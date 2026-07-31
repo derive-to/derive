@@ -28,6 +28,8 @@ import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { usePageVisible } from "@/lib/use-page-visible"
+import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import { ConsolePending } from "./context-skeleton"
@@ -36,7 +38,10 @@ import { answerMdToHtml } from "./lib/answer-md"
 // The context console: ask, read the answer (with the query/confidence/caveats the
 // runner attaches), follow up. One conversation at a time — older sessions are a
 // picker away; the owner additionally gets the activity view. The transcript polls
-// fast only while the runner owes a reply (sessionQuery's refetchInterval).
+// fast only while the runner owes a reply (sessionQuery's refetchInterval), and refetches
+// immediately on the server's session.settled/session.progress push (SessionThread) —
+// the poll is the fallback, the push is what makes a reply land without waiting out
+// the interval.
 export function ContextConsole() {
   const { id } = useParams({ from: "/contexts/$id" })
   // Keyed by context id: the router keeps this route's component mounted across
@@ -528,6 +533,49 @@ function SessionThread({
       qc.invalidateQueries({ queryKey: contextSessionsQuery(contextId).queryKey })
   }, [state, contextId, qc])
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
+  // The server already publishes these on the same per-user SSE stream the notification
+  // bell uses (contexts.ts settleWake/progressWake) — react to them instead of waiting out
+  // sessionQuery's poll interval, so a reply that lands between polls shows up at once
+  // instead of quantised to the next tick.
+  //
+  // Subscribed while the session is UNSETTLED, which is deliberately wider than the poll's
+  // `open`: a runner that claims a session flips it to `working`, and sessionQuery stops
+  // polling there, so a `working` transcript had nothing refreshing it at all. Those are
+  // exactly the long runs that emit `session.progress`. The push covers that gap for free —
+  // the EventSource is already open for the notification bell, so this adds no requests.
+  //
+  // Where the poll IS running (`open`) it stays on as the fallback for a missed event or a
+  // dropped stream: this shortens the common case, it does not replace the safety net.
+  //
+  // SCOPE: this is the CONTEXT CONSOLE only. The chat rail on an artifact is a separate
+  // surface — `use-artifact-chat.ts`, plain fetch into local state, polled from
+  // artifact-chat.tsx on its own 900ms interval, and it never touches sessionQuery. It has
+  // no `working` hole (its gate is already `working || open`), so it does not have the bug
+  // fixed here, but it also gets none of this push. Wiring it up is its own change.
+  //
+  // WHICH TURNS ACTUALLY PUSH (verified on the PR preview, not inferred): only a turn that
+  // goes through the runner report path or a close/fail — contexts.ts calls settleWake /
+  // progressWake there and nowhere else. `serveAttended`, which serves an Ask answered
+  // in-process by the model, settles the session WITHOUT publishing anything, so on that
+  // path these subscriptions sit idle and the poll does all the work. This is therefore a
+  // win for AGENT-RUN contexts (a real runner answering, long runs emitting progress, and
+  // the `working` stall above) and a no-op for an attended Ask. Making attended turns push
+  // means publishing from serveAttended; that is a server change, deliberately not made
+  // here.
+  const visible = usePageVisible()
+  const pushRefresh = (e: MessageEvent) => {
+    let payload: { session_id?: string }
+    try {
+      payload = JSON.parse(e.data) as { session_id?: string }
+    } catch {
+      return
+    }
+    if (payload.session_id === sessionId) refresh()
+  }
+  const unsettled = state === "open" || state === "working"
+  const pushEnabled = !!me && visible && unsettled
+  useUserEvent("session.settled", pushRefresh, pushEnabled)
+  useUserEvent("session.progress", pushRefresh, pushEnabled)
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
   // hooks run unconditionally (a hook can't sit below an early return).
   const post = useApiMutation({

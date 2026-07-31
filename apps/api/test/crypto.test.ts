@@ -83,8 +83,17 @@ describe("encryptSecret / decryptSecret — AES-256-GCM at rest", () => {
     // Wrong key: returns the (still-encrypted) blob, never the plaintext.
     expect(decryptSecret(blob, "wrong")).not.toBe("topsecret")
     // Tampered ciphertext fails the GCM auth tag and is not decoded to plaintext.
+    //
+    // The mutation has to be GUARANTEED different. Overwriting the last characters with a fixed
+    // string ("…AA") silently tampers with nothing on the runs where the ciphertext already ends
+    // that way — the blob is then byte-identical, decrypts perfectly, and this test fails while
+    // reporting that GCM is broken. Rare, random, and observed in CI. Flip relative to what is
+    // actually there instead.
     const p = blob.split(".")
-    const tampered = `${p.slice(0, 3).join(".")}.${(p[3] ?? "").slice(0, -2)}AA`
+    const ct = p[3] ?? ""
+    const flipped = ct.slice(-1) === "A" ? "B" : "A"
+    const tampered = `${p.slice(0, 3).join(".")}.${ct.slice(0, -1)}${flipped}`
+    expect(tampered).not.toBe(blob)
     expect(decryptSecret(tampered, pass)).not.toBe("topsecret")
   })
 

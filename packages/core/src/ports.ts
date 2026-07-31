@@ -206,6 +206,43 @@ export interface ListArtifactsOpts {
   excludeRemoved?: boolean
 }
 
+/** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */
+export interface WorkspaceSummary {
+  total: number
+  tags: { tag: string; count: number }[]
+  /** The workspace's display name, or null when there is no workspace row. */
+  workspace: string | null
+  /** Favorited artifacts in THIS workspace (0 for an anonymous caller). */
+  favorites: number
+  /** Artifacts the caller owns here — the "Created by me" badge. */
+  mine: number
+  /** …of those, the ones not surfaced anywhere yet (`listed = none`). */
+  minePrivate: number
+}
+
+export interface ArtifactDetailOpts {
+  artifactId: string
+  /** The artifact's workspace — settings + managed-mirror status are keyed on it. */
+  orgId: string
+  /** The signed-in viewer, or null (anonymous). Null skips the favorite lookup. */
+  viewerId: string | null
+}
+
+/** One page's worth of artifact-detail context — see `ArtifactQueryStore.artifactDetail`. */
+export interface ArtifactDetail {
+  versions: VersionRecord[]
+  tags: string[]
+  /** Ids of the collections containing this artifact. */
+  collectionIds: string[]
+  proposals: ProposalRecord[]
+  /** Distinct OPEN comment threads on this artifact (the public viewer's pill count). */
+  openThreads: number
+  favorite: boolean
+  settings: OrgSettings
+  /** True when this artifact is mirrored from a GitHub sync source (read-only in Derive). */
+  managed: boolean
+}
+
 export interface ListEnrichmentOpts {
   /** The page of artifact ids being decorated. */
   ids: string[]
@@ -385,6 +422,18 @@ export interface ArtifactStore {
   /** Owner opt-in: the anonymous public page shows version history. */
   setPublicHistory(artifactId: string, on: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
+  /** Resolve many short ids at once. Bulk operations resolved one artifact per short id in
+   *  a loop; on the edge tier that is a ~80ms round trip each, up to BULK_MAX of them.
+   *  Order is unspecified and unknown ids are simply absent — callers key by `short_id`. */
+  getByShortIds(shortIds: string[]): Promise<ArtifactRecord[]>
+  /** An artifact plus its workspace's settings, in one call. The settings are keyed on the
+   *  `org_id` the artifact carries, so fetching them separately is an FK chain — not the
+   *  same-key shape most batches here use, but a join answers it in one round trip all the
+   *  same. Settings fall back to the parsed defaults when the workspace has no row, exactly
+   *  as `getOrgSettings` does. Null artifact ⇒ null (and default settings). */
+  artifactWithSettings(
+    shortId: string,
+  ): Promise<{ artifact: ArtifactRecord | null; settings: OrgSettings }>
   /** Load an artifact by its internal id (used by domain mode's host lookup). */
   getArtifactById(id: string): Promise<ArtifactRecord | null>
   /** Batch-load artifacts by internal id in ONE query (id ∈ ids). Order is unspecified;
@@ -402,6 +451,28 @@ export interface ArtifactStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS,
+   *  its current version row, and that version's facts, in one query. The share-link
+   *  SSR path computed the two counts by fetching the artifact's entire version list and
+   *  entire comment list and taking `.length` — two whole-table reads for two integers, on
+   *  the most-trafficked anonymous surface, plus a trip each for the version row and the
+   *  slots. `facts` carries only what factSummary reads (slot + json), ordered by slot. */
+  unfurlInfo(
+    artifactId: string,
+    versionN: number,
+  ): Promise<{
+    versionCount: number
+    commentCount: number
+    version: VersionRecord | null
+    facts: { slot: string; json: string }[]
+  }>
+  /** Each artifact's CURRENT version, for a set of artifacts, keyed by artifact id — one
+   *  query instead of a `getVersion(id, current_version)` per artifact. Workspace search
+   *  grep-confirms up to 30 candidates and was fetching each one's version separately;
+   *  on the edge tier that is 30 sequential ~80ms round trips inside one request, and a
+   *  `Promise.all` around them cannot help (see edge-pg.ts). Artifacts with no current
+   *  version are simply absent from the result. */
+  currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>>
   /** Replace a version's stored facts with `rows` (delete-then-insert, so a
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */
@@ -512,6 +583,15 @@ export interface CommentStore {
   createComment(c: NewComment): Promise<CommentRecord>
   /** Comments on an artifact, oldest-first; optionally filtered by thread state. */
   listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]>
+  /** The comment rail's whole payload: an artifact's comments AND the version their
+   *  anchors are re-checked against, in one call. Both are keyed on the same artifact,
+   *  so on the edge tier issuing them separately paid two ~80ms round trips for one
+   *  panel. `version` is null when the artifact has no such version yet. */
+  commentsPage(
+    artifactId: string,
+    versionN: number,
+    opts?: CommentListOpts,
+  ): Promise<{ comments: CommentRecord[]; version: VersionRecord | null }>
   getComment(id: string): Promise<CommentRecord | null>
   /** Patch a single comment's body, meta (reactions, edited, deleted), and/or
    *  anchor (the re-anchor sweep self-heals an element anchor it recovered across
@@ -538,6 +618,9 @@ export interface CommentStore {
   /** Artifact ids in `orgId` with an open thread the user is tagged in or authored —
    *  the "needs your feedback" set the home section is built from. */
   artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]>
+  /** DISTINCT author ids on an artifact's comments. The @mention directory needs only this,
+   *  and was reading every comment ROW — bodies and all — to collect them. */
+  commentAuthorIds(artifactId: string): Promise<string[]>
 }
 
 export interface ArtifactQueryStore {
@@ -548,6 +631,19 @@ export interface ArtifactQueryStore {
    * `ids` array matches nothing.
    */
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /**
+   * Everything the artifact DETAIL response needs about one artifact, in ONE store call:
+   * its versions, tags, the collections it sits in, its proposals, its open-thread count,
+   * whether the viewer has favorited it, its workspace's settings, and whether it is a
+   * read-only GitHub mirror. Same motivation as `listEnrichment` — these were seven
+   * sequential ~80ms round trips on the edge tier, all keyed on the same artifact (or its
+   * org). `viewerId` null skips the favorite check (anonymous readers can't have one).
+   *
+   * `managed` and `favorite` are answered as booleans about THIS artifact rather than by
+   * fetching the org's whole managed-id set / the user's whole favorite list and calling
+   * `.includes()`, which is what the route used to do.
+   */
+  artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail>
   /**
    * Everything the library list decorates a page of rows with, in ONE store call:
    * view counts, tags, preview readiness, author handle + byline directory rows,
@@ -601,6 +697,17 @@ export interface ArtifactQueryStore {
   storageBytes(orgId: string): Promise<number>
   /** Tag → usage count, scoped to a workspace when orgId is given (browse sidebar). */
   tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]>
+  /**
+   * The browse sidebar's whole summary for one workspace, in ONE store call: total
+   * artifacts, tag→count, the workspace's name, and — for a signed-in caller — their
+   * favorite count, owned count, and not-yet-surfaced owned count. Six calls all keyed
+   * on the same org (or org+user), which on the edge tier was six ~80ms round trips to
+   * render one sidebar. `userId` null ⇒ the three per-user counts come back 0.
+   *
+   * `favorites` is a COUNT: the route it replaces fetched the user's whole favorite id
+   * list and used only `.length`.
+   */
+  workspaceSummary(orgId: string, userId: string | null): Promise<WorkspaceSummary>
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>
@@ -676,6 +783,15 @@ export interface WorkspaceStore {
   deleteWorkspace(orgId: string): Promise<void>
   /** Every workspace a user belongs to, with their role, oldest first (the switcher). */
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]>
+  /** listWorkspaces(userId) + getOAuthClientWorkspaces(userId, clientId) as ONE round
+   *  trip — `bound` is already a subset of `mine` (a LEFT JOIN on the Postgres driver, so
+   *  a workspace the grant names but the user has since left never appears). Empty
+   *  clientId ⇒ bound is always []. The oauth-agent default-workspace resolution is the
+   *  only caller — reach for listWorkspaces / getOAuthClientWorkspaces directly elsewhere. */
+  workspacesAndOauthBinding(
+    userId: string,
+    clientId: string,
+  ): Promise<{ mine: (WorkspaceRecord & { role: Role })[]; bound: string[] }>
   getMembership(orgId: string, userId: string): Promise<MembershipRecord | null>
   listMemberships(orgId: string): Promise<MembershipRecord[]>
   /** Every membership across a set of orgs in ONE query (org_id ∈ orgIds); callers group
@@ -751,6 +867,12 @@ export interface CollectionStore {
   deleteCollection(id: string): Promise<void>
   /** Collections with their item counts, newest first; scoped to a workspace when orgId is given. */
   listCollections(orgId?: string): Promise<(CollectionRecord & { count: number })[]>
+  /** `listCollections` + `listRepoSources` for the SAME org, in one call — the list route's
+   *  two independent org-scoped reads collapsed to one round trip on the edge tier. */
+  collectionsOverview(orgId: string): Promise<{
+    collections: (CollectionRecord & { count: number })[]
+    sources: RepoSourceRecord[]
+  }>
   /** Artifact ids in a collection (drives ?collection= browse). */
   collectionArtifactIds(collectionId: string): Promise<string[]>
   /** Collection ids containing an artifact (for the artifact's "add to" UI). */
@@ -849,6 +971,11 @@ export interface IntegrationStore {
   /** Ids of every artifact mirrored from a sync source in this workspace —
    *  drives the read-only gate + the `managed` flag (synced docs aren't editable). */
   managedArtifactIds(orgId: string): Promise<string[]>
+  /** Is THIS artifact mirrored from a sync source? The single-artifact question three
+   *  write paths were answering with `managedArtifactIds(org).includes(id)` — pulling the
+   *  workspace's entire managed-id set (parsed out of every repo source's file manifest)
+   *  to test one membership, which gets steadily worse as a workspace syncs more repos. */
+  isManagedArtifact(orgId: string, artifactId: string): Promise<boolean>
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   /** The instance's GitHub App credentials, or null before the manifest setup. */
   getGithubApp(): Promise<GitHubAppRecord | null>
@@ -864,6 +991,15 @@ export interface IntegrationStore {
   /** The workspace's integration preferences, merged over defaults (so a workspace
    *  that never saved any returns all-enabled). */
   getOrgSettings(orgId: string): Promise<OrgSettings>
+  /** getOrgSettings(orgId) + getUserBrandprint(userId) as ONE round trip — the pg driver
+   *  batches (a UNION ALL, falling back to settings-alone on an older user table with no
+   *  brandprint column); embedded composes. userId null ⇒ personalBrandprint always null
+   *  (that read is skipped entirely). resolveActorBrandprint (MCP connect, context
+   *  runner, rework endpoint) is the only caller. */
+  orgContext(
+    orgId: string,
+    userId: string | null,
+  ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
   /** The workspace's cached Stripe subscription, absent ⇒ null (free). */
@@ -991,6 +1127,14 @@ export interface ContextStore {
   getContext(id: string): Promise<ContextRecord | null>
   /** A workspace's contexts, newest first. */
   listContexts(orgId: string): Promise<ContextRecord[]>
+  /** `listContexts` with each row's manifest artifact resolved to its `short_id` — the
+   *  list route's second query (`getArtifactsByIds` over the ids the first one returned)
+   *  folded into a LEFT JOIN. Not the same-key shape the other batches use: this is a
+   *  genuine FK dependency, which SQL can still answer in one round trip. `manifest_short_id`
+   *  is null when the manifest artifact is missing. */
+  contextsWithManifests(
+    orgId: string,
+  ): Promise<(ContextRecord & { manifest_short_id: string | null })[]>
   /** Remove a context and its sessions + messages, scoped to its workspace. */
   deleteContext(id: string, orgId: string): Promise<void>
   /** Stamp `runner_seen_at` (the queue route's liveness mark). The caller decides
@@ -1011,6 +1155,19 @@ export interface ContextStore {
   /** Remove a user from the roster; a no-op if they weren't on it. */
   removeContextAsker(contextId: string, userId: string): Promise<void>
   createSession(s: NewSession): Promise<SessionRecord>
+  /**
+   * Open a session AND write its first message AND set the resulting state, in one call.
+   * Chat's enqueue did these as three sequential statements — on the edge tier that is
+   * three ~80ms round trips (see edge-pg.ts) for one logical act. Postgres does all three
+   * in a single statement with a CTE chain, which also makes them ATOMIC: three loose
+   * statements outside a transaction can leave a session with no first message if the
+   * isolate dies between them, and nothing reopens that.
+   */
+  createSessionWithMessage(
+    s: NewSession,
+    m: Omit<NewSessionMessage, "session_id">,
+    state: SessionState,
+  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }>
   getSession(id: string): Promise<SessionRecord | null>
   /** Sessions on a context, newest first; `askerId` narrows to one person's. */
   listSessions(
@@ -1165,8 +1322,19 @@ export interface DirectoryStore {
   createNotifications(rows: NewNotification[]): Promise<void>
   listNotifications(userId: string, limit: number): Promise<NotificationRecord[]>
   unreadNotificationCount(userId: string): Promise<number>
+  /** The bell's whole payload — the page of notifications AND the total unread count
+   *  (over every notification the user has, not just this page) — in one call. On the
+   *  edge tier `listNotifications`+`unreadNotificationCount` are two round trips for the
+   *  same `user_id`; a store that can answer both from one query should. */
+  notificationsPage(userId: string, limit: number): Promise<NotificationsPage>
   /** Mark the given ids read, or all of the user's notifications when "all". */
   markNotificationsRead(userId: string, ids: string[] | "all"): Promise<void>
+}
+
+/** See `DirectoryStore.notificationsPage`. */
+export interface NotificationsPage {
+  notifications: NotificationRecord[]
+  unread: number
 }
 
 export interface AgentStore {
@@ -1191,6 +1359,14 @@ export interface AgentStore {
   getAutomationsByIds(ids: string[]): Promise<AutomationRecord[]>
   /** A workspace's automations, newest first. Default 100. */
   listAutomations(orgId: string, limit?: number): Promise<AutomationRecord[]>
+  /** `listAutomations` with each row's agent's `runs_seen_at` folded in (the honesty badge
+   *  — null means no executor has ever polled). The list route used to fetch automations
+   *  and the workspace's whole agent roster as two separate round trips and join them in
+   *  memory; same org, same page, one query. */
+  automationsWithExecutors(
+    orgId: string,
+    limit?: number,
+  ): Promise<(AutomationRecord & { executor_seen_at: string | null })[]>
   /** Partial update, org-scoped (id + orgId must both match). Undefined fields are
    *  untouched; refs null clears. Returns the updated row, or null when not found. */
   updateAutomation(
@@ -1845,7 +2021,13 @@ export type ConnectionScope = "personal" | "workspace"
  *              sync already uses, and a short-lived token is minted per call.
  *  slack       no stored credential — the workspace's existing bot install provides it.
  */
-export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack"
+/** How a connection authenticates, and therefore who spends its credential.
+ *
+ *  `mcp` is the odd one out and deliberately so: it is broker-executed like `oauth`, but it
+ *  carries its own server URL in its ref and its own bearer in `secret_enc`, so it needs no
+ *  vendor account and no broker plan. It is NOT a direct kind — Derive does not make its HTTP
+ *  call itself — and it has no vendor side to revoke. */
+export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack" | "mcp"
 
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and
@@ -2905,6 +3087,9 @@ export interface NewComment {
 /** Options for {@link MetaStore.listComments}. */
 export interface CommentListOpts {
   state?: CommentState
+  /** Only this thread's comments. Filtering in SQL rather than reading the artifact's whole
+   *  comment table and filtering in the Worker, which is what the agent tools used to do. */
+  threadId?: string
 }
 
 /** A bundle version's blob is this manifest; file versions point at content directly. */

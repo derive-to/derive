@@ -409,6 +409,11 @@ export interface Connection {
   user_id: string
   broker: string
   toolkit: string
+  /** How it authenticates. `mcp` is a Model Context Protocol server connected by URL — it needs
+   *  no vendor account and no broker plan, which is why it is the one kind you can add here. */
+  kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp"
+  /** kind `mcp`: the server URL. Display only — the credential never comes back. */
+  base_url?: string | null
   scopes_label: string | null
   status: "active" | "pending" | "revoked"
   created_at: string
@@ -1241,6 +1246,15 @@ export const api = {
   },
   connect(toolkit: string): Promise<Connection & { connect_url: string }> {
     return f("/v1/connections", opts({ toolkit })).then(j)
+  },
+  /** Connect an MCP server as a source. The server is contacted immediately and its tool list
+   *  pinned, so a 201 here means it really answered — not that a row was stored hopefully. */
+  connectMcp(input: {
+    toolkit: string
+    mcp_url: string
+    mcp_secret?: string
+  }): Promise<Connection> {
+    return f("/v1/connections", opts(input)).then(j)
   },
   async revokeConnection(id: string): Promise<void> {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })

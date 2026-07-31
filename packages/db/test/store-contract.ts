@@ -87,6 +87,35 @@ export function runStoreContract(
       await store.removeMembership(ORG, "temp")
       expect(await store.getMembership(ORG, "temp")).toBeNull()
     })
+
+    it("workspacesAndOauthBinding matches the two calls it replaces", async () => {
+      const orgA = `org_${uuid()}`
+      const orgB = `org_${uuid()}`
+      const user = `owc_${uuid()}`
+      const client = `client_${uuid()}`
+      await store.setWorkspace(orgA, "A")
+      await store.setWorkspace(orgB, "B")
+      await store.setMembership({ id: uuid(), org_id: orgA, user_id: user, role: "owner" })
+      await store.setMembership({ id: uuid(), org_id: orgB, user_id: user, role: "editor" })
+
+      // No grant binding yet — bound is empty ("all workspaces"), mine is unaffected.
+      const unbound = await store.workspacesAndOauthBinding(user, client)
+      expect(unbound.mine).toEqual(await store.listWorkspaces(user))
+      expect(unbound.bound).toEqual([])
+
+      // The consent multi-select narrows to orgA only.
+      await store.setOAuthClientWorkspaces(user, client, [orgA])
+      const bound = await store.workspacesAndOauthBinding(user, client)
+      expect(bound.mine).toEqual(await store.listWorkspaces(user))
+      expect(bound.bound).toEqual([orgA])
+
+      // A DIFFERENT client's binding never leaks into this one's `bound`.
+      const otherClient = `client_${uuid()}`
+      expect((await store.workspacesAndOauthBinding(user, otherClient)).bound).toEqual([])
+
+      // Empty clientId (a registered dk_agt_ token has none) never matches any binding.
+      expect((await store.workspacesAndOauthBinding(user, "")).bound).toEqual([])
+    })
   })
 
   describe(`${label}: artifacts + versions`, () => {
@@ -1743,6 +1772,625 @@ export function runStoreContract(
         new Date(Date.now() + 120_000).toISOString(),
       )
       expect(due.filter((d) => d.webhook_id === hook.id)).toHaveLength(2)
+    })
+  })
+
+  describe(`${label}: round-2 batched reads`, () => {
+    it("collectionRolesForUser folds explicit membership and workspace-seat access (higher wins), one call", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Round2")
+      const seated = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Seated",
+        created_by: "amy",
+        workspace_access: "member",
+      })
+      const inviteOnly = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Invite-only",
+        created_by: "amy",
+        workspace_access: "none",
+      })
+      const untouched = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Untouched",
+        created_by: "amy",
+        workspace_access: "none",
+      })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "bob", role: "viewer" })
+      // Explicit share on the invite-only collection, at a HIGHER role than bob's seat
+      // would ever grant on the seated one — proves fold-by-max, not last-write-wins.
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: inviteOnly.id,
+        user_id: "bob",
+        role: "owner",
+      })
+      expect(await store.collectionRolesForUser([], "bob")).toEqual({})
+      const roles = await store.collectionRolesForUser(
+        [seated.id, inviteOnly.id, untouched.id],
+        "bob",
+      )
+      expect(roles[seated.id]).toBe("viewer") // seat only
+      expect(roles[inviteOnly.id]).toBe("owner") // explicit share only
+      expect(roles[untouched.id]).toBeUndefined() // neither
+    })
+
+    it("notificationsPage matches listNotifications + unreadNotificationCount, and unread counts the WHOLE history not just the page", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const base = {
+        actor: "bob",
+        kind: "mention" as const,
+        artifact_id: a.id,
+        artifact_short_id: a.short_id,
+        artifact_title: "Doc",
+        thread_id: uuid(),
+        comment_id: uuid(),
+        preview: "hey",
+      }
+      const user = `u_${uuid()}`
+      for (let i = 0; i < 5; i++)
+        await store.createNotification({ id: uuid(), user_id: user, ...base })
+      // Page of 2, but all 5 are unread — `unread` must reflect the full 5, not the page.
+      const page = await store.notificationsPage(user, 2)
+      expect(page.notifications).toHaveLength(2)
+      expect(page.unread).toBe(5)
+      expect(page.notifications).toEqual(await store.listNotifications(user, 2))
+      expect(page.unread).toBe(await store.unreadNotificationCount(user))
+      await store.markNotificationsRead(user, "all")
+      expect((await store.notificationsPage(user, 2)).unread).toBe(0)
+    })
+
+    it("automationsWithExecutors joins each automation's agent liveness, one call; a deleted/missing agent ⇒ null", async () => {
+      const org = `org_${uuid()}`
+      const agent = await store.createAgent({
+        id: uuid(),
+        org_id: org,
+        name: "bot",
+        token: `tok_${uuid()}`,
+        role: "editor",
+      })
+      await store.touchAgentRunsSeen(agent.id, "2026-01-01T00:00:00.000Z")
+      const live = await store.createAutomation({
+        id: uuid(),
+        org_id: org,
+        agent_id: agent.id,
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "has a live executor",
+      })
+      const orphaned = await store.createAutomation({
+        id: uuid(),
+        org_id: org,
+        agent_id: `ag_${uuid()}`, // no such agent row
+        trigger: JSON.stringify({ kind: "manual" }),
+        instruction: "agent never existed",
+      })
+      const rows = await store.automationsWithExecutors(org)
+      expect(rows.find((r) => r.id === live.id)?.executor_seen_at).toBe("2026-01-01T00:00:00.000Z")
+      expect(rows.find((r) => r.id === orphaned.id)?.executor_seen_at).toBeNull()
+      // Same rows listAutomations would return, just decorated.
+      expect(rows.map((r) => r.id).sort()).toEqual(
+        (await store.listAutomations(org)).map((r) => r.id).sort(),
+      )
+    })
+
+    it("artifactDetail matches every individual call it replaces", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Detail")
+      const viewer = `u_${uuid()}`
+      const a = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.addVersion(a.id, newVersion())
+      await store.addVersion(a.id, newVersion())
+      await store.setArtifactTags(a.id, ["zeta", "alpha"])
+      await store.setFavorite(a.id, viewer)
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Holder",
+        created_by: "amy",
+      })
+      await store.addCollectionItem(col.id, a.id)
+      await store.createProposal({
+        id: uuid(),
+        artifact_id: a.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        author: "amy",
+        base_version: 1,
+      })
+      // Two comments in ONE open thread + one resolved thread: openThreads counts
+      // DISTINCT open threads, so this must be 1, not 2 and not 3.
+      const openThread = uuid()
+      for (const body of ["first", "second"])
+        await store.createComment({
+          id: uuid(),
+          artifact_id: a.id,
+          thread_id: openThread,
+          base_version: 1,
+          body_md: body,
+          author: "amy",
+        })
+      const doneThread = uuid()
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: doneThread,
+        base_version: 1,
+        body_md: "done",
+        author: "amy",
+      })
+      await store.setThreadState(a.id, doneThread, "resolved")
+      await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, whiteLabel: true })
+
+      const detail = await store.artifactDetail({ artifactId: a.id, orgId: org, viewerId: viewer })
+      // Indistinguishable from the calls it replaces.
+      expect(detail.versions).toEqual(await store.listVersions(a.id))
+      expect(detail.tags).toEqual((await store.tagsForArtifacts([a.id]))[a.id] ?? [])
+      expect(detail.collectionIds).toEqual(await store.collectionIdsForArtifact(a.id))
+      expect(detail.proposals).toEqual(await store.listProposals(a.id))
+      expect(detail.openThreads).toBe(
+        (await store.commentSignals([a.id], null))[a.id]?.open_threads ?? 0,
+      )
+      expect(detail.favorite).toBe((await store.listUserFavoriteIds(viewer)).includes(a.id))
+      expect(detail.settings).toEqual(await store.getOrgSettings(org))
+      expect(detail.managed).toBe((await store.managedArtifactIds(org)).includes(a.id))
+      // Populated, not vacuously equal-empty — and ORDER matters: the route indexes its
+      // mapped array against `versions[i]`, so ascending-by-n is part of the contract.
+      expect(detail.versions.map((v) => v.n)).toEqual([1, 2])
+      expect(detail.tags).toEqual(["alpha", "zeta"])
+      expect(detail.collectionIds).toEqual([col.id])
+      expect(detail.proposals).toHaveLength(1)
+      expect(detail.openThreads).toBe(1)
+      expect(detail.favorite).toBe(true)
+      expect(detail.settings.whiteLabel).toBe(true)
+      expect(detail.managed).toBe(false)
+
+      // An anonymous viewer has no favorite; everything else is unchanged.
+      const anon = await store.artifactDetail({ artifactId: a.id, orgId: org, viewerId: null })
+      expect(anon.favorite).toBe(false)
+      expect(anon.versions).toEqual(detail.versions)
+      expect(anon.openThreads).toBe(1)
+      // A DIFFERENT user's favorite must not leak into this viewer's answer.
+      const stranger = await store.artifactDetail({
+        artifactId: a.id,
+        orgId: org,
+        viewerId: `u_${uuid()}`,
+      })
+      expect(stranger.favorite).toBe(false)
+    })
+
+    it("artifactDetail on a bare artifact returns empties + settings defaults, no crash", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Bare")
+      const a = await store.createArtifact(newArtifact({ org_id: org }))
+      const detail = await store.artifactDetail({
+        artifactId: a.id,
+        orgId: org,
+        viewerId: `u_${uuid()}`,
+      })
+      expect(detail.versions).toEqual([])
+      expect(detail.tags).toEqual([])
+      expect(detail.collectionIds).toEqual([])
+      expect(detail.proposals).toEqual([])
+      expect(detail.openThreads).toBe(0)
+      expect(detail.favorite).toBe(false)
+      expect(detail.managed).toBe(false)
+      // No org_settings row ⇒ the parsed defaults, same as getOrgSettings would give.
+      expect(detail.settings).toEqual(await store.getOrgSettings(org))
+    })
+
+    it("artifactDetail scopes to ITS artifact — a sibling's versions/tags/proposals never bleed in", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Scoping")
+      const mine = await store.createArtifact(newArtifact({ org_id: org }))
+      const other = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.addVersion(mine.id, newVersion())
+      await store.addVersion(other.id, newVersion())
+      await store.addVersion(other.id, newVersion())
+      await store.setArtifactTags(other.id, ["not-mine"])
+      await store.createProposal({
+        id: uuid(),
+        artifact_id: other.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        author: "amy",
+        base_version: 1,
+      })
+      await store.createComment({
+        id: uuid(),
+        artifact_id: other.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "on the other one",
+        author: "amy",
+      })
+      const detail = await store.artifactDetail({
+        artifactId: mine.id,
+        orgId: org,
+        viewerId: null,
+      })
+      expect(detail.versions).toHaveLength(1)
+      expect(detail.tags).toEqual([])
+      expect(detail.proposals).toEqual([])
+      expect(detail.openThreads).toBe(0)
+    })
+
+    it("commentsPage matches listComments + getVersion, honors ?state=, and preserves oldest-first order", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "v1" }))
+      await store.addVersion(a.id, newVersion({ message: "v2" }))
+      const openThread = uuid()
+      const doneThread = uuid()
+      for (const [thread, body] of [
+        [openThread, "first"],
+        [openThread, "second"],
+        [doneThread, "third"],
+      ] as const)
+        await store.createComment({
+          id: uuid(),
+          artifact_id: a.id,
+          thread_id: thread,
+          base_version: 1,
+          body_md: body,
+          author: "amy",
+        })
+      await store.setThreadState(a.id, doneThread, "resolved")
+
+      const all = await store.commentsPage(a.id, 2)
+      expect(all.comments).toEqual(await store.listComments(a.id))
+      expect(all.version).toEqual(await store.getVersion(a.id, 2))
+      expect(all.comments).toHaveLength(3)
+      expect(all.version?.n).toBe(2)
+      // Oldest-first is the rail's render order and part of the contract.
+      const times = all.comments.map((cm) => cm.created_at)
+      expect([...times].sort()).toEqual(times)
+      // The state filter passes through.
+      const open = await store.commentsPage(a.id, 2, { state: "open" })
+      expect(open.comments).toEqual(await store.listComments(a.id, { state: "open" }))
+      expect(open.comments).toHaveLength(2)
+      // A version that doesn't exist ⇒ null, not a throw (and the comments still come back).
+      const missing = await store.commentsPage(a.id, 99)
+      expect(missing.version).toBeNull()
+      expect(missing.comments).toHaveLength(3)
+    })
+
+    it("contextsWithManifests resolves each context's manifest short_id, preserving listContexts' rows, order and org scope", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Ctx")
+      const first = await store.createArtifact(newArtifact({ org_id: org }))
+      const second = await store.createArtifact(newArtifact({ org_id: org }))
+      const mk = (name: string, manifestId: string) =>
+        store.createContext({
+          id: `ctx_${uuid()}`,
+          org_id: org,
+          name,
+          agent_id: `ag_${uuid()}`,
+          manifest_artifact_id: manifestId,
+          created_by: "amy",
+        })
+      const a = await mk("First", first.id)
+      const b = await mk("Second", second.id)
+      // A context in ANOTHER workspace must not leak into this list.
+      const otherOrg = `org_${uuid()}`
+      await store.setWorkspace(otherOrg, "Elsewhere")
+      const elsewhere = await store.createArtifact(newArtifact({ org_id: otherOrg }))
+      await store.createContext({
+        id: `ctx_${uuid()}`,
+        org_id: otherOrg,
+        name: "Not yours",
+        agent_id: `ag_${uuid()}`,
+        manifest_artifact_id: elsewhere.id,
+        created_by: "amy",
+      })
+
+      const rows = await store.contextsWithManifests(org)
+      expect(rows.find((r) => r.id === a.id)?.manifest_short_id).toBe(first.short_id)
+      expect(rows.find((r) => r.id === b.id)?.manifest_short_id).toBe(second.short_id)
+      expect(rows.every((r) => r.org_id === org)).toBe(true)
+      // Same rows, same order, as listContexts — the JOIN must not reorder or drop.
+      // (Both schemas put a FK on manifest_artifact_id, so the JOIN's null branch is
+      // unreachable in practice; it stays a LEFT JOIN because the code it replaces also
+      // tolerated an unresolvable manifest rather than dropping the row.)
+      expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
+    })
+
+    it("isManagedArtifact agrees with managedArtifactIds, including the substring trap", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Managed WS")
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Mirror",
+        created_by: "amy",
+      })
+      const synced = await store.createArtifact(newArtifact({ org_id: org }))
+      const plain = await store.createArtifact(newArtifact({ org_id: org }))
+      const src = await store.createRepoSource({
+        id: uuid(),
+        org_id: org,
+        collection_id: col.id,
+        repo: "acme/derive",
+        ref: "main",
+        includes: "**/*.md",
+        pr_number: null,
+        created_by: "amy",
+      })
+      // The path→artifact map is written by the sync, not at creation.
+      await store.updateRepoSourceSync(src.id, {
+        files: JSON.stringify({ "README.md": { artifact_id: synced.id } }),
+      })
+
+      expect(await store.isManagedArtifact(org, synced.id)).toBe(true)
+      expect(await store.isManagedArtifact(org, plain.id)).toBe(false)
+      // Agrees with the call it replaces, both ways.
+      const all = await store.managedArtifactIds(org)
+      expect(all.includes(synced.id)).toBe(true)
+      expect(all.includes(plain.id)).toBe(false)
+      // THE SUBSTRING TRAP: the implementation narrows with a SQL LIKE and then confirms by
+      // parsing. A prefix of a managed id appears inside the stored JSON as a substring, so a
+      // LIKE alone would answer true — the parse is what makes it false.
+      expect(await store.isManagedArtifact(org, synced.id.slice(0, 8))).toBe(false)
+      // Another workspace's mirror never counts as this one's.
+      const otherOrg = `org_${uuid()}`
+      await store.setWorkspace(otherOrg, "Other")
+      expect(await store.isManagedArtifact(otherOrg, synced.id)).toBe(false)
+    })
+
+    it("artifactWithSettings returns the artifact and its workspace's settings together", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Settings WS")
+      const a = await store.createArtifact(newArtifact({ org_id: org }))
+      // No settings row yet ⇒ the parsed defaults, same as getOrgSettings.
+      const before = await store.artifactWithSettings(a.short_id)
+      expect(before.artifact?.id).toBe(a.id)
+      expect(before.settings).toEqual(await store.getOrgSettings(org))
+      // …and after one is written, the joined value tracks it.
+      await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, chatBeta: true })
+      const after = await store.artifactWithSettings(a.short_id)
+      expect(after.settings.chatBeta).toBe(true)
+      expect(after.settings).toEqual(await store.getOrgSettings(org))
+      expect(after.artifact).toEqual(await store.getByShortId(a.short_id))
+      // An unknown short id ⇒ null artifact + defaults, never a throw.
+      const missing = await store.artifactWithSettings("nosuchid")
+      expect(missing.artifact).toBeNull()
+      expect(missing.settings).toEqual(DEFAULT_ORG_SETTINGS)
+    })
+
+    it("createSessionWithMessage writes session + first message + state as one unit", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Chat WS")
+      const asker = `u_${uuid()}`
+      const sessionId = `ses_${uuid()}`
+      const messageId = `sm_${uuid()}`
+      const { session, message } = await store.createSessionWithMessage(
+        {
+          id: sessionId,
+          context_id: null,
+          context_version: null,
+          org_id: org,
+          asker_id: asker,
+          subject_ref: JSON.stringify({ kind: "artifact", id: "abc12345" }),
+        },
+        { id: messageId, author_kind: "asker", author_id: asker, body_md: "First question." },
+        "open",
+      )
+      // The returned session reflects the state that was SET, not the pre-update row —
+      // the route hands this straight back to the client.
+      expect(session.id).toBe(sessionId)
+      expect(session.state).toBe("open")
+      expect(session.context_id).toBeNull()
+      expect(session.org_id).toBe(org)
+      expect(message.id).toBe(messageId)
+      expect(message.session_id).toBe(sessionId)
+      expect(message.body_md).toBe("First question.")
+      // Both rows are actually persisted, and readable exactly as the separate calls left them.
+      const stored = await store.getSession(sessionId)
+      expect(stored).toEqual(session)
+      expect(await store.listSessionMessages(sessionId)).toEqual([message])
+      // A session is never left without its first message — the whole point of doing it as
+      // one statement rather than three.
+      expect((await store.listSessionMessages(sessionId)).length).toBe(1)
+    })
+
+    it("unfurlInfo counts versions + comments in the database and returns the current version", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const other = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "v1" }))
+      await store.addVersion(a.id, newVersion({ message: "v2" }))
+      await store.addVersion(other.id, newVersion())
+      const thread = uuid()
+      for (const body of ["one", "two", "three"])
+        await store.createComment({
+          id: uuid(),
+          artifact_id: a.id,
+          thread_id: thread,
+          base_version: 1,
+          body_md: body,
+          author: "amy",
+        })
+      // A comment and version on ANOTHER artifact must not be counted here.
+      await store.createComment({
+        id: uuid(),
+        artifact_id: other.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "elsewhere",
+        author: "amy",
+      })
+
+      // Facts on the CURRENT version, and a decoy on v1 that must not leak into
+      // the v2 read (the facts branch is keyed on the version, not just the artifact).
+      await store.setVersionData(a.id, 1, [
+        { id: uuid(), slot: "old", json: JSON.stringify({ stale: true }), size_bytes: 20, gen: 1 },
+      ])
+      await store.setVersionData(a.id, 2, [
+        { id: uuid(), slot: "metrics", json: JSON.stringify({ mrr: 42 }), size_bytes: 16, gen: 1 },
+        { id: uuid(), slot: "answers", json: JSON.stringify({ n: 7 }), size_bytes: 12, gen: 1 },
+      ])
+
+      const info = await store.unfurlInfo(a.id, 2)
+      // Same numbers the whole-list reads it replaces would have produced.
+      expect(info.versionCount).toBe((await store.listVersions(a.id)).length)
+      expect(info.commentCount).toBe((await store.listComments(a.id)).length)
+      expect(info.version).toEqual(await store.getVersion(a.id, 2))
+      expect(info.versionCount).toBe(2)
+      expect(info.commentCount).toBe(3)
+      expect(info.version?.message).toBe("v2")
+      // Facts match the getVersionData call this replaces, narrowed to slot+json and in
+      // NAME order — factSummary reads them in order, and a UNION ALL promises none.
+      expect(info.facts).toEqual(
+        (await store.getVersionData(a.id, 2)).map((r) => ({ slot: r.slot, json: r.json })),
+      )
+      expect(info.facts).toEqual([
+        { slot: "answers", json: JSON.stringify({ n: 7 }) },
+        { slot: "metrics", json: JSON.stringify({ mrr: 42 }) },
+      ])
+      // v1's fact stays on v1 — asking for v2 never sees it.
+      expect((await store.unfurlInfo(a.id, 1)).facts).toEqual([
+        { slot: "old", json: JSON.stringify({ stale: true }) },
+      ])
+      // Counts include RESOLVED threads (the card shows total discussion, not open).
+      await store.setThreadState(a.id, thread, "resolved")
+      expect((await store.unfurlInfo(a.id, 2)).commentCount).toBe(3)
+      // A bare artifact: zeroes, a null version and no facts, not a throw.
+      const bare = await store.createArtifact(newArtifact())
+      expect(await store.unfurlInfo(bare.id, 1)).toEqual({
+        versionCount: 0,
+        commentCount: 0,
+        version: null,
+        facts: [],
+      })
+    })
+
+    it("currentVersions returns each artifact's CURRENT version only, matching getVersion per id", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      const noVersions = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "a1" }))
+      await store.addVersion(a.id, newVersion({ message: "a2" }))
+      await store.addVersion(a.id, newVersion({ message: "a3" }))
+      await store.addVersion(b.id, newVersion({ message: "b1" }))
+
+      expect(await store.currentVersions([])).toEqual({})
+      const cur = await store.currentVersions([a.id, b.id, noVersions.id, "art_missing"])
+      // Indistinguishable from a getVersion(id, current_version) per artifact…
+      const freshA = await store.getArtifactById(a.id)
+      expect(cur[a.id]).toEqual(await store.getVersion(a.id, freshA?.current_version ?? 0))
+      // …and it is the CURRENT one (3), not the first or an arbitrary row.
+      expect(cur[a.id]?.n).toBe(3)
+      expect(cur[a.id]?.message).toBe("a3")
+      expect(cur[b.id]?.n).toBe(1)
+      // An artifact with no versions, and an id that doesn't exist, are simply absent.
+      expect(cur[noVersions.id]).toBeUndefined()
+      expect(cur.art_missing).toBeUndefined()
+      // Each entry belongs to the artifact it is keyed under — no cross-wiring.
+      expect(cur[a.id]?.artifact_id).toBe(a.id)
+      expect(cur[b.id]?.artifact_id).toBe(b.id)
+    })
+
+    it("workspaceSummary matches the six calls it replaces, and keeps each one's scoping rules", async () => {
+      const org = `org_${uuid()}`
+      const otherOrg = `org_${uuid()}`
+      await store.setWorkspace(org, "Summary WS")
+      await store.setWorkspace(otherOrg, "Elsewhere")
+      const me = `u_${uuid()}`
+
+      // Owned + listed, owned + unlisted, and one owned by someone else.
+      const listedMine = await store.createArtifact(newArtifact({ org_id: org, listed: "public" }))
+      const unlistedMine = await store.createArtifact(newArtifact({ org_id: org, listed: "none" }))
+      const theirs = await store.createArtifact(newArtifact({ org_id: org }))
+      for (const a of [listedMine, unlistedMine])
+        await store.setArtifactMember({
+          id: uuid(),
+          artifact_id: a.id,
+          user_id: me,
+          role: "owner",
+        })
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: theirs.id,
+        user_id: `u_${uuid()}`,
+        role: "owner",
+      })
+      await store.setArtifactTags(listedMine.id, ["alpha", "beta"])
+      await store.setArtifactTags(theirs.id, ["alpha"])
+
+      // Favorites: one live in-org (counts), one in ANOTHER workspace (must not),
+      // one removed (must not) — the scoping the route's comment calls out.
+      await store.setFavorite(listedMine.id, me)
+      const elsewhere = await store.createArtifact(newArtifact({ org_id: otherOrg }))
+      await store.setFavorite(elsewhere.id, me)
+      const removed = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.setFavorite(removed.id, me)
+      await store.setArtifactsRemoved([removed.id], "2026-01-01T00:00:00.000Z")
+
+      const s = await store.workspaceSummary(org, me)
+      // Indistinguishable from the calls it replaces.
+      expect(s.total).toBe(await store.countArtifacts(org))
+      expect([...s.tags].sort((a, b) => a.tag.localeCompare(b.tag))).toEqual(
+        await store.tagCounts(org),
+      )
+      expect(s.workspace).toBe((await store.getWorkspace(org))?.name ?? null)
+      expect(s.favorites).toBe((await store.listUserFavoriteIds(me, org)).length)
+      expect(s.mine).toBe(await store.countOwnedBy(org, me))
+      expect(s.minePrivate).toBe(await store.countOwnedBy(org, me, "none"))
+      // …and the values are the ones the scoping rules demand.
+      expect(s.workspace).toBe("Summary WS")
+      expect(s.mine).toBe(2)
+      expect(s.minePrivate).toBe(1)
+      expect(s.favorites).toBe(1) // NOT 3: the other workspace's and the removed one drop
+      expect(s.tags.find((t) => t.tag === "alpha")?.count).toBe(2)
+      expect(s.tags.find((t) => t.tag === "beta")?.count).toBe(1)
+
+      // An anonymous caller gets the workspace-level facts and zero per-user counts.
+      const anon = await store.workspaceSummary(org, null)
+      expect(anon.total).toBe(s.total)
+      expect(anon.workspace).toBe("Summary WS")
+      expect(anon.favorites).toBe(0)
+      expect(anon.mine).toBe(0)
+      expect(anon.minePrivate).toBe(0)
+
+      // A workspace that doesn't exist ⇒ null name and zeroes, not a throw.
+      const missing = await store.workspaceSummary(`org_${uuid()}`, me)
+      expect(missing.workspace).toBeNull()
+      expect(missing.total).toBe(0)
+      expect(missing.tags).toEqual([])
+      expect(missing.favorites).toBe(0)
+    })
+
+    it("collectionsOverview matches listCollections + listRepoSources for the same org", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Overview")
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Repo mirror",
+        created_by: "amy",
+      })
+      await store.createRepoSource({
+        id: uuid(),
+        org_id: org,
+        collection_id: col.id,
+        repo: "acme/derive",
+        ref: "main",
+        includes: "**/*.md",
+        pr_number: null,
+        created_by: "amy",
+      })
+      const overview = await store.collectionsOverview(org)
+      expect(overview.collections.map((c) => c.id)).toEqual(
+        (await store.listCollections(org)).map((c) => c.id),
+      )
+      expect(overview.sources).toEqual(await store.listRepoSources(org))
+      expect(overview.sources).toHaveLength(1)
+      // An org with nothing yields both empty, not an error.
+      const empty = await store.collectionsOverview(`org_${uuid()}`)
+      expect(empty).toEqual({ collections: [], sources: [] })
     })
   })
 

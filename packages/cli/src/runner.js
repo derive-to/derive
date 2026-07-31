@@ -1270,6 +1270,19 @@ function buildRunPrompt(run, before) {
       `You have these SOURCE TOOLS. Call one by running \`node derive-source.mjs <toolName> '<jsonArgs>'\` in bash; it prints the tool's JSON result:\n${list}`,
     )
   }
+  // A bound source that contributed no tools. Say so plainly rather than letting the run behave
+  // as though the source was never configured: "the numbers are missing because Stripe is
+  // unreachable" is a usable answer, and silently omitting them is not.
+  if (run.sources_quiet?.length) {
+    // `why` rides down with the claim, resolved once by the server. This used to keep its own
+    // copy of the wording, matched to the API's only by a comment saying so — and the CLI is
+    // deliberately dependency-free, so there was never a shared module to reach for. Falling
+    // back to the raw reason keeps an older server legible rather than blank.
+    const lost = run.sources_quiet.map((q) => `- ${q.toolkit}: ${q.why ?? q.reason}`).join("\n")
+    lines.push(
+      `These sources are UNAVAILABLE for this run:\n${lost}\n\nDo not guess or invent what they would have returned. Do the rest of the job and say plainly, in your answer, which source was missing and why.`,
+    )
+  }
   // What fired this run, when a webhook sent a body. The server coalesces a burst into one
   // run carrying several payloads, so this is a list and the newest is last. Untrusted input
   // by definition — it is whatever the caller POSTed — so it is framed as data to read, never

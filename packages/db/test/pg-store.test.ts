@@ -1,4 +1,5 @@
 import { randomUUID as uuid } from "node:crypto"
+import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { Pool } from "pg"
 import { describe, expect, it } from "vitest"
 import { PgMetaStore } from "../src/pg"
@@ -283,6 +284,59 @@ if (PG_URL) {
           )
           await store.setUserProfile("u1", { brandprint: null })
           expect(await store.getUserBrandprint("u1")).toBeNull()
+        },
+      )
+    })
+
+    it("orgContext matches the two calls it replaces", async () => {
+      await inSchema(
+        async (boot, schema) => {
+          await boot.query(
+            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, brandprint text)`,
+          )
+          await boot.query(
+            `INSERT INTO ${schema}."user"(id,email,name,brandprint) VALUES('u1','amy@x.com','Amy',$1)`,
+            [JSON.stringify({ collectionId: "col_x" })],
+          )
+        },
+        async (store) => {
+          const org = `org_${uuid()}`
+          await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, slackPost: false })
+          const combined = await store.orgContext(org, "u1")
+          expect(combined).toEqual({
+            settings: await store.getOrgSettings(org),
+            personalBrandprint: await store.getUserBrandprint("u1"),
+          })
+          expect(combined.settings.slackPost).toBe(false)
+          expect(combined.personalBrandprint).toBe(JSON.stringify({ collectionId: "col_x" }))
+          // null userId skips the user read entirely — settings alone, no error even
+          // though nothing was seeded for a null id.
+          expect(await store.orgContext(org, null)).toEqual({
+            settings: await store.getOrgSettings(org),
+            personalBrandprint: null,
+          })
+        },
+      )
+    })
+
+    it("orgContext tolerates a user table with no brandprint column", async () => {
+      await inSchema(
+        async (boot, schema) => {
+          // The older/minimal shape getUserBrandprint's own try/catch already tolerates —
+          // orgContext's UNION must fall back the same way, not throw.
+          await boot.query(
+            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text)`,
+          )
+          await boot.query(
+            `INSERT INTO ${schema}."user"(id,email,name) VALUES('u1','amy@x.com','Amy')`,
+          )
+        },
+        async (store) => {
+          const org = `org_${uuid()}`
+          await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, emailNotifications: false })
+          const combined = await store.orgContext(org, "u1")
+          expect(combined.settings.emailNotifications).toBe(false)
+          expect(combined.personalBrandprint).toBeNull()
         },
       )
     })

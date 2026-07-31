@@ -242,10 +242,16 @@ export const commentRoutes = (ctx: AppContext) => {
       // out-of-enum ?state= is rejected with a 400 before we reach here, so consume
       // the typed value directly rather than re-coercing. Absent ⇒ undefined ⇒ all.
       const { state } = c.req.valid("query")
-      const comments = await meta.listComments(artifact.id, { state })
+      // The comments AND the version their anchors re-resolve against, in one store
+      // call — both are keyed on this artifact, so issuing them separately paid two
+      // full ~80ms edge round trips for one panel (see edge-pg.ts).
+      const { comments, version: cur } = await meta.commentsPage(
+        artifact.id,
+        artifact.current_version,
+        { state },
+      )
       // Flag whether each anchor still resolves against the current version. Build the
       // anchor content once (tag-stripping HTML for text-quote matching) and reuse it.
-      const cur = await meta.getVersion(artifact.id, artifact.current_version)
       const raw = cur ? await sourceText(cur) : null
       const content = raw === null ? null : anchorContentFor(raw, cur?.content_type ?? "")
       return c.json({

@@ -135,6 +135,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     actingHuman,
     privateOwnerId,
     activeWorkspace,
+    membershipOf,
     actorFor,
     agentFor,
     authorize,
@@ -290,7 +291,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // workspace (the same scoping actorFor applies).
       const isOperator = isToken(c)
       const baselineRole = me
-        ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+        ? ((await membershipOf(c, listOrg, me.id))?.role ?? null)
         : agent && agent.org_id === listOrg
           ? agent.role
           : null
@@ -451,28 +452,22 @@ export const artifactRoutes = (ctx: AppContext) => {
           tags: [],
           workspace: null,
         })
-      const [total, tags, favIds, ws, mine, minePrivate] = await Promise.all([
-        meta.countArtifacts(org),
-        meta.tagCounts(org),
-        // Scope the favorites count to THIS workspace's live artifacts — the favorites
-        // view is workspace-scoped, so a favorite of an artifact in another workspace
-        // must not inflate the count (otherwise "Favorites · 1" with an empty list).
-        me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
-        meta.getWorkspace(org),
-        // The caller's owned artifacts — the "Created by me" filter's badge.
-        me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
-        // …and how many of those aren't surfaced anywhere yet: the "waiting on you
-        // to share it" signal (a fresh publish is listed=none until promoted).
-        me ? meta.countOwnedBy(org, me.id, "none") : Promise.resolve(0),
-      ])
-      tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+      // The sidebar's whole summary in ONE store call. These were six reads all scoped
+      // to this workspace (or this workspace + caller) — six ~80ms round trips on the
+      // edge for one sidebar. Semantics preserved by workspaceSummary: `favorites`
+      // counts only THIS workspace's live artifacts (a favorite in another workspace, or
+      // of a removed one, must not inflate the badge), and `mine`/`mine_private` key on
+      // the OWNER member row rather than the author_id denorm. `favorites` is also now a
+      // count rather than a whole id list the route only took `.length` of.
+      const summary = await meta.workspaceSummary(org, me?.id ?? null)
+      const tags = [...summary.tags].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
       return c.json({
-        total,
-        favorites: favIds.length,
-        mine,
-        mine_private: minePrivate,
+        total: summary.total,
+        favorites: summary.favorites,
+        mine: summary.mine,
+        mine_private: summary.minePrivate,
         tags,
-        workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+        workspace: summary.workspace ?? DEFAULT_WORKSPACE_NAME,
       })
     },
   )
@@ -532,7 +527,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A GitHub-synced artifact is read-only in Derive: GitHub is the source of
       // truth, so a republish would be silently overwritten on the next sync.
       // Edit it in the repo instead.
-      if ((await meta.managedArtifactIds(existing.org_id)).includes(existing.id))
+      if (await meta.isManagedArtifact(existing.org_id, existing.id))
         return fail(c, 409, "managed by GitHub sync — edit this file in the repo")
       // Locked: even an editor can't publish directly — changes go through review.
       // The web client routes editors to "propose" when locked, so this is the
@@ -1190,7 +1185,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const listOrg = await activeWorkspace(c)
     const isOperator = isToken(c)
     const baselineRole = me
-      ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+      ? ((await membershipOf(c, listOrg, me.id))?.role ?? null)
       : agent && agent.org_id === listOrg
         ? agent.role
         : null
@@ -1283,11 +1278,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const artifact = await meta.getByShortId(c.req.param("shortId"))
-      // For a missing artifact, fall back to a no-access placeholder so an anonymous
-      // probe can't learn anything (only id/password_hash/org_id are read by actorFor,
-      // and we 404 immediately after).
-      const actor = await actorFor(c, artifact ?? ({ id: "" } as ArtifactRecord))
+      // 404 BEFORE resolving an actor. This used to run actorFor against a placeholder
+      // artifact first, which for a signed-in caller meant a full artifactGrants round
+      // trip (~80ms) against an empty id on every miss — paid, then thrown away one line
+      // later. Nothing about the response differs: a miss is a bare 404 either way, so
+      // an anonymous probe still learns nothing.
       if (!artifact) return bail(fail(c, 404, "not found"))
+      const actor = await actorFor(c, artifact)
       if (!can(actor, "read", artifact.workspace_access, artifact.link_role))
         // A locked artifact isn't hidden, it's lockable: tell the client to prompt for
         // the password (401) rather than claim it doesn't exist (404). A lock only ever
@@ -1324,7 +1321,17 @@ export const artifactRoutes = (ctx: AppContext) => {
           removed: true,
           managed: false,
         })
-      const allVersions = await meta.listVersions(artifact.id)
+      // The detail response's whole artifact-scoped context — versions, tags, the
+      // collections it sits in, its proposals, the open-thread count, the viewer's
+      // favorite, the workspace's settings, and whether it is a read-only GitHub mirror
+      // — in ONE store call. These were eight sequential round trips (~80ms each on the
+      // edge, see edge-pg.ts) all keyed on this one artifact or its org.
+      const detail = await meta.artifactDetail({
+        artifactId: artifact.id,
+        orgId: artifact.org_id,
+        viewerId: actor.kind === "user" ? (actor.userId ?? null) : null,
+      })
+      const allVersions = detail.versions
       // The public-history gate: unless the owner opted the public page in, an
       // anonymous caller's history collapses to the current version — the payload
       // must not leak what the page won't show (version messages and author names
@@ -1335,9 +1342,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           ? allVersions.filter((v) => v.n === artifact.current_version)
           : allVersions
       const me = actor.kind === "user" ? actor.userId : null
-      const tags = (await meta.tagsForArtifacts([artifact.id]))[artifact.id] ?? []
-      const favorite = me ? (await meta.listUserFavoriteIds(me)).includes(artifact.id) : false
-      const collections = await meta.collectionIdsForArtifact(artifact.id)
+      const tags = detail.tags
+      const favorite = detail.favorite
+      const collections = detail.collectionIds
       const myRole = effectiveRole(actor, artifact.workspace_access, artifact.link_role)
       // The share dialog's disclosure rows: which collections' sharing REACHES this
       // artifact (a workspace-open collection propagates every seat; an invite-only
@@ -1402,7 +1409,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             owner_name: creatorNames[col.created_by]?.name ?? null,
           }))
       }
-      const proposals = await meta.listProposals(artifact.id)
+      const proposals = detail.proposals
       // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
       // block: the entry + file tree (so the client can render the doc and navigate
       // siblings) plus skill identity when it is one. One manifest read, on the detail
@@ -1464,8 +1471,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         // Show the Made-with-Derive mark on this artifact's public surfaces? False
         // only for white-label workspaces that are also entitled to it (beta, or an
         // active subscription); the viewer reads this single boolean so workspace
-        // settings and billing state never travel to anonymous clients.
-        badge: !(await effectiveWhiteLabel(artifact.org_id)),
+        // settings and billing state never travel to anonymous clients. The settings
+        // ride in from artifactDetail's batch, so the common case (white-label off)
+        // costs no round trip at all here.
+        badge: !(await effectiveWhiteLabel(artifact.org_id, detail.settings)),
         // Owner opt-in: the anonymous public page shows version history. The
         // client uses it to render the byline dropdown; the server enforces it
         // above (trimmed versions) and in raw.ts (old-version bytes).
@@ -1478,10 +1487,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // viewer — the whole point of the pill is what signing in would unlock.
         ...(actor.kind === "anon" &&
         (artifact.link_role === "commenter" || artifact.link_role === "editor")
-          ? {
-              open_comment_count:
-                (await meta.commentSignals([artifact.id], null))[artifact.id]?.open_threads ?? 0,
-            }
+          ? { open_comment_count: detail.openThreads }
           : {}),
         // The artifact's current workspace — the move dialog needs this to exclude
         // it from the destination picker.
@@ -1500,7 +1506,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         removed: !!artifact.removed_at,
         // Mirrored from a GitHub sync source → read-only in Derive (the client hides
         // Edit/Propose; the publish/propose routes also refuse it server-side).
-        managed: (await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id),
+        managed: detail.managed,
         // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
         // it must not be able to touch derive.to cookies/storage), which means it also has
         // no origin of its own to send OUR session cookie back on, and Chrome refuses to
@@ -1685,7 +1691,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (body instanceof Response) return bail(body)
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (shortId) => meta.getByShortId(shortId),
+        (ids) => meta.getByShortIds(ids),
         (a) => authorize(c, "manage", a),
         (a) => deleteArtifactAndUnindex(meta, search, a.id, a.org_id),
       )

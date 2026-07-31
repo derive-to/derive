@@ -165,15 +165,21 @@ export function registerCatchUpTool(tc: ToolContext): void {
           }
         }
       }
-      const open = await ctx.meta.listComments(a.id, { state: "open" })
+      // ONE read of this artifact's comments, split by state in memory. These were three
+      // separate `listComments(a.id, { state })` calls differing only by the filter — three
+      // ~80ms round trips (see edge-pg.ts) on the agent loop's hottest call, for rows out of
+      // the same table for the same artifact. `listComments` orders by created_at either
+      // way, so each filtered slice keeps the order its own query produced.
+      const allComments = await ctx.meta.listComments(a.id)
+      const open = allComments.filter((cm) => cm.state === "open")
       // Threads whose quoted text changed in a landed version — feedback that may no
       // longer apply. Surfacing it tells the agent its edits touched commented text.
-      const outdated = await ctx.meta.listComments(a.id, { state: "outdated" })
+      const outdated = allComments.filter((cm) => cm.state === "outdated")
       const outdatedBit = outdated.length
         ? ` ${outdated.length} now outdated (the quoted text changed).`
         : ""
       // Threads with a proposal already pending — the agent shouldn't re-address them.
-      const addressed = await ctx.meta.listComments(a.id, { state: "addressed" })
+      const addressed = allComments.filter((cm) => cm.state === "addressed")
       const addressedBit = addressed.length
         ? ` ${addressed.length} addressed (a proposal is pending review).`
         : ""

@@ -44,21 +44,26 @@ export const embedRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   // Everything an unfurl/embed surface needs for one artifact, plus the absolute
-  // URLs of the sibling endpoints. Counts come from the live version + comment list.
+  // URLs of the sibling endpoints. Counts are computed in the database, not by
+  // measuring lists read into the Worker — see the round-trip note below.
   const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
-    const [versions, comments, version, facts] = await Promise.all([
-      meta.listVersions(artifact.id),
-      meta.listComments(artifact.id),
-      meta.getVersion(artifact.id, artifact.current_version),
-      // Best-effort: a share card must never fail to render because a fact read hiccuped.
-      meta.getVersionData(artifact.id, artifact.current_version).catch(() => []),
-    ])
+    // One round trip. The counts used to come from `listVersions(...).length` and
+    // `listComments(...).length` — two whole-table reads to produce two integers, on the
+    // most-trafficked anonymous surface there is — plus a trip each for the version row
+    // and the facts. The Promise.all around them bought nothing: one pg.Client per
+    // request means node-postgres queues them (see edge-pg.ts). The facts ride in the same
+    // query now, so they no longer need their own best-effort catch: there is no longer a
+    // fact read that can fail independently of the counts this card is built from.
+    const { versionCount, commentCount, version, facts } = await meta.unfurlInfo(
+      artifact.id,
+      artifact.current_version,
+    )
     const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
     return {
       title: artifact.title ?? "Untitled",
       kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
-      versionCount: versions.length,
-      commentCount: comments.length,
+      versionCount,
+      commentCount,
       // The reward for publishing a fact: the shared link carries its own numbers.
       dataSummary: factSummary(facts),
       pageUrl: artifactUrl(baseUrl, artifact),

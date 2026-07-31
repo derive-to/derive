@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { refRouter } from "@derive/broker"
 import {
   type ContextAskerRecord,
   type ContextRecord,
@@ -22,6 +23,7 @@ import {
   brokerFor,
   callTool,
   connectionBindError,
+  mcpAuthFor,
   parseConnectionIds,
   spendableConnections,
   toolsForRun,
@@ -180,7 +182,7 @@ export const contextRoutes = (ctx: AppContext) => {
       }
       // GitHub-synced artifacts are read-only in Derive, exactly as the proposal route says —
       // changes belong in the repo, and chat must not be a way around that.
-      if ((await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id)) {
+      if (await meta.isManagedArtifact(artifact.org_id, artifact.id)) {
         await reply(
           "This document is managed by GitHub sync, so changes belong in the repo rather than here.",
           "failed",
@@ -388,12 +390,17 @@ export const contextRoutes = (ctx: AppContext) => {
   // spend, so the write gate must count spendable connections (see spendableConnections).
   const contextTools = async (x: ContextRecord) => {
     const ids = parseConnectionIds(x.connection_ids)
-    if (ids.length === 0) return { broker: null, tools: [], credentialed: false }
-    const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
+    if (ids.length === 0) return { broker: null, route: null, tools: [], credentialed: false }
+    const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey, deps.allowEchoStub)
+    // The router rides along with the broker for the same reason the broker does: the proxy has
+    // to EXECUTE through whatever listed the tool, or an `mcp:` tool would be listed by the MCP
+    // broker and run by the plan's. It also carries the per-ref bearer.
+    const route = refRouter(broker, mcpAuthFor(meta, x.org_id, deps.encryptionKey))
     const spendable = await spendableConnections(meta, x.org_id, ids)
     return {
       broker,
-      tools: await toolsForRun(meta, broker, x.org_id, ids),
+      route,
+      tools: await toolsForRun(meta, broker, x.org_id, ids, route, deps.encryptionKey),
       credentialed: spendable.length > 0,
     }
   }
@@ -676,14 +683,12 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!(await managementPrincipal(c))) return bail(fail(c, 401, "unauthenticated"))
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
-      const rows = await meta.listContexts(org)
-      // Resolve every context's manifest artifact in ONE query, then map id → short_id —
-      // not a getArtifactById per row.
-      const manifests = await meta.getArtifactsByIds(rows.map((x) => x.manifest_artifact_id))
-      const shortById = new Map(manifests.map((a) => [a.id, a.short_id]))
-      const contexts = rows.map((x) =>
-        contextJson(x, shortById.get(x.manifest_artifact_id) ?? null),
-      )
+      // Contexts with each one's manifest artifact already resolved to its short_id —
+      // one round trip. Resolving the manifests was a second query keyed on the ids the
+      // first returned, so it could not be batched by key; the store answers it with a
+      // LEFT JOIN instead (see contextsWithManifests).
+      const rows = await meta.contextsWithManifests(org)
+      const contexts = rows.map((x) => contextJson(x, x.manifest_short_id))
       return c.json({ contexts })
     },
   )
@@ -1150,13 +1155,19 @@ export const contextRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
-      const art = await meta.getByShortId(b.short_id)
+      // The artifact AND its workspace's settings in one round trip. The settings are keyed
+      // on the org_id the artifact carries, so reading them separately was an FK chain, and
+      // on the edge tier that second lookup is a flat ~80ms (see edge-pg.ts). Fetching them
+      // together does NOT weaken either gate below: both still run, in the same order, on
+      // the same values.
+      const { artifact: art, settings } = await meta
+        .artifactWithSettings(b.short_id)
+        .catch(() => ({ artifact: null, settings: null }))
       if (!art || art.current_version === 0 || !(await authorize(c, "read", art)))
         return bail(fail(c, 404, "not found"))
       // BETA GATE, enforced on the SERVER as well as hidden in the UI. A flag that only
       // hides a button is not a gate: the route is reachable directly, and this is the
       // lane that spends the operator's model key.
-      const settings = await meta.getOrgSettings(art.org_id).catch(() => null)
       if (!settings?.chatBeta) return bail(fail(c, 404, "chat is not enabled for this workspace"))
       // ALLOWLIST, on top of the workspace's own opt-in. `chatBeta` is gated on `manage`, so on
       // a shared host any workspace owner could switch it on and spend the operator's key. An
@@ -1196,21 +1207,38 @@ export const contextRoutes = (ctx: AppContext) => {
       // deploy/relax-context-session-d1.sql fails right here — and it used to fail as a bare
       // `NOT NULL constraint failed` 500 with no clue as to which of the two operator actions
       // was missing. Name the fix instead.
+      // Session, first message and state in ONE store call. These were three sequential
+      // writes — three ~80ms round trips for one logical act — and, being three loose
+      // statements outside a transaction, they could also leave a session with no first
+      // message if the isolate died between them. On Postgres this is now a single CTE
+      // chain, so it is one trip AND atomic.
       let session: SessionRecord
+      let first: SessionMessageRecord
       try {
-        session = await meta.createSession({
-          id: newId("ses"),
-          // NO CONTEXT: this is the default agent, which is the absence of a packaged one.
-          context_id: null,
-          context_version: null,
-          org_id: art.org_id,
-          asker_id: me.id,
-          subject_ref: JSON.stringify({
-            kind: "artifact",
-            id: art.short_id,
-            ...(wantsPublish ? { mode: "publish" } : {}),
-          }),
-        })
+        const created = await meta.createSessionWithMessage(
+          {
+            id: newId("ses"),
+            // NO CONTEXT: this is the default agent, which is the absence of a packaged one.
+            context_id: null,
+            context_version: null,
+            org_id: art.org_id,
+            asker_id: me.id,
+            subject_ref: JSON.stringify({
+              kind: "artifact",
+              id: art.short_id,
+              ...(wantsPublish ? { mode: "publish" } : {}),
+            }),
+          },
+          {
+            id: newId("sm"),
+            author_kind: "asker",
+            author_id: me.id,
+            body_md: b.body_md,
+          },
+          "open",
+        )
+        session = created.session
+        first = created.message
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         if (/NOT NULL constraint failed: context_session\.context_(id|version)/i.test(msg)) {
@@ -1230,16 +1258,6 @@ export const contextRoutes = (ctx: AppContext) => {
         }
         throw e
       }
-      const first = await meta.addSessionMessage(
-        {
-          id: newId("sm"),
-          session_id: session.id,
-          author_kind: "asker",
-          author_id: me.id,
-          body_md: b.body_md,
-        },
-        "open",
-      )
       // Served here, not queued — the person is waiting. Detached, so this returns now.
       // Through `background`, not a bare await: on Workers that is executionCtx.waitUntil, so
       // the turn outlives the response and a client that gives up mid-turn still gets its reply
@@ -1748,10 +1766,11 @@ export const contextRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
-    const { broker, tools } = await contextTools(x)
+    const { broker, route, tools } = await contextTools(x)
     const out = await callTool({
       meta,
       broker,
+      route: route ?? undefined,
       orgId: x.org_id,
       encryptionKey: deps.encryptionKey,
       allowed: tools,

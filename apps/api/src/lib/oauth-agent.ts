@@ -11,6 +11,11 @@ import { sha256 } from "./crypto"
 export interface OauthAgentResolution {
   rec: AgentRecord
   ownerId: string
+  /** The owner's display name, already known from the grant row (opaque token) or the
+   *  getUsers lookup this resolution already had to make (JWT token) — null only for a
+   *  legacy grant/claims with no name on file. Callers use this instead of a fresh
+   *  getUsers([ownerId]) round trip to display "acting on behalf of". */
+  ownerName: string | null
   scopeRole: Role
   /** The OAuth client this grant belongs to (keys the granted-workspace set). */
   clientId: string
@@ -73,10 +78,7 @@ export function makeOauthAgent({
     email: string | null,
     name: string | null,
   ): Promise<{ org: string; memberRole: Role; bound: string[] }> => {
-    const [mine, bound] = await Promise.all([
-      meta.listWorkspaces(userId),
-      clientId ? meta.getOAuthClientWorkspaces(userId, clientId) : Promise.resolve([]),
-    ])
+    const { mine, bound } = await meta.workspacesAndOauthBinding(userId, clientId)
     // The grant's reachable workspaces the user is STILL a member of. A non-empty
     // `bound` restricts; an empty one means every workspace they belong to.
     const scoped = bound.length ? mine.filter((w) => bound.includes(w.id)) : mine
@@ -111,6 +113,7 @@ export function makeOauthAgent({
       const scopeRole = roleFromScopes(grant.scopes)
       return {
         ownerId: grant.userId,
+        ownerName: grant.userName,
         scopeRole,
         clientId: grant.clientId,
         boundWorkspaces: ws.bound,
@@ -178,6 +181,7 @@ export function makeOauthAgent({
     const scopeRole = roleFromScopes(scopes)
     return {
       ownerId: userId,
+      ownerName: u?.name ?? null,
       scopeRole,
       clientId,
       boundWorkspaces: ws.bound,
