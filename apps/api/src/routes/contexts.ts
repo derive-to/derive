@@ -33,6 +33,7 @@ import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
+import { makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
 import { log } from "../log"
 
@@ -89,7 +90,22 @@ export const contextRoutes = (ctx: AppContext) => {
   ) => {
     const subject = parseSubject(s.subject_ref)
     if (!subject || subject.kind !== "artifact") return
+    // Slices of the answer as the model writes it, coalesced so a reply costs tens of publishes
+    // rather than one per token. Ephemeral by construction — `reply()` below still writes the
+    // whole transcript row, which stays the record.
+    const stream = makeDeltaStream({
+      publish: ({ seq, text }) =>
+        bus.publish(`u:${s.asker_id}`, {
+          type: "session.delta",
+          session_id: s.id,
+          seq,
+          text,
+        }),
+    })
     const reply = async (body: string, state: SessionState, payload?: unknown) => {
+      // Push the tail before the terminal event, so a client can never receive "settled" while
+      // a slice is still buffered and end up rendering a truncated answer mid-animation.
+      stream.flush()
       await meta.addSessionMessage(
         {
           id: newId("sm"),
@@ -101,6 +117,12 @@ export const contextRoutes = (ctx: AppContext) => {
         },
         state,
       )
+      // WAKE THE ASKER. An attended turn used to settle silently — it is served in-process, so
+      // nothing went through the runner report path that publishes this, and a watching client
+      // learned the answer had landed only on its next poll. Streaming makes this mandatory
+      // rather than merely nice: deltas with no terminal event leave a reader watching a reply
+      // that never officially finishes.
+      if (state !== "open") settleWake(s, state)
     }
     const flags = await meta.getOrgSettings(s.org_id).catch(() => null)
     // No model wired (the common self-host case) — say so in the transcript rather than leaving
@@ -204,7 +226,10 @@ export const contextRoutes = (ctx: AppContext) => {
           notifyRender: ctx.notifyRender,
           background: ctx.background,
           search: ctx.search,
-          callModel: ctx.callModel,
+          // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
+          // `callModel` along exactly as before, and the streaming decision stays here, where
+          // the transport (this asker's channel) is actually known.
+          callModel: stream.wrap(ctx.callModel),
           billingBlocked: ctx.billingBlocked,
         },
         {

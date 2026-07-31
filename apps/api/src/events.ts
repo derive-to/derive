@@ -43,6 +43,16 @@ const DOMAIN_EVENTS = [
   // returns the tick instead of blocking to timeout. A wake only (the waiter
   // re-reads the transcript); the session stays `working`; not webhook-eligible.
   "session.progress",
+  // A slice of the answer being written, for a reply the model is streaming. Emitted
+  // on the ASKER's `u:<id>` channel with `session_id`, a monotonic `seq`, and `text`.
+  //
+  // UNLIKE ITS SIBLINGS THIS ONE CARRIES CONTENT rather than being a bare wake — which
+  // is the point, since re-reading is the round trip streaming exists to avoid. It is
+  // still not authoritative: deltas are coalesced, may be dropped, and are never
+  // persisted. The transcript written when the turn settles is the record, so a client
+  // that misses deltas loses the animation and nothing else. Not webhook-eligible —
+  // partial text is not something anyone can act on.
+  "session.delta",
 ] as const
 export type DomainEvent = (typeof DOMAIN_EVENTS)[number]
 

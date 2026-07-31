@@ -256,3 +256,149 @@ describe("a tool call survives translation to chat-completions", () => {
     expect(JSON.stringify(msgs)).toContain("19.8")
   })
 })
+
+// ---- Streaming ------------------------------------------------------------
+// `onDelta` is additive: without it the adapter must behave exactly as it always has, and with
+// it the RETURNED ModelTurn must be identical to what the buffered path would have produced.
+// That equivalence is the whole safety argument for streaming, so it is what these assert.
+
+/** A fake SSE response built from raw `data:` frames, chunked at awkward boundaries on purpose. */
+const sseResponse = (frames: string[], splitEvery = 7) => {
+  const wire = frames.map((f) => `data: ${f}\n\n`).join("")
+  const bytes = new TextEncoder().encode(wire)
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        // Deliberately split mid-frame so the reader's buffering is exercised, not bypassed.
+        for (let i = 0; i < bytes.length; i += splitEvery)
+          controller.enqueue(bytes.slice(i, i + splitEvery))
+        controller.close()
+      },
+    }),
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  )
+}
+
+const streamImpl = (frames: string[]) => {
+  const seen: Record<string, unknown>[] = []
+  const impl = (async (_url: string, init: RequestInit) => {
+    seen.push(JSON.parse(String(init.body)))
+    return sseResponse(frames)
+  }) as unknown as typeof fetch
+  return { seen, impl }
+}
+
+const textFrames = [
+  JSON.stringify({ choices: [{ delta: { content: "Hel" } }] }),
+  JSON.stringify({ choices: [{ delta: { content: "lo, " } }] }),
+  JSON.stringify({ choices: [{ delta: { content: "world" } }] }),
+  JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { cost: 0.002 } }),
+  "[DONE]",
+]
+
+describe("streaming", () => {
+  it("does not ask for a stream when nobody is listening", async () => {
+    const { seen, impl } = capture()
+    await model(impl)({ system: "s", messages: [], tools: [] })
+    expect(seen[0]?.body.stream).toBeUndefined()
+  })
+
+  it("asks for a stream (and usage) only when onDelta is passed", async () => {
+    const { seen, impl } = streamImpl(textFrames)
+    await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
+    expect(seen[0]?.stream).toBe(true)
+    expect(seen[0]?.stream_options).toEqual({ include_usage: true })
+  })
+
+  it("emits text as it arrives, and returns the SAME reply the buffered path would", async () => {
+    const got: string[] = []
+    const { impl } = streamImpl(textFrames)
+    const turn = await model(impl)({
+      system: "s",
+      messages: [],
+      tools: [],
+      onDelta: (t) => got.push(t),
+    })
+    expect(got).toEqual(["Hel", "lo, ", "world"])
+    // The deltas are a view; the RETURN VALUE is the answer, and it is whole.
+    expect(turn.text).toBe("Hello, world")
+    expect(got.join("")).toBe(turn.text)
+    expect(turn.done).toBe(true)
+    expect(turn.costUsd).toBe(0.002)
+  })
+
+  it("reassembles tool calls split across frames, and never streams their fragments", async () => {
+    const got: string[] = []
+    const { impl } = streamImpl([
+      JSON.stringify({ choices: [{ delta: { content: "checking" } }] }),
+      JSON.stringify({
+        choices: [
+          { delta: { tool_calls: [{ index: 0, id: "t1", function: { name: "wx_get" } }] } },
+        ],
+      }),
+      JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"ci' } }] } }],
+      }),
+      JSON.stringify({
+        choices: [
+          { delta: { tool_calls: [{ index: 0, function: { arguments: 'ty":"London"}' } }] } },
+        ],
+      }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+      "[DONE]",
+    ])
+    const turn = await model(impl)({
+      system: "s",
+      messages: [],
+      tools: [],
+      onDelta: (t) => got.push(t),
+    })
+    // Only prose was streamed — a half-written JSON argument is not showable and never emitted.
+    expect(got).toEqual(["checking"])
+    expect(turn.toolUses).toEqual([{ id: "t1", name: "wx_get", input: { city: "London" } }])
+    expect(turn.done).toBe(false)
+  })
+
+  it("still detects truncation, which streaming must not hide", async () => {
+    const { impl } = streamImpl([
+      JSON.stringify({ choices: [{ delta: { content: "half a doc" } }] }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] }),
+      "[DONE]",
+    ])
+    await expect(
+      model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} }),
+    ).rejects.toThrow(/token ceiling/)
+  })
+
+  it("a listener that throws does not cost us the reply", async () => {
+    const { impl } = streamImpl(textFrames)
+    const turn = await model(impl)({
+      system: "s",
+      messages: [],
+      tools: [],
+      onDelta: () => {
+        throw new Error("subscriber blew up")
+      },
+    })
+    expect(turn.text).toBe("Hello, world")
+  })
+
+  it("skips a malformed frame instead of losing the rest of the reply", async () => {
+    const got: string[] = []
+    const { impl } = streamImpl([
+      JSON.stringify({ choices: [{ delta: { content: "before" } }] }),
+      "{not json at all",
+      JSON.stringify({ choices: [{ delta: { content: "after" } }] }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+      "[DONE]",
+    ])
+    const turn = await model(impl)({
+      system: "s",
+      messages: [],
+      tools: [],
+      onDelta: (t) => got.push(t),
+    })
+    expect(got).toEqual(["before", "after"])
+    expect(turn.text).toBe("beforeafter")
+  })
+})

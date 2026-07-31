@@ -45,6 +45,129 @@ interface ToolCall {
   function?: { name?: string; arguments?: string }
 }
 
+/** The non-streaming chat-completions response. A streamed response is reassembled into exactly
+ *  this shape (see `readStream`) so the two transports share one parser. */
+interface CompletionBody {
+  choices?: {
+    message?: { content?: string | null; tool_calls?: ToolCall[] }
+    finish_reason?: string
+  }[]
+  usage?: { cost?: unknown }
+}
+
+/** One `data:` frame of a streamed completion. Tool calls arrive in fragments addressed by
+ *  `index`, with `name` on the first fragment and `arguments` split across later ones. */
+interface StreamChunk {
+  choices?: {
+    delta?: {
+      content?: string | null
+      tool_calls?: {
+        index?: number
+        id?: string
+        function?: { name?: string; arguments?: string }
+      }[]
+    }
+    finish_reason?: string | null
+  }[]
+  usage?: { cost?: unknown }
+}
+
+/**
+ * Reassemble a streamed completion into the buffered response shape, calling `onDelta` with
+ * assistant text as it arrives.
+ *
+ * Text is emitted as it comes; TOOL CALLS ARE NOT. A tool call's `arguments` is JSON split
+ * across frames at arbitrary boundaries, so a partial fragment is not parseable and is never
+ * useful to show — it is accumulated silently and parsed once at the end, exactly as the
+ * buffered path does.
+ *
+ * `onDelta` is caller code running inside our read loop: it is wrapped so a throw there cannot
+ * abort the stream and lose a reply that the model has already been paid for.
+ */
+async function readStream(res: Response, onDelta: (text: string) => void): Promise<CompletionBody> {
+  const body = res.body
+  if (!body) return { choices: [{ message: { content: "" }, finish_reason: "stop" }] }
+  const reader = body.getReader()
+  const decode = new TextDecoder()
+  let buffered = ""
+  let text = ""
+  let finish: string | undefined
+  let usage: { cost?: unknown } | undefined
+  // Keyed by the frame's `index` so two concurrent tool calls cannot interleave into one.
+  const calls = new Map<number, { id?: string; name?: string; args: string }>()
+
+  const emit = (chunk: string) => {
+    try {
+      onDelta(chunk)
+    } catch {
+      /* a listener that throws must not cost us the rest of the reply */
+    }
+  }
+
+  const handle = (frame: string) => {
+    if (!frame.startsWith("data:")) return
+    const payload = frame.slice(5).trim()
+    // The terminal sentinel, not JSON.
+    if (!payload || payload === "[DONE]") return
+    let parsed: StreamChunk
+    try {
+      parsed = JSON.parse(payload) as StreamChunk
+    } catch {
+      return // a malformed frame is skipped, not fatal — the rest of the reply still arrives
+    }
+    if (parsed.usage) usage = parsed.usage
+    const choice = parsed.choices?.[0]
+    if (!choice) return
+    if (choice.finish_reason) finish = choice.finish_reason
+    const piece = choice.delta?.content
+    if (piece) {
+      text += piece
+      emit(piece)
+    }
+    for (const t of choice.delta?.tool_calls ?? []) {
+      const i = t.index ?? 0
+      const slot = calls.get(i) ?? { args: "" }
+      if (t.id) slot.id = t.id
+      if (t.function?.name) slot.name = t.function.name
+      if (t.function?.arguments) slot.args += t.function.arguments
+      calls.set(i, slot)
+    }
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffered += decode.decode(value, { stream: true })
+      // Frames are separated by a blank line; the trailing partial stays buffered for the
+      // next read rather than being parsed half-formed.
+      const parts = buffered.split(/\r?\n\r?\n/)
+      buffered = parts.pop() ?? ""
+      for (const p of parts) handle(p.trim())
+    }
+    if (buffered.trim()) handle(buffered.trim())
+  } finally {
+    reader.releaseLock()
+  }
+
+  const toolCalls = [...calls.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([i, c]) => ({
+      id: c.id ?? `call_${i}`,
+      type: "function",
+      function: { name: c.name, arguments: c.args },
+    }))
+  return {
+    choices: [
+      {
+        message: { content: text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) },
+        finish_reason: finish,
+      },
+    ],
+    usage,
+  }
+}
+
 /**
  * What the turn cost, when the endpoint says so.
  *
@@ -163,7 +286,12 @@ const flatten = (content: unknown): string => {
 export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["callModel"] => {
   const doFetch = opts.fetchImpl ?? fetch
   const url = `${opts.baseUrl.replace(/\/+$/, "")}/chat/completions`
-  return async ({ system, messages, tools }): Promise<ModelTurn> => {
+  return async ({ system, messages, tools, onDelta }): Promise<ModelTurn> => {
+    // Stream ONLY when someone is listening. Without `onDelta` this is byte-for-byte the
+    // request it has always sent, so every non-streaming caller (the loop's own tests, the
+    // substrate, automations) keeps the exact behaviour — and a gateway that does not support
+    // SSE is only ever asked for one when a caller actually wants deltas.
+    const wantStream = typeof onDelta === "function"
     const res = await doFetch(url, {
       method: "POST",
       headers: {
@@ -178,6 +306,9 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
           ...(messages as ModelMessage[]).flatMap(asMessages),
         ],
         ...(tools.length ? { tools: asTools(tools), tool_choice: "auto" } : {}),
+        // `stream_options` asks the gateway to send a final usage frame, which a stream
+        // otherwise omits — without it every streamed turn would report cost as unknown.
+        ...(wantStream ? { stream: true, stream_options: { include_usage: true } } : {}),
       }),
       signal: AbortSignal.timeout(120_000),
     })
@@ -186,13 +317,12 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
       // right judgement for a 429 or a 5xx. Same contract as the Anthropic client.
       throw new Error(`model call failed (${res.status}): ${(await res.text()).slice(0, 300)}`)
     }
-    const body = (await res.json()) as {
-      choices?: {
-        message?: { content?: string | null; tool_calls?: ToolCall[] }
-        finish_reason?: string
-      }[]
-      usage?: { cost?: unknown }
-    }
+    // A streamed response is reassembled into the SAME shape the buffered branch parses below,
+    // so everything after this point — truncation, tool calls, cost, `done` — is one code path
+    // and cannot drift between streaming and non-streaming callers.
+    const body = wantStream
+      ? await readStream(res, onDelta as (t: string) => void)
+      : ((await res.json()) as CompletionBody)
     const choice = body.choices?.[0]
     const calls = choice?.message?.tool_calls ?? []
     // TRUNCATION IS NOT A REPLY. The revision contract asks for the COMPLETE document back, so
