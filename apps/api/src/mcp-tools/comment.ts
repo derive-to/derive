@@ -109,8 +109,8 @@ export function registerCommentTool(tc: ToolContext): void {
       let reactedTo: string | undefined
       if (react) {
         if (!thread) return err("`react` needs `reply_to` (the thread to acknowledge).")
-        const inThread = (await ctx.meta.listComments(a.id)).filter(
-          (c) => c.thread_id === thread && !parseMeta(c.meta).deleted,
+        const inThread = (await ctx.meta.listComments(a.id, { threadId: thread })).filter(
+          (c) => !parseMeta(c.meta).deleted,
         )
         if (inThread.length === 0) return err(`No thread "${thread}" on "${short_id}".`)
         const target =
@@ -135,7 +135,7 @@ export function registerCommentTool(tc: ToolContext): void {
         // comment.resolved out regardless. Without it an agent could emit unbounded "a thread was
         // resolved" events — into every webhook subscriber and any connected Slack channel — for
         // threads that never existed.
-        const known = (await ctx.meta.listComments(a.id)).some((c) => c.thread_id === thread)
+        const known = (await ctx.meta.listComments(a.id, { threadId: thread })).length > 0
         if (!known) return err(`No thread "${thread}" on "${short_id}".`)
         // Shared with the HTTP resolve route and the Slack Resolve button (lib/thread-actions.ts)
         // — it flips the thread, publishes on the bus AND fans comment.resolved out to webhooks.

@@ -414,6 +414,27 @@ export const sessionRoutes = (ctx: AppContext) => {
     },
   )
 
+  // `meta.sharedOrgIds`, memoized per request + pair. Both profile routes ask the same
+  // question twice with identical arguments — once inside `profileVisibleTo` below, once for
+  // the visibility scope of the work they return — and on the edge tier the second ask is a
+  // full ~80ms round trip for a set the request already has. Keyed by Context so it dies with
+  // the request, same technique as the actor and membership caches in context.ts.
+  const sharedOrgsCache = new WeakMap<Context, Map<string, Promise<string[]>>>()
+  const sharedOrgsFor = (c: Context, meId: string, otherId: string): Promise<string[]> => {
+    let perRequest = sharedOrgsCache.get(c)
+    if (!perRequest) {
+      perRequest = new Map()
+      sharedOrgsCache.set(c, perRequest)
+    }
+    const key = `${meId}:${otherId}`
+    const hit = perRequest.get(key)
+    if (hit) return hit
+    // Cache the PROMISE, so two callers racing before the first resolves still de-dupe.
+    const pending = meta.sharedOrgIds(meId, otherId)
+    perRequest.set(key, pending)
+    return pending
+  }
+
   // Whether this viewer may see this profile at all.
   const profileVisibleTo = async (
     c: Context,
@@ -423,7 +444,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     const me = await currentUser(c)
     if (!me) return false
     if (me.id === p.id) return true
-    return (await meta.sharedOrgIds(me.id, p.id)).length > 0
+    return (await sharedOrgsFor(c, me.id, p.id)).length > 0
   }
 
   // A public profile by handle — the GitHub-style discovery surface.
@@ -449,7 +470,7 @@ export const sessionRoutes = (ctx: AppContext) => {
         return bail(fail(c, 404, "no profile with that username"))
       const me = await currentUser(c)
       // sharedOrgIds(x, x) is all of x's workspaces — self is trivially a teammate.
-      const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      const sharedOrgs = me ? await sharedOrgsFor(c, me.id, p.id) : []
       const teammate = !!me && (me.id === p.id || sharedOrgs.length > 0)
       const ghIds = await meta.githubIdsForUser(p.id)
       const [works, githubLogin] = await Promise.all([
@@ -512,7 +533,7 @@ export const sessionRoutes = (ctx: AppContext) => {
         return bail(fail(c, 404, "no profile with that username"))
       const me = await currentUser(c)
       // sharedOrgIds(x, x) is all of x's workspaces — self always sees their own work.
-      const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      const sharedOrgs = me ? await sharedOrgsFor(c, me.id, p.id) : []
       if (!me || (me.id !== p.id && sharedOrgs.length === 0))
         return c.json({ artifacts: [], next_cursor: null })
       const ghIds = await meta.githubIdsForUser(p.id)
@@ -648,8 +669,10 @@ export const sessionRoutes = (ctx: AppContext) => {
           ))
       ) {
         for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
-        for (const cm of await meta.listComments(artifact.id))
-          if (cm.author_id) ids.add(cm.author_id)
+        // Just the distinct author ids. This used to read every comment ROW on the artifact —
+        // bodies, metadata and all — and collect `author_id` in the Worker, on a route that
+        // fires every time someone types "@" in the composer.
+        for (const id of await meta.commentAuthorIds(artifact.id)) ids.add(id)
       }
 
       const users = await meta.getUsers([...ids])

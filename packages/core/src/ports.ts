@@ -592,6 +592,9 @@ export interface CommentStore {
   /** Artifact ids in `orgId` with an open thread the user is tagged in or authored —
    *  the "needs your feedback" set the home section is built from. */
   artifactIdsNeedingFeedback(userId: string, orgId: string): Promise<string[]>
+  /** DISTINCT author ids on an artifact's comments. The @mention directory needs only this,
+   *  and was reading every comment ROW — bodies and all — to collect them. */
+  commentAuthorIds(artifactId: string): Promise<string[]>
 }
 
 export interface ArtifactQueryStore {
@@ -3011,6 +3014,9 @@ export interface NewComment {
 /** Options for {@link MetaStore.listComments}. */
 export interface CommentListOpts {
   state?: CommentState
+  /** Only this thread's comments. Filtering in SQL rather than reading the artifact's whole
+   *  comment table and filtering in the Worker, which is what the agent tools used to do. */
+  threadId?: string
 }
 
 /** A bundle version's blob is this manifest; file versions point at content directly. */

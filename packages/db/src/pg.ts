@@ -765,8 +765,16 @@ export class PgMetaStore implements MetaStore {
     const where = and(
       eq(comment.artifact_id, artifactId),
       opts?.state ? eq(comment.state, opts.state) : undefined,
+      opts?.threadId ? eq(comment.thread_id, opts.threadId) : undefined,
     )
     return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at))
+  }
+  async commentAuthorIds(artifactId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ id: comment.author_id })
+      .from(comment)
+      .where(and(eq(comment.artifact_id, artifactId), isNotNull(comment.author_id)))
+    return rows.map((r) => r.id).filter((x): x is string => !!x)
   }
 
   async commentsPage(
