@@ -5,6 +5,7 @@ import {
   DEFAULT_MAX_TURNS,
   type ModelTurn,
   runAgentLoop,
+  TOOL_OUTPUT_BUDGET_CHARS,
 } from "../src/lib/agent-loop"
 import { answerContract, revisionContract } from "../src/lib/turn-core"
 
@@ -266,5 +267,63 @@ describe("agent loop: cost", () => {
     // an unreported run cannot quietly look free.
     const out = await runAgentLoop(base({}))
     expect(out.costUsd).toBeNull()
+  })
+})
+
+describe("agent loop: what it lets the model read", () => {
+  const toolTurn = (id: string) => turn({ toolUses: [{ id, name: "read", input: {} }] })
+
+  it("spends a tool-output budget ACROSS turns, not just per call", async () => {
+    // The broker caps one result, which stops a single call blowing the window. It does not stop
+    // twelve calls doing it together — which is what a run reading a corpus per turn does, and
+    // what produced a 1,040,577-token prompt against a 1,048,576-token limit on a real cloud MCP.
+    const model = scripted([
+      toolTurn("t1"),
+      toolTurn("t2"),
+      toolTurn("t3"),
+      toolTurn("t4"),
+      turn({ text: revisionText() }),
+    ])
+    const huge = "x".repeat(150_000)
+    const out = await runAgentLoop(
+      base({ callModel: model.callModel, tools: [], executeTool: async () => huge }),
+    )
+    expect(out.ok).toBe(true)
+
+    const delivered = JSON.stringify(model.seen[model.seen.length - 1]?.messages ?? [])
+    // Four 150k reads would be 600k characters. The budget holds the total down, with headroom
+    // for the envelope around each result.
+    expect(delivered.length).toBeLessThan(TOOL_OUTPUT_BUDGET_CHARS + 20_000)
+  })
+
+  it("tells the model how much room is left, instead of only that it truncated", async () => {
+    // A model told only "truncated" reasonably retries the same call with different arguments,
+    // which is how a run spends its last turns re-reading what it cannot keep.
+    const model = scripted([toolTurn("t1"), turn({ text: revisionText() })])
+    await runAgentLoop(
+      base({ callModel: model.callModel, executeTool: async () => "y".repeat(300_000) }),
+    )
+    const delivered = JSON.stringify(model.seen[1]?.messages ?? [])
+    expect(delivered).toMatch(/truncated \d+ characters/)
+    expect(delivered).toMatch(/Answer with what you have rather than calling again/)
+  })
+
+  it("announces the last turn instead of springing it", async () => {
+    // A run guillotined at the cap has paid for every turn and produced nothing: the most
+    // expensive way to fail, and the easiest to avoid.
+    const model = scripted([
+      toolTurn("t1"),
+      toolTurn("t2"),
+      toolTurn("t3"),
+      turn({ text: revisionText() }),
+    ])
+    const out = await runAgentLoop(
+      base({ callModel: model.callModel, maxTurns: 4, executeTool: async () => "ok" }),
+    )
+    expect(out.ok).toBe(true)
+    const finalPrompt = JSON.stringify(model.seen[3]?.messages ?? [])
+    expect(finalPrompt).toContain("This is your final turn")
+    // And it is said ONCE, on the turn where it changes what to do — not every turn.
+    expect(JSON.stringify(model.seen[1]?.messages ?? [])).not.toContain("final turn")
   })
 })
