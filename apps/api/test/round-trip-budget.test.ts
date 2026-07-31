@@ -130,17 +130,19 @@ describe("hot read paths stay within their round-trip budget", () => {
         // trip here is paid before the document can even start loading. Measured at
         // 515ms on production (floor 227ms).
         //
-        // 5 here is the SQLite count; Postgres answers the middle three with one
-        // `artifactGrants`, so the hosted tier pays 3. Was 6/4 — the author byline
-        // (`getUsers`) now rides the artifactDetail union as one more arm instead of a
-        // sequential round trip at the end of the handler.
+        // 5 here is the SQLite count. Postgres pays 2: `artifactWithGrants` answers the
+        // record AND the authorization triple in one statement, then one `artifactDetail`.
+        // Was 6/4, then 5/3 (the author byline joined the detail union), now 5/2.
         //
-        // ONE fold is left: getByShortId + the grants read could become a single
-        // FK-chained query (the artifact and the caller's grants on it, keyed on the
-        // short id), taking pg 3 -> 2. Worth doing — this request gates the document's
-        // rendered bytes, because the viewer's URL carries a token that only exists on
-        // this record, so every trip here is paid before the document can start
-        // loading. Measured at 515ms on production, floor 227ms.
+        // That last fold was the one this comment used to list as remaining, and it was
+        // worth taking: measured on the preview, this request is 457ms of a 481ms
+        // document open — the journey essentially IS this handler — and the artifact read
+        // and the grants read were strictly serial, because the second needs the id and
+        // org the first returns.
+        //
+        // The SQLite number does not move: embedded drivers implement neither fast path
+        // (a local round trip costs nothing), so they still make all five reads. Budget
+        // for the higher of the two, as the header explains.
         path: `/v1/artifacts/${short_id}`,
         budget: 6,
         needs:

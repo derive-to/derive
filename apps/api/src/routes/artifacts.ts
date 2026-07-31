@@ -1301,14 +1301,37 @@ export const artifactRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      const shortId = c.req.param("shortId")
+      // THE DOCUMENT OPEN'S CRITICAL PATH. Measured on the preview, this request is 457ms
+      // of a 481ms open — the journey basically IS this handler. It used to open with two
+      // strictly serial reads: the artifact, and then the caller's grants on it, which
+      // could not start until the first landed because it needs the artifact's id and org.
+      // `artifactWithGrants` resolves the artifact inside the grants query, so the pair
+      // costs one round trip instead of two. Optional, like `artifactGrants` beneath it:
+      // a store without it takes the read-by-read path unchanged.
+      const viewer = await currentUser(c)
+      const combined =
+        viewer && meta.artifactWithGrants
+          ? await meta.artifactWithGrants(shortId, viewer.id)
+          : undefined
+      // `combined` is undefined when the fast path did not run at all (anonymous caller,
+      // or a store without it) and null when it ran and found nothing — only the first
+      // needs the read-by-read fallback.
+      const artifact =
+        combined !== undefined ? combined?.artifact : await meta.getByShortId(shortId)
       // 404 BEFORE resolving an actor. This used to run actorFor against a placeholder
       // artifact first, which for a signed-in caller meant a full artifactGrants round
       // trip (~80ms) against an empty id on every miss — paid, then thrown away one line
       // later. Nothing about the response differs: a miss is a bare 404 either way, so
       // an anonymous probe still learns nothing.
       if (!artifact) return bail(fail(c, 404, "not found"))
-      const actor = await actorFor(c, artifact)
+      const actor = await actorFor(
+        c,
+        artifact,
+        combined && viewer
+          ? { userId: viewer.id, orgRole: combined.orgRole, artifactRoles: combined.artifactRoles }
+          : undefined,
+      )
       if (!can(actor, "read", artifact.workspace_access, artifact.link_role))
         // A locked artifact isn't hidden, it's lockable: tell the client to prompt for
         // the password (401) rather than claim it doesn't exist (404). A lock only ever

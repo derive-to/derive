@@ -4244,11 +4244,30 @@ export function runStoreContract(
         return { orgRole: g.orgRole, artifactRole: maxRole(null, ...g.artifactRoles) }
       }
 
-      for (const u of [owner, member, sharee, collab, stranger])
+      // The THIRD path: the same grants, resolved by SHORT ID alongside the artifact row,
+      // so the document open pays one round trip instead of two. It answers the identical
+      // question, so it is held to the identical answer.
+      const combined = async (userId: string) => {
+        const r = await store.artifactWithGrants?.(art.short_id, userId)
+        if (!r) throw new Error("artifactWithGrants found no artifact")
+        return { orgRole: r.orgRole, artifactRole: maxRole(null, ...r.artifactRoles) }
+      }
+
+      for (const u of [owner, member, sharee, collab, stranger]) {
         expect(await fast(org, u), `grants disagree for ${u}`).toEqual(await slow(org, u))
+        if (store.artifactWithGrants)
+          expect(await combined(u), `artifactWithGrants disagrees for ${u}`).toEqual(
+            await slow(org, u),
+          )
+      }
 
       // The org arm must key on the org PASSED IN, not on the artifact's own workspace.
       for (const u of [owner, stranger]) expect(await fast(other, u)).toEqual(await slow(other, u))
+
+      // An unknown short id is null, not a throw and not an empty-grants object — the
+      // route distinguishes "no such document" (404) from "no standing on it".
+      if (store.artifactWithGrants)
+        expect(await store.artifactWithGrants(`sid_missing_${uuid()}`, owner)).toBeNull()
     })
   })
   // CHAOS: the same question, asked both ways, over randomly-shaped access graphs.

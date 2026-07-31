@@ -1845,6 +1845,49 @@ export class PgMetaStore implements MetaStore {
     }
     return { orgRole, artifactRoles }
   }
+  // `getByShortId` + `artifactGrants` as ONE statement — see the port doc. The artifact
+  // resolves in a CTE and every grant arm joins to it, so the caller's standing comes back
+  // with the record instead of after it. Same four grant sources as artifactGrants above,
+  // in the same order, deliberately: the store contract runs both against the read-by-read
+  // path and requires all three to agree.
+  async artifactWithGrants(
+    shortId: string,
+    userId: string,
+  ): Promise<{ artifact: ArtifactRecord; orgRole: Role | null; artifactRoles: Role[] } | null> {
+    const res = await this.db.execute(sql`
+      with a as (select * from artifact where short_id = ${shortId})
+      select 'artifact' as kind, to_jsonb(a) as doc from a
+      union all
+      select 'org', to_jsonb(m.role)
+        from a join membership m on m.org_id = a.org_id and m.user_id = ${userId}
+      union all
+      select 'grant', to_jsonb(am.role)
+        from a join artifact_member am on am.artifact_id = a.id and am.user_id = ${userId}
+      union all
+      select 'grant', to_jsonb(cm.role)
+        from a
+        join collection_item ci on ci.artifact_id = a.id
+        join collection_member cm on cm.collection_id = ci.collection_id and cm.user_id = ${userId}
+      union all
+      select 'grant', to_jsonb(m2.role)
+        from a
+        join collection_item ci2 on ci2.artifact_id = a.id
+        join collection c on c.id = ci2.collection_id and c.workspace_access = 'member'
+        join membership m2 on m2.org_id = c.org_id and m2.user_id = ${userId}
+    `)
+    const rows = (res as unknown as { rows?: { kind: string; doc: unknown }[] }).rows ?? []
+    let record: ArtifactRecord | null = null
+    let orgRole: Role | null = null
+    const artifactRoles: Role[] = []
+    for (const r of rows) {
+      if (r.kind === "artifact") record = r.doc as ArtifactRecord
+      else if (r.kind === "org") orgRole = r.doc as Role
+      else artifactRoles.push(r.doc as Role)
+    }
+    // No artifact row means no such short id — and then no grant arm could have matched
+    // either, since every one of them joins through it.
+    return record ? { artifact: record, orgRole, artifactRoles } : null
+  }
   async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
     if (artifactIds.length === 0) return {}
     const rows = await this.db

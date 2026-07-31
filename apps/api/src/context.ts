@@ -1072,7 +1072,16 @@ export function buildContext(deps: AppDeps) {
   // changed by someone else is picked up by the next request. Keyed by Context, so it dies with
   // the request rather than outliving a revoked share.
   const actorCache = new WeakMap<Context, Map<string, Promise<Actor>>>()
-  const actorFor = (c: Context, a: ArtifactRecord): Promise<Actor> => {
+  /** `pre` is grants a caller ALREADY has in hand, from a read that fetched the artifact
+   *  and the caller's standing on it together (`artifactWithGrants`). It is a shortcut
+   *  around the query, never around the decision — and it is honoured ONLY when the
+   *  request's principal turns out to be exactly the user it was resolved for. Anything
+   *  else (an agent bearer alongside a session cookie, a token, an anonymous visitor)
+   *  ignores it and takes the normal path, so a mis-supplied `pre` can cost a wasted
+   *  query but cannot produce the wrong actor. */
+  type PreGrants = { userId: string; orgRole: Role | null; artifactRoles: Role[] }
+
+  const actorFor = (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
     let perArtifact = actorCache.get(c)
     if (!perArtifact) {
       perArtifact = new Map()
@@ -1082,12 +1091,12 @@ export function buildContext(deps: AppDeps) {
     // the first resolves would otherwise both miss and both issue the three queries.
     const hit = perArtifact.get(a.id)
     if (hit) return hit
-    const pending = resolveActor(c, a)
+    const pending = resolveActor(c, a, pre)
     perArtifact.set(a.id, pending)
     return pending
   }
 
-  const resolveActor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
+  const resolveActor = async (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
     // A password on the artifact is a lock on its public link. Has this visitor
     // entered it? The unlock cookie's value is derived from the server-only
     // hash, so it can't be forged.
@@ -1138,6 +1147,17 @@ export function buildContext(deps: AppDeps) {
     //
     // Both paths feed the SAME maxRole/can(): the fast path changes how the inputs arrive, never
     // what they are. artifact-grants-parity.test.ts asserts the two agree.
+    // Already resolved alongside the artifact itself — same inputs, one round trip earlier.
+    // The identity check is the guard described on PreGrants.
+    if (pre && pre.userId === me.id)
+      return {
+        kind: "user",
+        userId: me.id,
+        artifactRole: maxRole(null, ...pre.artifactRoles),
+        orgRole: pre.orgRole,
+        locked,
+        unlocked,
+      }
     if (meta.artifactGrants) {
       const g = await meta.artifactGrants(a.id, a.org_id, me.id)
       return {

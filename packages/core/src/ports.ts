@@ -941,6 +941,26 @@ export interface CollectionStore {
     userId: string,
   ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }>
 
+  /**
+   * `getByShortId` + `artifactGrants`, keyed on the SHORT ID, in one statement.
+   *
+   * The same optional-fast-path contract as `artifactGrants`, one level up. The document
+   * open is gated on GET /v1/artifacts/:shortId — measured on the preview at 457ms of a
+   * 481ms open, essentially the whole journey — and it opened with two strictly serial
+   * reads: fetch the artifact to learn its id and org, then fetch the caller's grants on
+   * it. The second cannot start until the first lands, so on the edge tier that ordering
+   * costs a full ~80ms round trip, every open.
+   *
+   * Resolving the artifact INSIDE the grants query removes the dependency. Null when no
+   * artifact has that short id. It never changes the answer: `can()` is still the only
+   * place a decision is made, and the store contract runs this against the read-by-read
+   * path over the same fixtures and requires them to agree.
+   */
+  artifactWithGrants?(
+    shortId: string,
+    userId: string,
+  ): Promise<{ artifact: ArtifactRecord; orgRole: Role | null; artifactRoles: Role[] } | null>
+
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>
   /** The folders belonging to a collection. Name order is a view concern. */
