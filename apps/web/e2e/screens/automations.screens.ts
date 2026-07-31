@@ -17,8 +17,13 @@ import { signUp } from "../helpers"
 //   • The Sources screen, driven for real: type a URL, press Connect, and the row that appears
 //     means the server actually answered. It was removed once for saying "connected" about an
 //     echo stub; it is back because that is no longer what happens.
-//   • Whatever the run actually does. A refusal for want of a model plan is the payer preflight
-//     working correctly, and it gets captured as-is rather than worked around.
+//   • Whatever the run actually does — captured as-is, never worked around. A refusal for want of
+//     a model plan is the payer preflight working. And against the PR preview the hosted executor
+//     currently settles a tool-using run as "agent did not produce a revision within 12 turns",
+//     while the same automation with the same source bound and an instruction that needs no tool
+//     succeeds. That is the executor's loop, not this rail: the rail is exercised end to end by
+//     apps/api/test/live-preview-weather.sh, which reads live weather through the deployed tool
+//     proxy and writes it into a real document.
 
 const OUT = process.env.SHOT_OUT ?? join(process.cwd(), "test-results", "screens")
 const WEATHER = process.env.WEATHER_MCP_URL ?? "http://localhost:8940/mcp"
@@ -27,6 +32,10 @@ const DESKTOP = { width: 1440, height: 900 }
 
 test.use({ deviceScaleFactor: 2, viewport: DESKTOP, ...(BASE ? { baseURL: BASE } : {}) })
 test.skip(process.env.SHOTS !== "1", "capture harness — set SHOTS=1")
+// Against a deployed target this drives a whole feature over the public internet AND waits for a
+// hosted agent to finish a real run. The default 60s expires somewhere around "run now", which
+// leaves the automation, the agent and the document behind — the cleanup at the end never runs.
+test.setTimeout(BASE ? 10 * 60_000 : 3 * 60_000)
 
 /** The app holds live connections, so `networkidle` never settles — bound it and let it paint. */
 const settle = async (page: Page, ms = 900) => {
@@ -113,22 +122,30 @@ test("MCP sources: connect, automate, run", async ({ page }) => {
   const list = await api(page, "/v1/connections?mine=1")
   const conns = (list.body as { connections?: { id: string; kind?: string; toolkit: string }[] })
     ?.connections
-  const c = conns?.find((x) => x.toolkit === "weather") ?? {}
+  const c = conns?.find((x) => x.toolkit === "weather")
   note(`connected ${JSON.stringify(c)}`)
-  writeFileSync(join(OUT, "connect-response.json"), JSON.stringify(c, null, 2))
-  expect((c as { kind?: string }).kind).toBe("mcp")
+  writeFileSync(join(OUT, "connect-response.json"), JSON.stringify(c ?? null, null, 2))
+  expect(c?.kind, "the row is a live MCP connection").toBe("mcp")
 
-  // 3. The document the automation keeps current.
-  const doc = await api(page, "/v1/artifacts", {
-    method: "POST",
-    body: {
-      title: "Weather watch (MCP walkthrough)",
-      content: "<h1>Weather watch</h1><p>No readings yet.</p>",
-      filename: "index.html",
-    },
-  })
-  const shortId = (doc.body as { short_id?: string })?.short_id
-  note(`document ${shortId ?? "not created"} (${doc.status})`)
+  // 3. The document the automation keeps current. MULTIPART, not JSON — `/v1/artifacts` takes a
+  //    file, and a JSON body 400s. Posting JSON here left the automation pointed at no document
+  //    at all, and the run then failed with "agent did not produce a revision", which reads like
+  //    a broken agent rather than a broken fixture.
+  const shortId = await page.evaluate(async (html) => {
+    const fd = new FormData()
+    fd.append("file", new File([html], "index.html", { type: "text/html" }))
+    fd.append("title", "Weather watch (MCP walkthrough)")
+    const res = await fetch("/v1/artifacts", {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    })
+    const body = (await res.json().catch(() => ({}))) as { short_id?: string }
+    return body.short_id ?? null
+  }, "<h1>Weather watch</h1><p>No readings yet.</p>")
+  expect(shortId, "the document the automation will rewrite").toBeTruthy()
+  note(`document ${shortId}`)
 
   // 4. The automations surface.
   await page.goto("/settings")
@@ -167,8 +184,8 @@ test("MCP sources: connect, automate, run", async ({ page }) => {
       agentId: (agent.body as { id?: string })?.id,
       instruction: "Rewrite the weather table from the connected weather source.",
       trigger: { kind: "manual" },
-      connectionIds: [c.id],
-      ...(shortId ? { refs: [{ kind: "artifact", id: shortId }] } : {}),
+      connectionIds: [c?.id],
+      refs: [{ kind: "artifact", id: shortId }],
     },
   })
   const autoId = (auto.body as { id?: string })?.id
@@ -177,45 +194,61 @@ test("MCP sources: connect, automate, run", async ({ page }) => {
   await settle(page)
   await shot(page, "04-automation-created")
 
-  // 7. RUN NOW. A refusal is as much a result as a success.
+  // 7. RUN NOW. A refusal — 402 for want of a model plan, say — is as much a result as a success,
+  //    and gets captured as-is rather than worked around.
   const run = await api(page, `/v1/automations/${autoId}/run`, { method: "POST" })
   note(`run now -> ${run.status} ${JSON.stringify(run.body).slice(0, 200)}`)
   writeFileSync(join(OUT, "run-response.json"), JSON.stringify(run.body, null, 2))
-  await page.waitForTimeout(5000)
+  const runId = (run.body as { id?: string })?.id
+  await page.waitForTimeout(3000)
   await page.goto("/settings")
   await settle(page)
   await shot(page, "05-run-fired")
 
-  // 8. The ledger, as a human reads it.
-  const feed = await api(page, "/v1/workspace/runs")
-  const runs = (feed.body as { runs?: { id: string; status: string }[] })?.runs ?? []
-  note(
-    `feed: ${runs
-      .slice(0, 3)
-      .map((r) => `${r.id}=${r.status}`)
-      .join(" ")}`,
-  )
-  writeFileSync(join(OUT, "runs-feed.json"), JSON.stringify(runs.slice(0, 5), null, 2))
-
-  // 9. The document itself.
-  if (shortId) {
-    await page.goto(`/artifacts/${shortId}`)
-    await settle(page, 1500)
-    await shot(page, "06-document")
+  // 8. Wait for a real hosted agent to actually finish, then read the ledger a human reads.
+  //    Screenshotting a `queued` row would prove only that a row exists.
+  type Run = { id: string; status: string; meta?: string; timeline?: { last_error?: string } }
+  let settled: Run | undefined
+  for (let i = 0; i < 40 && runId; i++) {
+    const feed = await api(page, "/v1/workspace/runs")
+    const found = ((feed.body as { runs?: Run[] })?.runs ?? []).find((r) => r.id === runId)
+    if (found && !["queued", "running"].includes(found.status)) {
+      settled = found
+      break
+    }
+    await page.waitForTimeout(6000)
   }
+  note(`run ${runId} settled ${settled?.status ?? "still in flight"} ${settled?.meta ?? ""}`)
+  writeFileSync(join(OUT, "run-settled.json"), JSON.stringify(settled ?? null, null, 2))
+
+  // 9. The document itself — the whole point. Captured whatever the run did to it.
+  const finalHtml = await page.evaluate(async (id) => {
+    const res = await fetch(`/v1/artifacts/${id}/content`, { credentials: "include" })
+    return res.ok ? await res.text() : `HTTP ${res.status}`
+  }, shortId)
+  writeFileSync(join(OUT, "document-after-run.html"), finalHtml)
+  note(`document is ${finalHtml.length} chars after the run`)
+  await page.goto(`/artifacts/${shortId}`)
+  await settle(page, 2000)
+  await shot(page, "06-document")
 
   // 10. Clean up: shared workspace, production data.
   if (autoId)
     note(
       `cleanup automation -> ${(await api(page, `/v1/automations/${autoId}`, { method: "DELETE" })).status}`,
     )
-  if (c.id)
+  if (c?.id)
     note(
       `cleanup connection -> ${(await api(page, `/v1/connections/${c.id}`, { method: "DELETE" })).status}`,
     )
   if (shortId)
     note(
       `cleanup document -> ${(await api(page, `/v1/artifacts/${shortId}`, { method: "DELETE" })).status}`,
+    )
+  const agentId = (agent.body as { id?: string })?.id
+  if (agentId)
+    note(
+      `cleanup agent -> ${(await api(page, `/v1/agents/${agentId}`, { method: "DELETE" })).status}`,
     )
   if (!priorAutomate) {
     await api(page, "/v1/workspace/settings", { method: "PATCH", body: { automateBeta: false } })
