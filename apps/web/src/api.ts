@@ -343,7 +343,14 @@ const j = async (r: Response) => {
   }
   return r.json()
 }
-const opts = (body?: unknown): RequestInit => ({
+// The high-churn read methods (lists, typeahead search) accept this so React Query's
+// per-fetch AbortSignal reaches the wire: a superseded keystroke CANCELS its request
+// instead of running an authenticated Worker + Postgres round trip nobody will read.
+// Display-level races were already guarded (query keys / alive flags) — forwarding the
+// signal is about not paying for abandoned work.
+type FetchInit = Pick<RequestInit, "signal">
+const opts = (body?: unknown, init?: FetchInit): RequestInit => ({
+  ...init,
   credentials: "include",
   headers: { accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
   ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
@@ -448,12 +455,14 @@ export const api = {
     handle: string,
     cursor?: string,
     limit?: number,
+    init?: FetchInit,
   ): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
     const qs = new URLSearchParams()
     if (cursor) qs.set("cursor", cursor)
     if (limit) qs.set("limit", String(limit))
     const s = qs.toString()
     return f(`/v1/users/${encodeURIComponent(handle)}/artifacts${s ? `?${s}` : ""}`, {
+      ...init,
       credentials: "include",
     }).then(j)
   },
@@ -486,25 +495,29 @@ export const api = {
       credentials: "include",
     }).then(() => undefined),
   // Find opted-in people by @handle or name (signed-in; empty q → []).
-  searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts()).then(j),
+  searchPeople: (q: string, init?: FetchInit): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts(undefined, init)).then(j),
   // Content search across the workspace via the persisted index: hits ranked by
   // relevance, each with a one-line snippet of WHERE it matched (visible text, so the
   // snippet reads as prose). Empty q → []. A small `limit` keeps the palette's debounced
   // typeahead to a few blob reads. Same visibility rules as list_artifacts.
-  searchContent: (q: string, limit = 6): Promise<{ hits: SearchHit[]; truncated: boolean }> => {
+  searchContent: (
+    q: string,
+    limit = 6,
+    init?: FetchInit,
+  ): Promise<{ hits: SearchHit[]; truncated: boolean }> => {
     const term = q.trim()
     return term
       ? f(
           `/v1/artifacts/search?format=json&in=text&limit=${limit}&query=${encodeURIComponent(term)}`,
-          opts(),
+          opts(undefined, init),
         ).then(j)
       : Promise.resolve({ hits: [], truncated: false })
   },
   // The People directory: browse opted-in people (empty q) or search them (signed-in).
   // Unlike searchPeople, an empty query BROWSES the discoverable set.
-  people: (q?: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/people${q ? `?query=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
+  people: (q?: string, init?: FetchInit): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/people${q ? `?query=${encodeURIComponent(q)}` : ""}`, opts(undefined, init)).then(j),
   // The people you share a workspace with — the directory's leading section.
   workspacePeople: (): Promise<{ users: PublicProfile[] }> =>
     f("/v1/people?scope=workspace", opts()).then(j),
@@ -566,26 +579,29 @@ export const api = {
   sendVerificationEmail: (email: string, callbackURL: string): Promise<unknown> =>
     f("/api/auth/send-verification-email", opts({ email, callbackURL })).then(authJson),
 
-  listArtifacts: (params?: {
-    q?: string
-    tag?: string
-    collection?: string
-    favorite?: boolean
-    /** Narrow to artifacts last changed by this GitHub login. */
-    author?: string
-    /** "shared" → only artifacts explicitly shared with you (across workspaces).
-     *  "following" → artifacts in the active workspace matching your follows
-     *  (followed GitHub authors + repo path prefixes) — the activity feed.
-     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
-     *  "mine" → everything you published by hand in the active workspace, any
-     *  visibility included — the library's "Created by me" filter. */
-    scope?: "shared" | "following" | "needs_feedback" | "mine"
-    cursor?: string
-    limit?: number
-    /** Grid order. Omit to get the route's default, created-desc (the library always sends
-     *  this explicitly); the library's own default is `updated`. */
-    sort?: SortMode
-  }): Promise<{
+  listArtifacts: (
+    params?: {
+      q?: string
+      tag?: string
+      collection?: string
+      favorite?: boolean
+      /** Narrow to artifacts last changed by this GitHub login. */
+      author?: string
+      /** "shared" → only artifacts explicitly shared with you (across workspaces).
+       *  "following" → artifacts in the active workspace matching your follows
+       *  (followed GitHub authors + repo path prefixes) — the activity feed.
+       *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
+       *  "mine" → everything you published by hand in the active workspace, any
+       *  visibility included — the library's "Created by me" filter. */
+      scope?: "shared" | "following" | "needs_feedback" | "mine"
+      cursor?: string
+      limit?: number
+      /** Grid order. Omit to get the route's default, created-desc (the library always sends
+       *  this explicitly); the library's own default is `updated`. */
+      sort?: SortMode
+    },
+    init?: FetchInit,
+  ): Promise<{
     artifacts: Artifact[]
     next_cursor: string | null
     /** Present when listing by `collection` — the collection's id + title, so the
@@ -603,7 +619,7 @@ export const api = {
     if (params?.limit) qs.set("limit", String(params.limit))
     if (params?.sort) qs.set("sort", params.sort)
     const s = qs.toString()
-    return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts()).then(j)
+    return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts(undefined, init)).then(j)
   },
   browseSummary: (): Promise<{
     total: number

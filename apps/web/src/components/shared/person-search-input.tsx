@@ -41,9 +41,10 @@ export function PersonSearchInput({
       return
     }
     let alive = true
+    const ac = new AbortController()
     const t = setTimeout(() => {
       api
-        .searchPeople(term)
+        .searchPeople(term, { signal: ac.signal })
         .then((r) => {
           if (alive) {
             setSuggest(r.users)
@@ -55,6 +56,8 @@ export function PersonSearchInput({
     }, 180)
     return () => {
       alive = false
+      // Abort the superseded lookup as well — don't pay for a keystroke nobody reads.
+      ac.abort()
       clearTimeout(t)
     }
   }, [value])

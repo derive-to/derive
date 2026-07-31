@@ -109,10 +109,11 @@ export function CommandPalette() {
       return
     }
     let alive = true
+    const ac = new AbortController()
     setPeopleLoading(true)
     const t = setTimeout(() => {
       api
-        .searchPeople(term)
+        .searchPeople(term, { signal: ac.signal })
         .then((r) => alive && setPeople(r.users))
         // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
         .catch(() => alive && setPeople([]))
@@ -120,6 +121,10 @@ export function CommandPalette() {
     }, 180)
     return () => {
       alive = false
+      // Abort the superseded request too — the alive flag already guarded the
+      // DISPLAY race; this stops paying the authed Worker round trip for a
+      // keystroke nobody will read.
+      ac.abort()
       clearTimeout(t)
     }
   }, [query, paletteOpen])
@@ -137,10 +142,11 @@ export function CommandPalette() {
       return
     }
     let alive = true
+    const ac = new AbortController()
     setContentLoading(true)
     const t = setTimeout(() => {
       api
-        .searchContent(term, 6)
+        .searchContent(term, 6, { signal: ac.signal })
         .then((r) => alive && setContent({ hits: r.hits, truncated: r.truncated, q: term }))
         // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
         .catch(() => alive && setContent(EMPTY_CONTENT))
@@ -148,6 +154,9 @@ export function CommandPalette() {
     }, 220)
     return () => {
       alive = false
+      // Abort the superseded content search — it reads blobs server-side, the
+      // costliest typeahead call in the palette.
+      ac.abort()
       clearTimeout(t)
     }
   }, [query, paletteOpen])

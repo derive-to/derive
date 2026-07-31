@@ -81,8 +81,11 @@ export type LibraryParams = {
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({
     queryKey: ["artifacts", params] as const,
-    queryFn: ({ pageParam }) =>
-      api.listArtifacts({ ...params, cursor: pageParam || undefined, limit: LIBRARY_PAGE }),
+    queryFn: ({ pageParam, signal }) =>
+      api.listArtifacts(
+        { ...params, cursor: pageParam || undefined, limit: LIBRARY_PAGE },
+        { signal },
+      ),
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     // Keep showing the current results while a new filter/search loads, so
@@ -206,7 +209,8 @@ const PROFILE_PAGE = 24
 export const profileArtifactsQuery = (handle: string) =>
   infiniteQueryOptions({
     queryKey: ["profile-artifacts", handle] as const,
-    queryFn: ({ pageParam }) => api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE),
+    queryFn: ({ pageParam, signal }) =>
+      api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE, { signal }),
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   })
@@ -217,7 +221,11 @@ export const profileArtifactsQuery = (handle: string) =>
 export const peopleQuery = (query: string) =>
   queryOptions({
     queryKey: ["people", query] as const,
-    queryFn: () => api.people(query || undefined).then((r) => r.users),
+    // The ctx param is annotated (not inferred): people.tsx spreads these options to
+    // add `enabled`, and TS's inference for a destructured context + keepPreviousData
+    // through a spread collapses the data type into a union with the placeholder fn.
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      api.people(query || undefined, { signal }).then((r) => r.users),
     placeholderData: keepPreviousData,
   })
 
@@ -227,7 +235,7 @@ export const peopleQuery = (query: string) =>
 export const targetPickerQuery = (q: string) =>
   queryOptions({
     queryKey: ["artifacts", "target-picker", q] as const,
-    queryFn: () => api.listArtifacts({ q: q.trim() || undefined, limit: 8 }),
+    queryFn: ({ signal }) => api.listArtifacts({ q: q.trim() || undefined, limit: 8 }, { signal }),
     placeholderData: keepPreviousData,
   })
 
@@ -238,7 +246,7 @@ export const targetPickerQuery = (q: string) =>
 export const searchQuery = (query: string, limit = 30) =>
   queryOptions({
     queryKey: ["search", query, limit] as const,
-    queryFn: () => api.searchContent(query, limit),
+    queryFn: ({ signal }) => api.searchContent(query, limit, { signal }),
     enabled: query.trim().length >= 2,
     placeholderData: keepPreviousData,
   })
