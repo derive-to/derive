@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { LocalBroker, refRouter } from "../src/index"
 import {
   encodeMcpRef,
-  isAllowedMcpUrl,
+  isAllowedOutboundUrl,
   isProviderLegalToolName,
   McpBroker,
   parseMcpRef,
@@ -552,22 +552,22 @@ describe("a broker fault is not blamed on the server", () => {
 })
 
 // URL POLICY: parsed, never prefix-matched.
-describe("which URLs Derive will dial", () => {
+describe("the ONE rule for which URLs Derive will dial", () => {
   it("accepts https anywhere and http only on loopback", () => {
-    expect(isAllowedMcpUrl("https://mcp.example.com/mcp")).toBe(true)
-    expect(isAllowedMcpUrl("http://localhost:8940/mcp")).toBe(true)
-    expect(isAllowedMcpUrl("http://127.0.0.1:8940/mcp")).toBe(true)
-    expect(isAllowedMcpUrl("http://example.com/mcp")).toBe(false)
-    expect(isAllowedMcpUrl("ftp://example.com")).toBe(false)
-    expect(isAllowedMcpUrl("not a url")).toBe(false)
+    expect(isAllowedOutboundUrl("https://mcp.example.com/mcp")).toBe(true)
+    expect(isAllowedOutboundUrl("http://localhost:8940/mcp")).toBe(true)
+    expect(isAllowedOutboundUrl("http://127.0.0.1:8940/mcp")).toBe(true)
+    expect(isAllowedOutboundUrl("http://example.com/mcp")).toBe(false)
+    expect(isAllowedOutboundUrl("ftp://example.com")).toBe(false)
+    expect(isAllowedOutboundUrl("not a url")).toBe(false)
   })
 
   it("USERINFO cannot smuggle a foreign host past the loopback rule", () => {
     // `localhost:8080` here is a username and password — the host is evil.example. A
     // `^http://localhost` prefix test accepts this, and Derive would then POST the pasted
     // Authorization: Bearer to an attacker's server, in cleartext.
-    expect(isAllowedMcpUrl("http://localhost:8080@evil.example/mcp")).toBe(false)
-    expect(isAllowedMcpUrl("http://LOCALHOST:1@10.0.0.5/x")).toBe(false)
-    expect(isAllowedMcpUrl("http://localhost.evil.com/mcp")).toBe(false)
+    expect(isAllowedOutboundUrl("http://localhost:8080@evil.example/mcp")).toBe(false)
+    expect(isAllowedOutboundUrl("http://LOCALHOST:1@10.0.0.5/x")).toBe(false)
+    expect(isAllowedOutboundUrl("http://localhost.evil.com/mcp")).toBe(false)
   })
 })

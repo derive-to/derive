@@ -1,4 +1,4 @@
-import { isAllowedMcpUrl, McpBroker } from "@derive/broker"
+import { isAllowedOutboundUrl, McpBroker } from "@derive/broker"
 import { type ConnectionRecord, newId } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
@@ -29,20 +29,6 @@ const present = (cn: ConnectionRecord) => ({
   status: cn.status,
   created_at: cn.created_at,
 })
-
-// Where the machineless lane may send a pasted credential: https anywhere, or plain http ONLY
-// to the loopback host for local development. Compared on the parsed hostname, because a
-// string prefix test on "http://localhost" also accepts http://localhost.evil.com — a
-// cleartext bearer sent to somebody else's server.
-const isAllowedBase = (raw: string): boolean => {
-  try {
-    const u = new URL(raw)
-    if (u.protocol === "https:") return true
-    return u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1")
-  } catch {
-    return false
-  }
-}
 
 // What to say when someone wires up an integration Derive isn't connected to yet. The fix
 // is the integration's own setup flow, not this endpoint — so the message points there.
@@ -166,13 +152,9 @@ export const connectionRoutes = (ctx: AppContext) => {
     // branch applies to base_url below, and a pasted URL is user input, so it earns a 400
     // rather than a 500.
     //
-    // PARSE IT, never prefix-match it. `http://localhost:8080@evil.example/mcp` passes any
-    // `^http://localhost` test and resolves to evil.example: `localhost:8080` is USERINFO. That
-    // would have Derive POST to an attacker's host, over cleartext, carrying the pasted
-    // `Authorization: Bearer`. `isAllowedMcpUrl` reads `u.hostname`, which userinfo cannot
-    // spoof — and it is the BROKER's predicate, so the route, the broker and the UI share one
-    // rule instead of three prefix tests that drifted apart.
-    if (b.mcp_url && !isAllowedMcpUrl(b.mcp_url))
+    // ONE predicate, shared with the broker and used for `base_url` below as well — see
+    // `isAllowedOutboundUrl` for the two string tests this replaced and how each was bypassed.
+    if (b.mcp_url && !isAllowedOutboundUrl(b.mcp_url))
       return fail(c, 400, "mcp_url must be https (or http://localhost for dev)")
     // The same 502 the `secret` branch raises, and for a worse reason if skipped: the token
     // authenticates THIS connect (it is still in memory) and is then dropped, so the row stores
@@ -192,7 +174,7 @@ export const connectionRoutes = (ctx: AppContext) => {
       // The dev escape hatch is the LOCALHOST HOST, not the prefix: `startsWith("http://localhost")`
       // also accepts http://localhost.evil.com, which would send a decrypted bearer to someone
       // else's box in cleartext. Parse and compare the hostname instead.
-      if (b.base_url && !isAllowedBase(b.base_url))
+      if (b.base_url && !isAllowedOutboundUrl(b.base_url))
         return fail(c, 400, "base_url must be https (or http://localhost for dev)")
       if (!deps.encryptionKey) return fail(c, 502, "secret connections need an encryption key")
       const rec = await meta.createConnection({

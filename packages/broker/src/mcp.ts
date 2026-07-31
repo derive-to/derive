@@ -123,15 +123,25 @@ export type QuietReason = "unpinned" | "unreachable" | "pin_mismatch" | "broker_
 const ourFault = (e: unknown): boolean => e instanceof TypeError || !(e instanceof Error)
 
 /**
- * May Derive dial this URL? https anywhere, http only on the loopback host.
+ * THE ONE RULE for any URL Derive will dial server-side, carrying a credential: https anywhere,
+ * plain http only to the loopback host for local development.
  *
- * PARSED, never prefix-matched. `http://localhost:8080@evil.example/mcp` satisfies any
- * `^http://localhost` test and resolves to evil.example — `localhost:8080` is USERINFO — which
- * would send the pasted `Authorization: Bearer` to an attacker's host in cleartext. `u.hostname`
- * is the part userinfo cannot spoof. The API route applies the same predicate before storing, so
- * a bad URL is a 400 rather than a throw; this is the backstop for every other caller.
+ * PARSED, never prefix-matched. Two ways a string test gets this wrong, both of which shipped:
+ *
+ *   http://localhost.evil.com/mcp          — a prefix match on "http://localhost" accepts it
+ *   http://localhost:8080@evil.example/mcp — `localhost:8080` is USERINFO; the host is evil.example
+ *
+ * Either one has Derive POST to somebody else's server, in cleartext, carrying the pasted
+ * `Authorization: Bearer`. `u.hostname` is the part neither trick can spoof.
+ *
+ * ONE copy on purpose. This existed as four — a route regex, a broker regex, a looser one in the
+ * settings UI, and a correct-but-separate `isAllowedBase` sitting forty lines from the route that
+ * needed it — and the two that were wrong were wrong in different ways. It governs `mcp_url` and
+ * a secret connection's `base_url` alike, because the question is identical: may we send a
+ * credential there? The client does NOT get a copy: `clients-no-core-at-runtime` keeps runtime
+ * policy out of web/cli, and a rule the client cannot enforce is one it should not restate.
  */
-export const isAllowedMcpUrl = (raw: string): boolean => {
+export const isAllowedOutboundUrl = (raw: string): boolean => {
   try {
     const u = new URL(raw)
     if (u.protocol === "https:") return true
@@ -380,7 +390,7 @@ export class McpBroker implements ToolBroker {
    */
   async connect(opts: { orgId: string; userId: string; toolkit: string }): Promise<ConnectResult> {
     const url = opts.toolkit.trim()
-    if (!isAllowedMcpUrl(url))
+    if (!isAllowedOutboundUrl(url))
       throw new Error("an MCP server URL must be https (or http://localhost for development)")
     try {
       const tools = await this.listTools(url, url)

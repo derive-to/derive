@@ -9,7 +9,7 @@ export { LocalBroker } from "./local"
 export type { McpAuthResolver } from "./mcp"
 export {
   encodeMcpRef,
-  isAllowedMcpUrl,
+  isAllowedOutboundUrl,
   isProviderLegalToolName,
   McpBroker,
   parseMcpRef,

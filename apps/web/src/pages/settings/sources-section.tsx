@@ -107,7 +107,13 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
     onError: (e: Error) => setError(e.message),
   })
 
-  const ready = name.trim().length > 0 && /^https:\/\/|^http:\/\/localhost/.test(url.trim())
+  // Enough to know the button would do something, and no more. This used to carry its own copy
+  // of the URL policy — a looser one, which enabled Connect for `http://localhost.evil.com`, a
+  // URL the server then refused. Restating a rule the client cannot enforce buys nothing and
+  // gives it a second chance to be wrong: `clients-no-core-at-runtime` keeps runtime policy out
+  // of the web app on purpose, so the server owns this and its refusal is already what the
+  // reader sees (`source-error`, in the server's own words).
+  const ready = name.trim().length > 0 && url.trim().length > 0
 
   return (
     <div className="mb-6 space-y-3" data-testid="sources-add">
