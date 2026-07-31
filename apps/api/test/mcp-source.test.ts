@@ -261,6 +261,9 @@ describe("MCP as a source: connect, list, call", () => {
     const created = await connect({ toolkit: "docs", mcp_url: mcp.url })
     expect(created.status).toBe(201)
     expect(created.body.kind).toBe("mcp")
+    // Shown in the Sources row. Routing reads the URL out of the ref, but a ref is an opaque
+    // token — without this the row cannot say which server it is.
+    expect(created.body.base_url).toBe(mcp.url)
     // And it is NOT a direct kind: Derive does not make its HTTP call itself, the broker does.
     expect(isDirect("mcp")).toBe(false)
   })

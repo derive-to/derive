@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { expect, type Page, test } from "@playwright/test"
+import { signUp } from "../helpers"
 
 // THE FULL WALKTHROUGH, captured against a real deployment as a real signed-in user:
 // connect an MCP source → bind it to an automation → run it → see what the run does.
@@ -70,13 +71,18 @@ const api = (page: Page, path: string, init?: { method?: string; body?: unknown 
 test("MCP sources: connect, automate, run", async ({ page }) => {
   mkdirSync(OUT, { recursive: true })
 
-  // 0. Sign in as the shared QA account. A fresh signup would litter a shared workspace and land
-  //    in a personal one where the beta gates are off.
-  await page.goto("/login")
-  await page.getByTestId("login-email").fill(process.env.QA_EMAIL ?? "")
-  await page.getByTestId("login-password").fill(process.env.QA_PASSWORD ?? "")
-  await page.getByTestId("login-submit").click()
-  await expect(page, "signed in").not.toHaveURL(/\/login/, { timeout: 20_000 })
+  // 0. On a DEPLOYED target, sign in as the shared QA account: a fresh signup would litter a
+  //    shared workspace and land in a personal one where the beta gates are off. Against the
+  //    harness's own local servers there is no such account, so sign up instead.
+  if (process.env.QA_EMAIL) {
+    await page.goto("/login")
+    await page.getByTestId("login-email").fill(process.env.QA_EMAIL)
+    await page.getByTestId("login-password").fill(process.env.QA_PASSWORD ?? "")
+    await page.getByTestId("login-submit").click()
+    await expect(page, "signed in").not.toHaveURL(/\/login/, { timeout: 20_000 })
+  } else {
+    await signUp(page, "MCP Sources Walkthrough")
+  }
   await settle(page)
   note(`signed in at ${BASE ?? "local"}`)
 

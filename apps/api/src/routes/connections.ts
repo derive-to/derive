@@ -247,7 +247,11 @@ export const connectionRoutes = (ctx: AppContext) => {
       // An MCP connection is its OWN kind. Storing it as `oauth` was already loose; once it
       // carries a `secret_enc` — which only `secret` was ever meant to have — it is a lie that
       // anything reasoning about `kind` will act on.
-      ...(b.mcp_url ? { kind: "mcp" as const } : {}),
+      //
+      // `base_url` carries the server URL for DISPLAY. The URL also lives inside broker_ref,
+      // which is where routing reads it — but a ref is an opaque routing token, and a Sources row
+      // that cannot say WHICH server you connected is not much of a Sources row.
+      ...(b.mcp_url ? { kind: "mcp" as const, base_url: b.mcp_url.replace(/\/+$/, "") } : {}),
       toolkit: b.toolkit,
       broker_ref: link.ref,
       // Write-only, exactly as `kind: "secret"` stores a pasted key: encrypted at rest, spent
