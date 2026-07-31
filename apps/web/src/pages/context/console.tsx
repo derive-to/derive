@@ -28,6 +28,8 @@ import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { usePageVisible } from "@/lib/use-page-visible"
+import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import { ConsolePending } from "./context-skeleton"
@@ -36,7 +38,10 @@ import { answerMdToHtml } from "./lib/answer-md"
 // The context console: ask, read the answer (with the query/confidence/caveats the
 // runner attaches), follow up. One conversation at a time — older sessions are a
 // picker away; the owner additionally gets the activity view. The transcript polls
-// fast only while the runner owes a reply (sessionQuery's refetchInterval).
+// fast only while the runner owes a reply (sessionQuery's refetchInterval), and refetches
+// immediately on the server's session.settled/session.progress push (SessionThread) —
+// the poll is the fallback, the push is what makes a reply land without waiting out
+// the interval.
 export function ContextConsole() {
   const { id } = useParams({ from: "/contexts/$id" })
   // Keyed by context id: the router keeps this route's component mounted across
@@ -528,6 +533,25 @@ function SessionThread({
       qc.invalidateQueries({ queryKey: contextSessionsQuery(contextId).queryKey })
   }, [state, contextId, qc])
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
+  // The server already publishes these on the same per-user SSE stream the notification
+  // bell uses (contexts.ts, `use()`'s report path) — react to them instead of waiting out
+  // sessionQuery's poll interval, so a reply that lands between polls shows up at once
+  // instead of quantised to the next tick. The poll stays on as the fallback (a missed
+  // SSE event, a dropped connection): this only shortens the common case, it doesn't
+  // replace the safety net.
+  const visible = usePageVisible()
+  const pushRefresh = (e: MessageEvent) => {
+    let payload: { session_id?: string }
+    try {
+      payload = JSON.parse(e.data) as { session_id?: string }
+    } catch {
+      return
+    }
+    if (payload.session_id === sessionId) refresh()
+  }
+  const pushEnabled = !!me && visible && state === "open"
+  useUserEvent("session.settled", pushRefresh, pushEnabled)
+  useUserEvent("session.progress", pushRefresh, pushEnabled)
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
   // hooks run unconditionally (a hook can't sit below an early return).
   const post = useApiMutation({
