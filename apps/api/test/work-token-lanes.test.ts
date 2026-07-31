@@ -17,6 +17,9 @@ import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./h
 // The same lesson is already written down one file over, in routes/model-credentials.ts:
 // "belonging to the same agent is not enough".
 const SECRET = "test-secret-at-least-16-chars"
+/** The refusal the guard gives. Asserted rather than just the status, so a 403 arriving for some
+ *  unrelated reason cannot stand in for the lane check. */
+const LANE = "a run token cannot act on a session"
 
 describe("a run token cannot act in the session lane", () => {
   const owner: TestUser = { id: "u_wt_own", email: "wtown@derive.test", name: "Owner" }
@@ -131,8 +134,7 @@ describe("a run token cannot act in the session lane", () => {
     const session = ((await ask.json()) as { session: { id: string } }).session.id
     const sessToken = (await dispatchAll()).find((s) => s.runId === session)?.token ?? ""
 
-    // Both kinds in hand, or the refusals below prove nothing.
-    expect(runToken.startsWith("dkrun_")).toBe(true)
+    // `runTokenFrom` already guaranteed the run kind; this is the one that can come back empty.
     expect(sessToken.startsWith("dksess_")).toBe(true)
 
     // The context's real tool, so getting past the door executes an outbound call and returns
@@ -143,14 +145,16 @@ describe("a run token cannot act in the session lane", () => {
         jsonAs(bearer(runToken), { tool: "game.get", args: { path: "/x" } }),
       ),
     )
-    expect([403, 404]).toContain(tool.status)
+    expect(tool.status).toBe(403)
+    expect(await tool.text()).toContain(LANE)
 
     // Answering: would post an agent message as this context and settle someone's ask.
     const answer = await app.request(
       `/v1/sessions/${session}/messages`,
       jsonAs(bearer(runToken), { body_md: "answered by the wrong lane", state: "answered" }),
     )
-    expect([401, 403, 404]).toContain(answer.status)
+    expect(answer.status).toBe(403)
+    expect(await answer.text()).toContain(LANE)
 
     // State: would fail the session out from under the executor that owns it.
     const patch = await app.request(`/v1/sessions/${session}`, {
@@ -158,12 +162,14 @@ describe("a run token cannot act in the session lane", () => {
       headers: { "content-type": "application/json", ...bearer(runToken) },
       body: JSON.stringify({ state: "failed" }),
     })
-    expect([401, 403, 404]).toContain(patch.status)
+    expect(patch.status).toBe(403)
+    expect(await patch.text()).toContain(LANE)
 
     // The queue: reading it claims sessions (open → working), so crossing here takes over the
     // ask lane's work.
     const queue = await app.request(`/v1/contexts/${ctx.id}/queue`, { headers: bearer(runToken) })
-    expect([403, 404]).toContain(queue.status)
+    expect(queue.status).toBe(403)
+    expect(await queue.text()).toContain(LANE)
 
     // The session's OWN pass still reaches both, so the refusals are about the lane and not
     // about these routes being broken for everyone.
