@@ -80,11 +80,16 @@ describe("decideUnfurl — the broadcast gate", () => {
     if (d.kind !== "card") return
     const json = JSON.stringify(d.blocks)
     expect(json).toContain("private Derive artifact")
-    expect(json).not.toContain("Q4 plan")
-    expect(json).not.toContain("q4-plan")
-    expect(json).not.toMatch(/q4/i)
     // It links to the bare short id, which the canonical redirect resolves.
     expect(json).toContain(`/artifacts/${artifact.short_id}`)
+    expect(json).not.toContain("Q4 plan")
+    expect(json).not.toContain("q4-plan")
+    // The catch-all runs against the card WITHOUT the short id, which is random and legitimately
+    // present (asserted above). Matching /q4/i over the whole card cannot tell a leaked slug from
+    // an id that happens to contain those two characters — and CI duly generated `s_4vq40i` and
+    // failed a card that leaked nothing. Excising the id keeps the check exact rather than
+    // probabilistic; picking a rarer title would only have made the collision less frequent.
+    expect(json.split(artifact.short_id).join("")).not.toMatch(/q4/i)
   })
 
   // A stale or bare-id link is the sharper case: the slug is re-derived from the CURRENT title
