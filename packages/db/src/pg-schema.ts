@@ -534,6 +534,18 @@ export const orgSettings = pgTable("org_settings", {
   settings: text("settings").notNull().default("{}"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+export const subscription = pgTable("subscription", {
+  org_id: text("org_id").primaryKey(),
+  stripe_customer_id: text("stripe_customer_id").notNull(),
+  stripe_subscription_id: text("stripe_subscription_id"),
+  tier: text("tier").$type<"team" | "business">().notNull(),
+  billing_interval: text("billing_interval").$type<"month" | "year">().notNull(),
+  status: text("status").notNull(),
+  quantity: integer("quantity").notNull(),
+  current_period_end: text("current_period_end"),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+  updated_at: text("updated_at").notNull(),
+})
 export const slackInstall = pgTable("slack_install", {
   org_id: text("org_id").primaryKey(),
   team_id: text("team_id").notNull(),
@@ -874,6 +886,7 @@ const TABLES = [
   folder,
   repoSource,
   orgSettings,
+  subscription,
   slackInstall,
   slackThreadLink,
   slackUserLink,

@@ -866,6 +866,11 @@ export interface IntegrationStore {
   getOrgSettings(orgId: string): Promise<OrgSettings>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** The workspace's cached Stripe subscription, absent ⇒ null (free). */
+  getSubscription(orgId: string): Promise<SubscriptionRecord | null>
+  /** Webhook resolution fallback when metadata.org_id is missing. */
+  getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<SubscriptionRecord | null>
+  upsertSubscription(s: SubscriptionRecord): Promise<void>
   // ---- Slack App (connected workspace + thread links) ---------------------
   /** The Slack workspace connected to this Derive workspace, or null. */
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
@@ -1982,6 +1987,24 @@ export interface SignupAttributionRecord {
 }
 
 export type NewSignupAttribution = Omit<SignupAttributionRecord, "created_at">
+
+/** One workspace's Stripe subscription state, webhook-fed; Stripe is the source
+ *  of truth and this row is the local cache the request-path gate reads. A row
+ *  with a null stripe_subscription_id and status "incomplete" is a checkout
+ *  stub (customer created, nothing paid yet) and grants nothing. */
+export interface SubscriptionRecord {
+  org_id: string
+  stripe_customer_id: string
+  stripe_subscription_id: string | null
+  tier: "team" | "business"
+  billing_interval: "month" | "year"
+  /** Stripe's subscription status, verbatim (active, trialing, past_due, canceled, ...). */
+  status: string
+  quantity: number
+  current_period_end: string | null
+  created_at: string
+  updated_at: string
+}
 
 /**
  * A pending per-artifact share invitation: an email invited to one artifact at a

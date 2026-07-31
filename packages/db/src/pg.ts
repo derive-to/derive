@@ -99,6 +99,7 @@ import type {
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
+  SubscriptionRecord,
   TakedownInput,
   UserDir,
   UserNotificationPrefRecord,
@@ -184,6 +185,7 @@ import {
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  subscription,
   userNotificationPref,
   version,
   versionData,
@@ -234,6 +236,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  subscription,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -281,6 +284,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactInvite: true,
   betaSignup: true,
   signupAttribution: true,
+  subscription: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -2050,6 +2054,24 @@ export class PgMetaStore implements MetaStore {
         target: orgSettings.org_id,
         set: { settings: JSON.stringify(settings) },
       })
+  }
+  async getSubscription(orgId: string): Promise<SubscriptionRecord | null> {
+    const rows = await this.db.select().from(subscription).where(eq(subscription.org_id, orgId))
+    return rows[0] ?? null
+  }
+  async getSubscriptionByStripeId(sid: string): Promise<SubscriptionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(subscription)
+      .where(eq(subscription.stripe_subscription_id, sid))
+    return rows[0] ?? null
+  }
+  async upsertSubscription(s: SubscriptionRecord): Promise<void> {
+    const { org_id: _org, created_at: _created, ...set } = s
+    await this.db
+      .insert(subscription)
+      .values(s)
+      .onConflictDoUpdate({ target: subscription.org_id, set })
   }
 
   // ---- Slack App ----------------------------------------------------------

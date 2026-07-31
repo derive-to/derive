@@ -652,6 +652,21 @@ export const orgSettings = sqliteTable("org_settings", {
   created_at: text("created_at").notNull().default(now),
 })
 
+// One workspace's Stripe subscription cache (webhook-fed; Stripe is the source
+// of truth). A row with a null stripe_subscription_id is a checkout stub.
+export const subscription = sqliteTable("subscription", {
+  org_id: text("org_id").primaryKey(),
+  stripe_customer_id: text("stripe_customer_id").notNull(),
+  stripe_subscription_id: text("stripe_subscription_id"),
+  tier: text("tier").$type<"team" | "business">().notNull(),
+  billing_interval: text("billing_interval").$type<"month" | "year">().notNull(),
+  status: text("status").notNull(),
+  quantity: integer("quantity").notNull(),
+  current_period_end: text("current_period_end"),
+  created_at: text("created_at").notNull().default(now),
+  updated_at: text("updated_at").notNull(),
+})
+
 // A connected Slack workspace (one row per Derive org). `bot_token` AES-encrypted at rest.
 export const slackInstall = sqliteTable("slack_install", {
   org_id: text("org_id").primaryKey(),
@@ -1080,6 +1095,7 @@ const TABLES = [
   folder,
   repoSource,
   orgSettings,
+  subscription,
   modelCredential,
   slackInstall,
   slackThreadLink,

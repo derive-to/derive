@@ -68,6 +68,7 @@ const deps = (
   notifyRender: () => {},
   background: async () => {},
   search: undefined,
+  billingBlocked: async () => null,
   callModel: async () => {
     if (typeof reply !== "string") return reply()
     return { text: reply, toolUses: [], costUsd: null, done: true }
