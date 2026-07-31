@@ -193,8 +193,16 @@ export const workspaceRoutes = (ctx: AppContext) => {
       const role = await workspaceRole(c)
       if (role === null) return bail(fail(c, 401, "unauthenticated"))
       const org = await activeWorkspace(c)
-      const [ws, members] = await Promise.all([meta.getWorkspace(org), meta.listMemberships(org)])
-      const users = await meta.getUsers(members.map((m) => m.user_id))
+      // Three reads keyed on the same org, the last of them strictly after the others
+      // because it needs the member ids the roster returns — and Promise.all does not
+      // overlap them on the edge tier (one pg.Client per invocation serialises whatever is
+      // queued on it). `workspaceWithMembers` answers all three in one statement where the
+      // store can; the fallback below is the original code, unchanged.
+      const combined = meta.workspaceWithMembers ? await meta.workspaceWithMembers(org) : null
+      const [ws, members] = combined
+        ? [combined.workspace, combined.members]
+        : await Promise.all([meta.getWorkspace(org), meta.listMemberships(org)])
+      const users = combined ? combined.users : await meta.getUsers(members.map((m) => m.user_id))
       const dir = new Map(users.map((u) => [u.id, u]))
       return c.json({
         id: org,

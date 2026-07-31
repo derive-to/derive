@@ -3587,6 +3587,46 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  // The workspace, its roster, and the directory rows for that roster in ONE statement —
+  // see the port doc. The user arm joins THROUGH membership rather than taking an id list,
+  // so it no longer has to wait for the roster to come back before it can start.
+  async workspaceWithMembers(orgId: string): Promise<{
+    workspace: WorkspaceRecord | null
+    members: MembershipRecord[]
+    users: UserDir[]
+  }> {
+    const core = [
+      sql`select 'ws' as kind, to_jsonb(w) as doc from workspace w where w.id = ${orgId}`,
+      sql`select 'member', to_jsonb(m) from membership m where m.org_id = ${orgId}`,
+    ]
+    // Best-effort, exactly like getUsers: the Better Auth tables can be absent on a fresh
+    // self-host, and there the roster must still come back rather than fail the page.
+    const directory = sql`select 'user', jsonb_build_object(
+        'id', u.id, 'email', u.email, 'name', u.name, 'image', u.image,
+        'username', u.username, 'profession', u.profession, 'about', u.about)
+      from "user" u join membership m2 on m2.user_id = u.id and m2.org_id = ${orgId}`
+    type Row = { kind: string; doc: unknown }
+    const run = async (arms: ReturnType<typeof sql>[]) => {
+      const res = await this.db.execute(sql.join(arms, sql` union all `))
+      return ((res as unknown as { rows?: Row[] }).rows ?? []) as Row[]
+    }
+    let rows: Row[]
+    try {
+      rows = await run([...core, directory])
+    } catch {
+      rows = await run(core)
+    }
+    let workspace: WorkspaceRecord | null = null
+    const members: MembershipRecord[] = []
+    const users: UserDir[] = []
+    for (const r of rows) {
+      if (r.kind === "ws") workspace = r.doc as WorkspaceRecord
+      else if (r.kind === "member") members.push(r.doc as MembershipRecord)
+      else users.push(r.doc as UserDir)
+    }
+    return { workspace, members, users }
+  }
+
   async getUsers(ids: string[]): Promise<UserDir[]> {
     if (ids.length === 0) return []
     try {

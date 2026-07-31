@@ -985,6 +985,24 @@ export interface CollectionStore {
     opts: ListPageOpts,
   ): Promise<{ artifacts: ArtifactRecord[]; enrichment: ListEnrichment }>
 
+  /**
+   * The workspace row, its membership roster, and the user directory for that roster —
+   * one statement, for a store that can.
+   *
+   * GET /v1/workspace was four round trips (measured 447ms), three of them keyed on the
+   * same org, and the last strictly after the others because it needs the member ids the
+   * roster returns. It is the Settings > Members page's entire cost.
+   *
+   * The `users` arm is best-effort in the same way the list's byline arm is: the Better
+   * Auth tables can be absent on a fresh self-host, and there the roster must still come
+   * back rather than fail the page.
+   */
+  workspaceWithMembers?(orgId: string): Promise<{
+    workspace: WorkspaceRecord | null
+    members: MembershipRecord[]
+    users: UserDir[]
+  }>
+
   artifactWithGrants?(
     shortId: string,
     userId: string,

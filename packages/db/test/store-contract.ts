@@ -4165,6 +4165,47 @@ export function runStoreContract(
       expect(await store.getPlan(theirs.id)).toBeNull()
     })
   })
+  // OPTIONAL FAST PATH. `workspaceWithMembers` collapses the workspace row, its roster and
+  // the directory rows for that roster into one statement. Held to the three reads it
+  // replaces, over the same fixtures.
+  describe(`${label}: workspaceWithMembers agrees with the three reads it replaces`, () => {
+    it("matches the workspace, the roster and the directory", async () => {
+      if (!store.workspaceWithMembers) return
+
+      const org = `org_wwm_${uuid()}`
+      await store.setWorkspace(org, "Roster")
+      const ids = [`u_a_${uuid()}`, `u_b_${uuid()}`, `u_c_${uuid()}`]
+      const roles = ["owner", "editor", "viewer"] as const
+      for (let i = 0; i < ids.length; i++)
+        await store.setMembership({
+          id: uuid(),
+          org_id: org,
+          user_id: ids[i] as string,
+          role: roles[i] as (typeof roles)[number],
+        })
+
+      const fast = await store.workspaceWithMembers(org)
+      const ws = await store.getWorkspace(org)
+      const members = await store.listMemberships(org)
+      const users = await store.getUsers(members.map((m) => m.user_id))
+
+      expect(fast.workspace).toEqual(ws)
+      const byId = (xs: { id: string }[]) => [...xs].sort((a, b) => a.id.localeCompare(b.id))
+      expect(byId(fast.members)).toEqual(byId(members))
+      expect(byId(fast.users)).toEqual(byId(users))
+      // Not vacuously empty: the roster has to have actually come back.
+      expect(fast.members.length).toBe(3)
+    })
+
+    it("returns a null workspace and an empty roster for an unknown org", async () => {
+      if (!store.workspaceWithMembers) return
+      const r = await store.workspaceWithMembers(`org_missing_${uuid()}`)
+      expect(r.workspace).toBeNull()
+      expect(r.members).toEqual([])
+      expect(r.users).toEqual([])
+    })
+  })
+
   // OPTIONAL FAST PATH. `listPage` collapses the library list AND its decoration into one
   // statement. Two things can go wrong that a "does it return rows" test would miss: the
   // decoration could disagree with `listEnrichment`, and the ORDER could be lost — a UNION
