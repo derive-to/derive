@@ -35,16 +35,16 @@ describe("delta coalescing", () => {
     await call(stream.wrap(emitting(["a", "b", "c"])))
     expect(sent).toEqual([]) // still buffered — three tokens are not three publishes
     stream.flush()
-    expect(sent).toEqual([{ seq: 1, text: "abc" }])
+    expect(sent).toMatchObject([{ seq: 1, text: "abc" }])
   })
 
   it("flushes on the size boundary mid-reply", async () => {
     const { sent, stream } = harness({ now: () => 0 })
     const big = "x".repeat(DELTA_FLUSH_CHARS)
     await call(stream.wrap(emitting([big, "tail"])))
-    expect(sent).toEqual([{ seq: 1, text: big }])
+    expect(sent).toMatchObject([{ seq: 1, text: big }])
     stream.flush()
-    expect(sent[1]).toEqual({ seq: 2, text: "tail" })
+    expect(sent[1]).toMatchObject({ seq: 2, text: "tail" })
   })
 
   it("flushes on the age boundary when the model is slow", async () => {
@@ -57,7 +57,7 @@ describe("delta coalescing", () => {
       return { text: "slow reply", toolUses: [], costUsd: null, done: true }
     }) as AgentLoopInput["callModel"])
     await call(wrapped)
-    expect(sent).toEqual([{ seq: 1, text: "slow reply" }])
+    expect(sent).toMatchObject([{ seq: 1, text: "slow reply" }])
   })
 
   it("never loses or reorders text, whatever the boundaries", async () => {
@@ -288,5 +288,74 @@ describe("the startup race", () => {
     // Slices flush every other delta, so eight deltas is four slices — the point is that it
     // kept publishing AFTER the early miss instead of latching quiet at the threshold.
     expect(sent.length).toBeGreaterThanOrEqual(4)
+  })
+})
+
+describe("a re-generated reply", () => {
+  it("marks a new attempt so a reader replaces rather than appends", async () => {
+    // THE BUG THIS PINS. The agent loop can call the model more than once for ONE answer:
+    // attended chat runs maxTurns = NUDGE_LIMIT + 1, so a reply that misses the reply contract
+    // is nudged and generated again. Only the LAST attempt becomes the transcript. Without an
+    // attempt marker a client appends the abandoned text to the real text and shows a garbled
+    // answer that the settled message then contradicts.
+    let t = 0
+    const sent: { seq: number; text: string; attempt: number }[] = []
+    const stream = makeDeltaStream({
+      publish: (s) => {
+        sent.push(s)
+      },
+      now: () => t,
+      flushMs: 10,
+    })
+    const wrapped = stream.wrap((async ({ onDelta }) => {
+      onDelta?.("bad attempt ")
+      t += 100
+      onDelta?.("text")
+      return { text: "bad attempt text", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+
+    // Attempt 1 — the reply the contract rejects.
+    await wrapped({ system: "", messages: [], tools: [] })
+    stream.flush()
+    // Attempt 2 — the loop re-asks through the SAME wrapped callModel.
+    await wrapped({ system: "", messages: [], tools: [] })
+    stream.flush()
+
+    const attempts = sent.map((s) => s.attempt)
+    expect(Math.min(...attempts)).toBe(1)
+    expect(Math.max(...attempts)).toBe(2)
+    // Every slice says which attempt it belongs to, so a client can drop the abandoned one.
+    expect(sent.filter((s) => s.attempt === 1).length).toBeGreaterThan(0)
+    expect(sent.filter((s) => s.attempt === 2).length).toBeGreaterThan(0)
+    // Sequence stays globally monotonic across attempts, so the reorder guard still works.
+    expect(sent.map((s) => s.seq)).toEqual([...sent.map((s) => s.seq)].sort((a, b) => a - b))
+  })
+
+  it("drops text still buffered from an attempt that was abandoned", async () => {
+    // Text the model emitted but that never flushed belongs to a reply being thrown away.
+    // Publishing it later would put words on screen the transcript will never contain.
+    const sent: { seq: number; text: string; attempt: number }[] = []
+    const stream = makeDeltaStream({
+      publish: (s) => {
+        sent.push(s)
+      },
+      now: () => 0, // frozen: nothing reaches the age boundary, so it all stays buffered
+    })
+    const first = stream.wrap((async ({ onDelta }) => {
+      onDelta?.("abandoned")
+      return { text: "abandoned", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    await first({ system: "", messages: [], tools: [] })
+    // No flush between attempts — the next call must discard that buffer, not inherit it.
+    const second = stream.wrap((async ({ onDelta }) => {
+      onDelta?.("real answer")
+      return { text: "real answer", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    await second({ system: "", messages: [], tools: [] })
+    stream.flush()
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.text).toBe("real answer")
+    expect(sent[0]?.text).not.toContain("abandoned")
   })
 })

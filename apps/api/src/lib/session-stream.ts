@@ -67,7 +67,7 @@ export interface DeltaStreamOpts {
    * no-listener note on `makeDeltaStream`. A `void` return means "no receipt available", and
    * streaming simply continues.
    */
-  publish: (slice: { seq: number; text: string }) => void | Promise<number>
+  publish: (slice: { seq: number; text: string; attempt: number }) => void | Promise<number>
   /** Injectable clock, so tests do not sleep. */
   now?: () => number
   flushChars?: number
@@ -100,11 +100,20 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
   // They lose the animation, not the answer.
   let streaming = true
   let consecutiveMisses = 0
+  // Which model ATTEMPT these slices belong to.
+  //
+  // The agent loop may call the model more than once for a single answer: attended chat runs
+  // `maxTurns: NUDGE_LIMIT + 1`, so a reply that misses the reply contract is nudged and
+  // re-generated. The first attempt's text is DISCARDED — only the last one becomes the
+  // transcript. Without this counter a client would append the abandoned attempt to the real
+  // one and show a garbled reply that never matches what gets persisted. Slices carry the
+  // attempt they came from so a reader can drop everything older the moment a new one starts.
+  let attempt = 0
 
   const flush = () => {
     if (!buffer || !streaming) return
     seq += 1
-    const slice = { seq, text: buffer }
+    const slice = { seq, text: buffer, attempt }
     buffer = ""
     oldestAt = 0
     try {
@@ -133,8 +142,14 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
       return seq
     },
     flush,
-    wrap: (inner) => (input) =>
-      inner({
+    wrap: (inner) => (input) => {
+      // A new model attempt. Anything still buffered belongs to the attempt being abandoned,
+      // so it is dropped rather than flushed — publishing it would put text on screen that the
+      // transcript is never going to contain.
+      attempt += 1
+      buffer = ""
+      oldestAt = 0
+      return inner({
         ...input,
         onDelta: (text) => {
           // Once nobody is listening, stop even ACCUMULATING: the returned ModelTurn is the
@@ -144,6 +159,7 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
           buffer += text
           if (buffer.length >= maxChars || now() - oldestAt >= maxMs) flush()
         },
-      }),
+      })
+    },
   }
 }

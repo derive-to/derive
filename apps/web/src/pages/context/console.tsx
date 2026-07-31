@@ -582,10 +582,13 @@ function SessionThread({
   // strictly newer than the last slice is dropped, so a reconnect redelivering one is a no-op.
   const [streaming, setStreaming] = useState("")
   const lastSeq = useRef(0)
+  // Which model attempt the accumulated text belongs to (see the `attempt` note in
+  // lib/session-stream.ts): a re-generated reply must replace the abandoned one, not append.
+  const lastAttempt = useRef(0)
   useUserEvent(
     "session.delta",
     (e) => {
-      let p: { session_id?: string; seq?: number; text?: string }
+      let p: { session_id?: string; seq?: number; text?: string; attempt?: number }
       try {
         p = JSON.parse(e.data) as typeof p
       } catch {
@@ -595,7 +598,11 @@ function SessionThread({
       const seq = typeof p.seq === "number" ? p.seq : lastSeq.current + 1
       if (seq <= lastSeq.current) return
       lastSeq.current = seq
-      setStreaming((s) => s + p.text)
+      const at = typeof p.attempt === "number" ? p.attempt : lastAttempt.current
+      const fresh = at > lastAttempt.current
+      lastAttempt.current = at
+      const text = p.text
+      setStreaming((s) => (fresh ? text : s + text))
     },
     pushEnabled,
   )
@@ -609,6 +616,7 @@ function SessionThread({
   useEffect(() => {
     setStreaming("")
     lastSeq.current = 0
+    lastAttempt.current = 0
   }, [agentCount])
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
   // hooks run unconditionally (a hook can't sit below an early return).

@@ -37,10 +37,13 @@ export function useArtifactChat(shortId: string) {
   // Highest slice applied. Slices are ordered, but a reconnect can redeliver one — ignoring
   // anything not strictly newer makes that a no-op instead of duplicated text.
   const lastSeq = useRef(0)
+  // Which model attempt the accumulated text belongs to (see the server note on `attempt`).
+  const lastAttempt = useRef(0)
 
   const clearStream = useCallback(() => {
     setStreaming("")
     lastSeq.current = 0
+    lastAttempt.current = 0
   }, [])
 
   const refresh = useCallback(
@@ -136,7 +139,7 @@ export function useArtifactChat(shortId: string) {
   useUserEvent(
     "session.delta",
     (e) => {
-      let p: { session_id?: string; seq?: number; text?: string }
+      let p: { session_id?: string; seq?: number; text?: string; attempt?: number }
       try {
         p = JSON.parse(e.data)
       } catch {
@@ -146,7 +149,14 @@ export function useArtifactChat(shortId: string) {
       const seq = typeof p.seq === "number" ? p.seq : lastSeq.current + 1
       if (seq <= lastSeq.current) return // a redelivery after a reconnect
       lastSeq.current = seq
-      setStreaming((s) => s + p.text)
+      // A NEW ATTEMPT REPLACES, it does not append. The agent loop re-generates a reply that
+      // missed its contract, and the abandoned attempt never reaches the transcript — appending
+      // would show a garbled answer that the settled message then contradicts.
+      const at = typeof p.attempt === "number" ? p.attempt : lastAttempt.current
+      const fresh = at > lastAttempt.current
+      lastAttempt.current = at
+      const text = p.text
+      setStreaming((s) => (fresh ? text : s + text))
     },
     live,
   )
