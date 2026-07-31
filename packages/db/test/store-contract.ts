@@ -193,6 +193,51 @@ export function runStoreContract(
       ])
     })
 
+    it("reads one slot across artifacts, and only from each one's CURRENT version", async () => {
+      // Two artifacts carry "xchecks"; one of them moves on to a new version, and the
+      // cross-artifact read must report the NEW value — reporting a superseded row as the
+      // present state is the failure that would make this quietly wrong.
+      const a = await store.createArtifact(newArtifact({ title: "Nightly A" }))
+      const v1 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v1.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":1}', size_bytes: 11, gen: 1 },
+      ])
+      const v2 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v2.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":2}', size_bytes: 11, gen: 1 },
+      ])
+      const b = await store.createArtifact(newArtifact({ title: "Nightly B" }))
+      const bv = await store.addVersion(b.id, newVersion())
+      await store.setVersionData(b.id, bv.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":9}', size_bytes: 11, gen: 1 },
+        { id: uuid(), slot: "xother", json: "1", size_bytes: 1, gen: 1 },
+      ])
+
+      const rows = await store.listSlotAcrossArtifacts(ORG, "xchecks")
+      const byId = new Map(rows.map((r) => [r.short_id, r]))
+      expect(byId.get(a.short_id)?.json).toBe('{"pass":2}') // the current version, not v1
+      expect(byId.get(a.short_id)?.n).toBe(v2.n)
+      expect(byId.get(b.short_id)?.json).toBe('{"pass":9}')
+      // A slot nobody carries is empty, not an error.
+      expect(await store.listSlotAcrossArtifacts(ORG, "nosuch")).toEqual([])
+      // The limit bounds the payload.
+      expect((await store.listSlotAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
+    })
+
+    it("lists the workspace's slot vocabulary as RAW rows, uncounted, carrying artifact_id", async () => {
+      const rows = await store.listWorkspaceSlots(ORG)
+      // Deliberately (slot, artifact) pairs rather than counts: the count has to be taken
+      // AFTER the caller's visibility gate, so the artifact_id it gates on must survive
+      // this far. A pre-aggregated count would already include artifacts the caller may
+      // not read, with the evidence needed to correct it thrown away.
+      const checks = rows.filter((r) => r.slot === "xchecks")
+      expect(new Set(checks.map((r) => r.artifact_id)).size).toBeGreaterThanOrEqual(2)
+      expect(rows.filter((r) => r.slot === "xother").length).toBe(1)
+      expect(checks[0]?.at).toBeTruthy()
+      expect(rows.every((r) => !!r.artifact_id)).toBe(true)
+      expect((await store.listWorkspaceSlots(ORG, { limit: 1 })).length).toBe(1)
+    })
+
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(

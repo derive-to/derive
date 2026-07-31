@@ -763,6 +763,13 @@ export function registerPublishTool(tc: ToolContext): void {
                 ctx.meta,
               )
             : []
+        // What the extraction actually STORED for this version, read back from the rows
+        // rather than echoed from the parser. Reporting the store is strictly more honest:
+        // it reflects what is now queryable, so a persistence failure shows up as an empty
+        // list instead of a confident claim. Until now success was silent — a slot was
+        // only ever mentioned when something went wrong, which is a poor way to teach a
+        // capability whose whole point is that it accrues.
+        const storedSlots = await ctx.meta.getVersionData(artifact.id, version.n).catch(() => [])
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -770,6 +777,12 @@ export function registerPublishTool(tc: ToolContext): void {
           kind: artifact.kind,
           version: version.n,
           url,
+          ...(storedSlots.length
+            ? {
+                data: storedSlots.map((s) => ({ slot: s.slot, bytes: s.size_bytes })),
+                data_next: `Queryable now: read(short_id:"${artifact.short_id}", data:"${storedSlots[0]?.slot}") for this version, or versions:"all" for the whole series.`,
+              }
+            : {}),
           // Single-file publishes report the stored bytes' sha256 (the content-
           // addressed blob key) so callers can verify what landed matches what
           // they sent.

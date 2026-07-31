@@ -144,9 +144,16 @@ read(short_id, data:"checks", versions:"all")
 Versions carrying no such slot are absent and the response says how many. Capped at 200
 points; past that it tells you and hands back the range to ask for.
 
+**Across artifacts.** `find(data:"checks")` reads that slot from EVERY artifact that
+carries it (each one's current version), and `find(data:"checks", tag:"nightly")` scopes
+it to a tagged set. `find(data:"*")` lists which slots exist in the workspace at all — the
+way to discover a vocabulary you did not author.
+
 Outside MCP, the same data is a URL: `GET /raw/<short_id>/data/<slot>.json` for the
-current version, `/raw/<short_id>/v/<n>/data/<slot>.json` to pin one — so a page can
-fetch its own history. Same access as the artifact itself.
+current version, `/raw/<short_id>/v/<n>/data/<slot>.json` to pin one, and
+`/raw/<short_id>/data/<slot>.jsonl` for the WHOLE series (one JSON object per version,
+oldest first) — so a page can chart its own history, a shell can pipe it to jq, and
+anything wanting SQL can point DuckDB at it. Same access as the artifact itself.
 
 Rules worth knowing before you author one:
 

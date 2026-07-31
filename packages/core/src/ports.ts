@@ -428,11 +428,27 @@ export interface ArtifactStore {
    *  workspace of nightly reports actually gets asked. Optionally narrowed by browse tag,
    *  since a tag is already how a set of artifacts is named. ONE query, joined to each
    *  artifact's current version so it can never report a superseded row. */
+  /** The workspace's slot VOCABULARY as RAW (slot, artifact) rows over current versions:
+   *  the discovery half of cross-artifact reads, since you cannot query a slot whose name
+   *  you do not know and nothing else in the surface lists them.
+   *
+   *  Deliberately NOT pre-aggregated. Both slot readers scope by org, and an org is not a
+   *  read permission: an artifact can be invite-only WITHIN its own workspace. The caller
+   *  must therefore narrow these rows through the visibility gate (api lib/visibility.ts)
+   *  before counting them. Aggregating here would hand back a count already computed over
+   *  artifacts the caller may not see, with the evidence needed to correct it discarded. */
+  listWorkspaceSlots(
+    orgId: string,
+    opts?: { limit?: number },
+  ): Promise<{ slot: string; artifact_id: string; at: string }[]>
+  /** Carries `id` for that same reason: the caller gates on it, then drops it. */
   listSlotAcrossArtifacts(
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },
-  ): Promise<{ short_id: string; title: string | null; n: number; json: string; at: string }[]>
+  ): Promise<
+    { id: string; short_id: string; title: string | null; n: number; json: string; at: string }[]
+  >
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */

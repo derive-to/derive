@@ -1,4 +1,4 @@
-import { diffLines, formatDiff, toMarkdown } from "@derive/core"
+import { diffLines, formatDiff, slotDeltas, toMarkdown } from "@derive/core"
 import { z } from "zod"
 import { clip } from "../lib/clip"
 import type { ToolContext } from "../mcp-tool-context"
@@ -216,6 +216,16 @@ export function registerCatchUpTool(tc: ToolContext): void {
         since >= to
           ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
           : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
+      // What the NUMBERS did between the versions being compared. The prose diff already
+      // shows what the page says; without this a review round sees everything except the
+      // figures the page is about.
+      const slotChanges =
+        since < to
+          ? slotDeltas(
+              await ctx.meta.getVersionData(a.id, since).catch(() => []),
+              await ctx.meta.getVersionData(a.id, to).catch(() => []),
+            )
+          : []
       return json({
         summary,
         review,
@@ -233,6 +243,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
               entry_diff:
                 "(omitted) — call again with response_format='detailed' for the line-level changes.",
             }),
+        ...(slotChanges.length ? { data_changes: slotChanges } : {}),
         open_comments: open.map(summarizeComment),
         ...(outdated.length ? { outdated_comments: outdated.map(summarizeComment) } : {}),
       })

@@ -5,8 +5,10 @@ import {
   missingDataSlotAdvisory,
   parseDataSlots,
   shapeOfJson,
+  slotDeltas,
   slotDriftAdvisories,
   slotShape,
+  slotSummary,
 } from "./data-slots"
 
 const html = (body: string) => `<!doctype html><html><body>${body}</body></html>`
@@ -286,5 +288,99 @@ describe("parseDataSlots — content type gating", () => {
       slot("a", "1") + slot("a", "2") + `<script type="application/derive-data">bad</script>`,
     )
     expect(parseDataSlots(src, "text/html")).toEqual(parseDataSlots(src, "text/html"))
+  })
+})
+
+// The unfurl summary: the incentive half. A shared link that shows its own numbers is
+// what rewards emitting a slot at all, so this has to look right on a card and never
+// break one — lossy on purpose, null rather than empty.
+describe("slotSummary", () => {
+  const row = (slot: string, json: string) => ({ slot, json })
+
+  it("summarizes an object slot's leading scalar fields", () => {
+    expect(slotSummary([row("checks", '{"pass":48,"fail":0,"flaky":1}')])).toBe(
+      "pass 48 · fail 0 · flaky 1",
+    )
+  })
+
+  it("caps at three fields so a card stays scannable", () => {
+    const s = slotSummary([row("m", '{"a":1,"b":2,"c":3,"d":4,"e":5}')])
+    expect(s).toBe("a 1 · b 2 · c 3")
+  })
+
+  it("names a bare scalar slot by its own slot name", () => {
+    expect(slotSummary([row("uptime", "99.95")])).toBe("uptime 99.95")
+    expect(slotSummary([row("status", '"green"')])).toBe("status green")
+  })
+
+  it("skips nested objects and arrays rather than printing noise", () => {
+    expect(slotSummary([row("checks", '{"pass":48,"detail":{"a":1},"tags":["x"],"fail":0}')])).toBe(
+      "pass 48 · fail 0",
+    )
+  })
+
+  it("drops values too long for a card", () => {
+    const long = "x".repeat(40)
+    expect(slotSummary([row("checks", JSON.stringify({ note: long, pass: 48 }))])).toBe("pass 48")
+  })
+
+  it("rounds noisy floats", () => {
+    expect(slotSummary([row("m", '{"ratio":0.123456789}')])).toBe("ratio 0.12")
+  })
+
+  it("returns null when there is nothing card-worthy, so the card falls back", () => {
+    expect(slotSummary([])).toBeNull()
+    expect(slotSummary([row("x", "{}")])).toBeNull()
+    expect(slotSummary([row("x", '{"nested":{"a":1}}')])).toBeNull()
+    expect(slotSummary([row("x", "{bad json")])).toBeNull()
+  })
+
+  it("draws from several slots when the first is thin", () => {
+    expect(slotSummary([row("a", '{"x":1}'), row("b", '{"y":2}')])).toBe("x 1 · y 2")
+  })
+})
+
+// Slot deltas: the review-loop half. A version diff that shows prose changes but not the
+// figures the page is about is only half a diff.
+describe("slotDeltas", () => {
+  const row = (slot: string, json: string) => ({ slot, json })
+
+  it("reports changed scalar fields with before and after", () => {
+    expect(
+      slotDeltas([row("checks", '{"pass":41,"fail":2}')], [row("checks", '{"pass":44,"fail":0}')]),
+    ).toEqual(["checks.pass 41 → 44", "checks.fail 2 → 0"])
+  })
+
+  it("says nothing when the numbers held", () => {
+    expect(slotDeltas([row("checks", '{"pass":44}')], [row("checks", '{"pass":44}')])).toEqual([])
+  })
+
+  it("reports a slot appearing or disappearing as its own event", () => {
+    expect(slotDeltas([], [row("checks", '{"pass":1}')])).toEqual(["checks (new)"])
+    expect(slotDeltas([row("checks", '{"pass":1}')], [])).toEqual(["checks (gone)"])
+  })
+
+  it("reports a new field inside an existing slot", () => {
+    expect(slotDeltas([row("c", '{"pass":1}')], [row("c", '{"pass":1,"flaky":3}')])).toEqual([
+      "c.flaky 3 (new)",
+    ])
+  })
+
+  it("reaches nested scalars", () => {
+    expect(slotDeltas([row("c", '{"t":{"ms":900}}')], [row("c", '{"t":{"ms":750}}')])).toEqual([
+      "c.t.ms 900 → 750",
+    ])
+  })
+
+  it("caps the list so a review stays readable", () => {
+    const before = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i]))
+    const after = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i + 1]))
+    expect(
+      slotDeltas([row("m", JSON.stringify(before))], [row("m", JSON.stringify(after))]).length,
+    ).toBeLessThanOrEqual(8)
+  })
+
+  it("survives an unparseable stored row", () => {
+    expect(() => slotDeltas([row("c", "{bad")], [row("c", '{"pass":1}')])).not.toThrow()
   })
 })
