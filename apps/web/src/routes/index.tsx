@@ -28,6 +28,14 @@ export const Route = createFileRoute("/")({
   },
   // Shape-matched pending frame for the cold-load auth/loader window.
   pendingComponent: LibraryPending,
+  // No minimum hold on that frame. The global defaultPendingMinMs(300) exists to stop a
+  // skeleton flashing mid-navigation — but on a cold boot the skeleton is up from first
+  // paint regardless, and the floor was measured holding the READY library back ~250ms
+  // (route resolved ~110ms, component mounted ~380ms). LibraryPending is shape-matched,
+  // so the swap lands in the same geometry and needs no smoothing delay. Warm in-app
+  // navs resolve inside defaultPendingMs(150), so the pending frame never shows there
+  // and this changes nothing for them.
+  pendingMinMs: 0,
   // The home library. Its filters + free-text search live in the URL (LibrarySearch)
   // so the nav rail can drive them from anywhere and a filtered/searched library is
   // shareable. The named feeds (Favorites, Following) are their OWN routes, not params
