@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { FakeBilling, subscriptionSnapshot } from "./fake-billing"
+import { FakeBilling, subscriptionRow, subscriptionSnapshot } from "./fake-billing"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: `U${n}` })
 const USERS = [u(1), u(2), u(3), u(4)]
+const PAST = "2000-01-01T00:00:00Z"
 
 const boot = (name: string) => {
   const fake = new FakeBilling()
@@ -170,5 +171,47 @@ describe("billing routes", () => {
     const body = await (await app.request("/v1/billing", { headers: as("u1@x.test") })).json()
     expect(body.subscribed).toBe(true)
     expect(body.beta).toBe(false)
+  })
+})
+
+describe("GET /v1/billing blocked", () => {
+  it("is null during beta grace even over the seat limit", async () => {
+    // boot()'s default deps have no billingEnforceAt, and USERS is 4 editors
+    // (over FREE_SEAT_LIMIT) — the published beta promise still wins.
+    const { app } = boot("br_blocked_beta")
+    const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
+    const body = await r.json()
+    expect(body.blocked).toBeNull()
+  })
+
+  it("is null while subscribed", async () => {
+    const FIVE = [u(1), u(2), u(3), u(4), u(5)]
+    const { app, meta } = makeAuthedApp("br_blocked_subscribed", FIVE, "editor", {
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    await meta.upsertSubscription(subscriptionRow({ status: "active", quantity: 5 }))
+    const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
+    const body = await r.json()
+    expect(body.blocked).toBeNull()
+  })
+
+  it("reports billing_required past enforcement with 4 seats", async () => {
+    const { app } = makeAuthedApp("br_blocked_needs_team", USERS, "editor", {
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
+    const body = await r.json()
+    expect(body.blocked?.code).toBe("billing_required")
+    expect(body.blocked?.message).toContain("/settings/billing")
+  })
+
+  it("reports billing_lapsed for a canceled subscription past enforcement", async () => {
+    const { app, meta } = makeAuthedApp("br_blocked_lapsed", USERS, "editor", {
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    await meta.upsertSubscription(subscriptionRow({ status: "canceled" }))
+    const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
+    const body = await r.json()
+    expect(body.blocked?.code).toBe("billing_lapsed")
   })
 })

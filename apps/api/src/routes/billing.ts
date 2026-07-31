@@ -25,6 +25,7 @@ export const billingRoutes = (ctx: AppContext) => {
     currentUser,
     workspaceRole,
     activeWorkspace,
+    blockCopy,
   } = ctx
   const billing = deps.billing
 
@@ -61,6 +62,7 @@ export const billingRoutes = (ctx: AppContext) => {
       enforce_at: deps.billingEnforceAt ?? null,
       beta,
       subscribed: state.subscriptionActive,
+      blocked: state.blockedReason ? blockCopy[state.blockedReason] : null,
     })
   })
 
