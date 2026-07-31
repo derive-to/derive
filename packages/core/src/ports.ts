@@ -519,6 +519,15 @@ export interface CommentStore {
   createComment(c: NewComment): Promise<CommentRecord>
   /** Comments on an artifact, oldest-first; optionally filtered by thread state. */
   listComments(artifactId: string, opts?: CommentListOpts): Promise<CommentRecord[]>
+  /** The comment rail's whole payload: an artifact's comments AND the version their
+   *  anchors are re-checked against, in one call. Both are keyed on the same artifact,
+   *  so on the edge tier issuing them separately paid two ~80ms round trips for one
+   *  panel. `version` is null when the artifact has no such version yet. */
+  commentsPage(
+    artifactId: string,
+    versionN: number,
+    opts?: CommentListOpts,
+  ): Promise<{ comments: CommentRecord[]; version: VersionRecord | null }>
   getComment(id: string): Promise<CommentRecord | null>
   /** Patch a single comment's body, meta (reactions, edited, deleted), and/or
    *  anchor (the re-anchor sweep self-heals an element anchor it recovered across
@@ -1012,6 +1021,14 @@ export interface ContextStore {
   getContext(id: string): Promise<ContextRecord | null>
   /** A workspace's contexts, newest first. */
   listContexts(orgId: string): Promise<ContextRecord[]>
+  /** `listContexts` with each row's manifest artifact resolved to its `short_id` — the
+   *  list route's second query (`getArtifactsByIds` over the ids the first one returned)
+   *  folded into a LEFT JOIN. Not the same-key shape the other batches use: this is a
+   *  genuine FK dependency, which SQL can still answer in one round trip. `manifest_short_id`
+   *  is null when the manifest artifact is missing. */
+  contextsWithManifests(
+    orgId: string,
+  ): Promise<(ContextRecord & { manifest_short_id: string | null })[]>
   /** Remove a context and its sessions + messages, scoped to its workspace. */
   deleteContext(id: string, orgId: string): Promise<void>
   /** Stamp `runner_seen_at` (the queue route's liveness mark). The caller decides

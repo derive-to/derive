@@ -707,6 +707,34 @@ export class PgMetaStore implements MetaStore {
     return this.db.select().from(comment).where(where).orderBy(asc(comment.created_at))
   }
 
+  async commentsPage(
+    artifactId: string,
+    versionN: number,
+    opts?: CommentListOpts,
+  ): Promise<{ comments: CommentRecord[]; version: VersionRecord | null }> {
+    // The comments and the version their anchors re-resolve against, both keyed on this
+    // artifact — one round trip instead of two (see edge-pg.ts on why that matters).
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'comment' kind, row_to_json(c) doc FROM comment c
+        WHERE c.artifact_id = $1 AND ($2::text IS NULL OR c.state = $2)
+       UNION ALL
+       SELECT 'version', row_to_json(v) FROM version v
+        WHERE v.artifact_id = $1 AND v.n = $3`,
+      [artifactId, opts?.state ?? null, versionN],
+    )
+    const comments: CommentRecord[] = []
+    let version: VersionRecord | null = null
+    for (const r of rows) {
+      if (r.kind === "comment") comments.push(r.doc as CommentRecord)
+      else version = r.doc as VersionRecord
+    }
+    // listComments' ordering, preserved: oldest first (the rail renders in thread order).
+    comments.sort((a, b) =>
+      a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+    )
+    return { comments, version }
+  }
+
   async setThreadState(artifactId: string, threadId: string, state: CommentState): Promise<number> {
     const rows = await this.db
       .update(comment)
@@ -2460,6 +2488,25 @@ export class PgMetaStore implements MetaStore {
       .from(context)
       .where(eq(context.org_id, orgId))
       .orderBy(desc(context.created_at))
+  }
+  async contextsWithManifests(
+    orgId: string,
+  ): Promise<(ContextRecord & { manifest_short_id: string | null })[]> {
+    // The route resolved every context's manifest artifact in a SECOND query keyed on
+    // the ids the first one returned — a real FK dependency, so it could not be a
+    // same-key batch, but a LEFT JOIN still answers it in one round trip. LEFT, not
+    // INNER: a context whose manifest artifact is gone must still list (the route
+    // rendered it with a null short_id).
+    const rows = await this.db
+      .select({ context, manifest_short_id: artifact.short_id })
+      .from(context)
+      .leftJoin(artifact, eq(artifact.id, context.manifest_artifact_id))
+      .where(eq(context.org_id, orgId))
+      .orderBy(desc(context.created_at))
+    return rows.map((r) => ({
+      ...(r.context as ContextRecord),
+      manifest_short_id: r.manifest_short_id ?? null,
+    }))
   }
   // Sequential cascade (messages → sessions → context), like deleteCollection.
   // The org scope gates the WHOLE cascade, not just the context row — otherwise a

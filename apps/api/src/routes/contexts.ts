@@ -675,14 +675,12 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!(await managementPrincipal(c))) return bail(fail(c, 401, "unauthenticated"))
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
-      const rows = await meta.listContexts(org)
-      // Resolve every context's manifest artifact in ONE query, then map id → short_id —
-      // not a getArtifactById per row.
-      const manifests = await meta.getArtifactsByIds(rows.map((x) => x.manifest_artifact_id))
-      const shortById = new Map(manifests.map((a) => [a.id, a.short_id]))
-      const contexts = rows.map((x) =>
-        contextJson(x, shortById.get(x.manifest_artifact_id) ?? null),
-      )
+      // Contexts with each one's manifest artifact already resolved to its short_id —
+      // one round trip. Resolving the manifests was a second query keyed on the ids the
+      // first returned, so it could not be batched by key; the store answers it with a
+      // LEFT JOIN instead (see contextsWithManifests).
+      const rows = await meta.contextsWithManifests(org)
+      const contexts = rows.map((x) => contextJson(x, x.manifest_short_id))
       return c.json({ contexts })
     },
   )

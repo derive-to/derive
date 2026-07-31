@@ -1939,6 +1939,85 @@ export function runStoreContract(
       expect(detail.openThreads).toBe(0)
     })
 
+    it("commentsPage matches listComments + getVersion, honors ?state=, and preserves oldest-first order", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "v1" }))
+      await store.addVersion(a.id, newVersion({ message: "v2" }))
+      const openThread = uuid()
+      const doneThread = uuid()
+      for (const [thread, body] of [
+        [openThread, "first"],
+        [openThread, "second"],
+        [doneThread, "third"],
+      ] as const)
+        await store.createComment({
+          id: uuid(),
+          artifact_id: a.id,
+          thread_id: thread,
+          base_version: 1,
+          body_md: body,
+          author: "amy",
+        })
+      await store.setThreadState(a.id, doneThread, "resolved")
+
+      const all = await store.commentsPage(a.id, 2)
+      expect(all.comments).toEqual(await store.listComments(a.id))
+      expect(all.version).toEqual(await store.getVersion(a.id, 2))
+      expect(all.comments).toHaveLength(3)
+      expect(all.version?.n).toBe(2)
+      // Oldest-first is the rail's render order and part of the contract.
+      const times = all.comments.map((cm) => cm.created_at)
+      expect([...times].sort()).toEqual(times)
+      // The state filter passes through.
+      const open = await store.commentsPage(a.id, 2, { state: "open" })
+      expect(open.comments).toEqual(await store.listComments(a.id, { state: "open" }))
+      expect(open.comments).toHaveLength(2)
+      // A version that doesn't exist ⇒ null, not a throw (and the comments still come back).
+      const missing = await store.commentsPage(a.id, 99)
+      expect(missing.version).toBeNull()
+      expect(missing.comments).toHaveLength(3)
+    })
+
+    it("contextsWithManifests resolves each context's manifest short_id, preserving listContexts' rows, order and org scope", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Ctx")
+      const first = await store.createArtifact(newArtifact({ org_id: org }))
+      const second = await store.createArtifact(newArtifact({ org_id: org }))
+      const mk = (name: string, manifestId: string) =>
+        store.createContext({
+          id: `ctx_${uuid()}`,
+          org_id: org,
+          name,
+          agent_id: `ag_${uuid()}`,
+          manifest_artifact_id: manifestId,
+          created_by: "amy",
+        })
+      const a = await mk("First", first.id)
+      const b = await mk("Second", second.id)
+      // A context in ANOTHER workspace must not leak into this list.
+      const otherOrg = `org_${uuid()}`
+      await store.setWorkspace(otherOrg, "Elsewhere")
+      const elsewhere = await store.createArtifact(newArtifact({ org_id: otherOrg }))
+      await store.createContext({
+        id: `ctx_${uuid()}`,
+        org_id: otherOrg,
+        name: "Not yours",
+        agent_id: `ag_${uuid()}`,
+        manifest_artifact_id: elsewhere.id,
+        created_by: "amy",
+      })
+
+      const rows = await store.contextsWithManifests(org)
+      expect(rows.find((r) => r.id === a.id)?.manifest_short_id).toBe(first.short_id)
+      expect(rows.find((r) => r.id === b.id)?.manifest_short_id).toBe(second.short_id)
+      expect(rows.every((r) => r.org_id === org)).toBe(true)
+      // Same rows, same order, as listContexts — the JOIN must not reorder or drop.
+      // (Both schemas put a FK on manifest_artifact_id, so the JOIN's null branch is
+      // unreachable in practice; it stays a LEFT JOIN because the code it replaces also
+      // tolerated an unresolvable manifest rather than dropping the row.)
+      expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
+    })
+
     it("collectionsOverview matches listCollections + listRepoSources for the same org", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Overview")

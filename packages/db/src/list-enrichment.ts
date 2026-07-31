@@ -3,11 +3,15 @@ import type {
   ArtifactDetailOpts,
   AutomationRecord,
   CollectionRecord,
+  CommentListOpts,
+  CommentRecord,
+  ContextRecord,
   ListEnrichment,
   ListEnrichmentOpts,
   MetaStore,
   NotificationsPage,
   RepoSourceRecord,
+  VersionRecord,
 } from "@derive/core"
 
 /**
@@ -87,6 +91,34 @@ export const composeArtifactDetail = async (
     settings,
     managed: managedIds.includes(artifactId),
   }
+}
+
+/** See `composeListEnrichment` — the comment rail's twin (comments + anchor version). */
+export const composeCommentsPage = async (
+  store: Pick<MetaStore, "listComments" | "getVersion">,
+  artifactId: string,
+  versionN: number,
+  opts?: CommentListOpts,
+): Promise<{ comments: CommentRecord[]; version: VersionRecord | null }> => {
+  const [comments, version] = await Promise.all([
+    store.listComments(artifactId, opts),
+    store.getVersion(artifactId, versionN),
+  ])
+  return { comments, version }
+}
+
+/** See `composeListEnrichment` — the contexts list's manifest resolution. */
+export const composeContextsWithManifests = async (
+  store: Pick<MetaStore, "listContexts" | "getArtifactsByIds">,
+  orgId: string,
+): Promise<(ContextRecord & { manifest_short_id: string | null })[]> => {
+  const rows = await store.listContexts(orgId)
+  const manifests = await store.getArtifactsByIds(rows.map((x) => x.manifest_artifact_id))
+  const shortById = new Map(manifests.map((a) => [a.id, a.short_id]))
+  return rows.map((x) => ({
+    ...x,
+    manifest_short_id: shortById.get(x.manifest_artifact_id) ?? null,
+  }))
 }
 
 /** See `composeListEnrichment` — the notifications-bell twin (page + true total unread). */

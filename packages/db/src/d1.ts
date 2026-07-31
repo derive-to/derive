@@ -13,6 +13,8 @@ import {
   composeArtifactDetail,
   composeAutomationsWithExecutors,
   composeCollectionsOverview,
+  composeCommentsPage,
+  composeContextsWithManifests,
   composeListEnrichment,
   composeNotificationsPage,
 } from "./list-enrichment"
@@ -44,6 +46,8 @@ export function createD1Store(d1: D1Database): MetaStore {
     MetaStore,
     | "listEnrichment"
     | "artifactDetail"
+    | "commentsPage"
+    | "contextsWithManifests"
     | "notificationsPage"
     | "automationsWithExecutors"
     | "collectionsOverview"
@@ -299,6 +303,9 @@ export function createD1Store(d1: D1Database): MetaStore {
     ...store,
     listEnrichment: (opts) => composeListEnrichment(store, opts),
     artifactDetail: (opts) => composeArtifactDetail(store, opts),
+    commentsPage: (artifactId, versionN, opts) =>
+      composeCommentsPage(store, artifactId, versionN, opts),
+    contextsWithManifests: (orgId) => composeContextsWithManifests(store, orgId),
     notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
     automationsWithExecutors: (orgId, limit) =>
       composeAutomationsWithExecutors(store, orgId, limit),
