@@ -850,6 +850,7 @@ export function runStoreContract(
         base_version: 1,
       })
       await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "editor" })
+      await store.setFavorite(a.id, me)
 
       const ids = [a.id, b.id]
       const enr = await store.listEnrichment({
@@ -867,6 +868,11 @@ export function runStoreContract(
       expect(enr.signals).toEqual(await store.commentSignals(ids, me))
       expect(enr.proposals).toEqual(await store.openProposalCounts(ids))
       expect(enr.shareRoles).toEqual(await store.artifactRolesFor(me, ids))
+      // Page-scoped by contract: the whole-list call clipped to `ids`, which is what the
+      // pg driver's arm returns natively and what the compose path has to narrow to.
+      expect([...enr.favorites].sort()).toEqual(
+        (await store.listUserFavoriteIds(me)).filter((id) => ids.includes(id)).sort(),
+      )
       // Spot-check the shape is actually populated, not vacuously equal-empty.
       expect(enr.views[a.id]).toBe(2)
       expect(enr.tags[a.id]).toEqual(["alpha", "beta"])
@@ -874,6 +880,7 @@ export function runStoreContract(
       expect(enr.signals[a.id]?.open_threads).toBe(1)
       expect(enr.proposals[a.id]).toBe(1)
       expect(enr.shareRoles[a.id]).toBe("editor")
+      expect(enr.favorites).toEqual([a.id])
       expect(enr.views[b.id]).toBeUndefined()
     })
 
@@ -897,6 +904,8 @@ export function runStoreContract(
       expect(enr.views).toEqual({})
       expect(enr.signals).toEqual({})
       expect(enr.shareRoles).toEqual({})
+      // No viewer ⇒ no star to report, on either driver.
+      expect(enr.favorites).toEqual([])
     })
 
     it("degrades the user-directory pieces to empty instead of failing the listing", async () => {
@@ -936,6 +945,7 @@ export function runStoreContract(
         signals: {},
         proposals: {},
         shareRoles: {},
+        favorites: [],
       })
     })
   })

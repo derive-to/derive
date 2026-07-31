@@ -1090,6 +1090,7 @@ export class PgMetaStore implements MetaStore {
       signals: {},
       proposals: {},
       shareRoles: {},
+      favorites: [],
     }
     if (ids.length === 0 && ghIds.length === 0 && authorIds.length === 0) return out
     const params: unknown[] = []
@@ -1113,11 +1114,18 @@ export class PgMetaStore implements MetaStore {
           `SELECT 'view', artifact_id, count(*)::text, NULL, NULL FROM view
             WHERE artifact_id = ANY(${page}) GROUP BY artifact_id`,
         )
-      if (viewerId)
+      if (viewerId) {
+        const viewer = bind(viewerId)
         branches.push(
           `SELECT 'comment', artifact_id, thread_id, author_id, meta FROM comment
             WHERE state = 'open' AND artifact_id = ANY(${page})`,
+          // Page-scoped, so the arm reads at most `ids.length` rows off the unique
+          // (artifact_id, user_id) index — where the route's old standalone call read the
+          // viewer's whole favorite list, and paid a round trip to do it.
+          `SELECT 'favorite', artifact_id, NULL, NULL, NULL FROM artifact_favorite
+            WHERE user_id = ${viewer} AND artifact_id = ANY(${page})`,
         )
+      }
       if (memberId)
         branches.push(
           `SELECT 'share', artifact_id, role, NULL, NULL FROM artifact_member
@@ -1196,6 +1204,9 @@ export class PgMetaStore implements MetaStore {
           break
         case "share":
           out.shareRoles[r.k] = r.c1 as Role
+          break
+        case "favorite":
+          out.favorites.push(r.k)
           break
         case "handle":
           out.handles.push({ gh_id: r.k, username: r.c1 })

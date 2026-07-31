@@ -223,8 +223,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // ?author=<github login> narrows to artifacts whose current author is that login.
       const author = c.req.query("author")?.trim().slice(0, 100) || undefined
 
-      const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
-      const favorites = new Set(favIds)
+      // The FAVORITES FEED needs the star list before the list query, because it narrows
+      // by it. Every other listing only needs to know which rows on the page it got back
+      // are starred — and that now rides `listEnrichment` as one more arm keyed on the
+      // same page of ids, so the common case no longer opens with a round trip of its
+      // own. On the edge tier that is ~80ms off the request the library boot waits on.
+      const favIds = me && favOnly ? await meta.listUserFavoriteIds(me.id) : []
       // tag / collection / favorite each narrow to an id set; intersect when combined.
       let ids: string[] | undefined
       const narrow = (next: string[]) => {
@@ -367,6 +371,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       const feedback = enrichment.signals
       const proposalCounts = enrichment.proposals
       const shareRoles = enrichment.shareRoles
+      // Page-scoped and taken from the batch, for BOTH paths — including the favorites
+      // feed, whose `favIds` above is a narrowing input, not the row decoration. One
+      // source of truth means the star a row renders can't disagree with the star the
+      // enrichment saw.
+      const favorites = new Set(enrichment.favorites)
       return c.json({
         artifacts: page.map((a) => ({
           ...toJson(deps.baseUrl, a, []),

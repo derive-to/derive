@@ -38,6 +38,7 @@ export const composeListEnrichment = async (
     | "commentSignals"
     | "openProposalCounts"
     | "artifactRolesFor"
+    | "listUserFavoriteIds"
   >,
   opts: ListEnrichmentOpts,
 ): Promise<ListEnrichment> => {
@@ -56,7 +57,13 @@ export const composeListEnrichment = async (
   const signals = opts.viewerId ? await store.commentSignals(opts.ids, opts.viewerId) : {}
   const proposals = await store.openProposalCounts(opts.ids)
   const shareRoles = opts.memberId ? await store.artifactRolesFor(opts.memberId, opts.ids) : {}
-  return { views, tags, previews, handles, bylines, signals, proposals, shareRoles }
+  // Narrowed to the page here, where the pg driver narrows in SQL — the contract is
+  // "which of `ids` are starred", so a driver that reads the whole list must still clip
+  // it, or the two shapes disagree the moment the viewer stars something off this page.
+  const starred = opts.viewerId ? await store.listUserFavoriteIds(opts.viewerId) : []
+  const onPage = new Set(opts.ids)
+  const favorites = starred.filter((id) => onPage.has(id))
+  return { views, tags, previews, handles, bylines, signals, proposals, shareRoles, favorites }
 }
 
 /** See `composeListEnrichment` — the artifact-detail twin. */

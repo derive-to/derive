@@ -276,6 +276,11 @@ export interface ListEnrichment {
   signals: Record<string, CommentSignals>
   proposals: Record<string, number>
   shareRoles: Record<string, Role>
+  /** Which of `ids` the viewer has starred. Page-scoped on purpose: a listing only ever
+   *  asks "is THIS row a favorite", and the route used to answer it by fetching the
+   *  viewer's ENTIRE favorite list in a round trip of its own, taken before the list
+   *  query had even run. Empty for an anonymous viewer. */
+  favorites: string[]
 }
 
 export type PreviewStatus = "pending" | "ready" | "failed"
