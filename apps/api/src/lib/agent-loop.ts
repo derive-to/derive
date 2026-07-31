@@ -213,8 +213,18 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
   while (turns < maxTurns) {
     turns += 1
     let turn: ModelTurn
+    // ON THE FINAL TURN, OFFER NO TOOLS. The warning below asks the model to stop calling them;
+    // a model that ignores it spends the last turn on a call whose result is discarded, and the
+    // run fails having paid for everything. Withdrawing the tools makes that structurally
+    // impossible: the only move left is to answer. Watched on a scheduled run against a live
+    // cloud MCP, where a polite request alone converged some runs and not others.
+    const finalTurn = turns === maxTurns
     try {
-      turn = await input.callModel({ system: input.system, messages, tools: input.tools })
+      turn = await input.callModel({
+        system: input.system,
+        messages,
+        tools: finalTurn ? [] : input.tools,
+      })
     } catch (e) {
       // The model call itself failed (429, 5xx, a network blip). Retryable: the expensive part
       // has not happened yet and a second attempt may well succeed — the same judgement the

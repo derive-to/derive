@@ -30,10 +30,10 @@ const revisionText = (content = "# Fresh", confidence = 0.9) =>
 
 /** Scripted model: returns the given turns in order, recording what it was asked. */
 const scripted = (turns: ModelTurn[]) => {
-  const seen: { messages: unknown[]; system: string }[] = []
+  const seen: { messages: unknown[]; system: string; tools?: unknown[] }[] = []
   let i = 0
-  const callModel: AgentLoopInput["callModel"] = async ({ messages, system }) => {
-    seen.push({ messages: [...messages], system })
+  const callModel: AgentLoopInput["callModel"] = async ({ messages, system, tools }) => {
+    seen.push({ messages: [...messages], system, tools })
     const t = turns[Math.min(i, turns.length - 1)]
     i += 1
     return t as ModelTurn
@@ -306,6 +306,27 @@ describe("agent loop: what it lets the model read", () => {
     const delivered = JSON.stringify(model.seen[1]?.messages ?? [])
     expect(delivered).toMatch(/truncated \d+ characters/)
     expect(delivered).toMatch(/Answer with what you have rather than calling again/)
+  })
+
+  it("withdraws the tools on the final turn, so they cannot be wasted", async () => {
+    // The announcement is a request, and a model may ignore it — observed on a scheduled run
+    // against a live cloud MCP, where some runs converged and some spent the last turn on a call
+    // whose result is discarded, failing having paid for everything. With no tools offered, the
+    // only move left is to answer.
+    const model = scripted([toolTurn("t1"), toolTurn("t2"), turn({ text: revisionText() })])
+    const out = await runAgentLoop(
+      base({
+        callModel: model.callModel,
+        maxTurns: 3,
+        tools: [{ name: "read", description: "d", params: { type: "object" } }],
+        executeTool: async () => "ok",
+      }),
+    )
+    expect(out.ok).toBe(true)
+    // Offered on the early turns...
+    expect((model.seen[0] as unknown as { tools: unknown[] }).tools ?? []).toHaveLength(1)
+    // ...and withdrawn on the last.
+    expect((model.seen[2] as unknown as { tools: unknown[] }).tools ?? []).toHaveLength(0)
   })
 
   it("announces the last turn instead of springing it", async () => {
