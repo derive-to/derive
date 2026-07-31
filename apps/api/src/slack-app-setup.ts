@@ -46,6 +46,22 @@ export const buildSlackManifest = (baseUrl: string) => {
           should_escape: false,
         },
       ],
+      // "Save to Derive" on any message's overflow menu — the capture path (lib/slack-capture.ts).
+      // A MESSAGE shortcut rather than a global one: it needs the message it was fired on, and a
+      // global shortcut carries none. It belongs under `features`, beside slash_commands, NOT
+      // under `settings` beside interactivity — Slack's manifest schema rejects unknown keys, so
+      // the misplacement did not degrade to "shortcut missing", it failed the whole manifest.
+      // A manifest is the only way to declare one; an existing app picks it up when the manifest
+      // is re-applied, and the shortcut then appears without a per-workspace reinstall (it needs
+      // no new scope — `commands` already covers it).
+      shortcuts: [
+        {
+          name: "Save to Derive",
+          type: "message",
+          callback_id: SLACK_CAPTURE_CALLBACK,
+          description: "Save this message as a comment on a Derive doc",
+        },
+      ],
     },
     oauth_config: {
       // The bot install callback + the per-user "Sign in with Slack" (OIDC) link callback.
@@ -74,18 +90,6 @@ export const buildSlackManifest = (baseUrl: string) => {
           "tokens_revoked",
         ],
       },
-      // "Save to Derive" on any message's overflow menu — the capture path (lib/slack-capture.ts).
-      // A MESSAGE shortcut rather than a global one: it needs the message it was fired on, and a
-      // global shortcut carries none. Declared here because a manifest is the only way to add
-      // one; an existing install picks it up on reinstall, like the unfurl domains.
-      shortcuts: [
-        {
-          name: "Save to Derive",
-          type: "message",
-          callback_id: SLACK_CAPTURE_CALLBACK,
-          description: "Save this message as a comment on a Derive doc",
-        },
-      ],
       // Buttons on comment cards (resolve / reopen a thread) POST here.
       interactivity: {
         is_enabled: true,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { SLACK_CAPTURE_CALLBACK } from "../src/lib/slack-capture"
 import { buildSlackManifest, slackSetupHTML } from "../src/slack-app-setup"
 
 const BASE = "https://api.derive.example.com"
@@ -82,6 +83,34 @@ describe("buildSlackManifest", () => {
     const cmd = m.features.slash_commands?.[0]
     expect(cmd?.command).toBe("/derive")
     expect(cmd?.url).toBe(`${BASE}/v1/slack/commands`)
+  })
+
+  // Placement, not just presence. Slack's manifest schema rejects unknown keys outright, so a
+  // shortcut declared one level away — under `settings`, beside interactivity, where it reads
+  // like it belongs — does not degrade to "the shortcut is missing". It fails the whole manifest,
+  // and the app cannot be created or updated at all. That is exactly how this shipped, and every
+  // other assertion in this file passed while it did, because they all check contents rather
+  // than where the contents live.
+  it("declares Save to Derive as a message shortcut under features, not settings", () => {
+    expect(m.features.shortcuts).toEqual([
+      {
+        name: "Save to Derive",
+        type: "message",
+        callback_id: "derive_capture",
+        description: expect.any(String),
+      },
+    ])
+    expect((m.settings as Record<string, unknown>).shortcuts).toBeUndefined()
+    // The callback_id is the contract between the manifest and the interactivity handler: Slack
+    // routes a message_action by this string, so a rename on one side alone is a dead shortcut.
+    expect(m.features.shortcuts[0]?.callback_id).toBe(SLACK_CAPTURE_CALLBACK)
+  })
+
+  // Slack caps a shortcut's name at 24 characters and its description at 150.
+  it("keeps the shortcut inside Slack's field limits", () => {
+    const s = m.features.shortcuts[0]
+    expect(s?.name.length).toBeLessThanOrEqual(24)
+    expect(s?.description.length).toBeLessThanOrEqual(150)
   })
 
   it("is named just Derive (Slack caps the app name at 35 chars)", () => {
