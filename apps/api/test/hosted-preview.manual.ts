@@ -22,6 +22,10 @@ const BASE = process.env.BASE ?? ""
 const EMAIL = process.env.EMAIL ?? ""
 const PASSWORD = process.env.PASSWORD ?? ""
 const WEATHER = process.env.WEATHER ?? ""
+// REAL_MODEL=1 drops the scripted model and lets the substrate resolve the deployment's own
+// model plan — the only way to exercise the gateway adapter's tool-call translation end to end,
+// which is the half that cannot be proven by scripting the model.
+const REAL_MODEL = process.env.REAL_MODEL === "1"
 
 describe("LIVE: a hosted run uses a bound MCP source on a deployment", () => {
   it("claims, calls the source through the proxy, and writes", async () => {
@@ -90,40 +94,54 @@ describe("LIVE: a hosted run uses a bound MCP source on a deployment", () => {
       waitUntil: (p: Promise<unknown>) => {
         pending.push(p)
       },
-      callModel: async ({ tools, messages }) => {
-        turn += 1
-        if (turn === 1) {
-          offered.push(...tools.map((t) => t.name))
-          return {
-            text: "",
-            toolUses: [{ id: "t1", name: tools[0]?.name ?? "MISSING", input: { city: "London" } }],
-            costUsd: null,
-            done: false,
-          }
-        }
-        toolResult = JSON.stringify(messages[messages.length - 1])
-        return {
-          text: `<revision>${JSON.stringify({
-            content: `<h1>Weather</h1><p>Read live from a connected MCP server.</p><pre>${toolResult.slice(0, 400)}</pre>`,
-            filename: "index.html",
-            confidence: 0.95,
-            message: "weather from the connected source",
-          })}</revision>`,
-          toolUses: [],
-          costUsd: null,
-          done: true,
-        }
-      },
-    }).start({ runId: run.id ?? "", token: agent.token ?? "", server: BASE })
+      ...(REAL_MODEL ? {} : { callModel: scripted }),
+    } as Parameters<typeof loopSubstrate>[0] & Record<string, unknown>).start({
+      runId: run.id ?? "",
+      token: agent.token ?? "",
+      server: BASE,
+    })
     await Promise.all(pending)
+
+    async function scripted({
+      tools,
+      messages,
+    }: {
+      tools: { name: string }[]
+      messages: unknown[]
+    }) {
+      turn += 1
+      if (turn === 1) {
+        offered.push(...tools.map((t) => t.name))
+        return {
+          text: "",
+          toolUses: [{ id: "t1", name: tools[0]?.name ?? "MISSING", input: { city: "London" } }],
+          costUsd: null,
+          done: false,
+        }
+      }
+      toolResult = JSON.stringify(messages[messages.length - 1])
+      return {
+        text: `<revision>${JSON.stringify({
+          content: `<h1>Weather</h1><p>Read live from a connected MCP server.</p><pre>${toolResult.slice(0, 400)}</pre>`,
+          filename: "index.html",
+          confidence: 0.95,
+          message: "weather from the connected source",
+        })}</revision>`,
+        toolUses: [],
+        costUsd: null,
+        done: true,
+      }
+    }
 
     process.stdout.write(
       `\n  OFFERED ${JSON.stringify(offered)}\n  RESULT ${toolResult.slice(0, 200)}\n`,
     )
-    expect(offered, "the claim handed the run its source's tools").toHaveLength(1)
-    expect(offered[0]).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
-    expect(offered[0]?.endsWith("get_current_weather")).toBe(true)
-    expect(toolResult, "the model saw live data, not an error").toContain("temperature_c")
+    if (!REAL_MODEL) {
+      expect(offered, "the claim handed the run its source's tools").toHaveLength(1)
+      expect(offered[0]).toMatch(/^[a-zA-Z0-9_-]{1,64}$/)
+      expect(offered[0]?.endsWith("get_current_weather")).toBe(true)
+      expect(toolResult, "the model saw live data, not an error").toContain("temperature_c")
+    }
 
     const settled = (await (await api(`/v1/workspace/runs`)).json()) as {
       runs: { id: string; status: string; meta?: string }[]
