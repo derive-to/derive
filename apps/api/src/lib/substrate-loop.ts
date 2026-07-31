@@ -104,6 +104,13 @@ interface ClaimedRun {
   instruction: string
   targets?: { kind: string; id?: string; tag?: string; mode?: string }[]
   tools?: { def: LoopTool; ref: string }[]
+  /** Bound sources that contributed NOTHING, and why. The claim has always sent this and this
+   *  executor dropped it on the floor — so a run whose source was unreachable, or whose tool list
+   *  had been rewritten since a human approved it, behaved as though no source was ever bound.
+   *  The model was not told, and neither was the ledger: the run just failed to write and the
+   *  only account of it was "the agent produced nothing", which points at the wrong thing
+   *  entirely. The CLI runner has read this since it existed; this lane now does too. */
+  sources_quiet?: { connection_id: string; toolkit: string; reason: string }[]
   payloads?: unknown[]
   flags?: AutonomyFlags
   meta?: string | null
@@ -184,8 +191,28 @@ const buildPrompt = (run: ClaimedRun, targetId: string | undefined): string => {
       `You have these tools. Prefer to pull what you need, then write:\n` +
         run.tools.map((t) => `- ${t.def.name}: ${t.def.description}`).join("\n"),
     )
+  // A bound source that contributed nothing. Say so plainly: "the figures are missing because
+  // that source is unreachable" is a usable answer, and silently omitting it is not — the model
+  // would otherwise invent numbers or stall looking for a tool it was told it had.
+  if (run.sources_quiet?.length)
+    lines.push(
+      `These bound sources gave you NOTHING this run, so do not wait for them and do not guess ` +
+        `what they would have returned — say what is missing and why:\n` +
+        run.sources_quiet.map((q) => `- ${q.toolkit}: ${quietWhy(q.reason)}`).join("\n"),
+    )
   return lines.join("\n\n")
 }
+
+/** The same wording the CLI runner uses, so a human reads one explanation whichever lane ran. */
+const quietWhy = (reason: string): string =>
+  ({
+    unreachable: "the server could not be reached",
+    pin_mismatch:
+      "the server's tool descriptions CHANGED since a human approved them, so it is being " +
+      "ignored until someone re-approves it",
+    unpinned: "the connection was never successfully approved",
+    no_tools: "it exposed no tools",
+  })[reason] ?? reason
 
 /** Tool calls go through the WORK ITEM'S OWN endpoint: least-privilege is re-checked
  *  server-side, exactly as it does for the container
@@ -499,6 +526,10 @@ const serveOneRun = async (
         outcome: "failed",
         why: out.failure.error.slice(0, 200),
         retryable: out.failure.retryable,
+        // A run bound to a source that went dark usually fails for THAT reason, and the ledger
+        // used to say only "the agent produced nothing" — which reads as a broken model and sent
+        // the last investigation looking in the wrong place for hours. Carry it on every failure.
+        ...(run.sources_quiet?.length ? { sources_quiet: run.sources_quiet } : {}),
       },
     })
     return
