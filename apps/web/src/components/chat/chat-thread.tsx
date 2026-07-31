@@ -13,6 +13,9 @@ export interface ChatMessage {
   author_kind: "asker" | "agent"
   body_md: string
   created_at: string
+  /** The turn's structured payload on an agent message. Carries which MODEL answered, which is
+   *  how a surface can show what a conversation is running on without a second request. */
+  meta?: { model?: { id: string; label: string } } | null
 }
 
 /** Poll while a turn is in flight, stop when it settles. Cheap, and it survives a reload —

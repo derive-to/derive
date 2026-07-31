@@ -67,7 +67,6 @@ export function ChatPage() {
       queryFn: () => json<{ models: ChatModel[] }>("/v1/chat/models"),
       staleTime: Number.POSITIVE_INFINITY,
     }).data?.models ?? []
-  const chosen = models.find((m) => m.id === modelParam) ?? models.find((m) => m.is_default)
 
   // Past conversations, this person's own. Refetched when a new one opens so the picker does
   // not go stale behind a running turn.
@@ -103,6 +102,17 @@ export function ChatPage() {
   )
 
   const chat = useChatSession({ open, followUp, resetKey: org })
+
+  // WHICH MODEL THE PICKER SHOWS, and it has to be the one that would actually answer. The URL
+  // wins (the person just picked it); otherwise the model this conversation was LAST answered
+  // with, read off the transcript exactly as the server reads it. Without this a reloaded
+  // conversation showed the deploy's default while the next turn would have run on the model it
+  // was already using — the label lying about what happens next.
+  const lastUsed = [...chat.messages].reverse().find((m) => m.meta?.model?.id)?.meta?.model?.id
+  const chosen =
+    models.find((m) => m.id === modelParam) ??
+    models.find((m) => m.id === lastUsed) ??
+    models.find((m) => m.is_default)
 
   // A session named in the URL is the deep link every other surface points at ("continue in
   // chat"), and it is also how the history picker navigates — one path, so a reload of a
