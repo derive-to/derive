@@ -44,7 +44,8 @@ export const embedRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   // Everything an unfurl/embed surface needs for one artifact, plus the absolute
-  // URLs of the sibling endpoints. Counts come from the live version + comment list.
+  // URLs of the sibling endpoints. Counts are computed in the database, not by
+  // measuring lists read into the Worker — see the round-trip note below.
   const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
     // One round trip. The counts used to come from `listVersions(...).length` and
     // `listComments(...).length` — two whole-table reads to produce two integers, on the
