@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { FakeBilling } from "./fake-billing"
+import { FakeBilling, subscriptionSnapshot } from "./fake-billing"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: `U${n}` })
@@ -22,15 +22,10 @@ const hook = (
     body: JSON.stringify(event),
   })
 
-const SNAP = {
-  id: "sub_1",
+const SNAP = subscriptionSnapshot({
   customerId: "cus_fake_default",
-  status: "active",
-  priceLookupKey: "team_monthly",
-  quantity: 4,
   currentPeriodEnd: "2026-08-30T00:00:00.000Z",
-  orgId: "default",
-}
+})
 
 describe("billing routes", () => {
   it("GET /v1/billing: owner sees free-tier truth", async () => {

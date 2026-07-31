@@ -2,23 +2,10 @@ import { SqliteMetaStore } from "@derive/db/sqlite"
 import { describe, expect, it } from "vitest"
 import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
-import { FakeBilling } from "./fake-billing"
+import { FakeBilling, subscriptionRow } from "./fake-billing"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: `U${n}` })
-
-const activeSub = (quantity: number) => ({
-  org_id: "default",
-  stripe_customer_id: "cus_1",
-  stripe_subscription_id: "sub_1",
-  tier: "team" as const,
-  billing_interval: "month" as const,
-  status: "active",
-  quantity,
-  current_period_end: null,
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-})
 
 describe("seat sync", () => {
   it("adding an editor bumps Stripe quantity; demoting to a non-billable role does not", async () => {
@@ -37,7 +24,7 @@ describe("seat sync", () => {
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
     await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
     await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
-    await meta.upsertSubscription(activeSub(3))
+    await meta.upsertSubscription(subscriptionRow({ quantity: 3 }))
 
     // PUT /v1/workspace/members adds u4 as editor (4 billable seats now).
     const r = await app.request("/v1/workspace/members", {
@@ -50,7 +37,7 @@ describe("seat sync", () => {
 
     // "viewer" is an artifact-sharing role, not a valid workspace-membership role
     // (isWorkspaceRole only allows owner/editor/commenter) — "commenter" is the
-    // workspace-role analog: a non-billable role, same as the brief's intent.
+    // workspace-role analog: a non-billable role.
     const demote = await app.request("/v1/workspace/members", {
       ...jsonAs(as("u1@x.test"), { email: "u4@x.test", role: "commenter" }),
       method: "PUT",
@@ -77,7 +64,7 @@ describe("seat sync", () => {
     const { app, meta } = makeAuthedApp("ss_heal", [u(1), u(2), u(3)], "editor", {
       deps: { billing: fake },
     })
-    await meta.upsertSubscription(activeSub(9)) // drifted
+    await meta.upsertSubscription(subscriptionRow({ quantity: 9 })) // drifted
     const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
     expect((await r.json()).quantity).toBe(3)
     expect(fake.quantityCalls.at(-1)).toEqual({ subscriptionId: "sub_1", quantity: 3 })
@@ -96,7 +83,7 @@ describe("seat sync", () => {
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
     await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
     await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
-    await meta.upsertSubscription(activeSub(3))
+    await meta.upsertSubscription(subscriptionRow({ quantity: 3 }))
 
     // POST /v1/workspace/invites with u4's email — an existing account, so this
     // takes the direct-add branch (not the pending-invite branch).
@@ -119,7 +106,7 @@ describe("seat sync", () => {
     await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
     await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
     await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
-    await meta.upsertSubscription(activeSub(2))
+    await meta.upsertSubscription(subscriptionRow({ quantity: 2 }))
 
     const before = fake.quantityCalls.length
     // u3 is added as "commenter" — a non-billable role, so billableSeatCount stays
@@ -150,18 +137,13 @@ describe("seat sync", () => {
 // MetaStore rather than through HTTP; these tests do the same for the new seat-sync
 // hook, calling it directly with a real SqliteMetaStore + FakeBilling.
 describe("purgeUserDataAndSyncSeats (account deletion → seat sync)", () => {
-  const sub = (orgId: string, subscriptionId: string, quantity: number) => ({
-    org_id: orgId,
-    stripe_customer_id: `cus_${orgId}`,
-    stripe_subscription_id: subscriptionId,
-    tier: "team" as const,
-    billing_interval: "month" as const,
-    status: "active",
-    quantity,
-    current_period_end: null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  })
+  const sub = (orgId: string, subscriptionId: string, quantity: number) =>
+    subscriptionRow({
+      org_id: orgId,
+      stripe_customer_id: `cus_${orgId}`,
+      stripe_subscription_id: subscriptionId,
+      quantity,
+    })
 
   it("recounts Stripe seats on every workspace the deleted user was editor/owner in", async () => {
     const meta = new SqliteMetaStore(":memory:")

@@ -1,6 +1,6 @@
 import type { MembershipRecord, MetaStore } from "@derive/core"
 import type { BillingDriver } from "./billing"
-import { syncSeats } from "./seats"
+import { isBillableRole, syncSeats } from "./seats"
 
 // Account-deletion guard: the workspaces a user SOLELY owns that still have other members.
 // Deleting the account would leave those workspaces without an admin, so we block until the
@@ -48,8 +48,8 @@ export async function purgeUserDataAndSyncSeats(
   userId: string,
 ): Promise<void> {
   const billableOrgs = (await meta.listWorkspaces(userId))
-    .filter((ws) => ws.role === "editor" || ws.role === "owner")
+    .filter((ws) => isBillableRole(ws.role))
     .map((ws) => ws.id)
   await meta.deleteUserData(userId)
-  for (const orgId of billableOrgs) await syncSeats({ meta, billing }, orgId)
+  await Promise.all(billableOrgs.map((orgId) => syncSeats({ meta, billing }, orgId)))
 }

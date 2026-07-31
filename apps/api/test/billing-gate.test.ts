@@ -2,35 +2,18 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { MetaStore } from "@derive/core"
-import { SqliteMetaStore } from "@derive/db/sqlite"
-import { FsBlobStore } from "@derive/storage/fs"
-import Database from "better-sqlite3"
 import { afterAll, describe, expect, it } from "vitest"
-import { createApp } from "../src/app"
-import { sha256 } from "../src/lib/crypto"
-import { FakeBilling } from "./fake-billing"
+import { FakeBilling, subscriptionRow } from "./fake-billing"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { appWithGrant, call, toolIsError, toolText } from "./mcp-helpers"
 
 const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: `U${n}` })
 const FOUR = [u(1), u(2), u(3), u(4)]
 const THREE = [u(1), u(2), u(3)]
 const PAST = "2000-01-01T00:00:00Z"
 
-const seedSub = async (meta: MetaStore, status: string, orgId = "default") => {
-  const now = new Date().toISOString()
-  await meta.upsertSubscription({
-    org_id: orgId,
-    stripe_customer_id: "cus_1",
-    stripe_subscription_id: "sub_1",
-    tier: "team",
-    billing_interval: "month",
-    status,
-    quantity: 4,
-    current_period_end: null,
-    created_at: now,
-    updated_at: now,
-  })
-}
+const seedSub = async (meta: MetaStore, status: string, orgId = "default") =>
+  meta.upsertSubscription(subscriptionRow({ org_id: orgId, status }))
 
 describe("billing gate", () => {
   it("beta: 4 editor seats publish freely", async () => {
@@ -102,7 +85,7 @@ describe("billing gate", () => {
     expect((await publishAs(app, "x".repeat(100), {}, as("u2@x.test"))).status).toBe(201)
   })
 
-  // Three bypass paths found in review: each records a publish into a billing-blocked
+  // Three bypass paths: each records a publish into a billing-blocked
   // workspace without ever consulting billingBlocked/BILLING_BLOCK_COPY. Seeded THREE
   // (never four) so the workspace is only ever lapsed by a canceled subscription, never
   // incidentally over the free seat limit — isolates the choke point under test.
@@ -201,79 +184,10 @@ describe("billing gate", () => {
 const mcpDir = mkdtempSync(join(tmpdir(), "derive-bg-mcp-"))
 afterAll(() => rmSync(mcpDir, { recursive: true, force: true }))
 
-function appWithGrant(
-  name: string,
-  scopes: string,
-  extra: Partial<Parameters<typeof createApp>[0]> = {},
-) {
-  const path = join(mcpDir, `${name}.db`)
-  const meta = new SqliteMetaStore(path)
-  const db = new Database(path)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, brandprint TEXT);
-    CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
-    CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
-  `)
-  db.prepare(
-    `INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_o','owner@x.test','Owner')`,
-  ).run()
-  db.prepare(`INSERT OR IGNORE INTO "oauthClient"(clientId,name) VALUES('cli','Claude')`).run()
-  db.prepare(
-    `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
-  ).run(
-    sha256(`tok_${name}`),
-    "cli",
-    "u_o",
-    JSON.stringify(scopes.split(/\s+/).filter(Boolean)),
-    new Date(Date.now() + 3_600_000).toISOString(),
-  )
-  db.close()
-  const blobs = new FsBlobStore(join(mcpDir, `${name}-blobs`))
-  const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok", ...extra })
-  return { app, token: `tok_${name}`, meta }
-}
-
-type McpApp = ReturnType<typeof createApp>
-
-async function rpc(app: McpApp, token: string, body: unknown) {
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    accept: "application/json, text/event-stream",
-    authorization: `Bearer ${token}`,
-  }
-  const res = await app.request("/mcp", { method: "POST", headers, body: JSON.stringify(body) })
-  const ct = res.headers.get("content-type") ?? ""
-  const txt = await res.text()
-  let parsed: { result?: unknown; error?: unknown } | null = null
-  if (ct.includes("application/json")) {
-    parsed = JSON.parse(txt)
-  } else if (ct.includes("text/event-stream")) {
-    const dataLine = txt.split("\n").find((l) => l.startsWith("data:"))
-    if (dataLine) parsed = JSON.parse(dataLine.slice(5).trim())
-  }
-  return { status: res.status, parsed }
-}
-
-const call = (app: McpApp, token: string, name: string, args: Record<string, unknown> = {}) =>
-  rpc(app, token, {
-    jsonrpc: "2.0",
-    id: 9,
-    method: "tools/call",
-    params: { name, arguments: args },
-  })
-
-type RpcOut = Awaited<ReturnType<typeof rpc>>
-const toolText = (r: RpcOut): string => {
-  const t = (r.parsed?.result as { content?: { text: string }[] } | undefined)?.content?.[0]?.text
-  if (t == null) throw new Error(`no tool text in response: ${JSON.stringify(r.parsed)}`)
-  return t
-}
-const toolIsError = (r: RpcOut): boolean =>
-  !!(r.parsed?.result as { isError?: boolean } | undefined)?.isError
-
 describe("MCP brandprint scaffold billing gate", () => {
   it("blocked workspace: publishing derive://brandprint/profile refuses before scaffolding", async () => {
     const { app, token, meta } = appWithGrant(
+      mcpDir,
       "bp-billing",
       "openid derive:read derive:publish derive:manage",
       { billing: new FakeBilling(), billingEnforceAt: PAST },

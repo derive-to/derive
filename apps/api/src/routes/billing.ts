@@ -1,17 +1,11 @@
+import { resolveBillingState } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { recordFromSnapshot } from "../lib/billing"
+import { lookupKeyFor, recordFromSnapshot } from "../lib/billing"
 import { fail, readJson } from "../lib/http"
-import { syncSeats } from "../lib/seats"
+import { billableSeatCount, isBillableRole, syncSeats } from "../lib/seats"
 import { log } from "../log"
-
-const LOOKUP: Record<string, string> = {
-  "team:month": "team_monthly",
-  "team:year": "team_annual",
-  "business:month": "business_monthly",
-  "business:year": "business_annual",
-}
 
 /**
  * The Stripe billing rail: the workspace's billing truth (GET), start a
@@ -28,6 +22,7 @@ export const billingRoutes = (ctx: AppContext) => {
     meta,
     deps,
     billingState,
+    billingEnforceAt,
     requireWorkspace,
     currentUser,
     workspaceRole,
@@ -39,31 +34,38 @@ export const billingRoutes = (ctx: AppContext) => {
   // read is for everyone, the PATCH-equivalents here — checkout, portal — stay
   // "manage" only). Also heals Stripe seat drift as a side effect: a membership
   // write's own syncSeats call can be lost (a dropped response, a swallowed Stripe
-  // hiccup), so the next look here re-checks and pushes the correction before
-  // reading state, so the response reflects reality regardless of who's reading.
+  // hiccup), so the next look here re-checks and pushes the correction — reusing the
+  // subscription + seat count already fetched below (`pre`) instead of syncSeats
+  // re-querying them — before reading state, so the response reflects reality
+  // regardless of who's reading.
   app.get("/v1/billing", async (c) => {
     const role = await workspaceRole(c)
     if (role === null) return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
-    await syncSeats({ meta, billing }, org)
-    const [state, sub, stored, assets, members] = await Promise.all([
-      billingState(org),
+    const [sub, members, stored, assets] = await Promise.all([
       meta.getSubscription(org),
+      meta.listMemberships(org),
       meta.storageBytes(org),
       meta.assetStorageBytes(org),
-      meta.listMemberships(org),
     ])
-    const seats = members.filter((m) => m.role === "editor" || m.role === "owner").length
-    const enforceAt = deps.billingEnforceAt ? new Date(deps.billingEnforceAt) : null
-    const enforced = !!enforceAt && enforceAt.getTime() <= Date.now()
-    const beta = !enforced && !state.subscriptionActive
+    const seats = members.filter((m) => isBillableRole(m.role)).length
+    const healed = await syncSeats({ meta, billing }, org, { sub, seats })
+    const subOut = healed ?? sub
+    const state = resolveBillingState({
+      subscription: subOut,
+      seatCount: seats,
+      now: new Date(),
+      enforceAt: billingEnforceAt,
+      fallbackMaxBytes: deps.maxBytes,
+    })
+    const beta = state.whiteLabelEntitled && !state.subscriptionActive
     return c.json({
       tier: state.tier,
-      status: sub?.status ?? null,
-      interval: sub?.billing_interval ?? null,
-      quantity: sub?.quantity ?? null,
+      status: subOut?.status ?? null,
+      interval: subOut?.billing_interval ?? null,
+      quantity: subOut?.quantity ?? null,
       seats,
-      current_period_end: sub?.current_period_end ?? null,
+      current_period_end: subOut?.current_period_end ?? null,
       storage: { used_bytes: stored + assets, cap_bytes: state.storageCapBytes ?? null },
       enforce_at: deps.billingEnforceAt ?? null,
       beta,
@@ -94,13 +96,11 @@ export const billingRoutes = (ctx: AppContext) => {
       email: me?.email ?? null,
       existingId: existing?.stripe_customer_id ?? null,
     })
-    const members = await meta.listMemberships(org)
-    const seats = Math.max(
-      1,
-      members.filter((m) => m.role === "editor" || m.role === "owner").length,
-    )
+    const seats = Math.max(1, await billableSeatCount(meta, org))
     // Stub row: remembers the customer id across an abandoned checkout. Grants
     // nothing (status "incomplete", no subscription id) until the webhook lands.
+    // tier/interval here are placeholders to satisfy the row shape — the webhook
+    // overwrites them with Stripe's truth once the subscription actually exists.
     const nowIso = new Date().toISOString()
     await meta.upsertSubscription({
       org_id: org,
@@ -116,7 +116,7 @@ export const billingRoutes = (ctx: AppContext) => {
     })
     const { url } = await billing.createCheckoutSession({
       customerId,
-      priceLookupKey: LOOKUP[`${b.tier}:${b.interval}`] as string,
+      priceLookupKey: lookupKeyFor(b.tier, b.interval),
       quantity: seats,
       orgId: org,
       successUrl: `${deps.baseUrl}/settings/billing?checkout=success`,

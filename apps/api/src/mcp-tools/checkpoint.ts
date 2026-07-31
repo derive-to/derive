@@ -7,7 +7,6 @@ import {
   roleAllows,
 } from "@derive/core"
 import { z } from "zod"
-import { BILLING_BLOCK_COPY } from "../context"
 import { afterPublish } from "../lib/after-publish"
 import type { ToolContext } from "../mcp-tool-context"
 import { json, text } from "../mcp-util"
@@ -132,8 +131,8 @@ export function registerCheckpointTool(tc: ToolContext): void {
       const bytes = new TextEncoder().encode(content)
       // A checkpoint is always a live publish (no propose concept here), so it's gated
       // the same as any other publish/approve choke point.
-      const billingBlock = await ctx.billingBlocked(targetOrg)
-      if (billingBlock) return text(BILLING_BLOCK_COPY[billingBlock].message)
+      const blocked = await ctx.billingBlocked(targetOrg)
+      if (blocked) return text(blocked.message)
       // Same workspace storage cap the HTTP routes and the publish `edits` path
       // enforce — checkpoint fires repeatedly by design, so it's the MCP path
       // most likely to accrete blobs past an exceeded quota.

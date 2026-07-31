@@ -21,9 +21,8 @@ const TIER_LABELS: Record<BillingInfo["tier"], string> = {
   business: "Business",
 }
 
-// bytes → "1.2 GB", the brief's fallback formula. No byte-format helper exists yet
-// in lib/ (checked: no formatBytes/formatSize anywhere in apps/web/src), so this is
-// the one place it's spelled out; a future shared helper should replace it here too.
+// bytes → "1.2 GB". No shared byte-format helper exists in web/src/lib yet; move
+// this there when a second caller shows up.
 const gb = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 
 // Mirrors LAPSED_SUBSCRIPTION_STATUSES in packages/core/src/billing.ts (not
@@ -37,8 +36,8 @@ const statusLine = (b: BillingInfo): string | null => {
     // lapses, so it can't distinguish "never subscribed" from "canceled" — only
     // the raw status can, so the message is derived from status alone.
     if (b.status && LAPSED_STATUSES.has(b.status))
-      // During beta, nothing is actually paused (enforcement hasn't arrived yet) — the
-      // beta note right below this line already says so, so don't also claim it is.
+      // Beta: nothing is actually paused yet, so don't claim it is. The beta note in
+      // the plan card covers messaging.
       return b.beta ? "Canceled." : "Canceled. Publishing is paused until an owner renews."
     return null
   }

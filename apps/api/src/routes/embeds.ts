@@ -37,7 +37,7 @@ import { fail, toBody } from "../lib/http"
  * org/password artifacts never leak a title — they get a generic locked card.
  */
 export const embedRoutes = (ctx: AppContext) => {
-  const { meta, authorize, blobs, billingState } = ctx
+  const { meta, authorize, blobs, effectiveWhiteLabel } = ctx
   const baseUrl = ctx.deps.baseUrl
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
@@ -208,9 +208,7 @@ export const embedRoutes = (ctx: AppContext) => {
     // for everyone else the bare frame is ignored — the mark is the free tier's rent.
     // Effective white-label also requires entitlement (beta, or an active
     // subscription) — the toggle alone isn't enough once billing is enforced.
-    const settings = await meta.getOrgSettings(artifact.org_id)
-    const whiteLabel =
-      settings.whiteLabel && (await billingState(artifact.org_id)).whiteLabelEntitled
+    const whiteLabel = await effectiveWhiteLabel(artifact.org_id)
     const shell =
       whiteLabel && c.req.query("chrome") === "none"
         ? bareShell({ info, src })

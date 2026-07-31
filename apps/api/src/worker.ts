@@ -24,7 +24,7 @@ import type { SendEmailBinding } from "./email-cf"
 import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedder"
 import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
-import { stripeBillingDriver } from "./lib/billing"
+import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
@@ -253,12 +253,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       // Hoisted above makeAuth (rather than built inline down at createApp's `billing:`
       // dep, where it lived before) so the account-deletion hook below and the billing
       // routes share the exact same driver instance instead of constructing two.
-      const billing = env.STRIPE_SECRET_KEY
-        ? stripeBillingDriver({
-            secretKey: env.STRIPE_SECRET_KEY,
-            webhookSecret: env.STRIPE_WEBHOOK_SECRET,
-          })
-        : undefined
+      const billing = makeBillingDriver(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET)
       const auth = makeAuth(authDb, baseUrl, secret, {
         usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
         // Transactional auth emails ride the same outbox; the WebhookOutbox DO drains it
@@ -321,10 +316,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Encrypt stored GitHub PATs at rest with the edge auth secret.
         encryptionKey: secret,
         slack: slackFromEnv(env),
-        // Billing routes are dark until a Stripe secret key is bound; self-host
-        // (and any deploy without one) never needs to set it. (Same instance the
-        // account-deletion seat-sync hook above uses — hoisted so there's exactly
-        // one driver, not two.)
         billing,
         billingEnforceAt: env.DERIVE_BILLING_ENFORCE_AT,
         superAdmins: superAdminsFromEnv(env),

@@ -1,6 +1,6 @@
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
-import { type AppContext, BILLING_BLOCK_COPY } from "../context"
+import type { AppContext } from "../context"
 import { bail, fail, readJson, str } from "../lib/http"
 
 /** Review rounds: the human side of the /derive loop. An agent requests a review
@@ -10,7 +10,7 @@ import { bail, fail, readJson, str } from "../lib/http"
  *  routes; a terminal "go" records the same call. Humans never resolve threads.
  *  The ReviewRound response schema is the single source for the web client's type. */
 export const reviewRoutes = (ctx: AppContext) => {
-  const { meta, bus, currentUser, requireArtifact, billingBlocked } = ctx
+  const { meta, bus, currentUser, requireArtifact, billingGate } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const ReviewRound = z
@@ -95,11 +95,8 @@ export const reviewRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await requireArtifact(c, "approve", { split: true })
       if (artifact instanceof Response) return bail(artifact)
-      const billingBlock = await billingBlocked(artifact.org_id)
-      if (billingBlock) {
-        const b = BILLING_BLOCK_COPY[billingBlock]
-        return bail(fail(c, 402, b.message, { code: b.code }))
-      }
+      const blocked = await billingGate(c, artifact.org_id)
+      if (blocked) return bail(blocked)
       const body = await readJson(c, z.object({ note: z.unknown().optional() }))
       if (body instanceof Response) return bail(body)
       const me = await currentUser(c)

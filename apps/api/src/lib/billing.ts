@@ -41,11 +41,32 @@ export interface BillingDriver {
   verifyWebhook(payload: string, signature: string): Promise<BillingEvent>
 }
 
-const TIERS: Record<string, { tier: "team" | "business"; interval: "month" | "year" }> = {
-  team_monthly: { tier: "team", interval: "month" },
-  team_annual: { tier: "team", interval: "year" },
-  business_monthly: { tier: "business", interval: "month" },
-  business_annual: { tier: "business", interval: "year" },
+/** The one source of truth for the four (tier, interval) combinations the rail sells,
+ *  each keyed by its Stripe price lookup key. TIERS (webhook → local row) and
+ *  lookupKeyFor (checkout → Stripe) both derive from this instead of keeping their
+ *  own parallel maps. */
+const PLANS = [
+  { tier: "team", interval: "month", lookupKey: "team_monthly" },
+  { tier: "team", interval: "year", lookupKey: "team_annual" },
+  { tier: "business", interval: "month", lookupKey: "business_monthly" },
+  { tier: "business", interval: "year", lookupKey: "business_annual" },
+] as const satisfies readonly {
+  tier: "team" | "business"
+  interval: "month" | "year"
+  lookupKey: string
+}[]
+
+const TIERS: Record<string, { tier: "team" | "business"; interval: "month" | "year" }> =
+  Object.fromEntries(PLANS.map((p) => [p.lookupKey, { tier: p.tier, interval: p.interval }]))
+
+/** The Stripe price lookup key for a (tier, interval) pair — the checkout route's
+ *  side of PLANS, mirroring TIERS on the webhook side. */
+export const lookupKeyFor = (tier: "team" | "business", interval: "month" | "year"): string => {
+  const plan = PLANS.find((p) => p.tier === tier && p.interval === interval)
+  // Unreachable for any of the four real combinations (exhaustive above); a
+  // defensive throw beats silently checking out the wrong plan.
+  if (!plan) throw new Error(`no plan for ${tier}/${interval}`)
+  return plan.lookupKey
 }
 
 /** Snapshot → local row. Unknown lookup keys (a price edited by hand in the
@@ -197,3 +218,12 @@ export const stripeBillingDriver = (a: {
     },
   }
 }
+
+/** Build the real Stripe driver from an operator's secret key, or undefined when it's
+ *  unset — billing is then simply disabled; self-host deployments never need to
+ *  configure one. */
+export const makeBillingDriver = (
+  secretKey?: string,
+  webhookSecret?: string,
+): BillingDriver | undefined =>
+  secretKey ? stripeBillingDriver({ secretKey, webhookSecret }) : undefined

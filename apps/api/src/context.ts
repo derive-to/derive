@@ -43,7 +43,7 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
-import { syncSeats } from "./lib/seats"
+import { billableSeatCount, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
@@ -742,24 +742,40 @@ export function buildContext(deps: AppDeps) {
   // plus a live editor-seat count. Never calls Stripe — resolveBillingState is pure and
   // DB-free, this just feeds it.
   const billingState = async (orgId: string): Promise<BillingState> => {
-    const [sub, members] = await Promise.all([
+    const [sub, seats] = await Promise.all([
       meta.getSubscription(orgId),
-      meta.listMemberships(orgId),
+      billableSeatCount(meta, orgId),
     ])
     return resolveBillingState({
       subscription: sub,
-      seatCount: members.filter((m) => m.role === "editor" || m.role === "owner").length,
+      seatCount: seats,
       now: new Date(),
       enforceAt: billingEnforceAt,
       fallbackMaxBytes: deps.maxBytes,
     })
   }
-  // Null = free to publish/approve; otherwise the reason a caller looks up in
-  // BILLING_BLOCK_COPY for the code + message to surface.
-  const billingBlocked = async (orgId: string): Promise<"needs_team" | "lapsed" | null> => {
+  // Null = free to publish/approve; otherwise the refusal copy (code + message) to
+  // surface to the caller.
+  const billingBlocked = async (
+    orgId: string,
+  ): Promise<{ code: string; message: string } | null> => {
     const s = await billingState(orgId)
-    return s.canPublishApprove ? null : (s.blockedReason ?? null)
+    return s.canPublishApprove || !s.blockedReason ? null : BILLING_BLOCK_COPY[s.blockedReason]
   }
+  // The full gate as a route guard, mirroring `limited`: a Response to return when
+  // blocked, else null to continue.
+  const billingGate = async (c: Context, orgId: string): Promise<Response | null> => {
+    const b = await billingBlocked(orgId)
+    return b ? fail(c, 402, b.message, { code: b.code }) : null
+  }
+
+  // Show the Made-with-Derive mark, or not? A workspace's whiteLabel toggle only takes
+  // effect when it's also ENTITLED (beta, or an active subscription) — the settings
+  // check runs first so the billing queries short-circuit away entirely once
+  // white-label is off, which is the common case.
+  const effectiveWhiteLabel = async (orgId: string): Promise<boolean> =>
+    (await meta.getOrgSettings(orgId)).whiteLabel === true &&
+    (await billingState(orgId)).whiteLabelEntitled
 
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
   // Sums published content (storageBytes) and staged /v1/assets uploads
@@ -772,7 +788,11 @@ export function buildContext(deps: AppDeps) {
   const overStorage = async (orgId: string, incoming: number): Promise<boolean> => {
     const cap = (await billingState(orgId)).storageCapBytes
     if (!cap) return false
-    return (await meta.storageBytes(orgId)) + (await meta.assetStorageBytes(orgId)) + incoming > cap
+    const [stored, assets] = await Promise.all([
+      meta.storageBytes(orgId),
+      meta.assetStorageBytes(orgId),
+    ])
+    return stored + assets + incoming > cap
   }
 
   // Lazy provisioning: the first member of a workspace is its owner; everyone
@@ -1219,6 +1239,9 @@ export function buildContext(deps: AppDeps) {
     overStorage,
     billingState,
     billingBlocked,
+    billingGate,
+    effectiveWhiteLabel,
+    billingEnforceAt,
     ensureMembership,
     activeWorkspace,
     setWsCookie,

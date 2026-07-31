@@ -18,7 +18,7 @@ import { restEmbedder } from "./embedder"
 import { loadLocalEmbedder } from "./embedder-local"
 import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
-import { stripeBillingDriver } from "./lib/billing"
+import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
@@ -201,9 +201,7 @@ const emailEnabled = !!(cfg.resendApiKey && cfg.emailFrom)
 // Hoisted above makeAuth (rather than built inline down at createApp's `billing:` dep,
 // where it lived before) so the account-deletion hook below and the billing routes
 // share the exact same driver instance instead of constructing two.
-const billing = cfg.stripeSecretKey
-  ? stripeBillingDriver({ secretKey: cfg.stripeSecretKey, webhookSecret: cfg.stripeWebhookSecret })
-  : undefined
+const billing = makeBillingDriver(cfg.stripeSecretKey, cfg.stripeWebhookSecret)
 const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
   usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
   // Render + enqueue transactional auth emails (reset / verify / change-email) onto the
@@ -463,9 +461,6 @@ const app = createApp({
   // Storage backstops: unset = unlimited (self-host stays open).
   maxArtifacts: cfg.maxArtifacts,
   maxBytes: cfg.maxBytes,
-  // Billing routes are dark until a Stripe secret key is configured; self-host
-  // never needs to set one. (Same instance the account-deletion seat-sync hook
-  // above uses — hoisted so there's exactly one driver, not two.)
   billing,
   billingEnforceAt: cfg.billingEnforceAt,
   // Per-actor write rate limits (per minute); unset = built-in defaults.

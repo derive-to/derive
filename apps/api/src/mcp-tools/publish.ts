@@ -15,7 +15,6 @@ import {
 } from "@derive/core"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
-import { BILLING_BLOCK_COPY } from "../context"
 import { markAddressed } from "../lib/addressed"
 import { afterPublish } from "../lib/after-publish"
 import { cleanPath, mergeBundleZip, zipBundleFiles } from "../lib/bundle"
@@ -95,8 +94,8 @@ export function registerPublishTool(tc: ToolContext): void {
     // human-approved proposal (see `profileForReview` in the caller) and so stays free
     // of this gate. A billing-blocked workspace must refuse the scaffold exactly like
     // any other live publish, and BEFORE any of it writes.
-    const billingBlock = await ctx.billingBlocked(targetOrg)
-    if (billingBlock) return { error: BILLING_BLOCK_COPY[billingBlock].message }
+    const blocked = await ctx.billingBlocked(targetOrg)
+    if (blocked) return { error: blocked.message }
     // Reuse an in-tenant collection pointer; otherwise create the conventions collection
     // (workspace-open so teammates read the docs + the reveal).
     let collectionId = bp?.collectionId
@@ -526,8 +525,8 @@ export function registerPublishTool(tc: ToolContext): void {
       // Live publish path. Gated on billing here, not up with the `edits` storage check
       // above — that check also runs for the propose branch (which stays free), so the
       // billing gate has to sit strictly after the review/propose split.
-      const billingBlock = await ctx.billingBlocked(targetOrg)
-      if (billingBlock) return err(BILLING_BLOCK_COPY[billingBlock].message)
+      const blocked = await ctx.billingBlocked(targetOrg)
+      if (blocked) return err(blocked.message)
       if (merge) {
         if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
         if (!existing) return text("`merge` needs the `short_id` of an existing bundle to add to.")

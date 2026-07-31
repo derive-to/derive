@@ -1,17 +1,13 @@
 import type { SubscriptionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { recordFromSnapshot } from "../src/lib/billing"
-import { FakeBilling } from "./fake-billing"
+import { FakeBilling, subscriptionSnapshot } from "./fake-billing"
 
-const snap = {
-  id: "sub_1",
-  customerId: "cus_1",
-  status: "active",
+const snap = subscriptionSnapshot({
   priceLookupKey: "business_annual",
   quantity: 3,
   currentPeriodEnd: "2027-07-30T00:00:00.000Z",
-  orgId: "default",
-}
+})
 
 describe("recordFromSnapshot", () => {
   it("maps lookup key to tier + interval and carries quantities", () => {
@@ -36,9 +32,9 @@ describe("recordFromSnapshot", () => {
 })
 
 // FakeBilling implements the same BillingDriver port the real Stripe driver does — the
-// in-memory stand-in later tasks' route tests inject instead of talking to Stripe. Covered
-// here so its recorded-call bookkeeping and signature check are proven once, not re-derived
-// by every route test that uses it.
+// in-memory stand-in route tests inject instead of talking to Stripe. Covered here so
+// its recorded-call bookkeeping and signature check are proven once, not re-derived by
+// every route test that uses it.
 describe("FakeBilling", () => {
   it("mints a customer id once and reuses an existing one without minting again", async () => {
     const billing = new FakeBilling()

@@ -1,4 +1,40 @@
+import type { SubscriptionRecord } from "@derive/core"
 import type { BillingDriver, BillingEvent, SubscriptionSnapshot } from "../src/lib/billing"
+
+/** A local subscription row, defaulted to an active Team-monthly plan (org_id
+ *  "default", cus_1/sub_1, quantity 4) — override just what a test cares about. */
+export const subscriptionRow = (over: Partial<SubscriptionRecord> = {}): SubscriptionRecord => {
+  const now = new Date().toISOString()
+  return {
+    org_id: "default",
+    stripe_customer_id: "cus_1",
+    stripe_subscription_id: "sub_1",
+    tier: "team",
+    billing_interval: "month",
+    status: "active",
+    quantity: 4,
+    current_period_end: null,
+    created_at: now,
+    updated_at: now,
+    ...over,
+  }
+}
+
+/** The Stripe-shaped counterpart of `subscriptionRow` — same defaults (cus_1/sub_1,
+ *  active team_monthly, quantity 4, org "default") — for tests that drive the
+ *  webhook/driver surface instead of upserting a row directly. */
+export const subscriptionSnapshot = (
+  over: Partial<SubscriptionSnapshot> = {},
+): SubscriptionSnapshot => ({
+  id: "sub_1",
+  customerId: "cus_1",
+  status: "active",
+  priceLookupKey: "team_monthly",
+  quantity: 4,
+  currentPeriodEnd: null,
+  orgId: "default",
+  ...over,
+})
 
 /** In-memory Stripe stand-in. Signature "test-sig" is the only valid one; the
  *  payload IS the BillingEvent as JSON, so tests author events directly. */

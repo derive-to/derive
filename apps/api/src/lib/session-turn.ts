@@ -40,7 +40,7 @@ export interface TurnDeps extends AfterPublishDeps {
   /** The billing gate — threaded through exactly like `meta`/`blobs` arrive, so the one
    *  branch that actually lands a live publish (landInProcess) can refuse it. Proposals
    *  stay free: only the live-publish branch checks this. */
-  billingBlocked: (orgId: string) => Promise<"needs_team" | "lapsed" | null>
+  billingBlocked: (orgId: string) => Promise<{ code: string; message: string } | null>
 }
 
 /** What a turn did, for the transcript and the ledger. `reply` is always present —
@@ -102,10 +102,7 @@ const apologyFor = (failure: NonNullable<TurnOutcome["failure"]>): string => {
     // billing, not a real write failure — surface that exact message (actionable: an owner
     // can fix it in Settings, Billing) rather than the generic "try again", which would be
     // dishonest advice here since retrying changes nothing until the plan is fixed.
-    const billingMessages: string[] = [
-      BILLING_BLOCK_COPY.needs_team.message,
-      BILLING_BLOCK_COPY.lapsed.message,
-    ]
+    const billingMessages: string[] = Object.values(BILLING_BLOCK_COPY).map((b) => b.message)
     if (billingMessages.includes(failure.error)) return failure.error
     return "I could not save that change, so nothing has been written."
   }
@@ -253,8 +250,8 @@ const landInProcess =
     // any bytes are recorded as a version. A refused write throws, same as landOverHttp's
     // failed-request idiom (lib/substrate-loop.ts): the turn reports it as a failed write
     // rather than a settled one.
-    const billingBlock = await deps.billingBlocked(input.artifact.org_id)
-    if (billingBlock) throw new Error(BILLING_BLOCK_COPY[billingBlock].message)
+    const blocked = await deps.billingBlocked(input.artifact.org_id)
+    if (blocked) throw new Error(blocked.message)
 
     const version = await deps.meta.addVersion(input.artifact.id, {
       id: newId("v"),
