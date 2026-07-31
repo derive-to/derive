@@ -13,16 +13,20 @@ import {
   useRouterState,
 } from "@tanstack/react-router"
 import { type ReactNode, useEffect, useState } from "react"
+import { API_BASE, artifactsListPath } from "../api"
 import { AgentPushListener } from "../components/chrome/agent-push"
 import { AppShell } from "../components/chrome/app-shell"
 import { BootShell } from "../components/chrome/boot-shell"
 import { Toaster } from "../components/ui/sonner"
 import { AuthProvider, CursorPrefProvider, ThemeProvider } from "../ctx"
+import { releaseUnclaimedBootResponses } from "../lib/boot-fetch"
 import { CHROMELESS_EXACT, CHROMELESS_PREFIX, isChromelessPath } from "../lib/chrome-routes"
 import { cacheRestored } from "../lib/persist"
+import { LIBRARY_PAGE } from "../lib/queries"
 import { queryClient } from "../lib/query-client"
 import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
+import { DEFAULT_SORT } from "../pages/library/sort"
 import "@/styles/globals.css"
 
 // Resolve the theme before first paint so there's no flash: a stored light/dark
@@ -47,6 +51,41 @@ const BOOT_FRAME = `(function(){try{var p=location.pathname;var authed=localStor
 )})==="1";var e=${JSON.stringify(CHROMELESS_EXACT)};var f=${JSON.stringify(
   CHROMELESS_PREFIX,
 )};var b=!authed||e.indexOf(p)>=0||f.some(function(x){return p.indexOf(x)===0});document.documentElement.setAttribute("data-boot",b?"bare":"rail")}catch(_){}})()`
+
+/** The two requests a signed-in cold boot always makes, as the EXACT URLs the api client
+ *  would build. Shared with `f()` in api.ts through `artifactsListPath`, so the head-start
+ *  and the real call cannot disagree; boot-fetch.test.ts pins the pairing end to end. */
+export const BOOT_START_URLS = {
+  bootstrap: `${API_BASE}/v1/bootstrap`,
+  homeList: API_BASE + artifactsListPath({ limit: LIBRARY_PAGE, sort: DEFAULT_SORT }),
+} as const
+
+// Third pre-paint sibling, and the only one that touches the network: START the boot's
+// API requests here, before a single module has loaded.
+//
+// Measured on the preview, a cold signed-in boot served its document in 45ms and then sat
+// idle: the first API request (get-session) left at 269ms and the library list at 297ms,
+// because both waited on the bundle to download, parse and hydrate. The list itself takes
+// ~477ms, so first-card landed at ~790ms with a third of that spent doing nothing.
+//
+// This hands the in-flight promises to lib/boot-fetch, which api.ts claims instead of
+// opening its own — a handoff of a real request, not a cache hint, so nothing depends on
+// the browser deciding to reuse a preload (the trap that made <link rel=prefetch> useless
+// for the artifact viewer). The gating table lives in lib/boot-fetch.ts.
+//
+// Same lockstep discipline as BOOT_FRAME: the route lists, the storage key and the URLs
+// are all interpolated from the shared definitions rather than retyped.
+const DATA_BOOT = `(function(){try{if(localStorage.getItem(${JSON.stringify(
+  STORAGE_KEYS.authed,
+)})!=="1")return;var p=location.pathname;var e=${JSON.stringify(
+  CHROMELESS_EXACT,
+)};var f=${JSON.stringify(
+  CHROMELESS_PREFIX,
+)};if(e.indexOf(p)>=0||f.some(function(x){return p.indexOf(x)===0}))return;var o={};var g=function(u){o[u]=fetch(u,{credentials:"include",headers:{accept:"application/json"}})};g(${JSON.stringify(
+  BOOT_START_URLS.bootstrap,
+)});if(p==="/"&&!location.search)g(${JSON.stringify(
+  BOOT_START_URLS.homeList,
+)});window.__deriveBoot=o}catch(_){}})()`
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   // Gate ALL route loading on the IndexedDB cache restore, so a loader's ensureQueryData reads
@@ -99,9 +138,14 @@ function RootComponent() {
   // that dynamic import is dead-code-eliminated from the prod build.
   useEffect(() => {
     reportWebVitals()
+    // Anything the head-start put on the wire has been claimed by now (the boot queries
+    // run in the first route's loader, well inside this window) — drop the rest so a URL
+    // that ever drifts leaks a request, not also a Response.
+    const claimed = setTimeout(releaseUnclaimedBootResponses, 10_000)
     if (import.meta.env.DEV && import.meta.env.VITE_REACT_SCAN) {
       import("react-scan").then(({ scan }) => scan({ enabled: true })).catch(() => {})
     }
+    return () => clearTimeout(claimed)
   }, [])
   return (
     <RootDocument>
@@ -167,6 +211,10 @@ function RootDocument({ children }: { children: ReactNode }) {
         <script
           // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from constant route lists, no user input.
           dangerouslySetInnerHTML={{ __html: BOOT_FRAME }}
+        />
+        <script
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from constant route lists + build-time URLs, no user input.
+          dangerouslySetInnerHTML={{ __html: DATA_BOOT }}
         />
         <HeadContent />
       </head>

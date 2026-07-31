@@ -56,7 +56,7 @@ export const workspacesQuery = () =>
     queryFn: () => api.listWorkspaces(),
   })
 
-const LIBRARY_PAGE = 30
+export const LIBRARY_PAGE = 30
 
 // The library list as an infinite query: each page is a keyset slice, and the
 // next cursor drives infinite scroll. Keyed by the active filter (search / tag /

@@ -1,5 +1,6 @@
 import type { LinkRole, Listed, Role, SortMode, WorkspaceAccess } from "@derive/core"
 import type { components, paths } from "./api-types"
+import { takeBootResponse } from "./lib/boot-fetch"
 import { guestQuery } from "./lib/guest-id"
 
 /** The role vocabulary and the v2 access model's three single-purpose fields are
@@ -343,7 +344,43 @@ export interface Diff {
 // the API origin when the SPA is served from a CDN separate from the container.
 export const API_BASE = (import.meta.env.VITE_DERIVE_API ?? "").replace(/\/$/, "")
 const u = (path: string) => API_BASE + path
-const f = (path: string, init?: RequestInit) => fetch(u(path), init)
+// Every request funnels through here, which is why the head-start is claimed here: a
+// boot request that __root's inline script already put on the wire is handed over rather
+// than opened a second time (see lib/boot-fetch.ts). Everything else takes the null path
+// and just fetches.
+const f = (path: string, init?: RequestInit) => {
+  const url = u(path)
+  return takeBootResponse(url, init) ?? fetch(url, init)
+}
+
+/** The library list's request path. Exported and shared so __root's head-start script
+ *  and `listArtifacts` cannot build different URLs for the same listing: the head-start
+ *  hands a real in-flight promise to the api layer keyed by URL, so a one-character
+ *  difference would silently degrade to "started a request nobody claims". */
+export const artifactsListPath = (params?: {
+  q?: string
+  tag?: string
+  collection?: string
+  favorite?: boolean
+  author?: string
+  scope?: "shared" | "following" | "needs_feedback" | "mine"
+  cursor?: string
+  limit?: number
+  sort?: SortMode
+}): string => {
+  const qs = new URLSearchParams()
+  if (params?.q) qs.set("query", params.q)
+  if (params?.tag) qs.set("tag", params.tag)
+  if (params?.collection) qs.set("collection", params.collection)
+  if (params?.favorite) qs.set("favorite", "true")
+  if (params?.author) qs.set("author", params.author)
+  if (params?.scope) qs.set("scope", params.scope)
+  if (params?.cursor) qs.set("cursor", params.cursor)
+  if (params?.limit) qs.set("limit", String(params.limit))
+  if (params?.sort) qs.set("sort", params.sort)
+  const s = qs.toString()
+  return `/v1/artifacts${s ? `?${s}` : ""}`
+}
 
 // Thrown error carries the HTTP status so callers can branch (e.g. a 401 on a
 // password artifact means "prompt for the password", not "not found"), plus the
@@ -630,18 +667,7 @@ export const api = {
      *  view can label itself even for a collection in another workspace. */
     collection?: { id: string; title: string }
   }> => {
-    const qs = new URLSearchParams()
-    if (params?.q) qs.set("query", params.q)
-    if (params?.tag) qs.set("tag", params.tag)
-    if (params?.collection) qs.set("collection", params.collection)
-    if (params?.favorite) qs.set("favorite", "true")
-    if (params?.author) qs.set("author", params.author)
-    if (params?.scope) qs.set("scope", params.scope)
-    if (params?.cursor) qs.set("cursor", params.cursor)
-    if (params?.limit) qs.set("limit", String(params.limit))
-    if (params?.sort) qs.set("sort", params.sort)
-    const s = qs.toString()
-    return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts(undefined, init)).then(j)
+    return f(artifactsListPath(params), opts(undefined, init)).then(j)
   },
   // The batched boot read: exactly the four bodies below (tags summary, collections,
   // workspace settings, notifications), one authenticated request. The client seeds
