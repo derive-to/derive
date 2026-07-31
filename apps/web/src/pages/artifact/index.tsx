@@ -636,7 +636,7 @@ export function Artifact() {
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
-  // no favorite, tags, collections, share, report, comments, or version tools.
+  // no favorite, collections, share, report, comments, or version tools.
   // The API gates every one of those for anon (anonLocked); hiding them here keeps
   // the chrome honest so there's no dead/forbidden affordance to bump into.
   const isAnon = !me
@@ -874,10 +874,8 @@ export function Artifact() {
               passwordProtected={!!art.password_protected}
               publicHistory={!!art.public_history}
               favorite={!!art.favorite}
-              tags={art.tags ?? []}
               collections={art.collections ?? []}
               collectionAccess={art.collection_access ?? []}
-              canEditTags={art.my_role === "editor" || art.my_role === "owner"}
               openProposals={art.open_proposals ?? 0}
               proposalsTotal={art.proposals_total ?? 0}
               isMobile={isMobile}
@@ -905,9 +903,6 @@ export function Artifact() {
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                   a ? { ...a, favorite: fav } : a,
                 )
-              }
-              onTags={(tags) =>
-                qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
               }
               onCollections={(collections) =>
                 // Pure cache write — CollectionsDialog calls this during its OPTIMISTIC

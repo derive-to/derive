@@ -2,7 +2,7 @@ import { Maximize2, MousePointer2Off, Zap } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
-import { CollectionsDialog, TagsDialog } from "@/components/shared/organize-dialogs"
+import { CollectionsDialog } from "@/components/shared/organize-dialogs"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -25,7 +25,7 @@ import { ShareButton } from "./share-dialog"
  *   [ Share · ★ · ⋯ ]        [ comments ]
  *     actions cluster          the discussion panel toggle (terminal)
  * The filled-ink Share leads as the one primary; the favorited star is glanceable
- * state; the ⋯ holds everything else (Focus/Present, Tags/Collections, Insights/
+ * state; the ⋯ holds everything else (Focus/Present, Collections, Insights/
  * History/Proposals, Edit/Lock/Report). Comments hugs the panel it opens. Presence +
  * the cursor picker are the ambient cluster the page renders ahead of this. Props-
  * driven; the page keeps the cache writes.
@@ -43,11 +43,9 @@ export function ArtifactTopBar(props: {
   passwordProtected?: boolean
   publicHistory?: boolean
   favorite: boolean
-  tags: string[]
   collections: string[]
   /** Collections whose sharing reaches this artifact — the share dialog's disclosure rows. */
   collectionAccess: CollectionGrant[]
-  canEditTags: boolean
   openProposals: number
   proposalsTotal: number
   isMobile: boolean
@@ -73,7 +71,6 @@ export function ArtifactTopBar(props: {
    *  tab, so both gates come from one fetch. */
   automateBeta: boolean
   onFavorite: (fav: boolean) => void
-  onTags: (tags: string[]) => void
   onCollections: (ids: string[]) => void
   onInsights: () => void
   onHistory: () => void
@@ -89,7 +86,6 @@ export function ArtifactTopBar(props: {
   const { shortId, openProposals, proposalsTotal } = props
   const { pref: cursorPref, setPref: setCursorPref } = useCursorPref()
   const [reportOpen, setReportOpen] = useState(false)
-  const [tagsOpen, setTagsOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [moveOpen, setMoveOpen] = useState(false)
   const [automateOpen, setAutomateOpen] = useState(false)
@@ -166,15 +162,7 @@ export function ArtifactTopBar(props: {
             </DropdownMenuCheckboxItem>
             <DropdownMenuSeparator />
 
-            {/* Organize — open as dialogs. */}
-            <DropdownMenuItem data-testid="artifact-tags" onSelect={() => setTagsOpen(true)}>
-              <Icon name="tag" size={16} /> Tags
-              {props.tags.length > 0 && (
-                <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
-                  {props.tags.length}
-                </span>
-              )}
-            </DropdownMenuItem>
+            {/* Organize — opens as a dialog. */}
             <DropdownMenuItem
               data-testid="artifact-collections"
               onSelect={() => setCollectionsOpen(true)}
@@ -264,14 +252,6 @@ export function ArtifactTopBar(props: {
       )}
 
       {/* Portaled dialogs — invisible until opened from the ⋯ menu. */}
-      <TagsDialog
-        shortId={shortId}
-        tags={props.tags}
-        canEdit={props.canEditTags}
-        onChange={props.onTags}
-        open={tagsOpen}
-        onOpenChange={setTagsOpen}
-      />
       <CollectionsDialog
         shortId={shortId}
         inCollections={props.collections}

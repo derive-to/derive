@@ -8,11 +8,11 @@ import { collectionsQuery, summaryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { summarize } from "./bulk-apply"
-import { BulkCollectionsDialog, BulkFolderDialog, BulkTagsDialog } from "./bulk-organize"
+import { BulkCollectionsDialog, BulkFolderDialog } from "./bulk-organize"
 
 // One action in the bar. The label is the button's text on a roomy viewport and its
 // accessible name everywhere — below `sm` the text collapses and the icon carries it, so
-// four actions still fit a phone without a scroll or an overflow menu.
+// the row still fits a phone without a scroll or an overflow menu.
 function BarAction({
   testId,
   icon,
@@ -52,12 +52,11 @@ function BarAction({
 // a card's ⋯ menu can already do to one artifact — this just does it to the set, through
 // the very same endpoints.
 //
-// Every action states its own scope before it runs. A library selection mixes what you
-// own with what you can merely read, so each action narrows the set to the artifacts it
-// may legally touch (tags: owner/editor; delete: owner) and reports the rest as
-// "skipped" rather than failing the batch or, worse, half-silently dropping them.
-// Collections are the exception: adding is an act of curation on YOUR collection, so the
-// server decides per artifact and anything it refuses comes back as skipped too.
+// A library selection mixes what you own with what you can merely read, so no action
+// assumes the whole set is fair game. Each one sends the full selection and lets the
+// server authorize artifact by artifact, reporting what it passed over as "skipped"
+// rather than failing the batch or, worse, half-silently dropping them. Delete is the
+// only action also gated client-side — it says how many it will skip before you confirm.
 export function SelectionBar({
   items,
   listKey,
@@ -74,17 +73,14 @@ export function SelectionBar({
   // "Move to folder" action (folders are per-collection, so it needs that collection).
   folderContext?: { collectionId: string; folders: Folder[] }
 }) {
-  const [showTags, setShowTags] = useState(false)
   const [showCollections, setShowCollections] = useState(false)
   const [showFolder, setShowFolder] = useState(false)
   const [showDelete, setShowDelete] = useState(false)
 
   const n = items.length
   const shortIds = items.map((a) => a.short_id)
-  // Client-side role counts drive the button-enable + the pre-action preview text ONLY.
-  // The server is the source of truth for what actually happens: each bulk call sends the
-  // whole selection and reports back what it could and couldn't touch.
-  const taggable = items.filter((a) => a.my_role === "owner" || a.my_role === "editor")
+  // Drives the delete button's enabled state and the count in its confirm copy, nothing
+  // more — the server re-authorizes every artifact and reports back what it skipped.
   const deletable = items.filter((a) => a.my_role === "owner")
   // All-starred → the star becomes the un-star (the card's own toggle, at scale).
   const allFavorite = n > 0 && items.every((a) => a.favorite)
@@ -117,7 +113,7 @@ export function SelectionBar({
           data-testid="library-selection-bar"
           // The floating-surface recipe (popover step + hairline ring), same as every
           // other surface that lifts off the page. Labels collapse to icons below `sm`
-          // so all four actions + the count fit a 320px phone without wrapping or
+          // so the actions and the count fit a 320px phone without wrapping or
           // horizontal scroll; each keeps its aria-label, so the icon-only form stays
           // announced.
           className="pointer-events-auto flex max-w-[calc(100vw-1.5rem)] items-center gap-0.5 rounded-2xl bg-popover px-2 py-2 text-popover-foreground shadow-[var(--shadow-pop)] ring-1 ring-foreground/10 duration-200 ease-out animate-in fade-in-0 slide-in-from-bottom-2 sm:gap-1 sm:px-3"
@@ -133,19 +129,6 @@ export function SelectionBar({
               selected
             </span>
           </div>
-
-          <BarAction
-            testId="library-selection-tags"
-            icon={<Icon name="tag" size={16} />}
-            label="Tags"
-            disabled={busy || taggable.length === 0}
-            title={
-              taggable.length === 0
-                ? "You can only tag artifacts you own or can edit"
-                : "Add tags to the selected artifacts"
-            }
-            onClick={() => setShowTags(true)}
-          />
 
           <BarAction
             testId="library-selection-collections"
@@ -212,21 +195,6 @@ export function SelectionBar({
         </div>
       </div>
 
-      {showTags && (
-        // The FULL selection goes to the dialog; the server tags what the caller can edit
-        // and reports the rest as skipped. `skipped` here is only the pre-action preview.
-        <BulkTagsDialog
-          items={items}
-          skipped={n - taggable.length}
-          listKey={listKey}
-          open={showTags}
-          onOpenChange={setShowTags}
-          onDone={() => {
-            setShowTags(false)
-            onClear()
-          }}
-        />
-      )}
       {showCollections && (
         <BulkCollectionsDialog
           items={items}

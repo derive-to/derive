@@ -4,7 +4,6 @@ import { useState } from "react"
 import { type Artifact, api, type Folder } from "@/api"
 import { Icon } from "@/components/icons"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -15,152 +14,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import {
-  artifactQuery,
-  collectionFoldersQuery,
-  collectionsQuery,
-  summaryQuery,
-} from "@/lib/queries"
+import { artifactQuery, collectionFoldersQuery, collectionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { cn } from "@/lib/utils"
 import { summarize } from "./bulk-apply"
 
-// The two organize dialogs in their MANY-artifact form, opened from the selection bar.
-// They mirror the single-artifact dialogs in components/shared/organize-dialogs (same
-// grammar, same API calls) with one deliberate difference: they ADD, never replace.
-// Applying "#q3" to eight artifacts must not flatten the tags the other seven already
-// carry — so tags are merged per artifact, and collections are only ever added to.
-
-// The artifacts a bulk write will touch, and the ones it will pass over. Every dialog
-// states this up front: a bulk write should never be a surprise.
-function ScopeLine({ count, skipped }: { count: number; skipped: number }) {
-  if (skipped === 0) return null
-  return (
-    <p className="text-sm text-muted-foreground">
-      {count} of {count + skipped} selected — {skipped} you can’t edit will be skipped.
-    </p>
-  )
-}
-
-export function BulkTagsDialog({
-  items,
-  skipped,
-  listKey,
-  onDone,
-  open,
-  onOpenChange,
-}: {
-  // The full selection — the server authorizes each artifact and skips what the caller
-  // can't edit. `skipped` is the caller's own pre-action estimate for the preview line.
-  items: Artifact[]
-  skipped: number
-  listKey: QueryKey
-  onDone: () => void
-  open: boolean
-  onOpenChange: (o: boolean) => void
-}) {
-  const [draft, setDraft] = useState("")
-  const [adding, setAdding] = useState<string[]>([])
-
-  const apply = useApiMutation({
-    // One call over the whole selection: the server ADDS the tags to each artifact's
-    // existing set (computing the union itself, so the client sends only the tags to add)
-    // and authorizes every artifact on its own — anything the caller can't edit comes back
-    // in `skipped`. Normalization (lowercase, dedupe, cap 20) is the server's too.
-    mutationFn: (tags: string[]) =>
-      api.bulkTags(
-        items.map((a) => a.short_id),
-        tags,
-      ),
-    invalidate: [
-      listKey,
-      summaryQuery().queryKey,
-      ...items.map((a) => artifactQuery(a.short_id).queryKey),
-    ],
-    success: (r) => summarize("Tagged", r),
-    onSuccess: onDone,
-  })
-
-  const stage = () => {
-    const v = draft.trim().toLowerCase()
-    setDraft("")
-    if (v && !adding.includes(v)) setAdding((prev) => [...prev, v])
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add tags</DialogTitle>
-          <DialogDescription>
-            Tags are added to each artifact’s existing set — nothing is replaced.
-          </DialogDescription>
-        </DialogHeader>
-        <ScopeLine count={items.length} skipped={skipped} />
-        {adding.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {adding.map((t) => (
-              <Badge key={t} variant="outline" className="gap-1">
-                #{t}
-                <button
-                  type="button"
-                  data-icon="inline-end"
-                  data-testid={`bulk-tag-remove-${t}`}
-                  onClick={() => setAdding((prev) => prev.filter((x) => x !== t))}
-                  aria-label={`Remove ${t}`}
-                  className="rounded-sm outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                >
-                  <Icon name="close" size={12} />
-                </button>
-              </Badge>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-1.5">
-          <Input
-            value={draft}
-            placeholder="Add a tag…"
-            data-testid="bulk-tag-input"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") stage()
-            }}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={stage}
-            disabled={!draft.trim()}
-            data-testid="bulk-tag-stage"
-          >
-            Add
-          </Button>
-        </div>
-        <DialogFooter>
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="bulk-tag-cancel"
-            onClick={() => onOpenChange(false)}
-          >
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            data-testid="bulk-tag-apply"
-            disabled={adding.length === 0 || apply.isPending}
-            onClick={() => apply.mutate(adding)}
-          >
-            {apply.isPending
-              ? "Tagging…"
-              : `Tag ${items.length} ${items.length === 1 ? "artifact" : "artifacts"}`}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
+// The organize dialogs in their MANY-artifact form, opened from the selection bar. Same
+// grammar and endpoints as the single-artifact dialog in shared/organize-dialogs, with one
+// safeguard: adding to a collection never removes, so a mis-click on a 30-artifact
+// selection costs a cleanup, not data. (Folders are single-valued and don't get that
+// guarantee — see BulkFolderDialog.)
 
 // Move the selected artifacts INTO a folder of the current collection (or unfile them).
 // One target folder for the whole selection; applies per item (folder membership is

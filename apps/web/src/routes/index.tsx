@@ -23,7 +23,7 @@ export const Route = createFileRoute("/")({
   // hits and the header still paints complete on the first frame.
   // The filters are search params, so the loader keys on them: without loaderDeps the
   // router treats every filtered library as the same match and an intent hover on a
-  // sidebar tag/collection link cannot preload the view it actually opens.
+  // sidebar collection link cannot preload the view it actually opens.
   loaderDeps: ({ search }) => search,
   loader: ({ context: { queryClient }, deps }) => {
     // prefetchQuery never throws — a failed warm just leaves the in-component useQuery
@@ -41,7 +41,6 @@ export const Route = createFileRoute("/")({
     void queryClient.prefetchInfiniteQuery(
       libraryArtifactsQuery({
         q: deps.query || undefined,
-        tag: deps.tag,
         collection: deps.collection,
         author: deps.author,
         scope: deps.tab === "mine" ? "mine" : undefined,
@@ -64,7 +63,6 @@ export const Route = createFileRoute("/")({
   // shareable. The named feeds (Favorites, Following) are their OWN routes, not params
   // here — path = the feed you're viewing, query = how it's filtered (docs/decisions/0002).
   validateSearch: (s: Record<string, unknown>): LibrarySearch => ({
-    tag: typeof s.tag === "string" ? s.tag : undefined,
     collection: typeof s.collection === "string" ? s.collection : undefined,
     folder: typeof s.folder === "string" ? s.folder : undefined,
     query: typeof s.query === "string" ? s.query : undefined,
