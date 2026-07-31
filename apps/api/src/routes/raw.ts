@@ -4,7 +4,14 @@ import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { crossDocTransform } from "../lib/cross-doc"
 import { verifyState } from "../lib/crypto"
-import { cacheControlFor, fail, IMMUTABLE_CACHE, TOMBSTONE } from "../lib/http"
+import {
+  cacheControlFor,
+  fail,
+  IMMUTABLE_CACHE,
+  RAW_TOKEN_MAX_AGE_MS,
+  RAW_TOKEN_WINDOW_MS,
+  TOMBSTONE,
+} from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
 import { safeJson } from "../mcp-util"
@@ -13,7 +20,6 @@ import { safeJson } from "../mcp-util"
 // doesn't re-check role/visibility live the way the cookie path's authorize() does, so
 // it's kept short — long enough to browse one sitting of a multi-page/image bundle,
 // short enough to bound exposure if the URL leaks (browser history, a proxy log, ...).
-const RAW_TOKEN_MAX_AGE_MS = 5 * 60 * 1000
 
 /** The sandbox: raw artifact + proposal bytes under /raw/*. Served with an
  *  opaque-origin CSP; a proposal renders exactly like the live version will. */
@@ -152,7 +158,7 @@ export const rawRoutes = (ctx: AppContext) => {
   // bytes the prefetch had just pulled).
   //
   // On the TOKEN route only, that can be relaxed on a principle rather than a guess: the
-  // URL carries a capability that expires in RAW_TOKEN_MAX_AGE_MS, so a private cache
+  // URL carries a capability that expires, so a private cache
   // entry keyed on that URL cannot outlive the access it was granted under. Cache for
   // exactly the token's lifetime and no longer. `private` still forbids any shared cache
   // from holding a gated artifact — the property the default was protecting.
@@ -164,7 +170,7 @@ export const rawRoutes = (ctx: AppContext) => {
       ? "private, no-store"
       : a.link_role !== "none"
         ? IMMUTABLE_CACHE
-        : `private, max-age=${Math.floor(RAW_TOKEN_MAX_AGE_MS / 1000)}`
+        : `private, max-age=${Math.floor(RAW_TOKEN_WINDOW_MS / 1000)}`
 
   const serveVersion = async (
     c: Context,

@@ -28,6 +28,23 @@ export const AGENT_TOKEN_PREFIX = "dk_agt_"
 // expires. Format: `<base64url(json)>.<hmac>`, keyed off the server auth secret.
 const stateKey = (secret: string): string => `derive-oauth-state:${secret}`
 
+/** Quantise a timestamp down to a window boundary. A token minted with a bucketed `iat`
+ *  is BYTE-IDENTICAL for every mint inside that window, which makes the URL carrying it
+ *  stable — and a stable URL is a cacheable one.
+ *
+ *  This exists because the raw-content token was re-signed on every artifact-detail
+ *  fetch, so the viewer's iframe URL changed on every open and its cache entry was
+ *  unreachable: measured on the preview, an open whose URL matched served from cache in
+ *  13ms with transferSize 0, while the very next open (new token, new URL) re-downloaded
+ *  15KB in 1147ms.
+ *
+ *  Validity is unchanged: `verifyState` still rejects anything older than maxAge, and a
+ *  token stamped at a bucket boundary expires exactly one window later — the same
+ *  ceiling a freshly-stamped one had. It does NOT extend a token's life, it only stops
+ *  minting a needlessly different one each time. */
+export const bucketedNow = (windowMs: number, nowMs: number = Date.now()): number =>
+  Math.floor(nowMs / windowMs) * windowMs
+
 export const signState = (
   payload: Record<string, unknown>,
   secret: string,

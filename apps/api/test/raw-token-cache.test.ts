@@ -29,8 +29,9 @@ describe("raw content cache-control", () => {
     const cc = res.headers.get("Cache-Control") ?? ""
     // Private, so no shared cache may ever hold a gated artifact's bytes...
     expect(cc).toContain("private")
-    // ...but the browser may, bounded by the same 5 minutes the token itself lasts.
-    expect(cc).toContain("max-age=300")
+    // ...but the browser may, bounded by the token WINDOW (2 min), which is shorter than
+    // the token's validity — so a cache entry can never outlive the URL that reaches it.
+    expect(cc).toContain("max-age=120")
     expect(cc).not.toContain("no-store")
   })
 
@@ -54,5 +55,40 @@ describe("raw content cache-control", () => {
     const res = await app.request(await tokenUrlFor(app, pub.short_id, h), { headers: h })
     expect(res.status).toBe(200)
     expect(res.headers.get("Cache-Control")).toContain("immutable")
+  })
+})
+
+describe("raw token bucketing", () => {
+  it("mints a byte-identical token across a window, so the viewer URL is cacheable", async () => {
+    const { app } = makeAuthedApp("rawcache-bucket", [owner])
+    const h = as(owner.email)
+    const pub = await (await publishAs(app, "<h1>b</h1>", { title: "Bucket" }, h)).json()
+    const tokenNow = async () =>
+      (await (await app.request(`/v1/artifacts/${pub.short_id}`, { headers: h })).json()).raw_token
+
+    // Two fetches moments apart used to produce two different tokens — and therefore two
+    // different iframe URLs, which is how the cache entry became unreachable on re-open.
+    expect(await tokenNow()).toBe(await tokenNow())
+  })
+
+  it("a bucketed token is still accepted, and still expires", async () => {
+    const { bucketedNow, signState, verifyState } = await import("../src/lib/crypto")
+    const { RAW_TOKEN_MAX_AGE_MS, RAW_TOKEN_WINDOW_MS } = await import("../src/lib/http")
+    const secret = "test-secret"
+    const now = 1_800_000_000_000
+
+    const tok = signState({ rid: "a_1" }, secret, bucketedNow(RAW_TOKEN_WINDOW_MS, now))
+    // Valid right away...
+    expect(verifyState<{ rid: string }>(tok, secret, RAW_TOKEN_MAX_AGE_MS, now)?.rid).toBe("a_1")
+    // ...and still valid at the worst case: minted at a bucket boundary, read a full
+    // window later. This is the guarantee the window-shorter-than-validity gap buys.
+    expect(
+      verifyState<{ rid: string }>(tok, secret, RAW_TOKEN_MAX_AGE_MS, now + RAW_TOKEN_WINDOW_MS)
+        ?.rid,
+    ).toBe("a_1")
+    // Bucketing must not extend the ceiling: past the max age it is dead as before.
+    expect(
+      verifyState(tok, secret, RAW_TOKEN_MAX_AGE_MS, now + RAW_TOKEN_MAX_AGE_MS + 1000),
+    ).toBeNull()
   })
 })
