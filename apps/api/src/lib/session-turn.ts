@@ -22,10 +22,10 @@ import {
   type SessionRecord,
   toMicroUsd,
 } from "@derive/core"
-import { BILLING_BLOCK_COPY } from "../context"
 import { log } from "../log"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
 import type { AgentLoopInput } from "./agent-loop"
+import { BillingBlockedError } from "./billing"
 import {
   documentBlock,
   documentContract,
@@ -98,12 +98,12 @@ const apologyFor = (failure: NonNullable<TurnOutcome["failure"]>): string => {
   if (failure.reason === "model")
     return "I could not reach the model just now. Nothing has been changed — try again."
   if (failure.reason === "write") {
-    // landInProcess throws with the billing copy verbatim when the write is refused for
-    // billing, not a real write failure — surface that exact message (actionable: an owner
-    // can fix it in Settings, Billing) rather than the generic "try again", which would be
-    // dishonest advice here since retrying changes nothing until the plan is fixed.
-    const billingMessages: string[] = Object.values(BILLING_BLOCK_COPY).map((b) => b.message)
-    if (billingMessages.includes(failure.error)) return failure.error
+    // landInProcess throws BillingBlockedError with the billing copy verbatim when the write
+    // is refused for billing, not a real write failure — turn-core's catch tags that onto
+    // `billingBlocked`, so surface the exact message (actionable: an owner can fix it at the
+    // billing URL) rather than the generic "try again", which would be dishonest advice here
+    // since retrying changes nothing until the plan is fixed.
+    if (failure.billingBlocked) return failure.error
     return "I could not save that change, so nothing has been written."
   }
   // The contract's own diagnostic when it had one — an edit that missed knows WHICH anchor
@@ -251,7 +251,7 @@ const landInProcess =
     // failed-request idiom (lib/substrate-loop.ts): the turn reports it as a failed write
     // rather than a settled one.
     const blocked = await deps.billingBlocked(input.artifact.org_id)
-    if (blocked) throw new Error(blocked.message)
+    if (blocked) throw new BillingBlockedError(blocked.message)
 
     const version = await deps.meta.addVersion(input.artifact.id, {
       id: newId("v"),

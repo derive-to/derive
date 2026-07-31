@@ -19,8 +19,19 @@ describe("quotas: per-workspace storage caps (C4b)", () => {
     expect((await pub(app, "0123456789")).status).toBe(201) // 10 ≤ 20
     const over = await pub(app, "0123456789AB") // total 22 > 20
     expect(over.status).toBe(413)
-    expect((await over.json()).error).toMatch(/storage quota/)
+    expect((await over.json()).error).toMatch(/out of storage/)
     expect(await m.storageBytes("default")).toBe(10) // the rejected upload stored nothing
+    m.close()
+  })
+
+  it("storage overflow carries the machine code and the billing URL", async () => {
+    const { app, meta: m } = quotaApp("quota-bytes-code", { maxBytes: 20 })
+    expect((await pub(app, "0123456789")).status).toBe(201) // 10 ≤ 20
+    const res = await pub(app, "0123456789AB") // total 22 > 20
+    expect(res.status).toBe(413)
+    const body = await res.json()
+    expect(body.code).toBe("storage_exceeded")
+    expect(body.error).toContain("/settings/billing")
     m.close()
   })
 

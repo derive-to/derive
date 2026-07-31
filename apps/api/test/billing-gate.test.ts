@@ -207,6 +207,7 @@ describe("MCP brandprint scaffold billing gate", () => {
     })
     expect(toolIsError(out)).toBe(true)
     expect(toolText(out)).toContain("plan has lapsed")
+    expect(toolText(out)).toMatch(/\/settings\/billing/)
 
     // No scaffold write happened: no brandprint pointer persisted, no collection made.
     const settings = await meta.getOrgSettings(org)

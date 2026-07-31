@@ -21,6 +21,11 @@ export type BillingEvent = {
   snapshot?: SubscriptionSnapshot
 }
 
+/** A write refused by the billing gate. Distinct from a real write failure so turn
+ *  lanes can surface the copy verbatim and skip the retry (retrying cannot help
+ *  until the plan changes). */
+export class BillingBlockedError extends Error {}
+
 export interface BillingDriver {
   ensureCustomer(a: {
     orgId: string

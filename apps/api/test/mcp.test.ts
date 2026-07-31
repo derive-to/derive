@@ -2956,7 +2956,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       short_id: created.short_id,
       edits: [{ old_str: "y", new_str: "y".repeat(500) }],
     })
-    expect(toolText(rejected)).toMatch(/storage quota/i)
+    expect(toolText(rejected)).toMatch(/out of storage/i)
     const stillOriginal = toolText(
       await call(app, token, "read", { short_id: created.short_id, format: "html" }),
     )

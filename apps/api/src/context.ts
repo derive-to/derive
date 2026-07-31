@@ -51,23 +51,31 @@ import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
-/** The refusal copy for a blocked publish/approve, keyed by `billingBlocked`'s reason.
- *  Lives here (not lib/http.ts) because the MCP surfaces need it too, and both import
- *  from context.ts already. No em dashes (support copy convention). */
-export const BILLING_BLOCK_COPY: Record<
-  "needs_team" | "lapsed",
-  { code: string; message: string }
-> = {
-  needs_team: {
-    code: "billing_required",
-    message:
-      "This workspace has more than 3 editor seats, which needs the Team plan. An owner can upgrade in Settings, Billing.",
-  },
-  lapsed: {
-    code: "billing_lapsed",
-    message:
-      "This workspace's plan has lapsed, so publishing is paused. Nothing was deleted. An owner can renew in Settings, Billing.",
-  },
+/** The refusal copy for blocked billing actions, keyed by reason. Built from baseUrl
+ *  so every surface (HTTP 402/413 bodies, MCP tool errors, session-turn apologies)
+ *  hands the human the direct upgrade link. Lives here (not lib/http.ts) because the
+ *  MCP surfaces need it too, and both import from context.ts already. No em dashes
+ *  (support copy convention). */
+export const billingBlockCopy = (baseUrl: string) => {
+  const billingUrl = `${baseUrl.replace(/\/$/, "")}/settings/billing`
+  return {
+    needs_team: {
+      code: "billing_required",
+      message: `This workspace has more than 3 editor seats, so publishing is paused until it upgrades to the Team plan. An owner can upgrade at ${billingUrl}.`,
+    },
+    lapsed: {
+      code: "billing_lapsed",
+      message: `This workspace's plan has lapsed, so publishing is paused. Nothing was deleted. An owner can renew at ${billingUrl}.`,
+    },
+    seat_limit: {
+      code: "billing_required",
+      message: `Free covers 3 editor seats, so this workspace needs the Team plan to add more editors. An owner can upgrade at ${billingUrl}.`,
+    },
+    storage: {
+      code: "storage_exceeded",
+      message: `This workspace is out of storage, so this save was refused. Upgrade for more at ${billingUrl}.`,
+    },
+  } as const
 }
 
 export interface SessionUser {
@@ -743,6 +751,10 @@ export function buildContext(deps: AppDeps) {
   // would compare false forever and enforcement day would silently never arrive.
   if (billingEnforceAt && Number.isNaN(billingEnforceAt.getTime()))
     throw new Error(`invalid DERIVE_BILLING_ENFORCE_AT: ${deps.billingEnforceAt}`)
+  // Built once per app, from this deployment's baseUrl — every blocked-billing surface
+  // (HTTP bodies, MCP tool errors, storage refusals, session-turn apologies) reads from
+  // this single record so the copy and the link can never drift between them.
+  const blockCopy = billingBlockCopy(deps.baseUrl)
   // The whole billing decision from local state only: the webhook-fed subscription row
   // plus a live editor-seat count. Never calls Stripe — resolveBillingState is pure and
   // DB-free, this just feeds it. `pre` skips the fetches when the caller already
@@ -768,7 +780,7 @@ export function buildContext(deps: AppDeps) {
     orgId: string,
   ): Promise<{ code: string; message: string } | null> => {
     const s = await billingState(orgId)
-    return s.canPublishApprove || !s.blockedReason ? null : BILLING_BLOCK_COPY[s.blockedReason]
+    return s.canPublishApprove || !s.blockedReason ? null : blockCopy[s.blockedReason]
   }
   // The full gate as a route guard, mirroring `limited`: a Response to return when
   // blocked, else null to continue.
@@ -1248,6 +1260,7 @@ export function buildContext(deps: AppDeps) {
     billingState,
     billingBlocked,
     billingGate,
+    blockCopy,
     effectiveWhiteLabel,
     ensureMembership,
     activeWorkspace,

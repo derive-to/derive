@@ -442,8 +442,7 @@ export function registerPublishTool(tc: ToolContext): void {
         // over-quota version the HTTP surfaces would have rejected.
         const editedBytes = new TextEncoder().encode(materialized.content).length
         if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
-        if (await ctx.overStorage(targetOrg, editedBytes))
-          return err(`"${short_id}"'s workspace storage quota is exceeded.`)
+        if (await ctx.overStorage(targetOrg, editedBytes)) return err(ctx.blockCopy.storage.message)
         content = materialized.content
         editsApplied = edits.length
         if (!filename) filename = materialized.filename
