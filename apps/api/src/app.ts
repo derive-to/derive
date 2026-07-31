@@ -16,6 +16,7 @@ import { mountMcp } from "./mcp"
 import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
+import { appLinkRoutes } from "./routes/app-links"
 import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
 import { automationRoutes } from "./routes/automations"
@@ -457,6 +458,14 @@ export function createApp(deps: AppDeps): Hono {
     agentDiscoveryRoutes,
   ])
     app.route("/", routes(ctx))
+
+  // App-association files, mounted OUTSIDE the loop above because they take no context:
+  // the OS fetches them unauthenticated, with no session and no workspace, and they are
+  // static JSON derived from config. Both 404 unless their identifiers are set.
+  app.route(
+    "/",
+    appLinkRoutes({ appleAppId: deps.appleAppId, androidFingerprints: deps.androidFingerprints }),
+  )
 
   // The OpenAPI description of the contract-first routes, served for agents and used to
   // generate the web client's response types (apps/web/src/api-types.ts). Only routers

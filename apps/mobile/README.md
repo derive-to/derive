@@ -62,8 +62,28 @@ add one with the first substantial screen and port those cases into it.
 - **The native tab bar.** It needs a device to get right, and the mechanism that keeps a
   tab switch from reading as a page load (driving the SPA's client-side router rather
   than reloading the web view) is something to try rather than reason about.
-- **Push, deep-link association files, the share extension.** All need an Apple Developer
-  account and EAS credentials.
+- **Push and the share extension.** Both need an Apple Developer account and EAS
+  credentials.
+
+## Turning on universal links
+
+The association files are already served by the API, but **off by default**: an instance
+with no app of its own must not publish one, because naming a bundle id hands that app the
+right to claim this domain's links. Switch them on by setting, on the API:
+
+| Var | Value |
+| --- | --- |
+| `DERIVE_IOS_APP_ID` | `<TeamID>.to.derive.app` |
+| `DERIVE_ANDROID_CERT_FINGERPRINTS` | SHA-256 fingerprints of the release keystore, comma separated |
+
+Both come from the Apple Developer account and the Android release keystore, so this is
+the one step gated on credentials rather than code. Once they are set, a derive.to link
+opens the app from Messages, Mail, Notes, the Slack desktop client, and Slack configured to
+open in Safari.
+
+It still will **not** work from inside Slack's own in-app browser — iOS does not honour
+universal links from a web view, and no configuration changes that. That path is covered
+on the web side by the "Open in Derive" bar.
 
 ## Sign-in
 

@@ -168,6 +168,15 @@ export interface AppDeps {
   webOrigins?: string[]
   /** Record + serve view analytics. Default on; set false to disable entirely. */
   analytics?: boolean
+  /** `<TeamID>.<bundle id>` of the iOS app allowed to claim this domain's links. Set ⇒
+   *  /.well-known/apple-app-site-association is served, so a derive.to link opens the
+   *  native app instead of a browser tab. Unset ⇒ 404, which is the honest answer for an
+   *  instance with no app: publishing an association for someone else's bundle id would
+   *  hand that app the right to claim this domain's links. */
+  appleAppId?: string
+  /** Comma-separated SHA-256 signing-cert fingerprints of the Android release keystore.
+   *  Same opt-in shape as appleAppId, for /.well-known/assetlinks.json. */
+  androidFingerprints?: string
   /** A real transactional email transport is configured (Resend on Node, the Cloudflare
    *  Email binding on the edge) rather than the log-only fallback. Gates the mail-dependent
    *  capabilities (password reset, email verification) in /v1/auth/capabilities, so the SPA
