@@ -432,3 +432,13 @@
     animation: none;
   }
 }
+
+/* The View Transitions cross-fade (router defaultViewTransition) is a UA animation
+   and does NOT honor prefers-reduced-motion by itself - turn it off explicitly. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
