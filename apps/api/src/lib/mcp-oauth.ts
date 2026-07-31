@@ -45,13 +45,38 @@ export interface McpOauthCredential {
   resource?: string
 }
 
+/**
+ * A dynamic client registration, kept so a second sign-in reuses the first one's client.
+ *
+ * Registration is not idempotent: Linear hands back a NEW client_id for byte-identical metadata
+ * every time it is asked. Registering per attempt would leave one abandoned OAuth client at the
+ * provider for every Sign in click, every retry and every flow someone thought better of — on an
+ * endpoint that is a standing rate-limit and abuse target.
+ *
+ * It lives in the same encrypted blob as the credential, so it costs no column, and it is written
+ * BEFORE consent — which is the whole point, since a flow that never completes is exactly the case
+ * that would otherwise re-register.
+ */
+export interface McpOauthClient {
+  v: 1
+  kind: "client"
+  client_id: string
+  client_secret?: string
+  /** Which authorization server issued it. A server that moves invalidates the reuse. */
+  authorization_server: string
+}
+
 export type StoredCredential =
   | { kind: "oauth"; cred: McpOauthCredential }
+  | { kind: "client"; client: McpOauthClient }
   | { kind: "bearer"; token: string }
   | { kind: "unreadable" }
 
 export const serializeCredential = (cred: McpOauthCredential, key: string): string =>
   encryptSecret(JSON.stringify(cred), key)
+
+export const serializeClient = (client: McpOauthClient, key: string): string =>
+  encryptSecret(JSON.stringify(client), key)
 
 /**
  * Read a stored credential without ever handing back something unusable.
@@ -76,9 +101,13 @@ export const readCredential = (
   if (plain.startsWith("v1.")) return { kind: "unreadable" }
   if (!plain.startsWith("{")) return { kind: "bearer", token: plain }
   try {
-    const parsed = JSON.parse(plain) as McpOauthCredential
+    const parsed = JSON.parse(plain) as McpOauthCredential & McpOauthClient
     if (parsed?.v === 1 && typeof parsed.access_token === "string")
       return { kind: "oauth", cred: parsed }
+    // A registration with no tokens yet. NOT a bearer: there is nothing here to send, and
+    // falling through would put a JSON blob in an Authorization header.
+    if (parsed?.v === 1 && parsed.kind === "client" && typeof parsed.client_id === "string")
+      return { kind: "client", client: parsed }
   } catch {
     // A JSON-shaped bearer token is vanishingly unlikely, but falling through to "use it as a
     // bearer" is the safe reading: it is at worst a token the server rejects.
@@ -103,6 +132,9 @@ export const liveBearer = async (
 ): Promise<string | undefined> => {
   const stored = readCredential(cn.secret_enc, key)
   if (stored.kind === "unreadable") return undefined
+  // Registered but never authorized: there is no token to send, and sending nothing produces an
+  // honest 401 rather than a confusing one.
+  if (stored.kind === "client") return undefined
   if (stored.kind === "bearer") return stored.token
   const { cred } = stored
   if (!expired(cred) || !cred.refresh_token || !key) return cred.access_token

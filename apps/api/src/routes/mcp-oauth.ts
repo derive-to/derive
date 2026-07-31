@@ -34,7 +34,12 @@ import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { signCapabilityToken, verifyCapabilityToken } from "../lib/capability-token"
 import { fail } from "../lib/http"
-import { type McpOauthCredential, serializeCredential } from "../lib/mcp-oauth"
+import {
+  type McpOauthCredential,
+  readCredential,
+  serializeClient,
+  serializeCredential,
+} from "../lib/mcp-oauth"
 
 /** Its own signing domain, so a state token cannot be replayed as any other capability. */
 const STATE_DOMAIN = "derive-mcp-oauth-state:"
@@ -154,22 +159,37 @@ export const mcpOauthRoutes = (ctx: AppContext) => {
       const md = await discoverAuthorizationServerMetadata(authServer)
       if (!md?.token_endpoint) return fail(c, 400, "that server does not advertise OAuth")
 
-      // Register per (server, deployment). Servers that offer registration hand back a public
-      // client — Stripe's advertises `token_endpoint_auth_methods_supported: ["none"]` — which is
-      // exactly the shape PKCE is designed for and needs no secret of ours anywhere.
+      // REUSE A REGISTRATION BEFORE MAKING ANOTHER. Registration is not idempotent — Linear
+      // returns a fresh client_id for byte-identical metadata — so registering per attempt leaves
+      // an abandoned client at the provider for every retry and every abandoned consent screen.
       const redirectUri = callbackUri(deps.baseUrl)
-      const client = md.registration_endpoint
-        ? await registerClient(authServer, {
-            metadata: md,
-            clientMetadata: {
-              client_name: "Derive",
-              redirect_uris: [redirectUri],
-              grant_types: ["authorization_code", "refresh_token"],
-              response_types: ["code"],
-              token_endpoint_auth_method: "none",
-            },
-          })
-        : undefined
+      const stored = readCredential(cn.secret_enc, secret)
+      const reusable =
+        stored.kind === "client" && stored.client.authorization_server === authServer
+          ? { client_id: stored.client.client_id, client_secret: stored.client.client_secret }
+          : // Re-authorizing an already-connected source: its credential names the client that
+            // was registered for it, and that one is still ours to use.
+            stored.kind === "oauth" && stored.cred.authorization_server === authServer
+            ? { client_id: stored.cred.client_id, client_secret: stored.cred.client_secret }
+            : undefined
+
+      // Servers that offer registration hand back a public client — Stripe's advertises
+      // `token_endpoint_auth_methods_supported: ["none"]` — which is exactly the shape PKCE is
+      // designed for and needs no secret of ours anywhere.
+      const client =
+        reusable ??
+        (md.registration_endpoint
+          ? await registerClient(authServer, {
+              metadata: md,
+              clientMetadata: {
+                client_name: "Derive",
+                redirect_uris: [redirectUri],
+                grant_types: ["authorization_code", "refresh_token"],
+                response_types: ["code"],
+                token_endpoint_auth_method: "none",
+              },
+            })
+          : undefined)
       if (!client?.client_id)
         return fail(
           c,
@@ -178,6 +198,23 @@ export const mcpOauthRoutes = (ctx: AppContext) => {
         )
 
       const scope = requestedScope(md.scopes_supported)
+      // Persist it BEFORE sending them off, because the flow that never comes back is precisely
+      // the one that would otherwise register again. Never over an existing credential: that blob
+      // holds live tokens and this one does not.
+      if (!reusable && stored.kind !== "oauth")
+        await meta.updateConnectionCredential(cn.id, org, {
+          secret_enc: serializeClient(
+            {
+              v: 1,
+              kind: "client",
+              client_id: client.client_id,
+              ...(client.client_secret ? { client_secret: client.client_secret } : {}),
+              authorization_server: authServer,
+            },
+            secret,
+          ),
+        })
+
       const { authorizationUrl, codeVerifier } = await startAuthorization(authServer, {
         metadata: md,
         clientInformation: client,

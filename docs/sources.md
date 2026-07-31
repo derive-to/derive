@@ -56,6 +56,10 @@ Discovery, registration, PKCE, the code exchange, and refresh all come from
 
 - **Registration is dynamic** (RFC 7591). Derive registers itself with each server the first time
   someone connects it, as a public client with PKCE S256. No per-deployment vendor paperwork.
+- **The registration is reused.** Registration is not idempotent: ask Linear twice with identical
+  metadata and you get two clients. So it is stored on the connection before you are sent to
+  consent, and every later Sign in on that connection reuses it. Otherwise every retry and every
+  abandoned consent screen would leave another OAuth client behind at the provider.
 - **Scopes are narrowed.** Asking for everything a server advertises is the obvious implementation
   and the wrong one: Linear advertises `read write openid email`, so its consent screen offered
   Write for a feature that reads. Plainly elevated scopes are dropped. If nothing recognisably

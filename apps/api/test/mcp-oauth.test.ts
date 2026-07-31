@@ -188,6 +188,46 @@ describe("connecting an MCP server by signing in", () => {
     expect(requestedScope(undefined)).toBeUndefined()
   })
 
+  it("registers ONCE per server, however many times you press Sign in", async () => {
+    // Registration is not idempotent: Linear hands back a fresh client_id for byte-identical
+    // metadata every time. So a Sign in pressed three times, or a consent screen abandoned twice
+    // before someone finishes, would leave three OAuth clients at the provider -- on an endpoint
+    // that is a standing rate-limit and abuse target.
+    const srv = await startOauthServer()
+    const created = await connect({ toolkit: "billing", mcp_url: srv.url })
+    const id = created.body.id as string
+
+    const clientIds = new Set<string>()
+    for (let i = 0; i < 3; i++) {
+      const auth = await app.request(`/v1/connections/${id}/authorize`, {
+        method: "POST",
+        headers: as(owner.email),
+      })
+      expect(auth.status).toBe(200)
+      const { authorize_url } = (await auth.json()) as { authorize_url: string }
+      clientIds.add(new URL(authorize_url).searchParams.get("client_id") ?? "")
+    }
+    expect(srv.state.registered).toBe(1)
+    expect(clientIds.size, "the same client every time").toBe(1)
+
+    // And finishing still works on the reused client — the reuse must not have cost the flow
+    // anything, which is the failure mode a registration-count assertion alone would miss.
+    const auth = await app.request(`/v1/connections/${id}/authorize`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    const { authorize_url } = (await auth.json()) as { authorize_url: string }
+    const state = new URL(authorize_url).searchParams.get("state") ?? ""
+    const cb = await app.request(
+      `/v1/connections/oauth/callback?code=authcode&state=${encodeURIComponent(state)}`,
+      { headers: as(owner.email) },
+    )
+    expect(cb.status).toBe(302)
+    const [row] = await meta.getConnectionsByIds([id])
+    expect(row?.status).toBe("active")
+    expect(readCredential(row?.secret_enc ?? null, SECRET).kind).toBe("oauth")
+  })
+
   it("someone else cannot finish a flow you started, even holding the link", async () => {
     // Signed state proves who STARTED it and rides in a URL, so it is replayable inside its
     // window. Only a live session can prove who FINISHES it.
