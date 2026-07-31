@@ -19,7 +19,7 @@ import { PostgresDialect } from "kysely"
 import { createApp } from "./app"
 import { type AuthDb, makeAuth } from "./auth-config"
 import { authSchema } from "./auth-schema"
-import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
+import { hyperdriveConn, livePgPool, type QueryLogEntry, queryProfile, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedder"
 import { workspacesBlockingDeletion } from "./lib/account"
@@ -418,7 +418,16 @@ export default {
     // notifications/webhooks off mid-flight. Idle sockets reap themselves and the
     // rest dies with the request context.
     if (env.HYPERDRIVE)
-      return requestPg.run(hyperdriveConn(env.HYPERDRIVE), () => handle(req, env, ctx))
+      return requestPg.run(hyperdriveConn(env.HYPERDRIVE), async () => {
+        // TEMPORARY — perf program trip-count profiler (akvf8ga9). Revert before merge.
+        const log: QueryLogEntry[] = []
+        const res = await queryProfile.run(log, () => handle(req, env, ctx))
+        const headers = new Headers(res.headers)
+        headers.set("x-perf-queries", String(log.length))
+        headers.set("x-perf-db-ms", String(Math.round(log.reduce((a, e) => a + e.ms, 0))))
+        headers.set("x-perf-detail", JSON.stringify(log).slice(0, 6000))
+        return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+      })
     return handle(req, env, ctx)
   },
 
