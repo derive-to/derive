@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { refRouter } from "@derive/broker"
 import {
   type AutomationRecord,
   type AutomationTrigger,
@@ -16,7 +17,9 @@ import {
   brokerFor,
   callTool,
   connectionBindError,
+  mcpAuthFor,
   parseConnectionIds,
+  type SourceQuiet,
   spendableConnections,
   toolsForRun,
 } from "../lib/broker"
@@ -493,13 +496,33 @@ export const automationRoutes = (ctx: AppContext) => {
     // automation's bound connections only. The runner's shim calls these back through the tool
     // endpoint below — credentials never leave the API.
     const broker = runnable.length
-      ? await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
+      ? await brokerFor(meta, agent.org_id, null, deps.encryptionKey, deps.allowEchoStub)
+      : null
+    // ONE router for the whole claim. Runs in a batch routinely share an automation, and so the
+    // same bound connections: without a shared router each run built its own MCP client and
+    // re-handshook every server it touched.
+    const route = broker
+      ? refRouter(broker, mcpAuthFor(meta, agent.org_id, deps.encryptionKey))
       : null
     const runs = await Promise.all(
       runnable.map(async ({ r, a }) => {
         const connIds = parseConnectionIds(a.connection_ids)
+        // A bound source that contributes NOTHING is the interesting case: the run is about to
+        // do its job without a thing its author expected it to have. Carried to the executor so
+        // the answer can say which source went quiet and why, instead of quietly omitting it.
+        const quiet: SourceQuiet[] = []
         const tools =
-          broker && connIds.length ? await toolsForRun(meta, broker, agent.org_id, connIds) : []
+          broker && route && connIds.length
+            ? await toolsForRun(
+                meta,
+                broker,
+                agent.org_id,
+                connIds,
+                route,
+                deps.encryptionKey,
+                quiet,
+              )
+            : []
         // Counted from the CONNECTIONS this run may spend, not from `tools` — a connection with
         // no base_url yields no HTTP tools but is still a real credential (it is spent by
         // delivery into the run). Deriving this from the tool list would report "not
@@ -510,6 +533,7 @@ export const automationRoutes = (ctx: AppContext) => {
         return {
           id: r.id,
           reason: r.reason,
+          ...(quiet.length ? { sources_quiet: quiet } : {}),
           // THIS claim's own started_at, so the executor can hand it straight back on
           // /finish as `claimed_started_at` — its proof that a later call is settling the
           // claim it just received, not merely a run id its (still valid, unexpired) token
@@ -693,11 +717,16 @@ export const automationRoutes = (ctx: AppContext) => {
     if (connIds.length === 0) return fail(c, 403, "run has no bound sources")
     // Resolve the run's allowed (tool → ref) set once, least-privilege. The requested tool must
     // be one of them; if a ref is supplied it must match that tool's ref (never cross to another).
-    const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey)
-    const allowed = await toolsForRun(meta, broker, agent.org_id, connIds)
+    const broker = await brokerFor(meta, agent.org_id, null, deps.encryptionKey, deps.allowEchoStub)
+    // One router for BOTH the least-privilege check and the execution below. They touch the same
+    // servers back to back, so sharing it means the MCP client handshakes once instead of twice
+    // per tool call — and this endpoint is called once per tool a composed script runs.
+    const route = refRouter(broker, mcpAuthFor(meta, agent.org_id, deps.encryptionKey))
+    const allowed = await toolsForRun(meta, broker, agent.org_id, connIds, route)
     const out = await callTool({
       meta,
       broker,
+      route,
       orgId: agent.org_id,
       encryptionKey: deps.encryptionKey,
       allowed,

@@ -2021,7 +2021,13 @@ export type ConnectionScope = "personal" | "workspace"
  *              sync already uses, and a short-lived token is minted per call.
  *  slack       no stored credential — the workspace's existing bot install provides it.
  */
-export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack"
+/** How a connection authenticates, and therefore who spends its credential.
+ *
+ *  `mcp` is the odd one out and deliberately so: it is broker-executed like `oauth`, but it
+ *  carries its own server URL in its ref and its own bearer in `secret_enc`, so it needs no
+ *  vendor account and no broker plan. It is NOT a direct kind — Derive does not make its HTTP
+ *  call itself — and it has no vendor side to revoke. */
+export type ConnectionKind = "oauth" | "secret" | "github_app" | "slack" | "mcp"
 
 /** A per-user connected external account (WO3): the owner authorized Derive's broker to act on
  *  their Gmail/Stripe/GitHub/etc. Always bound to ONE person (identity never falls back), and

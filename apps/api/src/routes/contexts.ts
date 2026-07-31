@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { refRouter } from "@derive/broker"
 import {
   type ContextAskerRecord,
   type ContextRecord,
@@ -22,6 +23,7 @@ import {
   brokerFor,
   callTool,
   connectionBindError,
+  mcpAuthFor,
   parseConnectionIds,
   spendableConnections,
   toolsForRun,
@@ -388,12 +390,17 @@ export const contextRoutes = (ctx: AppContext) => {
   // spend, so the write gate must count spendable connections (see spendableConnections).
   const contextTools = async (x: ContextRecord) => {
     const ids = parseConnectionIds(x.connection_ids)
-    if (ids.length === 0) return { broker: null, tools: [], credentialed: false }
-    const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey)
+    if (ids.length === 0) return { broker: null, route: null, tools: [], credentialed: false }
+    const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey, deps.allowEchoStub)
+    // The router rides along with the broker for the same reason the broker does: the proxy has
+    // to EXECUTE through whatever listed the tool, or an `mcp:` tool would be listed by the MCP
+    // broker and run by the plan's. It also carries the per-ref bearer.
+    const route = refRouter(broker, mcpAuthFor(meta, x.org_id, deps.encryptionKey))
     const spendable = await spendableConnections(meta, x.org_id, ids)
     return {
       broker,
-      tools: await toolsForRun(meta, broker, x.org_id, ids),
+      route,
+      tools: await toolsForRun(meta, broker, x.org_id, ids, route, deps.encryptionKey),
       credentialed: spendable.length > 0,
     }
   }
@@ -1759,10 +1766,11 @@ export const contextRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
-    const { broker, tools } = await contextTools(x)
+    const { broker, route, tools } = await contextTools(x)
     const out = await callTool({
       meta,
       broker,
+      route: route ?? undefined,
       orgId: x.org_id,
       encryptionKey: deps.encryptionKey,
       allowed: tools,

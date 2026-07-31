@@ -189,3 +189,70 @@ describe("the response it reads", () => {
     ).rejects.toThrow(/token ceiling/)
   })
 })
+
+// A TOOL CALL AND ITS RESULT MUST SURVIVE THE TRIP TO THE GATEWAY.
+//
+// The loop speaks Anthropic: after a tool call it appends the assistant's `toolUses`
+// (`{id, name, input}`) as one message and the results (`{tool_use_id, content}`) as the next.
+// Chat-completions wants `tool_calls` on the assistant turn and a separate `role: "tool"` message
+// per result. Both blocks used to go through `flatten`, which matches on `type` — and neither
+// carries one — so BOTH became "".
+//
+// The model therefore never saw that it had called a tool, nor what came back. It asked again,
+// saw nothing, asked again, and the run died at the turn cap reporting "the agent did not produce
+// a revision" — a conversation with its middle deleted, wearing the costume of a confused model.
+// It broke every tool-using hosted run on any gateway deployment, for every kind of source.
+describe("a tool call survives translation to chat-completions", () => {
+  const capture = async () => {
+    let sent: { messages: Record<string, unknown>[] } | undefined
+    const call = openAiCompatModel({
+      baseUrl: "https://gw.test/v1",
+      apiKey: "k",
+      model: "m",
+      fetchImpl: (async (_u: string, init: RequestInit) => {
+        sent = JSON.parse(String(init.body))
+        return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }) as unknown as typeof fetch,
+    })
+    await call({
+      system: "s",
+      messages: [
+        { role: "user", content: "read the weather" },
+        { role: "assistant", content: [{ id: "t1", name: "wx_get", input: { city: "London" } }] },
+        { role: "user", content: [{ tool_use_id: "t1", content: '{"temperature_c":19.8}' }] },
+      ] as never,
+      tools: [{ name: "wx_get", description: "d", params: {} }],
+    })
+    return sent?.messages ?? []
+  }
+
+  it("the assistant turn carries tool_calls with JSON-STRING arguments", async () => {
+    const assistant = (await capture()).find((m) => m.role === "assistant") as {
+      tool_calls?: { id: string; type: string; function: { name: string; arguments: string } }[]
+    }
+    expect(assistant?.tool_calls).toHaveLength(1)
+    expect(assistant?.tool_calls?.[0]?.id).toBe("t1")
+    expect(assistant?.tool_calls?.[0]?.type).toBe("function")
+    expect(assistant?.tool_calls?.[0]?.function.name).toBe("wx_get")
+    // A STRING, not an object — the one detail that silently breaks a strict gateway.
+    expect(assistant?.tool_calls?.[0]?.function.arguments).toBe('{"city":"London"}')
+  })
+
+  it("the result comes back as its own role:tool message, keyed to the call", async () => {
+    const tool = (await capture()).find((m) => m.role === "tool")
+    expect(tool).toBeTruthy()
+    expect(tool?.tool_call_id).toBe("t1")
+    expect(tool?.content).toBe('{"temperature_c":19.8}')
+  })
+
+  it("nothing is silently emptied — the regression that caused this", async () => {
+    const msgs = await capture()
+    // Before the fix BOTH of these were `{content: ""}`, and the model was left asking into a
+    // void until the loop ran out of turns.
+    expect(msgs.filter((m) => m.content === "")).toHaveLength(0)
+    expect(JSON.stringify(msgs)).toContain("19.8")
+  })
+})

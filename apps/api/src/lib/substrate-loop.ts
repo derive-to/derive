@@ -104,6 +104,13 @@ interface ClaimedRun {
   instruction: string
   targets?: { kind: string; id?: string; tag?: string; mode?: string }[]
   tools?: { def: LoopTool; ref: string }[]
+  /** Bound sources that contributed NOTHING, and why. The claim has always sent this and this
+   *  executor dropped it on the floor — so a run whose source was unreachable, or whose tool list
+   *  had been rewritten since a human approved it, behaved as though no source was ever bound.
+   *  The model was not told, and neither was the ledger: the run just failed to write and the
+   *  only account of it was "the agent produced nothing", which points at the wrong thing
+   *  entirely. The CLI runner has read this since it existed; this lane now does too. */
+  sources_quiet?: { connection_id: string; toolkit: string; reason: string; why?: string }[]
   payloads?: unknown[]
   flags?: AutonomyFlags
   meta?: string | null
@@ -183,6 +190,17 @@ const buildPrompt = (run: ClaimedRun, targetId: string | undefined): string => {
     lines.push(
       `You have these tools. Prefer to pull what you need, then write:\n` +
         run.tools.map((t) => `- ${t.def.name}: ${t.def.description}`).join("\n"),
+    )
+  // A bound source that contributed nothing. Say so plainly: "the figures are missing because
+  // that source is unreachable" is a usable answer, and silently omitting it is not — the model
+  // would otherwise invent numbers or stall looking for a tool it was told it had.
+  if (run.sources_quiet?.length)
+    lines.push(
+      `These bound sources gave you NOTHING this run, so do not wait for them and do not guess ` +
+        `what they would have returned — say what is missing and why:\n` +
+        // `why` comes down with the claim: the server resolves it once, so neither executor
+        // keeps a copy of the wording to drift out of step with the other.
+        run.sources_quiet.map((q) => `- ${q.toolkit}: ${q.why ?? q.reason}`).join("\n"),
     )
   return lines.join("\n\n")
 }
@@ -499,6 +517,15 @@ const serveOneRun = async (
         outcome: "failed",
         why: out.failure.error.slice(0, 200),
         retryable: out.failure.retryable,
+        // A run bound to a source that went dark usually fails for THAT reason, and the ledger
+        // used to say only "the agent produced nothing" — which reads as a broken model and sent
+        // the last investigation looking in the wrong place for hours. Carry it on every failure.
+        ...(run.sources_quiet?.length ? { sources_quiet: run.sources_quiet } : {}),
+        // HOW MANY HANDS IT HAD. "Failed with zero tools" and "failed holding three" are
+        // different diagnoses — the first is a binding or reachability problem and the second is
+        // the model or the contract — and the ledger could not tell them apart at all, so every
+        // investigation started by guessing which one it was looking at.
+        tools_offered: run.tools?.length ?? 0,
       },
     })
     return

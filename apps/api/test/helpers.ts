@@ -198,7 +198,9 @@ export const authProxy = <T extends ReturnType<typeof createApp>>(a: T): T =>
 // requests auto-authenticate as that token — the shared `app` with knobs (sandbox
 // origin, version window, …).
 export const ownerApp = (deps: Omit<AppDeps, "token">) =>
-  authProxy(createApp({ ...deps, token: TEST_TOKEN }))
+  // The echo broker is opt-in in production (see DERIVE_LOCAL_BROKER); tests are the context it
+  // exists for, so it is on here unless a test is specifically asserting the refusing default.
+  authProxy(createApp({ allowEchoStub: true, ...deps, token: TEST_TOKEN }))
 
 export const meta = makeStore("default", [])
 const sharedApp = createApp({
@@ -206,6 +208,7 @@ const sharedApp = createApp({
   blobs: new FsBlobStore(join(dir, "blobs")),
   baseUrl: "http://derive.test",
   token: TEST_TOKEN,
+  allowEchoStub: true,
 })
 // The default app: every request authenticates as the token (owner).
 export const app = authProxy(sharedApp)
@@ -350,6 +353,7 @@ export const makeAuthedApp = (
     auth: fakeAuth(users),
     defaultRole,
     defaultOrgId: "default",
+    allowEchoStub: true,
     ...opts?.deps,
   })
   const gated = new Proxy(app, {

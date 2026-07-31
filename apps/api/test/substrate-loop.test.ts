@@ -1182,3 +1182,55 @@ describe("what the run READS to learn the document's format", () => {
     }
   })
 })
+
+// A BOUND SOURCE THAT WENT QUIET must reach both the model and the ledger.
+//
+// The claim has always sent `sources_quiet` and this executor dropped it, so a run whose server
+// was unreachable — or whose tool list had been rewritten since a human approved it — behaved as
+// though no source had ever been bound. The model was not told, so it stalled or invented; the
+// ledger was not told, so the only account was "the agent produced nothing", which points at the
+// model instead of at the dead source. That misdirection cost a real investigation.
+describe("loop substrate: a source that contributed nothing is explained", () => {
+  // `why` is resolved server-side and rides down with the claim, so neither executor keeps its
+  // own copy of the wording.
+  const quiet = [
+    {
+      connection_id: "c1",
+      toolkit: "weather",
+      reason: "unreachable",
+      why: "the server could not be reached",
+    },
+  ]
+
+  it("tells the MODEL which source went quiet and why", async () => {
+    const api = stubApi({ run: { ...baseRun, sources_quiet: quiet } })
+    const url = await api.url
+    let prompt = ""
+    await runToSettle(url, api.rec, async ({ messages }) => {
+      prompt = JSON.stringify(messages)
+      return { text: revision(), toolUses: [], costUsd: null, done: true }
+    })
+    expect(prompt).toContain("weather")
+    expect(prompt).toContain("could not be reached")
+    // And it must tell the model NOT to invent the missing figures.
+    expect(prompt).toContain("do not guess")
+    await api.close()
+  })
+
+  it("records it on the FAILURE, so the ledger names the dead source", async () => {
+    const api = stubApi({ run: { ...baseRun, sources_quiet: quiet } })
+    const url = await api.url
+    await runToSettle(url, api.rec, async () => ({
+      text: "I could not read it.",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    const meta = api.rec.finishes[0]?.meta as Record<string, unknown>
+    expect(meta?.outcome).toBe("failed")
+    expect(meta?.sources_quiet).toEqual(quiet)
+    // "Failed with zero tools" is a different diagnosis from "failed holding three".
+    expect(meta?.tools_offered).toBe(0)
+    await api.close()
+  })
+})
