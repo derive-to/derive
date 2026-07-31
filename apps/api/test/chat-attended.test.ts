@@ -1,5 +1,6 @@
 import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
+import { createInProcessBackplane } from "../src/bus"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp } from "./helpers"
 
@@ -597,5 +598,143 @@ describe("follow-ups are limited, budgeted, and gated", () => {
     expect(after.length).toBe(before + 1)
     expect(after.at(-1)?.author_kind).toBe("asker")
     void app
+  })
+})
+
+// ---- Streaming the reply --------------------------------------------------
+// The attended turn used to settle SILENTLY: served in-process, it never went through the
+// runner report path that publishes, so a watching client learned the answer had landed only
+// on its next poll. Streaming makes the terminal event mandatory — deltas with no settle leave
+// a reader watching a reply that never officially finishes. These pin both halves.
+
+/* (helper folded into the tests below) */
+
+describe("an attended reply streams, then settles", () => {
+  it("publishes coalesced deltas and a terminal settle, in that order, on the asker's channel", async () => {
+    const seen: { channel: string; type: string; body: Record<string, unknown> }[] = []
+    const inner = createInProcessBackplane()
+    const plane = {
+      ...inner,
+      publish(channel: string, e: Record<string, unknown>) {
+        seen.push({ channel, type: String(e.type), body: e })
+        inner.publish(channel, e as never)
+      },
+      // Deltas take the RECEIPT-bearing publish (that count is what lets the stream switch
+      // itself off when no tab is open), so the capture has to cover it too. Returning 1 stands
+      // in for an open tab; the zero-listener shutoff is unit-tested in session-stream.test.ts.
+      async publishWithReceipt(channel: string, e: Record<string, unknown>) {
+        seen.push({ channel, type: String(e.type), body: e })
+        inner.publish(channel, e as never)
+        return 1
+      },
+    }
+    const users = [{ id: "u-st", email: "st@x.com", name: "St" }]
+    const { app, meta } = makeAuthedApp("chat-stream", users, undefined, {
+      deps: {
+        backplane: plane as never,
+        // A model that streams its answer in pieces, exactly as the real adapter does.
+        callModel: async ({ onDelta }) => {
+          for (const piece of ["Hello", ", ", "world"]) onDelta?.(piece)
+          return { text: "Hello, world", toolUses: [], costUsd: null, done: true }
+        },
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    const created = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as("st@x.com"),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Doc"], { type: "text/markdown" }), "doc.md")
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await created.json()) as { short_id: string }
+
+    const opened = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as("st@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "hi", mode: "propose" }),
+    })
+    expect(opened.status).toBe(201)
+    const sessionId = ((await opened.json()) as { session: { id: string } }).session.id
+
+    // serveAttended is detached — wait for the transcript to carry the agent's reply.
+    for (let i = 0; i < 60; i++) {
+      const msgs = await meta.listSessionMessages(sessionId)
+      if (msgs.some((m) => m.author_kind === "agent")) break
+      await new Promise((r) => setTimeout(r, 25))
+    }
+
+    const mine = seen.filter((e) => e.body.session_id === sessionId)
+    const deltas = mine.filter((e) => e.type === "session.delta")
+    const settles = mine.filter((e) => e.type === "session.settled")
+
+    // Deltas landed, on the ASKER's channel, and their text is the whole reply in order.
+    expect(deltas.length).toBeGreaterThan(0)
+    expect(new Set(deltas.map((d) => d.channel))).toEqual(new Set(["u:u-st"]))
+    expect(deltas.map((d) => d.body.text).join("")).toBe("Hello, world")
+    expect(deltas.map((d) => d.body.seq)).toEqual(deltas.map((_, i) => i + 1))
+    // COALESCED: three model pieces did not become three publishes.
+    expect(deltas.length).toBeLessThan(3)
+
+    // ...and the turn ended with exactly one terminal event, AFTER every delta.
+    expect(settles).toHaveLength(1)
+    expect(mine.at(-1)?.type).toBe("session.settled")
+    expect(settles[0]?.body.state).toBe("answered")
+  })
+
+  it("still settles when there is no model, so a client never waits forever", async () => {
+    const seen: { type: string; body: Record<string, unknown> }[] = []
+    const inner = createInProcessBackplane()
+    const plane = {
+      ...inner,
+      publish(channel: string, e: Record<string, unknown>) {
+        seen.push({ type: String(e.type), body: e })
+        inner.publish(channel, e as never)
+      },
+    }
+    const users = [{ id: "u-nm", email: "nm@x.com", name: "Nm" }]
+    // No callModel at all — the self-host default.
+    const { app, meta } = makeAuthedApp("chat-nomodel-stream", users, undefined, {
+      deps: { backplane: plane as never },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    const created = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as("nm@x.com"),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Doc"], { type: "text/markdown" }), "doc.md")
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await created.json()) as { short_id: string }
+    const opened = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as("nm@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ short_id, body_md: "hi", mode: "propose" }),
+    })
+    // Chat is unreachable with no model wired, so either it refuses up front or it answers
+    // in the transcript — both are terminal. What must NOT happen is a silent hang.
+    if (opened.status === 201) {
+      const sessionId = ((await opened.json()) as { session: { id: string } }).session.id
+      for (let i = 0; i < 60; i++) {
+        const msgs = await meta.listSessionMessages(sessionId)
+        if (msgs.some((m) => m.author_kind === "agent")) break
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      expect(seen.filter((e) => e.type === "session.settled")).toHaveLength(1)
+    } else {
+      expect(opened.status).toBeGreaterThanOrEqual(400)
+    }
   })
 })

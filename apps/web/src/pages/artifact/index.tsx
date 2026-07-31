@@ -1032,6 +1032,7 @@ export function Artifact() {
                 <ArtifactChat
                   messages={chat.messages}
                   working={chat.working}
+                  streaming={chat.streaming}
                   disabledReason={chat.error ?? undefined}
                   onSend={(b) => chat.send(b, effectiveCanPublish)}
                   onPoll={chat.poll}

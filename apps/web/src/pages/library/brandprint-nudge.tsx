@@ -7,6 +7,7 @@ import { useAuth } from "@/ctx"
 import { useBootGate } from "@/lib/bootstrap"
 import { workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { useIdleGate } from "@/lib/use-idle-gate"
 
 // The spec's "first on the team" catch-all: Derive creates team workspaces at first
 // need, often after onboarding, so the owner of a Brandprint-less workspace gets one
@@ -22,7 +23,9 @@ export function BrandprintNudge() {
       return true
     }
   })
-  const { data: ws, isError: wsError } = useQuery({ ...workspaceQuery(), enabled: !!me })
+  // Ambient nudge: hidden until both reads land, so neither needs to race the boot.
+  const idle = useIdleGate()
+  const { data: ws, isError: wsError } = useQuery({ ...workspaceQuery(), enabled: !!me && idle })
   // Boot-batch gated: /v1/bootstrap seeds the settings cache; this read then costs
   // nothing on boot. workspaceQuery above is not in the batch and keeps its timing.
   const bootGate = useBootGate()
