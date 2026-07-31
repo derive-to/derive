@@ -77,6 +77,68 @@ const asTools = (tools: LoopTool[]) =>
     },
   }))
 
+/**
+ * One turn of tool use, translated into the chat-completions shape.
+ *
+ * THE LOOP SPEAKS ANTHROPIC. After a tool call it appends the assistant's `toolUses`
+ * (`{id, name, input}`) as one message, then the results (`{tool_use_id, content}`) as the next.
+ * Chat-completions wants neither: an assistant turn carries `tool_calls` with a JSON-STRING
+ * `arguments`, and every result is its OWN `role: "tool"` message keyed by `tool_call_id`.
+ *
+ * Until this existed, both were run through `flatten`, which matches on `type` — and neither
+ * block carries one. So both became the empty string: the model's own tool call disappeared from
+ * the history, and so did the answer. Every turn it asked again, saw nothing, and asked again,
+ * until the loop ran out of turns and reported "the agent did not produce a revision" — which
+ * reads as a confused model and is really a conversation with its middle deleted. It broke EVERY
+ * tool-using hosted run on a gateway deployment, for every kind of source, and no test caught it
+ * because the loop's own tests inject `callModel` and never go through an adapter.
+ */
+interface ToolUseBlock {
+  id: string
+  name: string
+  input?: unknown
+}
+interface ToolResultBlock {
+  tool_use_id: string
+  content?: unknown
+}
+
+const isToolUse = (b: unknown): b is ToolUseBlock =>
+  !!b && typeof b === "object" && "id" in b && "name" in b
+const isToolResult = (b: unknown): b is ToolResultBlock =>
+  !!b && typeof b === "object" && "tool_use_id" in b
+
+/** Chat-completions messages for one loop message — usually one, but a results block fans out to
+ *  one `role: "tool"` message per result. */
+const asMessages = (m: ModelMessage): Record<string, unknown>[] => {
+  const blocks = Array.isArray(m.content) ? (m.content as unknown[]) : null
+  if (blocks) {
+    const results = blocks.filter(isToolResult)
+    if (results.length)
+      return results.map((r) => ({
+        role: "tool",
+        tool_call_id: r.tool_use_id,
+        content: typeof r.content === "string" ? r.content : JSON.stringify(r.content ?? ""),
+      }))
+    const uses = blocks.filter(isToolUse)
+    if (uses.length)
+      return [
+        {
+          role: "assistant",
+          // Any prose the same turn produced rides along; null when there was none, which is
+          // what the API expects for a pure tool-call turn.
+          content: flatten(blocks.filter((b) => !isToolUse(b))) || null,
+          tool_calls: uses.map((u) => ({
+            id: u.id,
+            type: "function",
+            function: { name: u.name, arguments: JSON.stringify(u.input ?? {}) },
+          })),
+        },
+      ]
+  }
+  return [{ role: m.role, content: flatten(m.content) }]
+}
+
 /** Anthropic accepts a bare string OR an array of content blocks; the chat-completions shape wants
  *  a string. Flatten text blocks and drop the rest, so a conversation built for one provider does
  *  not arrive at the other as "[object Object]". */
@@ -88,8 +150,9 @@ const flatten = (content: unknown): string => {
       if (typeof b === "string") return b
       const o = b as { type?: string; text?: string; content?: unknown }
       if (o.type === "text" && typeof o.text === "string") return o.text
-      // A tool RESULT block carries the payload the model needs to keep going; losing it would
-      // silently truncate the conversation rather than fail loudly.
+      // A properly-typed tool RESULT that carries no `tool_use_id` never reaches `asMessages`'
+      // fan-out, so it would otherwise be dropped here — losing the payload the model needs to
+      // keep going, silently, rather than failing loudly.
       if (o.type === "tool_result") return typeof o.content === "string" ? o.content : ""
       return ""
     })
@@ -112,10 +175,7 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
         max_tokens: opts.maxTokens ?? 8_000,
         messages: [
           { role: "system", content: system },
-          ...(messages as ModelMessage[]).map((m) => ({
-            role: m.role,
-            content: flatten(m.content),
-          })),
+          ...(messages as ModelMessage[]).flatMap(asMessages),
         ],
         ...(tools.length ? { tools: asTools(tools), tool_choice: "auto" } : {}),
       }),

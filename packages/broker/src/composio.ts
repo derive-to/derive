@@ -1,3 +1,4 @@
+import { unbound } from "./http"
 import type { BrokerToolDef, ConnectResult, ToolBroker } from "./types"
 
 const API_BASE = "https://backend.composio.dev/api/v3"
@@ -13,10 +14,15 @@ const API_BASE = "https://backend.composio.dev/api/v3"
 export class ComposioBroker implements ToolBroker {
   readonly provider = "composio"
 
+  /** Always a plain function, never the raw global — see `unbound`. */
+  private readonly fetchImpl: typeof fetch
+
   constructor(
     private readonly apiKey: string,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+    fetchImpl: typeof fetch = fetch,
+  ) {
+    this.fetchImpl = unbound(fetchImpl)
+  }
 
   private async call(path: string, init?: RequestInit): Promise<unknown> {
     const res = await this.fetchImpl(`${API_BASE}${path}`, {

@@ -1,5 +1,5 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
-import { makeBroker } from "@derive/broker"
+import { type McpAuthResolver, makeBroker, quietReason, refRouter } from "@derive/broker"
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { installationToken } from "./github-app"
@@ -15,6 +15,43 @@ import { installationToken } from "./github-app"
  *  run" decision). What this struct protects is narrower and still worth protecting: a claim
  *  must hand over exactly the access the work item was granted and no routing detail beyond
  *  it, so a bug here can't widen one run's reach into another's. */
+
+/** One bound connection that contributed nothing, and why — the difference between an outage
+ *  and a server that rewrote its tools after someone approved them. */
+export interface SourceQuiet {
+  connection_id: string
+  toolkit: string
+  /** unpinned | unreachable | pin_mismatch from the MCP broker; `no_tools` when the broker
+   *  offers no explanation (a plan broker with nothing connected, say). */
+  reason: string
+  /** The same thing in a sentence, resolved HERE so no executor has to keep its own copy.
+   *
+   *  Both lanes render this to a model and, on a failure, to the ledger a person reads. The
+   *  wording lived in two places — apps/api's loop and packages/cli's runner — kept in step by a
+   *  comment saying they matched, which is not a mechanism. The CLI is deliberately
+   *  dependency-free (it cannot import @derive/core; `decideWrite` is ported into it for the same
+   *  reason), so a shared module was never available to them. Sending the sentence with the
+   *  reason costs nothing and leaves exactly one copy, here, next to the code that decides it. */
+  why: string
+}
+
+/** Why a bound source contributed nothing, in words a person and a model both read. Keyed by the
+ *  machine reason so an unknown one still degrades to something legible rather than blank. */
+const QUIET_WHY: Record<string, string> = {
+  unreachable: "the server could not be reached",
+  pin_mismatch:
+    "the server's tool descriptions CHANGED since a human approved them, so it is being " +
+    "ignored until someone re-approves it",
+  unpinned: "the connection was never successfully approved",
+  no_tools: "it exposed no tools",
+  // Not the server's fault, and the wording must not imply it is. This is the case that spent a
+  // release blaming healthy servers for a bug on our side.
+  broker_error:
+    "Derive failed before it could ask the server — this is a fault on our side, not the " +
+    "server's, and it needs a bug report rather than a reconnect",
+}
+export const quietWhy = (reason: string): string => QUIET_WHY[reason] ?? reason
+
 export interface RunTool {
   def: BrokerToolDef
   ref: string
@@ -62,6 +99,18 @@ export const toolsForRun = async (
   broker: ToolBroker,
   orgId: string,
   connectionIds: string[],
+  /** An optional SHARED ref router. Pass one when resolving several runs in a single request (a
+   *  claim), so every run's MCP lookups reuse one client and one set of sessions instead of
+   *  re-handshaking per run. Omitted, each call gets its own. */
+  router?: (ref: string) => ToolBroker,
+  /** Needed only to decrypt an MCP connection's bearer. Omitted, MCP servers that require
+   *  authentication simply contribute no tools rather than being called without a credential. */
+  encryptionKey?: string,
+  /** Filled with one entry per connection that contributed NOTHING, and why. An out-param
+   *  rather than a wider return type so every existing caller is untouched — but a caller that
+   *  wants to explain itself ("I could not read X") now can, instead of a run silently missing
+   *  a source and nobody knowing whether the server is down or its tools were rewritten. */
+  quiet?: SourceQuiet[],
 ): Promise<RunTool[]> => {
   const spendable = await spendableConnections(meta, orgId, connectionIds)
   // A direct connection is called by resolving a path against its base_url and refusing
@@ -71,12 +120,38 @@ export const toolsForRun = async (
   // two tools that throw on every call. Expose none instead — but note it is still SPENDABLE,
   // which is why the gate counts spendableConnections and not this list.
   const usable = spendable.filter((cn) => !isDirect(cn.kind) || !!cn.base_url)
+  // Per-CONNECTION routing through ONE router: an `mcp:` ref reaches the MCP broker whatever the
+  // workspace's broker plan is (it needs no vendor account at all), everything else keeps the
+  // plan's broker. Sharing the router across this resolution is what lets the MCP client reuse
+  // its session instead of re-handshaking per connection, and carries the per-ref bearer.
+  const route = router ?? refRouter(broker, mcpAuthFor(meta, orgId, encryptionKey))
   const out: RunTool[] = []
+  // Dedupe by ref before listing. Two connection rows can point at the same broker_ref (the same
+  // MCP server bound twice, a re-connect that kept the ref), and listing it twice is two extra
+  // network round trips for a set of tools we already have.
+  const seen = new Set<string>()
   for (const cn of usable) {
+    if (seen.has(cn.broker_ref)) continue
+    seen.add(cn.broker_ref)
     const entry = { ref: cn.broker_ref, kind: cn.kind, connectionId: cn.id }
     // A direct connection has no vendor account, so its tools are ours to declare and
     // ours to execute (see executeHttpTool); the broker is never asked about it.
-    const defs = isDirect(cn.kind) ? httpTools(cn.toolkit) : await broker.toolsFor([cn.broker_ref])
+    //
+    // One unreachable or hostile server must not take down the whole tool list: a run bound to
+    // three connections still gets the other two, and sees the failure as a missing tool rather
+    // than a failed claim.
+    let defs: BrokerToolDef[]
+    if (isDirect(cn.kind)) defs = httpTools(cn.toolkit)
+    else {
+      const via = route(cn.broker_ref)
+      // Addressed by ref AND connection: the ref routes, the id says whose credential.
+      const target = authTarget(cn.broker_ref, cn.id)
+      defs = await via.toolsFor([target]).catch(() => [])
+      if (defs.length === 0) {
+        const reason = quietReason(via, target) ?? "no_tools"
+        quiet?.push({ connection_id: cn.id, toolkit: cn.toolkit, reason, why: quietWhy(reason) })
+      }
+    }
     for (const def of defs) out.push({ def, ...entry })
   }
   return out
@@ -90,6 +165,51 @@ export const toolsForRun = async (
  *  path (which refuses an unknown ref) instead of silently into ours. */
 const DIRECT_KINDS = new Set<ConnectionKind>(["secret", "github_app", "slack"])
 export const isDirect = (kind: ConnectionKind): boolean => DIRECT_KINDS.has(kind)
+
+/**
+ * The bearer resolver an MCP client uses, built from the connections already in hand.
+ *
+ * Keyed by REF rather than by URL, because two connections can point at the same server with
+ * different credentials — a personal one per member, say — and resolving by URL would hand one
+ * member's run the other member's token.
+ *
+ * Decrypts at CALL time, never at bind time, and never stores the plaintext on anything that
+ * outlives the call. Same rule as `bearerFor`: a credential revoked a second ago must stop
+ * working now, not whenever something happens to re-read it.
+ */
+export const mcpAuthFor = (
+  meta: MetaStore,
+  orgId: string,
+  encryptionKey: string | undefined,
+): McpAuthResolver => {
+  // Keyed by CONNECTION ID, which the caller appends to the target as `<ref>#<id>`.
+  //
+  // Resolving by ref alone is not merely imprecise, it is a cross-user credential leak: a ref is
+  // `mcp:<pin>:<url>` and the pin is a hash of the tool list, so two members who connect the SAME
+  // server produce the SAME ref. "The row with this ref that has a secret" then hands one
+  // member's run whatever token the other stored — the exact fallback that "identity never falls
+  // back" forbids. A connection id cannot collide, and the org check keeps a guessed id from
+  // reaching another tenant's row.
+  const cache = new Map<string, Promise<ConnectionRecord | null>>()
+  return async (target: string) => {
+    if (!encryptionKey) return undefined
+    const hash = target.indexOf("#")
+    if (hash < 0) return undefined
+    const id = target.slice(hash + 1)
+    let row = cache.get(id)
+    if (!row) {
+      row = meta.getConnection(id)
+      cache.set(id, row)
+    }
+    const cn = await row
+    if (!cn || cn.org_id !== orgId || !cn.secret_enc) return undefined
+    return decryptSecret(cn.secret_enc, encryptionKey)
+  }
+}
+
+/** The target string an MCP call is resolved against: the ref (routing) plus the connection id
+ *  (whose credential). Two members on one server share a ref and must not share a token. */
+export const authTarget = (ref: string, connectionId: string): string => `${ref}#${connectionId}`
 
 /** The tools a direct connection exposes. Named `<toolkit>.<verb>` to match the broker's
  *  convention, so the runner's shim treats every kind of connection identically.
@@ -225,7 +345,9 @@ export const parseConnectionIds = (raw: string | null): string[] => {
  *  should return. A shared shape so the two lanes can't drift on what a call means. */
 export type ToolCallOutcome =
   | { ok: true; result: unknown }
-  | { ok: false; status: 403 | 404 | 502; message: string }
+  // 409 is the AMBIGUOUS case: the name matched more than one bound source, which is a conflict
+  // to resolve rather than a permission to deny.
+  | { ok: false; status: 403 | 404 | 409 | 502; message: string }
 
 /**
  * Execute one tool call against a lane's already-resolved least-privilege list. Both proxies
@@ -247,10 +369,28 @@ export const callTool = async (opts: {
   tool: string
   args?: unknown
   ref?: string
+  /** The same SHARED ref router the allowed set was resolved with, when there is one. Routing
+   *  has to happen on BOTH halves or the pair disagrees: an `mcp:` tool would be listed by the
+   *  MCP broker and then executed by the plan's, which for the default LocalBroker means a stub
+   *  echo — a wrong ANSWER rather than an error, the worst failure of the two. */
+  route?: (ref: string) => ToolBroker
 }): Promise<ToolCallOutcome> => {
   const { meta, broker, orgId, encryptionKey, allowed, tool, args, ref } = opts
-  const match = allowed.find((t) => t.def.name === tool && (!ref || t.ref === ref))
+  const matches = allowed.filter((t) => t.def.name === tool && (!ref || t.ref === ref))
+  const match = matches[0]
   if (!match) return { ok: false, status: 403, message: `tool not allowed for ${opts.subject}` }
+  // AMBIGUOUS NAMES MUST NOT RESOLVE TO WHICHEVER CAME FIRST. A tool's name carries a namespace
+  // derived from its server's host, and `safeHost` folds every non-alphanumeric run to `_`, so
+  // `sub.example.com` and `sub-example.com` — two unrelated registrable domains — produce the
+  // same prefix. Taking the first match would run one server's tool against ANOTHER server's ref
+  // and credential, sending the caller's arguments somewhere they were never meant to go. There
+  // is no safe way to guess which was meant, so refuse and say so.
+  if (matches.length > 1)
+    return {
+      ok: false,
+      status: 409,
+      message: `"${tool}" is ambiguous for ${opts.subject}: ${matches.length} bound sources expose that name. Disconnect one, or pass \`ref\` to name the source.`,
+    }
   try {
     if (isDirect(match.kind)) {
       if (!encryptionKey)
@@ -260,7 +400,19 @@ export const callTool = async (opts: {
       return { ok: true, result: await executeHttpTool(meta, cn, tool, args ?? {}, encryptionKey) }
     }
     if (!broker) return { ok: false, status: 502, message: "no broker for this workspace" }
-    return { ok: true, result: await broker.execute({ ref: match.ref, tool, args: args ?? {} }) }
+    // Execute must spend the SAME connection's credential the listing used, so it addresses by
+    // (ref, connection) too. A shared router built without this run's connections resolves no
+    // credential, which fails closed — an unauthenticated call the server refuses — rather than
+    // silently reaching for whichever token happens to match the ref.
+    const via = (opts.route ?? refRouter(broker, mcpAuthFor(meta, orgId, encryptionKey)))(match.ref)
+    return {
+      ok: true,
+      result: await via.execute({
+        ref: authTarget(match.ref, match.connectionId),
+        tool,
+        args: args ?? {},
+      }),
+    }
   } catch (e) {
     return { ok: false, status: 502, message: e instanceof Error ? e.message : "tool failed" }
   }
@@ -307,6 +459,9 @@ export const brokerFor = async (
   orgId: string,
   ownerUserId: string | null,
   encryptionKey: string | undefined,
+  /** Dev/test opt-in to the echo stub. Omitted, a workspace with no plan gets a refusing
+   *  broker rather than one that fabricates plausible answers. */
+  allowEchoStub = false,
 ): Promise<ToolBroker> => {
   const plan = await meta.resolvePlan(orgId, ownerUserId, "broker")
   if (plan && encryptionKey) {
@@ -315,5 +470,5 @@ export const brokerFor = async (
       key: decryptSecret(plan.secret_enc, encryptionKey),
     })
   }
-  return makeBroker(null)
+  return makeBroker(null, allowEchoStub)
 }
