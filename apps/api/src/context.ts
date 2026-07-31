@@ -23,6 +23,7 @@ import {
   resolveBillingState,
   roleAllows,
   type SearchIndex,
+  type SubscriptionRecord,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
@@ -738,14 +739,21 @@ export function buildContext(deps: AppDeps) {
     return rateLimited(c, r.retryAfter)
   }
   const billingEnforceAt = deps.billingEnforceAt ? new Date(deps.billingEnforceAt) : null
+  // Fail loud on a typo'd date here, the one parse both entrypoints share — a NaN
+  // would compare false forever and enforcement day would silently never arrive.
+  if (billingEnforceAt && Number.isNaN(billingEnforceAt.getTime()))
+    throw new Error(`invalid DERIVE_BILLING_ENFORCE_AT: ${deps.billingEnforceAt}`)
   // The whole billing decision from local state only: the webhook-fed subscription row
   // plus a live editor-seat count. Never calls Stripe — resolveBillingState is pure and
-  // DB-free, this just feeds it.
-  const billingState = async (orgId: string): Promise<BillingState> => {
-    const [sub, seats] = await Promise.all([
-      meta.getSubscription(orgId),
-      billableSeatCount(meta, orgId),
-    ])
+  // DB-free, this just feeds it. `pre` skips the fetches when the caller already
+  // holds the row and count (GET /v1/billing), same shape as syncSeats.
+  const billingState = async (
+    orgId: string,
+    pre?: { sub: SubscriptionRecord | null; seatCount: number },
+  ): Promise<BillingState> => {
+    const [sub, seats] = pre
+      ? [pre.sub, pre.seatCount]
+      : await Promise.all([meta.getSubscription(orgId), billableSeatCount(meta, orgId)])
     return resolveBillingState({
       subscription: sub,
       seatCount: seats,
@@ -1241,7 +1249,6 @@ export function buildContext(deps: AppDeps) {
     billingBlocked,
     billingGate,
     effectiveWhiteLabel,
-    billingEnforceAt,
     ensureMembership,
     activeWorkspace,
     setWsCookie,

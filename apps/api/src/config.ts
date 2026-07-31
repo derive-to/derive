@@ -37,8 +37,8 @@ const urlOr = (name: string, v: string | undefined): string | undefined => {
 }
 
 /** Validate that an optional env var parses as a date; a typo'd value would
- *  otherwise become `new Date(v).getTime()` === NaN downstream (see routes/billing.ts's
- *  `enforceAt` check), silently disabling enforcement forever instead of failing fast. */
+ *  otherwise become `new Date(v).getTime()` === NaN downstream (context.ts parses
+ *  `billingEnforceAt`), silently disabling enforcement forever instead of failing fast. */
 const dateOr = (name: string, v: string | undefined): string | undefined => {
   if (!v) return undefined
   if (Number.isNaN(new Date(v).getTime()))

@@ -85,10 +85,11 @@ describe("billing gate", () => {
     expect((await publishAs(app, "x".repeat(100), {}, as("u2@x.test"))).status).toBe(201)
   })
 
-  // Three bypass paths: each records a publish into a billing-blocked
-  // workspace without ever consulting billingBlocked/BILLING_BLOCK_COPY. Seeded THREE
-  // (never four) so the workspace is only ever lapsed by a canceled subscription, never
-  // incidentally over the free seat limit — isolates the choke point under test.
+  // Restore and draft claim both record a publish without going through the main
+  // publish route, so each needs its own gate (the third such path, the MCP brandprint
+  // scaffold, is covered in the /mcp describe below). Seeded THREE members (never four)
+  // so the workspace is only ever lapsed by a canceled subscription, never incidentally
+  // over the free seat limit — isolates the choke point under test.
 
   it("blocked workspace: version restore refuses with 402 billing_lapsed", async () => {
     const { app, meta } = makeAuthedApp("bg_restore", THREE, "editor", {

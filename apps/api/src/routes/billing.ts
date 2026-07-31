@@ -1,10 +1,9 @@
-import { resolveBillingState } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import { lookupKeyFor, recordFromSnapshot } from "../lib/billing"
 import { fail, readJson } from "../lib/http"
-import { billableSeatCount, isBillableRole, syncSeats } from "../lib/seats"
+import { billableSeatCount, syncSeats } from "../lib/seats"
 import { log } from "../log"
 
 /**
@@ -22,7 +21,6 @@ export const billingRoutes = (ctx: AppContext) => {
     meta,
     deps,
     billingState,
-    billingEnforceAt,
     requireWorkspace,
     currentUser,
     workspaceRole,
@@ -42,22 +40,15 @@ export const billingRoutes = (ctx: AppContext) => {
     const role = await workspaceRole(c)
     if (role === null) return fail(c, 401, "unauthenticated")
     const org = await activeWorkspace(c)
-    const [sub, members, stored, assets] = await Promise.all([
+    const [sub, seats, stored, assets] = await Promise.all([
       meta.getSubscription(org),
-      meta.listMemberships(org),
+      billableSeatCount(meta, org),
       meta.storageBytes(org),
       meta.assetStorageBytes(org),
     ])
-    const seats = members.filter((m) => isBillableRole(m.role)).length
     const healed = await syncSeats({ meta, billing }, org, { sub, seats })
     const subOut = healed ?? sub
-    const state = resolveBillingState({
-      subscription: subOut,
-      seatCount: seats,
-      now: new Date(),
-      enforceAt: billingEnforceAt,
-      fallbackMaxBytes: deps.maxBytes,
-    })
+    const state = await billingState(org, { sub: subOut, seatCount: seats })
     const beta = state.whiteLabelEntitled && !state.subscriptionActive
     return c.json({
       tier: state.tier,
