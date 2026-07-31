@@ -109,6 +109,27 @@ describe("hot read paths stay within their round-trip budget", () => {
         budget: 3,
         needs: "workspace resolve, membership, ONE bootstrap",
       },
+      {
+        // The document open's first leg, and the one that GATES the rendered bytes: the
+        // viewer frame's URL carries a token that only exists on this record, so every
+        // trip here is paid before the document can even start loading. Measured at
+        // 515ms on production (floor 227ms).
+        //
+        // 6 here is the SQLite count; Postgres answers the middle three with one
+        // `artifactGrants`, so the hosted tier pays 4. Two further folds are possible
+        // and deliberately not taken yet: the author byline (`getUsers`) could ride the
+        // artifactDetail union as one more arm, and artifact+grants could become a
+        // single FK-chained read. Together that is 4 -> 2 on pg, ~160ms. They are not
+        // urgent because hover/pointerdown prefetch now resolves this record BEFORE the
+        // click (see rawArtifactUrl + usePrefetchArtifact), so the remaining cost lands
+        // only on opens that were never hovered — a real case, but no longer the common
+        // one. Revisit if the field data says otherwise.
+        path: `/v1/artifacts/${short_id}`,
+        budget: 6,
+        needs:
+          "getByShortId, the authorization triple (one artifactGrants on pg), " +
+          "ONE artifactDetail, author bylines",
+      },
     ]
 
     const over: string[] = []
