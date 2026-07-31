@@ -962,7 +962,8 @@ export const api = {
   updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
     f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
 
-  // Billing: plan truth, checkout, and the Stripe portal. Admin only.
+  // Billing: plan truth (any member can read), checkout, and the Stripe portal
+  // (both Admin only).
   getBilling: (): Promise<BillingInfo> => f("/v1/billing", opts()).then(j),
   startCheckout: (
     tier: "team" | "business",

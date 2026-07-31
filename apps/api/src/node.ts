@@ -16,7 +16,7 @@ import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { configWarnings } from "./config-manifest"
 import { restEmbedder } from "./embedder"
 import { loadLocalEmbedder } from "./embedder-local"
-import { workspacesBlockingDeletion } from "./lib/account"
+import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
 import { stripeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
@@ -198,6 +198,12 @@ const authSecret = resolveAuthSecret(cfg.dataDir)
 // still records each message (an operator can read a reset link from the container logs),
 // but the SPA hides the self-serve mail flows (see `emailEnabled` in createApp deps).
 const emailEnabled = !!(cfg.resendApiKey && cfg.emailFrom)
+// Hoisted above makeAuth (rather than built inline down at createApp's `billing:` dep,
+// where it lived before) so the account-deletion hook below and the billing routes
+// share the exact same driver instance instead of constructing two.
+const billing = cfg.stripeSecretKey
+  ? stripeBillingDriver({ secretKey: cfg.stripeSecretKey, webhookSecret: cfg.stripeWebhookSecret })
+  : undefined
 const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
   usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
   // Render + enqueue transactional auth emails (reset / verify / change-email) onto the
@@ -211,7 +217,10 @@ const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
       ? `Transfer ownership or remove the other members of ${blocking.join(", ")} before deleting your account.`
       : null
   },
-  purgeUserData: (userId) => meta.deleteUserData(userId),
+  // Purge, then heal Stripe seat counts on every workspace the deleted account was
+  // billable in (see purgeUserDataAndSyncSeats) — otherwise a vacated editor/owner
+  // seat keeps being billed until an unrelated membership change happens to heal it.
+  purgeUserData: (userId) => purgeUserDataAndSyncSeats(meta, billing, userId),
   // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
   recordSignupAttribution: signupAttributionHook(meta),
 })
@@ -451,13 +460,9 @@ const app = createApp({
   maxArtifacts: cfg.maxArtifacts,
   maxBytes: cfg.maxBytes,
   // Billing routes are dark until a Stripe secret key is configured; self-host
-  // never needs to set one.
-  billing: cfg.stripeSecretKey
-    ? stripeBillingDriver({
-        secretKey: cfg.stripeSecretKey,
-        webhookSecret: cfg.stripeWebhookSecret,
-      })
-    : undefined,
+  // never needs to set one. (Same instance the account-deletion seat-sync hook
+  // above uses — hoisted so there's exactly one driver, not two.)
+  billing,
   billingEnforceAt: cfg.billingEnforceAt,
   // Per-actor write rate limits (per minute); unset = built-in defaults.
   publishRate: cfg.publishRate,

@@ -97,8 +97,12 @@ describe("billing routes", () => {
   })
 
   it("webhook: bad signature 400, good subscription event upserts", async () => {
-    const { app, meta } = boot("br_hook")
+    const { app, meta, fake } = boot("br_hook")
     expect((await hook(app, {}, "wrong")).status).toBe(400)
+    // The handler now refetches by id (order-proofing) rather than trusting the
+    // event payload — the FakeBilling driver's `subscriptions` map is the authority,
+    // so it must be seeded to match what the event snapshot claims.
+    fake.subscriptions.set("sub_1", SNAP)
     const r = await hook(app, { type: "customer.subscription.updated", snapshot: SNAP })
     expect(r.status).toBe(200)
     const row = await meta.getSubscription("default")
@@ -116,8 +120,10 @@ describe("billing routes", () => {
   })
 
   it("webhook: deletion marks canceled; GET now reports it", async () => {
-    const { app, meta } = boot("br_deleted")
+    const { app, meta, fake } = boot("br_deleted")
+    fake.subscriptions.set("sub_1", SNAP)
     await hook(app, { type: "customer.subscription.updated", snapshot: SNAP })
+    fake.subscriptions.set("sub_1", { ...SNAP, status: "canceled" })
     await hook(app, {
       type: "customer.subscription.deleted",
       snapshot: { ...SNAP, status: "canceled" },
@@ -128,8 +134,23 @@ describe("billing routes", () => {
     expect(body.status).toBe("canceled")
   })
 
+  it("webhook: a stale retried 'active' event can't resurrect a canceled subscription", async () => {
+    const { app, meta, fake } = boot("br_stale_retry")
+    // Authoritative Stripe state is already canceled (the `deleted` event processed
+    // first, in real time). A late retry of the earlier `updated` event arrives with
+    // a snapshot that still claims "active" — the refetch must win over the payload.
+    fake.subscriptions.set("sub_1", { ...SNAP, status: "canceled" })
+    const r = await hook(app, {
+      type: "customer.subscription.updated",
+      snapshot: { ...SNAP, status: "active" },
+    })
+    expect(r.status).toBe(200)
+    expect((await meta.getSubscription("default"))?.status).toBe("canceled")
+  })
+
   it("checkout with an active sub: 409, the portal owns changes", async () => {
-    const { app } = boot("br_409")
+    const { app, fake } = boot("br_409")
+    fake.subscriptions.set("sub_1", SNAP)
     await hook(app, { type: "customer.subscription.updated", snapshot: SNAP })
     expect(
       (
@@ -148,7 +169,8 @@ describe("billing routes", () => {
   })
 
   it("an active subscription is never beta, even before enforcement", async () => {
-    const { app } = boot("br_active_not_beta")
+    const { app, fake } = boot("br_active_not_beta")
+    fake.subscriptions.set("sub_1", SNAP)
     await hook(app, { type: "customer.subscription.updated", snapshot: SNAP })
     const body = await (await app.request("/v1/billing", { headers: as("u1@x.test") })).json()
     expect(body.subscribed).toBe(true)

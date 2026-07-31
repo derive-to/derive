@@ -162,11 +162,24 @@ export const billingRoutes = (ctx: AppContext) => {
         await meta.upsertSubscription(recordFromSnapshot(snap.orgId, snap, existing))
       }
     } else if (event.type.startsWith("customer.subscription.") && event.snapshot) {
-      const snap = event.snapshot
-      const orgId = snap.orgId ?? (await meta.getSubscriptionByStripeId(snap.id))?.org_id ?? null
-      if (orgId) {
-        const existing = await meta.getSubscription(orgId)
-        await meta.upsertSubscription(recordFromSnapshot(orgId, snap, existing))
+      // Delivery order isn't guaranteed — Stripe can retry an older event after a
+      // newer one already landed (e.g. a stale "active" `updated` retried after the
+      // `deleted` that followed it in real time). Trusting the payload verbatim would
+      // let that stale retry flip a canceled row back to active forever, since no
+      // further events arrive to correct it. So the payload only tells us WHICH
+      // subscription changed; refetch it by id and upsert from that authoritative
+      // snapshot instead, the same defense checkout.session.completed already uses.
+      // Stripe keeps canceled subscriptions retrievable (getSubscription only returns
+      // null for a genuinely missing id), so this covers `deleted` events too. Any
+      // other failure (auth, network, rate limit) rethrows out of the driver, which
+      // correctly 500s the webhook so Stripe retries instead of us acking bad data.
+      const snap = await billing.getSubscription(event.snapshot.id)
+      if (snap) {
+        const orgId = snap.orgId ?? (await meta.getSubscriptionByStripeId(snap.id))?.org_id ?? null
+        if (orgId) {
+          const existing = await meta.getSubscription(orgId)
+          await meta.upsertSubscription(recordFromSnapshot(orgId, snap, existing))
+        }
       }
     }
     // invoice.payment_failed and anything else: acknowledged; subscription.updated

@@ -1,4 +1,6 @@
+import { SqliteMetaStore } from "@derive/db/sqlite"
 import { describe, expect, it } from "vitest"
+import { purgeUserDataAndSyncSeats } from "../src/lib/account"
 import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
 import { FakeBilling } from "./fake-billing"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
@@ -129,5 +131,93 @@ describe("seat sync", () => {
     expect(r.status).toBe(201)
     expect((await r.json()).kind).toBe("member")
     expect(fake.quantityCalls).toHaveLength(before)
+  })
+})
+
+// Account deletion drops the user's membership row in every workspace they belonged
+// to in one shot (MetaStore.deleteUserData) — including any workspace where they held
+// a billable seat. purgeUserDataAndSyncSeats (apps/api/src/lib/account.ts) is the hook
+// wired into Better Auth's real delete-account flow at the API layer (node.ts / worker.ts)
+// to heal that: capture the billable orgs before the purge, recount after.
+//
+// NOTE on coverage: the full end-to-end path (an authenticated HTTP request that drives
+// Better Auth's own account-deletion endpoint) is NOT drivable from this test harness —
+// makeAuthedApp never wires a real `auth` (makeAuth) instance, only a bare session
+// lookup, and purgeUserData/blockUserDeletion are Better-Auth hooks that only fire
+// through that real instance (see auth-config.ts: "Unset (tests) ⇒ no cascade").
+// account-deletion.test.ts already established this precedent for the neighboring
+// blockUserDeletion guard, testing workspacesBlockingDeletion directly against a real
+// MetaStore rather than through HTTP; these tests do the same for the new seat-sync
+// hook, calling it directly with a real SqliteMetaStore + FakeBilling.
+describe("purgeUserDataAndSyncSeats (account deletion → seat sync)", () => {
+  const sub = (orgId: string, subscriptionId: string, quantity: number) => ({
+    org_id: orgId,
+    stripe_customer_id: `cus_${orgId}`,
+    stripe_subscription_id: subscriptionId,
+    tier: "team" as const,
+    billing_interval: "month" as const,
+    status: "active",
+    quantity,
+    current_period_end: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  })
+
+  it("recounts Stripe seats on every workspace the deleted user was editor/owner in", async () => {
+    const meta = new SqliteMetaStore(":memory:")
+    const fake = new FakeBilling()
+    const me = "u_deleted"
+    const other = "u_other"
+    await meta.setWorkspace("ws_a", "A")
+    await meta.setMembership({ id: "m_a1", org_id: "ws_a", user_id: me, role: "editor" })
+    await meta.setMembership({ id: "m_a2", org_id: "ws_a", user_id: other, role: "owner" })
+    await meta.upsertSubscription(sub("ws_a", "sub_a", 2))
+
+    await purgeUserDataAndSyncSeats(meta, fake, me)
+
+    // The membership is gone (the purge ran)...
+    expect(await meta.getMembership("ws_a", me)).toBeNull()
+    // ...and Stripe was told the seat count dropped from 2 to 1.
+    expect(fake.quantityCalls).toEqual([{ subscriptionId: "sub_a", quantity: 1 }])
+    expect((await meta.getSubscription("ws_a"))?.quantity).toBe(1)
+  })
+
+  it("does not sync a workspace where the deleted user held a non-billable role", async () => {
+    const meta = new SqliteMetaStore(":memory:")
+    const fake = new FakeBilling()
+    const me = "u_deleted"
+    const owner = "u_owner"
+    await meta.setWorkspace("ws_b", "B")
+    await meta.setMembership({ id: "m_b1", org_id: "ws_b", user_id: owner, role: "owner" })
+    await meta.setMembership({ id: "m_b2", org_id: "ws_b", user_id: me, role: "commenter" })
+    await meta.upsertSubscription(sub("ws_b", "sub_b", 1))
+
+    await purgeUserDataAndSyncSeats(meta, fake, me)
+
+    expect(await meta.getMembership("ws_b", me)).toBeNull()
+    expect(fake.quantityCalls).toHaveLength(0)
+  })
+
+  it("skips a workspace with no subscription (nothing to sync) without failing the purge", async () => {
+    const meta = new SqliteMetaStore(":memory:")
+    const fake = new FakeBilling()
+    const me = "u_deleted"
+    await meta.setWorkspace("ws_c", "C")
+    await meta.setMembership({ id: "m_c1", org_id: "ws_c", user_id: me, role: "owner" })
+
+    await expect(purgeUserDataAndSyncSeats(meta, fake, me)).resolves.toBeUndefined()
+    expect(await meta.getMembership("ws_c", me)).toBeNull()
+    expect(fake.quantityCalls).toHaveLength(0)
+  })
+
+  it("no billing driver configured: the purge still runs, seat sync is a no-op", async () => {
+    const meta = new SqliteMetaStore(":memory:")
+    const me = "u_deleted"
+    await meta.setWorkspace("ws_d", "D")
+    await meta.setMembership({ id: "m_d1", org_id: "ws_d", user_id: me, role: "editor" })
+    await meta.upsertSubscription(sub("ws_d", "sub_d", 1))
+
+    await expect(purgeUserDataAndSyncSeats(meta, undefined, me)).resolves.toBeUndefined()
+    expect(await meta.getMembership("ws_d", me)).toBeNull()
   })
 })

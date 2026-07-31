@@ -37,7 +37,9 @@ const statusLine = (b: BillingInfo): string | null => {
     // lapses, so it can't distinguish "never subscribed" from "canceled" — only
     // the raw status can, so the message is derived from status alone.
     if (b.status && LAPSED_STATUSES.has(b.status))
-      return "Canceled. Publishing is paused until an owner renews."
+      // During beta, nothing is actually paused (enforcement hasn't arrived yet) — the
+      // beta note right below this line already says so, so don't also claim it is.
+      return b.beta ? "Canceled." : "Canceled. Publishing is paused until an owner renews."
     return null
   }
   if (b.status === "past_due") return "Payment past due, publishing continues while Stripe retries"

@@ -36,6 +36,16 @@ const urlOr = (name: string, v: string | undefined): string | undefined => {
   return v
 }
 
+/** Validate that an optional env var parses as a date; a typo'd value would
+ *  otherwise become `new Date(v).getTime()` === NaN downstream (see routes/billing.ts's
+ *  `enforceAt` check), silently disabling enforcement forever instead of failing fast. */
+const dateOr = (name: string, v: string | undefined): string | undefined => {
+  if (!v) return undefined
+  if (Number.isNaN(new Date(v).getTime()))
+    throw new Error(`invalid ${name}: ${v} (expected a parseable date)`)
+  return v
+}
+
 /** The fully-resolved, validated runtime configuration. Read once at boot from
  *  the environment so the rest of the entrypoint never touches `process.env`. */
 export interface Config {
@@ -196,7 +206,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     commentRate: posInt("DERIVE_COMMENT_RATE", env.DERIVE_COMMENT_RATE),
     stripeSecretKey: env.STRIPE_SECRET_KEY,
     stripeWebhookSecret: env.STRIPE_WEBHOOK_SECRET,
-    billingEnforceAt: env.DERIVE_BILLING_ENFORCE_AT,
+    billingEnforceAt: dateOr("DERIVE_BILLING_ENFORCE_AT", env.DERIVE_BILLING_ENFORCE_AT),
     webOrigins,
     retentionDays: numOr(
       "DERIVE_ANALYTICS_RETENTION_DAYS",
