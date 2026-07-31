@@ -422,6 +422,10 @@ export interface ArtifactStore {
   /** Owner opt-in: the anonymous public page shows version history. */
   setPublicHistory(artifactId: string, on: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
+  /** Resolve many short ids at once. Bulk operations resolved one artifact per short id in
+   *  a loop; on the edge tier that is a ~80ms round trip each, up to BULK_MAX of them.
+   *  Order is unspecified and unknown ids are simply absent — callers key by `short_id`. */
+  getByShortIds(shortIds: string[]): Promise<ArtifactRecord[]>
   /** An artifact plus its workspace's settings, in one call. The settings are keyed on the
    *  `org_id` the artifact carries, so fetching them separately is an FK chain — not the
    *  same-key shape most batches here use, but a join answers it in one round trip all the

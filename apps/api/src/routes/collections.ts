@@ -395,7 +395,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       if (allowedCols.length === 0) return bail(fail(c, 403, "forbidden"))
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (shortId) => meta.getByShortId(shortId),
+        (ids) => meta.getByShortIds(ids),
         (a) => authorize(c, "share", a),
         async (a) => {
           // Same-workspace guard mirrors the single add-item route: a foreign-workspace

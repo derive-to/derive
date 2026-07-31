@@ -487,6 +487,10 @@ export function makeRepos(db: SqliteDb) {
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
+  const getByShortIds = async (shortIds: string[]): Promise<ArtifactRecord[]> =>
+    shortIds.length === 0
+      ? []
+      : db.select().from(artifact).where(inArray(artifact.short_id, shortIds)).all()
   const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
   const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
@@ -3829,6 +3833,7 @@ export function makeRepos(db: SqliteDb) {
     setLocked,
     setPublicHistory,
     getByShortId,
+    getByShortIds,
     artifactWithSettings,
     getArtifactById,
     getArtifactsByIds,

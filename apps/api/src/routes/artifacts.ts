@@ -1674,7 +1674,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (body instanceof Response) return bail(body)
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (shortId) => meta.getByShortId(shortId),
+        (ids) => meta.getByShortIds(ids),
         (a) => authorize(c, "manage", a),
         (a) => deleteArtifactAndUnindex(meta, search, a.id, a.org_id),
       )
