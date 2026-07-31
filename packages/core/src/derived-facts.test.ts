@@ -96,3 +96,14 @@ describe("deriveFacts", () => {
     expect(Date.now() - started).toBeLessThan(2_000)
   })
 })
+
+describe("hostile hrefs", () => {
+  it("one malformed percent-encoding costs that edge, never the whole row", () => {
+    const page =
+      '<a href="/artifacts/bad-%zz">broken</a><a href="/artifacts/good-abc12345">fine</a>'
+    const d = Object.fromEntries(
+      deriveFacts(page, "text/html").map((f) => [f.slot, JSON.parse(f.json)]),
+    )
+    expect(d.$links.refs).toEqual(["abc12345"])
+  })
+})

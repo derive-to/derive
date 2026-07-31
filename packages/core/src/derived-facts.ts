@@ -18,7 +18,7 @@
 
 import { isDerivedFactName, MAX_FACT_BYTES } from "@derive/facts"
 import { pageText } from "./anchor"
-import { sectionMarkers } from "./doc-text"
+import { type SectionMarker, sectionMarkers } from "./doc-text"
 import { parseRef } from "./ids"
 
 /** Bump on ANY change to a deriver's output for the same input — the same discipline as
@@ -42,8 +42,7 @@ const byteLength = (s: string): number => new TextEncoder().encode(s).length
 /** The section spine — heading/landmark labels with 1-based source lines, exactly what
  *  `read`'s outline view walks. Null when the document has fewer than two sections:
  *  a one-heading page has no navigable structure worth a row. */
-const deriveOutline = (source: string, contentType: string): unknown => {
-  const markers = sectionMarkers(source, contentType)
+const deriveOutline = (markers: SectionMarker[]): unknown => {
   if (markers.length < 2) return null
   const sections = markers
     .slice(0, OUTLINE_MAX_SECTIONS)
@@ -75,7 +74,15 @@ const deriveLinks = (source: string, contentType: string): unknown => {
   for (const t of targets) {
     const m = /\/artifacts\/([^/?#\s]+)/.exec(t)
     if (!m?.[1]) continue
-    const { shortId } = parseRef(decodeURIComponent(m[1]))
+    // Guarded PER TARGET: decodeURIComponent throws on malformed percent-encoding, and
+    // one bad href in someone's page must cost that edge, never the whole row.
+    let ref = m[1]
+    try {
+      ref = decodeURIComponent(ref)
+    } catch {
+      /* use the raw segment */
+    }
+    const { shortId } = parseRef(ref)
     if (/^[0-9a-z]{6,12}$/.test(shortId) && !refs.includes(shortId)) refs.push(shortId)
   }
   return refs.length ? { refs } : null
@@ -84,11 +91,11 @@ const deriveLinks = (source: string, contentType: string): unknown => {
 /** Counting, never judging — and nothing with an embedded assumption (no reading-time:
  *  a words-per-minute constant is a judgment wearing a number). `words` counts the
  *  VISIBLE text for HTML, so markup weight doesn't masquerade as prose. */
-const deriveStats = (source: string, contentType: string): unknown => {
+const deriveStats = (source: string, contentType: string, markers: SectionMarker[]): unknown => {
   const isHtml = contentType.includes("html")
   const visible = isHtml ? pageText(source) : source
   const words = visible.split(/\s+/).filter(Boolean).length
-  const sections = sectionMarkers(source, contentType).length
+  const sections = markers.length
   const codeBlocks = isHtml
     ? (source.match(/<pre\b/gi) ?? []).length
     : (source.match(/^[ \t]*```/gm) ?? []).length >> 1
@@ -98,9 +105,14 @@ const deriveStats = (source: string, contentType: string): unknown => {
   return { chars: source.length, words, sections, code_blocks: codeBlocks, tables }
 }
 
-const DERIVERS: [string, (source: string, contentType: string) => unknown][] = [
-  ["$outline", deriveOutline],
-  ["$links", deriveLinks],
+// Section markers are computed ONCE and shared: two derivers need them, and this runs on
+// the hot path of every html/markdown publish.
+const DERIVERS: [
+  string,
+  (source: string, contentType: string, markers: SectionMarker[]) => unknown,
+][] = [
+  ["$outline", (_s, _ct, markers) => deriveOutline(markers)],
+  ["$links", (source, ct) => deriveLinks(source, ct)],
   ["$stats", deriveStats],
 ]
 
@@ -126,11 +138,12 @@ export const assertedOnly = <T extends { slot: string }>(rows: T[]): T[] =>
 
 export const deriveFacts = (source: string, contentType: string): DerivedFact[] => {
   const out: DerivedFact[] = []
+  const markers = sectionMarkers(source, contentType)
   for (const [slot, derive] of DERIVERS) {
     if (!isDerivedFactName(slot)) continue // structurally impossible; keeps the invariant loud
     let value: unknown
     try {
-      value = derive(source, contentType)
+      value = derive(source, contentType, markers)
     } catch {
       continue // a deriver must never fail a publish; a missing row is a cache miss
     }

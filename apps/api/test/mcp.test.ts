@@ -555,6 +555,34 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(after.some((r) => r.slot === "$stats")).toBe(true)
   })
 
+  it("derived $rows in an older version never trigger the asserted backfill walk", async () => {
+    // The interplay the build doc ordered pinned (and the first commit CLAIMED was
+    // pinned without a test existing — this is that test). backfillNewSlots fires when a
+    // fact is new relative to the previous version's rows. Those rows now include $rows,
+    // and the walk must key on ASSERTED names only: a republish of an unchanged page
+    // must do no walk, because "checks" was already tracked, and the $rows beside it are
+    // not facts appearing for the first time.
+    const { app, token, meta } = appWithGrant(dir, "interplay", "openid derive:read derive:publish")
+    const page =
+      "<!doctype html><html><body><h1>A</h1><h2>B</h2>" +
+      '<script type="application/derive-facts" data-fact="checks">{"pass":1}</script>' +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Interplay", content: page })),
+    )
+    const rec = await meta.getByShortId(pub.short_id)
+    if (!rec) throw new Error("gone")
+    // v1 has checks + $rows. Wipe v1's rows entirely, then publish v2: if the walk keyed
+    // on ALL previous rows it would see nothing tracked and re-walk; if it keyed on
+    // asserted names in the CURRENT parse minus previous rows, "checks" is fresh and the
+    // walk restores v1's checks — but must write NOTHING for $names into v1 (derived
+    // rows are lazy-only for old versions; the walk never pays derivation).
+    await meta.setVersionData(rec.id, 1, [])
+    await call(app, token, "publish", { short_id: pub.short_id, content: page })
+    const v1rows = await meta.getVersionData(rec.id, 1)
+    expect(v1rows.map((r) => r.slot)).toEqual(["checks"])
+  })
+
   it("review deltas show the author's numbers moving, never the host's", async () => {
     // catch_up's data_changes exists so a review round sees "checks.pass 9 -> 11" beside
     // the prose diff. Between any two versions the derived $stats ALSO moved (the page
