@@ -3045,6 +3045,8 @@ export function makeRepos(db: SqliteDb) {
       trigger?: string
       instruction?: string
       refs?: string | null
+      /** JSON array of connection ids this automation may spend; null clears them all. */
+      connection_ids?: string | null
       enabled?: 0 | 1
     },
   ): Promise<AutomationRecord | null> => {
@@ -3053,6 +3055,7 @@ export function makeRepos(db: SqliteDb) {
     if (fields.trigger !== undefined) set.trigger = fields.trigger
     if (fields.instruction !== undefined) set.instruction = fields.instruction
     if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
     if (fields.enabled !== undefined) set.enabled = fields.enabled
     if (Object.keys(set).length === 0) return getAutomation(id)
     return (
@@ -3412,6 +3415,45 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
       .returning()
       .get()) ?? null
+
+  const updateConnectionCredential = async (
+    id: string,
+    orgId: string,
+    fields: {
+      secret_enc?: string | null
+      broker_ref?: string
+      status?: ConnectionStatus
+      scopes_label?: string | null
+    },
+    expectSecretEnc?: string | null,
+  ): Promise<ConnectionRecord | null> => {
+    const set: Record<string, unknown> = {}
+    if (fields.secret_enc !== undefined) set.secret_enc = fields.secret_enc
+    if (fields.broker_ref !== undefined) set.broker_ref = fields.broker_ref
+    if (fields.status !== undefined) set.status = fields.status
+    if (fields.scopes_label !== undefined) set.scopes_label = fields.scopes_label
+    if (Object.keys(set).length === 0) return getConnection(id)
+    // The compare-and-swap rides IN the WHERE clause, so the check and the write are one
+    // statement. Reading first and then writing would leave the window this exists to close.
+    const guard =
+      expectSecretEnc === undefined
+        ? undefined
+        : expectSecretEnc === null
+          ? isNull(connection.secret_enc)
+          : eq(connection.secret_enc, expectSecretEnc)
+    return (
+      (await db
+        .update(connection)
+        .set(set)
+        .where(
+          guard
+            ? and(eq(connection.id, id), eq(connection.org_id, orgId), guard)
+            : and(eq(connection.id, id), eq(connection.org_id, orgId)),
+        )
+        .returning()
+        .get()) ?? null
+    )
+  }
   const getAgentByToken = async (token: string): Promise<AgentRecord | null> =>
     (await db.select().from(agent).where(eq(agent.token, token)).get()) ?? null
   const getAgent = async (id: string): Promise<AgentRecord | null> =>
@@ -3888,6 +3930,9 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
     await db.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id)).run()
+    // The view ledger is raw DDL (no drizzle model) with an FK to artifact(id) —
+    // invisible to check-delete-cascade and enforced on Postgres. See pg.ts.
+    await db.run(sql`DELETE FROM view WHERE artifact_id = ${id}`)
     await db.delete(artifact).where(eq(artifact.id, id)).run()
     // Drop the search-index row too. Contentless FTS/tsvector rows aren't drizzle
     // tables, so they ride the same raw-SQL path unindexArtifact uses.
@@ -4229,6 +4274,7 @@ export function makeRepos(db: SqliteDb) {
     getConnectionsByIds,
     listConnections,
     setConnectionStatus,
+    updateConnectionCredential,
     getAgentByToken,
     getOAuthGrant,
     getOAuthClientName,

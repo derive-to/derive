@@ -204,6 +204,11 @@ jobs:
       - name: Test against Cloudflare D1 (workerd)
         run: pnpm --filter @derive/db test:d1
 
+      # The OAuth sign-in path in the runtime it actually deploys to. This feature has already
+      # been broken once by a Node/workerd difference that every Node test missed.
+      - name: Test the sign-in path in workerd
+        run: pnpm --filter @derive/api test:worker
+
       # Bundle budget: build the web client and fail if the gzipped JS blows past
       # the budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk
       # weight can't regress silently.

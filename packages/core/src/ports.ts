@@ -708,6 +708,15 @@ export interface ArtifactQueryStore {
    * list and used only `.length`.
    */
   workspaceSummary(orgId: string, userId: string | null): Promise<WorkspaceSummary>
+  /** The signed-in boot read: everything the app shell asks for in its first breath —
+   *  sidebar summary, collections + repo sources + the caller's collection roles,
+   *  workspace settings, and the notifications page — as ONE store call, so the
+   *  hosted tier answers it in one Postgres round trip instead of four requests'
+   *  worth of sequential reads. Embedded drivers compose it from the underlying
+   *  methods (composeBootstrap): they pay no wire trips, so parity here is the
+   *  SHAPE, not the statement count. Deliberately excludes /v1/me/onboarding
+   *  (its grants read is try/catch-optional and must not poison the batch). */
+  bootstrap(orgId: string, userId: string, notifLimit: number): Promise<BootstrapRead>
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>
@@ -1359,6 +1368,17 @@ export interface DirectoryStore {
 }
 
 /** See `DirectoryStore.notificationsPage`. */
+/** One round trip's worth of app-shell boot data — see MetaStore.bootstrap. */
+export interface BootstrapRead {
+  summary: WorkspaceSummary
+  collections: (CollectionRecord & { count: number })[]
+  sources: RepoSourceRecord[]
+  /** The caller's explicit per-collection roles (creator-ownership is applied by the route). */
+  collectionRoles: Record<string, Role>
+  settings: OrgSettings
+  notifications: NotificationsPage
+}
+
 export interface NotificationsPage {
   notifications: NotificationRecord[]
   unread: number
@@ -1404,6 +1424,8 @@ export interface AgentStore {
       trigger?: string
       instruction?: string
       refs?: string | null
+      /** JSON array of connection ids this automation may spend; null clears them all. */
+      connection_ids?: string | null
       enabled?: 0 | 1
     },
   ): Promise<AutomationRecord | null>
@@ -1536,6 +1558,33 @@ export interface AgentStore {
     id: string,
     orgId: string,
     status: ConnectionStatus,
+  ): Promise<ConnectionRecord | null>
+  /**
+   * Rewrite a connection's stored credential, and optionally its ref and status — the one
+   * mutation the table never had.
+   *
+   * It exists for OAuth, where the credential is not final at connect: the row is created
+   * `pending` before the redirect, and the callback later writes the token, pins the tool list
+   * into `broker_ref`, and flips it `active`. A refresh then rewrites the same field again,
+   * repeatedly, for the life of the connection. Without it there is nowhere to put a rotated
+   * token, which is why a pasted key could never be rotated either.
+   *
+   * `expectSecretEnc` is a COMPARE-AND-SWAP on the credential, and it is not optional politeness:
+   * two runs can hit an expired access token in the same second, both refresh, and the slower
+   * reply would otherwise overwrite the newer token with an older one — invalidating a grant that
+   * was working. A mismatch returns null and the caller re-reads instead of guessing. The same
+   * guard the model-credential PUT already uses, for the same reason.
+   */
+  updateConnectionCredential(
+    id: string,
+    orgId: string,
+    fields: {
+      secret_enc?: string | null
+      broker_ref?: string
+      status?: ConnectionStatus
+      scopes_label?: string | null
+    },
+    expectSecretEnc?: string | null,
   ): Promise<ConnectionRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>

@@ -4,10 +4,10 @@ import { Icon } from "@/components/icons"
 // The home's ONE quiet triage entry — a single clickable well that replaces the old
 // stacked "needs your feedback" card-strip. It links to the /feedback feed, so the home
 // stays "your work," one job (the whole IA move). Shown only when something actually
-// needs you; its count is preloaded in the home route loader, so this line paints
-// deterministically on the first frame — no late-landing shift that would drift the
-// virtualized grid below it. A well, not cards (the surfaces ladder: an interactive
-// well before a card).
+// needs you. Its count is prefetched (not awaited) by the home loader; while it resolves,
+// the library reserves this bar's height (h-10 — keep that slot in step with the py-2.5
+// + text-sm geometry here) so the common case swaps in with zero shift. A well, not
+// cards (the surfaces ladder: an interactive well before a card).
 export function TriageBar({ count }: { count: number }) {
   return (
     <Link

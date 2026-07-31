@@ -52,7 +52,12 @@ const fakeServer = (opts: {
       // A streamable-HTTP server may answer either way to the same request; both must parse.
       return new Response(opts.sse ? `event: message\ndata: ${payload}\n\n` : payload, {
         status: 200,
-        headers: { "mcp-session-id": "sess-1" },
+        headers: {
+          "mcp-session-id": "sess-1",
+          // A real SSE reply declares itself, and that header is what selects the streaming
+          // reader — so omitting it here tested a path no server actually produces.
+          "content-type": opts.sse ? "text/event-stream" : "application/json",
+        },
       })
     }
     if (body.method === "initialize") return reply({ protocolVersion: "2025-11-25" })
@@ -123,6 +128,124 @@ describe("MCP broker: connect + list + call", () => {
     const link = await broker.connect({ orgId: "o1", userId: "u1", toolkit: "https://s.test/mcp" })
     expect(link.status).toBe("active")
     expect(await broker.toolsFor([link.ref])).toHaveLength(2)
+  })
+
+  it("answers from a stream the server never closes", async () => {
+    // THE BUG THIS EXISTS FOR. The spec lets a server keep the SSE stream open after replying, to
+    // push notifications down it, and real ones do (gitmcp.io). Reading with `res.text()` waits
+    // for EOF, so every call to such a server stalled until the 20s abort and was then reported
+    // as the SERVER failing — while it had answered in milliseconds. If this test hangs, that
+    // regression is back.
+    const held = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"))
+      const result =
+        body.method === "initialize"
+          ? { protocolVersion: "2025-11-25" }
+          : body.method === "tools/list"
+            ? { tools: TOOLS }
+            : { content: [{ type: "text", text: "ok" }] }
+      const stream = new ReadableStream({
+        start(controller) {
+          const enc = new TextEncoder()
+          // A notification FIRST, with no id — the reply is found by matching, not by position.
+          controller.enqueue(
+            enc.encode('event: message\ndata: {"jsonrpc":"2.0","method":"notifications/ping"}\n\n'),
+          )
+          controller.enqueue(
+            enc.encode(
+              `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`,
+            ),
+          )
+          // and then nothing, forever: no close().
+        },
+      })
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "mcp-session-id": "sess-held" },
+      })
+    }) as unknown as typeof fetch
+
+    const broker = new McpBroker(held)
+    const link = await broker.connect({
+      orgId: "o1",
+      userId: "u1",
+      toolkit: "https://held.test/mcp",
+    })
+    expect(link.status).toBe("active")
+    expect(await broker.toolsFor([link.ref])).toHaveLength(2)
+  }, 10_000)
+
+  it("ignores a reply that belongs to a different request", async () => {
+    // Once a stream can carry several messages, "the last frame" is whatever happened to be in
+    // the buffer. Answering with someone else's result is worse than not answering at all.
+    const wrong = (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}"))
+      const mine = JSON.stringify({
+        jsonrpc: "2.0",
+        id: body.id,
+        result: body.method === "initialize" ? { protocolVersion: "2025-11-25" } : { tools: TOOLS },
+      })
+      const other = JSON.stringify({ jsonrpc: "2.0", id: 999_999, result: { tools: [] } })
+      return new Response(`event: message\ndata: ${mine}\n\nevent: message\ndata: ${other}\n\n`, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })
+    }) as unknown as typeof fetch
+
+    const broker = new McpBroker(wrong)
+    const link = await broker.connect({
+      orgId: "o1",
+      userId: "u1",
+      toolkit: "https://mix.test/mcp",
+    })
+    expect(link.status).toBe("active")
+    // The trailing frame says zero tools. Ours said two, and ours is the one that counts.
+    expect(await broker.toolsFor([link.ref])).toHaveLength(2)
+  })
+
+  it("clips a tool result that would blow the run's context budget", async () => {
+    // FOUND ON A REAL CLOUD MCP, not imagined: DeepWiki's read_wiki_contents returns an entire
+    // wiki, and one call produced a 1,040,577-token prompt against a 1,048,576-token limit. Every
+    // later turn failed identically, so the run exhausted its turns and reported "agent did not
+    // produce a revision within 12 turns" — the symptom, never the cause.
+    const huge = "x".repeat(400_000)
+    const server = fakeServer({
+      tools: TOOLS,
+      onCall: () => ({ content: [{ type: "text", text: huge }] }),
+    })
+    const broker = new McpBroker(server.impl)
+    const link = await broker.connect({
+      orgId: "o1",
+      userId: "u1",
+      toolkit: "https://big.test/mcp",
+    })
+    const out = (await broker.execute({
+      ref: link.ref,
+      tool: "big_test.search",
+      args: {},
+    })) as { content: { type: string; text: string }[] }
+
+    const total = JSON.stringify(out).length
+    expect(total, `still ${total} chars`).toBeLessThan(90_000)
+    // The cut is DECLARED. A model that knows it was truncated can narrow and ask again; one that
+    // does not cannot tell a partial answer from the whole truth.
+    const last = out.content[out.content.length - 1]
+    expect(last?.text).toMatch(/truncated \d+ characters/)
+    expect(last?.text).toMatch(/narrower/i)
+    // And what survived is the server's real text, not a placeholder.
+    expect(out.content[0]?.text?.startsWith("xxx")).toBe(true)
+  })
+
+  it("leaves an ordinary tool result exactly as the server sent it", async () => {
+    const server = fakeServer({
+      tools: TOOLS,
+      onCall: () => ({ content: [{ type: "text", text: "small and complete" }] }),
+    })
+    const broker = new McpBroker(server.impl)
+    const link = await broker.connect({ orgId: "o1", userId: "u1", toolkit: "https://ok.test/mcp" })
+    expect(await broker.execute({ ref: link.ref, tool: "ok_test.search", args: {} })).toEqual({
+      content: [{ type: "text", text: "small and complete" }],
+    })
   })
 
   it("an unreachable server connects as pending rather than throwing", async () => {

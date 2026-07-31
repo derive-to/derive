@@ -8,7 +8,8 @@
         "scripts/stripe-seed.mjs",
         "test/**/*.manual.ts",
         "test/weather-mcp-server.mjs"
-      ]
+      ],
+      "ignoreDependencies": ["express"]
     },
     "apps/web": {
       "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]

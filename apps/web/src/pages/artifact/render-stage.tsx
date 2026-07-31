@@ -35,7 +35,9 @@ export function RenderStage({
   overlays,
   className,
 }: {
-  rawSrc: string
+  /** null = the source isn't known yet (the record is still a list-row seed) — the
+   *  boot state shows without an iframe, and the frame mounts when the src lands. */
+  rawSrc: string | null
   title: string
   /** The shown version — when it steps UP (a new version published in place), a
    *  soft "Updated" badge flashes over the render (research: auto-swap + soft cue). */
@@ -59,11 +61,12 @@ export function RenderStage({
   }, [])
 
   // Arm the stuck-boot timeout while booting; clear it the moment the frame loads.
+  // No src yet means no load in flight — don't count seed-wait time against the render.
   useEffect(() => {
-    if (phase !== "booting") return
+    if (phase !== "booting" || rawSrc == null) return
     const t = setTimeout(() => setPhase("failed"), BOOT_TIMEOUT_MS)
     return () => clearTimeout(t)
-  }, [phase])
+  }, [phase, rawSrc])
 
   const handleLoad = () => {
     setPhase("ready")
@@ -101,25 +104,27 @@ export function RenderStage({
         ref={wrapRef}
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
       >
-        <iframe
-          key={attempt}
-          ref={frameRef}
-          onLoad={handleLoad}
-          title={title}
-          src={rawSrc}
-          allow="fullscreen"
-          // touch-action: pan-y lets the outer page scroll instead of the iframe
-          // trapping the gesture on a phone (research's scroll-trap fix); the frame
-          // opts into its own pan only inside an explicit zoom mode. The iframe keeps
-          // its own bg-white (the right default for a transparent HTML doc) but starts
-          // hidden and cross-fades in on load, so the white→content swap resolves
-          // gently over the neutral canvas instead of hard-flashing.
-          sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-          className={cn(
-            "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-200",
-            phase === "ready" && "opacity-100",
-          )}
-        />
+        {rawSrc != null && (
+          <iframe
+            key={attempt}
+            ref={frameRef}
+            onLoad={handleLoad}
+            title={title}
+            src={rawSrc}
+            allow="fullscreen"
+            // touch-action: pan-y lets the outer page scroll instead of the iframe
+            // trapping the gesture on a phone (research's scroll-trap fix); the frame
+            // opts into its own pan only inside an explicit zoom mode. The iframe keeps
+            // its own bg-white (the right default for a transparent HTML doc) but starts
+            // hidden and cross-fades in on load, so the white→content swap resolves
+            // gently over the neutral canvas instead of hard-flashing.
+            sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+            className={cn(
+              "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-200",
+              phase === "ready" && "opacity-100",
+            )}
+          />
+        )}
 
         {/* Boot — a calm centered spinner over the white canvas until the render's
             own `load` fires. Announced politely; not a full skeleton because the

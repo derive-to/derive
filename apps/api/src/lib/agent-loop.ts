@@ -100,6 +100,20 @@ export interface AgentLoopInput {
     system: string
     messages: ModelMessage[]
     tools: LoopTool[]
+    /** Assistant text as it arrives, so a caller can show a reply being written instead of
+     *  waiting for the whole thing.
+     *
+     *  OPTIONAL AND ADDITIVE ON PURPOSE. Streaming could have been a second return type, but
+     *  `callModel` is implemented by two adapters and consumed by the loop, turn-core,
+     *  session-turn and the substrate loop — plus every test that injects a fake. A callback on
+     *  the INPUT leaves all of them untouched: an adapter that ignores it behaves exactly as
+     *  before, and `ModelTurn` stays the single source of truth for the final text, tool calls,
+     *  truncation and cost. Nothing downstream reads deltas to make a decision.
+     *
+     *  Deltas are BEST EFFORT and non-authoritative: they may be coalesced, and an adapter or
+     *  provider without streaming simply never calls this. NEVER accumulate them into the answer
+     *  you persist — use the returned `ModelTurn.text`, which is always the complete reply. */
+    onDelta?: (text: string) => void
   }) => Promise<ModelTurn>
   /** Execute one tool server-side. Errors are RETURNED as text, never thrown — a failing tool
    *  is information the model should react to, not a reason to lose the whole run. */
@@ -152,6 +166,41 @@ const resultText = (value: unknown): string => {
   }
 }
 
+/**
+ * How much tool output ONE RUN may put in front of the model, across every turn.
+ *
+ * The broker caps a single result, which stops one call from blowing the window. It does not stop
+ * TWELVE calls from doing it together, and a run that reads a corpus per turn will do exactly
+ * that. Watched on a real cloud MCP: one `read_wiki_contents` produced a 1,040,577-token prompt
+ * against a 1,048,576-token limit, and every later turn failed identically until the turn budget
+ * ran out — so the run paid twelve times to learn nothing.
+ *
+ * 240k characters is roughly 60k tokens: room for several substantial reads, and far enough below
+ * any current context window that the remaining turns still have somewhere to live.
+ */
+export const TOOL_OUTPUT_BUDGET_CHARS = 240_000
+
+/**
+ * Clip one tool result to what the run can still afford, and SAY what is left.
+ *
+ * The number matters more than the truncation. A model told only "truncated" reasonably tries the
+ * same call again with different arguments — which is how a run spends its remaining turns
+ * re-reading things it cannot keep. A model told it has 12,000 characters left asks a smaller
+ * question, or writes with what it has.
+ */
+const clipToBudget = (text: string, remaining: number): { text: string; used: number } => {
+  if (text.length <= remaining) return { text, used: text.length }
+  if (remaining <= 0)
+    return {
+      text: "[no tool-output budget left for this run — answer with what you already have, and do not call another tool]",
+      used: 0,
+    }
+  return {
+    text: `${text.slice(0, remaining)}\n\n…[truncated ${text.length - remaining} characters: this run's tool-output budget is spent. Answer with what you have rather than calling again.]`,
+    used: remaining,
+  }
+}
+
 /** A truncated reply, duck-typed. TruncatedReplyError (lib/model-openai) carries `truncated`;
  *  matching on the property rather than importing the class keeps this file free of the
  *  provider adapters that depend on IT. */
@@ -172,12 +221,24 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
   let turns = 0
   // NUDGE_LIMIT is the shared policy (one re-ask), not a local choice.
   let nudges = 0
+  // Tool output already spent, across every turn. See TOOL_OUTPUT_BUDGET_CHARS.
+  let toolChars = 0
 
   while (turns < maxTurns) {
     turns += 1
     let turn: ModelTurn
+    // ON THE FINAL TURN, OFFER NO TOOLS. The warning below asks the model to stop calling them;
+    // a model that ignores it spends the last turn on a call whose result is discarded, and the
+    // run fails having paid for everything. Withdrawing the tools makes that structurally
+    // impossible: the only move left is to answer. Watched on a scheduled run against a live
+    // cloud MCP, where a polite request alone converged some runs and not others.
+    const finalTurn = turns === maxTurns
     try {
-      turn = await input.callModel({ system: input.system, messages, tools: input.tools })
+      turn = await input.callModel({
+        system: input.system,
+        messages,
+        tools: finalTurn ? [] : input.tools,
+      })
     } catch (e) {
       // The model call itself failed (429, 5xx, a network blip). Retryable: the expensive part
       // has not happened yet and a second attempt may well succeed — the same judgement the
@@ -204,16 +265,32 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
       // Gmail. Latency is the right thing to trade for that.
       const results: { tool_use_id: string; content: string }[] = []
       for (const use of turn.toolUses) {
+        let text: string
         try {
-          results.push({
-            tool_use_id: use.id,
-            content: resultText(await input.executeTool(use.name, use.input)),
-          })
+          text = resultText(await input.executeTool(use.name, use.input))
         } catch (e) {
+          // An error is a diagnosis, not payload: it is short, and it must never be squeezed out
+          // by a budget the successful calls spent.
           results.push({ tool_use_id: use.id, content: resultText(e) })
+          continue
         }
+        const clipped = clipToBudget(text, TOOL_OUTPUT_BUDGET_CHARS - toolChars)
+        toolChars += clipped.used
+        results.push({ tool_use_id: use.id, content: clipped.text })
       }
       messages.push({ role: "user", content: results })
+
+      // THE LAST TURN IS ANNOUNCED, not sprung. Without this a run exploring one turn too long is
+      // guillotined at the cap having paid for every turn and produced nothing — which is the
+      // most expensive way for a run to fail and the easiest to avoid. Said once, on the turn
+      // where it changes what the model should do.
+      if (turns === maxTurns - 1) {
+        messages.push({
+          role: "user",
+          content:
+            "This is your final turn: any further tool call is discarded. Produce the revision now, using what you already have.",
+        })
+      }
       continue
     }
 

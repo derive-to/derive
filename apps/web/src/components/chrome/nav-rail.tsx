@@ -36,6 +36,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
+import { useBootGate } from "@/lib/bootstrap"
 import { getMonogram } from "@/lib/initials"
 import { prTitle } from "@/lib/pr"
 import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
@@ -350,10 +351,16 @@ export function NavRail() {
   const qc = useQueryClient()
   // Nav data read straight from react-query (deduped with the loaders that warm
   // it). enabled on a session so an anon never hits the authed endpoints.
-  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me })
+  // Gated on the boot batch: /v1/bootstrap seeds these caches in ONE request with the
+  // sidebar's whole read set; the gate opens the moment the batch settles either way,
+  // so a failed batch just means these run themselves (the pre-batch behavior).
+  // `workspaces` below is NOT in the batch (token/grant-bound semantics differ) and
+  // keeps its own timing.
+  const bootGate = useBootGate()
+  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
   const { data: collections = [], isPending: collectionsPending } = useQuery({
     ...collectionsQuery(),
-    enabled: !!me,
+    enabled: !!me && bootGate,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
   // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored

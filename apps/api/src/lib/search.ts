@@ -710,6 +710,21 @@ const SNIPPET_LEN = 160
 // line can be deeply indented; a query may carry stray spaces) so the match stays
 // locatable. Falls back to the head of the line when the literal isn't on it (shouldn't
 // happen after grep-confirm, but stays safe).
+// The index's hit lines are RAW SOURCE, so on an HTML artifact a snippet could read
+// as markup (`<div class="vig-bar"><span…`) — the payoff of the slowest search in the
+// product must be prose. Strip tags, entity refs, and the partial-tag remnants a
+// line-based index leaves when a tag spans lines. Display-only: matching already
+// happened, and over-stripping a weird line degrades to a shorter snippet, never a
+// wrong result.
+export const stripMarkup = (line: string): string =>
+  line
+    .replace(/^[^<>]*>/, " ") // leading remnant of a tag opened on a previous line
+    .replace(/<[^>]*$/, " ") // trailing tag left open into the next line
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&[a-zA-Z#0-9]{1,8};/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+
 export const snippetAround = (line: string, query: string): string => {
   const flat = line.replace(/\s+/g, " ").trim()
   const q = query.replace(/\s+/g, " ").trim()
@@ -729,7 +744,7 @@ export const toSearchHits = (results: WorkspaceSearchResult[], query: string): S
       title: r.title,
       current_version: r.current_version,
       // A literal hit line is the best snippet; a dense-only hit falls back to its chunk snippet.
-      snippet: hit ? snippetAround(hit.text, query) : (r.semantic?.snippet ?? ""),
+      snippet: hit ? snippetAround(stripMarkup(hit.text), query) : (r.semantic?.snippet ?? ""),
       // Semantic-only when there's no literal hit line but a dense passage carried it here.
       semantic: !hit && !!r.semantic?.snippet,
     }

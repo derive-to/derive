@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
 import { connectedAgentsQuery, onboardingQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { useDeferredGate } from "@/lib/use-deferred-gate"
 
 // Whether the home's connect-your-agent card should render for this user right now.
 // Shared with the library so the Brandprint nudge can yield (one onboarding surface
@@ -14,6 +15,7 @@ import { STORAGE_KEYS } from "@/lib/storage-keys"
 // design — errors and missing data just hide the card.
 export function useConnectNudge() {
   const { me } = useAuth()
+  const deferred = useDeferredGate()
   const [dismissed, setDismissed] = useState(() => {
     try {
       return localStorage.getItem(STORAGE_KEYS.connectNudge) === "1"
@@ -25,12 +27,12 @@ export function useConnectNudge() {
   // the connect happens in the user's terminal — tabbing back is the moment to look.
   const { data: ob } = useQuery({
     ...onboardingQuery(),
-    enabled: !!me && !dismissed,
+    enabled: !!me && !dismissed && deferred,
     refetchOnWindowFocus: true,
   })
   const { data: agents } = useQuery({
     ...connectedAgentsQuery(),
-    enabled: !!me && !dismissed,
+    enabled: !!me && !dismissed && deferred,
     refetchOnWindowFocus: true,
   })
   const dismiss = () => {

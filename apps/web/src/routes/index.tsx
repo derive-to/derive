@@ -1,33 +1,64 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { needsFeedbackArtifactsQuery, summaryQuery } from "../lib/queries"
+import { bootstrapQuery } from "../lib/bootstrap"
+import { libraryArtifactsQuery, needsFeedbackArtifactsQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
 import { Library } from "../pages/library"
 import { LibraryPending } from "../pages/library/library-skeleton"
-import { parseLibrarySort } from "../pages/library/sort"
+import { DEFAULT_SORT, parseLibrarySort } from "../pages/library/sort"
 import type { LibrarySearch } from "../pages/library/types"
 
 export const Route = createFileRoute("/")({
   // Auth + first-run onboarding gate (anon → /login, un-onboarded → /welcome).
   beforeLoad: requireOnboarded,
-  // Preload the two data the home BRANCHES on, so both paint deterministically on the
-  // first frame: the summary count decides the greeting ("Welcome back" vs "Welcome to
-  // Derive" — a pending query would flash the new-user copy at every returning user), and
-  // the feedback count decides the triage line. Awaiting them here (they're small, and
-  // warm within staleTime → instant) also means the grid below never gets pushed down by
-  // a late-landing header, which would drift the virtualizer's scrollMargin. The
-  // shape-matched LibraryPending covers the cold-load window while this resolves.
-  loader: async ({ context: { queryClient } }) => {
-    // Best-effort: warm the cache for a deterministic first paint, but never let a failed
-    // preload BLOCK the home behind the route error boundary — the greeting/triage are
-    // non-critical (a failed summary just falls back to a neutral "Welcome," and the
-    // in-component useQuery retries), while the artifact list has its own error handling.
-    await Promise.all([
-      queryClient.ensureQueryData(summaryQuery()).catch(() => {}),
-      queryClient.ensureQueryData(needsFeedbackArtifactsQuery()).catch(() => {}),
-    ])
+  // Warm the two queries the home header branches on (greeting copy, triage line) WITHOUT
+  // awaiting them. Awaiting held the whole route — and with it the artifact list, the one
+  // request the person is waiting for — behind two header niceties: on a cold boot the
+  // list didn't start until these resolved (~450ms of a ~1s boot, measured). Un-awaited,
+  // the grid mounts immediately and the header data streams in behind it. The header
+  // stays honest without the await: the greeting renders neutral "Welcome," until the
+  // count resolves (never the new-user copy on a guess), the triage line reserves its
+  // height while pending, and the grid recomputes scrollMargin on any above-grid height
+  // change (artifact-grid.tsx observes the content wrapper), so a late landing shifts
+  // nothing it can't absorb. Warm boots are unchanged: within staleTime these are cache
+  // hits and the header still paints complete on the first frame.
+  // The filters are search params, so the loader keys on them: without loaderDeps the
+  // router treats every filtered library as the same match and an intent hover on a
+  // sidebar tag/collection link cannot preload the view it actually opens.
+  loaderDeps: ({ search }) => search,
+  loader: ({ context: { queryClient }, deps }) => {
+    // prefetchQuery never throws — a failed warm just leaves the in-component useQuery
+    // to retry, which is the same fallback the awaited version defended with .catch().
+    // The summary rides the boot BATCH (/v1/bootstrap seeds it with the collections,
+    // settings and notifications the shell is about to ask for) — prefetching it here
+    // starts that one request in the loader instead of on the nav rail's mount, and
+    // prefetching summaryQuery individually would fire the exact request the batch
+    // exists to remove.
+    void queryClient.prefetchQuery(bootstrapQuery(queryClient))
+    void queryClient.prefetchQuery(needsFeedbackArtifactsQuery())
+    // Warm the EXACT list this URL renders, keyed the way the body keys it (the param
+    // object below mirrors LibraryBody's construction — keep them in step), so hovering
+    // "#architecture" in the rail paints that filtered grid from cache on click.
+    void queryClient.prefetchInfiniteQuery(
+      libraryArtifactsQuery({
+        q: deps.query || undefined,
+        tag: deps.tag,
+        collection: deps.collection,
+        author: deps.author,
+        scope: deps.tab === "mine" ? "mine" : undefined,
+        sort: deps.sort ?? DEFAULT_SORT,
+      }),
+    )
   },
   // Shape-matched pending frame for the cold-load auth/loader window.
   pendingComponent: LibraryPending,
+  // No minimum hold on that frame. The global defaultPendingMinMs(300) exists to stop a
+  // skeleton flashing mid-navigation — but on a cold boot the skeleton is up from first
+  // paint regardless, and the floor was measured holding the READY library back ~250ms
+  // (route resolved ~110ms, component mounted ~380ms). LibraryPending is shape-matched,
+  // so the swap lands in the same geometry and needs no smoothing delay. Warm in-app
+  // navs resolve inside defaultPendingMs(150), so the pending frame never shows there
+  // and this changes nothing for them.
+  pendingMinMs: 0,
   // The home library. Its filters + free-text search live in the URL (LibrarySearch)
   // so the nav rail can drive them from anywhere and a filtered/searched library is
   // shareable. The named feeds (Favorites, Following) are their OWN routes, not params

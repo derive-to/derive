@@ -25,7 +25,7 @@ import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
-import { ArtifactChat, RailTabs } from "./artifact-chat"
+import { ArtifactChat } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
@@ -117,7 +117,18 @@ export function Artifact() {
   // click that follows a hover reads straight from cache. Optimistic edits and
   // the SSE live updates below write through the same client.
   const qc = useQueryClient()
-  const { data: art, isError: failed, error, refetch } = useQuery(artifactQuery(shortId))
+  // Passing the client seeds the first paint from the clicked card's list row
+  // (placeholderData in artifactQuery): the header renders on the first frame after
+  // the click. `seeded` gates the content iframe below — a list row has no raw_token,
+  // so starting the render from it would only restart the frame when the real record
+  // lands a beat later.
+  const {
+    data: art,
+    isPlaceholderData: seeded,
+    isError: failed,
+    error,
+    refetch,
+  } = useQuery(artifactQuery(shortId, qc))
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
   // Comments are signed-in-only (the API 404s anon by design) — don't fire the
@@ -599,7 +610,11 @@ export function Artifact() {
   const rawBase = rawToken
     ? `${API_BASE}/raw/${shortId}/v/${shown}/t/${rawToken}`
     : `${API_BASE}/raw/${shortId}/v/${shown}`
-  const rawSrc = `${rawBase}/index.html`
+  // While the record is a list-row seed (placeholder), hold the frame: the seed has no
+  // raw_token, and a tokenless load now would just be torn down and reloaded when the
+  // real record lands ~a beat later. RenderStage shows its boot state meanwhile, so the
+  // person sees real header + calm loading, never a double content flash.
+  const rawSrc = seeded ? null : `${rawBase}/index.html`
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
@@ -1009,63 +1024,62 @@ export function Artifact() {
           </div>
 
           {!focus && (
-            <>
-              <ArtifactComments
-                rail={rail}
-                onRail={setRail}
-                chatBeta={chatBeta}
-                chatPanel={
-                  <ArtifactChat
-                    messages={chat.messages}
-                    working={chat.working}
-                    disabledReason={chat.error ?? undefined}
-                    onSend={(b) => chat.send(b, effectiveCanPublish)}
-                    onPoll={chat.poll}
-                  />
-                }
-                shortId={shortId}
-                isMobile={isMobile}
-                isAnon={isAnon}
-                canComment={canComment}
-                reviewCard={
-                  // Top of the comments rail, not its own pane; members who can act only.
-                  canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
-                }
-                onSheetHeight={setSheetInset}
-                docLive={docLive}
-                editing={inlineEdit.active}
-                panel={effectivePanel}
-                asideWidth={asideWidth}
-                openCount={openCount}
-                frameRef={frame}
-                subscribeGeom={subscribeGeom}
-                onScrollDoc={scrollBy}
-                pinned={pinned}
-                general={general}
-                resolved={resolvedThreads}
-                openThreads={openThreads}
-                activeThread={activeThread}
-                hoverThread={hoverThread}
-                inDoc={inDoc}
-                composer={composer}
-                sel={sel}
-                setPanel={setPanel}
-                setComposer={setComposer}
-                setSel={setSel}
-                setActiveThread={setActiveThread}
-                setHoverThread={setHoverThread}
-                activate={activateThread}
-                toggleResolve={toggleResolve}
-                reply={reply}
-                submitNew={submitNew}
-                jumpTo={jumpTo}
-                startSelComment={startSelComment}
-                agents={agents}
-                currentSlide={deck?.i ?? null}
-                landedSlides={landedSlides}
-                anchorConf={anchorConf}
-              />
-            </>
+            <ArtifactComments
+              rail={rail}
+              onRail={setRail}
+              chatBeta={chatBeta}
+              chatPanel={
+                <ArtifactChat
+                  messages={chat.messages}
+                  working={chat.working}
+                  streaming={chat.streaming}
+                  disabledReason={chat.error ?? undefined}
+                  onSend={(b) => chat.send(b, effectiveCanPublish)}
+                  onPoll={chat.poll}
+                />
+              }
+              shortId={shortId}
+              isMobile={isMobile}
+              isAnon={isAnon}
+              canComment={canComment}
+              reviewCard={
+                // Top of the comments rail, not its own pane; members who can act only.
+                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
+              }
+              onSheetHeight={setSheetInset}
+              docLive={docLive}
+              editing={inlineEdit.active}
+              panel={effectivePanel}
+              asideWidth={asideWidth}
+              openCount={openCount}
+              frameRef={frame}
+              subscribeGeom={subscribeGeom}
+              onScrollDoc={scrollBy}
+              pinned={pinned}
+              general={general}
+              resolved={resolvedThreads}
+              openThreads={openThreads}
+              activeThread={activeThread}
+              hoverThread={hoverThread}
+              inDoc={inDoc}
+              composer={composer}
+              sel={sel}
+              setPanel={setPanel}
+              setComposer={setComposer}
+              setSel={setSel}
+              setActiveThread={setActiveThread}
+              setHoverThread={setHoverThread}
+              activate={activateThread}
+              toggleResolve={toggleResolve}
+              reply={reply}
+              submitNew={submitNew}
+              jumpTo={jumpTo}
+              startSelComment={startSelComment}
+              agents={agents}
+              currentSlide={deck?.i ?? null}
+              landedSlides={landedSlides}
+              anchorConf={anchorConf}
+            />
           )}
         </div>
       </div>
