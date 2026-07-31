@@ -16,7 +16,7 @@ import { gb } from "@/lib/bytes"
 import { closePaywall, type PaywallReason, usePaywall } from "@/lib/paywall"
 import { billingQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { PLANS } from "@/pages/settings/billing-plans"
+import { type PaidTier, PLANS } from "@/pages/settings/billing-plans"
 
 // One dialog for every paywall hit, opened by the global mutation-error funnel
 // (query-client.ts). The reason decides the headline; the sell is always the
@@ -37,10 +37,7 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
     .filter((m) => m.role === "owner")
     .map((m) => m.name ?? m.handle ?? "a workspace admin")
 
-  const checkout = useApiMutation<
-    { url: string },
-    { tier: "team" | "business"; interval: "month" | "year" }
-  >({
+  const checkout = useApiMutation<{ url: string }, { tier: PaidTier; interval: "month" | "year" }>({
     mutationFn: ({ tier, interval }) => api.startCheckout(tier, interval),
     pendingKey: (vars) => vars.tier,
     onSuccess: ({ url }) => {
@@ -85,58 +82,62 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
             </li>
           ))}
         </ul>
-        {isAdmin ? (
-          <div className="flex flex-col items-start gap-3">
-            <ToggleGroup
-              type="single"
-              value={cycle}
-              onValueChange={(v) => v && setCycle(v as "month" | "year")}
-              data-testid="paywall-interval-toggle"
-              className="gap-[3px] rounded-lg bg-secondary p-[3px]"
-            >
-              <ToggleGroupItem
-                value="month"
-                className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
+        {/* Wait for ws to load before picking the role-dependent branch, avoiding a flash of wrong text */}
+        {ws ? (
+          isAdmin ? (
+            <div className="flex flex-col items-start gap-3">
+              <ToggleGroup
+                type="single"
+                value={cycle}
+                onValueChange={(v) => v && setCycle(v as "month" | "year")}
+                data-testid="paywall-interval-toggle"
+                className="gap-[3px] rounded-lg bg-secondary p-[3px]"
               >
-                Monthly
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="year"
-                className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-              >
-                Annual
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                data-testid="paywall-checkout-team"
-                size="sm"
-                loading={checkout.isPendingFor("team")}
-                disabled={checkout.isPending}
-                onClick={() => checkout.mutate({ tier: "team", interval: cycle })}
-              >
-                Upgrade to Team
-              </Button>
-              <Button
-                data-testid="paywall-checkout-business"
-                variant="outline"
-                size="sm"
-                loading={checkout.isPendingFor("business")}
-                disabled={checkout.isPending}
-                onClick={() => checkout.mutate({ tier: "business", interval: cycle })}
-              >
-                Upgrade to Business
-              </Button>
+                <ToggleGroupItem
+                  value="month"
+                  className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
+                >
+                  Monthly
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="year"
+                  className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
+                >
+                  Annual
+                </ToggleGroupItem>
+              </ToggleGroup>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  data-testid="paywall-checkout-team"
+                  size="sm"
+                  loading={checkout.isPendingFor("team")}
+                  disabled={checkout.isPending}
+                  onClick={() => checkout.mutate({ tier: "team", interval: cycle })}
+                >
+                  Upgrade to Team
+                </Button>
+                <Button
+                  data-testid="paywall-checkout-business"
+                  variant="outline"
+                  size="sm"
+                  loading={checkout.isPendingFor("business")}
+                  disabled={checkout.isPending}
+                  onClick={() => checkout.mutate({ tier: "business", interval: cycle })}
+                >
+                  Upgrade to Business
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {team?.price[cycle]} · Business {business?.price[cycle]}
+              </p>
             </div>
+          ) : (
             <p className="text-sm text-muted-foreground">
-              {team?.price[cycle]} · Business {business?.price[cycle]}
+              Ask a workspace admin to upgrade.
+              {admins.length > 0 && ` That's ${admins.join(", ")}.`}
             </p>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Ask a workspace admin to upgrade.{admins.length > 0 && ` That's ${admins.join(", ")}.`}
-          </p>
-        )}
+          )
+        ) : null}
         <Link
           to="/settings/$section"
           params={{ section: "billing" }}
