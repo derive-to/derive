@@ -320,6 +320,77 @@ interface RpcResult {
   error?: { message?: string }
 }
 
+/**
+ * Ceiling on ONE tool result, because a source's answer lands verbatim in the run's prompt.
+ *
+ * Found on a real cloud MCP: DeepWiki's `read_wiki_contents` returns an entire wiki, and one call
+ * produced a 1,040,577-token prompt against a 1,048,576-token model limit. Every following turn
+ * failed the same way, so the run burned its whole turn budget and finished "agent did not produce
+ * a revision within 12 turns" -- naming the symptom, and never the cause.
+ *
+ * 80k chars matches apps/api's own `clip`, which bounds Derive's responses for exactly this reason
+ * in the other direction ("so no single read/search result can blow a client's context budget").
+ * A source deserves the same ceiling: nothing about it being remote makes its output smaller.
+ *
+ * CLIPPED, NEVER DROPPED, and always with the cut declared. A truncated answer the model knows is
+ * truncated can be worked with -- it can narrow the question and call again. A silently shortened
+ * one is indistinguishable from the whole truth, which is the worse failure by far.
+ */
+const MAX_RESULT_CHARS = 80_000
+
+interface ContentBlock {
+  type?: string
+  text?: string
+}
+
+const clipToolResult = (result: unknown): unknown => {
+  let whole: string
+  try {
+    whole = JSON.stringify(result) ?? ""
+  } catch {
+    return result // not serializable is not our problem to solve here
+  }
+  if (whole.length <= MAX_RESULT_CHARS) return result
+
+  const blocks = (result as { content?: unknown })?.content
+  if (!Array.isArray(blocks)) {
+    // A shape we do not model, and too big to pass on. Say so rather than forward it.
+    return {
+      content: [
+        {
+          type: "text",
+          text: `[this source returned ${whole.length} characters, past the ${MAX_RESULT_CHARS}-character limit for one tool result, in a shape that cannot be trimmed — ask it for less]`,
+        },
+      ],
+    }
+  }
+
+  let budget = MAX_RESULT_CHARS
+  const kept: ContentBlock[] = []
+  let clipped = 0
+  for (const raw of blocks as ContentBlock[]) {
+    const text = typeof raw?.text === "string" ? raw.text : null
+    if (text === null) {
+      kept.push(raw)
+      continue
+    }
+    if (text.length <= budget) {
+      kept.push(raw)
+      budget -= text.length
+      continue
+    }
+    clipped += text.length - budget
+    kept.push({ ...raw, text: text.slice(0, budget) })
+    budget = 0
+  }
+  const dropped = (blocks as ContentBlock[]).length - kept.length
+  kept.push({
+    type: "text",
+    text: `…[truncated ${clipped} characters${dropped > 0 ? ` and ${dropped} further block(s)` : ""} — this source returned more than one tool result may carry. Ask it something narrower.]`,
+  })
+  return { ...(result as object), content: kept }
+}
+
 export class McpBroker implements ToolBroker {
   readonly provider = "mcp"
   /** Per-instance session ids, keyed by server URL. MCP's streamable HTTP transport hands back
@@ -567,7 +638,8 @@ export class McpBroker implements ToolBroker {
       name: bare,
       arguments: opts.args ?? {},
     })
-    return body.result ?? null
+    // Bounded HERE, at the one point every MCP source passes through, rather than at each caller.
+    return body.result === undefined ? null : clipToolResult(body.result)
   }
 
   /** Nothing is held server-side: a connection IS its ref, so revoking is the caller deleting

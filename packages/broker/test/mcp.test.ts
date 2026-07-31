@@ -203,6 +203,51 @@ describe("MCP broker: connect + list + call", () => {
     expect(await broker.toolsFor([link.ref])).toHaveLength(2)
   })
 
+  it("clips a tool result that would blow the run's context budget", async () => {
+    // FOUND ON A REAL CLOUD MCP, not imagined: DeepWiki's read_wiki_contents returns an entire
+    // wiki, and one call produced a 1,040,577-token prompt against a 1,048,576-token limit. Every
+    // later turn failed identically, so the run exhausted its turns and reported "agent did not
+    // produce a revision within 12 turns" — the symptom, never the cause.
+    const huge = "x".repeat(400_000)
+    const server = fakeServer({
+      tools: TOOLS,
+      onCall: () => ({ content: [{ type: "text", text: huge }] }),
+    })
+    const broker = new McpBroker(server.impl)
+    const link = await broker.connect({
+      orgId: "o1",
+      userId: "u1",
+      toolkit: "https://big.test/mcp",
+    })
+    const out = (await broker.execute({
+      ref: link.ref,
+      tool: "big_test.search",
+      args: {},
+    })) as { content: { type: string; text: string }[] }
+
+    const total = JSON.stringify(out).length
+    expect(total, `still ${total} chars`).toBeLessThan(90_000)
+    // The cut is DECLARED. A model that knows it was truncated can narrow and ask again; one that
+    // does not cannot tell a partial answer from the whole truth.
+    const last = out.content[out.content.length - 1]
+    expect(last?.text).toMatch(/truncated \d+ characters/)
+    expect(last?.text).toMatch(/narrower/i)
+    // And what survived is the server's real text, not a placeholder.
+    expect(out.content[0]?.text?.startsWith("xxx")).toBe(true)
+  })
+
+  it("leaves an ordinary tool result exactly as the server sent it", async () => {
+    const server = fakeServer({
+      tools: TOOLS,
+      onCall: () => ({ content: [{ type: "text", text: "small and complete" }] }),
+    })
+    const broker = new McpBroker(server.impl)
+    const link = await broker.connect({ orgId: "o1", userId: "u1", toolkit: "https://ok.test/mcp" })
+    expect(await broker.execute({ ref: link.ref, tool: "ok_test.search", args: {} })).toEqual({
+      content: [{ type: "text", text: "small and complete" }],
+    })
+  })
+
   it("an unreachable server connects as pending rather than throwing", async () => {
     // Matches how the other brokers report a not-yet-usable account: the row is stored so it can
     // be retried, and toolsForRun only passes ACTIVE connections to a run.
