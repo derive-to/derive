@@ -39,7 +39,8 @@ export const Route = createFileRoute("/artifacts/$ref")({
           // only for a session the page will actually read them with.
           if (queryClient.getQueryData(meQuery().queryKey))
             queryClient.prefetchQuery(commentsQuery(id))
-          if (!art.removed) prefetchArtifactRaw(id, version ?? art.current_version)
+          // The token belongs to the URL the frame loads — see prefetchArtifactRaw.
+          if (!art.removed) prefetchArtifactRaw(id, version ?? art.current_version, art.raw_token)
           return
         }
       }
