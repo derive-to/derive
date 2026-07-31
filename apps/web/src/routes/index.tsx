@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { needsFeedbackArtifactsQuery, summaryQuery } from "../lib/queries"
+import { libraryArtifactsQuery, needsFeedbackArtifactsQuery, summaryQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
 import { Library } from "../pages/library"
 import { LibraryPending } from "../pages/library/library-skeleton"
-import { parseLibrarySort } from "../pages/library/sort"
+import { DEFAULT_SORT, parseLibrarySort } from "../pages/library/sort"
 import type { LibrarySearch } from "../pages/library/types"
 
 export const Route = createFileRoute("/")({
@@ -20,11 +20,28 @@ export const Route = createFileRoute("/")({
   // change (artifact-grid.tsx observes the content wrapper), so a late landing shifts
   // nothing it can't absorb. Warm boots are unchanged: within staleTime these are cache
   // hits and the header still paints complete on the first frame.
-  loader: ({ context: { queryClient } }) => {
+  // The filters are search params, so the loader keys on them: without loaderDeps the
+  // router treats every filtered library as the same match and an intent hover on a
+  // sidebar tag/collection link cannot preload the view it actually opens.
+  loaderDeps: ({ search }) => search,
+  loader: ({ context: { queryClient }, deps }) => {
     // prefetchQuery never throws — a failed warm just leaves the in-component useQuery
     // to retry, which is the same fallback the awaited version defended with .catch().
     void queryClient.prefetchQuery(summaryQuery())
     void queryClient.prefetchQuery(needsFeedbackArtifactsQuery())
+    // Warm the EXACT list this URL renders, keyed the way the body keys it (the param
+    // object below mirrors LibraryBody's construction — keep them in step), so hovering
+    // "#architecture" in the rail paints that filtered grid from cache on click.
+    void queryClient.prefetchInfiniteQuery(
+      libraryArtifactsQuery({
+        q: deps.query || undefined,
+        tag: deps.tag,
+        collection: deps.collection,
+        author: deps.author,
+        scope: deps.tab === "mine" ? "mine" : undefined,
+        sort: deps.sort ?? DEFAULT_SORT,
+      }),
+    )
   },
   // Shape-matched pending frame for the cold-load auth/loader window.
   pendingComponent: LibraryPending,

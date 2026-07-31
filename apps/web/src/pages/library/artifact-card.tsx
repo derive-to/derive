@@ -237,6 +237,9 @@ export function ArtifactCard({
           data-testid={`artifact-card-open-${a.short_id}`}
           onClick={onOpen}
           onMouseEnter={onPrefetch}
+          // Touch never fires mouseenter — pointerdown lands ~100ms before the click
+          // completes, so a tap gets the same head start a hover gives a mouse.
+          onPointerDown={onPrefetch}
           onFocus={onPrefetch}
           aria-label={`Open ${a.title ?? a.short_id}`}
           className="flex w-full min-w-0 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"

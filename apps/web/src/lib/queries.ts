@@ -95,6 +95,10 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     // collection must never strand a stale/empty cached page (the blank-collection
     // bug: a collection cached empty mid-sync, then shown empty on return).
     refetchOnMount: "always",
+    // Deliberately NO maxPages: the keyset cursor is forward-only (next_cursor with no
+    // previous-cursor twin), so a page cap would drop the TOP pages on a deep scroll
+    // with no way to refetch them — the list would visibly lose its head. Bounding the
+    // persisted-restore cost of a deep scroll needs bidirectional cursors first.
   })
 
 // Artifacts that need YOUR feedback: an open comment thread you're tagged in or have
