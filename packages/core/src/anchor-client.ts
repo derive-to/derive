@@ -343,12 +343,16 @@ interface ElReg {
       return
     }
     if (e.key === "Escape") {
-      // Escape is "leave this mode" — the host decides what that means (exit when
-      // clean, confirm when there are unsaved edits). Blur first so the caret and
-      // the block's focus ring don't linger behind the decision.
+      // Two steps, deliberately. With the caret in a block, Escape drops the caret
+      // and stops there — the typed text and the session both survive, which is what
+      // "get this cursor out of the way" should mean. Only an Escape with no block
+      // focused asks the host to leave the MODE (it exits clean, confirms dirty).
       if (editOn) {
         const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
-        if (focused instanceof HTMLElement) focused.blur()
+        if (focused instanceof HTMLElement) {
+          focused.blur()
+          return
+        }
       }
       post({ type: "esc" })
     }
@@ -402,7 +406,16 @@ interface ElReg {
        without it, edit mode is pixel-identical to reading and you have to click
        something to discover what counts as text. Tracks exactly what a click would
        activate (same editContainerFor), so it can never promise the wrong region. */
-    ".derive-edit-hover{background-color:rgba(100,116,139,.09);border-radius:3px;outline:1px solid rgba(100,116,139,.22);outline-offset:2px;cursor:text}"
+    ".derive-edit-hover{background-color:rgba(100,116,139,.09);border-radius:3px;outline:1px solid rgba(100,116,139,.22);outline-offset:2px;cursor:text}" +
+    /* ...and again derived from the block's OWN text colour, which by definition
+       contrasts with whatever the artifact painted behind it. The slate wash above
+       composites to ~1:1 on a dark page — invisible exactly where the invitation
+       matters most. Declared second so it wins wherever color-mix is supported, and
+       the rgba rule remains the fallback where it is not. */
+    "@supports (color: color-mix(in srgb, currentColor 10%, transparent)){" +
+    ".derive-edit-hover{background-color:color-mix(in srgb, currentColor 8%, transparent);outline-color:color-mix(in srgb, currentColor 38%, transparent)}" +
+    "[data-derive-editable]:focus{outline-color:color-mix(in srgb, currentColor 70%, transparent)}" +
+    "}"
   ;(document.head || document.documentElement).appendChild(st)
 
   /* === Element anchors ========================================================
@@ -1205,6 +1218,15 @@ interface ElReg {
     })
   }
   window.addEventListener("resize", reflow)
+  /* The frame is resized when the host gives back the on-screen keyboard's height —
+     which happens a beat AFTER the tap that opened it, by which time the block the
+     caret is in may be behind the keyboard. revealBlock already ran (and correctly
+     did nothing, the frame being full height then), so re-run it on the shrink. */
+  window.addEventListener("resize", () => {
+    if (!editOn) return
+    const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
+    if (focused instanceof HTMLElement) revealBlock(focused)
+  })
   /* images/fonts settle after load — re-measure a few times so pins AND geometry land right */
   window.addEventListener("load", () => {
     const remeasure = () => {
@@ -1564,6 +1586,10 @@ interface ElReg {
   const editClick = (e: MouseEvent) => {
     const base = editBase
     if (!base) return
+    // A keyboard-synthesized click (Enter/Space on a focused link) reports
+    // clientX/clientY 0, which would resolve a caret at the frame's top-left and
+    // silently arm an unrelated block. Editing is pointer-driven; ignore it.
+    if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
     const el0 = asEl(e.target)
     // Never navigate while editing — a click on a link edits its text instead.
     if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
@@ -1637,8 +1663,11 @@ interface ElReg {
     const r = el.getBoundingClientRect()
     const vh = window.innerHeight || document.documentElement.clientHeight
     if (r.top >= 8 && r.bottom <= vh - 8) return
+    // Same answer fastScrollTo gives: an OS-level motion preference outranks the
+    // nicety of an animated scroll.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
     try {
-      el.scrollIntoView({ block: "center", behavior: "smooth" })
+      el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" })
     } catch (_e) {
       el.scrollIntoView()
     }
@@ -1692,6 +1721,15 @@ interface ElReg {
   document.addEventListener("input", (e) => {
     if (!editOn) return
     if (!asEl(e.target)?.closest("[data-derive-editable]")) return
+    // Tell the host it is dirty on the FIRST keystroke, before the debounce. The
+    // exact count can wait 120ms; the fact that there is unsaved work cannot — the
+    // host's unsaved-work guard is armed by this number, and typing then
+    // immediately hitting Escape or a link inside that window dropped the edit
+    // silently. An optimistic 1 is corrected by the settled count either way.
+    if (lastDirty <= 0) {
+      lastDirty = 1
+      post({ type: "edit-state", dirty: 1 })
+    }
     scheduleDirty()
   })
 

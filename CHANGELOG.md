@@ -21,6 +21,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
   publish the editing chrome clears immediately instead of lingering, tinted, until
   the version swap lands. The comments rail stops telling you to select text for a
   comment while selection is editing text.
+- **PR previews no longer render OG images into production.** The preview Worker
+  inherited the `[browser]` binding and the `PREVIEW_RENDERER` durable object, whose
+  sweep (`versionsMissingPreview`) is scoped by a row limit and nothing else — so a
+  preview screenshots arbitrary PRODUCTION versions and writes the results back to the
+  shared database. That was survivable while previews screenshotted production's own
+  bytes; combined with the change below it would have overwritten real artifacts' cards
+  with a branch's rendering, permanently (the sweep never revisits a version that
+  already has an image). Previews now drop the renderer, and the vanity-subdomain base
+  with it — a draft minted on a preview was writing a live `domain` row into
+  production's table and then being served by production.
 - **PR previews serve their own artifact bytes.** `DERIVE_SANDBOX_URL` was inherited
   verbatim by preview Workers, so every preview's `/raw/*` — including the injected
   `derive-client.js` — was answered by production. Any change to the in-iframe client

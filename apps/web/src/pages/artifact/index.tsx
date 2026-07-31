@@ -20,7 +20,7 @@ import {
 import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
-import { useIsMobile } from "@/lib/use-is-mobile"
+import { useCoarsePointer, useIsMobile } from "@/lib/use-is-mobile"
 import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
@@ -108,6 +108,9 @@ export function Artifact() {
   const { me, loading } = useAuth()
   const nav = useNavigate()
   const isMobile = useIsMobile()
+  // Thumb-sized targets and "tap" copy follow the POINTER, not the breakpoint: a
+  // landscape phone is 844px wide and a tablet wider still, and both are fingers.
+  const coarsePointer = useCoarsePointer()
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the
@@ -133,7 +136,17 @@ export function Artifact() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
-      if (focus) setFocus(false)
+      // Escape dismisses the TOPMOST layer, and this listener is the bottom one.
+      // Radix (dialogs, menus, popovers — including this page's own confirms) binds
+      // on document with capture and calls preventDefault without stopping
+      // propagation, so without this check one press both closes the dialog and
+      // re-runs the action that opened it: the discard confirm became impossible to
+      // dismiss with Escape, and closing an unrelated ⋯ menu tore down edit mode.
+      if (e.defaultPrevented) return
+      if (focus) {
+        setFocus(false)
+        return
+      }
       // Keyboard focus is often OUTSIDE the frame (the user just clicked the strip),
       // so the window listener owns Escape there; the frame forwards its own.
       inlineEditRef.current.requestExit()
@@ -141,6 +154,22 @@ export function Artifact() {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [focus])
+
+  // ⌘S / ⌘Enter with focus on the host chrome. The frame forwards the same keys when
+  // the caret is inside the document, but the strip advertises the shortcut and focus
+  // is on the HOST the moment you click anything in it — without this the browser's
+  // Save-page dialog opens over the workbench instead.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.repeat) return
+      if (e.key !== "s" && e.key !== "S" && e.key !== "Enter") return
+      if (!inlineEditRef.current.active) return
+      e.preventDefault()
+      inlineEditRef.current.save()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
   // The review overlay: null = closed. A ?review deep link (or a surface that knows
   // which proposal it means) opens it ON that proposal; the ⋯ menu opens it bare.
   const [reviewing, setReviewing] = useState<{ proposalId?: string } | null>(null)
@@ -213,9 +242,10 @@ export function Artifact() {
   // Holds the inline-edit API (not just a flag) so the SSE handler and the two
   // Escape listeners — all declared ABOVE the hook — can read live state and call
   // back into it without re-subscribing on every render.
-  const inlineEditRef = useRef<{ active: boolean; requestExit: () => void }>({
+  const inlineEditRef = useRef<{ active: boolean; requestExit: () => void; save: () => void }>({
     active: false,
     requestExit: () => {},
+    save: () => {},
   })
   const pinnedRef = useRef(version)
   pinnedRef.current = version
@@ -458,7 +488,11 @@ export function Artifact() {
       setActiveThread(null)
     },
   })
-  inlineEditRef.current = { active: inlineEdit.active, requestExit: inlineEdit.requestExit }
+  inlineEditRef.current = {
+    active: inlineEdit.active,
+    requestExit: inlineEdit.requestExit,
+    save: inlineEdit.save,
+  }
 
   // Unsaved inline edits live only in the frame's DOM — a route change unmounts it
   // and a reload throws it away, both silently. Guard BOTH: withResolver drives the
@@ -466,7 +500,13 @@ export function Artifact() {
   // the browser's own prompt (the only thing that can stop it). Same shape as the
   // new-artifact draft guard in pages/new.tsx.
   const editBlocker = useBlocker({
-    shouldBlockFn: () => inlineEdit.blocking,
+    // Only a navigation that actually LEAVES this artifact. The route canonicalises
+    // its own URL with `replace` (a rename by a collaborator is enough to trigger
+    // it), and blocking that pops a discard dialog for a slug rewrite the user never
+    // asked for — then re-pops it the moment they cancel, because the rewrite is
+    // still pending. Same-artifact navigations carry no risk to unsaved edits: the
+    // frame is not remounted.
+    shouldBlockFn: ({ next }) => inlineEdit.blocking && !next.pathname.includes(shortId),
     enableBeforeUnload: () => inlineEdit.blocking,
     withResolver: true,
   })
@@ -620,12 +660,7 @@ export function Artifact() {
   // entry point — there's no top-bar toggle or `c` key on a phone, and a hidden
   // panel made comments unreachable). Computed here rather than in the panel hook
   // so a desktop→mobile resize with a persisted "hidden" can't strand a phone.
-  // On phones the sheet's peek bar is normally always docked (it IS the entry point
-  // to comments there). An inline-edit session is the one exception: selection edits
-  // text instead of quoting it, so the panel behind that bar can only explain what it
-  // can't do right now — while costing ~60px of the little height a keyboard leaves.
-  // It comes straight back on Done, which is one tap away in the strip.
-  const effectivePanel = isMobile && !isAnon ? (inlineEdit.active ? "hidden" : "open") : panel
+  const effectivePanel = isMobile && !isAnon ? "open" : panel
 
   // The rendered artifact frame — identical for the anon public viewer and the authed
   // workbench, so build it once and place it in both branches (no prop drift).
@@ -890,14 +925,18 @@ export function Artifact() {
             // black band below. `sheetInset` tracks the sheet's real height (peek
             // bar, full list, or keyboard-pinned composer), so this never over- or
             // under-reserves the way a fixed `pb-[50vh]` did.
-            // Exactly one thing occupies the bottom at a time: the comments sheet
-            // when reading, the keyboard when editing (the sheet is stood down).
+            // Two things can occupy the bottom: the comments sheet and, while
+            // editing, the on-screen keyboard. Reserve the taller — the sheet pins
+            // ITSELF above the keyboard, so adding them would double-count.
             style={
-              isMobile && !focus && inlineEdit.active
-                ? { paddingBottom: keyboard?.inset ?? 0 }
-                : isMobile && !focus && effectivePanel === "open"
-                  ? { paddingBottom: sheetInset }
-                  : undefined
+              !focus && (keyboard || (isMobile && effectivePanel === "open"))
+                ? {
+                    paddingBottom: Math.max(
+                      isMobile && effectivePanel === "open" ? sheetInset : 0,
+                      inlineEdit.active ? (keyboard?.inset ?? 0) : 0,
+                    ),
+                  }
+                : undefined
             }
           >
             {art.bundle && !editing && (
@@ -911,7 +950,7 @@ export function Artifact() {
                 dirty={inlineEdit.dirty}
                 canPublish={effectiveCanPublish}
                 saving={inlineEdit.saving}
-                touch={isMobile}
+                touch={coarsePointer}
                 onSave={inlineEdit.save}
                 onDiscard={inlineEdit.discard}
                 onDone={inlineEdit.done}

@@ -35,8 +35,13 @@ export function EditBar({
   // actually hit is worth more there than the vertical space it costs.
   const hit = touch ? "h-11 px-4" : ""
   return (
+    // role=status + aria-live: entering the mode unmounts the Edit button the user
+    // just pressed, so focus falls to body and a screen reader would otherwise get
+    // no signal at all that the document became editable.
     <div
       data-testid="inline-edit-bar"
+      role="status"
+      aria-live="polite"
       className="flex shrink-0 items-center gap-2 border-border border-b bg-accent/40 py-1.5 pr-2 pl-4"
     >
       <Icon name="pencil" size={14} className="shrink-0 text-muted-foreground" />
@@ -70,7 +75,9 @@ export function EditBar({
               className={hit}
             >
               {canPublish ? "Save" : "Suggest"}
-              <Kbd className="max-sm:hidden">⌘S</Kbd>
+              <Kbd aria-hidden className="max-sm:hidden">
+                ⌘S
+              </Kbd>
             </Button>
           </>
         ) : (
@@ -82,7 +89,9 @@ export function EditBar({
             className={hit}
           >
             Done
-            <Kbd className="max-sm:hidden">Esc</Kbd>
+            <Kbd aria-hidden className="max-sm:hidden">
+              Esc
+            </Kbd>
           </Button>
         )}
       </div>

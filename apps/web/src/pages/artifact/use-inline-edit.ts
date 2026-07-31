@@ -74,6 +74,7 @@ export function useInlineEdit(p: {
   // The listener is registered once; the save mutation is created below it. A ref
   // bridges the two without re-subscribing the listener on every render.
   const saveRef = useRef<() => void>(() => {})
+  const savingRef = useRef(false)
 
   // Every way out of the mode funnels through here.
   //   "restore" — revert unsaved text and re-arm the read grammar (Done, Escape,
@@ -126,20 +127,31 @@ export function useInlineEdit(p: {
         const w = collectWait.current
         // The nonce pins the reply to THIS collect: a slow page can answer a
         // timed-out collect after a newer one started, and those stale edits must
-        // not save (they'd be missing the user's latest typing).
-        if (!w || d.nonce !== w.nonce) return
+        // not save (they'd be missing the user's latest typing). A client cached
+        // from before the nonce existed (the served client has a 5-minute cache, so
+        // this is every deploy's first few minutes) replies without one — accept
+        // that rather than making saving look broken until the cache turns over.
+        if (!w || (d.nonce !== undefined && d.nonce !== w.nonce)) return
         collectWait.current = null
         clearTimeout(w.timer)
         const edits = Array.isArray(d.edits) ? (d.edits as QuoteEditInput[]) : []
-        // The frame counted changed blocks it could not express as edits (or the
-        // frame reloaded and lost them): saving "nothing" now would present data
-        // loss as success — surface it instead.
+        // Blocks the frame changed but could NOT express as an edit. Saving the rest
+        // would publish some of the user's work and let the post-save reload wipe
+        // the remainder — data loss presented as success. `uncaptured` is reported
+        // per block, because one dirty block can legitimately yield several edits, so
+        // counts alone can't tell a partial failure from a normal multi-edit save.
+        const uncaptured = typeof d.uncaptured === "number" ? d.uncaptured : 0
         const frameDirty = typeof d.dirty === "number" ? d.dirty : 0
-        w.resolve(edits.length === 0 && frameDirty > 0 ? { desync: true } : edits)
+        const lost = uncaptured > 0 || (edits.length === 0 && frameDirty > 0)
+        w.resolve(lost ? { desync: true } : edits)
       } else if (d.type === "edit-save") {
-        // ⌘S / ⌘Enter pressed inside the frame. Only meaningful with pending edits;
-        // a bare shortcut on a clean document should do nothing, not file a version.
-        if (activeRef.current && dirtyRef.current > 0) saveRef.current()
+        // ⌘S / ⌘Enter pressed inside the frame. Deliberately NOT gated on the dirty
+        // count: that number arrives on a debounce, and gating on it dropped the
+        // save when you typed and hit ⌘S in one motion — with the frame having
+        // already swallowed the browser's own Save dialog, so nothing happened at
+        // all. A save with nothing to collect is a no-op (see onSuccess), and the
+        // in-flight guard is what stops key-repeat from stacking versions.
+        if (activeRef.current && !savingRef.current) saveRef.current()
       } else if (d.type === "edit-blocked") {
         // A click landed somewhere inline editing can't reach. Quiet + deduped —
         // information, not an alarm.
@@ -159,7 +171,9 @@ export function useInlineEdit(p: {
     new Promise((resolve, reject) => {
       const nonce = ++nonceSeq.current
       const timer = window.setTimeout(() => {
-        collectWait.current = null
+        // Only clear the slot if it is still OURS — a newer collect may already own
+        // it, and nulling that one would strand a save that can never resolve.
+        if (collectWait.current?.nonce === nonce) collectWait.current = null
         reject(new Error("The page didn't report its edits. Try again."))
       }, 4000)
       collectWait.current = { nonce, resolve, timer }
@@ -240,7 +254,8 @@ export function useInlineEdit(p: {
         return
       }
       if (!r) {
-        exit("restore") // nothing actually changed — just leave edit mode
+        // Nothing to save (a shortcut on a clean document, or everything reverted).
+        // Stay in the mode: exiting on a no-op would make ⌘S feel like a cancel.
         return
       }
       if (r.kind === "published") {
@@ -290,6 +305,7 @@ export function useInlineEdit(p: {
   })
 
   saveRef.current = () => save.mutate()
+  savingRef.current = save.isPending
 
   return {
     active,
