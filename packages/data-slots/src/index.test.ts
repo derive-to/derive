@@ -384,3 +384,60 @@ describe("slotDeltas", () => {
     expect(() => slotDeltas([row("c", "{bad")], [row("c", '{"pass":1}')])).not.toThrow()
   })
 })
+
+describe("browser parity and adversarial input (the CodeQL round)", () => {
+  // Five high-severity alerts arrived the day the parser moved to its own package —
+  // on code that had passed silently inside core for two PRs. The move re-attributed
+  // every line as new, which is the only reason they surfaced. All five were real.
+
+  it('ends a block at "</script >" exactly like a browser does', () => {
+    // The close tag may carry whitespace (or junk) before its ">" and still terminate
+    // the element. Matching only the literal "</script>" made this parser read PAST a
+    // close the browser honored — the two disagreed about where the body ends, which
+    // is the drift SPEC.md's normative close-tag hazard exists to prevent. Found in
+    // the reference implementation itself.
+    const page =
+      '<script type="application/derive-data" data-slot="a">{"x":1}</script >' +
+      '<script type="application/derive-data" data-slot="b">{"y":2}</SCRIPT\t>'
+    const { slots } = parseDataSlots(page, "text/html")
+    expect(slots.map((s) => [s.slot, s.json])).toEqual([
+      ["a", '{"x":1}'],
+      ["b", '{"y":2}'],
+    ])
+  })
+
+  it("still reports the truncation hazard when the early close is a spaced tag", () => {
+    const page =
+      '<script type="application/derive-data" data-slot="tpl">{"t": "</script >"}</script>'
+    const { slots, advisories } = parseDataSlots(page, "text/html")
+    expect(slots).toHaveLength(0)
+    expect(advisories.join(" ")).toMatch(/unterminated string/)
+  })
+
+  it("parses the CodeQL fence attack string in linear time", () => {
+    // The exact adversarial shape from the alert: many repetitions of an almost-opener.
+    // The old whole-block regex went polynomial here; the line scanner is linear by
+    // construction, so this must return promptly rather than hang the suite.
+    const attack = "\n```derive-data\t!\na".repeat(20_000)
+    const started = Date.now()
+    const { slots } = parseDataSlots(attack, "text/markdown")
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(slots).toHaveLength(0)
+  })
+
+  it("counts numeric cells in linear time on the adversarial table shapes", () => {
+    const tdAttack = "<td".repeat(30_000)
+    const pipeAttack = `|0${" ".repeat(30_000)}`
+    const started = Date.now()
+    expect(missingDataSlotAdvisory(tdAttack, "text/html")).toBeNull()
+    expect(missingDataSlotAdvisory(pipeAttack, "text/markdown")).toBeNull()
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
+  it("still finds real numeric cells after the linear-time rewrite", () => {
+    const html = `<table>${"<td> 42 </td><td>$1,204.50</td><td>93%</td><td>7</td>"}</table>`
+    expect(missingDataSlotAdvisory(html, "text/html")).toMatch(/4 numeric table cells/)
+    const md = "| a | b |\n|---|---|\n| 41 | 7% |\n| $9 | 12.5 |\n"
+    expect(missingDataSlotAdvisory(md, "text/markdown")).toMatch(/4 numeric table cells/)
+  })
+})

@@ -81,14 +81,13 @@ const attr = (attrs: string, name: string): string | null => {
   return m ? (m[2] ?? m[3] ?? "") : null
 }
 
-// A <script …>…</script> block. JSON can't legally contain "</script>", so a
-// non-greedy match to the first close is exactly the block's body — no DOM needed.
-const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi
-
-// A fenced block opening with ```derive-data <slot> and closing on a line that is just
-// ``` (optionally indented/padded). The name stops at whitespace or a backtick.
-const FENCE_RE =
-  /(^|\n)[ \t]*```[ \t]*derive-data[ \t]+([^\s`]+)[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*```[ \t]*(?=\r?\n|$)/g
+// A <script …>…</script> block, ended the way a BROWSER ends it: the close tag may carry
+// whitespace or junk before its ">" ("</script >", "</script foo>") and still terminates
+// the element. Matching only the literal "</script>" here made the parser read PAST a
+// close tag the browser honored, so the two disagreed about where the body ends — the
+// exact drift SPEC.md's normative close-tag hazard exists to prevent, present in the
+// reference implementation itself until CodeQL flagged it.
+const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi
 
 interface RawBlock {
   slot: string
@@ -118,14 +117,35 @@ const htmlBlocks = (source: string): RawBlock[] => {
   return out
 }
 
+// The fence opener and closer, each anchored to ONE line. The old single mega-regex
+// spanned the whole block with a lazy [\s\S]*? and ambiguous whitespace runs, which
+// CodeQL correctly called polynomial on adversarial input — a parser meant to run on
+// untrusted documents on any host cannot carry a ReDoS. A line scanner is linear by
+// construction and matches the documented grammar more literally than the regex did.
+const FENCE_OPEN = /^[ \t]*```[ \t]*derive-data[ \t]+([^\s`]+)[ \t]*$/
+const FENCE_CLOSE = /^[ \t]*```[ \t]*$/
+
 const markdownBlocks = (source: string): RawBlock[] => {
   const out: RawBlock[] = []
-  FENCE_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  m = FENCE_RE.exec(source)
-  while (m) {
-    out.push({ slot: m[2] ?? "", body: m[3] ?? "" })
-    m = FENCE_RE.exec(source)
+  const lines = source.split("\n")
+  for (let i = 0; i < lines.length; i++) {
+    const open = FENCE_OPEN.exec((lines[i] as string).replace(/\r$/, ""))
+    if (!open) continue
+    const body: string[] = []
+    let closed = false
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = (lines[j] as string).replace(/\r$/, "")
+      if (FENCE_CLOSE.test(line)) {
+        out.push({ slot: open[1] ?? "", body: body.join("\n") })
+        i = j // resume after the closer
+        closed = true
+        break
+      }
+      body.push(line)
+    }
+    // An unclosed fence matches the old behavior: no block, and the JSON-validation
+    // pass never sees it (markdown has no </script> analog to advise about).
+    if (!closed) break
   }
   return out
 }
@@ -328,9 +348,15 @@ const DATA_TABLE_MIN_CELLS = 4
 // A numeric cell: an HTML <td> or a markdown table cell whose whole content is a number
 // (with optional %, $, commas, decimals, sign). Prose containing a figure never matches,
 // because the CELL has to be the number.
-const HTML_NUM_CELL = /<td[^>]*>\s*[-+$]?\d[\d,]*\.?\d*\s*%?\s*<\/td>/gi
+// Cell detection in two LINEAR steps: grab short cell bodies with an unambiguous
+// character class ([^<] / [^|\n] cannot overlap the delimiters), then validate each
+// bounded capture with an anchored check. The old single-regex forms interleaved \s*
+// runs around optional characters, which is the classic polynomial-backtracking shape
+// CodeQL flagged — and an advisory helper must never be the slow path of a publish.
+const HTML_CELL = /<td\b[^>]*>([^<]{1,40})<\/td>/gi
 const MD_TABLE_ROW = /^\s*\|.+\|\s*$/gm
-const MD_NUM_CELL = /\|\s*[-+$]?\d[\d,]*\.?\d*\s*%?\s*(?=\|)/g
+const MD_CELL = /\|([^|\n]{1,40})(?=\|)/g
+const NUMERIC_CELL = /^\s*[-+$]?\d[\d,]*(?:\.\d+)?\s*%?\s*$/
 
 /**
  * Does this page carry FIGURES that no slot makes queryable? The nudge that turns slots
@@ -355,10 +381,10 @@ export const missingDataSlotAdvisory = (source: string, contentType: string): st
 
   let cells = 0
   if (isHtml) {
-    cells = (source.match(HTML_NUM_CELL) ?? []).length
+    for (const m of source.matchAll(HTML_CELL)) if (NUMERIC_CELL.test(m[1] ?? "")) cells++
   } else {
     for (const row of source.match(MD_TABLE_ROW) ?? [])
-      cells += (row.match(MD_NUM_CELL) ?? []).length
+      for (const m of row.matchAll(MD_CELL)) if (NUMERIC_CELL.test(m[1] ?? "")) cells++
   }
   if (cells < DATA_TABLE_MIN_CELLS) return null
 
