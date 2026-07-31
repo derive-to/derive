@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { type Artifact, api, type PublicProfile, type SearchHit, workspaceDisplayName } from "@/api"
@@ -14,9 +14,10 @@ import {
   CommandList,
 } from "@/components/ui/command"
 import { colorForName } from "@/lib/avatar-tints"
+import { fuzzyTitles } from "@/lib/fuzzy"
 import { splitMatches } from "@/lib/highlight"
 import { getInitials } from "@/lib/initials"
-import { collectionsQuery, workspacesQuery } from "@/lib/queries"
+import { cachedArtifactRows, collectionsQuery, workspacesQuery } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
@@ -69,31 +70,47 @@ export function CommandPalette() {
   const [contentLoading, setContentLoading] = useState(false)
   const [peopleLoading, setPeopleLoading] = useState(false)
 
-  // Fresh query each open.
+  const qc = useQueryClient()
+  // Fresh query each open — seeded from the cache, not empty: the library's cached
+  // rows ARE the recent list, so the palette opens showing real artifacts instead of
+  // a skeleton it replaces a round trip later.
   useEffect(() => {
     if (paletteOpen) {
       setQuery("")
-      setResults([])
+      setResults(fuzzyTitles(cachedArtifactRows(qc), ""))
       setContent(EMPTY_CONTENT)
       setPeople([])
     }
-  }, [paletteOpen])
+  }, [paletteOpen, qc])
 
-  // Debounced server search for artifacts while open.
+  // Local-first title search: every keystroke ranks the artifacts already in the
+  // query cache (prefix > word prefix > substring > subsequence) and paints them
+  // NOW; the debounced server search below then replaces the group with the
+  // authoritative answer (it also sees artifacts the cache has never loaded).
+  // The person looking for their own document by name — the common case — never
+  // waits on the network at all.
+  useEffect(() => {
+    if (!paletteOpen) return
+    setResults(fuzzyTitles(cachedArtifactRows(qc), query))
+  }, [query, paletteOpen, qc])
+
+  // Debounced server search for artifacts while open (authoritative pass).
   useEffect(() => {
     if (!paletteOpen) return
     let alive = true
+    const ac = new AbortController()
     setLoading(true)
     const t = setTimeout(() => {
       api
-        .listArtifacts({ q: query.trim() || undefined, limit: 8 })
+        .listArtifacts({ q: query.trim() || undefined, limit: 8 }, { signal: ac.signal })
         .then((r) => alive && setResults(r.artifacts))
-        // frontend-ignore: debounced typeahead — clearing on an aborted/failed keystroke is intended, not a hidden load failure
-        .catch(() => alive && setResults([]))
+        // frontend-ignore: debounced typeahead — a failed/aborted keystroke keeps the local matches already shown, not a hidden load failure
+        .catch(() => {})
         .finally(() => alive && setLoading(false))
     }, 180)
     return () => {
       alive = false
+      ac.abort()
       clearTimeout(t)
     }
   }, [query, paletteOpen])

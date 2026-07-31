@@ -280,13 +280,21 @@ type ArtifactListCache =
   | { artifacts?: Artifact[]; next_cursor?: string | null }
   | { pages?: { artifacts?: Artifact[] }[] }
   | undefined
-const artifactRowsOf = (data: ArtifactListCache): Artifact[] => {
+export const artifactRowsOf = (data: ArtifactListCache): Artifact[] => {
   if (!data) return []
   if (Array.isArray(data)) return data
   if ("pages" in data && data.pages) return data.pages.flatMap((p) => p.artifacts ?? [])
   if ("artifacts" in data && data.artifacts) return data.artifacts
   return []
 }
+
+// Every artifact row the cache knows about, across all the list caches — the ⌘K
+// palette's local search corpus. Cheap (a few array flattens over what is already
+// in memory) and safe to call per keystroke.
+export const cachedArtifactRows = (client: QueryClient): Artifact[] =>
+  client
+    .getQueriesData<ArtifactListCache>({ queryKey: ["artifacts"] })
+    .flatMap(([, data]) => artifactRowsOf(data))
 
 // Typed query options shared by route loaders (ensureQueryData, for intent
 // preloading) and components (useQuery). One source of truth for keys +
