@@ -175,3 +175,5 @@ Blocked-banner copy (section 3) is replaced with:
 - billing_lapsed: "Your plan has lapsed, so publishing is paused. Renew to keep Deriving."
 
 The upgrade dialog (section 2c) drops the single Team feature list with two small checkout buttons in favor of a side-by-side Team and Business comparison, each card carrying its full feature breakdown and its own upgrade button at the bottom, Business on the right to anchor the higher price (Connor's decision).
+
+Members (section 2b) now interposes a confirmation dialog before any action on a subscribed workspace would grant a new billable seat, an invite as Creator or Admin, or a Viewer promoted to one, showing the per-editor price and the resulting seat total so admins see the cost before it's incurred (Connor's decision). The billing page's current-plan card (section 1) gains a receipt line above the status text, seats times the per-editor price equals the monthly total, so the bill is legible at a glance rather than only inferable from the seat count (Connor's decision).

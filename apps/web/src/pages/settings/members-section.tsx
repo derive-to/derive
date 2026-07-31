@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useRef, useState } from "react"
-import { type ArtifactMember, api, type Role } from "@/api"
+import { type ArtifactMember, api, type BillingInfo, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { SettingsGroup } from "@/components/shared/settings-group"
@@ -9,6 +9,14 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Select,
   SelectContent,
@@ -20,9 +28,22 @@ import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
 import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { PLANS, unitPrice } from "./billing-plans"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
+
+// Billable roles (mirror the pricing page + billing rail): Creator (editor) and
+// Admin (owner) hold a seat; Viewer (commenter/legacy viewer) doesn't.
+const isBillableRole = (r: Role): boolean => r === "editor" || r === "owner"
+
+// Which billable-seat action is pending confirmation: a fresh invite (the
+// person isn't in the workspace yet, so the dialog's last sentence about
+// billing starting on accept applies), or a promotion of an existing
+// commenter/viewer to editor/owner (they're already here, so it doesn't).
+type SeatConfirmState =
+  | { kind: "invite"; email: string; role: Role }
+  | { kind: "promote"; userId: string; role: Role }
 
 // A workspace on the free tier keeps this many editor seats before an upgrade is
 // required — mirrors packages/core/src/billing.ts's FREE_SEAT_LIMIT. Not imported
@@ -46,6 +67,12 @@ export function MembersSection({ meId }: { meId: string }) {
   // through.
   const addingRef = useRef(false)
   const [removing, setRemoving] = useState<ArtifactMember | null>(null)
+  // A billable-seat grant (invite or promotion) awaiting the seat-confirmation
+  // dialog; null when no such action is in flight. Only ever set on a
+  // SUBSCRIBED workspace (see addMember / requestRoleChange below): an
+  // unsubscribed workspace never routes through here, keeping its existing
+  // free-tier note + server gate untouched.
+  const [seatConfirm, setSeatConfirm] = useState<SeatConfirmState | null>(null)
 
   const isAdmin = ws?.role === "owner"
 
@@ -66,20 +93,34 @@ export function MembersSection({ meId }: { meId: string }) {
       }
     },
   })
-  const addMember = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (addingRef.current || invite.isPending) return
-    const em = email.trim()
-    if (!em) return
+  // The actual invite call, split out of addMember so the seat-confirmation
+  // dialog's Confirm button can fire it too (with an extra onDone to close the
+  // dialog once it lands).
+  const fireInvite = (em: string, role: Role, onDone?: () => void) => {
     addingRef.current = true
     invite.mutate(
-      { email: em, role: addRole },
+      { email: em, role },
       {
+        onSuccess: onDone,
         onSettled: () => {
           addingRef.current = false
         },
       },
     )
+  }
+  const addMember = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (addingRef.current || invite.isPending) return
+    const em = email.trim()
+    if (!em) return
+    // A subscribed workspace bills per editor: a fresh invite as Creator/Admin
+    // always grants a NEW seat (the invitee isn't in the workspace yet), so
+    // pause on the confirmation dialog before firing the mutation.
+    if (billing?.subscribed && isBillableRole(addRole)) {
+      setSeatConfirm({ kind: "invite", email: em, role: addRole })
+      return
+    }
+    fireInvite(em, addRole)
   }
 
   const roleMut = useApiMutation({
@@ -94,6 +135,33 @@ export function MembersSection({ meId }: { meId: string }) {
     success: "Role updated",
   })
   const changeRole = (userId: string, role: Role) => roleMut.mutate({ userId, role })
+  // The per-row role dropdown's entry point: a promotion FROM a non-billable
+  // role (commenter/viewer) TO a billable one (editor/owner) grants a new seat
+  // on a subscribed workspace, so it pauses on the confirmation dialog first.
+  // Re-roles between editor and owner (already billable either way) and any
+  // demotion change the role with no seat impact, so they go straight through.
+  const requestRoleChange = (member: ArtifactMember, role: Role) => {
+    if (billing?.subscribed && !isBillableRole(member.role) && isBillableRole(role)) {
+      setSeatConfirm({ kind: "promote", userId: member.user_id, role })
+      return
+    }
+    changeRole(member.user_id, role)
+  }
+  // The seat-confirmation dialog's Confirm button: fires whichever mutation
+  // was pending and closes the dialog once it lands (stays open on failure;
+  // the global mutation-error toast still fires, and the dialog just lets the
+  // admin retry or cancel).
+  const confirmSeat = () => {
+    if (!seatConfirm) return
+    if (seatConfirm.kind === "invite") {
+      fireInvite(seatConfirm.email, seatConfirm.role, () => setSeatConfirm(null))
+    } else {
+      roleMut.mutate(
+        { userId: seatConfirm.userId, role: seatConfirm.role },
+        { onSuccess: () => setSeatConfirm(null) },
+      )
+    }
+  }
 
   const removeMut = useApiMutation({
     mutationFn: (m: ArtifactMember) => api.removeWorkspaceMember(m.user_id),
@@ -214,7 +282,7 @@ export function MembersSection({ meId }: { meId: string }) {
               {isAdmin ? (
                 <Select
                   value={roleValue(m.role)}
-                  onValueChange={(v) => changeRole(m.user_id, v as Role)}
+                  onValueChange={(v) => requestRoleChange(m, v as Role)}
                 >
                   <SelectTrigger
                     data-testid={`member-role-${m.user_id}`}
@@ -262,7 +330,82 @@ export function MembersSection({ meId }: { meId: string }) {
           onConfirm={() => removeMember(removing)}
         />
       )}
+
+      {seatConfirm && billing && (
+        <SeatConfirmDialog
+          billing={billing}
+          includeInviteNote={seatConfirm.kind === "invite"}
+          pending={seatConfirm.kind === "invite" ? invite.isPending : roleMut.isPending}
+          onConfirm={confirmSeat}
+          onCancel={() => setSeatConfirm(null)}
+        />
+      )}
     </SettingsSection>
+  )
+}
+
+// The paid-tier seat-confirmation gate: granting a NEW billable seat on a
+// subscribed workspace (a fresh invite as Creator/Admin, or promoting a
+// Viewer/commenter to one) pauses here before the mutation fires. Built
+// directly on the shadcn Dialog rather than the shared ConfirmDialog
+// (components/shared/confirm-dialog.tsx): the copy is a full paragraph plus a
+// sentence that only applies to the invite case, and the required testids
+// don't fit that component's single-description, fixed-cancel-testid
+// contract.
+function SeatConfirmDialog({
+  billing,
+  includeInviteNote,
+  pending,
+  onConfirm,
+  onCancel,
+}: {
+  billing: BillingInfo
+  /** Drops the "billing starts once they accept" sentence for a role
+   *  promotion: that person is already in the workspace. */
+  includeInviteNote: boolean
+  pending: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const tierName = PLANS.find((p) => p.tier === billing.tier)?.name ?? "Team"
+  const unit = unitPrice(billing.tier, billing.interval)
+  const cadence = billing.interval === "year" ? "monthly, billed annually" : "monthly"
+  const nextSeats = billing.seats + 1
+  const inviteNote = includeInviteNote
+    ? " If they don't have an account yet, billing starts once they accept the invite."
+    : ""
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent data-testid="seat-confirm-dialog">
+        <DialogHeader>
+          <DialogTitle>Add a billed editor seat?</DialogTitle>
+          <DialogDescription>
+            {`Editor seats on ${tierName} are billed at $${unit} per editor ${cadence}. With this seat your workspace will have ${nextSeats} seats at $${nextSeats * unit} per month.${inviteNote}`}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={pending}
+            onClick={onCancel}
+            data-testid="seat-confirm-cancel"
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            loading={pending}
+            disabled={pending}
+            onClick={onConfirm}
+            data-testid="seat-confirm-add"
+          >
+            Add editor seat
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

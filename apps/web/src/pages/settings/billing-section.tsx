@@ -8,7 +8,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { gb } from "@/lib/bytes"
 import { billingQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { PLANS } from "./billing-plans"
+import { PLANS, unitPrice } from "./billing-plans"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -48,6 +48,19 @@ const statusLine = (b: BillingInfo): string | null => {
 const seatLine = (b: BillingInfo): string => {
   if (b.tier === "free") return `${b.seats} of ${FREE_SEAT_LIMIT} free editor seats used`
   return `${b.seats} editor seat${b.seats === 1 ? "" : "s"}`
+}
+
+// The receipt line: seats × the PLANS unit price for the current tier/interval,
+// so the card shows what's actually being billed, not just the seat count.
+// Subscribed + paid-tier only (unitPrice resolves Free/unset to 0, which would
+// otherwise render a nonsense "seats × $0" line); null interval (shouldn't
+// happen once subscribed, but defensively) is treated as monthly, same as
+// unitPrice itself.
+const costLine = (b: BillingInfo): string | null => {
+  if (!b.subscribed || b.tier === "free") return null
+  const unit = unitPrice(b.tier, b.interval)
+  const annually = b.interval === "year" ? ", billed annually" : ""
+  return `${b.seats} editor seat${b.seats === 1 ? "" : "s"} × $${unit} = $${b.seats * unit} per month${annually}`
 }
 
 // How long a just-completed checkout keeps re-polling for the webhook to land
@@ -202,10 +215,12 @@ export function BillingSection() {
 
 function CurrentPlanCard({ billing }: { billing: BillingInfo }) {
   const status = statusLine(billing)
+  const cost = costLine(billing)
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-muted p-4 ring-1 ring-border">
       <div className="text-base font-medium text-foreground">{TIER_LABELS[billing.tier]}</div>
       <div className="flex flex-col gap-0.5 text-sm text-muted-foreground">
+        {cost && <p data-testid="billing-cost-line">{cost}</p>}
         {status && <p>{status}</p>}
         <p>{seatLine(billing)}</p>
         <StorageMeter storage={billing.storage} tier={billing.tier} />

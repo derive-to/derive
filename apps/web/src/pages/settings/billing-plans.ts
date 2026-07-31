@@ -26,6 +26,11 @@ export const PLANS = [
     badge: "Most teams",
     tagline: "For teams whose agents ship work that needs review.",
     price: { month: "$15 per editor / month", year: "$12 per editor / month, billed annually" },
+    // Numeric mirrors of the display `price` strings above: the same per-editor
+    // monthly figures, as plain numbers, matching the Stripe lookup-key prices
+    // seeded by the billing rail. `year` is the annually-billed MONTHLY rate, not
+    // the yearly total.
+    unit: { month: 15, year: 12 },
     everythingIn: "Everything in Free, plus",
     features: [
       "Unlimited editors",
@@ -42,6 +47,9 @@ export const PLANS = [
     name: "Business",
     tagline: "For organizations that need control and accountability.",
     price: { month: "$30 per editor / month", year: "$25 per editor / month, billed annually" },
+    // Numeric mirror of the display `price` strings above, same reasoning as
+    // Team's `unit` field.
+    unit: { month: 30, year: 25 },
     everythingIn: "Everything in Team, plus",
     features: [
       "250 GB pooled storage",
@@ -56,3 +64,19 @@ export const PLANS = [
 ] as const
 
 export type Plan = (typeof PLANS)[number]
+
+/** The per-editor monthly price (whole dollars) for a tier at a billing
+ *  interval: the numeric counterpart to the `unit` fields above, looked up in
+ *  one place so the seat confirmation dialog (members-section.tsx) and the
+ *  billing page's cost line (billing-section.tsx) can't compute it
+ *  differently. Takes the full `BillingInfo["tier"]` union (not just
+ *  `PaidTier`) so callers can pass it straight through with no cast; Free
+ *  (which has no `unit`) and a `null`/`undefined` interval (never billed yet,
+ *  treated as monthly) both resolve to 0. */
+export const unitPrice = (
+  tier: "free" | PaidTier,
+  interval: "month" | "year" | null | undefined,
+): number => {
+  const plan = PLANS.find((p) => p.tier === tier)
+  return plan && "unit" in plan ? plan.unit[interval ?? "month"] : 0
+}
