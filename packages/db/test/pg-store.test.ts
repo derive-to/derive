@@ -288,7 +288,7 @@ if (PG_URL) {
       )
     })
 
-    it("orgSettingsAndBrandprint matches the two calls it replaces", async () => {
+    it("orgContext matches the two calls it replaces", async () => {
       await inSchema(
         async (boot, schema) => {
           await boot.query(
@@ -302,7 +302,7 @@ if (PG_URL) {
         async (store) => {
           const org = `org_${uuid()}`
           await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, slackPost: false })
-          const combined = await store.orgSettingsAndBrandprint(org, "u1")
+          const combined = await store.orgContext(org, "u1")
           expect(combined).toEqual({
             settings: await store.getOrgSettings(org),
             personalBrandprint: await store.getUserBrandprint("u1"),
@@ -311,7 +311,7 @@ if (PG_URL) {
           expect(combined.personalBrandprint).toBe(JSON.stringify({ collectionId: "col_x" }))
           // null userId skips the user read entirely — settings alone, no error even
           // though nothing was seeded for a null id.
-          expect(await store.orgSettingsAndBrandprint(org, null)).toEqual({
+          expect(await store.orgContext(org, null)).toEqual({
             settings: await store.getOrgSettings(org),
             personalBrandprint: null,
           })
@@ -319,11 +319,11 @@ if (PG_URL) {
       )
     })
 
-    it("orgSettingsAndBrandprint tolerates a user table with no brandprint column", async () => {
+    it("orgContext tolerates a user table with no brandprint column", async () => {
       await inSchema(
         async (boot, schema) => {
           // The older/minimal shape getUserBrandprint's own try/catch already tolerates —
-          // orgSettingsAndBrandprint's UNION must fall back the same way, not throw.
+          // orgContext's UNION must fall back the same way, not throw.
           await boot.query(
             `CREATE TABLE ${schema}."user" (id text primary key, email text, name text)`,
           )
@@ -334,7 +334,7 @@ if (PG_URL) {
         async (store) => {
           const org = `org_${uuid()}`
           await store.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, emailNotifications: false })
-          const combined = await store.orgSettingsAndBrandprint(org, "u1")
+          const combined = await store.orgContext(org, "u1")
           expect(combined.settings.emailNotifications).toBe(false)
           expect(combined.personalBrandprint).toBeNull()
         },

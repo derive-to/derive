@@ -18,7 +18,7 @@ import {
   composeContextsWithManifests,
   composeListEnrichment,
   composeNotificationsPage,
-  composeOrgSettingsAndBrandprint,
+  composeOrgContext,
   composeWorkspaceSummary,
   composeWorkspacesAndOauthBinding,
 } from "./list-enrichment"
@@ -148,7 +148,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     | "collectionsOverview"
     | "workspaceSummary"
     | "workspacesAndOauthBinding"
-    | "orgSettingsAndBrandprint"
+    | "orgContext"
   > & { close(): void } = {
     ...repos,
 
@@ -611,8 +611,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
     workspacesAndOauthBinding: (userId, clientId) =>
       composeWorkspacesAndOauthBinding(store, userId, clientId),
-    orgSettingsAndBrandprint: (orgId, userId) =>
-      composeOrgSettingsAndBrandprint(store, orgId, userId),
+    orgContext: (orgId, userId) => composeOrgContext(store, orgId, userId),
   }
 }
 

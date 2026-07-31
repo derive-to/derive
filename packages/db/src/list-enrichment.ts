@@ -111,7 +111,7 @@ export const composeWorkspacesAndOauthBinding = async (
 }
 
 /** See `composeListEnrichment` — the Brandprint resolution's twin. */
-export const composeOrgSettingsAndBrandprint = async (
+export const composeOrgContext = async (
   store: Pick<MetaStore, "getOrgSettings" | "getUserBrandprint">,
   orgId: string,
   userId: string | null,

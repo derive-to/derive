@@ -206,7 +206,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     )
 
     // THE FIRST THREE CALLS ARE IDENTICAL ON EVERY TOOL CALL: getOAuthGrant,
-    // workspacesAndOauthBinding, orgSettingsAndBrandprint — the MCP/OAuth session bootstrap,
+    // workspacesAndOauthBinding, orgContext — the MCP/OAuth session bootstrap,
     // paid before any tool-specific work starts. This was SEVEN calls (getAgentByToken,
     // getOAuthGrant, listWorkspaces, getOAuthClientWorkspaces, getUsers, getOrgSettings,
     // getUserBrandprint) until this round: getAgentByToken is now skipped outright for any
@@ -214,7 +214,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // MCP call — see context.ts), getUsers was redundant with the name the grant resolution
     // already had (see OauthAgentResolution.ownerName), and listWorkspaces +
     // getOAuthClientWorkspaces / getOrgSettings + getUserBrandprint each collapsed into one
-    // round trip (workspacesAndOauthBinding, orgSettingsAndBrandprint — pg.ts batches, embedded
+    // round trip (workspacesAndOauthBinding, orgContext — pg.ts batches, embedded
     // composes). 7 → 3 bootstrap calls, ~320ms/call saved on every single MCP tool call.
     //
     // Budgets below are the measured count, no headroom — same discipline as

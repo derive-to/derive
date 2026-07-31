@@ -974,7 +974,7 @@ export interface IntegrationStore {
    *  brandprint column); embedded composes. userId null ⇒ personalBrandprint always null
    *  (that read is skipped entirely). resolveActorBrandprint (MCP connect, context
    *  runner, rework endpoint) is the only caller. */
-  orgSettingsAndBrandprint(
+  orgContext(
     orgId: string,
     userId: string | null,
   ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>

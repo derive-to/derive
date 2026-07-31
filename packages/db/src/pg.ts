@@ -2340,7 +2340,7 @@ export class PgMetaStore implements MetaStore {
   // than a JOIN. Both branches select a plain `text` column, so — unlike a bare NULL
   // literal — no explicit cast is needed for type resolution. resolveActorBrandprint
   // (MCP connect, context runner, rework endpoint) is the only caller.
-  async orgSettingsAndBrandprint(
+  async orgContext(
     orgId: string,
     userId: string | null,
   ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }> {
