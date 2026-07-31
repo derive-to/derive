@@ -15,6 +15,8 @@ import { describe, expect, it } from "vitest"
 import {
   buildPrompt,
   checkWritable,
+  credentialEnvVars,
+  credentialsBlock,
   doctor,
   gitSafeEnv,
   loadRunnerConfig,
@@ -423,6 +425,9 @@ describe("artifact file channel", () => {
       // The non-mock serve path resolves the run's plan first; the fake `claude` ignores the
       // token, so any credential lets the artifact channel run end to end.
       modelCredential: async () => ({ credential: { kind: "oauth", value: "t" }, reason: "none" }),
+      // ...and then the CONTEXT's connection credentials, for the model's environment. This
+      // session has none, which is the ordinary case for a context with nothing bound.
+      credentials: async () => ({ credentials: [], quiet: [] }),
     }
     const session = () => ({
       id: "ses_1",
@@ -858,5 +863,61 @@ describe("runner once (single drain)", () => {
     } finally {
       srv.close()
     }
+  })
+})
+
+describe("credential delivery — env and prompt", () => {
+  const cred = (over = {}) => ({
+    connection_id: "conn_1",
+    toolkit: "stripe",
+    env: ["STRIPE_API_KEY", "DERIVE_CONN_STRIPE"],
+    value: "rk_live_secret_value_xyz",
+    label: "read-only, charges and refunds",
+    scope: "workspace",
+    ...over,
+  })
+
+  it("sets EVERY name the server listed to the same value", () => {
+    // The vendor's conventional name is what makes an unmodified SDK work with no instruction;
+    // the canonical one is what an agent can find by rule when we don't recognize the vendor.
+    // Both must resolve, or one of those two properties silently stops holding.
+    const env = credentialEnvVars([
+      cred(),
+      cred({ toolkit: "own", env: ["DERIVE_CONN_OWN"], value: "k2" }),
+    ])
+    expect(env).toEqual({
+      STRIPE_API_KEY: "rk_live_secret_value_xyz",
+      DERIVE_CONN_STRIPE: "rk_live_secret_value_xyz",
+      DERIVE_CONN_OWN: "k2",
+    })
+    expect(credentialEnvVars([])).toEqual({})
+  })
+
+  it("names the variables in the prompt but NEVER the values", () => {
+    // Naming them is the point: an agent that doesn't know STRIPE_API_KEY is set asks the user
+    // to paste a key. Withholding the VALUE is equally the point — the prompt becomes the
+    // transcript, the run meta, and whatever the provider logs, none of which we control.
+    const block = credentialsBlock([cred()])
+    expect(block).toContain("STRIPE_API_KEY")
+    expect(block).toContain("DERIVE_CONN_STRIPE")
+    expect(block).toContain("read-only, charges and refunds")
+    expect(block).not.toContain("rk_live_secret_value_xyz")
+    // Nothing to say when nothing was delivered — no empty heading in every prompt.
+    expect(credentialsBlock([])).toBe("")
+  })
+
+  it("says whose account a personal credential acts as, and what went missing", () => {
+    // A shared context spending someone's personal key is the sensitive case: whoever reads the
+    // run should see it, and so should the model.
+    expect(credentialsBlock([cred({ scope: "personal" })])).toContain("acts as the person")
+    // A bound source that resolved to nothing is stated rather than silently absent, so the
+    // answer can say what it could not reach.
+    const quiet = credentialsBlock(
+      [],
+      [{ toolkit: "github", reason: "broker_error", why: "the install is gone" }],
+    )
+    expect(quiet).toContain("github")
+    expect(quiet).toContain("UNAVAILABLE")
+    expect(quiet).toContain("the install is gone")
   })
 })

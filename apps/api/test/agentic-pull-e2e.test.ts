@@ -90,6 +90,118 @@ process.stdout.write(JSON.stringify({ type: "result", result: "<revision>" + JSO
   return bin
 }
 
+/** A fake `claude` that REPORTS ITS OWN ENVIRONMENT instead of calling a tool: the only way to
+ *  prove a delivered credential actually reached the spawned model process. It reports presence
+ *  and the last four characters, never the key — a test that writes a secret into a published
+ *  artifact would be teaching the wrong lesson even with a fixture value. */
+const fakeEnvProbeBin = (cwd: string): string => {
+  const bin = join(cwd, "fake-claude-env.cjs")
+  writeFileSync(
+    bin,
+    `#!/usr/bin/env node
+const vendor = process.env.STRIPE_API_KEY || ""
+const canonical = process.env.DERIVE_CONN_STRIPE || ""
+const revision = {
+  content: [
+    "# Env probe",
+    "vendor_name_set: " + (vendor ? "yes" : "no"),
+    "canonical_name_set: " + (canonical ? "yes" : "no"),
+    "same_value: " + (vendor && vendor === canonical ? "yes" : "no"),
+    "last4: " + vendor.slice(-4),
+  ].join("\\n"),
+  filename: "notes.md",
+  confidence: 0.95,
+  message: "probed the environment",
+}
+process.stdout.write(JSON.stringify({ type: "system", session_id: "fake_env" }) + "\\n")
+process.stdout.write(JSON.stringify({ type: "result", result: "<revision>" + JSON.stringify(revision) + "</revision>" }) + "\\n")
+`,
+  )
+  chmodSync(bin, 0o755)
+  return bin
+}
+
+describe("credential delivery, end to end on the live stack", () => {
+  it("a bound key reaches the spawned model's environment under both of its names", async () => {
+    // The whole point of "keys to the run", proven through the real stack rather than a unit:
+    // server resolves the binding → the runner fetches it → it is in the child process's env,
+    // where an ordinary `stripe` SDK would find it. Nothing between here and the model is mocked
+    // except the model's own reasoning.
+    //
+    // NO base_url on purpose, so this connection contributes no tools at all: what arrives can
+    // only have arrived by delivery, not through the tool shim.
+    const key = "rk_live_e2e_probe_key_4f2b"
+    const conn = (await (
+      await post("/v1/connections", {
+        toolkit: "stripe",
+        kind: "secret",
+        secret: key,
+        scope: "workspace",
+        scopes_label: "read-only, charges",
+      })
+    ).json()) as { id: string }
+    const doc = await publish("Env Probe", "# Env probe\n\nnothing yet")
+    const auto = (await (
+      await post("/v1/automations", {
+        trigger: { kind: "manual" },
+        instruction: `Report your environment into ${doc.short_id}.`,
+        refs: [{ kind: "artifact", id: doc.short_id, mode: "publish" }],
+        connectionIds: [conn.id],
+      })
+    ).json()) as { id: string; agent_token: string }
+    await app.request(`/v1/automations/${auto.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+
+    const cwd = mkdtempSync(join(tmpdir(), "cred-e2e-"))
+    const client = new DeriveClient(base, auto.agent_token)
+    const runs = await client.claimRuns()
+    const claimed = runs[0]
+    if (!claimed) throw new Error("expected a claimed run")
+    // The claim itself carries NO credential — delivery is the runner's separate, deliberate read.
+    expect(JSON.stringify(claimed)).not.toContain(key)
+    // And this connection contributes no tools, so the shim is not even written.
+    expect(claimed.tools ?? []).toHaveLength(0)
+
+    await serveRun(client, claimed, "You are this workspace's automation agent.", {
+      server: base,
+      token: auto.agent_token,
+      cwd,
+      mock: false,
+      providerName: "claude-code",
+      agentBin: fakeEnvProbeBin(cwd),
+      model: "sonnet",
+      timeoutMs: 30_000,
+    })
+
+    // A credentialed run proposes (the gate's rung 3), so the probe's report is in the proposal.
+    const after = await detail(doc.short_id)
+    expect(after.open_proposals).toBe(1)
+    const { proposals } = (await (
+      await app.request(`/v1/artifacts/${doc.short_id}/proposals?state=open`, {
+        headers: as(owner.email),
+      })
+    ).json()) as { proposals: { id: string }[] }
+    const approved = await app.request(
+      `/v1/artifacts/${doc.short_id}/proposals/${proposals[0]?.id}/approve`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", ...as(owner.email) },
+        body: "{}",
+      },
+    )
+    expect(approved.status).toBe(200)
+    const body = await content(doc.short_id)
+    // The model process saw the key under the vendor's own name AND the canonical one, with the
+    // same value, and it was the key we stored.
+    expect(body).toContain("vendor_name_set: yes")
+    expect(body).toContain("canonical_name_set: yes")
+    expect(body).toContain("same_value: yes")
+    expect(body).toContain(`last4: ${key.slice(-4)}`)
+  })
+})
+
 describe("agentic pull — a scheduled/triggered artifact pulls from a mock source and updates", () => {
   it("run-now → the runner pulls through the bound source and PROPOSES; approving lands it", async () => {
     // This asserted a live v2 until the credentialed rung landed. A run bound to a connection

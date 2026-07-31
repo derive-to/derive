@@ -1,6 +1,6 @@
 import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { type McpAuthResolver, makeBroker, quietReason, refRouter } from "@derive/broker"
-import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
+import type { ConnectionKind, ConnectionRecord, ConnectionScope, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { installationToken } from "./github-app"
 
@@ -275,6 +275,102 @@ export const bearerFor = async (
     return decryptSecret(install.bot_token, encryptionKey)
   }
   throw new Error(`connection kind ${cn.kind} has no direct credential`)
+}
+
+/** One credential handed to a run's environment. `value` is the real secret — this struct is
+ *  the ONE place a stored credential is meant to leave the server, and only to a machine its
+ *  owner operates (see credentialsForWork). */
+export interface DeliveredCredential {
+  connection_id: string
+  toolkit: string
+  /** Every environment variable name this should be set as, most conventional first. */
+  env: string[]
+  value: string
+  /** What it can do, in the words of whoever pasted it — shown to the model, never parsed. */
+  label: string | null
+  scope: ConnectionScope
+}
+
+/** Vendor-conventional variable names, so a delivered key is picked up by the vendor's own SDK
+ *  and CLI with no instruction at all (`stripe` reads STRIPE_API_KEY; `gh` reads GITHUB_TOKEN).
+ *  Deliberately tiny and additive: an unrecognized toolkit still gets the canonical name below,
+ *  so nothing depends on this map being complete. */
+const VENDOR_ENV: Record<string, string> = {
+  stripe: "STRIPE_API_KEY",
+  github: "GITHUB_TOKEN",
+  slack: "SLACK_BOT_TOKEN",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  linear: "LINEAR_API_KEY",
+  notion: "NOTION_API_KEY",
+  posthog: "POSTHOG_API_KEY",
+}
+
+/** The canonical name every delivered credential gets, recognized vendor or not — so an agent
+ *  can always find its key by a rule instead of by our guess about its vendor. */
+export const canonicalEnvName = (toolkit: string): string =>
+  `DERIVE_CONN_${toolkit.replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase()}`
+
+export const envNamesFor = (toolkit: string): string[] => {
+  const canonical = canonicalEnvName(toolkit)
+  const vendor = VENDOR_ENV[toolkit]
+  return vendor ? [vendor, canonical] : [canonical]
+}
+
+/**
+ * The credentials to hand a work item's environment: its bound, spendable connections resolved
+ * to real secret values.
+ *
+ * This is the "keys to the run" decision (derive.to 1h3r7vsf) in one function. Where a machine
+ * exists, the agent writes ordinary code with real libraries, so it needs the real key — and
+ * safety comes from the key's OWN scope (a restricted Stripe key, a SELECT-only database role),
+ * which the person pasting it chooses, not from us standing between the model and its SDKs.
+ *
+ * Two things this deliberately does NOT do:
+ *   - It does not decide WHO may receive this. The caller does, because that is an
+ *     authorization question about the executor (owner-operated vs a machine Derive runs) and
+ *     it belongs at the route, next to the token check.
+ *   - It does not deliver an `mcp` connection. That kind is reached THROUGH the broker with a
+ *     bearer we hold; there is no variable an agent would put it in, and handing it over would
+ *     turn a brokered lane into a raw one behind the operator's back.
+ *
+ * A connection whose backing install is gone makes `bearerFor` throw. That is reported as a
+ * quiet source, not a failed delivery: a run bound to three keys still gets the other two and
+ * can say which one went missing, exactly as the tool lane behaves.
+ */
+export const credentialsForWork = async (
+  meta: MetaStore,
+  orgId: string,
+  connectionIds: string[],
+  encryptionKey: string,
+  quiet?: SourceQuiet[],
+): Promise<DeliveredCredential[]> => {
+  const spendable = await spendableConnections(meta, orgId, connectionIds)
+  const out: DeliveredCredential[] = []
+  for (const cn of spendable) {
+    if (!isDirect(cn.kind)) continue
+    try {
+      const value = await bearerFor(meta, cn, encryptionKey)
+      out.push({
+        connection_id: cn.id,
+        toolkit: cn.toolkit,
+        env: envNamesFor(cn.toolkit),
+        value,
+        label: cn.scopes_label,
+        scope: cn.scope,
+      })
+    } catch (err) {
+      // The MESSAGE, never the credential — bearerFor throws about a missing install, but this
+      // catch must stay incapable of surfacing a secret even if that ever changes.
+      quiet?.push({
+        connection_id: cn.id,
+        toolkit: cn.toolkit,
+        reason: "broker_error",
+        why: err instanceof Error ? err.message : "the credential could not be resolved",
+      })
+    }
+  }
+  return out
 }
 
 /**

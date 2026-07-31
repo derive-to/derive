@@ -209,6 +209,26 @@ export class DeriveClient {
     }
   }
 
+  /** The CONNECTION credentials this work item's context was given, to put in the model's
+   *  environment — "keys to the run". Fetched here, at spawn time, rather than riding the
+   *  claim: the runs claim is batched, so carrying secrets on it would pull keys for runs that
+   *  may never execute. Exactly the shape modelCredential already follows.
+   *
+   *  Returns [] rather than throwing when the server withholds them (an older server with no
+   *  such route, hosted delivery not yet consented, no encryption key): a runner that cannot
+   *  get credentials should run the job without them and let the agent say what it could not
+   *  reach — not die before starting.
+   *
+   *  `kind` is "runs" or "sessions". `quiet` explains any connection that resolved to nothing. */
+  async credentials(kind, id) {
+    try {
+      const r = await this.call(`/v1/agent/${kind}/${id}/credentials`)
+      return { credentials: r.credentials ?? [], quiet: r.sources_quiet ?? [] }
+    } catch {
+      return { credentials: [], quiet: [] }
+    }
+  }
+
   /** Persist a refreshed login blob back to the EXACT row this run resolved to (the CLI
    *  rotated a single-use login in place). Bound to the run's scope and the tier it read
    *  (`source`), with a compare-and-swap (`prevSha256` = sha256 of the blob the run started
@@ -714,6 +734,44 @@ export const RETRY_DELAY_MS = 30_000
 // pulls from the run's source tools (via the shim in serveRun) and returns the FULL new artifact
 // source in a <revision> block. The runner then writes it through the gate.
 
+/** The delivered credentials as environment variables. Every name the server listed maps to the
+ *  same value, so an agent finds the key either by the vendor's own convention (STRIPE_API_KEY —
+ *  which the `stripe` SDK reads with no instruction) or by the canonical DERIVE_CONN_* rule. */
+export const credentialEnvVars = (credentials = []) => {
+  const env = {}
+  for (const cred of credentials)
+    for (const name of cred.env ?? []) if (name) env[name] = cred.value
+  return env
+}
+
+/** What to TELL the model it has. Naming the variables is not optional: an agent that does not
+ *  know STRIPE_API_KEY is set writes code that asks the user to paste a key, which is the whole
+ *  failure this feature exists to remove.
+ *
+ *  Values are deliberately absent — the model reads them from its own environment. Keeping them
+ *  out of the prompt keeps them out of the transcript, the run meta and any provider-side log of
+ *  the conversation, none of which we control. */
+export const credentialsBlock = (credentials = [], quiet = []) => {
+  if (!credentials.length && !quiet.length) return ""
+  const lines = ["", "## Credentials available to you", ""]
+  for (const cred of credentials) {
+    const names = (cred.env ?? []).join(" / ")
+    const what = cred.label ? ` — ${cred.label}` : ""
+    const whose = cred.scope === "personal" ? " (acts as the person who attached it)" : ""
+    lines.push(`- \`${names}\` — ${cred.toolkit}${what}${whose}`)
+  }
+  if (credentials.length)
+    lines.push(
+      "",
+      "They are already set in your environment. Use them with ordinary libraries and CLIs —",
+      "install what you need. Never print a credential, echo it, or write it into a document.",
+    )
+  // A bound source that resolved to nothing is worth saying out loud: the job is about to run
+  // without something its author expected it to have, and an agent that knows can say so.
+  for (const q of quiet) lines.push(`- ${q.toolkit}: UNAVAILABLE — ${q.why}`)
+  return `${lines.join("\n")}\n`
+}
+
 // The write gate, ported from @derive/core's decideWrite. The CLI stays dependency-free (it can't
 // import the TS core at runtime), so this is a faithful copy. The MODEL never chooses the write
 // mode — this does, from the target's consent (mode), the workspace flags, and confidence.
@@ -980,6 +1038,18 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
       return
     }
   }
+  // The context's own credentials, for the model's environment — fetched here rather than off
+  // the claim (see DeriveClient.credentials). Never logged: only the NAMES reach the prompt, and
+  // nothing here reaches the transcript.
+  const delivered = cfg.mock
+    ? { credentials: [], quiet: [] }
+    : await client.credentials("sessions", session.id)
+  const connEnv = credentialEnvVars(delivered.credentials)
+  const hasConnEnv = Object.keys(connEnv).length > 0
+  if (hasConnEnv)
+    console.log(
+      `[runner] session ${session.id}: ${delivered.credentials.length} credential(s) in env: ${Object.keys(connEnv).join(", ")}`,
+    )
   let result
   try {
     result = cfg.mock
@@ -989,9 +1059,12 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
           cwd: cfg.cwd,
           model: cfg.model,
           timeoutMs: cfg.timeoutMs,
-          systemPrompt: manifest,
+          systemPrompt: manifest + credentialsBlock(delivered.credentials, delivered.quiet),
           prompt: buildPrompt(session.messages),
-          env: modelEnv ? { ...stripModelTokens(process.env), ...modelEnv } : undefined,
+          env:
+            modelEnv || hasConnEnv
+              ? { ...stripModelTokens(process.env), ...modelEnv, ...connEnv }
+              : undefined,
         })
   } finally {
     // Remove any per-run credential files (a Codex login's auth.json) now the spawn is done.
@@ -1379,11 +1452,24 @@ export async function serveRun(client, run, manifest, cfg) {
   const shimEnv = hasTools
     ? { DERIVE_SERVER: cfg.server, DERIVE_TOKEN: cfg.token, DERIVE_RUN_ID: run.id }
     : {}
+  // The automation's bound credentials, for the model's environment — the run lane's half of
+  // "keys to the run", resolved exactly as the session lane resolves it.
+  const delivered = cfg.mock
+    ? { credentials: [], quiet: [] }
+    : await client.credentials("runs", run.id)
+  const connEnv = credentialEnvVars(delivered.credentials)
+  const hasConnEnv = Object.keys(connEnv).length > 0
+  if (hasConnEnv)
+    console.log(
+      `[runner] run ${run.id}: ${delivered.credentials.length} credential(s) in env: ${Object.keys(connEnv).join(", ")}`,
+    )
   // Same rule as the session lane: an inherited model token is stripped, so only the plan this
   // run resolved can authenticate it. A stray global key on the host is neither billable nor
   // exfiltratable, and cannot redirect the injected token at a proxy.
   const env =
-    modelEnv || hasTools ? { ...stripModelTokens(process.env), ...modelEnv, ...shimEnv } : undefined
+    modelEnv || hasTools || hasConnEnv
+      ? { ...stripModelTokens(process.env), ...modelEnv, ...shimEnv, ...connEnv }
+      : undefined
 
   let result
   try {
@@ -1394,7 +1480,7 @@ export async function serveRun(client, run, manifest, cfg) {
           cwd: cfg.cwd,
           model: cfg.model,
           timeoutMs: cfg.timeoutMs,
-          systemPrompt: manifest,
+          systemPrompt: manifest + credentialsBlock(delivered.credentials, delivered.quiet),
           prompt: buildRunPrompt(run, before),
           env,
           meter,

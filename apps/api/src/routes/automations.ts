@@ -17,6 +17,7 @@ import {
   brokerFor,
   callTool,
   connectionBindError,
+  credentialsForWork,
   mcpAuthFor,
   parseConnectionIds,
   type SourceQuiet,
@@ -91,6 +92,7 @@ export const automationRoutes = (ctx: AppContext) => {
     agentFor,
     agentRunScope,
     agentSessionScope,
+    isMintedApiToken,
     privateOwnerId,
     requireUser,
     requireWorkspace,
@@ -677,6 +679,46 @@ export const automationRoutes = (ctx: AppContext) => {
   // shim only sends a tool NAME: the server maps it to the connected-account ref, verifies it is
   // one of THIS run's tools, and runs it through the broker. Credentials stay server-side; the
   // runner only ever holds tool names. An explicit `ref` is still honored (and re-checked).
+  /** The run lane's half of credential delivery — the exact mirror of
+   *  `GET /v1/agent/sessions/:id/credentials`, including who may read it and why. See that
+   *  route's comment for the reasoning; the two are kept side by side deliberately, because a
+   *  context reaching different credentials depending on whether a schedule or a person
+   *  triggered it is the thing bound connections exist to make impossible. */
+  app.get("/v1/agent/runs/:id/credentials", async (c) => {
+    // agentFor first — the minted-token flag is a byproduct of resolving the bearer, so asking
+    // before it runs always answers "not minted". Same ordering as the session route.
+    const agent = await agentFor(c)
+    if (isMintedApiToken(c)) return fail(c, 403, "a minted API token cannot read credentials")
+    if (!agent) return fail(c, 401, "agent token required")
+    if (isSessionBearer(c)) return fail(c, 403, "a session token cannot act on a run")
+    const scope = agentRunScope(c)
+    if (scope && scope !== c.req.param("id")) return fail(c, 404, "not found")
+    const run = await meta.getRun(c.req.param("id"))
+    if (!run || run.agent_id !== agent.id || run.org_id !== agent.org_id)
+      return fail(c, 404, "not found")
+    if (scope)
+      return c.json({
+        credentials: [],
+        reason: "hosted delivery is not enabled for this workspace's connections",
+      })
+    if (!deps.encryptionKey) return c.json({ credentials: [], reason: "no encryption key" })
+    const a = run.automation_id ? await meta.getAutomation(run.automation_id) : null
+    // EXACTLY the ids the claim resolves tools from — the automation's own bindings, and not
+    // also its context's. Delivering a wider set than the tool lane grants would mean a run
+    // could spend a credential it was never shown, which is the divergence bound connections
+    // exist to prevent. If context bindings should reach a run, that belongs in ONE resolver
+    // both lanes call, not in a second list here.
+    const quiet: SourceQuiet[] = []
+    const credentials = await credentialsForWork(
+      meta,
+      agent.org_id,
+      a ? parseConnectionIds(a.connection_ids) : [],
+      deps.encryptionKey,
+      quiet,
+    )
+    return c.json({ credentials, ...(quiet.length ? { sources_quiet: quiet } : {}) })
+  })
+
   app.post("/v1/agent/runs/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")

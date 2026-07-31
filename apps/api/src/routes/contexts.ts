@@ -23,8 +23,10 @@ import {
   brokerFor,
   callTool,
   connectionBindError,
+  credentialsForWork,
   mcpAuthFor,
   parseConnectionIds,
+  type SourceQuiet,
   spendableConnections,
   toolsForRun,
 } from "../lib/broker"
@@ -55,6 +57,7 @@ export const contextRoutes = (ctx: AppContext) => {
     agentFor,
     agentSessionScope,
     authorize,
+    isMintedApiToken,
     bus,
     askLimiter,
     canAskContext,
@@ -1740,6 +1743,63 @@ export const contextRoutes = (ctx: AppContext) => {
   // libraries instead. That asymmetry is intended, not an unfinished wiring job — the endpoint
   // is not dead code, and it is also not the road new credential shapes travel (see the
   // FROZEN SURFACE note on httpTools).
+  /**
+   * The credentials this session's context was given, for a runner to put in the model's
+   * environment — "keys to the run" (derive.to 1h3r7vsf). The agent then writes ordinary code
+   * with real libraries instead of calling tools we invented.
+   *
+   * Its own endpoint rather than a field on the claim, for two reasons. The runs claim is
+   * BATCHED (up to ten), so carrying secrets there would decrypt keys for runs that may never
+   * execute; and the executor needs them only at spawn. That is also how the model-plan
+   * credential already works (`GET /v1/agent/model-credential`), so this is the codebase's
+   * existing shape, not a new one.
+   *
+   * WHO MAY READ IT is the whole security story, and it is decided here:
+   *   - A STANDING agent bearer — a runner the owner started themselves, on their own machine —
+   *     is served. The key is already theirs; Derive is the vault, not a chaperone.
+   *   - A DISPATCHED capability token (dksess_) ran on a substrate Derive chose, which may be a
+   *     machine we operate. Putting a customer's key in our container is a different consent
+   *     decision, so it waits for a per-key opt-in: empty list plus a reason, not a 403, because
+   *     the executor is not misbehaving.
+   *   - A MINTED dkapi_ REST bearer is refused outright. It resolves through agentFor to an
+   *     `oauth:<client>` principal with no session scope, so it otherwise looks exactly like a
+   *     standing runner; #559 made every REST route reachable from an agent's shell, and this is
+   *     the one route that must never be.
+   *   - A signed-in human is refused. No endpoint returns a stored credential to a person, at
+   *     any role; delivery must not become the read-back hole in that.
+   */
+  app.get("/v1/agent/sessions/:id/credentials", async (c) => {
+    // agentFor FIRST: it is what resolves the bearer, and the minted-token flag is a byproduct
+    // of that resolution (a cache it fills). Asking before it runs always answers "not minted",
+    // which would have left this check silently inert — the test that pins it caught exactly
+    // that, and it is the reason this ordering is spelled out rather than assumed.
+    const agent = await agentFor(c)
+    if (isMintedApiToken(c)) return fail(c, 403, "a minted API token cannot read credentials")
+    if (!agent) return fail(c, 401, "agent token required")
+    const scope = agentSessionScope(c)
+    const sessionId = c.req.param("id") ?? ""
+    if (scope && scope !== sessionId) return fail(c, 403, "not this session's token")
+    const s = await meta.getSession(sessionId)
+    const x = s?.context_id ? await meta.getContext(s.context_id) : null
+    if (!s || !x || x.agent_id !== agent.id || x.org_id !== agent.org_id)
+      return fail(c, 404, "not found")
+    if (scope)
+      return c.json({
+        credentials: [],
+        reason: "hosted delivery is not enabled for this workspace's connections",
+      })
+    if (!deps.encryptionKey) return c.json({ credentials: [], reason: "no encryption key" })
+    const quiet: SourceQuiet[] = []
+    const credentials = await credentialsForWork(
+      meta,
+      x.org_id,
+      parseConnectionIds(x.connection_ids),
+      deps.encryptionKey,
+      quiet,
+    )
+    return c.json({ credentials, ...(quiet.length ? { sources_quiet: quiet } : {}) })
+  })
+
   app.post("/v1/agent/sessions/:id/tool", async (c) => {
     const agent = await agentFor(c)
     if (!agent) return fail(c, 401, "agent token required")
