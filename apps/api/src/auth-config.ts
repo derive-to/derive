@@ -436,7 +436,21 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       // two-step flow (password → code) the client handles via the twoFactorRedirect result.
       twoFactor({ issuer: "Derive" }),
       // oauthProvider signs id tokens + serves JWKS through the jwt plugin.
-      jwt(),
+      //
+      // `disableSettingJwtHeader` turns off the plugin's /get-session after-hook, which
+      // otherwise mints a JWT — and READS THE jwks ROW — on every authenticated request,
+      // purely to set a `set-auth-jwt` response header. Nothing consumes that header: the
+      // web client registers only passkey + twoFactor (no jwtClient), and the string
+      // appears nowhere in this repo. On the hosted tier that read is a ~80ms Hyperdrive
+      // round trip (see edge-pg.ts) on EVERY signed-in request — it was the first query in
+      // every profiled trace, and on routes batched down to two trips it was half of what
+      // remained. Better Auth's own docs recommend disabling it when an OAuth provider
+      // plugin is present, which is exactly this configuration.
+      //
+      // What still works, because none of it runs through this hook: GET /api/auth/jwks,
+      // id-token + JWS-access-token signing at token-mint time (oauthProvider), and our own
+      // verifier in lib/oauth-agent.ts, which fetches and caches JWKS per isolate.
+      jwt({ disableSettingJwtHeader: true }),
       // Derive as an OAuth 2.1 authorization server: agents (MCP clients) authenticate
       // via a browser consent instead of a pasted token, and get a scoped, expiring
       // access token. Endpoints land under /api/auth/oauth2/*; the consent screen is

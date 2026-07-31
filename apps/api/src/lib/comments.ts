@@ -23,7 +23,12 @@ export const isCollaboratorAuthor = async (
   if (!actorId) return false
   if (await meta.getMembership(artifact.org_id, actorId)) return true
   if (await meta.getArtifactMember(artifact.id, actorId)) return true
-  return (await meta.listAgents(artifact.org_id)).some((a) => a.id === actorId)
+  // The agent case, resolved BY ID rather than by scanning the workspace's whole roster:
+  // `listAgents(org).some(a => a.id === actorId)` fetched every agent row in the workspace
+  // to answer one identity question. Still workspace-scoped, exactly as the scan was — an
+  // agent registered in another workspace is not a collaborator here.
+  const agent = await meta.getAgent(actorId)
+  return agent !== null && agent.org_id === artifact.org_id
 }
 
 /** The fixed reaction set; arbitrary emoji are rejected to keep data clean. */

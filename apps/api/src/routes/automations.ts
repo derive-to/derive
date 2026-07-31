@@ -302,15 +302,10 @@ export const automationRoutes = (ctx: AppContext) => {
     if (org instanceof Response) return org
     // Each row carries its agent's runs-lane liveness so the UI can say, honestly,
     // whether ANYTHING executes this automation — null = no executor has ever polled.
-    // One batched roster read (no-N+1), joined in memory.
-    const [autos, agents] = await Promise.all([meta.listAutomations(org), meta.listAgents(org)])
-    const seen = new Map(agents.map((a) => [a.id, a.runs_seen_at]))
-    return c.json({
-      automations: autos.map((a) => ({
-        ...present(a),
-        executor_seen_at: seen.get(a.agent_id) ?? null,
-      })),
-    })
+    // One store call, one round trip on Postgres (see automationsWithExecutors);
+    // `present` spreads the whole row, so `executor_seen_at` rides along.
+    const autos = await meta.automationsWithExecutors(org)
+    return c.json({ automations: autos.map(present) })
   })
 
   app.delete("/v1/automations/:id", async (c) => {

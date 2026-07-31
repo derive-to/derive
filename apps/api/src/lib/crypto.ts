@@ -15,6 +15,12 @@ export const sha256 = (s: string): string => createHash("sha256").update(s).dige
 export const mintToken = (prefix: string): string =>
   `${prefix}_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
 
+/** Every registered agent token is `mintToken("dk_agt")`. A bearer that doesn't start
+ *  with this prefix can never match a row in the agent table — callers use this to skip
+ *  a guaranteed-miss getAgentByToken lookup (one Postgres round trip) instead of paying
+ *  it on every OAuth/JWT-authenticated MCP call. */
+export const AGENT_TOKEN_PREFIX = "dk_agt_"
+
 // --- signed, expiring state tokens -----------------------------------------
 // A tamper-proof `state` we hand to GitHub at the start of the App install flow
 // and read back on the callback: it binds the install to the workspace + user

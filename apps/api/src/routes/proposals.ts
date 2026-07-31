@@ -98,23 +98,27 @@ export const proposalRoutes = (ctx: AppContext) => {
     })
     .openapi("Proposal")
 
-  // Resolve an on-behalf-of human id to a compact public identity for the review byline
-  // ("on behalf of Alice"). Null for a direct human proposal. Async because it reads the
-  // user directory; proposals-per-artifact are few, so a per-proposal lookup is fine.
-  const onBehalfOf = async (
-    id: string | null,
-  ): Promise<{ handle: string | null; name: string | null } | null> => {
-    if (!id) return null
-    const u = (await meta.getUsers([id]))[0]
-    return u ? { handle: u.username, name: u.name } : null
+  // The on-behalf-of humans for a SET of proposals, in ONE directory read, keyed by id.
+  // This used to be a `getUsers([oneId])` awaited inside `proposalJson` — one ~80ms round
+  // trip PER PROPOSAL on the list route, and the `Promise.all` around those does not overlap
+  // them on this tier (see edge-pg.ts). The old comment reasoned "proposals-per-artifact are
+  // few, so a per-proposal lookup is fine"; `listProposals` is unbounded, and on the edge
+  // "few" is still 80ms each.
+  type Byline = { handle: string | null; name: string | null }
+  const bylinesFor = async (ps: ProposalRecord[]): Promise<Record<string, Byline>> => {
+    const ids = [...new Set(ps.map((p) => p.on_behalf_of).filter((x): x is string => !!x))]
+    if (ids.length === 0) return {}
+    const out: Record<string, Byline> = {}
+    for (const u of await meta.getUsers(ids)) out[u.id] = { handle: u.username, name: u.name }
+    return out
   }
 
-  const proposalJson = async (a: ArtifactRecord, p: ProposalRecord) => ({
+  const proposalJson = (a: ArtifactRecord, p: ProposalRecord, bylines: Record<string, Byline>) => ({
     id: p.id,
     state: p.state,
     author: p.author,
     // Delegation provenance: when an agent proposed, who it acted on behalf of (else null).
-    on_behalf_of: await onBehalfOf(p.on_behalf_of),
+    on_behalf_of: p.on_behalf_of ? (bylines[p.on_behalf_of] ?? null) : null,
     message: p.message,
     base_version: p.base_version,
     kind: p.kind,
@@ -175,7 +179,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
       if (!(await authorize(c, "propose", artifact))) return bail(fail(c, 403, "forbidden"))
       // GitHub-synced artifacts are read-only in Derive; changes belong in the repo.
-      if ((await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id))
+      if (await meta.isManagedArtifact(artifact.org_id, artifact.id))
         return bail(fail(c, 409, "managed by GitHub sync — propose this change in the repo"))
       const rl = await limited(c, publishLimiter)
       if (rl) return bail(rl)
@@ -280,7 +284,10 @@ export const proposalRoutes = (ctx: AppContext) => {
           message: proposal.message,
           base_version: proposal.base_version,
         })
-        return c.json({ ...(await proposalJson(artifact, proposal)), addressed }, 201)
+        return c.json(
+          { ...proposalJson(artifact, proposal, await bylinesFor([proposal])), addressed },
+          201,
+        )
       } catch (err) {
         if (err instanceof PublishError) return bail(fail(c, err.statusCode as 400, err.message))
         throw err
@@ -318,7 +325,9 @@ export const proposalRoutes = (ctx: AppContext) => {
       const { state } = c.req.valid("query")
       const proposals = await meta.listProposals(artifact.id, state ? { state } : undefined)
       return c.json({
-        proposals: await Promise.all(proposals.map((p) => proposalJson(artifact, p))),
+        proposals: ((bylines) => proposals.map((p) => proposalJson(artifact, p, bylines)))(
+          await bylinesFor(proposals),
+        ),
       })
     },
   )
@@ -346,7 +355,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       const [a, b] = [base ? await sourceText(base) : "", await sourceText(proposal)]
       const ops = a !== null && b !== null ? diffLines(a, b) : []
       return c.json({
-        ...(await proposalJson(artifact, proposal)),
+        ...proposalJson(artifact, proposal, await bylinesFor([proposal])),
         diff: { base_version: proposal.base_version, ops },
       })
     },
@@ -396,7 +405,10 @@ export const proposalRoutes = (ctx: AppContext) => {
           str(body.note) ?? null,
         )
         const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
-        return c.json({ ...(await proposalJson(artifact, fresh)), published: version.n })
+        return c.json({
+          ...proposalJson(artifact, fresh, await bylinesFor([fresh])),
+          published: version.n,
+        })
       } catch (err) {
         if (err instanceof PublishError) return bail(fail(c, err.statusCode as 400, err.message))
         throw err
@@ -437,7 +449,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         str(body.note) ?? null,
       )
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
-      return c.json(await proposalJson(artifact, fresh))
+      return c.json(proposalJson(artifact, fresh, await bylinesFor([fresh])))
     },
   )
 
@@ -478,7 +490,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
         bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
-      return c.json(await proposalJson(artifact, fresh))
+      return c.json(proposalJson(artifact, fresh, await bylinesFor([fresh])))
     },
   )
 

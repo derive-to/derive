@@ -103,6 +103,16 @@ const makeDeps = (docs: Doc[], search?: SearchIndex): WorkspaceSearchDeps => {
         const d = docs.find((x) => x.id === id)
         return d ? version(d) : null
       },
+      // The batched face of getVersion the grep-confirm pass uses (one query for the
+      // whole candidate page instead of one per candidate).
+      currentVersions: async (ids: string[]) => {
+        const out: Record<string, VersionRecord> = {}
+        for (const id of ids) {
+          const d = docs.find((x) => x.id === id)
+          if (d) out[id] = version(d)
+        }
+        return out
+      },
       searchArtifactIds: async (orgId, query, limit) => lexical(docs, orgId, query, limit),
     },
     search,

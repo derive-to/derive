@@ -17,8 +17,11 @@ describe("oauth agent role capping + consent binding", () => {
     scopes: ["openid", "derive:read", "derive:publish"],
     expiresAt: new Date(Date.now() + 60_000),
   }
-  const stub = (over: Record<string, unknown> = {}): MetaStore =>
-    ({
+  // workspacesAndOauthBinding is derived from the (possibly overridden) listWorkspaces /
+  // getOAuthClientWorkspaces below, not hardcoded — so a test overriding either of those
+  // still flows through, exactly as it did before the two calls collapsed into one.
+  const stub = (over: Record<string, unknown> = {}): MetaStore => {
+    const merged = {
       getOAuthGrant: async () => grant,
       listWorkspaces: async () => [
         { id: "ws_one", name: "One", role: "owner" },
@@ -26,7 +29,15 @@ describe("oauth agent role capping + consent binding", () => {
       ],
       getOAuthClientWorkspaces: async () => [],
       ...over,
-    }) as unknown as MetaStore
+    } as unknown as MetaStore
+    return {
+      ...merged,
+      workspacesAndOauthBinding: async (userId: string, clientId: string) => ({
+        mine: await merged.listWorkspaces(userId),
+        bound: await merged.getOAuthClientWorkspaces(userId, clientId),
+      }),
+    } as unknown as MetaStore
+  }
 
   const resolve = (meta: MetaStore) =>
     makeOauthAgent({

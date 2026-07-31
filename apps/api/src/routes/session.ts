@@ -10,7 +10,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { authorProfile, resolveHandles } from "../lib/author"
+import { authorProfile, handlesFrom } from "../lib/author"
 import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
 import { Artifact, PersonalBrandprintSchema } from "../schemas"
@@ -134,7 +134,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     async (c) => {
       const u = await requireUser(c)
       if (u instanceof Response) return bail(u)
-      const role = await ensureMembership(await activeWorkspace(c), u.id) // provisions on first load
+      const role = await ensureMembership(c, await activeWorkspace(c), u.id) // provisions on first load
       return c.json({ user: { ...u, role }, multi: true })
     },
   )
@@ -414,6 +414,27 @@ export const sessionRoutes = (ctx: AppContext) => {
     },
   )
 
+  // `meta.sharedOrgIds`, memoized per request + pair. Both profile routes ask the same
+  // question twice with identical arguments — once inside `profileVisibleTo` below, once for
+  // the visibility scope of the work they return — and on the edge tier the second ask is a
+  // full ~80ms round trip for a set the request already has. Keyed by Context so it dies with
+  // the request, same technique as the actor and membership caches in context.ts.
+  const sharedOrgsCache = new WeakMap<Context, Map<string, Promise<string[]>>>()
+  const sharedOrgsFor = (c: Context, meId: string, otherId: string): Promise<string[]> => {
+    let perRequest = sharedOrgsCache.get(c)
+    if (!perRequest) {
+      perRequest = new Map()
+      sharedOrgsCache.set(c, perRequest)
+    }
+    const key = `${meId}:${otherId}`
+    const hit = perRequest.get(key)
+    if (hit) return hit
+    // Cache the PROMISE, so two callers racing before the first resolves still de-dupe.
+    const pending = meta.sharedOrgIds(meId, otherId)
+    perRequest.set(key, pending)
+    return pending
+  }
+
   // Whether this viewer may see this profile at all.
   const profileVisibleTo = async (
     c: Context,
@@ -423,7 +444,7 @@ export const sessionRoutes = (ctx: AppContext) => {
     const me = await currentUser(c)
     if (!me) return false
     if (me.id === p.id) return true
-    return (await meta.sharedOrgIds(me.id, p.id)).length > 0
+    return (await sharedOrgsFor(c, me.id, p.id)).length > 0
   }
 
   // A public profile by handle — the GitHub-style discovery surface.
@@ -449,7 +470,7 @@ export const sessionRoutes = (ctx: AppContext) => {
         return bail(fail(c, 404, "no profile with that username"))
       const me = await currentUser(c)
       // sharedOrgIds(x, x) is all of x's workspaces — self is trivially a teammate.
-      const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      const sharedOrgs = me ? await sharedOrgsFor(c, me.id, p.id) : []
       const teammate = !!me && (me.id === p.id || sharedOrgs.length > 0)
       const ghIds = await meta.githubIdsForUser(p.id)
       const [works, githubLogin] = await Promise.all([
@@ -512,7 +533,7 @@ export const sessionRoutes = (ctx: AppContext) => {
         return bail(fail(c, 404, "no profile with that username"))
       const me = await currentUser(c)
       // sharedOrgIds(x, x) is all of x's workspaces — self always sees their own work.
-      const sharedOrgs = me ? await meta.sharedOrgIds(me.id, p.id) : []
+      const sharedOrgs = me ? await sharedOrgsFor(c, me.id, p.id) : []
       if (!me || (me.id !== p.id && sharedOrgs.length === 0))
         return c.json({ artifacts: [], next_cursor: null })
       const ghIds = await meta.githubIdsForUser(p.id)
@@ -527,19 +548,25 @@ export const sessionRoutes = (ctx: AppContext) => {
       const page = hasMore ? rows.slice(0, limit) : rows
       const last = page[page.length - 1]
       const next_cursor = hasMore && last ? encodeCursor(last.created_at, last.id) : null
-      const pageIds = page.map((a) => a.id)
-      const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
-      const tags = await meta.tagsForArtifacts(pageIds)
-      const previews = await meta.previewReady(pageIds)
-      const handleByGhId = await resolveHandles(meta, [
-        ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
-      ])
+      // The page's decoration in ONE store call, the same batch the library list uses.
+      // These were four separate round trips (~80ms each on the edge) keyed on the same
+      // page of ids. Only the pieces this surface renders are requested: no comment
+      // signals, proposal counts or share roles, so those branches never run.
+      const enrichment = await meta.listEnrichment({
+        ids: page.map((a) => a.id),
+        ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: analyticsOn,
+      })
+      const handleByGhId = handlesFrom(enrichment.handles)
       return c.json({
         artifacts: page.map((a) => ({
           ...toJson(deps.baseUrl, a, []),
-          views: counts[a.id] ?? 0,
-          tags: tags[a.id] ?? [],
-          has_preview: previews[a.id] === true,
+          views: enrichment.views[a.id] ?? 0,
+          tags: enrichment.tags[a.id] ?? [],
+          has_preview: enrichment.previews[a.id] === true,
           author: authorProfile(a, handleByGhId),
         })),
         next_cursor,
@@ -642,8 +669,10 @@ export const sessionRoutes = (ctx: AppContext) => {
           ))
       ) {
         for (const m of await meta.listArtifactMembers(artifact.id)) ids.add(m.user_id)
-        for (const cm of await meta.listComments(artifact.id))
-          if (cm.author_id) ids.add(cm.author_id)
+        // Just the distinct author ids. This used to read every comment ROW on the artifact —
+        // bodies, metadata and all — and collect `author_id` in the Worker, on a route that
+        // fires every time someone types "@" in the composer.
+        for (const id of await meta.commentAuthorIds(artifact.id)) ids.add(id)
       }
 
       const users = await meta.getUsers([...ids])

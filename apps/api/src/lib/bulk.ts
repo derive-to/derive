@@ -30,32 +30,51 @@ export const BulkSummarySchema = z
  *  cards), so this guards against a scripted or pathological call, not a normal limit. */
 export const BULK_MAX = 500
 
-// Enough to keep a 50-item set from serializing a few hundred DB round-trips, without
-// opening a connection per artifact.
+// A fan-out width for the authorize/apply passes. It buys real concurrency for anything
+// that is NOT Postgres — R2 reads, a hosted-tier subrequest — and on the Node/self-host
+// tier it parallelises database work too.
+//
+// It does NOT parallelise Postgres on the hosted edge, and the comment here used to claim
+// it did ("enough to keep a 50-item set from serializing a few hundred DB round-trips").
+// The edge opens one pg.Client per invocation (see edge-pg.ts) and node-postgres queues
+// everything on it, so eight workers issuing queries produce eight queued queries, not
+// eight concurrent ones. Reducing the NUMBER of round trips is the only lever; `resolve`
+// is now batched out of the loop entirely for that reason.
 const CONCURRENCY = 8
 
 /**
- * The one bulk primitive: for each (deduped) shortId, resolve it, authorize it, and apply
- * to the ones that pass — bounded-concurrent — returning the {ok, skipped, failed} tally.
- * Not-found or authz-refused counts as `skipped`; a thrown `apply` counts as `failed` and
- * never sinks the rest of the batch. The `allow`/`apply` split is what lets every caller
- * reuse the existing per-artifact authz (`authorize(c, action, a)`) unchanged.
+ * The one bulk primitive: resolve every (deduped) shortId UP FRONT in a single batched
+ * lookup, then authorize and apply per artifact — bounded-concurrent — returning the
+ * {ok, skipped, failed} tally. Not-found or authz-refused counts as `skipped`; a thrown
+ * `apply` counts as `failed` and never sinks the rest of the batch. The `allow`/`apply`
+ * split is what lets every caller reuse the existing per-artifact authz
+ * (`authorize(c, action, a)`) unchanged.
+ *
+ * `resolveAll` takes the whole id set because resolving one artifact per id was one round
+ * trip per id — up to BULK_MAX of them, ~80ms each, before any work happened. Authorization
+ * and the writes themselves remain per-artifact by design: authz is a per-artifact question
+ * (a selection routinely mixes docs you own with ones you only read) and the writes are
+ * genuinely distinct rows. Those are the remaining per-item cost, and batching authz would
+ * mean priming the request's actor cache from a multi-artifact grants query — a bigger,
+ * auth-sensitive change than this one.
  */
 export async function bulkArtifactOp<A>(
   shortIds: string[],
-  resolve: (shortId: string) => Promise<A | null>,
+  resolveAll: (shortIds: string[]) => Promise<A[]>,
   allow: (a: A) => Promise<boolean>,
   apply: (a: A) => Promise<void>,
 ): Promise<BulkSummary> {
   const uniq = [...new Set(shortIds)]
   const summary: BulkSummary = { ok: 0, skipped: 0, failed: 0 }
+  const found = await resolveAll(uniq)
+  // Ids that resolved to nothing are skipped, exactly as a null `resolve` used to be.
+  summary.skipped += uniq.length - found.length
   let next = 0
   const worker = async () => {
-    while (next < uniq.length) {
-      const shortId = uniq[next++]
-      if (shortId === undefined) break
-      const a = await resolve(shortId)
-      if (!a || !(await allow(a))) {
+    while (next < found.length) {
+      const a = found[next++]
+      if (a === undefined) break
+      if (!(await allow(a))) {
         summary.skipped++
         continue
       }
@@ -69,6 +88,6 @@ export async function bulkArtifactOp<A>(
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, uniq.length) }, worker))
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, found.length) }, worker))
   return summary
 }
