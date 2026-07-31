@@ -1,3 +1,9 @@
+// Vite resolves these to the same hashed assets the fontsource CSS references, so
+// preloading them starts the font fetch with the document instead of serialised
+// behind the stylesheet that @imports it (the only latin-variable files; italics
+// and other subsets stay lazy).
+import geistUrl from "@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url"
+import geistMonoUrl from "@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?url"
 import { type QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
   createRootRouteWithContext,
@@ -69,6 +75,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "apple-touch-icon", href: "/brand/favicon.png" },
       // Fonts are self-hosted via @fontsource-variable imports in globals.css —
       // Geist Sans + Geist Mono (both weight-only), so no third-party request.
+      // Preloaded so the fetch is not discovered late through the stylesheet:
+      // crossOrigin is required for font destinations even same-origin, or the
+      // preload is re-fetched and wasted.
+      { rel: "preload", as: "font", type: "font/woff2", crossOrigin: "anonymous", href: geistUrl },
+      {
+        rel: "preload",
+        as: "font",
+        type: "font/woff2",
+        crossOrigin: "anonymous",
+        href: geistMonoUrl,
+      },
     ],
   }),
   component: RootComponent,

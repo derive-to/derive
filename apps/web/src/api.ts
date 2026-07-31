@@ -143,6 +143,26 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
+
+/** GET /v1/bootstrap — the four boot endpoints' bodies in one response. Each field is
+ *  exactly the corresponding endpoint's shape (server-side the mappers are shared), so
+ *  seeding a query cache from it is indistinguishable from that endpoint having
+ *  answered. */
+export interface BootstrapPayload {
+  summary: {
+    total: number
+    favorites: number
+    mine: number
+    mine_private: number
+    tags: { tag: string; count: number }[]
+    /** Non-null: the server defaults a missing name, same as /v1/tags. */
+    workspace: string
+  }
+  collections: Collection[]
+  settings: OrgSettings
+  notifications: Notification[]
+  unread: number
+}
 /** A Slack channel subscription. Generated from the OpenAPI spec. */
 export type SlackSubscription = components["schemas"]["SlackSubscription"]
 /** The workspace's billing truth: plan, Stripe status, seats, storage. Hand-declared:
@@ -229,6 +249,9 @@ export interface Automation {
   trigger: AutomationTrigger
   instruction: string
   refs: AutomationRef[]
+  /** Sources this automation may read from during a run. Ids of connections; the credential
+   *  itself is never here and is resolved server-side at call time. */
+  connection_ids: string[]
   enabled: boolean
   created_at: string
   /** When this automation's agent last polled the run claim endpoint (list responses
@@ -346,7 +369,14 @@ const j = async (r: Response) => {
   }
   return r.json()
 }
-const opts = (body?: unknown): RequestInit => ({
+// The high-churn read methods (lists, typeahead search) accept this so React Query's
+// per-fetch AbortSignal reaches the wire: a superseded keystroke CANCELS its request
+// instead of running an authenticated Worker + Postgres round trip nobody will read.
+// Display-level races were already guarded (query keys / alive flags) — forwarding the
+// signal is about not paying for abandoned work.
+type FetchInit = Pick<RequestInit, "signal">
+const opts = (body?: unknown, init?: FetchInit): RequestInit => ({
+  ...init,
   credentials: "include",
   headers: { accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
   ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
@@ -451,12 +481,14 @@ export const api = {
     handle: string,
     cursor?: string,
     limit?: number,
+    init?: FetchInit,
   ): Promise<{ artifacts: Artifact[]; next_cursor: string | null }> => {
     const qs = new URLSearchParams()
     if (cursor) qs.set("cursor", cursor)
     if (limit) qs.set("limit", String(limit))
     const s = qs.toString()
     return f(`/v1/users/${encodeURIComponent(handle)}/artifacts${s ? `?${s}` : ""}`, {
+      ...init,
       credentials: "include",
     }).then(j)
   },
@@ -489,25 +521,29 @@ export const api = {
       credentials: "include",
     }).then(() => undefined),
   // Find opted-in people by @handle or name (signed-in; empty q → []).
-  searchPeople: (q: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts()).then(j),
+  searchPeople: (q: string, init?: FetchInit): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/users/search?query=${encodeURIComponent(q)}`, opts(undefined, init)).then(j),
   // Content search across the workspace via the persisted index: hits ranked by
   // relevance, each with a one-line snippet of WHERE it matched (visible text, so the
   // snippet reads as prose). Empty q → []. A small `limit` keeps the palette's debounced
   // typeahead to a few blob reads. Same visibility rules as list_artifacts.
-  searchContent: (q: string, limit = 6): Promise<{ hits: SearchHit[]; truncated: boolean }> => {
+  searchContent: (
+    q: string,
+    limit = 6,
+    init?: FetchInit,
+  ): Promise<{ hits: SearchHit[]; truncated: boolean }> => {
     const term = q.trim()
     return term
       ? f(
           `/v1/artifacts/search?format=json&in=text&limit=${limit}&query=${encodeURIComponent(term)}`,
-          opts(),
+          opts(undefined, init),
         ).then(j)
       : Promise.resolve({ hits: [], truncated: false })
   },
   // The People directory: browse opted-in people (empty q) or search them (signed-in).
   // Unlike searchPeople, an empty query BROWSES the discoverable set.
-  people: (q?: string): Promise<{ users: PublicProfile[] }> =>
-    f(`/v1/people${q ? `?query=${encodeURIComponent(q)}` : ""}`, opts()).then(j),
+  people: (q?: string, init?: FetchInit): Promise<{ users: PublicProfile[] }> =>
+    f(`/v1/people${q ? `?query=${encodeURIComponent(q)}` : ""}`, opts(undefined, init)).then(j),
   // The people you share a workspace with — the directory's leading section.
   workspacePeople: (): Promise<{ users: PublicProfile[] }> =>
     f("/v1/people?scope=workspace", opts()).then(j),
@@ -569,26 +605,29 @@ export const api = {
   sendVerificationEmail: (email: string, callbackURL: string): Promise<unknown> =>
     f("/api/auth/send-verification-email", opts({ email, callbackURL })).then(authJson),
 
-  listArtifacts: (params?: {
-    q?: string
-    tag?: string
-    collection?: string
-    favorite?: boolean
-    /** Narrow to artifacts last changed by this GitHub login. */
-    author?: string
-    /** "shared" → only artifacts explicitly shared with you (across workspaces).
-     *  "following" → artifacts in the active workspace matching your follows
-     *  (followed GitHub authors + repo path prefixes) — the activity feed.
-     *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
-     *  "mine" → everything you published by hand in the active workspace, any
-     *  visibility included — the library's "Created by me" filter. */
-    scope?: "shared" | "following" | "needs_feedback" | "mine"
-    cursor?: string
-    limit?: number
-    /** Grid order. Omit to get the route's default, created-desc (the library always sends
-     *  this explicitly); the library's own default is `updated`. */
-    sort?: SortMode
-  }): Promise<{
+  listArtifacts: (
+    params?: {
+      q?: string
+      tag?: string
+      collection?: string
+      favorite?: boolean
+      /** Narrow to artifacts last changed by this GitHub login. */
+      author?: string
+      /** "shared" → only artifacts explicitly shared with you (across workspaces).
+       *  "following" → artifacts in the active workspace matching your follows
+       *  (followed GitHub authors + repo path prefixes) — the activity feed.
+       *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
+       *  "mine" → everything you published by hand in the active workspace, any
+       *  visibility included — the library's "Created by me" filter. */
+      scope?: "shared" | "following" | "needs_feedback" | "mine"
+      cursor?: string
+      limit?: number
+      /** Grid order. Omit to get the route's default, created-desc (the library always sends
+       *  this explicitly); the library's own default is `updated`. */
+      sort?: SortMode
+    },
+    init?: FetchInit,
+  ): Promise<{
     artifacts: Artifact[]
     next_cursor: string | null
     /** Present when listing by `collection` — the collection's id + title, so the
@@ -606,8 +645,14 @@ export const api = {
     if (params?.limit) qs.set("limit", String(params.limit))
     if (params?.sort) qs.set("sort", params.sort)
     const s = qs.toString()
-    return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts()).then(j)
+    return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts(undefined, init)).then(j)
   },
+  // The batched boot read: exactly the four bodies below (tags summary, collections,
+  // workspace settings, notifications), one authenticated request. The client seeds
+  // the four individual query caches from it — see lib/bootstrap.ts. Typed against the
+  // same named types those methods use, so a drift is a type error here.
+  bootstrap: (init?: FetchInit): Promise<BootstrapPayload> =>
+    f("/v1/bootstrap", opts(undefined, init)).then(j),
   browseSummary: (): Promise<{
     total: number
     favorites: number
@@ -838,6 +883,8 @@ export const api = {
     instruction: string
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
+    /** Sources the run may read from. Each must be this workspace's and attachable by you. */
+    connectionIds?: string[]
   }): Promise<Automation & { agent_token?: string }> => f("/v1/automations", opts(input)).then(j),
   updateAutomation: (
     id: string,
@@ -846,6 +893,8 @@ export const api = {
       trigger?: AutomationTrigger
       instruction?: string
       refs?: (string | AutomationRef)[] | null
+      /** null or [] unbinds every source. */
+      connectionIds?: string[] | null
       enabled?: boolean
     },
   ): Promise<Automation> => f(`/v1/automations/${id}`, { ...opts(input), method: "PATCH" }).then(j),
@@ -1191,8 +1240,8 @@ export const api = {
     const qs = p.toString()
     return f(`/v1/users${qs ? `?${qs}` : ""}`, opts()).then(j)
   },
-  notifications: (): Promise<{ notifications: Notification[]; unread: number }> =>
-    f("/v1/notifications", opts()).then(j),
+  notifications: (init?: FetchInit): Promise<{ notifications: Notification[]; unread: number }> =>
+    f("/v1/notifications", opts(undefined, init)).then(j),
   markNotificationsRead: (sel: { ids: string[] } | { all: true }): Promise<{ unread: number }> =>
     f("/v1/notifications/read", opts(sel)).then(j),
   notificationsStreamUrl: (): string => u("/v1/notifications/events"),
@@ -1277,8 +1326,14 @@ export const api = {
     toolkit: string
     mcp_url: string
     mcp_secret?: string
-  }): Promise<Connection> {
+  }): Promise<Connection & { reason?: string }> {
     return f("/v1/connections", opts(input)).then(j)
+  },
+  /** Begin the sign-in for a source that is waiting on authorization. Returns the URL to send the
+   *  person to — a POST that hands back a URL rather than redirecting, so the caller keeps control
+   *  of the navigation and can show its own "opening…" state. */
+  authorizeMcp(id: string): Promise<{ authorize_url: string }> {
+    return f(`/v1/connections/${id}/authorize`, opts({})).then(j)
   },
   async revokeConnection(id: string): Promise<void> {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })

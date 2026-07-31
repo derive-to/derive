@@ -1,6 +1,11 @@
 import type { SortMode } from "@derive/core"
-import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query"
-import { API_BASE, api } from "@/api"
+import {
+  infiniteQueryOptions,
+  keepPreviousData,
+  type QueryClient,
+  queryOptions,
+} from "@tanstack/react-query"
+import { API_BASE, type Artifact, api } from "@/api"
 
 // The signed-in user (or null for an anon visitor). One key read by the thin
 // AuthProvider (useQuery) AND the route guards (ensureQueryData) — they dedupe
@@ -76,8 +81,11 @@ export type LibraryParams = {
 export const libraryArtifactsQuery = (params: LibraryParams) =>
   infiniteQueryOptions({
     queryKey: ["artifacts", params] as const,
-    queryFn: ({ pageParam }) =>
-      api.listArtifacts({ ...params, cursor: pageParam || undefined, limit: LIBRARY_PAGE }),
+    queryFn: ({ pageParam, signal }) =>
+      api.listArtifacts(
+        { ...params, cursor: pageParam || undefined, limit: LIBRARY_PAGE },
+        { signal },
+      ),
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor ?? undefined,
     // Keep showing the current results while a new filter/search loads, so
@@ -87,6 +95,10 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     // collection must never strand a stale/empty cached page (the blank-collection
     // bug: a collection cached empty mid-sync, then shown empty on return).
     refetchOnMount: "always",
+    // Deliberately NO maxPages: the keyset cursor is forward-only (next_cursor with no
+    // previous-cursor twin), so a page cap would drop the TOP pages on a deep scroll
+    // with no way to refetch them — the list would visibly lose its head. Bounding the
+    // persisted-restore cost of a deep scroll needs bidirectional cursors first.
   })
 
 // Artifacts that need YOUR feedback: an open comment thread you're tagged in or have
@@ -201,7 +213,8 @@ const PROFILE_PAGE = 24
 export const profileArtifactsQuery = (handle: string) =>
   infiniteQueryOptions({
     queryKey: ["profile-artifacts", handle] as const,
-    queryFn: ({ pageParam }) => api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE),
+    queryFn: ({ pageParam, signal }) =>
+      api.profileArtifacts(handle, pageParam || undefined, PROFILE_PAGE, { signal }),
     initialPageParam: "",
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   })
@@ -212,7 +225,11 @@ export const profileArtifactsQuery = (handle: string) =>
 export const peopleQuery = (query: string) =>
   queryOptions({
     queryKey: ["people", query] as const,
-    queryFn: () => api.people(query || undefined).then((r) => r.users),
+    // The ctx param is annotated (not inferred): people.tsx spreads these options to
+    // add `enabled`, and TS's inference for a destructured context + keepPreviousData
+    // through a spread collapses the data type into a union with the placeholder fn.
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      api.people(query || undefined, { signal }).then((r) => r.users),
     placeholderData: keepPreviousData,
   })
 
@@ -222,7 +239,7 @@ export const peopleQuery = (query: string) =>
 export const targetPickerQuery = (q: string) =>
   queryOptions({
     queryKey: ["artifacts", "target-picker", q] as const,
-    queryFn: () => api.listArtifacts({ q: q.trim() || undefined, limit: 8 }),
+    queryFn: ({ signal }) => api.listArtifacts({ q: q.trim() || undefined, limit: 8 }, { signal }),
     placeholderData: keepPreviousData,
   })
 
@@ -233,7 +250,7 @@ export const targetPickerQuery = (q: string) =>
 export const searchQuery = (query: string, limit = 30) =>
   queryOptions({
     queryKey: ["search", query, limit] as const,
-    queryFn: () => api.searchContent(query, limit),
+    queryFn: ({ signal }) => api.searchContent(query, limit, { signal }),
     enabled: query.trim().length >= 2,
     placeholderData: keepPreviousData,
   })
@@ -259,14 +276,70 @@ export const activeSyncsQuery = () =>
     refetchOnWindowFocus: true,
   })
 
+// Every cache shape that lives under the ["artifacts"] key prefix: the library's
+// infinite pages, the needs-feedback flat array, and the {artifacts} envelope the
+// target-picker stores. The seed scanner below reads them all.
+type ArtifactListCache =
+  | Artifact[]
+  | { artifacts?: Artifact[]; next_cursor?: string | null }
+  | { pages?: { artifacts?: Artifact[] }[] }
+  | undefined
+export const artifactRowsOf = (data: ArtifactListCache): Artifact[] => {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  if ("pages" in data && data.pages) return data.pages.flatMap((p) => p.artifacts ?? [])
+  if ("artifacts" in data && data.artifacts) return data.artifacts
+  return []
+}
+
+// Every artifact row the cache knows about, across all the list caches — the ⌘K
+// palette's local search corpus. Cheap (a few array flattens over what is already
+// in memory) and safe to call per keystroke.
+export const cachedArtifactRows = (client: QueryClient): Artifact[] =>
+  client
+    .getQueriesData<ArtifactListCache>({ queryKey: ["artifacts"] })
+    .flatMap(([, data]) => artifactRowsOf(data))
+
 // Typed query options shared by route loaders (ensureQueryData, for intent
 // preloading) and components (useQuery). One source of truth for keys +
 // fetchers, so a preloaded route and the page that renders it resolve to the
 // same cache entry — the preload warms exactly what the page reads.
-export const artifactQuery = (shortId: string) =>
+//
+// Pass the QueryClient (the component does; loaders don't need to) to seed the
+// FIRST paint from any list row already in the cache: the card the person just
+// clicked carries the title, author, version and tags, so the workbench header
+// renders on the first frame after the click while the authoritative record
+// loads. The seed is deliberately weaker than the record — a list row has no
+// raw_token and may lack viewer-specific fields — so the page gates the content
+// iframe on the REAL fetch (isPlaceholderData) and the seed never starts a
+// render it would immediately restart.
+export const artifactQuery = (shortId: string, client?: QueryClient) =>
   queryOptions({
     queryKey: ["artifact", shortId] as const,
     queryFn: () => api.getArtifact(shortId),
+    placeholderData: client
+      ? () => {
+          for (const [, data] of client.getQueriesData<ArtifactListCache>({
+            queryKey: ["artifacts"],
+          })) {
+            const hit = artifactRowsOf(data).find((a) => a?.short_id === shortId)
+            if (hit) return hit
+          }
+          return undefined
+        }
+      : undefined,
+  })
+
+// The bell's badge + panel — a real query rather than the raw fetch it replaced, so
+// it dedupes with anything else that asks, persists (the badge paints warm on boot,
+// before the network answers), and cancels a superseded fetch. The SSE "notification"
+// event invalidates it, so staleness is only the fallback path.
+export const notificationsQuery = () =>
+  queryOptions({
+    // Annotated ctx (not inferred): the bell spreads these options to add `enabled`,
+    // the same inference collapse peopleQuery documents.
+    queryKey: ["notifications"] as const,
+    queryFn: ({ signal }: { signal: AbortSignal }) => api.notifications({ signal }),
   })
 
 export const commentsQuery = (shortId: string) =>

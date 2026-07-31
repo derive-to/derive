@@ -101,6 +101,14 @@ describe("hot read paths stay within their round-trip budget", () => {
         needs: "workspace resolve, membership, one collectionsOverview, one roles batch",
       },
       { path: "/v1/me", budget: 2, needs: "workspace resolve, one memoized membership read" },
+      {
+        // The batched boot read: four requests' worth of sidebar data through ONE
+        // store call. Its whole reason to exist is this number — a second read here
+        // means an arm escaped the batch.
+        path: "/v1/bootstrap",
+        budget: 3,
+        needs: "workspace resolve, membership, ONE bootstrap",
+      },
     ]
 
     const over: string[] = []

@@ -9,6 +9,7 @@ import type {
   AssetRecord,
   AuditLogRecord,
   AutomationRecord,
+  BootstrapRead,
   CollectionMemberRecord,
   CollectionRecord,
   CommentListOpts,
@@ -335,6 +336,91 @@ const VIEW_WINDOW_MS = 30 * 86400_000
  */
 const addRunCost = (micros: number | null | undefined) =>
   micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
+
+// ---- Boot-path SQL shared between the standalone methods and bootstrap() ----
+// Positional params are stable across every consumer: $1 = org id, $2 = user id
+// (nullable text), $3 = notifications page limit (bootstrap only).
+type SummaryRow = { kind: string; k: string | null; n: number | null }
+const WORKSPACE_SUMMARY_SQL = `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1
+       UNION ALL
+       SELECT 'tag', t.tag, count(*)::int FROM artifact_tag t
+         JOIN artifact a ON a.id = t.artifact_id
+        WHERE a.org_id = $1 GROUP BY t.tag
+       UNION ALL
+       SELECT 'workspace', w.name, NULL FROM workspace w WHERE w.id = $1
+       UNION ALL
+       SELECT 'favorites', NULL, count(*)::int FROM artifact_favorite f
+         JOIN artifact a ON a.id = f.artifact_id
+        WHERE $2::text IS NOT NULL AND f.user_id = $2
+          AND a.org_id = $1 AND a.removed_at IS NULL
+       UNION ALL
+       SELECT 'mine', NULL, count(*)::int FROM artifact a
+         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
+        WHERE $2::text IS NOT NULL AND a.org_id = $1
+       UNION ALL
+       SELECT 'mine_private', NULL, count(*)::int FROM artifact a
+         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
+        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none'`
+const mapSummaryRows = (rows: SummaryRow[]): WorkspaceSummary => {
+  const out: WorkspaceSummary = {
+    total: 0,
+    tags: [],
+    workspace: null,
+    favorites: 0,
+    mine: 0,
+    minePrivate: 0,
+  }
+  for (const r of rows) {
+    switch (r.kind) {
+      case "total":
+        out.total = r.n ?? 0
+        break
+      case "tag":
+        if (r.k !== null) out.tags.push({ tag: r.k, count: r.n ?? 0 })
+        break
+      case "workspace":
+        out.workspace = r.k
+        break
+      case "favorites":
+        out.favorites = r.n ?? 0
+        break
+      case "mine":
+        out.mine = r.n ?? 0
+        break
+      case "mine_private":
+        out.minePrivate = r.n ?? 0
+        break
+    }
+  }
+  out.tags.sort((a, b) => a.tag.localeCompare(b.tag))
+  return out
+}
+// $1 = org id. Two org-scoped tables the collections route always reads together.
+const COLLECTIONS_OVERVIEW_SQL = `SELECT 'collection' kind, row_to_json(t) doc FROM (
+         SELECT c.*, COALESCE(ci.cnt, 0)::int AS count
+         FROM collection c
+         LEFT JOIN (
+           SELECT collection_id, count(*)::int cnt FROM collection_item GROUP BY collection_id
+         ) ci ON ci.collection_id = c.id
+         WHERE c.org_id = $1
+       ) t
+       UNION ALL
+       SELECT 'source', row_to_json(r) FROM repo_source r WHERE r.org_id = $1`
+type OverviewRow = { kind: string; doc: unknown }
+const mapOverviewRows = (
+  rows: OverviewRow[],
+): { collections: (CollectionRecord & { count: number })[]; sources: RepoSourceRecord[] } => {
+  const collections: (CollectionRecord & { count: number })[] = []
+  const sources: RepoSourceRecord[] = []
+  for (const r of rows) {
+    if (r.kind === "collection") collections.push(r.doc as CollectionRecord & { count: number })
+    else sources.push(r.doc as RepoSourceRecord)
+  }
+  collections.sort((a, b) =>
+    a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
+  )
+  return { collections, sources }
+}
 
 export class PgMetaStore implements MetaStore {
   private constructor(
@@ -1256,62 +1342,59 @@ export class PgMetaStore implements MetaStore {
     // the same SQL the individual method runs — including the semantics that are easy to
     // lose: `favorites` joins the artifact so a favorite of a REMOVED or other-workspace
     // artifact is excluded, `mine`/`minePrivate` require an OWNER member row (not the
-    // author_id denorm), and tags come back ordered by tag.
-    const { rows } = await this.pool.query<{ kind: string; k: string | null; n: number | null }>(
-      `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1
+    // author_id denorm), and tags come back ordered by tag. The statement text is shared
+    // with bootstrap() below, so the two can never drift.
+    const { rows } = await this.pool.query<SummaryRow>(WORKSPACE_SUMMARY_SQL, [orgId, userId])
+    return mapSummaryRows(rows)
+  }
+  async bootstrap(orgId: string, userId: string, notifLimit: number): Promise<BootstrapRead> {
+    // The app shell's first breath as ONE statement: five independent org/user-scoped
+    // arms UNION ALLed as (arm, doc) jsonb rows. The summary and overview arms embed the
+    // EXACT statements their standalone methods run (shared constants above, so they
+    // cannot drift); roles is the by-id-list method re-keyed by org (same rows for this
+    // caller: every collection id in the list belongs to the org); settings is the raw
+    // row getOrgSettings parses; notifications is the window query notificationsPage
+    // runs, with the aggregate ordered explicitly so the page order survives jsonb_agg.
+    // On the hosted tier this replaces four boot REQUESTS (each paying its own auth and
+    // round trips on its own pg.Client) with one round trip after auth.
+    const { rows } = await this.pool.query<{ arm: string; doc: unknown }>(
+      `SELECT 'summary' arm, (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${WORKSPACE_SUMMARY_SQL}) t) doc
        UNION ALL
-       SELECT 'tag', t.tag, count(*)::int FROM artifact_tag t
-         JOIN artifact a ON a.id = t.artifact_id
-        WHERE a.org_id = $1 GROUP BY t.tag
+       SELECT 'overview', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${COLLECTIONS_OVERVIEW_SQL}) t)
        UNION ALL
-       SELECT 'workspace', w.name, NULL FROM workspace w WHERE w.id = $1
+       SELECT 'roles', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (
+         SELECT cm.collection_id, cm.role FROM collection_member cm
+          WHERE cm.user_id = $2 AND cm.collection_id IN (SELECT id FROM collection WHERE org_id = $1)) t)
        UNION ALL
-       SELECT 'favorites', NULL, count(*)::int FROM artifact_favorite f
-         JOIN artifact a ON a.id = f.artifact_id
-        WHERE $2::text IS NOT NULL AND f.user_id = $2
-          AND a.org_id = $1 AND a.removed_at IS NULL
+       SELECT 'settings', (SELECT to_jsonb(os.settings) FROM org_settings os WHERE os.org_id = $1)
        UNION ALL
-       SELECT 'mine', NULL, count(*)::int FROM artifact a
-         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
-        WHERE $2::text IS NOT NULL AND a.org_id = $1
-       UNION ALL
-       SELECT 'mine_private', NULL, count(*)::int FROM artifact a
-         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
-        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none'`,
-      [orgId, userId],
+       SELECT 'notifications', (SELECT COALESCE(jsonb_agg(row_to_json(t) ORDER BY t.created_at DESC, t.id DESC), '[]'::jsonb) FROM (
+         SELECT *, count(*) FILTER (WHERE read = 0) OVER ()::int AS unread_total
+           FROM notification WHERE user_id = $2
+          ORDER BY created_at DESC LIMIT $3) t)`,
+      [orgId, userId, notifLimit],
     )
-    const out: WorkspaceSummary = {
-      total: 0,
-      tags: [],
-      workspace: null,
-      favorites: 0,
-      mine: 0,
-      minePrivate: 0,
+    const arm: Record<string, unknown> = {}
+    for (const r of rows) arm[r.arm] = r.doc
+    const { collections, sources } = mapOverviewRows((arm.overview as OverviewRow[] | null) ?? [])
+    const collectionRoles: Record<string, Role> = {}
+    for (const r of (arm.roles as { collection_id: string; role: Role }[] | null) ?? [])
+      collectionRoles[r.collection_id] = r.role
+    const notifRows =
+      (arm.notifications as (NotificationRecord & { unread_total: number })[] | null) ?? []
+    return {
+      summary: mapSummaryRows((arm.summary as SummaryRow[] | null) ?? []),
+      collections,
+      sources,
+      collectionRoles,
+      // to_jsonb of the text column yields a JSON string (or null when no row) — exactly
+      // the raw value getOrgSettings hands to the same parser.
+      settings: parseOrgSettings(typeof arm.settings === "string" ? arm.settings : null),
+      notifications: {
+        notifications: notifRows.map(({ unread_total: _, ...n }) => n),
+        unread: notifRows[0]?.unread_total ?? 0,
+      },
     }
-    for (const r of rows) {
-      switch (r.kind) {
-        case "total":
-          out.total = r.n ?? 0
-          break
-        case "tag":
-          if (r.k !== null) out.tags.push({ tag: r.k, count: r.n ?? 0 })
-          break
-        case "workspace":
-          out.workspace = r.k
-          break
-        case "favorites":
-          out.favorites = r.n ?? 0
-          break
-        case "mine":
-          out.mine = r.n ?? 0
-          break
-        case "mine_private":
-          out.minePrivate = r.n ?? 0
-          break
-      }
-    }
-    out.tags.sort((a, b) => a.tag.localeCompare(b.tag))
-    return out
   }
   async tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]> {
     const base = this.db
@@ -2110,29 +2193,9 @@ export class PgMetaStore implements MetaStore {
     // org-scoped round trips; a UNION ALL discriminated by `kind` answers both in one,
     // each branch's full row carried as JSON so the shapes don't have to be reconciled
     // into a single column set.
-    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
-      `SELECT 'collection' kind, row_to_json(t) doc FROM (
-         SELECT c.*, COALESCE(ci.cnt, 0)::int AS count
-         FROM collection c
-         LEFT JOIN (
-           SELECT collection_id, count(*)::int cnt FROM collection_item GROUP BY collection_id
-         ) ci ON ci.collection_id = c.id
-         WHERE c.org_id = $1
-       ) t
-       UNION ALL
-       SELECT 'source', row_to_json(r) FROM repo_source r WHERE r.org_id = $1`,
-      [orgId],
-    )
-    const collections: (CollectionRecord & { count: number })[] = []
-    const sources: RepoSourceRecord[] = []
-    for (const r of rows) {
-      if (r.kind === "collection") collections.push(r.doc as CollectionRecord & { count: number })
-      else sources.push(r.doc as RepoSourceRecord)
-    }
-    collections.sort((a, b) =>
-      a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
-    )
-    return { collections, sources }
+    // Statement text shared with bootstrap() — see WORKSPACE_SUMMARY_SQL's note.
+    const { rows } = await this.pool.query<OverviewRow>(COLLECTIONS_OVERVIEW_SQL, [orgId])
+    return mapOverviewRows(rows)
   }
   // ---- Folders (organize a collection's artifacts) -----------------------
   async createFolder(f: NewFolder): Promise<FolderRecord> {
@@ -3554,6 +3617,8 @@ export class PgMetaStore implements MetaStore {
       trigger?: string
       instruction?: string
       refs?: string | null
+      /** JSON array of connection ids this automation may spend; null clears them all. */
+      connection_ids?: string | null
       enabled?: 0 | 1
     },
   ): Promise<AutomationRecord | null> {
@@ -3562,6 +3627,7 @@ export class PgMetaStore implements MetaStore {
     if (fields.trigger !== undefined) set.trigger = fields.trigger
     if (fields.instruction !== undefined) set.instruction = fields.instruction
     if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
     if (fields.enabled !== undefined) set.enabled = fields.enabled
     if (Object.keys(set).length === 0) return this.getAutomation(id)
     const rows = await this.db
@@ -3901,6 +3967,42 @@ export class PgMetaStore implements MetaStore {
       .update(connection)
       .set({ status })
       .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
+      .returning()
+    return rows[0] ?? null
+  }
+  async updateConnectionCredential(
+    id: string,
+    orgId: string,
+    fields: {
+      secret_enc?: string | null
+      broker_ref?: string
+      status?: ConnectionStatus
+      scopes_label?: string | null
+    },
+    expectSecretEnc?: string | null,
+  ): Promise<ConnectionRecord | null> {
+    const set: Record<string, unknown> = {}
+    if (fields.secret_enc !== undefined) set.secret_enc = fields.secret_enc
+    if (fields.broker_ref !== undefined) set.broker_ref = fields.broker_ref
+    if (fields.status !== undefined) set.status = fields.status
+    if (fields.scopes_label !== undefined) set.scopes_label = fields.scopes_label
+    if (Object.keys(set).length === 0) return this.getConnection(id)
+    // The compare-and-swap rides IN the WHERE clause, so the check and the write are one
+    // statement. Reading first and then writing would leave the window this exists to close.
+    const guard =
+      expectSecretEnc === undefined
+        ? undefined
+        : expectSecretEnc === null
+          ? isNull(connection.secret_enc)
+          : eq(connection.secret_enc, expectSecretEnc)
+    const rows = await this.db
+      .update(connection)
+      .set(set)
+      .where(
+        guard
+          ? and(eq(connection.id, id), eq(connection.org_id, orgId), guard)
+          : and(eq(connection.id, id), eq(connection.org_id, orgId)),
+      )
       .returning()
     return rows[0] ?? null
   }
@@ -4381,6 +4483,13 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
       await tx.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id))
+      // The view ledger is a raw-DDL table (ddl.ts placeholderTables), NOT a drizzle
+      // model — so scripts/check-delete-cascade.mjs cannot see it, and it was missed
+      // here while carrying a NOT NULL FK to artifact(id). Postgres enforces that FK,
+      // so deleting any artifact that had ever logged a view rolled the whole
+      // transaction back (a production 500 the embedded suite could not reproduce:
+      // better-sqlite3 runs with FK enforcement off). Raw SQL, matching the writes.
+      await tx.execute(sql`DELETE FROM view WHERE artifact_id = ${id}`)
       await tx.delete(artifact).where(eq(artifact.id, id))
     })
     // Drop the search-index row after the delete commits (the tombstone table isn't a

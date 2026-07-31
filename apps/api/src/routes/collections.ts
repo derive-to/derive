@@ -10,6 +10,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { Collection, collectionsJson, enrich, sourceMaps } from "../lib/boot-shapes"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
@@ -51,72 +52,6 @@ export const collectionRoutes = (ctx: AppContext) => {
     return col
   }
 
-  // A collection as it goes out: the stored row + its item `count` + where it came from
-  // (`kind` = manual/repo/pr, with the repo/PR details). Origin is DERIVED here, not
-  // stored. Every collection-returning endpoint emits this one shape.
-  const Collection = z
-    .object({
-      id: z.string(),
-      title: z.string(),
-      created_by: z.string().describe('Creator\'s user id ("anon" if created anonymously).'),
-      created_at: z.string(),
-      count: z.number().describe("Number of artifacts in the collection."),
-      workspace_access: z
-        .enum(["none", "member"])
-        .optional()
-        .describe('Workspace share scope: "member" (all members) or "none" (invite-only).'),
-      my_role: z
-        .enum(["viewer", "commenter", "editor", "owner"])
-        .nullable()
-        .optional()
-        .describe("Caller's own role on the collection; drives the Share dialog. Null if none."),
-      kind: z
-        .enum(["manual", "repo", "pr"])
-        .optional()
-        .describe('Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).'),
-      parentId: z
-        .string()
-        .optional()
-        .describe("For a PR preview: the repo collection it nests under, when connected."),
-      prNumber: z.number().optional().describe("For a PR preview: the pull-request number."),
-      repo: z.string().optional().describe('For repo/PR collections: the "owner/name" slug.'),
-    })
-    .openapi("Collection")
-
-  // A repo_source links a collection to a "owner/name" repo; pr_number null = the branch
-  // mirror (the parent), set = a PR preview (a child). Built once, shared by every path
-  // that enriches a collection so the origin logic lives in one place.
-  type Src = { repo: string; pr: number | null }
-  const sourceMaps = (
-    sources: { collection_id: string; repo: string; pr_number: number | null }[],
-  ) => {
-    const srcByCollection = new Map<string, Src>()
-    const branchByRepo = new Map<string, string>()
-    for (const s of sources) {
-      srcByCollection.set(s.collection_id, { repo: s.repo, pr: s.pr_number })
-      if (s.pr_number === null) branchByRepo.set(s.repo, s.collection_id)
-    }
-    return { srcByCollection, branchByRepo }
-  }
-  const enrich = (
-    col: CollectionRecord & { count: number; my_role: Role | null },
-    srcByCollection: Map<string, Src>,
-    branchByRepo: Map<string, string>,
-  ) => {
-    const src = srcByCollection.get(col.id)
-    if (!src) return { ...col, kind: "manual" as const }
-    if (src.pr === null) return { ...col, kind: "repo" as const, repo: src.repo }
-    return {
-      ...col,
-      kind: "pr" as const,
-      repo: src.repo,
-      prNumber: src.pr,
-      // Omitted when the repo was disconnected but the PR source lingers → the
-      // client falls back to rendering it top-level.
-      parentId: branchByRepo.get(src.repo),
-    }
-  }
-
   app.openapi(
     createRoute({
       method: "get",
@@ -141,7 +76,6 @@ export const collectionRoutes = (ctx: AppContext) => {
       // a workspace's collections can't be enumerated via a public artifact's workspace.
       if (!(await isMember(c, org))) return c.json({ collections: [] })
       const { collections: cols, sources } = await meta.collectionsOverview(org)
-      const { srcByCollection, branchByRepo } = sourceMaps(sources)
       // Same share experience as an artifact: an invite-only collection
       // (workspace_access=none) only lists for its creator or an explicit
       // collectionMember — collectionRole (the single source of truth, shared with the
@@ -157,12 +91,7 @@ export const collectionRoutes = (ctx: AppContext) => {
               me.id,
             )
           : {}
-      const roleFor = (col: (typeof cols)[number]): Role | null =>
-        isToken(c) ? "owner" : col.created_by === me?.id ? "owner" : (roleMap[col.id] ?? null)
-      const collections = cols
-        .map((col) => ({ col, role: roleFor(col) }))
-        .filter(({ role }) => role !== null)
-        .map(({ col, role }) => enrich({ ...col, my_role: role }, srcByCollection, branchByRepo))
+      const collections = collectionsJson(cols, sources, roleMap, me?.id ?? null, isToken(c))
       return c.json({ collections })
     },
   )

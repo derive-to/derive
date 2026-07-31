@@ -22,6 +22,7 @@ import { automationRoutes } from "./routes/automations"
 import { betaRoutes } from "./routes/beta"
 import { billingRoutes } from "./routes/billing"
 import { blobRoutes } from "./routes/blob"
+import { bootstrapRoutes } from "./routes/bootstrap"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { conciergeRoutes } from "./routes/concierge"
@@ -34,6 +35,7 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
 import { marketingRoutes } from "./routes/marketing"
+import { mcpOauthRoutes } from "./routes/mcp-oauth"
 import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
@@ -426,12 +428,14 @@ export function createApp(deps: AppDeps): Hono {
     slackRoutes,
     billingRoutes,
     vitalsRoutes,
+    bootstrapRoutes,
     moderationRoutes,
     proposalRoutes,
     reviewRoutes,
     automationRoutes,
     planRoutes,
     connectionRoutes,
+    mcpOauthRoutes,
     modelCredentialRoutes,
     conciergeRoutes,
     reworkRoutes,

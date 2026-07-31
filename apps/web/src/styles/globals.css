@@ -432,3 +432,22 @@
     animation: none;
   }
 }
+
+/* The View Transitions cross-fade (router defaultViewTransition) is a UA animation
+   and does NOT honor prefers-reduced-motion by itself - turn it off explicitly. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+}
+
+/* The shared-element half of the card->document open: the workbench title always
+   carries the morph name (unique here - one h1 per page); the clicked library card
+   claims the same name just-in-time (artifact-card.tsx), and the router's view
+   transition morphs one into the other. The reduced-motion guard above disables it
+   with the rest of the transition animations. */
+.vt-doc-title {
+  view-transition-name: doc-title;
+}

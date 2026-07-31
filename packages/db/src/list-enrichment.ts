@@ -2,6 +2,7 @@ import type {
   ArtifactDetail,
   ArtifactDetailOpts,
   AutomationRecord,
+  BootstrapRead,
   CollectionRecord,
   CommentListOpts,
   CommentRecord,
@@ -124,6 +125,29 @@ export const composeOrgContext = async (
 }
 
 /** See `composeListEnrichment` — the browse sidebar's twin. */
+// The boot read for the embedded drivers: the same five underlying reads the pg
+// driver folds into one statement, run sequentially — local engines pay no wire
+// trips, so the parity that matters here is the SHAPE (see MetaStore.bootstrap).
+export const composeBootstrap = async (
+  store: Parameters<typeof composeWorkspaceSummary>[0] &
+    Parameters<typeof composeCollectionsOverview>[0] &
+    Parameters<typeof composeNotificationsPage>[0] &
+    Pick<MetaStore, "collectionRolesForUser" | "getOrgSettings">,
+  orgId: string,
+  userId: string,
+  notifLimit: number,
+): Promise<BootstrapRead> => {
+  const summary = await composeWorkspaceSummary(store, orgId, userId)
+  const { collections, sources } = await composeCollectionsOverview(store, orgId)
+  const collectionRoles = await store.collectionRolesForUser(
+    collections.map((c) => c.id),
+    userId,
+  )
+  const settings = await store.getOrgSettings(orgId)
+  const notifications = await composeNotificationsPage(store, userId, notifLimit)
+  return { summary, collections, sources, collectionRoles, settings, notifications }
+}
+
 export const composeWorkspaceSummary = async (
   store: Pick<
     MetaStore,

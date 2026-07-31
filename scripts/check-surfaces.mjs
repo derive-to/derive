@@ -45,6 +45,7 @@ const QUERY_ALLOW = new Set([
   // names on success, without them if the query errors — so it's never blank forever.
   "components/billing/blocked-banner.tsx", // blocking-state banner; billing read degrades by returning null
   // (no error UI needed; if query fails, the banner simply does not render)
+  "components/chrome/notification-bell.tsx", // ambient badge; a failed load stays quiet, SSE/visibility retries
   "components/chrome/getting-started.tsx", // ambient checklist pill; hides itself on any failure
   "pages/library/connect-nudge.tsx", // ambient activation card; hides itself on any failure
   "pages/artifact/artifact-breadcrumb.tsx", // collections/siblings reads degrade to the title (no switcher)

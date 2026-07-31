@@ -11,6 +11,14 @@ export function getRouter() {
   return createRouter({
     routeTree,
     scrollRestoration: true,
+    // Key scroll positions by the full href, not the pathname: every filtered library
+    // ("/?tag=…", "/?collection=…") shares the "/" pathname, and one shared key means
+    // switching filters inherits a stale offset. Each filter now keeps its own.
+    getScrollRestorationKey: (location) => location.href,
+    // Route changes cross-fade via the View Transitions API where the browser has it
+    // (a no-op elsewhere). globals.css disables the animation under
+    // prefers-reduced-motion, which the API alone does not honor.
+    defaultViewTransition: true,
     defaultPreload: "intent",
     // React Query owns staleness. Setting the router's preload stale time to 0
     // means an intent hover always reaches the loader, which dedupes through the

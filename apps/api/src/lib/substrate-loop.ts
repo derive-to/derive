@@ -40,8 +40,15 @@ import {
  *
  * TWO LANES, ONE TURN. A run is an automation firing; a session is somebody asking. The middle of
  * both — call the model, nudge once, gate, write — is lib/turn-core.ts, shared with attended chat.
- * What differs is exactly two things, and they stay explicit here rather than being unified into
- * something that fits neither: how the work ARRIVES, and how it SETTLES.
+ * What differs is three things, and they stay explicit here rather than being unified into
+ * something that fits neither: how the work ARRIVES, how it SETTLES, and whether the answer
+ * STREAMS.
+ *
+ * Streaming belongs to the attended lane alone, and structurally rather than by omission: that
+ * lane calls the model in-process on the asker's own request, so it has a live channel to publish
+ * slices onto (routes/contexts.ts wraps `callModel` before handing it to turn-core). This lane
+ * executes behind a capability token and reports once, at settle — there is no open connection to
+ * stream into, so a runner-served ask shows its waiting state until the answer lands.
  *
  * The arrival difference is not cosmetic. `GET /v1/agent/runs/claim` returns a LIST you search by
  * id; `POST /v1/agent/sessions/claim` returns ONE session, because the token already names it.
