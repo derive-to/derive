@@ -552,6 +552,16 @@ function SessionThread({
   // artifact-chat.tsx on its own 900ms interval, and it never touches sessionQuery. It has
   // no `working` hole (its gate is already `working || open`), so it does not have the bug
   // fixed here, but it also gets none of this push. Wiring it up is its own change.
+  //
+  // WHICH TURNS ACTUALLY PUSH (verified on the PR preview, not inferred): only a turn that
+  // goes through the runner report path or a close/fail — contexts.ts calls settleWake /
+  // progressWake there and nowhere else. `serveAttended`, which serves an Ask answered
+  // in-process by the model, settles the session WITHOUT publishing anything, so on that
+  // path these subscriptions sit idle and the poll does all the work. This is therefore a
+  // win for AGENT-RUN contexts (a real runner answering, long runs emitting progress, and
+  // the `working` stall above) and a no-op for an attended Ask. Making attended turns push
+  // means publishing from serveAttended; that is a server change, deliberately not made
+  // here.
   const visible = usePageVisible()
   const pushRefresh = (e: MessageEvent) => {
     let payload: { session_id?: string }
