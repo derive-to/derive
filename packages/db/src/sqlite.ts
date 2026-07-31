@@ -265,6 +265,9 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(notification).where(eq(notification.artifact_id, id)).run()
         db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
         db.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id)).run()
+        // The view ledger is raw DDL (no drizzle model) with an FK to artifact(id) —
+        // invisible to check-delete-cascade and enforced on Postgres. See pg.ts.
+        raw.prepare(`DELETE FROM view WHERE artifact_id = ?`).run(id)
         db.delete(artifact).where(eq(artifact.id, id)).run()
       })()
       // The contentless fts5 row isn't a drizzle table, so it rides the inherited

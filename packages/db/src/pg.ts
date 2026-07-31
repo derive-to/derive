@@ -4288,6 +4288,13 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))
       await tx.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id))
+      // The view ledger is a raw-DDL table (ddl.ts placeholderTables), NOT a drizzle
+      // model — so scripts/check-delete-cascade.mjs cannot see it, and it was missed
+      // here while carrying a NOT NULL FK to artifact(id). Postgres enforces that FK,
+      // so deleting any artifact that had ever logged a view rolled the whole
+      // transaction back (a production 500 the embedded suite could not reproduce:
+      // better-sqlite3 runs with FK enforcement off). Raw SQL, matching the writes.
+      await tx.execute(sql`DELETE FROM view WHERE artifact_id = ${id}`)
       await tx.delete(artifact).where(eq(artifact.id, id))
     })
     // Drop the search-index row after the delete commits (the tombstone table isn't a
