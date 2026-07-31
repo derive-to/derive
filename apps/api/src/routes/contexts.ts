@@ -180,7 +180,7 @@ export const contextRoutes = (ctx: AppContext) => {
       }
       // GitHub-synced artifacts are read-only in Derive, exactly as the proposal route says —
       // changes belong in the repo, and chat must not be a way around that.
-      if ((await meta.managedArtifactIds(artifact.org_id)).includes(artifact.id)) {
+      if (await meta.isManagedArtifact(artifact.org_id, artifact.id)) {
         await reply(
           "This document is managed by GitHub sync, so changes belong in the repo rather than here.",
           "failed",

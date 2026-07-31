@@ -933,6 +933,11 @@ export interface IntegrationStore {
   /** Ids of every artifact mirrored from a sync source in this workspace —
    *  drives the read-only gate + the `managed` flag (synced docs aren't editable). */
   managedArtifactIds(orgId: string): Promise<string[]>
+  /** Is THIS artifact mirrored from a sync source? The single-artifact question three
+   *  write paths were answering with `managedArtifactIds(org).includes(id)` — pulling the
+   *  workspace's entire managed-id set (parsed out of every repo source's file manifest)
+   *  to test one membership, which gets steadily worse as a workspace syncs more repos. */
+  isManagedArtifact(orgId: string, artifactId: string): Promise<boolean>
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   /** The instance's GitHub App credentials, or null before the manifest setup. */
   getGithubApp(): Promise<GitHubAppRecord | null>

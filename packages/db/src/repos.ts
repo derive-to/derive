@@ -554,6 +554,21 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
 
+  // "Is THIS artifact synced?" without materializing the workspace's whole managed set.
+  // The ids live inside each repo source's `files` JSON, so there is no column to filter on —
+  // but a LIKE on the raw text narrows to the few sources that could possibly contain it, and
+  // the parse then CONFIRMS, because a substring match is not proof (an id can appear inside a
+  // longer one, or in another field). Same answer as `managedArtifactIds(org).includes(id)`,
+  // without reading every manifest in the workspace to get it.
+  const isManagedArtifact = async (orgId: string, artifactId: string): Promise<boolean> => {
+    const rows = await db
+      .select({ files: repoSource.files })
+      .from(repoSource)
+      .where(and(eq(repoSource.org_id, orgId), like(repoSource.files, `%${artifactId}%`)))
+      .all()
+    return collectManagedIds(rows).includes(artifactId)
+  }
+
   // The artifact + its workspace's settings. One join here too — the embedded dialects can
   // express it just as well, and it keeps the two drivers' shapes identical.
   const artifactWithSettings = async (
@@ -3928,6 +3943,7 @@ export function makeRepos(db: SqliteDb) {
     listRepoSourcesByInstallation,
     listSyncingRepoSources,
     managedArtifactIds,
+    isManagedArtifact,
     getGithubApp,
     setGithubApp,
     getOrgSettings,

@@ -525,7 +525,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A GitHub-synced artifact is read-only in Derive: GitHub is the source of
       // truth, so a republish would be silently overwritten on the next sync.
       // Edit it in the repo instead.
-      if ((await meta.managedArtifactIds(existing.org_id)).includes(existing.id))
+      if (await meta.isManagedArtifact(existing.org_id, existing.id))
         return fail(c, 409, "managed by GitHub sync — edit this file in the repo")
       // Locked: even an editor can't publish directly — changes go through review.
       // The web client routes editors to "propose" when locked, so this is the

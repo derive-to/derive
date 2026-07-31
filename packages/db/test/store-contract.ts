@@ -2018,6 +2018,48 @@ export function runStoreContract(
       expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
     })
 
+    it("isManagedArtifact agrees with managedArtifactIds, including the substring trap", async () => {
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Managed WS")
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Mirror",
+        created_by: "amy",
+      })
+      const synced = await store.createArtifact(newArtifact({ org_id: org }))
+      const plain = await store.createArtifact(newArtifact({ org_id: org }))
+      const src = await store.createRepoSource({
+        id: uuid(),
+        org_id: org,
+        collection_id: col.id,
+        repo: "acme/derive",
+        ref: "main",
+        includes: "**/*.md",
+        pr_number: null,
+        created_by: "amy",
+      })
+      // The path→artifact map is written by the sync, not at creation.
+      await store.updateRepoSourceSync(src.id, {
+        files: JSON.stringify({ "README.md": { artifact_id: synced.id } }),
+      })
+
+      expect(await store.isManagedArtifact(org, synced.id)).toBe(true)
+      expect(await store.isManagedArtifact(org, plain.id)).toBe(false)
+      // Agrees with the call it replaces, both ways.
+      const all = await store.managedArtifactIds(org)
+      expect(all.includes(synced.id)).toBe(true)
+      expect(all.includes(plain.id)).toBe(false)
+      // THE SUBSTRING TRAP: the implementation narrows with a SQL LIKE and then confirms by
+      // parsing. A prefix of a managed id appears inside the stored JSON as a substring, so a
+      // LIKE alone would answer true — the parse is what makes it false.
+      expect(await store.isManagedArtifact(org, synced.id.slice(0, 8))).toBe(false)
+      // Another workspace's mirror never counts as this one's.
+      const otherOrg = `org_${uuid()}`
+      await store.setWorkspace(otherOrg, "Other")
+      expect(await store.isManagedArtifact(otherOrg, synced.id)).toBe(false)
+    })
+
     it("artifactWithSettings returns the artifact and its workspace's settings together", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Settings WS")

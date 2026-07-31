@@ -127,6 +127,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  like,
   lt,
   lte,
   ne,
@@ -2242,6 +2243,18 @@ export class PgMetaStore implements MetaStore {
   }
   async deleteRepoSource(id: string, orgId: string): Promise<void> {
     await this.db.delete(repoSource).where(and(eq(repoSource.id, id), eq(repoSource.org_id, orgId)))
+  }
+  async isManagedArtifact(orgId: string, artifactId: string): Promise<boolean> {
+    // The managed ids live inside each repo source's `files` JSON, so there is no column to
+    // filter on — but a LIKE narrows to the few sources that could contain this id, instead
+    // of reading every manifest in the workspace to answer one boolean. The parse then
+    // CONFIRMS: a substring match is not proof (an id can appear inside a longer one, or in
+    // some other field), so the answer stays identical to managedArtifactIds().includes().
+    const rows = await this.db
+      .select({ files: repoSource.files })
+      .from(repoSource)
+      .where(and(eq(repoSource.org_id, orgId), like(repoSource.files, `%${artifactId}%`)))
+    return collectManagedIds(rows).includes(artifactId)
   }
   async managedArtifactIds(orgId: string): Promise<string[]> {
     const rows = await this.db
