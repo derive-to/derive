@@ -555,6 +555,64 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(after.some((r) => r.slot === "$stats")).toBe(true)
   })
 
+  it("says WHY a fact is absent, instead of telling authors to do the impossible", async () => {
+    // Three absences, three different truths — all found by dogfooding the live preview,
+    // where every one of them read back as "embed a derive-facts block to add one".
+    const { app, token } = appWithGrant(dir, "absence", "openid derive:read derive:publish")
+
+    // (1) A BUNDLE whose page carries a real block. Extraction is single-file only, so the
+    // block is dropped — and the old message told this author to embed the block they
+    // just embedded. The publish must now SAY so, and the read must not misdirect.
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Bundle",
+          files: {
+            "index.html":
+              '<h1>B</h1><script type="application/derive-facts" data-fact="checks">{"pass":5}</script>',
+          },
+        }),
+      ),
+    )
+    expect(pub.note).toContain("index.html")
+    expect(pub.note).toContain("single-file")
+    const bundleMiss = toolText(
+      await call(app, token, "read", { short_id: pub.short_id, data: "checks" }),
+    )
+    expect(bundleMiss).toContain("carries no facts")
+    expect(bundleMiss).not.toContain("embed a derive-facts block to add one")
+
+    // (2) A DERIVED name nobody can embed: a one-heading page has no $outline, and the
+    // advice "embed a block" is impossible — $ is outside the author grammar.
+    const plain = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Plain", content: "<h1>Only</h1><p>x</p>" }),
+      ),
+    )
+    const derivedMiss = toolText(
+      await call(app, token, "read", { short_id: plain.short_id, data: "$outline" }),
+    )
+    expect(derivedMiss).toContain("computed by the host")
+    expect(derivedMiss).not.toContain("embed a derive-facts block to add one")
+
+    // (3) The SERIES note over underived history: those versions did not "omit the block"
+    // — series reads never lazily fill, by design, so they are simply underived.
+    await call(app, token, "publish", { short_id: plain.short_id, content: "<h1>A</h1><h2>B</h2>" })
+    const series = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: plain.short_id,
+          data: "$outline",
+          versions: "all",
+        }),
+      ),
+    )
+    if (series.note) {
+      expect(series.note).not.toContain("omitted the block")
+      expect(series.note).toContain("single-version read")
+    }
+  })
+
   it("derived $rows in an older version never trigger the asserted backfill walk", async () => {
     // The interplay the build doc ordered pinned (and the first commit CLAIMED was
     // pinned without a test existing — this is that test). backfillNewSlots fires when a

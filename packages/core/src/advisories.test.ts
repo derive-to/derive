@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { missingBlobAdvisory, publishAdvisories } from "./advisories"
+import { bundleFactsAdvisory, missingBlobAdvisory, publishAdvisories } from "./advisories"
 import type { BlobStore } from "./ports"
 
 const HTML_NO_VIEWPORT = "<!doctype html><html><head><title>x</title></head><body>hi</body></html>"
@@ -120,5 +120,34 @@ describe("missingBlobAdvisory", () => {
       },
     }
     expect(await missingBlobAdvisory(page([KEY_B]), flaky)).toBeNull()
+  })
+})
+
+describe("bundleFactsAdvisory (the silent drop, found by dogfooding)", () => {
+  const block = '<script type="application/derive-facts" data-fact="checks">{"pass":5}</script>'
+
+  it("names the page whose facts block will be dropped", () => {
+    const a = bundleFactsAdvisory({ "index.html": `<h1>Home</h1>${block}`, "b.html": "<h1>B</h1>" })
+    expect(a).toContain("index.html")
+    expect(a).toContain("single-file")
+    // It must NOT tell the author to embed a block — they just did, into a bundle.
+    expect(a).not.toContain("embed a derive-facts block to add one")
+  })
+
+  it("stays quiet when no page asserts anything", () => {
+    expect(bundleFactsAdvisory({ "index.html": "<h1>Home</h1>", "s.md": "# S" })).toBeNull()
+  })
+
+  it("speaks up for a MALFORMED block too — a failed assertion is still an assertion", () => {
+    const bad = '<script type="application/derive-facts" data-fact="checks">{oops</script>'
+    expect(bundleFactsAdvisory({ "index.html": bad })).toContain("index.html")
+  })
+
+  it("reads markdown pages in THEIR grammar, and ignores non-page files", () => {
+    // Markdown asserts with a ```derive-facts fence, not a script tag — a scan that only
+    // knew the HTML form would stay silent on exactly the pages a skill bundle is made of.
+    const fenced = '# N\n\n```derive-facts checks\n{"pass":5}\n```\n'
+    expect(bundleFactsAdvisory({ "notes.md": fenced })).toContain("notes.md")
+    expect(bundleFactsAdvisory({ "logo.png": block, "style.css": block })).toBeNull()
   })
 })

@@ -44,6 +44,35 @@ import {
 import { enqueueRender } from "../previews"
 import { CORE_SKILLS } from "../skills-reference.gen"
 
+/** Does this version's KIND carry facts at all? Extraction and derivation both run on
+ *  single-file HTML/markdown only (after-publish.ts), so a bundle, deck or binary carries
+ *  neither asserted nor derived rows — and telling its author to embed a block is telling
+ *  them to do the thing that was just silently ignored. Found by dogfooding: a bundle
+ *  whose index.html DID carry a valid block still read back as "embed a block to add one". */
+const kindCarriesFacts = (v: VersionRecord | null): boolean =>
+  v?.content_type === "text/html" || v?.content_type === "text/markdown"
+
+/** Why a fact is absent, said accurately — the cases the old single message merged.
+ *  A `$name` can never be embedded (the author grammar rejects `$`), so "embed a block"
+ *  is impossible advice for it; a bundle can't carry facts at all; everything else is the
+ *  ordinary "nobody asserted this yet". `present` is what the version DOES carry, so the
+ *  reply both explains the absence and shows the alternatives. */
+const absenceNote = (
+  name: string | null,
+  v: VersionRecord | null,
+  ref: string,
+  present: string[] = [],
+): string => {
+  const also = present.length ? ` This version carries: ${present.join(", ")}.` : ""
+  if (!kindCarriesFacts(v))
+    return `${ref} is a ${v?.content_type === "derive/skill" ? "skill" : "bundle or non-text"} version, which carries no facts — asserted or derived. Facts are extracted from single-file HTML and markdown only, so a derive-facts block inside a bundle page is not read.`
+  if (name && isDerivedFactName(name))
+    return `${ref} has no "${name}". Derived facts are computed by the host, never embedded — "${name}" is absent because this version's content produced none ($outline needs two or more sections, $links needs a reference to another artifact).${also}`
+  if (present.length)
+    return `No facts "${name}" in ${ref} — facts: ${present.join(", ")}. Pass data:"*" to list them.`
+  return `${ref} carries no facts — embed a derive-facts block to add one.`
+}
+
 /**
  * Recompute a version's derived facts from its own bytes and persist them, returning the
  * fresh set. The lazy half of derivation: publish-time covers new versions, this covers
@@ -435,7 +464,13 @@ export function registerReadTool(tc: ToolContext): void {
                 }
               : missing > 0
                 ? {
-                    note: `${missing} version(s) in this range carry no "${data}" slot — they predate facts or omitted the block.`,
+                    // A derived name is never "omitted": nobody embeds it. Series reads
+                    // serve STORED rows only (a 200-version series must not become 200
+                    // blob reads), so old versions are simply underived until each is
+                    // read singly — which is the honest instruction to give here.
+                    note: isDerivedFactName(data)
+                      ? `${missing} version(s) in this range have no stored "${data}". Derived facts fill on a single-version read (read the version without \`versions\`), never in a series — a series must not trigger one derivation per version.`
+                      : `${missing} version(s) in this range carry no "${data}" slot — they predate facts or omitted the block.`,
                   }
                 : {}),
           })
@@ -453,11 +488,7 @@ export function registerReadTool(tc: ToolContext): void {
               bytes: r.size_bytes,
               ...(isDerivedFactName(r.slot) ? { derived: true } : {}),
             })),
-            ...(rows.length
-              ? {}
-              : {
-                  note: `Version ${n} of "${short_id}" carries no facts. Embed a derive-data block (see the publishing skill) to make one queryable.`,
-                }),
+            ...(rows.length ? {} : { note: absenceNote(null, v, `Version ${n} of "${short_id}"`) }),
           })
         }
         let rows = await ctx.meta.getVersionData(a.id, n, data)
@@ -479,9 +510,12 @@ export function registerReadTool(tc: ToolContext): void {
         if (!row) {
           const all = await ctx.meta.getVersionData(a.id, n)
           return err(
-            all.length
-              ? `No facts "${data}" in "${short_id}" v${n} — facts: ${all.map((r) => r.slot).join(", ")}. Pass data:"*" to list them.`
-              : `"${short_id}" v${n} carries no facts — embed a derive-data block to add one.`,
+            absenceNote(
+              data,
+              v,
+              `"${short_id}" v${n}`,
+              all.map((r) => r.slot),
+            ),
           )
         }
         // The consumption instrument: the meter counts EMISSION, and adoption is

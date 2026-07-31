@@ -1,6 +1,7 @@
 import {
   artifactUrl,
   assertedOnly,
+  bundleFactsAdvisory,
   EditError,
   heavyAssetsAdvisory,
   looksLikeHtmlDocument,
@@ -842,7 +843,12 @@ export function registerPublishTool(tc: ToolContext): void {
                 ]
                   .map((advisory) => ` ${advisory}`)
                   .join("")
-              : ""),
+              : // A bundle gets no publishAdvisories (they read one document), but a facts
+                // block inside one of its pages is dropped SILENTLY — say so.
+                ((files ? bundleFactsAdvisory(files as Record<string, string>) : null)?.replace(
+                  /^/,
+                  " ",
+                ) ?? "")),
         }
         // PUBLISH → SEE IT, in one call. Without `render` this is exactly the old
         // response. With it, wait for the shot and hand it back here, because the
