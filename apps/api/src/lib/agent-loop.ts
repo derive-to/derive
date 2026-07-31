@@ -100,6 +100,20 @@ export interface AgentLoopInput {
     system: string
     messages: ModelMessage[]
     tools: LoopTool[]
+    /** Assistant text as it arrives, so a caller can show a reply being written instead of
+     *  waiting for the whole thing.
+     *
+     *  OPTIONAL AND ADDITIVE ON PURPOSE. Streaming could have been a second return type, but
+     *  `callModel` is implemented by two adapters and consumed by the loop, turn-core,
+     *  session-turn and the substrate loop — plus every test that injects a fake. A callback on
+     *  the INPUT leaves all of them untouched: an adapter that ignores it behaves exactly as
+     *  before, and `ModelTurn` stays the single source of truth for the final text, tool calls,
+     *  truncation and cost. Nothing downstream reads deltas to make a decision.
+     *
+     *  Deltas are BEST EFFORT and non-authoritative: they may be coalesced, and an adapter or
+     *  provider without streaming simply never calls this. NEVER accumulate them into the answer
+     *  you persist — use the returned `ModelTurn.text`, which is always the complete reply. */
+    onDelta?: (text: string) => void
   }) => Promise<ModelTurn>
   /** Execute one tool server-side. Errors are RETURNED as text, never thrown — a failing tool
    *  is information the model should react to, not a reason to lose the whole run. */

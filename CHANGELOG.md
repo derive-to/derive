@@ -6,7 +6,30 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 
 ## [Unreleased]
 
+### Added
+- **Chat replies arrive as they are written.** An attended turn used to be a spinner
+  until the whole answer landed, which on a long reply is twenty seconds of nothing.
+  The model's text now streams to the asker as a `session.delta` event on their own
+  `u:<id>` channel, rendered into the same bubble the settled message lands in, so
+  there is no jump when the transcript takes over. Deltas are a **view, never the
+  record**: nothing is persisted until the turn settles, so a client that misses them
+  loses the animation and nothing else. The `<revision>` block the reply contract asks
+  for is cut from the stream — it is machinery rather than an answer, and the settled
+  message strips it too. Slices are coalesced (a publish per 200 characters or 250ms,
+  not one per token, because each is a Durable Object fetch), and a turn nobody is
+  watching goes quiet after three of them reach an empty room — which is most turns,
+  since an MCP ask or an API caller has no browser at all. Needs a gateway that serves
+  SSE chat-completions; one that refuses is retried buffered, so streaming can never
+  break a request that worked before.
+
 ### Changed
+- **An attended turn now announces its own end.** `serveAttended` answers in-process,
+  so it never went through the runner report path that publishes `session.settled` —
+  a watching client learned the answer had landed only on its next poll. It now wakes
+  the asker, and both the chat rail and the context console read the transcript on that
+  event instead of waiting out the interval. With a live stream the rail's poll drops
+  from 900ms to 5s, where it is the safety net for a dropped stream rather than the way
+  the answer arrives.
 - **Inline editing, second pass — the mode is legible and can't lose your work.**
   Entering edit mode used to be pixel-identical to reading: nothing on screen said
   the page had changed state, and you had to click something to discover what

@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
+import { applyDelta, type DeltaState, EMPTY_DELTA } from "@/lib/session-delta"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -547,21 +548,20 @@ function SessionThread({
   // Where the poll IS running (`open`) it stays on as the fallback for a missed event or a
   // dropped stream: this shortens the common case, it does not replace the safety net.
   //
-  // SCOPE: this is the CONTEXT CONSOLE only. The chat rail on an artifact is a separate
-  // surface — `use-artifact-chat.ts`, plain fetch into local state, polled from
-  // artifact-chat.tsx on its own 900ms interval, and it never touches sessionQuery. It has
-  // no `working` hole (its gate is already `working || open`), so it does not have the bug
-  // fixed here, but it also gets none of this push. Wiring it up is its own change.
+  // SCOPE: this file is the CONTEXT CONSOLE. The chat rail on an artifact is a separate
+  // surface — `use-artifact-chat.ts`, plain fetch into local state, on its own poll — and it
+  // subscribes to these same events itself. The two implement one contract in two places;
+  // keep them in step.
   //
   // WHICH TURNS ACTUALLY PUSH (verified on the PR preview, not inferred): only a turn that
   // goes through the runner report path or a close/fail — contexts.ts calls settleWake /
   // progressWake there and nowhere else. `serveAttended`, which serves an Ask answered
   // in-process by the model, settles the session WITHOUT publishing anything, so on that
-  // path these subscriptions sit idle and the poll does all the work. This is therefore a
-  // win for AGENT-RUN contexts (a real runner answering, long runs emitting progress, and
-  // the `working` stall above) and a no-op for an attended Ask. Making attended turns push
-  // means publishing from serveAttended; that is a server change, deliberately not made
-  // here.
+  // path these subscriptions sat idle and the poll did all the work.
+  //
+  // THAT GAP IS NOW CLOSED: serveAttended publishes `session.settled` when it finishes, and
+  // streams the answer as `session.delta` on the way (see routes/contexts.ts). So both kinds
+  // of turn — a real runner reporting, and an Ask answered in-process — push here.
   const visible = usePageVisible()
   const pushRefresh = (e: MessageEvent) => {
     let payload: { session_id?: string }
@@ -576,6 +576,29 @@ function SessionThread({
   const pushEnabled = !!me && visible && unsettled
   useUserEvent("session.settled", pushRefresh, pushEnabled)
   useUserEvent("session.progress", pushRefresh, pushEnabled)
+
+  // The answer as it is being written. Same contract as the artifact chat rail: a VIEW only,
+  // never persisted, replaced by the transcript row the moment the turn settles. Anything not
+  // strictly newer than the last slice is dropped, so a reconnect redelivering one is a no-op.
+  // The accumulation rules are shared with the artifact chat rail (lib/session-delta.ts) so the
+  // two surfaces cannot drift — they did once, and only one of them was right.
+  const [delta, setDelta] = useState<DeltaState>(EMPTY_DELTA)
+  const streaming = delta.text
+  useUserEvent(
+    "session.delta",
+    (e) => setDelta((s) => applyDelta(s, e.data, sessionId)),
+    pushEnabled,
+  )
+  // Drop the provisional text once the persisted reply is in the transcript, so the two are
+  // never on screen together. Keyed on the message COUNT: a settling turn appends the agent's
+  // row, which is exactly the moment the streamed copy stops being the freshest thing here.
+  const agentCount = (data?.messages ?? []).filter((m) => m.author_kind === "agent").length
+  // agentCount is the CHANGE SIGNAL to clear on, not a value the body reads — the same shape
+  // as the reset effects elsewhere in this file, and the rule cannot see the difference.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset trigger, see above
+  useEffect(() => {
+    setDelta(EMPTY_DELTA)
+  }, [agentCount])
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
   // hooks run unconditionally (a hook can't sit below an early return).
   const post = useApiMutation({
@@ -630,7 +653,23 @@ function SessionThread({
         {messages.map((m) => (
           <MessageRow key={m.id} m={m} contextName={contextName} />
         ))}
-        {session.state === "open" && (
+        {/* The answer mid-write. Plain text with preserved whitespace, not the markdown the
+            settled row renders: a half-arrived reply is half-arrived markup too, and running
+            each slice through the renderer makes it visibly thrash as it completes. */}
+        {streaming && (
+          <div className="flex flex-col gap-1 px-1" data-testid="console-streaming">
+            <span className="text-2xs uppercase tracking-wide text-muted-foreground">
+              {contextName}
+            </span>
+            <p className="whitespace-pre-wrap text-sm text-foreground">
+              {streaming}
+              <span className="ml-0.5 inline-block h-3.5 w-px translate-y-0.5 animate-pulse bg-foreground/70" />
+            </p>
+          </div>
+        )}
+        {/* The spinner is what you show when there is NOTHING yet. Once text is arriving it
+            would read as a second, stalled turn sitting under a reply that is visibly moving. */}
+        {session.state === "open" && !streaming && (
           <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
             <Spinner size="sm" tone="current" data-testid="console-waiting" />
             Thinking — the runner picks this up on its next poll.

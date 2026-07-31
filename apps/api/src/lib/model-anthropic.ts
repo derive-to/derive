@@ -115,6 +115,12 @@ const authHeaders = (c: AnthropicCredential): Record<string, string> =>
 export const anthropicModel = (opts: AnthropicOptions): AgentLoopInput["callModel"] => {
   const doFetch = opts.fetchImpl ?? fetch
   const model = opts.model ?? DEFAULT_ANTHROPIC_MODEL
+  // NO STREAMING HERE, deliberately. `onDelta` is part of the callModel contract and this adapter
+  // simply never calls it, which the contract explicitly allows — the caller then sees a reply
+  // that arrives whole, exactly as before streaming existed. Wiring it up is a separate job (the
+  // Messages API's SSE shape is a different reassembly from chat-completions'), and it buys
+  // nothing today: the lanes this adapter serves — the payer chain and unattended runs — have no
+  // watcher to stream to. Attended chat runs on the gateway adapter (see node.ts / worker.ts).
   return async ({ system, messages, tools }): Promise<ModelTurn> => {
     const res = await doFetch(API, {
       method: "POST",
