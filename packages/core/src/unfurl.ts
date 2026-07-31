@@ -25,9 +25,9 @@ export interface UnfurlInfo {
   oembedUrl: string
   /** Absolute embeddable-view URL (`/v1/embed/:ref`). */
   embedUrl: string
-  /** A card-sized summary of this version's data slots (`pass 48 · fail 0`), when it
+  /** A card-sized summary of this version's facts (`pass 48 · fail 0`), when it
    *  carries any. Leads the description: the numbers are what a reader scanning a shared
-   *  link actually wants, and showing them is what rewards publishing a slot at all. */
+   *  link actually wants, and showing them is what rewards publishing a fact at all. */
   dataSummary?: string | null
 }
 
@@ -36,9 +36,9 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`
 /**
  * One-line human description: "HTML · 3 versions · 2 comments · on Derive".
  *
- * When the version carries data slots, their summary LEADS: "pass 48 · fail 0 · HTML · 14
+ * When the version carries facts, their summary LEADS: "pass 48 · fail 0 · HTML · 14
  * versions · on Derive". A shared link that shows its own numbers is the whole incentive
- * for emitting a slot, and it costs one line here.
+ * for emitting a fact, and it costs one line here.
  */
 export const unfurlDescription = (i: {
   kindLabel: string

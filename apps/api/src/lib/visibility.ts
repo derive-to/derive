@@ -5,7 +5,7 @@
 // actual reach before returning a single row.
 //
 // It lives here, alone, because the second copy is how these drift: a fix applied to
-// search that never reaches the slot reader is indistinguishable from no fix at all.
+// search that never reaches the fact reader is indistinguishable from no fix at all.
 
 import type { ArtifactRecord, MetaStore } from "@derive/core"
 
@@ -25,7 +25,7 @@ export interface VisibilityOpts {
  * Narrow a set of candidate artifact ids to the ones this caller may actually read.
  *
  * Re-resolves every candidate through `listArtifacts` with the caller's own
- * orgId/viewerId/publicOnly, PLUS `excludeRemoved` (the search index and the slot tables
+ * orgId/viewerId/publicOnly, PLUS `excludeRemoved` (the search index and the fact tables
  * both outlive a takedown, and listArtifacts keeps tombstones for the feed, so a caller
  * that skipped this would make a moderated artifact readable again). An id survives only
  * if that call returns it, so an oracle with no access knowledge can never widen what a

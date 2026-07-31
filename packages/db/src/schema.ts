@@ -1015,11 +1015,11 @@ export const asset = sqliteTable(
   (t) => [index("asset_org").on(t.org_id)],
 )
 
-// A structured data slot extracted from a version's source (see @derive/core data-slots):
+// A structured facts extracted from a version's source (see @derive/core data-facts):
 // a small named JSON payload the authoring agent can query back across versions without
 // re-parsing its own old markup. Natural key (artifact_id, n, slot); rows are written once
 // when a version goes live and never mutated. `gen` marks which extraction rules produced
-// the row (its DEFAULT must equal @derive/core SLOT_GEN) so a grammar change can re-extract
+// the row (its DEFAULT must equal @derive/core FACT_GEN) so a grammar change can re-extract
 // older versions lazily — the generation lever the derived-view cache uses.
 export const versionData = sqliteTable(
   "version_data",

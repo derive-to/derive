@@ -1,7 +1,7 @@
-# Data slots: the read contract
+# Facts: the read contract
 
 **Status: draft, prototype.** Nothing here is published as a standard yet, and it should not
-be until somebody outside the team emits a slot. Publishing a spec for a format nothing
+be until somebody outside the team emits a fact. Publishing a spec for a format nothing
 emits is precisely how CSVW and the W3C Web Annotation model died, and both were better
 specified than the things that beat them.
 
@@ -22,7 +22,7 @@ independent implementer will get it wrong there.
 ## 1. The model
 
 A **record** has an ordered, immutable series of **versions**. Each version is a document.
-A version may carry named **slots**: JSON values, addressed by `(record, version, slot)`.
+A version may carry named **facts**: JSON values, addressed by `(record, version, name)`.
 
 The version IS the time axis. There is no separate timestamp dimension to design, and no
 write path other than publishing a version. That constraint is load-bearing: it is why this
@@ -36,15 +36,15 @@ Data lives inside the document, in a block the page carries anyway.
 HTML — an inert script block, invisible in every browser:
 
 ```html
-<script type="application/derive-data" data-slot="checks">
+<script type="application/derive-facts" data-fact="checks">
 {"pass": 44, "fail": 0}
 </script>
 ```
 
-Markdown — a fence whose info string names the slot:
+Markdown — a fence whose info string names the fact:
 
 ````markdown
-```derive-data checks
+```derive-facts checks
 {"pass": 44, "fail": 0}
 ```
 ````
@@ -53,12 +53,25 @@ Rules, all of which degrade to advisories and **never** block a write:
 
 | Thing | Rule |
 | --- | --- |
-| Slot name | `[a-z0-9][a-z0-9-]{0,63}`, lowercase, never silently normalized |
+| Fact name | `[a-z0-9][a-z0-9-]{0,63}`, lowercase, never silently normalized |
 | Body | valid JSON of any shape |
-| Size | 32 KiB per slot, counted in **bytes**, not characters |
-| Count | 20 slots per version; extras dropped, named in the advisory |
+| Size | 32 KiB per fact, counted in **bytes**, not characters |
+| Count | 20 facts per version; extras dropped, named in the advisory |
 | Duplicate name | first occurrence wins |
 | Carrier | single-file HTML or Markdown |
+
+**Older spellings MUST keep parsing.** This shipped as `application/derive-data` /
+`data-slot` before the name settled, and a version is immutable: documents already
+published carry the old bytes and nothing may rewrite them. An implementation accepts both
+forever — it costs one membership test — and teaches only the current spelling to new
+writers. Dropping the old form would silently empty the history of anything published
+early, which is §3.2's prohibition on fabricated gaps arriving from the other direction.
+
+(The rename itself is worth one line of rationale, since a spec that changes a name owes
+the reason: `data-slot` already means *a named placeholder that content is injected into*
+in Web Components, Vue and Svelte — the exact inverse of a block that IS content. It also
+collided inside the reference host's own repo, where the UI kit puts `data-slot` on every
+card and dialog.)
 
 **The `</script>` hazard is normative, not incidental.** HTML ends a script block at the
 first close tag, whatever a JSON string wanted, and a browser does the same. An
@@ -79,7 +92,7 @@ grammar, and test against `</script >` specifically.
 `(record, slot)` on the current version; `(record, version, slot)` to pin one.
 
 ### 3.2 A series
-`(record, slot, version-range)` returns one point per version **that carries the slot**,
+`(record, slot, version-range)` returns one point per version **that carries the fact**,
 oldest first.
 
 > **A version carrying no value is ABSENT. It is never a null, a zero, or a gap filled in.**
@@ -101,7 +114,7 @@ whole surface quietly untrustworthy rather than visibly broken.
 
 ### 3.4 Partial reads of one version
 
-Structured slots are not the only read this layer owes. A version is often too large to
+Structured facts are not the only read this layer owes. A version is often too large to
 hand to an agent whole, so the same addressing story extends INTO a document: an
 **outline** (headings, or landmark regions for a headless page), a **named section**, a
 **line window**. A reader should be able to spend tokens proportional to the part it
@@ -113,7 +126,7 @@ Three rules, same spirit as the rest:
   derived from the source and is never more readable than it.
 - **Derived views are recomputable, so they may be cached content-addressed** — keyed by
   the source hash plus a generation number, and the generation MUST be bumped on any
-  change to the deriving code, or stale views serve forever. (Slots are NOT this: they are
+  change to the deriving code, or stale views serve forever. (Facts are NOT this: they are
   canonical rows that must survive any eviction. Different lifecycle, different store.)
 - **Measure before caching.** The cost of recomputing a derived view is an empirical
   number, not an intuition; this host ships a per-read timing probe and gates its own
@@ -131,7 +144,7 @@ and MUST do so before returning **or counting** anything.
 > **Aggregates disclose. Gate first, then count.**
 
 A count computed over records the caller cannot see reveals their existence as surely as
-naming them. `slots: 7` when the caller may read six is a leak.
+naming them. `facts: 7` when the caller may read six is a leak.
 
 > **Never report what was filtered.**
 
@@ -261,14 +274,14 @@ both one-line fixes; a bare `TypeError: Failed to fetch` is an afternoon.
 
 ## 7. Adoption
 
-Extraction happens at write time, so a slot added to a record with existing versions would
+Extraction happens at write time, so a fact added to a record with existing versions would
 start its series that day and silently lose everything before it. A host SHOULD, on a
 slot's first appearance, walk back through earlier versions and extract it from documents
 that already carried the block. Bound the walk, and say when the bound stopped it.
 
 **And the harder half.** None of the above matters if nothing emits. Every dead convention
 in this space had good querying; what they lacked was a consumer that *rewarded* publishing
-at the moment of publishing. A host SHOULD make emitting a slot pay immediately and
+at the moment of publishing. A host SHOULD make emitting a fact pay immediately and
 visibly: the share card carrying the record's own numbers, the review diff showing them
 move, the write acknowledging what it stored. That is a claim this project is currently
 testing, not a settled result.

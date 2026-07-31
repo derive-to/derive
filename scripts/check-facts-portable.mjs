@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @derive/data-slots is the piece meant to be READ AND REIMPLEMENTED by other hosts, so its
+// @derive/facts is the piece meant to be READ AND REIMPLEMENTED by other hosts, so its
 // portability is a load-bearing property rather than a nice one: the moment it imports
 // anything, the thing we are proposing as a convention stops being copyable without
 // bringing this repo along.
@@ -15,7 +15,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 
-const PKG = "packages/data-slots"
+const PKG = "packages/facts"
 const SRC = join(PKG, "src")
 
 const walk = (dir) => {
@@ -52,14 +52,14 @@ for (const dep of Object.keys(manifest.dependencies ?? {}))
 // A guard that passes because it looked in the wrong place is a claim, not a check.
 if (checked === 0) {
   console.error(
-    `check-data-slots-portable: found NO source under ${SRC} — the package moved or the ` +
+    `check-facts-portable: found NO source under ${SRC} — the package moved or the ` +
       "path is stale, so this guard is asserting nothing.",
   )
   process.exit(1)
 }
 
 if (failures.length) {
-  console.error("check-data-slots-portable: @derive/data-slots is no longer portable\n")
+  console.error("check-facts-portable: @derive/facts is no longer portable\n")
   for (const f of failures) console.error(`  ✖ ${f}`)
   console.error(
     "\nThis package is the part meant to be reimplemented by other hosts (see its SPEC.md), " +
@@ -69,4 +69,4 @@ if (failures.length) {
   process.exit(1)
 }
 
-console.log(`check-data-slots-portable: ok — ${checked} file(s), zero imports, zero runtime deps`)
+console.log(`check-facts-portable: ok — ${checked} file(s), zero imports, zero runtime deps`)

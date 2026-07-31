@@ -13,7 +13,7 @@
     "packages/core": {
       "entry": ["src/anchor-client.ts"]
     },
-    "packages/data-slots": {
+    "packages/facts": {
       "ignore": ["examples/**"]
     },
     "packages/db": {

@@ -116,7 +116,7 @@ import {
   mergeRunMeta,
   parseRunMeta,
   runCounter,
-  WORKSPACE_SLOT_ROW_CAP,
+  WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
 import {
   and,
@@ -514,7 +514,7 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(versionData.n))
       .limit(limit)
   }
-  async listWorkspaceSlots(orgId: string, opts?: { limit?: number }) {
+  async listWorkspaceFacts(orgId: string, opts?: { limit?: number }) {
     // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
     // the caller, AFTER the visibility gate — see the port doc for why not here.
     return this.db
@@ -530,9 +530,9 @@ export class PgMetaStore implements MetaStore {
       )
       .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
       .orderBy(asc(versionData.slot))
-      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
+      .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
   }
-  async listSlotAcrossArtifacts(
+  async listFactAcrossArtifacts(
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },

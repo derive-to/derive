@@ -1,4 +1,4 @@
-import { diffLines, formatDiff, slotDeltas, toMarkdown } from "@derive/core"
+import { diffLines, factDeltas, formatDiff, toMarkdown } from "@derive/core"
 import { z } from "zod"
 import { clip } from "../lib/clip"
 import type { ToolContext } from "../mcp-tool-context"
@@ -221,7 +221,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
       // figures the page is about.
       const slotChanges =
         since < to
-          ? slotDeltas(
+          ? factDeltas(
               await ctx.meta.getVersionData(a.id, since).catch(() => []),
               await ctx.meta.getVersionData(a.id, to).catch(() => []),
             )

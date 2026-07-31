@@ -1,5 +1,5 @@
 {
-  "name": "@derive/data-slots",
+  "name": "@derive/facts",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/derive-to/derive.git",
-    "directory": "packages/data-slots"
+    "directory": "packages/data-facts"
   },
   "exports": {
     ".": "./src/index.ts"

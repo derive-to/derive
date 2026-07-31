@@ -3,6 +3,7 @@ import {
   artifactUrl,
   candidateShortIds,
   escapeHtml,
+  factSummary,
   injectHead,
   kindLabel,
   normalizeUsername,
@@ -14,7 +15,6 @@ import {
   profileMetaTags,
   profileSummary,
   refFor,
-  slotSummary,
   type UnfurlInfo,
   unfurlMetaTags,
 } from "@derive/core"
@@ -46,11 +46,11 @@ export const embedRoutes = (ctx: AppContext) => {
   // Everything an unfurl/embed surface needs for one artifact, plus the absolute
   // URLs of the sibling endpoints. Counts come from the live version + comment list.
   const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
-    const [versions, comments, version, slots] = await Promise.all([
+    const [versions, comments, version, facts] = await Promise.all([
       meta.listVersions(artifact.id),
       meta.listComments(artifact.id),
       meta.getVersion(artifact.id, artifact.current_version),
-      // Best-effort: a share card must never fail to render because a slot read hiccuped.
+      // Best-effort: a share card must never fail to render because a fact read hiccuped.
       meta.getVersionData(artifact.id, artifact.current_version).catch(() => []),
     ])
     const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
@@ -59,8 +59,8 @@ export const embedRoutes = (ctx: AppContext) => {
       kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
       versionCount: versions.length,
       commentCount: comments.length,
-      // The reward for publishing a slot: the shared link carries its own numbers.
-      dataSummary: slotSummary(slots),
+      // The reward for publishing a fact: the shared link carries its own numbers.
+      dataSummary: factSummary(facts),
       pageUrl: artifactUrl(baseUrl, artifact),
       imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
       oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
