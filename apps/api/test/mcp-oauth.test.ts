@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { afterAll, describe, expect, it } from "vitest"
 import { readCredential } from "../src/lib/mcp-oauth"
+import { requestedScope } from "../src/routes/mcp-oauth"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // Connecting an MCP server by SIGNING IN.
@@ -167,6 +168,24 @@ describe("connecting an MCP server by signing in", () => {
       expect(stored.cred.refresh_token).toBe("rt_1")
       expect(stored.cred.expires_at).toBeGreaterThan(Date.now())
     }
+  })
+
+  it("asks for the narrowest scopes the server offers, never everything", async () => {
+    // Caught on a real consent screen: Linear advertises `read write openid email`, and asking
+    // for all of it made "Derive is requesting access" say Read, WRITE, Identity, Email — for a
+    // feature whose own description is "your agents can read from it".
+    expect(requestedScope(["read", "write", "openid", "email"])).toBe("read openid email")
+    expect(requestedScope(["org:read", "project:write", "team:write", "event:write"])).toBe(
+      "org:read",
+    )
+    // A single opaque scope is not a privilege claim we can second-guess — Stripe's is just "mcp".
+    expect(requestedScope(["mcp"])).toBe("mcp")
+    expect(requestedScope(["default"])).toBe("default")
+    // Nothing recognisably narrow, and nothing advertised at all, both defer to the server's own
+    // default rather than inventing a request.
+    expect(requestedScope(["write"])).toBeUndefined()
+    expect(requestedScope([])).toBeUndefined()
+    expect(requestedScope(undefined)).toBeUndefined()
   })
 
   it("someone else cannot finish a flow you started, even holding the link", async () => {

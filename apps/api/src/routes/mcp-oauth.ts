@@ -41,6 +41,32 @@ const STATE_DOMAIN = "derive-mcp-oauth-state:"
 /** Long enough to read a consent screen and sign in; short enough that a leaked URL goes stale. */
 const STATE_TTL_MS = 15 * 60_000
 
+/**
+ * Which scopes to ask a server for.
+ *
+ * Asking for everything it advertises is the obvious implementation and the wrong one. Linear
+ * advertises `read write openid email`, so the consent screen read "Access: Read, Write, Identity,
+ * Email address" for a feature whose own description is "your agents can read from it" and whose
+ * token field says "paste the narrowest token the server will accept". Over-asking is what makes a
+ * careful person press Cancel, and they would be right to.
+ *
+ * Scope names are vendor-specific, so this is a HEURISTIC, not a taxonomy: drop the ones that
+ * plainly grant more than reading, keep the rest. If that leaves nothing recognisable, ask for
+ * nothing and let the authorization server apply its own default, which is what the MCP
+ * authorization spec says to do when a client cannot know the right scopes.
+ *
+ * Deliberately conservative in the direction of asking for LESS. A missing scope surfaces
+ * immediately and loudly — the callback re-lists the tools and a server that will not answer
+ * leaves the connection pending with its own words on screen — whereas an over-broad grant is
+ * silent, permanent until revoked, and ours to have caused.
+ */
+const ELEVATED = /write|admin|delete|manage|create|update|billing|payment/i
+
+export const requestedScope = (supported: string[] | undefined): string | undefined => {
+  const narrow = (supported ?? []).filter((s) => !ELEVATED.test(s))
+  return narrow.length ? narrow.join(" ") : undefined
+}
+
 /** Where the provider sends the person back. One route for every server. */
 export const callbackUri = (baseUrl: string): string =>
   new URL("/v1/connections/oauth/callback", baseUrl).toString()
@@ -151,11 +177,12 @@ export const mcpOauthRoutes = (ctx: AppContext) => {
           "that server needs a pre-registered client, which this deployment has not configured",
         )
 
+      const scope = requestedScope(md.scopes_supported)
       const { authorizationUrl, codeVerifier } = await startAuthorization(authServer, {
         metadata: md,
         clientInformation: client,
         redirectUrl: redirectUri,
-        ...(md.scopes_supported?.length ? { scope: md.scopes_supported.join(" ") } : {}),
+        ...(scope ? { scope } : {}),
         resource: new URL(serverUrl),
       })
 
@@ -259,7 +286,12 @@ export const mcpOauthRoutes = (ctx: AppContext) => {
         scopes_label: "signed in",
       })
       // Back to where they started, not to a JSON body: this is a browser navigation.
-      return c.redirect(new URL("/settings?tab=sources&connected=1", deps.baseUrl).toString(), 302)
+      //
+      // `/settings/sources`, not `/settings?tab=sources`. Settings sections are PATH segments
+      // (routes/settings.$section.tsx); the query form is not a route, so it fell through to
+      // /settings/profile — meaning every completed sign-in landed on the wrong page and the
+      // person never saw whether it had worked. Caught by clicking through it, not by a test.
+      return c.redirect(new URL("/settings/sources?connected=1", deps.baseUrl).toString(), 302)
     } catch (e) {
       return fail(c, 400, `could not complete authorization: ${(e as Error).message}`.slice(0, 200))
     }
