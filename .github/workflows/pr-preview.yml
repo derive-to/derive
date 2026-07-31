@@ -27,8 +27,16 @@ name: PR preview
 # deliberate: a preview you cannot sign into, or that shows an empty library, cannot tell you
 # whether a change is right. It is also why this never runs for a fork — see the `if` below.
 # What it does NOT share is anything that would let it act as production: no routes, no cron,
-# no queue consumer (scripts/preview-config.mjs enforces all three and fails the build if any
-# survives).
+# no queue consumer, no OG renderer, no vanity-subdomain base (scripts/preview-config.mjs
+# enforces each one and fails the build if any survives).
+#
+# A PREVIEW SERVES ARTIFACT HTML ON ITS OWN ORIGIN. DERIVE_SANDBOX_URL is unset here, because
+# inheriting it made the preview's /raw/* — including the injected iframe client — answered by
+# PRODUCTION, which silently hid every frame-side change from the preview built to show it.
+# The iframe sandbox and the CSP sandbox header still keep artifact HTML out of cookies and
+# storage. What is given up is the visible domain separation between untrusted HTML and the
+# login form: on a preview they share a hostname. The preview URL is public and
+# unauthenticated, so do not enter credentials on a preview host you reached from a link.
 
 on:
   pull_request:
@@ -152,8 +160,13 @@ jobs:
             const body = `${marker}\n### Preview\n\n${url}\n\n` +
               `Deployed from \`${context.sha.slice(0, 7)}\` as \`${process.env.PREVIEW_NAME}\`.\n\n` +
               `It shares **production's database** — sign in with your real account, and treat ` +
-              `anything you change here as changed for real. It has no routes, no cron and no ` +
-              `queue consumer, so it cannot serve derive.to or run scheduled work.`
+              `anything you change here as changed for real. It has no routes, no cron, no ` +
+              `queue consumer and no OG renderer, so it cannot serve derive.to, run scheduled ` +
+              `work, or write images onto real artifacts.\n\n` +
+              `Unlike production it serves artifact HTML on **its own origin** (that is what ` +
+              `makes frame-side changes visible here). Storage is still sandboxed away, but ` +
+              `untrusted HTML and the sign-in form share a hostname — treat this URL as you ` +
+              `would any link: don't type a password into it because a page asked you to.`
             const { data: comments } = await github.rest.issues.listComments({
               ...context.repo, issue_number: context.issue.number,
             })

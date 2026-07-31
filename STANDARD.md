@@ -46,6 +46,7 @@ compatible client. Messages are tagged with a `source` field.
 | `esc` | — | Escape pressed while focus was inside the frame; the host applies its own dismissals (e.g. exiting focus mode) |
 | `edit-state` | `{ dirty }` | inline edit mode: how many blocks currently differ from the pre-edit snapshot |
 | `edit-edits` | `{ edits: [{ quote: { exact, prefix, suffix }, new_text }], dirty, nonce }` | reply to `edit-collect`: each changed text run as a quote-scoped edit, built from the PRE-edit document text. `dirty` is the changed-block count at collect time (the host refuses to treat empty edits over dirty blocks as a clean save); `nonce` echoes the request's, so a late reply can't resolve a newer collect |
+| `edit-save` | — | ⌘S / ⌘Enter pressed inside the frame (the host's own window listener cannot see keys typed in the iframe); the host saves if there are pending edits |
 | `edit-blocked` | `{ reason }` | a click landed where inline editing can't reach (`"control"` = a form control/media, `"dynamic"` = content the page's own script created after the snapshot) |
 
 ### Host → artifact frame (`source: "derive-host"`)
@@ -54,7 +55,7 @@ compatible client. Messages are tagged with a `source` field.
 |---|---|---|
 | `anchors` | `{ anchors: [{ id, exact, prefix, suffix }] }` | paint these anchors as highlights; reply with `anchors-resolved` |
 | `focus-anchor` | `{ id }` | scroll to + flash that anchor |
-| `edit-mode` | `{ on }` | enter/leave inline edit mode: on entry the client snapshots the document text (quotes are built from it); a click then lands a caret in the nearest text block (`contenteditable`, plain text only — Enter blocked, paste flattened); leaving restores anything unsaved |
+| `edit-mode` | `{ on, keep? }` | enter/leave inline edit mode (`keep:true` on the way out leaves the typed text standing and only removes the editing chrome — used right after a publish, where the text on screen is what was just saved and the version swap will reload the frame): on entry the client snapshots the document text (quotes are built from it); a click then lands a caret in the nearest text block (`contenteditable`, plain text only — Enter blocked, paste flattened), and the block under the pointer is lit as an invitation; leaving restores anything unsaved unless `keep` |
 | `edit-collect` | `{ nonce }` | reply with `edit-edits` echoing `nonce`: the changed runs diffed against the snapshot, word-snapped, as quote-scoped edits |
 | `edit-restore` | — | revert every edited block to its snapshot (the Discard verb); dirty drops to 0 |
 
