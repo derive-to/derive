@@ -1,3 +1,4 @@
+import { unbound } from "./http"
 import type { BrokerToolDef, ConnectResult, ToolBroker } from "./types"
 
 /**
@@ -204,10 +205,15 @@ export class McpBroker implements ToolBroker {
    */
   readonly quiet = new Map<string, "unpinned" | "unreachable" | "pin_mismatch">()
 
+  /** Always a plain function, never the raw global — see `unbound`. */
+  private readonly fetchImpl: typeof fetch
+
   constructor(
-    private readonly fetchImpl: typeof fetch = fetch,
+    fetchImpl: typeof fetch = fetch,
     private readonly authFor: McpAuthResolver = () => undefined,
-  ) {}
+  ) {
+    this.fetchImpl = unbound(fetchImpl)
+  }
 
   /** Opaque per-credential ids, so a session key can be scoped to a credential without the
    *  credential itself ever becoming a map key (keys get logged, iterated and dumped). */

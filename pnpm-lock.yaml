@@ -11197,7 +11197,7 @@ snapshots:
 
   ini@4.1.1: {}
 
-  ink-spinner@5.0.0(ink@7.1.1(@types/react@19.2.17)(react@19.2.5))(react@19.2.5):
+  ink-spinner@5.0.0(ink@7.1.1(@types/react@19.2.17)(react@19.2.7))(react@19.2.5):
     dependencies:
       cli-spinners: 2.9.2
       ink: 7.1.1(@types/react@19.2.17)(react@19.2.5)
@@ -11546,7 +11546,7 @@ snapshots:
       sharp: 0.35.3(@types/node@25.9.3)
       undici: 7.28.0
       workerd: 1.20260611.1
-      ws: 8.21.0
+      ws: 8.21.1
       youch: 4.1.0-beta.10
     transitivePeerDependencies:
       - '@types/node'
@@ -12179,7 +12179,7 @@ snapshots:
       eslint-plugin-react-hooks: 7.1.1(eslint@10.5.0(jiti@2.7.0))
       figures: 6.1.0
       ink: 7.1.1(@types/react@19.2.17)(react@19.2.5)
-      ink-spinner: 5.0.0(ink@7.1.1(@types/react@19.2.17)(react@19.2.5))(react@19.2.5)
+      ink-spinner: 5.0.0(ink@7.1.1(@types/react@19.2.17)(react@19.2.7))(react@19.2.5)
       jiti: 2.7.0
       magicast: 0.5.3
       oxc-resolver: 11.24.2
