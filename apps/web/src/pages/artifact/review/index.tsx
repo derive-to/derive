@@ -10,6 +10,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { openPaywall } from "@/lib/paywall"
+import { paywallReasonFor } from "@/lib/query-client"
 import { useFocusTrap } from "@/lib/use-focus-trap"
 import { cn } from "@/lib/utils"
 import { ReviewBody } from "./body"
@@ -118,7 +120,12 @@ export function ReviewOverlay({
       onApplied()
       await load()
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Action failed")
+      // approveProposal is a raw api.* call, not a useApiMutation, so the global
+      // MutationCache interceptor never sees it — a billing 402 must open the paywall
+      // here, or it renders as raw inline text instead of the upgrade funnel.
+      const reason = paywallReasonFor(e)
+      if (reason) openPaywall(reason)
+      else setErr(e instanceof Error ? e.message : "Action failed")
     } finally {
       setBusy(false)
     }

@@ -30,7 +30,7 @@ export function UpgradeDialog() {
 // Split so the data queries mount only while the dialog is open.
 function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
   const { data: billing } = useQuery(billingQuery())
-  const { data: ws } = useQuery(workspaceQuery())
+  const { data: ws, isError: wsError } = useQuery(workspaceQuery())
   const [cycle, setCycle] = useState<"month" | "year">("month")
   const isAdmin = ws?.role === "owner"
   const admins = (ws?.members ?? [])
@@ -82,7 +82,10 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
             </li>
           ))}
         </ul>
-        {/* Wait for ws to load before picking the role-dependent branch, avoiding a flash of wrong text */}
+        {/* Wait for ws to load before picking the role-dependent branch, avoiding a flash of
+            wrong text — but if the query ERRORS (anonymous viewer, 401) `ws` never arrives, so
+            fall back to the ask-an-admin copy without names rather than leaving the footer
+            permanently empty. */}
         {ws ? (
           isAdmin ? (
             <div className="flex flex-col items-start gap-3">
@@ -132,11 +135,10 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
               </p>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              Ask a workspace admin to upgrade.
-              {admins.length > 0 && ` That's ${admins.join(", ")}.`}
-            </p>
+            <AskAdmin admins={admins} />
           )
+        ) : wsError ? (
+          <AskAdmin />
         ) : null}
         <Link
           to="/settings/$section"
@@ -149,5 +151,16 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
         </Link>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// The non-owner footer, shared by the loaded-workspace branch (names the admins) and the
+// query-error fallback (roster unknown, so the copy alone still tells the reader what to do).
+function AskAdmin({ admins }: { admins?: string[] }) {
+  return (
+    <p className="text-sm text-muted-foreground">
+      Ask a workspace admin to upgrade.
+      {admins && admins.length > 0 && ` That's ${admins.join(", ")}.`}
+    </p>
   )
 }

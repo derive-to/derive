@@ -39,9 +39,10 @@ const QUERY_ALLOW = new Set([
   "components/chrome/sync-chip.tsx", // ambient status indicator
   "components/billing/upgrade-dialog.tsx", // paywall dialog; billing/workspace are warm
   // elsewhere in the app by the time a paywall fires, and every read here already
-  // degrades on purpose (generic fallback copy when billing is undefined, the
-  // non-admin "ask an admin" branch when workspace is undefined) — never a spinner
-  // or blank flash, so there is no error state to add.
+  // degrades on purpose (generic fallback copy when billing is undefined). The
+  // workspace read shows a brief blank footer while the roster loads (avoids a
+  // wrong-branch flash), then the ask-an-admin fallback once it settles — with
+  // names on success, without them if the query errors — so it's never blank forever.
   "components/billing/blocked-banner.tsx", // blocking-state banner; billing read degrades by returning null
   // (no error UI needed; if query fails, the banner simply does not render)
   "components/chrome/getting-started.tsx", // ambient checklist pill; hides itself on any failure

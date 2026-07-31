@@ -175,6 +175,7 @@ export function BillingSection() {
             isAdmin={isAdmin}
             onCheckout={(tier) => checkout.mutate({ tier, interval: cycle })}
             pendingTier={(t) => checkout.isPendingFor(t)}
+            checkoutPending={checkout.isPending}
           />
           {isAdmin ? (
             billing.subscribed && <ManageBilling />
@@ -264,12 +265,16 @@ function PlanGrid({
   isAdmin,
   onCheckout,
   pendingTier,
+  checkoutPending,
 }: {
   billing: BillingInfo
   cycle: "month" | "year"
   isAdmin: boolean
   onCheckout: (tier: "team" | "business") => void
   pendingTier: (tier: string) => boolean
+  /** True while ANY tier's checkout is in flight — disables every button so a click on
+   *  Business while Team's session is still opening can't fire two Stripe sessions. */
+  checkoutPending: boolean
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
@@ -318,6 +323,7 @@ function PlanGrid({
                 variant={p.tier === "team" ? "default" : "outline"}
                 className="mt-auto"
                 loading={pendingTier(p.tier)}
+                disabled={checkoutPending}
                 onClick={() => onCheckout(p.tier as "team" | "business")}
               >
                 {`Upgrade to ${p.name}`}
