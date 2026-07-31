@@ -534,11 +534,18 @@ function SessionThread({
   }, [state, contextId, qc])
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
   // The server already publishes these on the same per-user SSE stream the notification
-  // bell uses (contexts.ts, `use()`'s report path) — react to them instead of waiting out
+  // bell uses (contexts.ts settleWake/progressWake) — react to them instead of waiting out
   // sessionQuery's poll interval, so a reply that lands between polls shows up at once
-  // instead of quantised to the next tick. The poll stays on as the fallback (a missed
-  // SSE event, a dropped connection): this only shortens the common case, it doesn't
-  // replace the safety net.
+  // instead of quantised to the next tick.
+  //
+  // Subscribed while the session is UNSETTLED, which is deliberately wider than the poll's
+  // `open`: a runner that claims a session flips it to `working`, and sessionQuery stops
+  // polling there, so a `working` transcript had nothing refreshing it at all. Those are
+  // exactly the long runs that emit `session.progress`. The push covers that gap for free —
+  // the EventSource is already open for the notification bell, so this adds no requests.
+  //
+  // Where the poll IS running (`open`) it stays on as the fallback for a missed event or a
+  // dropped stream: this shortens the common case, it does not replace the safety net.
   const visible = usePageVisible()
   const pushRefresh = (e: MessageEvent) => {
     let payload: { session_id?: string }
@@ -549,7 +556,8 @@ function SessionThread({
     }
     if (payload.session_id === sessionId) refresh()
   }
-  const pushEnabled = !!me && visible && state === "open"
+  const unsettled = state === "open" || state === "working"
+  const pushEnabled = !!me && visible && unsettled
   useUserEvent("session.settled", pushRefresh, pushEnabled)
   useUserEvent("session.progress", pushRefresh, pushEnabled)
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
