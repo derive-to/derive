@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { libraryFeedParams, scopeFor } from "./params"
-import type { LibrarySearch } from "./types"
+import { LIBRARY_SEARCH_PARAMS, type LibrarySearch } from "./types"
 
 const NONE: LibrarySearch = {}
 
@@ -55,5 +55,24 @@ describe("libraryFeedParams", () => {
   it("scopeFor stays the single mapping the routes and the body share", () => {
     expect(scopeFor("all")).toBeUndefined()
     expect(scopeFor("favorites")).toBeUndefined()
+  })
+})
+
+describe("LIBRARY_SEARCH_PARAMS", () => {
+  it("lists exactly the keys of LibrarySearch", () => {
+    // The head-start script (routes/__root.tsx) starts the DEFAULT home listing before
+    // the router exists, and decides "is this the default URL" from this list. A key
+    // added to LibrarySearch and forgotten here means the boot starts one list while the
+    // app renders another — a wasted request AND a slower page, with nothing visibly
+    // wrong. This assignment fails to compile if the two drift.
+    const everyKey: Record<keyof Required<LibrarySearch>, true> = {
+      collection: true,
+      folder: true,
+      query: true,
+      author: true,
+      tab: true,
+      sort: true,
+    }
+    expect([...LIBRARY_SEARCH_PARAMS].sort()).toEqual(Object.keys(everyKey).sort())
   })
 })

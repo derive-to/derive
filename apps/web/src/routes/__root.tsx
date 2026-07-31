@@ -27,6 +27,7 @@ import { queryClient } from "../lib/query-client"
 import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
 import { DEFAULT_SORT } from "../pages/library/sort"
+import { LIBRARY_SEARCH_PARAMS } from "../pages/library/types"
 import "@/styles/globals.css"
 
 // Resolve the theme before first paint so there's no flash: a stored light/dark
@@ -83,7 +84,9 @@ const DATA_BOOT = `(function(){try{if(localStorage.getItem(${JSON.stringify(
   CHROMELESS_PREFIX,
 )};if(e.indexOf(p)>=0||f.some(function(x){return p.indexOf(x)===0}))return;var o={};var g=function(u){o[u]=fetch(u,{credentials:"include",headers:{accept:"application/json"}})};g(${JSON.stringify(
   BOOT_START_URLS.bootstrap,
-)});if(p==="/"&&!location.search)g(${JSON.stringify(
+)});var q=new URLSearchParams(location.search);var n=${JSON.stringify(
+  LIBRARY_SEARCH_PARAMS,
+)};if(p==="/"&&!n.some(function(k){return q.has(k)}))g(${JSON.stringify(
   BOOT_START_URLS.homeList,
 )});window.__deriveBoot=o}catch(_){}})()`
 
