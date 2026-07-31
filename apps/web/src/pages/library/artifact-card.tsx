@@ -1,3 +1,4 @@
+import { useRef } from "react"
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
@@ -64,6 +65,7 @@ export function ArtifactCard({
   selectionActive?: boolean
   onSelect?: (shift: boolean) => void
 }) {
+  const titleRef = useRef<HTMLSpanElement>(null)
   const isOwner = a.my_role === "owner"
   const showTags = !!onEditTags && (a.my_role === "owner" || a.my_role === "editor")
   const showDelete = isOwner && !!onDelete
@@ -235,7 +237,20 @@ export function ArtifactCard({
         <button
           type="button"
           data-testid={`artifact-card-open-${a.short_id}`}
-          onClick={onOpen}
+          onClick={() => {
+            // Claim the shared morph name for THIS card only (duplicate names skip the
+            // whole transition), then open. Cleared lazily: the next claimant strips it.
+            for (const el of document.querySelectorAll<HTMLElement>("[data-vt-doc-title]")) {
+              el.style.viewTransitionName = ""
+              delete el.dataset.vtDocTitle
+            }
+            const t = titleRef.current
+            if (t) {
+              t.style.viewTransitionName = "doc-title"
+              t.dataset.vtDocTitle = "1"
+            }
+            onOpen()
+          }}
           onMouseEnter={onPrefetch}
           // Touch never fires mouseenter — pointerdown lands ~100ms before the click
           // completes, so a tap gets the same head start a hover gives a mouse.
@@ -245,8 +260,15 @@ export function ArtifactCard({
           className="flex w-full min-w-0 flex-col gap-0.5 text-left outline-none after:absolute after:inset-0 after:z-1 after:rounded-xl after:content-[''] focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring"
         >
           {/* The title is the work — Geist voice, sized to the caption so the preview
-              stays the hero. */}
-          <span className="truncate font-serif text-base font-medium tracking-tight text-foreground">
+              stays the hero. On open it takes the shared view-transition name JUST IN
+              TIME (names must be unique per snapshot, so only the clicked card may
+              carry it): the router's view transition then morphs this text into the
+              workbench header's title instead of cutting — the one detail that makes
+              opening a document read as a physical motion. */}
+          <span
+            ref={titleRef}
+            className="truncate font-serif text-base font-medium tracking-tight text-foreground"
+          >
             {a.title ?? a.short_id}
           </span>
           {stateLine && (

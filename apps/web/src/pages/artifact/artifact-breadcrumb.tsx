@@ -19,7 +19,11 @@ import { refFor } from "./parse-ref"
 
 // Shared title styling so the plain-title and switcher-trigger forms are pixel-identical
 // (the reframe's document header: serif, base, tight).
-const TITLE_CLASS = "truncate font-serif text-base font-medium leading-tight tracking-tight"
+// vt-doc-title (globals.css): the receiving half of the card->workbench title morph —
+// the clicked card's title claims the same view-transition name just-in-time, so
+// opening a document MOVES its title into this header instead of cutting.
+const TITLE_CLASS =
+  "vt-doc-title truncate font-serif text-base font-medium leading-tight tracking-tight"
 
 // The document-title line in the artifact header. When the artifact was opened from a
 // collection (the `?collection=` context) — or belongs to exactly one — the title
