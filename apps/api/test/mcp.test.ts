@@ -555,6 +555,45 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(after.some((r) => r.slot === "$stats")).toBe(true)
   })
 
+  it("stops serving a RETIRED deriver's rows, and collects them", async () => {
+    // Generations are per-deriver, read off the DERIVERS table. A `$name` the table no
+    // longer owns therefore has no generation, and the sentinel it gets back matches no
+    // stored row — so the orphan re-derives once, its prefix-scoped write drops it, and
+    // the read tells the truth about a name the host does not compute. Returning the
+    // column default instead would have served a retired deriver's output forever.
+    const { app, token, meta } = appWithGrant(dir, "retired", "openid derive:read derive:publish")
+    const page =
+      '<!doctype html><html><body><h1>Retired</h1><p>see <a href="/artifacts/other-doc-zz88yy77">that</a></p><h2>More</h2><p>x</p></body></html>'
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Retired", content: page })),
+    )
+    const rec = await meta.getByShortId(pub.short_id)
+    if (!rec) throw new Error("gone")
+    const live = await meta.getVersionData(rec.id, 1)
+    expect(live.map((r) => r.slot).sort()).toEqual(["$links", "$outline", "$stats"])
+    // Seed a row from a deriver that no longer exists, at the generation it shipped with.
+    await meta.setDerivedVersionData(rec.id, 1, [
+      ...live.map((r) => ({
+        id: r.id,
+        slot: r.slot,
+        json: r.json,
+        size_bytes: r.size_bytes,
+        gen: r.gen,
+      })),
+      { id: "vd_retired", slot: "$legacy", json: '{"old":true}', size_bytes: 12, gen: 1 },
+    ])
+    expect((await meta.getVersionData(rec.id, 1)).some((r) => r.slot === "$legacy")).toBe(true)
+
+    const miss = toolText(
+      await call(app, token, "read", { short_id: pub.short_id, data: "$legacy" }),
+    )
+    expect(miss).toContain("computed by the host")
+    expect(miss).not.toContain("old")
+    // The re-derivation swept the orphan and left the live rows intact.
+    const after = (await meta.getVersionData(rec.id, 1)).map((r) => r.slot).sort()
+    expect(after).toEqual(["$links", "$outline", "$stats"])
+  })
+
   it("a derived write can never delete an asserted row, whatever the interleaving", async () => {
     // The hazard this PR introduced and this test pins: lazy derivation is the SECOND
     // writer to an old version's rows, and backfillNewSlots is the first. Done as

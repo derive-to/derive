@@ -11,7 +11,6 @@
 import {
   type ArtifactRecord,
   type BlobStore,
-  DERIVED_FACT_GEN,
   deriveFacts,
   FACT_GEN,
   type MetaStore,
@@ -95,8 +94,9 @@ const extractVersionData = async (
   const { facts } = parseFacts(source, ct)
   // Derived facts ($outline/$links/$stats) ride the same pass over bytes already decoded:
   // the host's mechanical reading, in the namespace the author grammar can't reach. They
-  // are cache entries with names — recomputable, never counted, never rewarded — so their
-  // gen is the DERIVER's generation, not the extraction grammar's.
+  // are cache entries with names — recomputable, never counted, never rewarded — so each
+  // row carries ITS OWN deriver's generation, not the extraction grammar's and not a
+  // host-wide one (a shared constant would make a $stats change invalidate every $links row).
   const derived = deriveFacts(source, ct)
   const rows = [
     ...facts.map((s) => ({
@@ -111,7 +111,7 @@ const extractVersionData = async (
       slot: s.slot,
       json: s.json,
       size_bytes: s.bytes,
-      gen: DERIVED_FACT_GEN,
+      gen: s.gen,
     })),
   ]
   if (rows.length === 0) return

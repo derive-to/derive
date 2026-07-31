@@ -310,6 +310,17 @@ Rules, all normative:
   evicted, regenerated, or versioned by the generation of the deriving code; a stale or
   missing derived row is a cache miss, not data loss. Asserted rows MUST never be treated
   this way.
+- **A generation belongs to ONE deriver, not to the host.** Versioning derived output with
+  a single shared constant makes a change to any deriver invalidate every other deriver's
+  rows across the whole corpus. That is affordable for a reader that can recompute on the
+  fly and ruinous for one that cannot — a consumer reading across records is bounded away
+  from compute (§4's crawler rule), so its only remaining choices are serving stale output
+  or serving none. Each derived row therefore SHOULD carry the generation of the code that
+  produced THAT row.
+- **A `$name` the host no longer computes MUST stop being served.** A retired deriver's
+  rows are the one derived state that never self-corrects: they match nothing, nothing
+  rewrites them, and they read as current forever. A generation that no live deriver
+  claims MUST NOT compare equal to a stored row's.
 - **Derived facts MUST NOT count.** Not toward adoption metrics, not in publish
   acknowledgments, not in author-facing advisories or reward surfaces (share cards,
   review diffs). The reward channel exists to pay authors for asserting; a host that

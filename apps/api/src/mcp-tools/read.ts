@@ -1,6 +1,6 @@
 import {
   artifactUrl,
-  DERIVED_FACT_GEN,
+  derivedGen,
   deriveFacts,
   isDerivedFactName,
   landmarkSlice,
@@ -107,7 +107,7 @@ const lazyDeriveVersion = async (
     slot: s.slot,
     json: s.json,
     size_bytes: s.bytes,
-    gen: DERIVED_FACT_GEN,
+    gen: s.gen,
     created_at: v.created_at,
   }))
   ctx.background(
@@ -491,12 +491,13 @@ export function registerReadTool(tc: ToolContext): void {
         let rows = await ctx.meta.getVersionData(a.id, n, data)
         // LAZY DERIVATION — bounded to exactly here, the single-version named read. A
         // $name that is missing (version predates derivation) or stale (its gen predates
-        // the current deriver) recomputes from the version's own bytes: one blob, one
+        // THAT deriver's current generation — per-slot, so a $stats bump never re-derives
+        // the corpus's $links) recomputes from the version's own bytes: one blob, one
         // pass, value returned now, rows persisted off the response. Series reads and the
         // raw routes serve stored rows only — a 200-version series must never become 200
         // blob reads in one request, and anonymous traffic must not command compute.
         let lazyFilled = false
-        if (isDerivedFactName(data) && (!rows[0] || rows[0].gen !== DERIVED_FACT_GEN)) {
+        if (isDerivedFactName(data) && (!rows[0] || rows[0].gen !== derivedGen(data))) {
           const fresh = await lazyDeriveVersion(ctx, a.id, v, n)
           if (fresh) {
             rows = fresh.filter((r) => r.slot === data)

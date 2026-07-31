@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DERIVED_FACT_GEN, deriveFacts } from "./derived-facts"
+import { derivedGen, deriveFacts } from "./derived-facts"
 
 const byName = (source: string, ct: string) =>
   Object.fromEntries(deriveFacts(source, ct).map((f) => [f.slot, JSON.parse(f.json)]))
@@ -81,7 +81,29 @@ describe("deriveFacts", () => {
     const a = deriveFacts(page, "text/html")
     const b = deriveFacts(page, "text/html")
     expect(a).toEqual(b)
-    expect(DERIVED_FACT_GEN).toBe(1)
+  })
+
+  it("stamps each row with ITS OWN deriver's generation", () => {
+    // Generations are PER DERIVER. A host-wide constant would mean a cosmetic $stats change
+    // marks every $links row in the corpus stale, and a consumer that cannot re-derive on
+    // the fly (a corpus scan is bounded away from compute) would then have to choose between
+    // serving stale output and serving none.
+    //
+    // $links sits at 2 and the others at 1, so this DISCRIMINATES: a hardcoded stamp in
+    // deriveFacts fails it. Backed by a structural guarantee too — `gen` is a required
+    // field of a DERIVERS entry, so a new deriver cannot compile without declaring one.
+    const page = '<!doctype html><h1>A</h1><p>t</p><h2>B</h2><a href="/artifacts/x-abc12345">l</a>'
+    const rows = deriveFacts(page, "text/html")
+    expect(rows.map((f) => f.slot).sort()).toEqual(["$links", "$outline", "$stats"])
+    for (const f of rows) expect(f.gen).toBe(derivedGen(f.slot))
+  })
+
+  it("gives a $name no deriver owns a generation no stored row can match", () => {
+    // A typo or a RETIRED deriver. The sentinel matches nothing, so the read path
+    // re-derives once and its prefix-scoped write drops the orphaned row — where
+    // returning the column default (1) would serve a dead deriver's output forever.
+    expect(derivedGen("$gone")).toBe(0)
+    expect(derivedGen("$links")).toBeGreaterThan(0)
   })
 
   it("stays linear on adversarial input", () => {
@@ -105,6 +127,18 @@ describe("hostile hrefs", () => {
       deriveFacts(page, "text/html").map((f) => [f.slot, JSON.parse(f.json)]),
     )
     expect(d.$links.refs).toEqual(["abc12345", "bbbb2222"])
+  })
+
+  it("reads BOTH link forms in BOTH content types — the asymmetry lost real edges", () => {
+    // Picking hrefs OR markdown targets by content type meant a markdown doc's raw anchor
+    // and an HTML page's markdown link both recorded nothing. Both are common, and the
+    // backlink index is only as exhaustive as this function.
+    const mdWithAnchor =
+      'see <a href="/artifacts/doc-abc12345">that</a> and [x](/artifacts/d-bbbb2222)'
+    expect(byName(mdWithAnchor, "text/markdown").$links.refs).toEqual(["abc12345", "bbbb2222"])
+    const htmlWithMdLink =
+      '<p>see [that](/artifacts/doc-abc12345)</p><a href="/artifacts/d-bbbb2222">y</a>'
+    expect(byName(htmlWithMdLink, "text/html").$links.refs).toEqual(["bbbb2222", "abc12345"])
   })
 
   it("one malformed percent-encoding costs that edge, never the whole row", () => {

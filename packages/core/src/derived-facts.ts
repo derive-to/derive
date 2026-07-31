@@ -21,11 +21,22 @@ import { pageText } from "./anchor"
 import { type SectionMarker, sectionMarkers } from "./doc-text"
 import { parseRef } from "./ids"
 
-/** Bump on ANY change to a deriver's output for the same input — the same discipline as
- *  FACT_GEN (extraction grammar) and #433's dv1 (derived views), for the same reason: a
- *  stored row must say which code produced it, so stale rows re-derive lazily instead of
- *  serving an old algorithm's output forever. */
-export const DERIVED_FACT_GEN = 1
+/** Sentinel for a `$name` no deriver owns — a typo, or a deriver since removed. It matches
+ *  no stored gen, so the read path re-derives once; that write is prefix-scoped and
+ *  replaces every `$` row, which garbage-collects the dead one. A retired deriver's output
+ *  must stop being served, and 1 (the column default) would serve it forever. */
+const UNKNOWN_DERIVED_GEN = 0
+
+/** The generation of ONE deriver's output, from the table below where it sits beside the
+ *  function it governs. PER DERIVER, never per host: one shared constant means a cosmetic
+ *  change to $stats marks every $links row in the corpus stale, and a consumer that cannot
+ *  re-derive on the fly (a corpus scan is bounded away from compute) then has to choose
+ *  between serving stale output and serving none. Same discipline as FACT_GEN (extraction
+ *  grammar) and #433's dv1 (derived views), for the same reason: a stored row must say
+ *  which code produced it, so stale rows re-derive lazily instead of serving an old
+ *  algorithm's output forever. */
+export const derivedGen = (slot: string): number =>
+  DERIVERS.find((d) => d.slot === slot)?.gen ?? UNKNOWN_DERIVED_GEN
 
 /** Ceiling on outline entries: keeps the JSON far under MAX_FACT_BYTES for any real
  *  document while still covering a 200-section monster. Past it the row says so. */
@@ -35,6 +46,9 @@ export interface DerivedFact {
   slot: string
   json: string
   bytes: number
+  /** The generation of the deriver that produced THIS row, carried so every writer stamps
+   *  the row's own generation rather than reaching for a host-wide constant. */
+  gen: number
 }
 
 const byteLength = (s: string): number => new TextEncoder().encode(s).length
@@ -62,19 +76,23 @@ const deriveOutline = (markers: SectionMarker[]): unknown => {
 const HTML_HREF = /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi
 const MD_LINK = /\]\(([^)\s]+)\)/g
 
-/** Outbound references to OTHER artifacts: short ids resolved from href values (HTML) or
- *  markdown link targets — `/artifacts/<ref>` paths and derive.to absolute forms. Hrefs
- *  only, deliberately: a short id mentioned in prose is a string, not an edge. Null when
- *  the document references nothing. Transcription caveat, stated where it matters: this
- *  records that a reference EXISTS, never why — footer boilerplate and a load-bearing
- *  citation look identical here, and weighting them is the consumer's job. */
-const deriveLinks = (source: string, contentType: string): unknown => {
+/** Outbound references to OTHER artifacts: short ids resolved from href values or markdown
+ *  link targets — `/artifacts/<ref>` paths and derive.to absolute forms. LINK TARGETS only,
+ *  deliberately: a short id mentioned in prose is a string, not an edge. Null when the
+ *  document references nothing. Transcription caveat, stated where it matters: this records
+ *  that a reference EXISTS, never why — footer boilerplate and a load-bearing citation look
+ *  identical here, and weighting them is the consumer's job.
+ *
+ *  BOTH forms are scanned in BOTH content types (gen 2). Picking one by content type lost
+ *  every raw `<a href>` in a markdown doc and every `](/artifacts/…)` in an HTML page, which
+ *  are common enough in real documents to leave holes in the graph the index is built from.
+ *  There is no false-positive shape in the crossover: a markdown link inside HTML is still a
+ *  reference, and so is an anchor inside markdown. Same reasoning as the unquoted-href fix —
+ *  a false edge is visible and arguable, an absent one silently understates the graph. */
+const deriveLinks = (source: string): unknown => {
   const targets: string[] = []
-  if (contentType.includes("html")) {
-    for (const m of source.matchAll(HTML_HREF)) targets.push(m[2] ?? m[3] ?? m[4] ?? "")
-  } else {
-    for (const m of source.matchAll(MD_LINK)) targets.push(m[1] ?? "")
-  }
+  for (const m of source.matchAll(HTML_HREF)) targets.push(m[2] ?? m[3] ?? m[4] ?? "")
+  for (const m of source.matchAll(MD_LINK)) targets.push(m[1] ?? "")
   const refs: string[] = []
   for (const t of targets) {
     const m = /\/artifacts\/([^/?#\s]+)/.exec(t)
@@ -112,13 +130,17 @@ const deriveStats = (source: string, contentType: string, markers: SectionMarker
 
 // Section markers are computed ONCE and shared: two derivers need them, and this runs on
 // the hot path of every html/markdown publish.
-const DERIVERS: [
-  string,
-  (source: string, contentType: string, markers: SectionMarker[]) => unknown,
-][] = [
-  ["$outline", (_s, _ct, markers) => deriveOutline(markers)],
-  ["$links", (source, ct) => deriveLinks(source, ct)],
-  ["$stats", deriveStats],
+//
+// `gen` lives HERE, in the same line as the function it governs, so bumping it is part of
+// changing the deriver rather than a second edit somewhere else that has to be remembered.
+const DERIVERS: {
+  slot: string
+  gen: number
+  derive: (source: string, contentType: string, markers: SectionMarker[]) => unknown
+}[] = [
+  { slot: "$outline", gen: 1, derive: (_s, _ct, markers) => deriveOutline(markers) },
+  { slot: "$links", gen: 2, derive: (source) => deriveLinks(source) },
+  { slot: "$stats", gen: 1, derive: deriveStats },
 ]
 
 /**
@@ -144,7 +166,7 @@ export const assertedOnly = <T extends { slot: string }>(rows: T[]): T[] =>
 export const deriveFacts = (source: string, contentType: string): DerivedFact[] => {
   const out: DerivedFact[] = []
   const markers = sectionMarkers(source, contentType)
-  for (const [slot, derive] of DERIVERS) {
+  for (const { slot, gen, derive } of DERIVERS) {
     if (!isDerivedFactName(slot)) continue // structurally impossible; keeps the invariant loud
     let value: unknown
     try {
@@ -156,7 +178,7 @@ export const deriveFacts = (source: string, contentType: string): DerivedFact[] 
     const json = JSON.stringify(value)
     const bytes = byteLength(json)
     if (bytes > MAX_FACT_BYTES) continue
-    out.push({ slot, json, bytes })
+    out.push({ slot, json, bytes, gen })
   }
   return out
 }
