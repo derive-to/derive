@@ -1,12 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { api, type BillingInfo } from "@/api"
+import { Icon } from "@/components/icons"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { gb } from "@/lib/bytes"
 import { billingQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { PLANS } from "./billing-plans"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -48,24 +50,21 @@ const seatLine = (b: BillingInfo): string => {
   return `${b.seats} editor seat${b.seats === 1 ? "" : "s"}`
 }
 
-const storageLine = (b: BillingInfo): string => {
-  const used = gb(b.storage.used_bytes)
-  return b.storage.cap_bytes == null ? `${used} used` : `${used} used of ${gb(b.storage.cap_bytes)}`
-}
-
 // How long a just-completed checkout keeps re-polling for the webhook to land
 // before giving up — Stripe's webhook is usually instant, but this covers the
 // tail. Same idea as welcome.tsx's WATCH_INTERVAL_MS.
 const CHECKOUT_POLL_INTERVAL_MS = 2000
 const CHECKOUT_POLL_TIMEOUT_MS = 30_000
 
-// Plan truth, upgrade, and the Stripe portal handoff. Owners (isAdmin) see the
-// buttons; every member sees the plan card. Structural skeleton borrowed from
+// Plan truth, the storage meter, the tier comparison grid, and the Stripe portal
+// handoff. Every member sees the plan card and grid; only admins (isAdmin) see
+// checkout buttons and the portal link. Structural skeleton borrowed from
 // general-section.tsx (the isAdmin gate, useQuery/useApiMutation idioms).
 export function BillingSection() {
   const qc = useQueryClient()
   const { data: ws } = useQuery(workspaceQuery())
   const [showSuccessBanner, setShowSuccessBanner] = useState(false)
+  const [cycle, setCycle] = useState<"month" | "year">("month")
   // A ref, not state: refetchInterval reads it synchronously on every tick, and
   // a ref's .current is always current there without re-subscribing the query.
   const pollDeadline = useRef<number | null>(null)
@@ -101,6 +100,20 @@ export function BillingSection() {
   })
   const isAdmin = ws?.role === "owner"
 
+  // The unsubscribed path: pick a billing cycle, then a tier — each starts a
+  // Stripe Checkout session and redirects there. Lives here (not in PlanGrid) so
+  // the same `cycle` state that drives the toggle also drives the grid's prices.
+  const checkout = useApiMutation<
+    { url: string },
+    { tier: "team" | "business"; interval: "month" | "year" }
+  >({
+    mutationFn: ({ tier, interval }) => api.startCheckout(tier, interval),
+    pendingKey: (vars) => vars.tier,
+    onSuccess: ({ url }) => {
+      window.location.href = url
+    },
+  })
+
   return (
     <SettingsSection title="Billing" description="Your plan, seats, and storage.">
       {showSuccessBanner && (
@@ -133,25 +146,60 @@ export function BillingSection() {
         />
       ) : billing ? (
         <>
-          <PlanCard billing={billing} />
+          <CurrentPlanCard billing={billing} />
+          <ToggleGroup
+            type="single"
+            value={cycle}
+            onValueChange={(v) => v && setCycle(v as "month" | "year")}
+            data-testid="billing-interval-toggle"
+            className="gap-[3px] rounded-lg bg-secondary p-[3px]"
+          >
+            <ToggleGroupItem
+              value="month"
+              data-testid="billing-interval-toggle-month"
+              className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
+            >
+              Monthly
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="year"
+              data-testid="billing-interval-toggle-year"
+              className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
+            >
+              Annual
+            </ToggleGroupItem>
+          </ToggleGroup>
+          <PlanGrid
+            billing={billing}
+            cycle={cycle}
+            isAdmin={isAdmin}
+            onCheckout={(tier) => checkout.mutate({ tier, interval: cycle })}
+            pendingTier={(t) => checkout.isPendingFor(t)}
+          />
           {isAdmin ? (
-            billing.subscribed ? (
-              <ManageBilling />
-            ) : (
-              <Upgrade />
-            )
+            billing.subscribed && <ManageBilling />
           ) : (
             <p className="text-sm text-muted-foreground">
               Only a workspace Admin can change billing.
             </p>
           )}
+          <p className="text-sm text-muted-foreground">
+            Need isolation, residency, or procurement?{" "}
+            <a
+              className="underline underline-offset-2 hover:text-foreground"
+              href="mailto:hello@derive.to"
+            >
+              Talk to us
+            </a>
+            .
+          </p>
         </>
       ) : null}
     </SettingsSection>
   )
 }
 
-function PlanCard({ billing }: { billing: BillingInfo }) {
+function CurrentPlanCard({ billing }: { billing: BillingInfo }) {
   const status = statusLine(billing)
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-muted p-4 ring-1 ring-border">
@@ -159,7 +207,7 @@ function PlanCard({ billing }: { billing: BillingInfo }) {
       <div className="flex flex-col gap-0.5 text-sm text-muted-foreground">
         {status && <p>{status}</p>}
         <p>{seatLine(billing)}</p>
-        <p>{storageLine(billing)}</p>
+        <StorageMeter storage={billing.storage} tier={billing.tier} />
       </div>
       {billing.beta && (
         <p className="text-sm text-muted-foreground">
@@ -167,6 +215,117 @@ function PlanCard({ billing }: { billing: BillingInfo }) {
           grace period.
         </p>
       )}
+    </div>
+  )
+}
+
+// The one usage visual on the page: a quiet bar that turns amber at 80% so the
+// nudge lands before the 413 does. Unlimited caps (self-host) keep the plain line.
+function StorageMeter({
+  storage,
+  tier,
+}: {
+  storage: BillingInfo["storage"]
+  tier: BillingInfo["tier"]
+}) {
+  if (storage.cap_bytes == null) return <p>{gb(storage.used_bytes)} used</p>
+  const pct = Math.min(100, (storage.used_bytes / storage.cap_bytes) * 100)
+  const high = pct >= 80
+  return (
+    <div data-testid="billing-storage-meter" className="flex flex-col gap-1">
+      <p>
+        {gb(storage.used_bytes)} used of {gb(storage.cap_bytes)}
+      </p>
+      <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-secondary">
+        <div
+          className={
+            high
+              ? "h-full rounded-full bg-amber-500" /* tokens-ignore */
+              : "h-full rounded-full bg-primary"
+          }
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {high && tier === "free" && (
+        <p className="text-amber-600 dark:text-amber-500" /* tokens-ignore */>
+          Running low? Team includes 50 GB pooled storage.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// The comparison surface: the pricing page's tier cards, in-app, with live
+// current-plan context. Checkout buttons render only for admins of unsubscribed
+// workspaces; a subscribed workspace changes plans in the Stripe portal below.
+function PlanGrid({
+  billing,
+  cycle,
+  isAdmin,
+  onCheckout,
+  pendingTier,
+}: {
+  billing: BillingInfo
+  cycle: "month" | "year"
+  isAdmin: boolean
+  onCheckout: (tier: "team" | "business") => void
+  pendingTier: (tier: string) => boolean
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      {PLANS.map((p) => {
+        const current = billing.tier === p.tier
+        return (
+          <div
+            key={p.tier}
+            data-testid={`billing-plan-card-${p.tier}`}
+            className={
+              p.tier === "team"
+                ? "flex flex-col gap-3 rounded-xl bg-muted p-4 ring-2 ring-primary"
+                : "flex flex-col gap-3 rounded-xl bg-muted p-4 ring-1 ring-border"
+            }
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-base font-medium text-foreground">{p.name}</span>
+              {"badge" in p && p.badge && (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  {p.badge}
+                </span>
+              )}
+              {current && (
+                <span className="ml-auto rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  Current plan
+                </span>
+              )}
+            </div>
+            <p className="text-sm font-medium text-foreground">{p.price[cycle]}</p>
+            <p className="text-sm text-muted-foreground">{p.tagline}</p>
+            <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
+              {"everythingIn" in p && p.everythingIn && (
+                <li className="font-medium text-foreground">{p.everythingIn}</li>
+              )}
+              {p.features.map((f) => (
+                <li key={f} className="flex items-start gap-2">
+                  <Icon name="check" size={14} className="mt-0.5 shrink-0 text-primary" />
+                  <span>{f}</span>
+                </li>
+              ))}
+            </ul>
+            {isAdmin && !billing.subscribed && p.tier !== "free" && (
+              <Button
+                data-testid={`billing-upgrade-${p.tier}`}
+                size="sm"
+                variant={p.tier === "team" ? "default" : "outline"}
+                className="mt-auto"
+                loading={pendingTier(p.tier)}
+                onClick={() => onCheckout(p.tier as "team" | "business")}
+              >
+                {`Upgrade to ${p.name}`}
+              </Button>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -195,75 +354,6 @@ function ManageBilling() {
       <p className="text-sm text-muted-foreground">
         Cards, invoices, plan changes, and cancellation happen in the Stripe portal.
       </p>
-    </div>
-  )
-}
-
-// The unsubscribed path: pick a billing cycle, then a tier — each starts a Stripe
-// Checkout session and redirects there.
-function Upgrade() {
-  const [cycle, setCycle] = useState<"month" | "year">("month")
-  const checkout = useApiMutation<
-    { url: string },
-    { tier: "team" | "business"; interval: "month" | "year" }
-  >({
-    mutationFn: ({ tier, interval }) => api.startCheckout(tier, interval),
-    pendingKey: (vars) => vars.tier,
-    onSuccess: ({ url }) => {
-      window.location.href = url
-    },
-  })
-  const start = (tier: "team" | "business") => checkout.mutate({ tier, interval: cycle })
-
-  const teamPrice = cycle === "year" ? "$12 per editor, billed annually" : "$15 per editor monthly"
-  const businessPrice =
-    cycle === "year" ? "$25 per editor, billed annually" : "$30 per editor monthly"
-
-  return (
-    <div className="flex flex-col items-start gap-3">
-      <ToggleGroup
-        type="single"
-        value={cycle}
-        onValueChange={(v) => v && setCycle(v as "month" | "year")}
-        data-testid="billing-interval-toggle"
-        className="gap-[3px] rounded-lg bg-secondary p-[3px]"
-      >
-        <ToggleGroupItem
-          value="month"
-          data-testid="billing-interval-toggle-month"
-          className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-        >
-          Monthly
-        </ToggleGroupItem>
-        <ToggleGroupItem
-          value="year"
-          data-testid="billing-interval-toggle-year"
-          className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-        >
-          Annual
-        </ToggleGroupItem>
-      </ToggleGroup>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          data-testid="billing-upgrade-team"
-          size="sm"
-          loading={checkout.isPendingFor("team")}
-          disabled={checkout.isPending}
-          onClick={() => start("team")}
-        >
-          {`Upgrade to Team, ${teamPrice}`}
-        </Button>
-        <Button
-          data-testid="billing-upgrade-business"
-          variant="outline"
-          size="sm"
-          loading={checkout.isPendingFor("business")}
-          disabled={checkout.isPending}
-          onClick={() => start("business")}
-        >
-          {`Upgrade to Business, ${businessPrice}`}
-        </Button>
-      </div>
     </div>
   )
 }
