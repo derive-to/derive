@@ -7,7 +7,8 @@ Decisions locked with Connor (2026-07-30):
 - Global upgrade dialog on any billing block, PLUS a persistent, non-dismissable "publishing paused" banner while the workspace is blocked. The banner links straight to `/settings/billing` (one click from banner to the plan comparison).
 - Tier feature lists mirror the published pricing page (`apps/web/public/site/pricing.html`) exactly, including not-yet-shipped Business items (SSO, audit log, guest management, SLA). One deliberate deviation: the storage overage clause ("~$1 per extra 10 GB/month") is omitted in-app because overage metering does not exist; cards say "50 GB pooled storage" / "250 GB pooled storage" plainly.
 - Owners check out directly from the dialog (tier + interval, straight to Stripe Checkout). Non-owners see the benefits plus "Ask a workspace admin" with the actual admin names.
-- Proactive touches in scope: 4th-editor invite warning in Members, storage nudge at 80% of cap, billing-page URL in agent/MCP error copy so a blocked publish tells the agent's human exactly where to upgrade.
+- Proactive touches in scope: storage nudge at 80% of cap, billing-page URL in agent/MCP error copy so a blocked publish tells the agent's human exactly where to upgrade.
+- The 4th billable seat is BLOCKED at invite time once enforcement starts (decision 2026-07-30, superseding the earlier warn-only design): the invite returns the 402, the upgrade dialog opens, the owner can pay and re-send. During beta the invite goes through with a forward-looking note. Role promotions get the same gate (otherwise it is a trivial bypass). The publish gate + banner remain the backstop for workspaces already over the limit.
 
 ## Why now
 
@@ -45,6 +46,14 @@ Every REST `fail(c, 413, "storage quota exceeded")` gains `{ code: "storage_exce
 The MCP/REST storage-overflow message becomes: "This workspace is out of storage, so this save was refused. Upgrade for more at {baseUrl}/settings/billing." for the sites in 1b plus the storage checks in `mcp-tools/publish.ts` and `mcp-tools/checkpoint.ts`. Sync paths (`lib/sync.ts`, `lib/sync-runner.ts`) keep their current logging behavior.
 
 This satisfies Connor's ask directly: an agent attempting a publish in a blocked workspace gets told publishing is paused until the workspace upgrades, with the billing page URL in hand.
+
+### 1d. Seat gate on granting a billable role
+
+Once enforcement is active, any request that would grant a 4th billable seat to a free, unsubscribed workspace is refused with 402 `{ code: "billing_required" }` and its own message (publishing copy would be wrong here):
+
+- seat_limit: "Free covers 3 editor seats, so this workspace needs the Team plan to add more editors. An owner can upgrade at {baseUrl}/settings/billing."
+
+Gate condition: enforcement active (same `DERIVE_BILLING_ENFORCE_AT` grace as every other gate; during beta the grant proceeds), no active subscription, current billable seat count >= 3, and the granted role is billable (editor or owner). Gated paths: the direct member invite endpoint (which the workspace-creation invite fan-out also flows through; verify at plan time) and the member role-change endpoint (Viewer promoted to Creator/Admin). Subscribed workspaces are never seat-gated: `syncSeats` already bills the new seat, which is the licensed-on-grant model working as designed. Invite ACCEPTANCE stays ungated (an invite sent pre-enforcement can still be accepted; the publish gate and banner are the backstop for the resulting over-limit state).
 
 ## 2. Web: paywall interception + upgrade dialog
 
@@ -112,17 +121,23 @@ Testids: `billing-plan-card-free|team|business`, `billing-storage-meter`; existi
 
 ## 5. Members: the 4th-editor moment
 
-In `members-section.tsx`: when the workspace is on free with no subscription (`billing.tier === "free" && !billing.subscribed`), the server-computed seat count is at the limit (`billing.seats >= 3`), and the invite-role selector is set to a billable role (Creator or Admin, i.e. editor/owner), an inline note renders under the invite row:
+The server gate is section 1d; this section is the Members UX around it.
 
-"Adding another editor moves this workspace to the Team plan, $15 per editor for everyone. See plans"
+Inline note under the invite row when the workspace is free with no subscription (`billing.tier === "free" && !billing.subscribed`), the server-computed seat count is at the limit (`billing.seats >= 3`), and the invite-role selector is set to a billable role (Creator or Admin, i.e. editor/owner):
 
-with "See plans" linking `/settings/billing`. Informational only; the invite proceeds unchanged (upgrade stays user-initiated). `billing.seats` is the source of truth (server-side billable count), never a client-side roster recount. Testid: `members-seat-warning`. The same moment on a role promotion (Viewer to Creator) is out of scope; ledger it as a follow-up.
+- During beta (`billing.beta`): "Adding a 4th editor will require the Team plan once billing starts, $15 per editor for everyone. See plans"
+- Post-enforcement: "Free covers 3 editor seats. Upgrading to Team adds unlimited editors, $15 per editor for everyone. See plans"
+
+with "See plans" linking `/settings/billing`. `billing.seats` is the source of truth (server-side billable count), never a client-side roster recount. Testid: `members-seat-warning`.
+
+When the gate refuses the invite or promotion (402 from section 1d), no Members-specific handling is needed: the global interceptor opens the upgrade dialog with the seats reason. After a successful upgrade the admin re-sends the invite (no queued auto-retry; YAGNI).
 
 ## 6. Testing
 
 API (`apps/api/test/`):
 
 - `billing.test.ts`: `blocked` is null during beta grace, null while subscribed, `billing_required` with 4 seats past enforcement, `billing_lapsed` when canceled past enforcement; blocked message contains `/settings/billing`.
+- Seat gate: during beta the 4th billable invite succeeds; post-enforcement it 402s with `billing_required` and the seat_limit message; a Viewer (commenter) invite always succeeds; a subscribed workspace's 4th editor invite succeeds; promoting a Viewer to Creator hits the same gate; accepting a pre-existing invite is not gated.
 - Storage: over-cap publish asserts `body.code === "storage_exceeded"` (and the message contains the URL); an oversize upload keeps its code-less "upload too large".
 - `billing-gate.test.ts` (MCP): blocked publish tool error text contains `/settings/billing`.
 
@@ -146,6 +161,6 @@ Live verification (end of build, like the rail's E2E): Playwright pass over the 
 ## Out of scope
 
 - Storage overage metering/billing (the "~$1 per 10 GB" pricing-page clause).
-- Role-promotion seat warning (ledgered follow-up).
+- Queued auto-retry of a refused invite after upgrade (admin re-sends by hand).
 - Founding-member annual (GTM step 12).
 - Marketing pricing page changes (it already matches; the FAQ's activity-based editor wording remains a pre-enforcement follow-up from the rail).
