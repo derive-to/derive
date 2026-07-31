@@ -12,6 +12,7 @@
 import type { ArtifactRecord, BlobStore, CommentRecord, MetaStore } from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
+import { log } from "../log"
 import { isCollaboratorAuthor, type Mention, quoteOf } from "./comments"
 import { enqueueGithubPrComment } from "./github-comments"
 import { notifyMentions } from "./mentions"
@@ -110,6 +111,20 @@ export const commentCreatedAction = async (
   const trustedAuthor =
     (!!onBehalfOf && (await isCollaboratorAuthor(meta, artifact, onBehalfOf))) ||
     (await isCollaboratorAuthor(meta, artifact, actorId))
+  // A refusal here is a deliberate policy outcome, but an INVISIBLE one: the comment saves, the
+  // response is 201, and the mirrors simply never fire. Nothing distinguishes "correctly
+  // withheld" from "broken" without reading the source, which is a bad place to be at the point
+  // someone is asking why their channel is quiet. Logged with both ids, because which of the two
+  // was consulted is the whole diagnosis: a null onBehalfOf means the CALLER skipped the
+  // contract, while a present one that still fails means the principal genuinely isn't a
+  // collaborator here.
+  if (!trustedAuthor)
+    log.info("comment mirror withheld: author is not a collaborator", {
+      artifact: artifact.id,
+      comment: comment.id,
+      actorId,
+      onBehalfOf: onBehalfOf ?? null,
+    })
   if (trustedAuthor && settings.githubPostComments)
     await enqueueGithubPrComment({ meta, blobs, baseUrl }, artifact, comment)
   // No global on/off any more: a channel subscription is the switch, and resolveChannels

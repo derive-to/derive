@@ -98,6 +98,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "1",
   },
   {
+    name: "DERIVE_BUILD_SHA",
+    group: "core",
+    doc: 'The commit this build was cut from. /healthz echoes it as `build`, so "which version is\nactually running" is answerable with curl rather than inferred from a deploy log — a deploy\ncan fail while the pipeline around it reads green, and liveness alone cannot tell a fresh\nprocess from the one already serving. Unset reports "dev". Set it in your image build.',
+    example: "",
+  },
+  {
     name: "DERIVE_TOKEN",
     group: "core",
     doc: "A static bearer token for headless CI/agent writes (and reading gated artifacts).\nSigned-in users can always write; anonymous callers are read-only either way.",

@@ -316,33 +316,52 @@ jobs:
           pnpm --filter @derive/api exec tsx migrate-auth-d1.ts --apply
           pnpm --filter @derive/api deploy:pg-schema
 
+      # --var stamps the commit into the worker, so /healthz can answer "what is running"
+      # and the check below can ASSERT it rather than smoke-test liveness.
+      #
+      # Retried because this step's failure mode is a transient upstream one: Cloudflare
+      # answered `Received a malformed response from the API` on three separate uploads in one
+      # afternoon, each of which succeeded verbatim on a re-run. An unretried transient here
+      # leaves the previous worker serving a green-looking pipeline. Deploy is idempotent (it
+      # uploads a new immutable version), so a retry can only help.
       - name: Deploy worker
         if: steps.head.outputs.stale != 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: pnpm --filter @derive/api exec wrangler deploy
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm --filter @derive/api exec wrangler deploy --var BUILD_SHA:"$GITHUB_SHA"; then
+              exit 0
+            fi
+            echo "::warning::wrangler deploy failed (attempt $attempt/3); retrying" >&2
+            sleep $((attempt * 10))
+          done
+          echo "wrangler deploy failed three times" >&2
+          exit 1
 
-      # Retried, and includes a DB-backed route so the Hyperdrive→Neon path is
-      # exercised, not just the worker's static response. Version-blind (healthz
-      # doesn't echo a build id yet), so treat it as a smoke, not a proof.
+      # Healthy AND actually this commit. The version assertion is the point: a deploy can
+      # fail, or be skipped, while the surrounding job is read as green — and liveness alone
+      # cannot tell a fresh worker from the one that was already serving. Comparing the
+      # build sha turns "it deployed" from something inferred into something checked.
+      # The DB-backed route stays, so the Hyperdrive→Postgres path is exercised too.
       - name: Verify prod
         if: steps.head.outputs.stale != 'true'
         run: |
-          # Healthy = the worker answers AND the database path answers. The listing
-          # is auth-gated (401 for a tokenless probe), so assert "not a 5xx/timeout"
-          # rather than success — a dead Postgres path shows up as 500 here while
-          # /healthz stays green (it doesn't touch the DB; the July 4 outage proved
-          # both properties).
+          # The listing is auth-gated (401 for a tokenless probe), so assert "not a 5xx/timeout"
+          # rather than success — a dead Postgres path shows up as 500 here while /healthz stays
+          # green (it doesn't touch the DB; the July 4 outage proved both properties).
           for _ in 1 2 3 4 5 6 7 8 9 10; do
+            health=$(curl -s --max-time 15 https://derive.to/healthz || echo '{}')
+            build=$(printf '%s' "$health" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
             db=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://derive.to/v1/artifacts || echo 000)
-            if curl -sf --max-time 15 https://derive.to/healthz > /dev/null &&
-               [ "$db" -ge 200 ] && [ "$db" -lt 500 ]; then
+            if [ "$build" = "$GITHUB_SHA" ] && [ "$db" -ge 200 ] && [ "$db" -lt 500 ]; then
+              echo "prod serving $build"
               exit 0
             fi
             sleep 6
           done
-          echo "prod not healthy after deploy (last /v1/artifacts status: $db)" >&2
+          echo "prod did not converge: serving build '${build:-unknown}', expected '$GITHUB_SHA' (last /v1/artifacts status: $db)" >&2
           exit 1
 
       # e2e smoke is manual-only (see e2e-smoke.yml; it ran per-PR until
