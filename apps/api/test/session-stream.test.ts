@@ -137,7 +137,7 @@ describe("publish cost", () => {
     expect(sent.length).toBeGreaterThan(5) // still genuinely streaming, not one lump at the end
   })
 
-  it("stops publishing once the first slice reaches nobody", async () => {
+  it("stops publishing once several slices in a row reach nobody", async () => {
     let t = 0
     const sent: { seq: number; text: string }[] = []
     const stream = makeDeltaStream({
@@ -158,14 +158,15 @@ describe("publish cost", () => {
       for (let i = 0; i < 50; i++) {
         onDelta?.("more")
         t += 100
+        await Promise.resolve() // real streaming awaits each read; receipts settle between slices
       }
       return { text: "whole answer", toolUses: [], costUsd: null, done: true }
     }) as AgentLoopInput["callModel"])
     const turn = await wrapped({ system: "", messages: [], tools: [] })
     stream.flush()
-    // A couple of slices go out before the probe answers; then it goes quiet for good, instead
-    // of paying ~50 more DO fetches for a reply nobody is watching.
-    expect(sent.length).toBeLessThanOrEqual(3)
+    // A few slices go out while the misses accumulate; then it goes quiet for good, instead of
+    // paying ~50 more DO fetches for a reply nobody is watching.
+    expect(sent.length).toBeLessThanOrEqual(6)
     // ...and the ANSWER is completely unaffected — that is the whole safety argument.
     expect(turn.text).toBe("whole answer")
   })
@@ -215,5 +216,77 @@ describe("publish cost", () => {
     await wrapped({ system: "", messages: [], tools: [] })
     // No receipt to read, so it must keep going rather than assume nobody is there.
     expect(sent.length).toBeGreaterThanOrEqual(3)
+  })
+})
+
+describe("the startup race", () => {
+  it("keeps streaming when a reader attaches a moment after the model starts", async () => {
+    // THE BUG THIS PINS. The client cannot subscribe until it knows the session is unsettled,
+    // which costs a round trip after the POST. A quick model publishes its first slice into an
+    // empty room — and a rule that stopped on ONE miss disabled streaming for the whole turn.
+    // Observed live on the preview: the context console's reply arrived with zero deltas.
+    let t = 0
+    let listeners = 0 // nobody yet
+    const sent: { seq: number; text: string }[] = []
+    const stream = makeDeltaStream({
+      publish: (s) => {
+        sent.push(s)
+        return Promise.resolve(listeners)
+      },
+      now: () => t,
+      flushMs: 10,
+    })
+    const wrapped = stream.wrap((async ({ onDelta }) => {
+      // Two slices land before the reader is attached.
+      onDelta?.("first ")
+      t += 100
+      onDelta?.("second ")
+      t += 100
+      await Promise.resolve()
+      listeners = 1 // the tab finishes subscribing
+      for (let i = 0; i < 10; i++) {
+        onDelta?.("more ")
+        t += 100
+        await Promise.resolve()
+      }
+      return { text: "done", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    await wrapped({ system: "", messages: [], tools: [] })
+    stream.flush()
+    // It survived the gap and kept streaming, rather than giving up on the first empty room.
+    expect(sent.length).toBeGreaterThanOrEqual(6)
+  })
+
+  it("a reader arriving mid-answer resets the miss count", async () => {
+    let t = 0
+    let listeners = 0
+    const sent: { seq: number; text: string }[] = []
+    const stream = makeDeltaStream({
+      publish: (s) => {
+        sent.push(s)
+        return Promise.resolve(listeners)
+      },
+      now: () => t,
+      flushMs: 10,
+    })
+    const wrapped = stream.wrap((async ({ onDelta }) => {
+      // Two misses — one short of going quiet — then somebody opens the page.
+      for (let i = 0; i < 2; i++) {
+        onDelta?.("x")
+        t += 100
+        await Promise.resolve()
+      }
+      listeners = 1
+      for (let i = 0; i < 6; i++) {
+        onDelta?.("y")
+        t += 100
+        await Promise.resolve()
+      }
+      return { text: "", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    await wrapped({ system: "", messages: [], tools: [] })
+    // Slices flush every other delta, so eight deltas is four slices — the point is that it
+    // kept publishing AFTER the early miss instead of latching quiet at the threshold.
+    expect(sent.length).toBeGreaterThanOrEqual(4)
   })
 })

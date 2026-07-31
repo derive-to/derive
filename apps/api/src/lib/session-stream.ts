@@ -35,6 +35,15 @@ export const DELTA_FLUSH_CHARS = 200
  * cannot tell the difference: prose arrives faster than anyone reads it either way.
  */
 export const DELTA_FLUSH_MS = 250
+/**
+ * How many consecutive slices must reach nobody before the turn stops publishing.
+ *
+ * Not one: the client cannot subscribe until it knows the session is unsettled, which costs a
+ * round trip after the POST, so a quick model can emit its first slice into an empty room. At
+ * the flush cadence three misses is under a second of tolerance — long enough to lose the race
+ * gracefully, short enough that a genuinely unwatched turn goes quiet almost at once.
+ */
+export const MISSES_BEFORE_QUIET = 3
 
 export interface DeltaStream {
   /** Wrap `callModel` so its text deltas publish, coalesced.
@@ -72,15 +81,25 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
   let buffer = ""
   let oldestAt = 0
   let seq = 0
-  // Flipped off when the first slice reports nobody received it. Most turns have no watcher —
-  // an MCP `use()` ask, an API caller, a tab closed mid-generation — and for those every
-  // further publish is pure waste. Costing one probe to skip the rest is the single biggest
-  // saving here: those turns go from tens of Durable Object fetches to exactly one.
+  // Flipped off once several slices in a row reach nobody. Most turns have no watcher — an MCP
+  // `use()` ask, an API caller, a tab closed mid-generation — and for those every publish is
+  // waste, so this is the single biggest saving here: those turns settle down to a couple of
+  // Durable Object fetches instead of tens.
   //
-  // A reader who opens the page mid-answer is not stranded: the terminal `session.settled`
-  // still fires, and settling is what makes a client re-read the transcript. They lose the
-  // animation, not the answer.
+  // WHY NOT STOP ON THE FIRST ZERO. There is a startup race, and stopping on one reading loses
+  // to it every time a model is quick. The client cannot subscribe until it knows the session
+  // is unsettled, which costs it a round trip after the POST; a model that emits its first
+  // token before that lands would publish to an empty room, and a single-reading rule would
+  // then disable streaming for the whole turn. This was not theoretical — it is exactly what
+  // the context console did on the preview: the reply arrived, and not one delta with it.
+  // Requiring consecutive misses tolerates the race (a few hundred ms at the flush cadence)
+  // while still going quiet almost immediately for a turn nobody is actually watching.
+  //
+  // A reader who opens the page mid-answer is not stranded either way: the terminal
+  // `session.settled` still fires, and settling is what makes a client re-read the transcript.
+  // They lose the animation, not the answer.
   let streaming = true
+  let consecutiveMisses = 0
 
   const flush = () => {
     if (!buffer || !streaming) return
@@ -90,12 +109,15 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
     oldestAt = 0
     try {
       const receipt = opts.publish(slice)
-      // Only the FIRST slice is probed. Later ones would pay a promise per publish to learn
-      // something that rarely changes mid-turn.
-      if (seq === 1 && receipt && typeof receipt.then === "function")
+      // Every slice is probed, not just the first — the count is what the publish already
+      // returns, so reading it costs nothing extra, and a watcher can arrive or leave mid-turn.
+      if (receipt && typeof receipt.then === "function")
         void receipt
           .then((delivered) => {
-            if (delivered === 0) streaming = false
+            // A reader who shows up later resets the count, so arriving mid-answer starts the
+            // animation rather than finding a stream that already gave up.
+            consecutiveMisses = delivered === 0 ? consecutiveMisses + 1 : 0
+            if (consecutiveMisses >= MISSES_BEFORE_QUIET) streaming = false
           })
           .catch(() => {
             /* an unanswerable probe is not a reason to stop streaming */
