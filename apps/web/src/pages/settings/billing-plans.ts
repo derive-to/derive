@@ -1,3 +1,5 @@
+import type { Role } from "@/api"
+
 /** The tier cards, shared by the billing page grid and the UpgradeDialog so the
  *  two surfaces can't drift. Copy mirrors the public pricing page
  *  (apps/web/public/site/pricing.html) verbatim; the storage-overage clause is
@@ -79,4 +81,25 @@ export const unitPrice = (
 ): number => {
   const plan = PLANS.find((p) => p.tier === tier)
   return plan && "unit" in plan ? plan.unit[interval ?? "month"] : 0
+}
+
+// Billable roles (mirror the pricing page + billing rail): Creator (editor) and
+// Admin (owner) hold a seat; Viewer (commenter/legacy viewer) doesn't.
+const isBillableRole = (r: Role): boolean => r === "editor" || r === "owner"
+
+/** The paid-seat gate: true iff granting `newRole` on a subscribed workspace
+ *  adds a NEW billed seat. The workspace bills per editor, so this covers both
+ *  call sites in members-section.tsx — a fresh invite as Creator/Admin (no
+ *  `existingRole`: the invitee isn't in the workspace yet) and a promotion of an
+ *  existing commenter/viewer to editor/owner. Re-roles between the two billable
+ *  roles (editor <-> owner) and any demotion carry no seat impact, so both
+ *  return false. Unsubscribed or unknown billing (`undefined`) always returns
+ *  false — that path keeps its existing free-tier note + server gate. */
+export function needsSeatConfirm(
+  billing: { subscribed: boolean } | undefined,
+  newRole: Role,
+  existingRole?: Role | null,
+): boolean {
+  const existingIsBillable = existingRole != null && isBillableRole(existingRole)
+  return !!billing?.subscribed && isBillableRole(newRole) && !existingIsBillable
 }

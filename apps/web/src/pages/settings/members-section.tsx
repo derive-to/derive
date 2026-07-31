@@ -10,14 +10,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -28,14 +20,10 @@ import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
 import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { PLANS, unitPrice } from "./billing-plans"
+import { needsSeatConfirm, PLANS, unitPrice } from "./billing-plans"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
-
-// Billable roles (mirror the pricing page + billing rail): Creator (editor) and
-// Admin (owner) hold a seat; Viewer (commenter/legacy viewer) doesn't.
-const isBillableRole = (r: Role): boolean => r === "editor" || r === "owner"
 
 // Which billable-seat action is pending confirmation: a fresh invite (the
 // person isn't in the workspace yet, so the dialog's last sentence about
@@ -93,15 +81,16 @@ export function MembersSection({ meId }: { meId: string }) {
       }
     },
   })
-  // The actual invite call, split out of addMember so the seat-confirmation
-  // dialog's Confirm button can fire it too (with an extra onDone to close the
-  // dialog once it lands).
-  const fireInvite = (em: string, role: Role, onDone?: () => void) => {
+  // The actual invite call, split out of addMember for the addingRef
+  // synchronization (see its declaration above). The seat-confirmation
+  // dialog's Confirm button (confirmSeat, below) fires `invite.mutateAsync`
+  // directly instead — a modal button click, not the form's rapid-Enter path,
+  // so it doesn't need this guard.
+  const fireInvite = (em: string, role: Role) => {
     addingRef.current = true
     invite.mutate(
       { email: em, role },
       {
-        onSuccess: onDone,
         onSettled: () => {
           addingRef.current = false
         },
@@ -116,7 +105,7 @@ export function MembersSection({ meId }: { meId: string }) {
     // A subscribed workspace bills per editor: a fresh invite as Creator/Admin
     // always grants a NEW seat (the invitee isn't in the workspace yet), so
     // pause on the confirmation dialog before firing the mutation.
-    if (billing?.subscribed && isBillableRole(addRole)) {
+    if (needsSeatConfirm(billing, addRole)) {
       setSeatConfirm({ kind: "invite", email: em, role: addRole })
       return
     }
@@ -141,25 +130,23 @@ export function MembersSection({ meId }: { meId: string }) {
   // Re-roles between editor and owner (already billable either way) and any
   // demotion change the role with no seat impact, so they go straight through.
   const requestRoleChange = (member: ArtifactMember, role: Role) => {
-    if (billing?.subscribed && !isBillableRole(member.role) && isBillableRole(role)) {
+    if (needsSeatConfirm(billing, role, member.role)) {
       setSeatConfirm({ kind: "promote", userId: member.user_id, role })
       return
     }
     changeRole(member.user_id, role)
   }
   // The seat-confirmation dialog's Confirm button: fires whichever mutation
-  // was pending and closes the dialog once it lands (stays open on failure;
-  // the global mutation-error toast still fires, and the dialog just lets the
-  // admin retry or cancel).
-  const confirmSeat = () => {
+  // was pending. The shared ConfirmDialog awaits this itself — showing its
+  // own pending spinner and disabling Cancel — and closes on success; it
+  // stays open on failure so the admin can retry or cancel (the global
+  // mutation-error toast still fires).
+  const confirmSeat = async () => {
     if (!seatConfirm) return
     if (seatConfirm.kind === "invite") {
-      fireInvite(seatConfirm.email, seatConfirm.role, () => setSeatConfirm(null))
+      await invite.mutateAsync({ email: seatConfirm.email, role: seatConfirm.role })
     } else {
-      roleMut.mutate(
-        { userId: seatConfirm.userId, role: seatConfirm.role },
-        { onSuccess: () => setSeatConfirm(null) },
-      )
+      await roleMut.mutateAsync({ userId: seatConfirm.userId, role: seatConfirm.role })
     }
   }
 
@@ -332,81 +319,37 @@ export function MembersSection({ meId }: { meId: string }) {
       )}
 
       {seatConfirm && billing && (
-        <SeatConfirmDialog
-          billing={billing}
-          includeInviteNote={seatConfirm.kind === "invite"}
-          pending={seatConfirm.kind === "invite" ? invite.isPending : roleMut.isPending}
+        <ConfirmDialog
+          open
+          onOpenChange={(o) => !o && setSeatConfirm(null)}
+          title="Add a billed editor seat?"
+          description={seatConfirmDescription(billing, seatConfirm.kind === "invite")}
+          confirmLabel="Add editor seat"
+          contentTestId="seat-confirm-dialog"
+          confirmTestId="seat-confirm-add"
+          cancelTestId="seat-confirm-cancel"
           onConfirm={confirmSeat}
-          onCancel={() => setSeatConfirm(null)}
         />
       )}
     </SettingsSection>
   )
 }
 
-// The paid-tier seat-confirmation gate: granting a NEW billable seat on a
-// subscribed workspace (a fresh invite as Creator/Admin, or promoting a
-// Viewer/commenter to one) pauses here before the mutation fires. Built
-// directly on the shadcn Dialog rather than the shared ConfirmDialog
-// (components/shared/confirm-dialog.tsx): the copy is a full paragraph plus a
-// sentence that only applies to the invite case, and the required testids
-// don't fit that component's single-description, fixed-cancel-testid
-// contract.
-function SeatConfirmDialog({
-  billing,
-  includeInviteNote,
-  pending,
-  onConfirm,
-  onCancel,
-}: {
-  billing: BillingInfo
-  /** Drops the "billing starts once they accept" sentence for a role
-   *  promotion: that person is already in the workspace. */
-  includeInviteNote: boolean
-  pending: boolean
-  onConfirm: () => void
-  onCancel: () => void
-}) {
+// The seat-confirmation dialog's body copy: per-editor price + the seat count
+// this grant would bring the workspace to, via the shared PLANS/unitPrice
+// source (billing-plans.ts) so this can't drift from the billing page's own
+// cost line (billing-section.tsx).
+function seatConfirmDescription(billing: BillingInfo, includeInviteNote: boolean): string {
   const tierName = PLANS.find((p) => p.tier === billing.tier)?.name ?? "Team"
   const unit = unitPrice(billing.tier, billing.interval)
   const cadence = billing.interval === "year" ? "monthly, billed annually" : "monthly"
   const nextSeats = billing.seats + 1
+  // Drops the "billing starts once they accept" sentence for a role promotion:
+  // that person is already in the workspace.
   const inviteNote = includeInviteNote
     ? " If they don't have an account yet, billing starts once they accept the invite."
     : ""
-
-  return (
-    <Dialog open onOpenChange={(o) => !o && onCancel()}>
-      <DialogContent data-testid="seat-confirm-dialog">
-        <DialogHeader>
-          <DialogTitle>Add a billed editor seat?</DialogTitle>
-          <DialogDescription>
-            {`Editor seats on ${tierName} are billed at $${unit} per editor ${cadence}. With this seat your workspace will have ${nextSeats} seats at $${nextSeats * unit} per month.${inviteNote}`}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={pending}
-            onClick={onCancel}
-            data-testid="seat-confirm-cancel"
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            loading={pending}
-            disabled={pending}
-            onClick={onConfirm}
-            data-testid="seat-confirm-add"
-          >
-            Add editor seat
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+  return `Editor seats on ${tierName} are billed at $${unit} per editor ${cadence}. With this seat your workspace will have ${nextSeats} seats at $${nextSeats * unit} per month.${inviteNote}`
 }
 
 // Outstanding invitations that haven't been accepted yet — shown only to Admins, only
