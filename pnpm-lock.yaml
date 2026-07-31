@@ -147,6 +147,9 @@ importers:
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
+      express:
+        specifier: ^5.1.0
+        version: 5.2.1
       fflate:
         specifier: ^0.8.2
         version: 0.8.3

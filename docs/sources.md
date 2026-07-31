@@ -111,6 +111,14 @@ LIVE_MCP=1 npx vitest run test/live-hosted-source.test.ts  # apps/api, the whole
 They are off by default because CI must not depend on somebody else's uptime, and because they
 make real requests to third parties, including a real dynamic client registration.
 
+The **consent round trip itself** does run in CI, in `test/mcp-oauth-roundtrip.test.ts`. It boots
+the MCP SDK's own reference OAuth server (`examples/server/simpleStreamableHttp --oauth`) on a free
+port and drives the whole flow: 401, path-aware discovery, dynamic registration, consent, the code
+exchange, the re-pin, and a tool call authorized by the token that came out. The reference provider
+simulates the login, which is the one step a real vendor needs a human for, so no account and no
+network are involved. What it cannot prove is any single vendor's quirks; that is what the live
+suites cover, up to the consent screen.
+
 They exist because every defect below was found by pointing the code at a real server and none of
 them would have surfaced against a stub:
 
