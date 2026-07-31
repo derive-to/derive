@@ -360,4 +360,47 @@ describe("seat gate on granting a billable role", () => {
     expect(body.code).toBe("billing_required")
     expect(body.error).toContain("/settings/billing")
   })
+
+  // DECIDED: seatGrantGate only counts seats against FREE_SEAT_LIMIT — it never reads
+  // blockedReason "lapsed" itself. So a canceled subscription behaves exactly like no
+  // subscription here: a workspace still under its 3 free seats can keep filling them.
+  // Publishing stays blocked for a lapsed workspace, but that's billingGate's job (see
+  // resolveBillingState's "lapsed" branch in packages/core/src/billing.ts), a separate
+  // gate from this one.
+  it("enforced: a lapsed workspace under the limit can still fill its free seats", async () => {
+    const { app, meta } = makeAuthedApp("sg_enf_lapsed_ok", [u(1), u(2), u(3)], "editor", {
+      isolated: true,
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.upsertSubscription(subscriptionRow({ status: "canceled" }))
+
+    const r = await app.request("/v1/workspace/members", {
+      ...jsonAs(as("u1@x.test"), { email: "u3@x.test", role: "editor" }),
+      method: "PUT",
+    })
+    expect(r.status).toBe(201)
+  })
+
+  it("enforced: a lapsed workspace at the limit is still seat-gated", async () => {
+    const { app, meta } = makeAuthedApp("sg_enf_lapsed_402", [u(1), u(2), u(3), u(4)], "editor", {
+      isolated: true,
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
+    await meta.upsertSubscription(subscriptionRow({ status: "canceled" }))
+
+    const r = await app.request("/v1/workspace/members", {
+      ...jsonAs(as("u1@x.test"), { email: "u4@x.test", role: "editor" }),
+      method: "PUT",
+    })
+    expect(r.status).toBe(402)
+    const body = await r.json()
+    expect(body.code).toBe("billing_required")
+  })
 })

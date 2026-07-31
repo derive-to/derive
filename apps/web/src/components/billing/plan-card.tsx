@@ -2,9 +2,9 @@ import type { ReactNode } from "react"
 import { Icon } from "@/components/icons"
 import type { Plan } from "@/pages/settings/billing-plans"
 
-// The check-icon feature list. Folded in here (not its own file) now that PlanCard
-// is its only caller — shared by the billing page's PlanGrid and the paywall
-// dialog's cards via PlanCard, so the two surfaces can't drift on markup.
+// The check-icon feature list. Lives here, not its own file, because PlanCard is
+// its only caller: one renderer for tier features, shared by the billing page's
+// PlanGrid and the paywall dialog's cards, so the two surfaces can't drift.
 function PlanFeatures({ plan }: { plan: Plan }) {
   return (
     <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">

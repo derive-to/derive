@@ -25,7 +25,6 @@ export function ConfirmDialog({
   tone = "destructive",
   onConfirm,
   confirmTestId = "confirm-dialog-confirm",
-  cancelTestId = "confirm-dialog-cancel",
   contentTestId,
   confirmPhrase,
 }: {
@@ -38,7 +37,6 @@ export function ConfirmDialog({
   tone?: "destructive" | "default"
   onConfirm: () => void | Promise<void>
   confirmTestId?: string
-  cancelTestId?: string
   /** data-testid for the DialogContent itself. Omit for no testid (the ordinary
    *  case — most callers identify the dialog by its confirm/cancel testids). */
   contentTestId?: string
@@ -126,7 +124,7 @@ export function ConfirmDialog({
             variant="ghost"
             disabled={pending}
             onClick={() => onOpenChange(false)}
-            data-testid={cancelTestId}
+            data-testid="confirm-dialog-cancel"
           >
             Cancel
           </Button>

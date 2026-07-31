@@ -13,12 +13,6 @@ import { FREE_SEAT_LIMIT, type PaidTier, PLANS, unitPrice } from "./billing-plan
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-const TIER_LABELS: Record<BillingInfo["tier"], string> = {
-  free: "Free",
-  team: "Team",
-  business: "Business",
-}
-
 // Mirrors LAPSED_SUBSCRIPTION_STATUSES in packages/core/src/billing.ts (not
 // imported at runtime, same reasoning as FREE_SEAT_LIMIT above): a formerly-live
 // subscription that ended, distinct from never having subscribed at all.
@@ -185,9 +179,10 @@ export function BillingSection() {
 function CurrentPlanCard({ billing }: { billing: BillingInfo }) {
   const status = statusLine(billing)
   const cost = costLine(billing)
+  const tierLabel = PLANS.find((p) => p.tier === billing.tier)?.name ?? "Free"
   return (
     <div className="flex flex-col gap-2 rounded-xl bg-muted p-4 ring-1 ring-border">
-      <div className="text-base font-medium text-foreground">{TIER_LABELS[billing.tier]}</div>
+      <div className="text-base font-medium text-foreground">{tierLabel}</div>
       <div className="flex flex-col gap-0.5 text-sm text-muted-foreground">
         {cost && <p data-testid="billing-cost-line">{cost}</p>}
         {status && <p>{status}</p>}

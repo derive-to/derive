@@ -321,7 +321,6 @@ export function MembersSection({ meId }: { meId: string }) {
           confirmLabel="Add editor seat"
           contentTestId="seat-confirm-dialog"
           confirmTestId="seat-confirm-add"
-          cancelTestId="seat-confirm-cancel"
           onConfirm={confirmSeat}
         />
       )}
