@@ -71,6 +71,37 @@ export interface Renderer {
   screenshot(url: string, opts: ScreenshotOpts): Promise<Uint8Array>
 }
 
+/**
+ * Refuse to screenshot an error page.
+ *
+ * A browser navigating to a 404 renders the 404 and the screenshot SUCCEEDS, so without
+ * this the job stores a picture of the words "not found" and marks itself `ready`. That is
+ * the worst possible outcome: the artifact's card is permanently wrong, nothing retries
+ * (the render did not fail), the dead-render self-heal never fires (a render exists), and
+ * the only cure is republishing, which nobody thinks to do. Seen twice in one afternoon on
+ * two different artifacts, both times a 4.5KB image where a real one is 70-110KB.
+ *
+ * Throwing instead routes it into the caller's existing failure path: status `failed`, a
+ * real error string, the retry/backoff, and the self-heal. It also makes the cause
+ * DIAGNOSABLE, which it currently is not — three separate paths in the raw routes return
+ * the identical bare "not found" (an unverifiable preview token falling through to
+ * anonymous authorization, a claim/artifact mismatch, and a version row that reads back
+ * missing), and a screenshot of the result cannot tell them apart. The status code in the
+ * error is the first evidence anyone will have about which.
+ *
+ * `null` is not an error: a same-document navigation legitimately yields no response.
+ *
+ * The URL carries a short-lived `pv` capability token, and this message reaches both the
+ * log and a stored DB column, so the token is redacted rather than persisted.
+ */
+export const assertNavigationOk = (res: { status(): number } | null, url: string): void => {
+  const status = res?.status()
+  if (status === undefined || status < 400) return
+  throw new Error(
+    `navigation returned HTTP ${status}; refusing to screenshot an error page (${url.replace(/\/pv\/[^/]+\//, "/pv/<redacted>/")})`,
+  )
+}
+
 export interface RenderTickDeps {
   meta: MetaStore
   blobs: BlobStore

@@ -22,8 +22,9 @@ import { authSchema } from "./auth-schema"
 import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedder"
-import { workspacesBlockingDeletion } from "./lib/account"
+import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
 import { signupAttributionHook } from "./lib/attribution"
+import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
@@ -160,6 +161,12 @@ export interface Env {
   SLACK_CLIENT_ID?: string
   SLACK_CLIENT_SECRET?: string
   SLACK_SIGNING_SECRET?: string
+  // Stripe (billing rail). STRIPE_SECRET_KEY set ⇒ the billing routes light up;
+  // STRIPE_WEBHOOK_SECRET is required for /v1/billing/webhook to accept events.
+  STRIPE_SECRET_KEY?: string
+  STRIPE_WEBHOOK_SECRET?: string
+  // ISO instant after which free-tier boundaries enforce; unset = beta grace.
+  DERIVE_BILLING_ENFORCE_AT?: string
 }
 
 /** A cached one-shot fetch of a static asset's text (a marketing page) from the
@@ -243,6 +250,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
             provider: "sqlite",
             schema: authSchema,
           })
+      // Hoisted above makeAuth (rather than built inline down at createApp's `billing:`
+      // dep, where it lived before) so the account-deletion hook below and the billing
+      // routes share the exact same driver instance instead of constructing two.
+      const billing = makeBillingDriver(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET)
       const auth = makeAuth(authDb, baseUrl, secret, {
         usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
         // Transactional auth emails ride the same outbox; the WebhookOutbox DO drains it
@@ -255,7 +266,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
             ? `Transfer ownership or remove the other members of ${blocking.join(", ")} before deleting your account.`
             : null
         },
-        purgeUserData: (userId) => meta.deleteUserData(userId),
+        // Purge, then heal Stripe seat counts on every workspace the deleted account was
+        // billable in (see purgeUserDataAndSyncSeats) — otherwise a vacated editor/owner
+        // seat keeps being billed until an unrelated membership change happens to heal it.
+        purgeUserData: (userId) => purgeUserDataAndSyncSeats(meta, billing, userId),
         // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
         recordSignupAttribution: signupAttributionHook(meta),
       })
@@ -302,6 +316,8 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Encrypt stored GitHub PATs at rest with the edge auth secret.
         encryptionKey: secret,
         slack: slackFromEnv(env),
+        billing,
+        billingEnforceAt: env.DERIVE_BILLING_ENFORCE_AT,
         superAdmins: superAdminsFromEnv(env),
         defaultOrgId: "default",
         subdomainBase: subdomainBaseFromEnv(env),

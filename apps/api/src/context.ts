@@ -3,6 +3,7 @@ import {
   type Actor,
   type AgentRecord,
   type ArtifactRecord,
+  type BillingState,
   type BlobStore,
   type BundleManifest,
   type CollectionRecord,
@@ -19,8 +20,10 @@ import {
   principalActor,
   principalOwnerId,
   type Role,
+  resolveBillingState,
   roleAllows,
   type SearchIndex,
+  type SubscriptionRecord,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
@@ -28,6 +31,7 @@ import { type Auth, mcpAudiences } from "./auth-config"
 import { type Backplane, createInProcessBackplane } from "./bus"
 import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
+import type { BillingDriver } from "./lib/billing"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
 import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
@@ -41,11 +45,31 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
+import { billableSeatCount, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
+
+/** The refusal copy for a blocked publish/approve, keyed by `billingBlocked`'s reason.
+ *  Lives here (not lib/http.ts) because the MCP surfaces need it too, and both import
+ *  from context.ts already. No em dashes (support copy convention). */
+export const BILLING_BLOCK_COPY: Record<
+  "needs_team" | "lapsed",
+  { code: string; message: string }
+> = {
+  needs_team: {
+    code: "billing_required",
+    message:
+      "This workspace has more than 3 editor seats, which needs the Team plan. An owner can upgrade in Settings, Billing.",
+  },
+  lapsed: {
+    code: "billing_lapsed",
+    message:
+      "This workspace's plan has lapsed, so publishing is paused. Nothing was deleted. An owner can renew in Settings, Billing.",
+  },
+}
 
 export interface SessionUser {
   id: string
@@ -158,6 +182,10 @@ export interface AppDeps {
    */
   maxArtifacts?: number
   maxBytes?: number
+  /** Stripe access, injected so tests fake it and self-host omits it. */
+  billing?: BillingDriver
+  /** ISO instant when free-tier boundaries enforce; unset = beta grace. */
+  billingEnforceAt?: string
   /**
    * Per-actor (signed-in user or agent, falling back to IP) write rate limits,
    * in actions per minute. Applied only when rateLimit is on; identity-keyed so
@@ -723,15 +751,70 @@ export function buildContext(deps: AppDeps) {
     if (r.ok) return null
     return rateLimited(c, r.retryAfter)
   }
+  const billingEnforceAt = deps.billingEnforceAt ? new Date(deps.billingEnforceAt) : null
+  // Fail loud on a typo'd date here, the one parse both entrypoints share — a NaN
+  // would compare false forever and enforcement day would silently never arrive.
+  if (billingEnforceAt && Number.isNaN(billingEnforceAt.getTime()))
+    throw new Error(`invalid DERIVE_BILLING_ENFORCE_AT: ${deps.billingEnforceAt}`)
+  // The whole billing decision from local state only: the webhook-fed subscription row
+  // plus a live editor-seat count. Never calls Stripe — resolveBillingState is pure and
+  // DB-free, this just feeds it. `pre` skips the fetches when the caller already
+  // holds the row and count (GET /v1/billing), same shape as syncSeats.
+  const billingState = async (
+    orgId: string,
+    pre?: { sub: SubscriptionRecord | null; seatCount: number },
+  ): Promise<BillingState> => {
+    const [sub, seats] = pre
+      ? [pre.sub, pre.seatCount]
+      : await Promise.all([meta.getSubscription(orgId), billableSeatCount(meta, orgId)])
+    return resolveBillingState({
+      subscription: sub,
+      seatCount: seats,
+      now: new Date(),
+      enforceAt: billingEnforceAt,
+      fallbackMaxBytes: deps.maxBytes,
+    })
+  }
+  // Null = free to publish/approve; otherwise the refusal copy (code + message) to
+  // surface to the caller.
+  const billingBlocked = async (
+    orgId: string,
+  ): Promise<{ code: string; message: string } | null> => {
+    const s = await billingState(orgId)
+    return s.canPublishApprove || !s.blockedReason ? null : BILLING_BLOCK_COPY[s.blockedReason]
+  }
+  // The full gate as a route guard, mirroring `limited`: a Response to return when
+  // blocked, else null to continue.
+  const billingGate = async (c: Context, orgId: string): Promise<Response | null> => {
+    const b = await billingBlocked(orgId)
+    return b ? fail(c, 402, b.message, { code: b.code }) : null
+  }
+
+  // Show the Made-with-Derive mark, or not? A workspace's whiteLabel toggle only takes
+  // effect when it's also ENTITLED (beta, or an active subscription) — the settings
+  // check runs first so the billing queries short-circuit away entirely once
+  // white-label is off, which is the common case.
+  const effectiveWhiteLabel = async (orgId: string): Promise<boolean> =>
+    (await meta.getOrgSettings(orgId)).whiteLabel === true &&
+    (await billingState(orgId)).whiteLabelEntitled
+
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
   // Sums published content (storageBytes) and staged /v1/assets uploads
   // (assetStorageBytes) separately — an asset baked into a bundle can double-count
   // against its staged row, a deliberate over-count: a permanent public /blob/:hash
   // URL must count from the moment it exists, not just once some doc embeds it.
-  const overStorage = async (orgId: string, incoming: number): Promise<boolean> =>
-    !!deps.maxBytes &&
-    (await meta.storageBytes(orgId)) + (await meta.assetStorageBytes(orgId)) + incoming >
-      deps.maxBytes
+  // The cap itself is now plan-aware (billingState.storageCapBytes) rather than a flat
+  // deps.maxBytes comparison: an active subscription's tier cap replaces the operator's
+  // fallback, so a Team workspace isn't stuck on the self-host default.
+  const overStorage = async (orgId: string, incoming: number): Promise<boolean> => {
+    const cap = (await billingState(orgId)).storageCapBytes
+    if (!cap) return false
+    const [stored, assets] = await Promise.all([
+      meta.storageBytes(orgId),
+      meta.assetStorageBytes(orgId),
+    ])
+    return stored + assets + incoming > cap
+  }
 
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
@@ -740,6 +823,7 @@ export function buildContext(deps: AppDeps) {
     if (existing) return existing.role
     const role: Role = (await meta.countMemberships(orgId)) === 0 ? "owner" : defaultRole
     await meta.setMembership({ id: newId("m"), org_id: orgId, user_id: userId, role })
+    await syncSeats({ meta, billing: deps.billing }, orgId)
     return role
   }
 
@@ -1174,6 +1258,10 @@ export function buildContext(deps: AppDeps) {
     oauthGrant,
     limited,
     overStorage,
+    billingState,
+    billingBlocked,
+    billingGate,
+    effectiveWhiteLabel,
     ensureMembership,
     activeWorkspace,
     setWsCookie,

@@ -107,6 +107,55 @@ describe("raw data-slot route", () => {
     expect(ok.status).toBe(200)
   })
 
+  it("is readable by the artifact's OWN page (CORS), which is the whole self-charting idea", async () => {
+    // Artifacts render in an OPAQUE ORIGIN (the sandbox CSP grants no allow-same-origin),
+    // so a page fetching its own data is cross-origin from a null origin. Without this
+    // header the browser never hands the body to the script: `fetch` throws a bare
+    // "Failed to fetch" and the page cannot chart its own history. Found by publishing a
+    // real probe page that self-discovered its short_id and then died on the next line;
+    // every other raw route already carried the header via RAW_HEADERS, and these two
+    // built their headers from scratch and lost it.
+    // ONE version, so v1 IS the current one: an anonymous read of an older version is
+    // refused by the public-history gate, and this case is about the CORS header.
+    await seed("slot9", "public")
+    for (const path of ["/raw/slot9/v/1/data/checks", "/raw/slot9/data/checks.jsonl"]) {
+      const res = await app.request(path)
+      expect(res.status, path).toBe(200)
+      expect(res.headers.get("access-control-allow-origin"), path).toBe("*")
+    }
+  })
+
+  it("a gated artifact's slot is never stored by a SHARED cache", async () => {
+    await seed("slot6b", "none", 2)
+    const auth = { authorization: "Bearer tok" }
+    // These 200s exist only because the CALLER could read the page, and nothing in the
+    // response varies on that credential. `public` would let a CDN or corporate proxy keep
+    // one member's figures and serve them to anyone — for a YEAR on the pinned route, which
+    // is what turns a slip into a lasting one.
+    for (const path of ["/raw/slot6b/v/1/data/checks", "/raw/slot6b/data/checks.jsonl"]) {
+      const res = await app.request(path, { headers: auth })
+      expect(res.status, path).toBe(200)
+      expect(res.headers.get("cache-control"), path).not.toContain("public")
+    }
+    // Still immutable, just browser-private: the version genuinely never changes.
+    expect(
+      (await app.request("/raw/slot6b/v/1/data/checks", { headers: auth })).headers.get(
+        "cache-control",
+      ),
+    ).toContain("immutable")
+    // A world-readable artifact keeps the hard shared cache, which is what makes these URLs
+    // cheap enough for a page to poll its own history. ONE version, so v1 is the current
+    // one: an anonymous read of an OLD version is refused by the public-history gate, and
+    // this case is about the cache header, not that gate.
+    await seed("slot6c", "public")
+    expect(
+      (await app.request("/raw/slot6c/v/1/data/checks")).headers.get("cache-control"),
+    ).toContain("public")
+    expect(
+      (await app.request("/raw/slot6c/data/checks.jsonl")).headers.get("cache-control"),
+    ).toContain("public")
+  })
+
   it("does not let the slot route bypass the anonymous history gate", async () => {
     // A public artifact without public_history: anon reads only the CURRENT version, so
     // an OLD version's slot must be as hidden as that version's bytes.
@@ -122,5 +171,60 @@ describe("raw data-slot route", () => {
     // No such file in this single-file artifact -> the content route answers, not a crash.
     const r = await app.request("/raw/slot8/v/1/data/checks/extra")
     expect([200, 404]).toContain(r.status)
+  })
+})
+
+// The JSONL export: the whole history of one slot, one object per version. This is the
+// substrate the querying story is built on (a page charts itself, an agent pulls a
+// series, jq/DuckDB read it) — so it must be correct, ordered, and gated exactly like
+// the per-version route.
+describe("raw data-slot JSONL export", () => {
+  it("serves the full series oldest-first, one JSON object per line", async () => {
+    await seed("jl1", "public", 3)
+    const r = await app.request("/raw/jl1/data/checks.jsonl", {
+      headers: { authorization: "Bearer tok" },
+    })
+    expect(r.status).toBe(200)
+    expect(r.headers.get("content-type")).toContain("application/x-ndjson")
+    const lines = (await r.text()).trim().split("\n")
+    expect(lines).toHaveLength(3)
+    const points = lines.map((l) => JSON.parse(l))
+    expect(points.map((p) => p.n)).toEqual([1, 2, 3])
+    expect(points.map((p) => p.data.day)).toEqual([1, 2, 3])
+    expect(points[0].at).toBeTruthy()
+  })
+
+  it("accepts the slot name with or without the .jsonl suffix", async () => {
+    await seed("jl2", "public", 2)
+    const bare = await app.request("/raw/jl2/data/checks.jsonl", {
+      headers: { authorization: "Bearer tok" },
+    })
+    expect(bare.status).toBe(200)
+  })
+
+  it("404s an unknown slot and an unknown artifact", async () => {
+    await seed("jl3", "public")
+    expect((await app.request("/raw/jl3/data/nosuch.jsonl")).status).toBe(404)
+    expect((await app.request("/raw/nope/data/checks.jsonl")).status).toBe(404)
+  })
+
+  it("does not leak a private artifact's series to an anonymous caller", async () => {
+    await seed("jl4", "none", 2)
+    expect((await app.request("/raw/jl4/data/checks.jsonl")).status).toBe(404)
+    const ok = await app.request("/raw/jl4/data/checks.jsonl", {
+      headers: { authorization: "Bearer tok" },
+    })
+    expect(ok.status).toBe(200)
+  })
+
+  it("gives an anonymous caller only the CURRENT point when history is not public", async () => {
+    // The export must not be a way around the public-history gate: without it, an old
+    // version's data would be readable here while its bytes are not.
+    await seed("jl5", "public", 3)
+    const anon = await app.request("/raw/jl5/data/checks.jsonl")
+    expect(anon.status).toBe(200)
+    const lines = (await anon.text()).trim().split("\n")
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0] as string).data.day).toBe(3)
   })
 })

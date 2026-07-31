@@ -89,6 +89,13 @@ export function registerPublishTool(tc: ToolContext): void {
         error:
           "This workspace has no Brandprint profile yet, and only an Admin/Owner can set one up. Ask an Admin to publish to derive://brandprint/profile once (that scaffolds it); after that anyone with publish rights can propose revisions.",
       }
+    // The scaffold below is a real live write (a collection create + a placeholder
+    // publish) — unlike the profile's own reveal/revision, which always routes to a
+    // human-approved proposal (see `profileForReview` in the caller) and so stays free
+    // of this gate. A billing-blocked workspace must refuse the scaffold exactly like
+    // any other live publish, and BEFORE any of it writes.
+    const blocked = await ctx.billingBlocked(targetOrg)
+    if (blocked) return { error: blocked.message }
     // Reuse an in-tenant collection pointer; otherwise create the conventions collection
     // (workspace-open so teammates read the docs + the reveal).
     let collectionId = bp?.collectionId
@@ -252,24 +259,40 @@ export function registerPublishTool(tc: ToolContext): void {
         workspace: wsArg,
         edits: z
           .array(
-            z.object({
-              old_str: z
-                .string()
-                .describe(
-                  "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
-                ),
-              new_str: z.string().describe("Replacement text. Empty string deletes."),
-              occurrence: z.coerce
-                .number()
-                .optional()
-                .describe(
-                  "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
-                ),
-            }),
+            z.union([
+              z.object({
+                old_str: z
+                  .string()
+                  .describe(
+                    "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
+                  ),
+                new_str: z.string().describe("Replacement text. Empty string deletes."),
+                occurrence: z.coerce
+                  .number()
+                  .optional()
+                  .describe(
+                    "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
+                  ),
+              }),
+              z.object({
+                quote: z
+                  .object({
+                    exact: z.string().describe("The VISIBLE text to replace, as a reader sees it."),
+                    prefix: z.string().optional().describe("Visible text just before it."),
+                    suffix: z.string().optional().describe("Visible text just after it."),
+                  })
+                  .describe(
+                    "Locates the edit by RENDERED text (the selector comment anchors use) instead of raw source — no format:'html' read needed. Strict resolution: the context must pin exactly one spot (or the exact be globally unique), the span may not cross markup, and a miss applies nothing.",
+                  ),
+                new_text: z
+                  .string()
+                  .describe("Replacement for the quoted span, as plain text. Empty deletes."),
+              }),
+            ]),
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it: exact-match search/replace against the current stored source, applied in order (each edit sees the previous one's result). Requires `short_id`; use INSTEAD of `content`, and read format:'html' first so old_str matches the raw source. See derive://skills/publishing. A miss applies nothing and returns why.",
+            "Surgical revision of a SINGLE-FILE artifact without resending it. Two shapes, not mixable in one batch: {old_str, new_str} — exact-match against the current stored source, applied in order (read format:'html' first so old_str matches the raw source); or {quote: {exact, prefix, suffix}, new_text} — located by VISIBLE text and resolved server-side, no raw read needed. Requires `short_id`; use INSTEAD of `content`. See derive://skills/publishing. A miss applies nothing and returns why.",
           ),
         base_version: z.coerce
           .number()
@@ -499,7 +522,11 @@ export function registerPublishTool(tc: ToolContext): void {
         }
       }
 
-      // Live publish path.
+      // Live publish path. Gated on billing here, not up with the `edits` storage check
+      // above — that check also runs for the propose branch (which stays free), so the
+      // billing gate has to sit strictly after the review/propose split.
+      const blocked = await ctx.billingBlocked(targetOrg)
+      if (blocked) return err(blocked.message)
       if (merge) {
         if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
         if (!existing) return text("`merge` needs the `short_id` of an existing bundle to add to.")
@@ -747,6 +774,13 @@ export function registerPublishTool(tc: ToolContext): void {
                 ctx.meta,
               )
             : []
+        // What the extraction actually STORED for this version, read back from the rows
+        // rather than echoed from the parser. Reporting the store is strictly more honest:
+        // it reflects what is now queryable, so a persistence failure shows up as an empty
+        // list instead of a confident claim. Until now success was silent — a slot was
+        // only ever mentioned when something went wrong, which is a poor way to teach a
+        // capability whose whole point is that it accrues.
+        const storedSlots = await ctx.meta.getVersionData(artifact.id, version.n).catch(() => [])
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -754,6 +788,12 @@ export function registerPublishTool(tc: ToolContext): void {
           kind: artifact.kind,
           version: version.n,
           url,
+          ...(storedSlots.length
+            ? {
+                data: storedSlots.map((s) => ({ slot: s.slot, bytes: s.size_bytes })),
+                data_next: `Queryable now: read(short_id:"${artifact.short_id}", data:"${storedSlots[0]?.slot}") for this version, or versions:"all" for the whole series.`,
+              }
+            : {}),
           // Single-file publishes report the stored bytes' sha256 (the content-
           // addressed blob key) so callers can verify what landed matches what
           // they sent.

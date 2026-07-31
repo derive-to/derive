@@ -206,6 +206,36 @@ export interface ListArtifactsOpts {
   excludeRemoved?: boolean
 }
 
+export interface ListEnrichmentOpts {
+  /** The page of artifact ids being decorated. */
+  ids: string[]
+  /** Distinct `author_gh_id`s on the page, to resolve to Derive handles. */
+  ghIds: string[]
+  /** Distinct `author_id`s on the page, to resolve to live bylines. */
+  authorIds: string[]
+  /** Comment signals are computed for this viewer; null skips them (anon listing). */
+  viewerId: string | null
+  /** Share roles are looked up for this member key; null skips them. */
+  memberId: string | null
+  /** Include view counts (the list gates this on the analytics setting). */
+  views: boolean
+}
+
+/** One page's worth of list decoration — see `ArtifactQueryStore.listEnrichment`. */
+export interface ListEnrichment {
+  views: Record<string, number>
+  tags: Record<string, string[]>
+  previews: Record<string, boolean>
+  /** gh_id → Derive username rows (the subset of `usersByGithubIds` the list needs). */
+  handles: { gh_id: string; username: string | null }[]
+  /** Live user-directory rows for the page's authors (the subset of `getUsers` the
+   *  byline self-heal needs). */
+  bylines: { id: string; name: string | null; username: string | null }[]
+  signals: Record<string, CommentSignals>
+  proposals: Record<string, number>
+  shareRoles: Record<string, Role>
+}
+
 export type PreviewStatus = "pending" | "ready" | "failed"
 
 export type RenderJobStatus = "pending" | "done" | "dead"
@@ -398,11 +428,27 @@ export interface ArtifactStore {
    *  workspace of nightly reports actually gets asked. Optionally narrowed by browse tag,
    *  since a tag is already how a set of artifacts is named. ONE query, joined to each
    *  artifact's current version so it can never report a superseded row. */
+  /** The workspace's slot VOCABULARY as RAW (slot, artifact) rows over current versions:
+   *  the discovery half of cross-artifact reads, since you cannot query a slot whose name
+   *  you do not know and nothing else in the surface lists them.
+   *
+   *  Deliberately NOT pre-aggregated. Both slot readers scope by org, and an org is not a
+   *  read permission: an artifact can be invite-only WITHIN its own workspace. The caller
+   *  must therefore narrow these rows through the visibility gate (api lib/visibility.ts)
+   *  before counting them. Aggregating here would hand back a count already computed over
+   *  artifacts the caller may not see, with the evidence needed to correct it discarded. */
+  listWorkspaceSlots(
+    orgId: string,
+    opts?: { limit?: number },
+  ): Promise<{ slot: string; artifact_id: string; at: string }[]>
+  /** Carries `id` for that same reason: the caller gates on it, then drops it. */
   listSlotAcrossArtifacts(
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },
-  ): Promise<{ short_id: string; title: string | null; n: number; json: string; at: string }[]>
+  ): Promise<
+    { id: string; short_id: string; title: string | null; n: number; json: string; at: string }[]
+  >
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
@@ -502,6 +548,20 @@ export interface ArtifactQueryStore {
    * `ids` array matches nothing.
    */
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /**
+   * Everything the library list decorates a page of rows with, in ONE store call:
+   * view counts, tags, preview readiness, author handle + byline directory rows,
+   * the viewer's comment signals, open-proposal counts, and the viewer's per-artifact
+   * share roles. Each piece is a trivial lookup keyed on the same page of ids, but on
+   * the edge tier a Postgres round trip costs ~80ms no matter how little it fetches
+   * (one serialized `pg.Client` per invocation — see edge-pg.ts), so issuing them as
+   * seven separate calls made every listing pay seven trips for one page. Postgres
+   * answers this in a single round trip; the embedded drivers compose it from the
+   * individual queries (their round trips are free). Gates mirror the list route's:
+   * `views` only when analytics is on, a null `viewerId` skips signals (anon listing),
+   * a null `memberId` skips share roles.
+   */
+  listEnrichment(opts: ListEnrichmentOpts): Promise<ListEnrichment>
   /** Full-text search index over an artifact's current visible text (+ title), keyed by
    *  id and scoped by org — the substrate that lifts workspace search past a live-grep of
    *  the N most-recent artifacts to the whole corpus. `indexArtifact` upserts (call on every
@@ -806,6 +866,11 @@ export interface IntegrationStore {
   getOrgSettings(orgId: string): Promise<OrgSettings>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** The workspace's cached Stripe subscription, absent ⇒ null (free). */
+  getSubscription(orgId: string): Promise<SubscriptionRecord | null>
+  /** Webhook resolution fallback when metadata.org_id is missing. */
+  getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<SubscriptionRecord | null>
+  upsertSubscription(s: SubscriptionRecord): Promise<void>
   // ---- Slack App (connected workspace + thread links) ---------------------
   /** The Slack workspace connected to this Derive workspace, or null. */
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
@@ -1928,6 +1993,24 @@ export interface SignupAttributionRecord {
 }
 
 export type NewSignupAttribution = Omit<SignupAttributionRecord, "created_at">
+
+/** One workspace's Stripe subscription state, webhook-fed; Stripe is the source
+ *  of truth and this row is the local cache the request-path gate reads. A row
+ *  with a null stripe_subscription_id and status "incomplete" is a checkout
+ *  stub (customer created, nothing paid yet) and grants nothing. */
+export interface SubscriptionRecord {
+  org_id: string
+  stripe_customer_id: string
+  stripe_subscription_id: string | null
+  tier: "team" | "business"
+  billing_interval: "month" | "year"
+  /** Stripe's subscription status, verbatim (active, trialing, past_due, canceled, ...). */
+  status: string
+  quantity: number
+  current_period_end: string | null
+  created_at: string
+  updated_at: string
+}
 
 /**
  * A pending per-artifact share invitation: an email invited to one artifact at a

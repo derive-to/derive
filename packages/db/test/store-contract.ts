@@ -1,5 +1,12 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewRun, NewVersion, SortMode } from "@derive/core"
+import type {
+  MetaStore,
+  NewArtifact,
+  NewRun,
+  NewVersion,
+  SortMode,
+  SubscriptionRecord,
+} from "@derive/core"
 import { DEFAULT_ORG_SETTINGS, maxRole } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -191,6 +198,51 @@ export function runStoreContract(
       expect((await store.getVersionDataSeries(a.id, "checks", 1, 5, 2)).map((r) => r.n)).toEqual([
         1, 2,
       ])
+    })
+
+    it("reads one slot across artifacts, and only from each one's CURRENT version", async () => {
+      // Two artifacts carry "xchecks"; one of them moves on to a new version, and the
+      // cross-artifact read must report the NEW value — reporting a superseded row as the
+      // present state is the failure that would make this quietly wrong.
+      const a = await store.createArtifact(newArtifact({ title: "Nightly A" }))
+      const v1 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v1.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":1}', size_bytes: 11, gen: 1 },
+      ])
+      const v2 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v2.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":2}', size_bytes: 11, gen: 1 },
+      ])
+      const b = await store.createArtifact(newArtifact({ title: "Nightly B" }))
+      const bv = await store.addVersion(b.id, newVersion())
+      await store.setVersionData(b.id, bv.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":9}', size_bytes: 11, gen: 1 },
+        { id: uuid(), slot: "xother", json: "1", size_bytes: 1, gen: 1 },
+      ])
+
+      const rows = await store.listSlotAcrossArtifacts(ORG, "xchecks")
+      const byId = new Map(rows.map((r) => [r.short_id, r]))
+      expect(byId.get(a.short_id)?.json).toBe('{"pass":2}') // the current version, not v1
+      expect(byId.get(a.short_id)?.n).toBe(v2.n)
+      expect(byId.get(b.short_id)?.json).toBe('{"pass":9}')
+      // A slot nobody carries is empty, not an error.
+      expect(await store.listSlotAcrossArtifacts(ORG, "nosuch")).toEqual([])
+      // The limit bounds the payload.
+      expect((await store.listSlotAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
+    })
+
+    it("lists the workspace's slot vocabulary as RAW rows, uncounted, carrying artifact_id", async () => {
+      const rows = await store.listWorkspaceSlots(ORG)
+      // Deliberately (slot, artifact) pairs rather than counts: the count has to be taken
+      // AFTER the caller's visibility gate, so the artifact_id it gates on must survive
+      // this far. A pre-aggregated count would already include artifacts the caller may
+      // not read, with the evidence needed to correct it thrown away.
+      const checks = rows.filter((r) => r.slot === "xchecks")
+      expect(new Set(checks.map((r) => r.artifact_id)).size).toBeGreaterThanOrEqual(2)
+      expect(rows.filter((r) => r.slot === "xother").length).toBe(1)
+      expect(checks[0]?.at).toBeTruthy()
+      expect(rows.every((r) => !!r.artifact_id)).toBe(true)
+      expect((await store.listWorkspaceSlots(ORG, { limit: 1 })).length).toBe(1)
     })
 
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
@@ -724,6 +776,138 @@ export function runStoreContract(
       // Replacing drops the old tags.
       await store.setArtifactTags(a.id, ["alpha"])
       expect(await store.artifactIdsByTag("beta")).not.toContain(a.id)
+    })
+  })
+
+  describe(`${label}: list enrichment (the batched decoration call)`, () => {
+    it("matches the individual queries it batches, per artifact", async () => {
+      const me = `u_${uuid()}`
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      // a: tags, a ready preview, views, an open comment thread, an open proposal, a share.
+      await store.setArtifactTags(a.id, ["beta", "alpha"])
+      await store.addVersion(a.id, newVersion())
+      await store.setVersionPreview(a.id, 1, { preview_key: "png", preview_status: "ready" })
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: me,
+        viewer_kind: "user",
+      })
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "x",
+        viewer_kind: "anon",
+      })
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t1",
+        base_version: 1,
+        body_md: "mine",
+        author: "me",
+        author_id: me,
+      })
+      await store.createProposal({
+        id: uuid(),
+        artifact_id: a.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        author: "amy",
+        base_version: 1,
+      })
+      await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "editor" })
+
+      const ids = [a.id, b.id]
+      const enr = await store.listEnrichment({
+        ids,
+        ghIds: [],
+        authorIds: [],
+        viewerId: me,
+        memberId: me,
+        views: true,
+      })
+      // The batch must be indistinguishable from the calls it replaces.
+      expect(enr.views).toEqual(await store.viewCounts(ids))
+      expect(enr.tags).toEqual(await store.tagsForArtifacts(ids))
+      expect(enr.previews).toEqual(await store.previewReady(ids))
+      expect(enr.signals).toEqual(await store.commentSignals(ids, me))
+      expect(enr.proposals).toEqual(await store.openProposalCounts(ids))
+      expect(enr.shareRoles).toEqual(await store.artifactRolesFor(me, ids))
+      // Spot-check the shape is actually populated, not vacuously equal-empty.
+      expect(enr.views[a.id]).toBe(2)
+      expect(enr.tags[a.id]).toEqual(["alpha", "beta"])
+      expect(enr.previews[a.id]).toBe(true)
+      expect(enr.signals[a.id]?.open_threads).toBe(1)
+      expect(enr.proposals[a.id]).toBe(1)
+      expect(enr.shareRoles[a.id]).toBe("editor")
+      expect(enr.views[b.id]).toBeUndefined()
+    })
+
+    it("honors the gates: no views, no viewer, no member", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "x",
+        viewer_kind: "anon",
+      })
+      const enr = await store.listEnrichment({
+        ids: [a.id],
+        ghIds: [],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: false,
+      })
+      expect(enr.views).toEqual({})
+      expect(enr.signals).toEqual({})
+      expect(enr.shareRoles).toEqual({})
+    })
+
+    it("degrades the user-directory pieces to empty instead of failing the listing", async () => {
+      // The contract schemas carry no Better Auth "user"/"account" tables — exactly
+      // the deployment shape those lookups are best-effort for. The core decoration
+      // must still come back.
+      const a = await store.createArtifact(newArtifact())
+      await store.setArtifactTags(a.id, ["gamma"])
+      const enr = await store.listEnrichment({
+        ids: [a.id],
+        ghIds: ["12345"],
+        authorIds: [`u_${uuid()}`],
+        viewerId: null,
+        memberId: null,
+        views: false,
+      })
+      expect(enr.handles).toEqual([])
+      expect(enr.bylines).toEqual([])
+      expect(enr.tags[a.id]).toEqual(["gamma"])
+    })
+
+    it("returns all-empty for an empty page", async () => {
+      const enr = await store.listEnrichment({
+        ids: [],
+        ghIds: [],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: true,
+      })
+      expect(enr).toEqual({
+        views: {},
+        tags: {},
+        previews: {},
+        handles: [],
+        bylines: [],
+        signals: {},
+        proposals: {},
+        shareRoles: {},
+      })
     })
   })
 
@@ -2481,6 +2665,42 @@ export function runStoreContract(
       // Deleting the workspace clears the pool sentinel too — nothing orphaned.
       await store.deleteWorkspace(org)
       expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
+    })
+  })
+
+  describe(`${label}: subscriptions (Stripe billing cache)`, () => {
+    it("subscription: absent → null; upsert inserts then updates; stripe-id lookup", async () => {
+      const org = `sub_org_${uuid()}`
+      expect(await store.getSubscription(org)).toBeNull()
+      expect(await store.getSubscriptionByStripeId("sub_nope")).toBeNull()
+      const now = new Date().toISOString()
+      const stripeSubscriptionId = `sub_stripe_${uuid()}`
+      await store.upsertSubscription({
+        org_id: org,
+        stripe_customer_id: "cus_1",
+        stripe_subscription_id: stripeSubscriptionId,
+        tier: "team",
+        billing_interval: "month",
+        status: "active",
+        quantity: 4,
+        current_period_end: "2026-08-30T00:00:00.000Z",
+        created_at: now,
+        updated_at: now,
+      })
+      const row = await store.getSubscription(org)
+      expect(row?.tier).toBe("team")
+      expect(row?.quantity).toBe(4)
+      expect((await store.getSubscriptionByStripeId(stripeSubscriptionId))?.org_id).toBe(org)
+      // Second upsert for the same org exercises the onConflict update path.
+      await store.upsertSubscription({
+        ...(row as SubscriptionRecord),
+        status: "canceled",
+        quantity: 5,
+        updated_at: new Date().toISOString(),
+      })
+      const updated = await store.getSubscription(org)
+      expect(updated?.status).toBe("canceled")
+      expect(updated?.quantity).toBe(5)
     })
   })
 

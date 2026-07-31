@@ -22,6 +22,59 @@ describe("unfurl + embed", () => {
     expect(svg).toContain("My Report")
   })
 
+  it("a slot-bearing artifact leads its unfurl with its own numbers", async () => {
+    // The single highest-leverage incentive in the whole slots bet: a link pasted in Slack
+    // shows "pass 48 · fail 0" before anyone clicks, which is the mechanic that made
+    // OpenGraph universal. It reaches the card through infoFor → dataSummary, and until
+    // now NOTHING asserted it — so any refactor of the unfurl path could delete the
+    // feature and leave every test green. It very nearly did: a concurrent PR extracts
+    // infoFor into a shared lib from a copy that predates the slot read.
+    const page =
+      "<!doctype html><html><body><h1>Nightly</h1>" +
+      '<script type="application/derive-data" data-slot="checks">{"pass":48,"fail":0}</script>' +
+      "</body></html>"
+    const short = await idOf(
+      await upload("nightly.html", page, { visibility: "public", title: "Nightly checks" }),
+    )
+    // The OG card image a surface renders directly.
+    const svg = await (await app.request(`/v1/og/${short}`)).text()
+    expect(svg).toContain("pass 48")
+    expect(svg).toContain("fail 0")
+
+    // ...and og:description in the server-rendered head, which is what a crawler that
+    // does not run JS actually reads. The numbers LEAD it.
+    const a = createApp({
+      meta,
+      blobs: new FsBlobStore(join(dir, "blobs-embed-slot")),
+      baseUrl: "http://derive.test",
+      token: "tok",
+      shell: SHELL,
+    })
+    const hop = await a.request(`/artifacts/${short}`, { headers: { authorization: "Bearer tok" } })
+    const html = await (
+      await a.request(hop.headers.get("location") ?? "", {
+        headers: { authorization: "Bearer tok" },
+      })
+    ).text()
+    expect(html).toMatch(/property="og:description" content="pass 48 · fail 0 ·/)
+
+    // An artifact with no slot keeps the plain description, so the lead is data-driven
+    // rather than a claim every card now makes.
+    const plain = await idOf(
+      await upload("bare.md", "# Plain", { visibility: "public", title: "Plain" }),
+    )
+    const plainHop = await a.request(`/artifacts/${plain}`, {
+      headers: { authorization: "Bearer tok" },
+    })
+    const plainHtml = await (
+      await a.request(plainHop.headers.get("location") ?? "", {
+        headers: { authorization: "Bearer tok" },
+      })
+    ).text()
+    expect(plainHtml).toContain('property="og:description"')
+    expect(plainHtml).not.toContain("pass 48")
+  })
+
   it("oembed returns a rich response with a sandboxed iframe", async () => {
     const short = await idOf(await upload("o.md", "# Hi", { visibility: "public", title: "Deck" }))
     const res = await app.request(

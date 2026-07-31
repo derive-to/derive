@@ -1,4 +1,5 @@
 import {
+  type AnyDocEdit,
   type ArtifactRecord,
   diffLines,
   EditError,
@@ -48,6 +49,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     authorize,
     limited,
     overStorage,
+    billingGate,
     publishLimiter,
     sourceText,
   } = ctx
@@ -191,7 +193,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       let filename: string
       let isBundle: boolean
       if (typeof editsField === "string") {
-        let edits: { old_str: string; new_str: string }[]
+        let edits: AnyDocEdit[]
         try {
           edits = JSON.parse(editsField)
         } catch {
@@ -378,6 +380,8 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (!r.ok) return bail(r.error)
       const { artifact, proposal } = r
       if (!(await authorize(c, "approve", artifact))) return bail(fail(c, 403, "forbidden"))
+      const blocked = await billingGate(c, artifact.org_id)
+      if (blocked) return bail(blocked)
       if (proposal.state !== "open") return bail(fail(c, 409, `proposal is ${proposal.state}`))
       const me = await currentUser(c)
       const approver = me ? (me.name ?? me.username ?? me.email) : null

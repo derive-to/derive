@@ -1,4 +1,4 @@
-import { diffLines, formatDiff, toMarkdown } from "@derive/core"
+import { diffLines, formatDiff, slotDeltas, toMarkdown } from "@derive/core"
 import { z } from "zod"
 import { clip } from "../lib/clip"
 import type { ToolContext } from "../mcp-tool-context"
@@ -21,6 +21,9 @@ export function registerCatchUpTool(tc: ToolContext): void {
     {
       description:
         "With a `short_id`: START HERE on an artifact — its state in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, the review round you're waiting on, and the full version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered thread list instead — your feedback to-do queue. Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) for a line-by-line diff of the two versions' readable Markdown form. WITHOUT a short_id: your WORK QUEUE — pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons); pass `ack:[id,…]` to clear the ones you finished. WAITING ON SOMETHING? Pass `wait` (seconds, max 50) to block until the human acts (or, in queue mode, until new work lands), then return the fresh state — chain waits instead of sleeping between polls. For the diff, review states, working a request, and the wait loop, read derive://skills/loop.",
+      // Read-only except `ack`, which clears handled requests off the queue. The hint
+      // stays true so planning-mode clients don't gate the start-here call on approval.
+      annotations: { readOnlyHint: true },
       inputSchema: {
         short_id: z
           .string()
@@ -213,6 +216,16 @@ export function registerCatchUpTool(tc: ToolContext): void {
         since >= to
           ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
           : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
+      // What the NUMBERS did between the versions being compared. The prose diff already
+      // shows what the page says; without this a review round sees everything except the
+      // figures the page is about.
+      const slotChanges =
+        since < to
+          ? slotDeltas(
+              await ctx.meta.getVersionData(a.id, since).catch(() => []),
+              await ctx.meta.getVersionData(a.id, to).catch(() => []),
+            )
+          : []
       return json({
         summary,
         review,
@@ -230,6 +243,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
               entry_diff:
                 "(omitted) — call again with response_format='detailed' for the line-level changes.",
             }),
+        ...(slotChanges.length ? { data_changes: slotChanges } : {}),
         open_comments: open.map(summarizeComment),
         ...(outdated.length ? { outdated_comments: outdated.map(summarizeComment) } : {}),
       })

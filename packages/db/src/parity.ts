@@ -47,6 +47,7 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SignupAttributionRecord,
+  SubscriptionRecord,
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
@@ -82,6 +83,7 @@ export interface TypedTables {
   invitation: InvitationRecord
   betaSignup: BetaSignupRecord
   signupAttribution: SignupAttributionRecord
+  subscription: SubscriptionRecord
   context: ContextRecord
   contextAsker: ContextAskerRecord
   contextSession: SessionRecord

@@ -44,6 +44,23 @@ describe("config: fail-fast env validation", () => {
     // A typo'd cap is "no limit", warned not fatal — it shouldn't take the app down.
     expect(loadConfig({ ...base, DERIVE_MAX_ARTIFACTS: "lots" }).maxArtifacts).toBeUndefined()
   })
+
+  it("rejects a malformed DERIVE_BILLING_ENFORCE_AT (a typo'd date must not silently never enforce)", () => {
+    expect(() => loadConfig({ ...base, DERIVE_BILLING_ENFORCE_AT: "not-a-date" })).toThrow(
+      /DERIVE_BILLING_ENFORCE_AT/,
+    )
+  })
+
+  it("accepts a well-formed DERIVE_BILLING_ENFORCE_AT", () => {
+    expect(
+      loadConfig({ ...base, DERIVE_BILLING_ENFORCE_AT: "2026-01-01T00:00:00.000Z" })
+        .billingEnforceAt,
+    ).toBe("2026-01-01T00:00:00.000Z")
+  })
+
+  it("leaves DERIVE_BILLING_ENFORCE_AT unset when the env var is unset", () => {
+    expect(loadConfig({ ...base }).billingEnforceAt).toBeUndefined()
+  })
 })
 
 // The dense-search embedder is selected by DERIVE_EMBED_PROVIDER; `workersai` additionally needs

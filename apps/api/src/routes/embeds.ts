@@ -14,6 +14,7 @@ import {
   profileMetaTags,
   profileSummary,
   refFor,
+  slotSummary,
   type UnfurlInfo,
   unfurlMetaTags,
 } from "@derive/core"
@@ -37,7 +38,7 @@ import { fail, toBody } from "../lib/http"
  * org/password artifacts never leak a title — they get a generic locked card.
  */
 export const embedRoutes = (ctx: AppContext) => {
-  const { meta, authorize, blobs } = ctx
+  const { meta, authorize, blobs, effectiveWhiteLabel } = ctx
   const baseUrl = ctx.deps.baseUrl
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
@@ -45,10 +46,12 @@ export const embedRoutes = (ctx: AppContext) => {
   // Everything an unfurl/embed surface needs for one artifact, plus the absolute
   // URLs of the sibling endpoints. Counts come from the live version + comment list.
   const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
-    const [versions, comments, version] = await Promise.all([
+    const [versions, comments, version, slots] = await Promise.all([
       meta.listVersions(artifact.id),
       meta.listComments(artifact.id),
       meta.getVersion(artifact.id, artifact.current_version),
+      // Best-effort: a share card must never fail to render because a slot read hiccuped.
+      meta.getVersionData(artifact.id, artifact.current_version).catch(() => []),
     ])
     const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
     return {
@@ -56,12 +59,30 @@ export const embedRoutes = (ctx: AppContext) => {
       kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
       versionCount: versions.length,
       commentCount: comments.length,
+      // The reward for publishing a slot: the shared link carries its own numbers.
+      dataSummary: slotSummary(slots),
       pageUrl: artifactUrl(baseUrl, artifact),
       imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
       oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
       embedUrl: `${baseUrl}/v1/embed/${ref}`,
     }
   }
+
+  /**
+   * The cache directive for a response whose CONTENT depends on who asked.
+   *
+   * Anything built from `infoFor` is assembled only for a caller who cleared `readable()`,
+   * so for an artifact with no world link it carries that artifact's title, counts and now
+   * its slot figures. Nothing here varies on the credential that produced those bytes, so
+   * marking them `public` invites a CDN or corporate proxy to hand an authorized member's
+   * card to an anonymous requester. Gated artifacts therefore cache in the caller's own
+   * browser only. The PNG branch below has always drawn this line; every sibling that
+   * embeds `infoFor` needs it drawn the same way.
+   */
+  const cacheFor = (a: ArtifactRecord | null, shared: string, privateMaxAge = 600): string =>
+    a && (a.link_role === "none" || !!a.password_hash)
+      ? `private, max-age=${privateMaxAge}`
+      : shared
 
   // Resolve `:ref` → an artifact the *request actor* may read. `null` means "render
   // a generic card" (missing, removed, or gated to an anonymous crawler).
@@ -92,13 +113,14 @@ export const embedRoutes = (ctx: AppContext) => {
         // with no world link (or a locked one) means an authorized member. Their
         // screenshot must never land in a shared cache; keep it browser-only there
         // (max-age so the library card <img> stays cached across renders).
-        const gated = artifact.link_role === "none" || !!artifact.password_hash
         if (png)
           return c.body(toBody(png), 200, {
             "Content-Type": "image/png",
-            "Cache-Control": gated
-              ? "private, max-age=3600"
-              : "public, max-age=86400, stale-while-revalidate=604800",
+            "Cache-Control": cacheFor(
+              artifact,
+              "public, max-age=86400, stale-while-revalidate=604800",
+              3600,
+            ),
             "X-Content-Type-Options": "nosniff",
           })
       }
@@ -114,12 +136,16 @@ export const embedRoutes = (ctx: AppContext) => {
         })
     return c.body(svg, 200, {
       "Content-Type": "image/svg+xml; charset=utf-8",
-      // Cache the thumbnail hard: only anon crawlers hit this (the app never does), and
-      // a gated artifact renders a title-less locked card, so there's nothing private to
-      // cache at the shared edge. 1 day fresh + a week of serve-stale-while-revalidate
-      // keeps regenerations rare while the card still refreshes in the background. The
-      // live version/comment counts can lag up to a day here — fine for an unfurl.
-      "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+      // Cache an ANONYMOUS card hard: 1 day fresh + a week of serve-stale-while-revalidate
+      // keeps regenerations rare while it still refreshes in the background, and the live
+      // version/comment counts may lag a day on an unfurl. A gated artifact reached this
+      // branch only because the CALLER could read it, so its revealed card (title, counts,
+      // slot figures) is browser-private — see cacheFor.
+      "Cache-Control": cacheFor(
+        artifact,
+        "public, max-age=86400, stale-while-revalidate=604800",
+        3600,
+      ),
       "X-Content-Type-Options": "nosniff",
     })
   })
@@ -183,7 +209,7 @@ export const embedRoutes = (ctx: AppContext) => {
     const artifact = await readable(c, ref)
     if (!artifact) return fail(c, 404, "not found")
     return c.json(oembedResponse(await infoFor(artifact), baseUrl), 200, {
-      "Cache-Control": "public, max-age=600",
+      "Cache-Control": cacheFor(artifact, "public, max-age=600"),
     })
   })
 
@@ -197,7 +223,7 @@ export const embedRoutes = (ctx: AppContext) => {
     const artifact = await readable(c, ref)
     const headers = {
       "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "public, max-age=600",
+      "Cache-Control": cacheFor(artifact, "public, max-age=600"),
       // Explicitly allow embedding anywhere; this card is meant to be iframed.
       "Content-Security-Policy": "frame-ancestors *",
     }
@@ -206,7 +232,9 @@ export const embedRoutes = (ctx: AppContext) => {
     const src = `${rawBase}/raw/${artifact.short_id}/v/${artifact.current_version}/`
     // White-label workspaces lose the plaque and may go fully bare (?chrome=none);
     // for everyone else the bare frame is ignored — the mark is the free tier's rent.
-    const { whiteLabel } = await meta.getOrgSettings(artifact.org_id)
+    // Effective white-label also requires entitlement (beta, or an active
+    // subscription) — the toggle alone isn't enough once billing is enforced.
+    const whiteLabel = await effectiveWhiteLabel(artifact.org_id)
     const shell =
       whiteLabel && c.req.query("chrome") === "none"
         ? bareShell({ info, src })

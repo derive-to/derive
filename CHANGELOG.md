@@ -7,6 +7,63 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 ## [Unreleased]
 
 ### Changed
+- **Inline editing, second pass — the mode is legible and can't lose your work.**
+  Entering edit mode used to be pixel-identical to reading: nothing on screen said
+  the page had changed state, and you had to click something to discover what
+  counted as text. Now the block under the pointer lights up as you move (the same
+  resolver a click uses, so the invitation can never point at the wrong region), and
+  the floating pill is a slim strip between the header and the document — in flow,
+  so it can no longer cover the sentence you came to fix or swallow the click aimed
+  at it. Leaving with unsaved edits asks first, through the house confirm dialog, on
+  in-app navigation, tab close, Escape and Done alike; before, navigating away threw
+  the typing out silently. **Escape** leaves the mode and **⌘S / ⌘Enter** saves
+  (forwarded out of the sandboxed frame, which the host window can't hear). After a
+  publish the editing chrome clears immediately instead of lingering, tinted, until
+  the version swap lands. The comments rail stops telling you to select text for a
+  comment while selection is editing text.
+- **PR previews no longer render OG images into production.** The preview Worker
+  inherited the `[browser]` binding and the `PREVIEW_RENDERER` durable object, whose
+  sweep (`versionsMissingPreview`) is scoped by a row limit and nothing else — so a
+  preview screenshots arbitrary PRODUCTION versions and writes the results back to the
+  shared database. That was survivable while previews screenshotted production's own
+  bytes; combined with the change below it would have overwritten real artifacts' cards
+  with a branch's rendering, permanently (the sweep never revisits a version that
+  already has an image). Previews now drop the renderer, and the vanity-subdomain base
+  with it — a draft minted on a preview was writing a live `domain` row into
+  production's table and then being served by production.
+- **PR previews serve their own artifact bytes.** `DERIVE_SANDBOX_URL` was inherited
+  verbatim by preview Workers, so every preview's `/raw/*` — including the injected
+  `derive-client.js` — was answered by production. Any change to the in-iframe client
+  (anchoring, cursors, decks, inline editing) was invisible in the preview that was
+  supposed to demonstrate it. `preview-config.mjs` now unsets it, with a guard so it
+  can't creep back, putting previews in the documented single-origin mode; the iframe
+  sandbox and the `Content-Security-Policy: sandbox` response header are untouched.
+
+### Added
+- **Inline text editing.** An **Edit** button on the artifact workbench turns the
+  rendered document itself into the editor: click any text, type, hit Save — a
+  typo fix no longer needs the raw source or an agent round-trip. Works on phones
+  too (the save bar floats above the comments sheet). Editors publish
+  a new version directly; commenters (and locked artifacts) get **Suggest edits**,
+  which files the same change as a proposal for review. Under the hood each
+  changed run travels as a **quote-scoped edit** (`{ quote: { exact, prefix,
+  suffix }, new_text }`) — the write-side twin of the comment anchor — resolved
+  server-side against the stored source with a strict matcher (context match, else
+  a globally unique exact, else refuse), so an edit can never land on the wrong
+  occurrence. For HTML artifacts the resolved span maps back to raw bytes through
+  an offset-tracking projection that refuses to cross markup or split an entity;
+  replacements are escaped. The `edits` field on `POST /versions`, `/proposals`,
+  and the MCP `publish` tool accepts the new shape as an alternative to
+  `{old_str, new_str}` (one shape per batch — the two resolve against different
+  baselines, so mixing is refused rather than silently reordered), with the same
+  `base_version` conflict safety and an atomic all-or-nothing batch capped at 500
+  edits per request.
+  The shown version freezes while editing (a concurrent publish warns instead of
+  reloading typed text away), comment anchors re-sweep as usual — a surgical
+  inline edit keeps neighboring comments attached — and structural changes stay
+  where they belong: chat and the source editor.
+
+### Changed
 - **Access is three single-purpose fields.** Replaced the overloaded `visibility`
   with `workspace_access` (does the artifact's workspace reach it, at each member's
   seat role), `link_role` (what merely holding the URL grants anyone — anonymous
