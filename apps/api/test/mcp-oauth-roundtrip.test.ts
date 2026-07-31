@@ -73,7 +73,9 @@ const startReferenceServer = async () => {
   throw new Error("the reference MCP server never came up")
 }
 
-const SECRET = "roundtrip-secret-at-least-16-chars-long"
+// Prefixed like the other suites' keys (hosted-mcp-source, mcp-oauth): long enough for the
+// cipher, and shaped so a secret scanner does not have to guess whether it is real.
+const SECRET = "zz-roundtrip-test-key-not-a-secret-value"
 const owner: TestUser = { id: "u_rt", email: "rt@derive.test", name: "O" }
 const { app, meta } = makeAuthedApp("mcp-oauth-roundtrip", [owner], "editor", {
   deps: { encryptionKey: SECRET, baseUrl: "https://derive.test" },
