@@ -136,8 +136,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
       // Same workspace storage cap the HTTP routes and the publish `edits` path
       // enforce — checkpoint fires repeatedly by design, so it's the MCP path
       // most likely to accrete blobs past an exceeded quota.
-      if (await ctx.overStorage(targetOrg, bytes.length))
-        return text("The workspace's storage quota is exceeded — checkpoint not saved.")
+      if (await ctx.overStorage(targetOrg, bytes.length)) return text(ctx.blockCopy.storage.message)
       try {
         const settings = existing ? null : await ctx.meta.getOrgSettings(targetOrg)
         const { artifact, version } = await publishVersion(

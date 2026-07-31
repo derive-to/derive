@@ -24,8 +24,8 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Favorite is the one property kept VISIBLE in the header — the filled star is a
 // glanceable state (you see at a glance that this artifact is starred), and a
-// sanctioned ink moment. Everything else (tags, collections, report) opens from the
-// ⋯ menu as a dialog; the tags/collections dialogs live in
+// sanctioned ink moment. Everything else (collections, report) opens from the
+// ⋯ menu as a dialog; the collections dialog lives in
 // components/shared/organize-dialogs (shared with the library's quick actions).
 export function StarButton({
   shortId,

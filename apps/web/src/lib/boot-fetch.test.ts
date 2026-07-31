@@ -54,7 +54,7 @@ describe("the head-started boot requests are the ones the api client asks for", 
     vi.stubGlobal("fetch", fetchSpy)
     headStarted({ [BOOT.homeList]: Promise.resolve(jsonResponse({ artifacts: ["head"] })) })
 
-    const got = await api.listArtifacts({ limit: LIBRARY_PAGE, sort: DEFAULT_SORT, tag: "x" })
+    const got = await api.listArtifacts({ limit: LIBRARY_PAGE, sort: DEFAULT_SORT, author: "amy" })
     expect(got).toEqual({ artifacts: ["network"] })
     expect(fetchSpy).toHaveBeenCalledOnce()
   })

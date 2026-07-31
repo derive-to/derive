@@ -14,9 +14,7 @@ import type { LibrarySelection } from "./use-library-selection"
 interface Handlers {
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
-  onPickTag: (tag: string) => void
   onPickAuthor: (login: string) => void
-  onEditTags: (a: Artifact) => void
   onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
@@ -149,9 +147,7 @@ function FolderSection({
               artifact={a}
               onOpen={() => handlers.onOpen(a)}
               onToggleFavorite={() => handlers.onToggleFavorite(a)}
-              onPickTag={handlers.onPickTag}
               onPickAuthor={handlers.onPickAuthor}
-              onEditTags={() => handlers.onEditTags(a)}
               onAddToCollection={() => handlers.onAddToCollection(a)}
               onDelete={() => handlers.onDelete(a)}
               onPrefetch={() => handlers.onPrefetch(a)}

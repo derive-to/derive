@@ -4337,4 +4337,77 @@ export function runStoreContract(
       }
     })
   })
+  describe(`${label}: connection credentials`, () => {
+    // The one mutation the connection table never had. It exists for OAuth — the row is created
+    // `pending` before the redirect and completed on callback — and for every refresh after that.
+    const mkConn = async (over: Record<string, unknown> = {}) =>
+      store.createConnection({
+        id: `conn_${uuid().slice(0, 8)}`,
+        org_id: ORG,
+        user_id: "u1",
+        scope: "personal",
+        kind: "mcp",
+        broker: "mcp",
+        toolkit: "stripe",
+        broker_ref: "mcp::https://mcp.stripe.com",
+        secret_enc: "v1.old",
+        status: "pending",
+        ...over,
+      } as never)
+
+    it("writes the credential, the ref and the status together", async () => {
+      const cn = await mkConn()
+      const out = await store.updateConnectionCredential(cn.id, ORG, {
+        secret_enc: "v1.new",
+        broker_ref: "mcp:s256-abc:https://mcp.stripe.com",
+        status: "active",
+        scopes_label: "oauth",
+      })
+      expect(out?.secret_enc).toBe("v1.new")
+      expect(out?.broker_ref).toBe("mcp:s256-abc:https://mcp.stripe.com")
+      expect(out?.status).toBe("active")
+      expect(out?.scopes_label).toBe("oauth")
+    })
+
+    it("is org-scoped — another workspace cannot rewrite the credential", async () => {
+      const cn = await mkConn()
+      expect(
+        await store.updateConnectionCredential(cn.id, `org_${uuid()}`, { secret_enc: "v1.x" }),
+      ).toBeNull()
+      expect((await store.getConnection(cn.id))?.secret_enc).toBe("v1.old")
+    })
+
+    it("COMPARE-AND-SWAP: a stale refresh cannot overwrite a newer token", async () => {
+      // Two runs hit an expired access token in the same second. Both refresh. The slower reply
+      // must not put its older token back over the newer one and invalidate a working grant.
+      const cn = await mkConn()
+      const fast = await store.updateConnectionCredential(
+        cn.id,
+        ORG,
+        { secret_enc: "v1.fresh" },
+        "v1.old",
+      )
+      expect(fast?.secret_enc).toBe("v1.fresh")
+      const slow = await store.updateConnectionCredential(
+        cn.id,
+        ORG,
+        { secret_enc: "v1.stale" },
+        "v1.old", // what the slow caller READ before it refreshed
+      )
+      expect(slow, "the stale write is refused, not applied").toBeNull()
+      expect((await store.getConnection(cn.id))?.secret_enc).toBe("v1.fresh")
+    })
+
+    it("the swap guard matches a NULL credential too, so a first write is safe", async () => {
+      const cn = await mkConn({ secret_enc: null })
+      expect(
+        (await store.updateConnectionCredential(cn.id, ORG, { secret_enc: "v1.first" }, null))
+          ?.secret_enc,
+      ).toBe("v1.first")
+      // And a second caller expecting null now loses.
+      expect(
+        await store.updateConnectionCredential(cn.id, ORG, { secret_enc: "v1.second" }, null),
+      ).toBeNull()
+    })
+  })
 }

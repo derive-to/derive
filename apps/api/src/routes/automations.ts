@@ -272,6 +272,10 @@ export const automationRoutes = (ctx: AppContext) => {
         trigger: TRIGGER.optional(),
         instruction: z.string().min(1).max(4000).optional(),
         refs: REFS.nullable().optional(),
+        // Sources were bindable only at CREATE, which meant an automation could never be pointed
+        // at a source connected afterwards — and connecting the source is the step a person does
+        // second, having already built the automation. `null` (or []) unbinds them all.
+        connectionIds: z.array(z.string().max(64)).max(20).nullable().optional(),
         enabled: z.boolean().optional(),
       }),
     )
@@ -280,6 +284,18 @@ export const automationRoutes = (ctx: AppContext) => {
       const agents = await meta.listAgents(org)
       if (!agents.some((ag) => ag.id === b.agentId))
         return bail(fail(c, 400, "agent must be in this workspace"))
+    }
+    // The SAME least-privilege check create makes, for the same reason: the ids must belong to
+    // this workspace and be attachable by this caller. An edit path that skipped it would be a
+    // way to bind someone else's credential to an automation that spends it.
+    if (b.connectionIds?.length) {
+      const bindErr = await connectionBindError(
+        meta,
+        org,
+        { userId: (await privateOwnerId(c)) ?? null, canManage: true },
+        b.connectionIds,
+      )
+      if (bindErr) return bail(fail(c, 400, bindErr))
     }
     const rec = await meta.updateAutomation(a.id, org, {
       agent_id: b.agentId,
@@ -291,6 +307,12 @@ export const automationRoutes = (ctx: AppContext) => {
           : b.refs === null
             ? null
             : JSON.stringify(normalizeSelectors(b.refs)),
+      connection_ids:
+        b.connectionIds === undefined
+          ? undefined
+          : b.connectionIds?.length
+            ? JSON.stringify(b.connectionIds)
+            : null,
       enabled: b.enabled === undefined ? undefined : b.enabled ? 1 : 0,
     })
     if (!rec) return fail(c, 404, "not found")

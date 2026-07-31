@@ -26,6 +26,7 @@
     "typecheck:tsc": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.manual.config.ts",
+    "test:worker": "vitest run --config vitest.worker.config.ts",
     "test:coverage": "vitest run --coverage",
     "gen:env": "vitest run test/config-manifest.test.ts -u",
     "gen:openapi": "vitest run test/openapi.test.ts -u"
@@ -59,10 +60,12 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
     "@cloudflare/workers-types": "^4.20260615.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^25.9.3",
     "@types/pg": "^8.11.10",
+    "express": "^5.1.0",
     "fflate": "^0.8.2",
     "tsx": "^4.19.0",
     "typescript": "^6.0.3",

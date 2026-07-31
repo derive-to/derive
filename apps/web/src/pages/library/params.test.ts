@@ -38,10 +38,11 @@ describe("libraryFeedParams", () => {
     expect(libraryFeedParams("all", { query: "old" }, "").q).toBeUndefined()
   })
 
-  it("keeps the home's tag/collection/author narrowing", () => {
-    expect(
-      libraryFeedParams("all", { tag: "arch", collection: "c1", author: "amy" }),
-    ).toMatchObject({ tag: "arch", collection: "c1", author: "amy" })
+  it("keeps the home's collection/author narrowing", () => {
+    expect(libraryFeedParams("all", { collection: "c1", author: "amy" })).toMatchObject({
+      collection: "c1",
+      author: "amy",
+    })
   })
 
   it("keeps the Created-by-me tab to the home library", () => {

@@ -50,6 +50,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     limited,
     overStorage,
     billingGate,
+    blockCopy,
     publishLimiter,
     sourceText,
   } = ctx
@@ -225,7 +226,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         bytes = new TextEncoder().encode(materialized.content)
         if (bytes.length > MAX_UPLOAD_BYTES) return bail(fail(c, 413, "upload too large"))
         if (await overStorage(artifact.org_id, bytes.length))
-          return bail(fail(c, 413, "storage quota exceeded"))
+          return bail(fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code }))
         filename = materialized.filename
         isBundle = false
       } else {
@@ -237,7 +238,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         // Proposals store a blob immediately, so they count toward the storage cap
         // of the artifact's workspace.
         if (await overStorage(artifact.org_id, bytes.length))
-          return bail(fail(c, 413, "storage quota exceeded"))
+          return bail(fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code }))
         filename = file.name
         isBundle =
           /\.zip$/i.test(file.name) ||

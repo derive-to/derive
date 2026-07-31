@@ -3,6 +3,7 @@ import { type McpAuthResolver, makeBroker, quietReason, refRouter } from "@deriv
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { installationToken } from "./github-app"
+import { liveBearer } from "./mcp-oauth"
 
 /** One tool a hosted run may call, paired with the connected-account ref it executes through.
  *  `kind` and `connectionId` are how the tool proxy routes the call without a second lookup;
@@ -203,7 +204,11 @@ export const mcpAuthFor = (
     }
     const cn = await row
     if (!cn || cn.org_id !== orgId || !cn.secret_enc) return undefined
-    return decryptSecret(cn.secret_enc, encryptionKey)
+    // One call site for BOTH credential shapes. A pasted key comes back as itself; an OAuth blob
+    // is refreshed here if it is about to expire, which is why this resolver runs per call rather
+    // than per request. An unreadable credential returns undefined — never the raw blob, which
+    // would put our ciphertext on somebody else's server. See lib/mcp-oauth.ts.
+    return await liveBearer(meta, cn, encryptionKey)
   }
 }
 

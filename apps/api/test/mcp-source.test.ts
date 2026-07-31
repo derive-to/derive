@@ -42,6 +42,14 @@ const startServer = async (tools: Tool[]) => {
     })
     req.on("end", () => {
       state.auth.push(req.headers.authorization)
+      // `?status=NNN` makes the server answer with that status and nothing else, so a test can
+      // exercise the failure a REAL server produces — a 401 challenge, a 404 at the wrong path —
+      // rather than only the "nothing is listening" case.
+      const forced = Number(new URL(req.url ?? "/", "http://x").searchParams.get("status"))
+      if (forced) {
+        res.writeHead(forced, forced === 401 ? { "www-authenticate": "Bearer" } : {})
+        return res.end(JSON.stringify({ error: `forced ${forced}` }))
+      }
       const msg = JSON.parse(raw || "{}") as { id?: number; method?: string; params?: never }
       const result =
         msg.method === "initialize"
@@ -287,7 +295,47 @@ describe("MCP as a source: connect, list, call", () => {
     // So: say so now, while a human is watching, and name the likely fix.
     const created = await connect({ toolkit: "down", mcp_url: "http://localhost:1/mcp" })
     expect(created.status).toBe(400)
-    expect(String(created.body.error)).toMatch(/did not answer|mcp_secret/)
+    // And it names WHICH failure. "did not answer" used to be said about a server that answered
+    // 401 as readily as one that was not there, which sent people to paste a token that could
+    // never help. A connection-refused arrives as `TypeError: fetch failed` with a cause, which
+    // is a dead server — not the "Illegal invocation" class of defect that is ours.
+    expect(String(created.body.error)).toMatch(/could not reach/)
+    expect(created.body.reason).toBe("unreachable")
+  })
+
+  it("tells a 401 from a 404, because they need opposite fixes", async () => {
+    // The two URLs a person actually tries against a real server. Stripe answers 401 at its root
+    // and 404 at /mcp; both used to produce the same sentence, and the natural recovery from the
+    // wrong one — paste a token — fails again saying nothing new.
+    const auth = await startServer([])
+    servers.push(auth.server)
+    // A 401 with no token is not a dead end — it is where OAuth begins. The row is stored
+    // PENDING (unpinned, so `toolsFor` refuses it and no run can use it) and carries the reason,
+    // so the client offers "Sign in" instead of showing something that looks broken.
+    const unauthorized = await connect({ toolkit: "needsauth", mcp_url: `${auth.url}?status=401` })
+    expect(unauthorized.status).toBe(201)
+    expect(unauthorized.body.status).toBe("pending")
+    expect(unauthorized.body.reason).toBe("auth_required")
+
+    // But a 401 when a token WAS pasted is a real failure: the token is wrong, and storing a row
+    // would leave a connection that can never come good.
+    const refused = await connect({
+      toolkit: "badtoken",
+      mcp_url: `${auth.url}?status=401`,
+      mcp_secret: "definitely-not-valid",
+    })
+    expect(refused.status).toBe(400)
+    expect(String(refused.body.error)).toMatch(/refused the token/i)
+  })
+
+  it("a 404 on a /mcp path suggests the root, which is where Stripe's server lives", async () => {
+    const gone = await startServer([])
+    servers.push(gone.server)
+    const res = await connect({ toolkit: "wrongpath", mcp_url: `${gone.url}?status=404` })
+    expect(res.status).toBe(400)
+    expect(res.body.reason).toBe("not_mcp")
+    // The URL ends in /mcp, so the message points at the root rather than leaving them guessing.
+    expect(String(res.body.error)).toMatch(/try http/)
   })
 
   it("refuses a plaintext URL that is not localhost", async () => {

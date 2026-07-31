@@ -3653,6 +3653,8 @@ export class PgMetaStore implements MetaStore {
       trigger?: string
       instruction?: string
       refs?: string | null
+      /** JSON array of connection ids this automation may spend; null clears them all. */
+      connection_ids?: string | null
       enabled?: 0 | 1
     },
   ): Promise<AutomationRecord | null> {
@@ -3661,6 +3663,7 @@ export class PgMetaStore implements MetaStore {
     if (fields.trigger !== undefined) set.trigger = fields.trigger
     if (fields.instruction !== undefined) set.instruction = fields.instruction
     if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
     if (fields.enabled !== undefined) set.enabled = fields.enabled
     if (Object.keys(set).length === 0) return this.getAutomation(id)
     const rows = await this.db
@@ -4000,6 +4003,42 @@ export class PgMetaStore implements MetaStore {
       .update(connection)
       .set({ status })
       .where(and(eq(connection.id, id), eq(connection.org_id, orgId)))
+      .returning()
+    return rows[0] ?? null
+  }
+  async updateConnectionCredential(
+    id: string,
+    orgId: string,
+    fields: {
+      secret_enc?: string | null
+      broker_ref?: string
+      status?: ConnectionStatus
+      scopes_label?: string | null
+    },
+    expectSecretEnc?: string | null,
+  ): Promise<ConnectionRecord | null> {
+    const set: Record<string, unknown> = {}
+    if (fields.secret_enc !== undefined) set.secret_enc = fields.secret_enc
+    if (fields.broker_ref !== undefined) set.broker_ref = fields.broker_ref
+    if (fields.status !== undefined) set.status = fields.status
+    if (fields.scopes_label !== undefined) set.scopes_label = fields.scopes_label
+    if (Object.keys(set).length === 0) return this.getConnection(id)
+    // The compare-and-swap rides IN the WHERE clause, so the check and the write are one
+    // statement. Reading first and then writing would leave the window this exists to close.
+    const guard =
+      expectSecretEnc === undefined
+        ? undefined
+        : expectSecretEnc === null
+          ? isNull(connection.secret_enc)
+          : eq(connection.secret_enc, expectSecretEnc)
+    const rows = await this.db
+      .update(connection)
+      .set(set)
+      .where(
+        guard
+          ? and(eq(connection.id, id), eq(connection.org_id, orgId), guard)
+          : and(eq(connection.id, id), eq(connection.org_id, orgId)),
+      )
       .returning()
     return rows[0] ?? null
   }

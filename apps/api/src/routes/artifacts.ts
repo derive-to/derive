@@ -155,6 +155,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     limited,
     overStorage,
     billingGate,
+    blockCopy,
     effectiveWhiteLabel,
     publishLimiter,
     unlockLimiter,
@@ -605,7 +606,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       bytes = new TextEncoder().encode(materialized.content)
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-      if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
+      if (await overStorage(org, bytes.length))
+        return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
       filename = materialized.filename
       isBundle = false
     } else {
@@ -615,7 +617,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       // The content-length header is advisory (a client can omit/understate it),
       // so re-check the actual buffered size — the hard cap before anything stores.
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
-      if (await overStorage(org, bytes.length)) return fail(c, 413, "storage quota exceeded")
+      if (await overStorage(org, bytes.length))
+        return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
       filename = file.name
       isBundle =
         /\.zip$/i.test(file.name) ||

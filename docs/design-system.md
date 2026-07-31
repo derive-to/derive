@@ -57,7 +57,7 @@ holds itself to the same standard voluntarily.
   an alert never reads as decoration — and status is never the accent.
 - **Calm categorical tints** — a muted, low-chroma family for feature wayfinding and
   categorical charts: `--color-share`, `--color-review`, `--color-insights`,
-  `--color-collection`, `--color-comments`, `--color-tag`, `--color-gold` (with
+  `--color-collection`, `--color-comments`, `--color-gold` (with
   `--chart-1…5` mirroring them). Theme-invariant by design, surfaced as `text-share` /
   `text-review` / … utilities and applied per call-site — never a blanket icon default,
   so a glyph inside a button or an active nav row still takes that surface's ink. "Calm
@@ -450,9 +450,9 @@ variants.
   live-cursor layer needs no control of its own), then the **actions** — the ONE filled-ink
   **Share** leads as the page's single primary (everything else ghost), then the favorited
   **star** (glanceable ink state), then a single sectioned **⋯** (view modes → organize →
-  activity → manage; Tags & Collections open as dialogs from it) — then the terminal
+  activity → manage; Collections opens as a dialog from it) — then the terminal
   **Comments** toggle hugging the panel it opens. Everything that used to crowd the row
-  (Present / Insights / History / Proposals / Edit / Lock / Report / Tags / Collections) now
+  (Present / Insights / History / Proposals / Edit / Lock / Report / Collections) now
   lives behind the ⋯ — the render is the hero, the chrome recedes.
 - **Live cursors** — peers' cursors are a slim arrow tinted by their **identity**: a stable,
   distinct tint from the shared identity palette (`colorForName`, the same palette avatar

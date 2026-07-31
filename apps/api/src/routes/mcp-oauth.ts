@@ -1,0 +1,353 @@
+/**
+ * Connecting an MCP server by SIGNING IN, instead of pasting a long-lived key.
+ *
+ * Two routes and one problem worth explaining.
+ *
+ * THE ROUTES. `POST /v1/connections/:id/authorize` discovers the server's authorization server,
+ * registers Derive as a client if the server supports it, and hands back a URL to send the person
+ * to. `GET /v1/connections/oauth/callback` receives them back, exchanges the code, stores the
+ * token, and only then can the connection become usable.
+ *
+ * THE PROBLEM. Everywhere else in this codebase a connection is born complete: `connect()` lists
+ * the server's tools and mints `mcp:<pin>:<url>` in one step, and `toolsFor` REFUSES any ref
+ * whose pin is empty — that refusal is the whole tool-poisoning defense, so it cannot be softened.
+ * But an OAuth connection cannot list anything until after consent comes back, which is a second
+ * HTTP round trip and a different request. So the row is created `pending` with an unpinned ref
+ * (unusable by construction, which is the correct resting state for a half-finished connection),
+ * and the callback is what lists the tools, computes the pin, rewrites the ref and flips it
+ * `active`. Re-pinning after the fact is the one part of this no library does for us.
+ *
+ * WHO MAY FINISH IT. Signed state proves who STARTED the flow; it rides in a URL and is
+ * replayable inside its window, so it cannot also prove who finished it. A live session must, and
+ * must match. Same rule the Slack identity link already applies, for the same reason.
+ */
+
+import { McpBroker } from "@derive/broker"
+import {
+  discoverAuthorizationServerMetadata,
+  discoverOAuthProtectedResourceMetadata,
+  exchangeAuthorization,
+  registerClient,
+  startAuthorization,
+} from "@modelcontextprotocol/sdk/client/auth.js"
+import { Hono } from "hono"
+import type { AppContext } from "../context"
+import { signCapabilityToken, verifyCapabilityToken } from "../lib/capability-token"
+import { fail } from "../lib/http"
+import {
+  type McpOauthCredential,
+  readCredential,
+  serializeClient,
+  serializeCredential,
+} from "../lib/mcp-oauth"
+
+/** Its own signing domain, so a state token cannot be replayed as any other capability. */
+const STATE_DOMAIN = "derive-mcp-oauth-state:"
+/** Long enough to read a consent screen and sign in; short enough that a leaked URL goes stale. */
+const STATE_TTL_MS = 15 * 60_000
+
+/**
+ * Which scopes to ask a server for.
+ *
+ * Asking for everything it advertises is the obvious implementation and the wrong one. Linear
+ * advertises `read write openid email`, so the consent screen read "Access: Read, Write, Identity,
+ * Email address" for a feature whose own description is "your agents can read from it" and whose
+ * token field says "paste the narrowest token the server will accept". Over-asking is what makes a
+ * careful person press Cancel, and they would be right to.
+ *
+ * Scope names are vendor-specific, so this is a HEURISTIC, not a taxonomy: drop the ones that
+ * plainly grant more than reading, keep the rest. If that leaves nothing recognisable, ask for
+ * nothing and let the authorization server apply its own default, which is what the MCP
+ * authorization spec says to do when a client cannot know the right scopes.
+ *
+ * Deliberately conservative in the direction of asking for LESS. A missing scope surfaces
+ * immediately and loudly — the callback re-lists the tools and a server that will not answer
+ * leaves the connection pending with its own words on screen — whereas an over-broad grant is
+ * silent, permanent until revoked, and ours to have caused.
+ */
+const ELEVATED = /write|admin|delete|manage|create|update|billing|payment/i
+
+export const requestedScope = (supported: string[] | undefined): string | undefined => {
+  const narrow = (supported ?? []).filter((s) => !ELEVATED.test(s))
+  return narrow.length ? narrow.join(" ") : undefined
+}
+
+/** Where the provider sends the person back. One route for every server. */
+export const callbackUri = (baseUrl: string): string =>
+  new URL("/v1/connections/oauth/callback", baseUrl).toString()
+
+/**
+ * The PKCE verifier has to survive the round trip, and it must not be guessable from the state.
+ * It rides inside the signed state itself: the state is HMAC'd with the server's own secret, so a
+ * caller can neither forge nor read it as anything but an opaque string, and nothing extra has to
+ * be stored for a flow that may never be completed.
+ */
+interface OauthState {
+  connectionId: string
+  orgId: string
+  userId: string
+  verifier: string
+  authServer: string
+  tokenEndpoint: string
+  clientId: string
+  clientSecret?: string
+  resource?: string
+}
+
+/**
+ * The whole state travels as ONE base64url field, not as nine.
+ *
+ * `signCapabilityToken` joins its fields with "." and recovers only the expiry structurally —
+ * everything before it comes back rejoined, so a kind with several fields has to "pick separators
+ * its field values can't contain". Half of these fields are URLs, and every real one has dots in
+ * it: `https://mcp.stripe.com` would split into four. Encoding the JSON once removes the question,
+ * and base64url is dot-free by construction.
+ */
+const packState = (s: OauthState): string[] => {
+  const bytes = new TextEncoder().encode(JSON.stringify(s))
+  let bin = ""
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return [btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "")]
+}
+
+const unpackState = (rest: string): OauthState | null => {
+  try {
+    const b64 = rest.replace(/-/g, "+").replace(/_/g, "/")
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4)
+    const bin = atob(padded)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    const s = JSON.parse(new TextDecoder().decode(bytes)) as OauthState
+    // The signature already proves we minted it; this only guards against an older token shape.
+    if (!s?.connectionId || !s.orgId || !s.userId || !s.verifier || !s.tokenEndpoint) return null
+    if (!s.authServer || !s.clientId) return null
+    return s
+  } catch {
+    return null
+  }
+}
+
+export const mcpOauthRoutes = (ctx: AppContext) => {
+  const { meta, requireUser, requireWorkspace, deps } = ctx
+  const app = new Hono()
+
+  /**
+   * Begin the flow for a connection that is waiting on authorization. Returns the URL to send the
+   * person to; the caller opens it. Deliberately a POST that returns a URL rather than a redirect,
+   * so the SPA keeps control of the navigation and can show its own "opening Stripe…" state.
+   */
+  app.post("/v1/connections/:id/authorize", async (c) => {
+    const org = await requireWorkspace(c, "read")
+    if (org instanceof Response) return org
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    // The same secret the other integrations sign state with — the Node and Worker entries pass
+    // the auth secret in as `encryptionKey`, and Slack's install flow already uses it this way.
+    const secret = deps.encryptionKey
+    if (!secret) return fail(c, 502, "this deployment cannot complete an OAuth connection")
+
+    const cn = await meta.getConnection(c.req.param("id"))
+    if (!cn || cn.org_id !== org) return fail(c, 404, "not found")
+
+    // WHO MAY START ONE, which is not the same question as who may read the list.
+    //
+    // Workspace: admin-managed, the same rule revoke applies even to whoever added it. Finishing
+    // this flow installs a grant into a source EVERY automation in the org can spend, so "read"
+    // was the wrong gate — it let any member attach their own access to shared infrastructure.
+    //
+    // Personal: its OWNER only, and deliberately stricter than revoke, which a manager may do for
+    // someone else. A manager cannot authorize another member's personal connection, because the
+    // row acts as its owner while the credential would be the manager's — the connection would
+    // then spend one person's access under another person's name.
+    if (cn.scope === "workspace") {
+      const gate = await requireWorkspace(c, "manage")
+      if (gate instanceof Response) return gate
+    } else if (cn.user_id !== me.id) {
+      return fail(c, 403, "forbidden")
+    }
+    if (cn.kind !== "mcp" || !cn.base_url) return fail(c, 400, "not an MCP connection")
+
+    try {
+      const serverUrl = cn.base_url
+      const prm = await discoverOAuthProtectedResourceMetadata(serverUrl).catch(() => undefined)
+      const authServer = prm?.authorization_servers?.[0] ?? serverUrl
+      const md = await discoverAuthorizationServerMetadata(authServer)
+      if (!md?.token_endpoint) return fail(c, 400, "that server does not advertise OAuth")
+
+      // REUSE A REGISTRATION BEFORE MAKING ANOTHER. Registration is not idempotent — Linear
+      // returns a fresh client_id for byte-identical metadata — so registering per attempt leaves
+      // an abandoned client at the provider for every retry and every abandoned consent screen.
+      const redirectUri = callbackUri(deps.baseUrl)
+      const stored = readCredential(cn.secret_enc, secret)
+      const reusable =
+        stored.kind === "client" && stored.client.authorization_server === authServer
+          ? { client_id: stored.client.client_id, client_secret: stored.client.client_secret }
+          : // Re-authorizing an already-connected source: its credential names the client that
+            // was registered for it, and that one is still ours to use.
+            stored.kind === "oauth" && stored.cred.authorization_server === authServer
+            ? { client_id: stored.cred.client_id, client_secret: stored.cred.client_secret }
+            : undefined
+
+      // Servers that offer registration hand back a public client — Stripe's advertises
+      // `token_endpoint_auth_methods_supported: ["none"]` — which is exactly the shape PKCE is
+      // designed for and needs no secret of ours anywhere.
+      const client =
+        reusable ??
+        (md.registration_endpoint
+          ? await registerClient(authServer, {
+              metadata: md,
+              clientMetadata: {
+                client_name: "Derive",
+                redirect_uris: [redirectUri],
+                grant_types: ["authorization_code", "refresh_token"],
+                response_types: ["code"],
+                token_endpoint_auth_method: "none",
+              },
+            })
+          : undefined)
+      if (!client?.client_id)
+        return fail(
+          c,
+          400,
+          "that server needs a pre-registered client, which this deployment has not configured",
+        )
+
+      const scope = requestedScope(md.scopes_supported)
+      // Persist it BEFORE sending them off, because the flow that never comes back is precisely
+      // the one that would otherwise register again. Never over an existing credential: that blob
+      // holds live tokens and this one does not.
+      if (!reusable && stored.kind !== "oauth")
+        await meta.updateConnectionCredential(cn.id, org, {
+          secret_enc: serializeClient(
+            {
+              v: 1,
+              kind: "client",
+              client_id: client.client_id,
+              ...(client.client_secret ? { client_secret: client.client_secret } : {}),
+              authorization_server: authServer,
+            },
+            secret,
+          ),
+        })
+
+      const { authorizationUrl, codeVerifier } = await startAuthorization(authServer, {
+        metadata: md,
+        clientInformation: client,
+        redirectUrl: redirectUri,
+        ...(scope ? { scope } : {}),
+        resource: new URL(serverUrl),
+      })
+
+      const state = await signCapabilityToken(
+        STATE_DOMAIN,
+        secret,
+        packState({
+          connectionId: cn.id,
+          orgId: org,
+          userId: me.id,
+          verifier: codeVerifier,
+          authServer,
+          tokenEndpoint: md.token_endpoint,
+          clientId: client.client_id,
+          ...(client.client_secret ? { clientSecret: client.client_secret } : {}),
+          resource: serverUrl,
+        }),
+        Date.now() + STATE_TTL_MS,
+      )
+      const url = new URL(authorizationUrl)
+      url.searchParams.set("state", state)
+      return c.json({ authorize_url: url.toString() })
+    } catch (e) {
+      return fail(c, 400, `could not start authorization: ${(e as Error).message}`.slice(0, 200))
+    }
+  })
+
+  /**
+   * The return leg. A top-level GET, like the Slack and GitHub callbacks, which is what passes the
+   * anonymous-write lockdown — and it still requires a live session below.
+   */
+  app.get("/v1/connections/oauth/callback", async (c) => {
+    const secret = deps.encryptionKey
+    const code = c.req.query("code")
+    const stateRaw = c.req.query("state")
+    if (!secret) return fail(c, 502, "OAuth is not configured")
+    if (c.req.query("error"))
+      return fail(c, 400, `authorization was declined: ${c.req.query("error")}`)
+    if (!code || !stateRaw) return fail(c, 400, "invalid callback")
+
+    const verified = await verifyCapabilityToken(STATE_DOMAIN, secret, stateRaw, Date.now())
+    const state = verified ? unpackState(verified.rest) : null
+    if (!state) return fail(c, 400, "that authorization link has expired — start again")
+
+    // State proves who STARTED it. It rides in a URL and is replayable inside its window, so a
+    // live session has to prove who FINISHES it, and they must be the same person.
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    if (me.id !== state.userId) return fail(c, 403, "sign in as the person who started this")
+
+    const cn = await meta.getConnection(state.connectionId)
+    if (!cn || cn.org_id !== state.orgId) return fail(c, 404, "not found")
+
+    try {
+      const tokens = await exchangeAuthorization(state.authServer, {
+        metadata: { token_endpoint: state.tokenEndpoint } as never,
+        clientInformation: { client_id: state.clientId, client_secret: state.clientSecret },
+        authorizationCode: code,
+        codeVerifier: state.verifier,
+        redirectUri: callbackUri(deps.baseUrl),
+        ...(state.resource ? { resource: new URL(state.resource) } : {}),
+      })
+
+      const cred: McpOauthCredential = {
+        v: 1,
+        access_token: tokens.access_token,
+        ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}),
+        ...(tokens.expires_in ? { expires_at: Date.now() + tokens.expires_in * 1000 } : {}),
+        token_endpoint: state.tokenEndpoint,
+        authorization_server: state.authServer,
+        client_id: state.clientId,
+        ...(state.clientSecret ? { client_secret: state.clientSecret } : {}),
+        ...(state.resource ? { resource: state.resource } : {}),
+      }
+      const secretEnc = serializeCredential(cred, secret)
+
+      // NOW list the tools, with the token we just obtained, and pin what came back. This is the
+      // step `connect()` does inline for a pasted key and cannot do here, because until this
+      // moment there was no credential to list with.
+      const broker = new McpBroker(undefined, () => cred.access_token)
+      const link = await broker.connect({
+        orgId: cn.org_id,
+        userId: cn.user_id,
+        toolkit: cn.base_url ?? "",
+      })
+      if (link.status !== "active") {
+        // Authorized, but the server still would not list. Keep the credential (it is valid and
+        // re-listing is cheap) and leave the row pending rather than pretending it is usable.
+        await meta.updateConnectionCredential(cn.id, cn.org_id, { secret_enc: secretEnc })
+        return fail(
+          c,
+          400,
+          "signed in, but that server would not list its tools — try reconnecting",
+        )
+      }
+
+      await meta.updateConnectionCredential(cn.id, cn.org_id, {
+        secret_enc: secretEnc,
+        broker_ref: link.ref,
+        status: "active",
+        scopes_label: "signed in",
+      })
+      // Back to where they started, not to a JSON body: this is a browser navigation.
+      //
+      // `/settings/sources`, not `/settings?tab=sources`. Settings sections are PATH segments
+      // (routes/settings.$section.tsx); the query form is not a route, so it fell through to
+      // /settings/profile — meaning every completed sign-in landed on the wrong page and the
+      // person never saw whether it had worked. Caught by clicking through it, not by a test.
+      return c.redirect(new URL("/settings/sources?connected=1", deps.baseUrl).toString(), 302)
+    } catch (e) {
+      return fail(c, 400, `could not complete authorization: ${(e as Error).message}`.slice(0, 200))
+    }
+  })
+
+  return app
+}

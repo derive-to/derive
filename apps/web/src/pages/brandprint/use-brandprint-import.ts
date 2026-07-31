@@ -2,7 +2,9 @@ import { useQueryClient } from "@tanstack/react-query"
 import { api } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
+import { openPaywall } from "@/lib/paywall"
 import { collectionsQuery, summaryQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { paywallReasonFor } from "@/lib/query-client"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { nextPersonalBrandprint } from "./personal-brandprint"
 import { placeholderFile } from "./profile-placeholder"
@@ -62,8 +64,13 @@ export function useBrandprintImport(
           const a = await api.publish(f)
           await api.addToCollection(target, a.short_id)
           ok++
-        } catch {
+        } catch (err) {
           failed.push(f.name)
+          // This catch swallows the failure to keep the batch going, but a billing
+          // refusal (e.g. storage_exceeded) must still reach the paywall — openPaywall
+          // just sets the reason, so firing it again per file is harmless.
+          const reason = paywallReasonFor(err)
+          if (reason) openPaywall(reason)
         }
       }
       if (created && ok === 0) {

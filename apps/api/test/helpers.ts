@@ -407,8 +407,13 @@ export const publishAs = (
   const url = shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts"
   return app.request(url, { method: "POST", body: form, headers })
 }
-export const jsonAs = (headers: Record<string, string>, body: unknown) => ({
-  method: "POST" as const,
+export const jsonAs = (
+  headers: Record<string, string>,
+  body: unknown,
+  /** POST unless a test is exercising an edit route. */
+  method: "POST" | "PATCH" | "PUT" = "POST",
+) => ({
+  method,
   headers: { "content-type": "application/json", ...headers },
   body: JSON.stringify(body),
 })

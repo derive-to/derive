@@ -21,16 +21,14 @@ import { ProposalSignal } from "./proposal-signal"
 /**
  * A compact list row for the library (the default for collections / synced repos,
  * where a flat thumbnail grid is noise for hundreds of docs). Reads top-to-bottom:
- * title, when it was last updated, then a meta line of type + folder location + tags.
+ * title, when it was last updated, then a meta line of type + folder location.
  * Same stretched-link + independently-clickable-controls pattern as ArtifactCard.
  */
 export function ArtifactRow({
   artifact: a,
   onOpen,
   onToggleFavorite,
-  onPickTag,
   onPickAuthor,
-  onEditTags,
   onAddToCollection,
   onDelete,
   onPrefetch,
@@ -41,14 +39,12 @@ export function ArtifactRow({
   artifact: Artifact
   onOpen: () => void
   onToggleFavorite: () => void
-  onPickTag: (tag: string) => void
   // Clicking the author filters the list by their GitHub login. Omit to render
   // the author as a non-filtering chip (still links to a known profile).
   onPickAuthor?: (login: string) => void
-  // Quick actions in the ⋯ menu — organize without opening the artifact. Tags
-  // are gated per-item (owner/editor), collections apply to any signed-in
-  // viewer (you're organizing your collections, not mutating the artifact).
-  onEditTags?: () => void
+  // Quick action in the ⋯ menu — organize without opening the artifact.
+  // Collections apply to any signed-in viewer (you're organizing your
+  // collections, not mutating the artifact).
   onAddToCollection?: () => void
   onDelete?: () => void
   onPrefetch?: () => void
@@ -59,12 +55,10 @@ export function ArtifactRow({
   onSelect?: (shift: boolean) => void
 }) {
   const isOwner = a.my_role === "owner"
-  const showTags = !!onEditTags && (a.my_role === "owner" || a.my_role === "editor")
   const showDelete = isOwner && !!onDelete
-  const showMenu = showTags || !!onAddToCollection || showDelete
+  const showMenu = !!onAddToCollection || showDelete
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const dir = a.source_path ? dirOf(a.source_path) : ""
-  const tags = a.tags ?? []
   // "Who last changed this": prefer the resolved author (carries the Derive handle),
   // fall back to the denormalized fields. Present only for synced artifacts.
   const author = a.author ?? null
@@ -174,32 +168,6 @@ export function ArtifactRow({
         </div>
       )}
 
-      {/* Tags sit above the stretched link so they stay independently clickable.
-          Badges rendered as buttons (asChild) — same chip grammar as ArtifactCard. */}
-      {tags.length > 0 && (
-        <div className="relative z-20 hidden max-w-2/5 flex-wrap justify-end gap-1.5 sm:flex">
-          {tags.slice(0, 4).map((t) => (
-            <Badge
-              key={t}
-              asChild
-              variant="outline"
-              className="px-1.5 font-mono text-2xs hover:border-foreground/25 hover:text-foreground"
-            >
-              <button
-                type="button"
-                data-testid={`artifact-row-tag-${t}`}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onPickTag(t)
-                }}
-              >
-                #{t}
-              </button>
-            </Badge>
-          ))}
-        </div>
-      )}
-
       <Button
         size="icon"
         variant="outline"
@@ -244,17 +212,7 @@ export function ArtifactRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
-            {/* Same organize order as the workbench ⋯ menu: Tags, then
-                Add to collection; Delete stays last behind a separator. */}
-            {showTags && (
-              <DropdownMenuItem
-                data-testid={`artifact-row-tags-${a.short_id}`}
-                onSelect={() => onEditTags?.()}
-              >
-                <Icon name="tag" size={16} />
-                Tags
-              </DropdownMenuItem>
-            )}
+            {/* Delete stays last, behind a separator — same as the workbench ⋯ menu. */}
             {onAddToCollection && (
               <DropdownMenuItem
                 data-testid={`artifact-row-collections-${a.short_id}`}
@@ -266,7 +224,7 @@ export function ArtifactRow({
             )}
             {showDelete && (
               <>
-                {(showTags || onAddToCollection) && <DropdownMenuSeparator />}
+                {onAddToCollection && <DropdownMenuSeparator />}
                 <DropdownMenuItem
                   data-testid={`artifact-row-delete-${a.short_id}`}
                   variant="destructive"

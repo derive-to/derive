@@ -59,11 +59,10 @@ export const workspacesQuery = () =>
 export const LIBRARY_PAGE = 30
 
 // The library list as an infinite query: each page is a keyset slice, and the
-// next cursor drives infinite scroll. Keyed by the active filter (search / tag /
+// next cursor drives infinite scroll. Keyed by the active filter (search /
 // collection / favorites) so each view caches independently.
 export type LibraryParams = {
   q?: string
-  tag?: string
   collection?: string
   favorite?: boolean
   // Narrow to artifacts last changed by this GitHub login.

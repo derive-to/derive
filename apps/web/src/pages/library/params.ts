@@ -36,7 +36,6 @@ export const libraryFeedParams = (
   q: q?.trim() || undefined,
   // The named feeds' validateSearch keeps only query + sort, so these are undefined
   // there; passing them unconditionally keeps this the same object the body built.
-  tag: search.tag,
   collection: search.collection,
   favorite: view === "favorites" || undefined,
   author: search.author,
