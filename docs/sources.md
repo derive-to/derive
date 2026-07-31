@@ -133,3 +133,22 @@ them would have surfaced against a stub:
 Servers currently covered: DeepWiki, GitMCP, Cloudflare docs and Hugging Face need no
 authorization; Stripe, Linear, Notion and Sentry all require it and all four support dynamic
 registration with PKCE S256 and a public client.
+
+### Proving the callback in a deployed Worker
+
+The round-trip test above runs in Node. Getting the same coverage on a deployed Worker takes one
+extra step, because a Worker cannot reach a reference server on your laptop and the SDK's example
+hardcodes `localhost` in the URLs it advertises:
+
+1. `cloudflared tunnel --url http://localhost:3500 --protocol http2` for a public https origin.
+   (Use `--protocol http2` if QUIC is blocked on your network; the default fails with a 530.)
+2. Host the SDK's `DemoInMemoryAuthProvider` behind `mcpAuthRouter` on one port, passing the tunnel
+   origin as `issuerUrl` / `baseUrl` / `resourceServerUrl` so the metadata advertises something the
+   Worker can fetch. Give the MCP transport `sessionIdGenerator: undefined` — a fresh transport per
+   request cannot honour a session id it never issued, and the client echoes one back on the
+   request after `initialize`.
+3. Point a connection on the preview at `<tunnel>/mcp` and drive connect → authorize → consent →
+   callback.
+
+Worth doing before believing this works in production. The runtime difference has bitten this
+feature twice, and each half is only proven where it has actually run.
