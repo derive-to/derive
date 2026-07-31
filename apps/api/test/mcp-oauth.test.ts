@@ -249,6 +249,45 @@ describe("connecting an MCP server by signing in", () => {
     expect(row?.status, "and the connection is untouched").toBe("pending")
   })
 
+  it("a WORKSPACE source needs manage to sign in, not merely read", async () => {
+    // Finishing this flow installs a grant into a source EVERY automation in the org can spend,
+    // so it follows the same admin-managed rule revoke does. `read` was the original gate, which
+    // let any member attach their own access to shared infrastructure.
+    const srv = await startOauthServer()
+    const created = await app.request(
+      "/v1/connections",
+      jsonAs(as(owner.email), { toolkit: "shared", mcp_url: srv.url, scope: "workspace" }),
+    )
+    const id = ((await created.json()) as { id: string }).id
+
+    // `other` is an editor here: plenty to read the list, not enough to sign in on the org's
+    // behalf.
+    const denied = await app.request(`/v1/connections/${id}/authorize`, {
+      method: "POST",
+      headers: as(other.email),
+    })
+    expect(denied.status).toBe(403)
+
+    const allowed = await app.request(`/v1/connections/${id}/authorize`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    expect(allowed.status).toBe(200)
+  })
+
+  it("a PERSONAL source is its owner's alone, even from a manager", async () => {
+    // Stricter than revoke, which a manager may do for someone else, and deliberately: the row
+    // acts as its owner, so a manager's grant stored here would spend one person's access under
+    // another person's name.
+    const srv = await startOauthServer()
+    const created = await connect({ toolkit: "mine", mcp_url: srv.url }, other)
+    const denied = await app.request(`/v1/connections/${created.body.id}/authorize`, {
+      method: "POST",
+      headers: as(owner.email), // the workspace owner, and still refused
+    })
+    expect(denied.status).toBe(403)
+  })
+
   it("a tampered or expired state is refused", async () => {
     const res = await app.request("/v1/connections/oauth/callback?code=x&state=not-a-real-state", {
       headers: as(owner.email),

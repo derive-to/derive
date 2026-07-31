@@ -148,8 +148,23 @@ export const mcpOauthRoutes = (ctx: AppContext) => {
 
     const cn = await meta.getConnection(c.req.param("id"))
     if (!cn || cn.org_id !== org) return fail(c, 404, "not found")
-    // A personal connection is its owner's grant and nobody else's to start.
-    if (cn.scope === "personal" && cn.user_id !== me.id) return fail(c, 403, "forbidden")
+
+    // WHO MAY START ONE, which is not the same question as who may read the list.
+    //
+    // Workspace: admin-managed, the same rule revoke applies even to whoever added it. Finishing
+    // this flow installs a grant into a source EVERY automation in the org can spend, so "read"
+    // was the wrong gate — it let any member attach their own access to shared infrastructure.
+    //
+    // Personal: its OWNER only, and deliberately stricter than revoke, which a manager may do for
+    // someone else. A manager cannot authorize another member's personal connection, because the
+    // row acts as its owner while the credential would be the manager's — the connection would
+    // then spend one person's access under another person's name.
+    if (cn.scope === "workspace") {
+      const gate = await requireWorkspace(c, "manage")
+      if (gate instanceof Response) return gate
+    } else if (cn.user_id !== me.id) {
+      return fail(c, 403, "forbidden")
+    }
     if (cn.kind !== "mcp" || !cn.base_url) return fail(c, 400, "not an MCP connection")
 
     try {
