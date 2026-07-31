@@ -1,4 +1,5 @@
-import type { ReactNode } from "react"
+import { useNavigate } from "@tanstack/react-router"
+import type { MouseEvent, ReactNode } from "react"
 import { useEffect, useRef } from "react"
 import { Icon } from "@/components/icons"
 import { cn } from "@/lib/utils"
@@ -43,9 +44,28 @@ export function ChatThread(props: {
   empty: ReactNode
   onPoll: () => void
   className?: string
+  /** Wraps each row — the page centres its rows in a reading column while the scroll area
+   *  stays full-bleed. Omitted, rows render as-is (the rail, which is already narrow). */
+  row?: (children: ReactNode) => ReactNode
 }) {
-  const { messages, working, streaming, empty, onPoll, className } = props
+  const { messages, working, streaming, empty, onPoll, className, row } = props
   const endRef = useRef<HTMLDivElement | null>(null)
+  const navigate = useNavigate()
+  const wrap = row ?? ((c: ReactNode) => c)
+
+  // An answer's citations are ROOT-RELATIVE anchors inside markdown we rendered (see mdToHtml),
+  // so a plain click would reload the whole SPA to open a document that is one route away.
+  // Caught here, once, for every row: external links (they carry target=_blank) and modified
+  // clicks (open-in-new-tab, which people do deliberately) are left entirely alone.
+  const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    const a = (e.target as HTMLElement).closest("a")
+    if (!a || a.target === "_blank") return
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+    const href = a.getAttribute("href")
+    if (!href?.startsWith("/")) return
+    e.preventDefault()
+    void navigate({ to: href })
+  }
 
   // Follow the tail as turns land. Depends on the message COUNT (and the working flag, which
   // adds the thinking row) — with empty deps this fired on mount only and every reply landed
@@ -67,20 +87,20 @@ export function ChatThread(props: {
   }, [working, streamAlive, onPoll])
 
   return (
-    <div className={cn("min-h-0 flex-1 overflow-y-auto", className)}>
+    <div className={cn("min-h-0 flex-1 overflow-y-auto", className)} onClick={onClick}>
       {messages.length === 0 ? (
         empty
       ) : (
         <div className="space-y-3">
           {messages.map((m) => (
-            <Bubble key={m.id} msg={m} />
+            <div key={m.id}>{wrap(<Bubble msg={m} />)}</div>
           ))}
           {/* The reply as it is being written. Once any of it has arrived it REPLACES the
               thinking row — a spinner sitting under text that is visibly streaming reads as a
               second, stalled turn. Falls back to the spinner while the model has not emitted
               yet, and whenever nothing is streaming at all, so a turn with no deltas looks
               exactly as it always did. */}
-          {streaming ? <Streaming text={streaming} /> : working ? <Thinking /> : null}
+          {streaming ? wrap(<Streaming text={streaming} />) : working ? wrap(<Thinking />) : null}
           <div ref={endRef} />
         </div>
       )}

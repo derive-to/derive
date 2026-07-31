@@ -42,6 +42,9 @@ export interface ChatTurnInput {
   workspaceName: string
   /** Who is asking, for the model's own reference ("what did I write last week"). */
   asker: { name: string | null }
+  /** The skill index for the tools this turn holds — one line each in the prompt, bodies read
+   *  on demand. Empty when the turn has no tools with separate procedure. */
+  skills: { name: string; summary: string }[]
 }
 
 /** The transcript as plain chat turns, oldest first. */
@@ -62,22 +65,47 @@ const apologyFor = (failure: { reason: string; error: string }): string => {
   return "I could not produce an answer to that."
 }
 
+/**
+ * THE SYSTEM PROMPT, and why it is short.
+ *
+ * The same discipline the MCP surface already runs on (see buildServer's `instructions`): the
+ * always-loaded text carries IDENTITY, the CONSEQUENCE lines that must hold on every single
+ * turn, and an INDEX — and the procedure lives in skills the agent reads when it needs them.
+ *
+ * The split is not stylistic. A rule the agent must obey on every reply (cite what you used,
+ * never invent) is worthless if it is one lazy read away; a procedure it needs on the turns it
+ * actually searches (how the literal search behaves, which find mode, how to read a section) is
+ * waste on every turn that does not. Chat gets this for free because it holds the REAL `read`
+ * tool: `read("derive://skills/finding")` serves the same body the MCP resource does, so there
+ * is one copy of the procedure and both surfaces read it.
+ *
+ * Anything longer than this belongs in a skill. If a lesson keeps having to be repeated here,
+ * that is the signal the skill index needs a better line, not that the prompt needs a paragraph.
+ */
 const systemPrompt = (input: ChatTurnInput): string => {
   const names = input.tools.tools.map((t) => t.name)
+  // Only the skills whose tools this turn actually holds: an index that points at procedure for
+  // a tool the agent cannot call is a way to waste its one lazy read.
+  const skills = input.skills.map(
+    (s) => `- ${s.name} — ${s.summary} — read derive://skills/${s.name}`,
+  )
   return `You are Derive, the agent built into Derive — a place teams keep living documents (called artifacts, or "derives") with full version history, review comments, and published web pages.
 
 You are talking with ${input.asker.name ?? "someone"} in the workspace "${input.workspaceName}". They are watching this reply as you write it.
 
-WHAT YOU CAN DO. You have tools${names.length ? `: ${names.join(", ")}` : " (none on this turn)"}. Use them rather than guessing:
-- Search the workspace before answering anything about what it contains. A confident answer from memory about a document you did not read is the single worst thing you can do here.
-- Read a document when the answer depends on what it actually says, and cite it: give the title and its URL, which is /artifacts/<short_id>.
-- If the workspace genuinely has nothing on the topic, say so plainly. Do not fill the gap with plausible content.
+TOOLS: ${names.length ? names.join(", ") : "none on this turn"}. Use them rather than guessing — you are answering about THIS workspace, and you cannot know its contents from memory.
 
-HOW TO WRITE. Answer the question asked, at the length it deserves — a one-line question gets a
-one-line answer. Prose, no preamble, no restating the question back. Markdown is rendered, so
-short lists and bold are fine; headings in a chat reply are not.
+Three things hold on every answer:
+- SEARCH BEFORE YOU ANSWER anything about what the workspace contains, and answer from what came back rather than from what sounds right.
+- LINK WHAT YOU USED: every document you name is a markdown link, [Q3 Roadmap](/artifacts/ab12cd34), using the short_id the tool returned. Never a bare short_id, never an invented one.
+- SAY SO WHEN THERE IS NOTHING. An empty workspace is a fact; plausible invented content is the one failure the person cannot detect by reading your answer.
 
-Never emit a revision block, an edits block, or any other machine block: this conversation is not about one document, and there is nothing here that would apply it.`
+HOW TO WRITE. Answer the question asked, at the length it deserves — a one-line question gets a one-line answer. Prose, no preamble, no restating the question back. Markdown renders, so short lists, bold and links are fine; headings in a chat reply are not. Never emit a revision or edits block: this conversation is not about one document, and nothing here would apply it.
+${
+  skills.length
+    ? `\nSKILLS carry the procedure. Read the matching one with the read tool when you need it:\n${skills.join("\n")}`
+    : ""
+}`
 }
 
 /**

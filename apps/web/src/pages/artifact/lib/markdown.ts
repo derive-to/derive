@@ -31,6 +31,16 @@ export function mdToHtml(src: string, mentions?: Mention[]): string {
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>',
   )
+  // ROOT-RELATIVE links — `[Q3 Roadmap](/artifacts/ab12cd34)`. An agent cites a document by its
+  // PATH (it has no business knowing this deploy's hostname), and without this the citation
+  // rendered as literal bracket-paren text: the one thing an answer about a document most needs
+  // to carry, dropped on the floor.
+  //
+  // The pattern is what makes it safe, so keep it strict: a leading slash followed by an
+  // ALPHANUMERIC. That admits `/artifacts/x` and excludes both `javascript:` (no leading slash)
+  // and `//evil.com` (protocol-relative, the classic bypass — blocked by the second character).
+  // No target=_blank: these stay in the app, and the chat surface routes them client-side.
+  h = h.replace(/\[([^\]]+)\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g, '<a href="$2">$1</a>')
   h = h.replace(
     /(^|[\s(])(https?:\/\/[^\s<)]+)/g,
     '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>',

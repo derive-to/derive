@@ -4,6 +4,7 @@ import { z } from "zod"
 import type { AppContext } from "../context"
 import { registerToolSurface, type ToolHandler } from "../mcp"
 import { makeToolContext, type ToolContextBase } from "../mcp-tool-context"
+import { CORE_SKILLS } from "../skills-reference.gen"
 import type { LoopTool } from "./agent-loop"
 
 /**
@@ -55,6 +56,44 @@ export interface ChatToolSurface {
   /** Execute one, exactly as the MCP transport would. Never throws: the loop turns a returned
    *  error into text the model can react to, and a thrown one into a lost turn. */
   execute: (name: string, input: unknown) => Promise<unknown>
+  /** The skills whose procedure applies to THESE tools — the index the system prompt carries,
+   *  one line each, whose bodies the turn reads on demand via `read("derive://skills/<name>")`.
+   *  The same bodies the MCP resources serve, so there is exactly one copy of the procedure. */
+  skills: { name: string; summary: string }[]
+}
+
+/**
+ * WHICH SKILL carries the procedure for which tool.
+ *
+ * Progressive disclosure only works if the index is HONEST: pointing a turn at a skill for a
+ * tool it does not hold spends its one lazy read on something it cannot act on. So the index is
+ * derived from the tools actually registered, never hand-listed alongside them — a subset change
+ * moves the index with it.
+ *
+ * A tool with no entry here has no separate procedure: its description is the whole story.
+ */
+const SKILL_FOR_TOOL: Record<string, readonly string[]> = {
+  find: ["finding"],
+  read: ["finding"],
+  publish: ["publishing", "assets"],
+  stage: ["publishing", "assets"],
+  use: ["contexts"],
+  comment: ["loop"],
+  catch_up: ["loop"],
+  organize: ["organize"],
+  checkpoint: ["checkpoint"],
+}
+
+/** The skill index for a set of tools: CORE_SKILLS order, deduped, summaries as authored. */
+export const skillsForTools = (
+  toolNames: Iterable<string>,
+): { name: string; summary: string }[] => {
+  const wanted = new Set<string>()
+  for (const t of toolNames) for (const s of SKILL_FOR_TOOL[t] ?? []) wanted.add(s)
+  return CORE_SKILLS.filter((s) => wanted.has(s.name)).map((s) => ({
+    name: s.name,
+    summary: s.summary,
+  }))
 }
 
 /**
@@ -173,6 +212,9 @@ export const buildChatTools = (
     }))
   return {
     tools,
+    // Derived from what actually registered, so the index can never advertise procedure for a
+    // tool this turn does not hold.
+    skills: skillsForTools(surface.names),
     execute: async (name, input) => {
       const handler: ToolHandler | undefined = surface.registry.get(name)
       // An unknown name is the model's mistake and should read as data it can correct, not as a

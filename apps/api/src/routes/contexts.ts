@@ -188,18 +188,20 @@ export const contextRoutes = (ctx: AppContext) => {
       return
     }
     const ws = await meta.getWorkspace(s.org_id).catch(() => null)
+    const tools = buildChatTools(ctx, {
+      org: s.org_id,
+      user: { id: me.id, name: me.name ?? me.username ?? null },
+      seatRole: seat.role,
+    })
     const res = await runChatTurn(
       { model: { ...model, callModel: stream.wrap(model.callModel) } },
       {
         session: s,
         transcript,
-        tools: buildChatTools(ctx, {
-          org: s.org_id,
-          user: { id: me.id, name: me.name ?? me.username ?? null },
-          seatRole: seat.role,
-        }),
+        tools,
         workspaceName: ws?.name ?? "this workspace",
         asker: { name: me.name ?? me.username ?? null },
+        skills: tools.skills,
       },
     )
     await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {

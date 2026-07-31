@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
+import type { ReactNode } from "react"
 import { useCallback, useEffect } from "react"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatThread } from "@/components/chat/chat-thread"
@@ -155,12 +156,30 @@ export function ChatPage() {
       </PageShell>
     )
 
+  // FULL SCREEN, on purpose. Chat is not a document page: the thread should own the viewport,
+  // and the composer should sit where the eye already is (the bottom edge), not float in the
+  // middle of a card. PageShell is therefore deliberately NOT used here — it exists to give
+  // reading pages one measure and one scroll rhythm, and this surface wants neither.
+  //
+  // Full-bleed does not mean full-width TEXT: the rows are centred in a reading column, so a
+  // wide monitor gets air rather than 200-character lines. That is the `row` wrapper below.
+  const measure = (children: ReactNode) => (
+    <div className="mx-auto w-full max-w-3xl px-4 sm:px-6">{children}</div>
+  )
+
   return (
-    <PageShell className="flex h-[calc(100dvh-8rem)] flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <Icon name="sparkles" className="text-muted-foreground" />
-        <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">Chat</h1>
-        <div className="ml-auto flex items-center gap-2">
+    <div className="flex h-full min-h-0 flex-col" data-testid="chat-page">
+      {/* The header is chrome, so it stays quiet: a small label, and the controls that change
+          what the next turn does. */}
+      <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 sm:px-6">
+        <Icon name="sparkles" className="size-4 text-muted-foreground" />
+        <h1 className="text-sm font-semibold tracking-tight text-foreground">Chat</h1>
+        {chat.sessionId ? (
+          <span className="hidden truncate text-xs text-muted-foreground sm:inline">
+            {history.data?.sessions.find((x) => x.id === chat.sessionId)?.preview ?? ""}
+          </span>
+        ) : null}
+        <div className="ml-auto flex items-center gap-1">
           {chat.sessionId ? (
             <Button
               variant="ghost"
@@ -186,56 +205,84 @@ export function ChatPage() {
             }
           />
         </div>
-      </div>
+      </header>
 
-      <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border bg-card">
-        <ChatThread
-          messages={chat.messages}
-          working={chat.working}
-          streaming={chat.streaming}
-          onPoll={chat.poll}
-          className="px-4 py-4"
-          empty={
-            <div className="flex h-full items-center justify-center">
+      <ChatThread
+        messages={chat.messages}
+        working={chat.working}
+        streaming={chat.streaming}
+        onPoll={chat.poll}
+        className="py-6"
+        row={measure}
+        empty={
+          <div className="flex h-full items-center justify-center px-4">
+            <div className="w-full max-w-lg">
               <EmptyState
                 icon={<Icon name="sparkles" />}
-                title={
-                  chatOff ? "Chat is not enabled here" : "Ask about anything in this workspace"
-                }
+                title={chatOff ? "Chat is not enabled here" : "Ask about your workspace"}
                 description={
                   chatOff
                     ? "An admin can turn chat on in workspace settings."
-                    : "Find content, summarize what changed, or ask what a document says. Derive searches and reads with your own permissions."
+                    : "Derive searches and reads with your own permissions, and links what it used."
                 }
               />
+              {!chatOff && (
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  {SUGGESTIONS.map((sug) => (
+                    <button
+                      key={sug}
+                      type="button"
+                      onClick={() => void chat.send(sug)}
+                      className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+                      data-testid="chat-suggestion"
+                    >
+                      {sug}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-          }
-        />
-        <ChatComposer
-          onSend={chat.send}
-          disabled={chatOff || !org}
-          disabledReason={chat.error ?? undefined}
-          placeholder="Ask about your workspace…"
-          accessory={
-            models.length > 1 ? (
-              <ModelPicker
-                models={models}
-                chosen={chosen}
-                onPick={(id) =>
-                  void navigate({
-                    to: "/chat",
-                    search: { session: sessionParam, model: id },
-                    replace: true,
-                  })
-                }
-              />
-            ) : null
-          }
-        />
+          </div>
+        }
+      />
+
+      <div className="shrink-0 border-t border-border">
+        {measure(
+          <ChatComposer
+            onSend={chat.send}
+            disabled={chatOff || !org}
+            disabledReason={chat.error ?? undefined}
+            placeholder="Ask about your workspace…"
+            className="border-t-0 px-0"
+            accessory={
+              models.length > 1 ? (
+                <ModelPicker
+                  models={models}
+                  chosen={chosen}
+                  onPick={(id) =>
+                    void navigate({
+                      to: "/chat",
+                      search: { session: sessionParam, model: id },
+                      replace: true,
+                    })
+                  }
+                />
+              ) : null
+            }
+          />,
+        )}
       </div>
-    </PageShell>
+    </div>
   )
 }
+
+/** Openers that show what this surface is FOR, in the words someone would actually type. Each
+ *  is a real question the tools can answer, not a feature tour. */
+const SUGGESTIONS = [
+  "What do we have about onboarding?",
+  "Summarize what changed this week",
+  "Find the pricing docs",
+]
 
 function ModelPicker(props: {
   models: ChatModel[]
