@@ -149,6 +149,14 @@ carries it (each one's current version), and `find(data:"checks", tag:"nightly")
 it to a tagged set. `find(data:"*")` lists which facts exist in the workspace at all — the
 way to discover a vocabulary you did not author.
 
+**What links here.** `find(links_to:"<short_id or URL>")` returns every artifact whose
+current version references that one — the inversion of the host-derived `$links` fact.
+Reach for it instead of `find(query:"<short_id>")`, which ranks and caps a guess at
+relevance: the index is exhaustive, and it counts only real link targets, never a short id
+sitting in prose. Two gaps worth knowing: bundles and skills carry no facts, so references
+inside their pages are never indexed, and a version published before derivation shipped
+carries no row until it is read once.
+
 Outside MCP, the same data is a URL: `GET /raw/<short_id>/data/<slot>.json` for the
 current version, `/raw/<short_id>/v/<n>/data/<slot>.json` to pin one, and
 `/raw/<short_id>/data/<slot>.jsonl` for the WHOLE series (one JSON object per version,

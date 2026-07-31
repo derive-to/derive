@@ -1,5 +1,7 @@
 import {
   artifactUrl,
+  assertedOnly,
+  bundleFactsAdvisory,
   EditError,
   heavyAssetsAdvisory,
   looksLikeHtmlDocument,
@@ -784,7 +786,12 @@ export function registerPublishTool(tc: ToolContext): void {
         // list instead of a confident claim. Until now success was silent — a fact was
         // only ever mentioned when something went wrong, which is a poor way to teach a
         // capability whose whole point is that it accrues.
-        const storedSlots = await ctx.meta.getVersionData(artifact.id, version.n).catch(() => [])
+        // assertedOnly: every version now also carries host-derived $rows, and the receipt
+        // is the AUTHOR's reward — a receipt that congratulated the host for its own
+        // indexes would bury the one line that pays the author for asserting.
+        const storedSlots = assertedOnly(
+          await ctx.meta.getVersionData(artifact.id, version.n).catch(() => []),
+        )
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -835,7 +842,12 @@ export function registerPublishTool(tc: ToolContext): void {
                 ]
                   .map((advisory) => ` ${advisory}`)
                   .join("")
-              : ""),
+              : // A bundle gets no publishAdvisories (they read one document), but a facts
+                // block inside one of its pages is dropped SILENTLY — say so.
+                ((files ? bundleFactsAdvisory(files as Record<string, string>) : null)?.replace(
+                  /^/,
+                  " ",
+                ) ?? "")),
         }
         // PUBLISH → SEE IT, in one call. Without `render` this is exactly the old
         // response. With it, wait for the shot and hand it back here, because the

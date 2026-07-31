@@ -10,6 +10,35 @@ import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } fro
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
 
+/**
+ * A bundle page carrying a facts block that nobody will ever read — empty when there is
+ * none. Extraction runs on single-file HTML/markdown only, so a block inside a bundle
+ * page is silently dropped: no rows, no receipt line, no advisory. Found by dogfooding
+ * the live preview, where a bundle whose index.html carried a valid block published
+ * without a word and then read back as "embed a derive-facts block to add one" — the
+ * author is told to do the thing that was just ignored. Silence was the bug; this makes
+ * the drop audible without changing what is stored.
+ */
+export const bundleFactsAdvisory = (files: Record<string, string>): string | null => {
+  const pages = Object.entries(files).filter(([p]) => /\.(html?|md|markdown)$/i.test(p))
+  const carrying = pages
+    .filter(([p, body]) => {
+      const ct = /\.(html?)$/i.test(p) ? "text/html" : "text/markdown"
+      const { facts, advisories } = parseFacts(body, ct)
+      // advisories alone counts too: a MALFORMED block is still an author trying to
+      // assert, and staying quiet about it is the same failure.
+      return facts.length > 0 || advisories.length > 0
+    })
+    .map(([p]) => p)
+  if (!carrying.length) return null
+  const named = `${carrying.slice(0, 3).join(", ")}${carrying.length > 3 ? ` and ${carrying.length - 3} more` : ""}`
+  return (
+    `${named} ${carrying.length === 1 ? "carries" : "carry"} a derive-facts block, but facts are ` +
+    "extracted from single-file HTML and markdown only — a bundle stores none, so nothing here is " +
+    "queryable. Publish the fact-bearing page as its own artifact to make it queryable."
+  )
+}
+
 /** Advisory strings for a just-published single file — empty when nothing to say. */
 export const publishAdvisories = (content: string, contentType: string): string[] => {
   const out: string[] = []

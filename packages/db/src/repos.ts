@@ -111,6 +111,7 @@ import type {
 import {
   DEFAULT_ORG_SETTINGS,
   GLOBAL_FOLLOW_ORG,
+  LINKS_FACT,
   maxRole,
   mergeRunMeta,
   parseRunMeta,
@@ -723,6 +724,31 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setDerivedVersionData = async (
+    artifactId: string,
+    n: number,
+    rows: NewVersionData[],
+  ): Promise<void> => {
+    // Replace ONLY the derived ($) rows: the delete is prefix-scoped so this writer cannot
+    // express "remove an asserted row", which is what makes it safe to run concurrently with
+    // the backfill (see MetaStore.setDerivedVersionData for the interleaving it prevents).
+    await db
+      .delete(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          like(versionData.slot, "$%"),
+        ),
+      )
+      .run()
+    if (rows.length === 0) return
+    await db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+      .run()
+  }
+
   const getVersionData = async (
     artifactId: string,
     n: number,
@@ -814,6 +840,64 @@ export function makeRepos(db: SqliteDb) {
         and(
           eq(artifact.org_id, orgId),
           eq(versionData.slot, slot),
+          isNull(artifact.removed_at),
+          tagged ? inArray(artifact.id, tagged) : undefined,
+        ),
+      )
+      .orderBy(desc(versionData.created_at))
+      .limit(opts?.limit ?? 100)
+      .all()
+  }
+
+  // The BACKLINK scan: the inversion of $links. Same join as above, two more predicates.
+  //
+  // The LIKE NARROWS, the caller CONFIRMS by parsing — a substring match is not proof (the
+  // same reasoning as isManagedArtifact above). The quote anchoring that makes it exact
+  // today rests on facts in three other files: the slot is $links, the deriver emits only
+  // [0-9a-z]{6,12}, and the caller passes no metacharacter. A fourth deriver breaks two of
+  // them, and the confirm is what makes that a non-event rather than a wrong answer.
+  //
+  // `ref` is re-validated HERE as well as at the tool boundary, because an unvalidated one
+  // reaching the pattern ("%") returns every linking artifact — a wrong answer, which is
+  // worse than an error. Lowercased by the caller because SQLite's LIKE is ASCII
+  // case-insensitive and Postgres's is not: the confirm settles the difference, but the two
+  // dialects should not disagree about the candidate set either.
+  //
+  // `at` is the artifact's activity time (stamped by addVersion), never
+  // version_data.created_at: a lazily derived row's timestamp is when the host got round to
+  // indexing, not when the link was made.
+  const listArtifactsLinkingTo = async (
+    orgId: string,
+    ref: string,
+    opts?: { tag?: string; limit?: number },
+  ) => {
+    if (!/^[0-9a-z]{6,12}$/.test(ref)) return []
+    const tagged = opts?.tag
+      ? db
+          .select({ id: artifactTag.artifact_id })
+          .from(artifactTag)
+          .where(eq(artifactTag.tag, opts.tag.trim().toLowerCase()))
+      : null
+    return db
+      .select({
+        id: artifact.id,
+        short_id: artifact.short_id,
+        title: artifact.title,
+        n: versionData.n,
+        json: versionData.json,
+        gen: versionData.gen,
+        at: artifactSortExpr(artifact, "updated").mapWith(String),
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(versionData.slot, LINKS_FACT),
+          like(versionData.json, `%"${ref}"%`),
           isNull(artifact.removed_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
@@ -4053,9 +4137,11 @@ export function makeRepos(db: SqliteDb) {
     currentVersions,
     unfurlInfo,
     setVersionData,
+    setDerivedVersionData,
     getVersionData,
     getVersionDataSeries,
     listWorkspaceFacts,
+    listArtifactsLinkingTo,
     listFactAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,

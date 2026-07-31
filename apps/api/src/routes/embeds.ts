@@ -1,11 +1,8 @@
 import {
   type ArtifactRecord,
-  artifactUrl,
   candidateShortIds,
   escapeHtml,
-  factSummary,
   injectHead,
-  kindLabel,
   normalizeUsername,
   oembedResponse,
   ogCardSvg,

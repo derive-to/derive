@@ -11,6 +11,7 @@
 import {
   type ArtifactRecord,
   type BlobStore,
+  deriveFacts,
   FACT_GEN,
   type MetaStore,
   newId,
@@ -89,20 +90,39 @@ const extractVersionData = async (
   if (ct !== "text/html" && ct !== "text/markdown") return
   const bytes = await blobs.get(version.blob_key)
   if (!bytes) return
-  const { facts } = parseFacts(new TextDecoder().decode(bytes), ct)
-  if (facts.length === 0) return
-  await meta.setVersionData(
-    version.artifact_id,
-    version.n,
-    facts.map((s) => ({
+  const source = new TextDecoder().decode(bytes)
+  const { facts } = parseFacts(source, ct)
+  // Derived facts ($outline/$links/$stats) ride the same pass over bytes already decoded:
+  // the host's mechanical reading, in the namespace the author grammar can't reach. They
+  // are cache entries with names — recomputable, never counted, never rewarded — so each
+  // row carries ITS OWN deriver's generation, not the extraction grammar's and not a
+  // host-wide one (a shared constant would make a $stats change invalidate every $links row).
+  const derived = deriveFacts(source, ct)
+  const rows = [
+    ...facts.map((s) => ({
       id: newId("vd"),
       slot: s.slot,
       json: s.json,
       size_bytes: s.bytes,
       gen: FACT_GEN,
     })),
-  )
+    ...derived.map((s) => ({
+      id: newId("vd"),
+      slot: s.slot,
+      json: s.json,
+      size_bytes: s.bytes,
+      gen: s.gen,
+    })),
+  ]
+  if (rows.length === 0) return
+  // ONE setVersionData call: it is a full replace, so asserted and derived must land
+  // together or the second write erases the first — the same union trap the backfill
+  // below documents for itself.
+  await meta.setVersionData(version.artifact_id, version.n, rows)
+  if (facts.length === 0) return
   // Off the hot path where the caller can: the walk-back costs a blob read per version.
+  // ASSERTED names only — old versions get their derived rows lazily on first read, so a
+  // backfill walk never pays derivation for versions nobody asks about.
   const backfill = backfillNewSlots(
     meta,
     blobs,

@@ -7,6 +7,18 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 ## [Unreleased]
 
 ### Added
+- **What links here.** `find(links_to:"<short id or URL>")` returns every artifact in the
+  workspace whose current version references that one. Until now the only way to ask was
+  `find(query:"<short id>")`, which ranks and caps a guess at relevance — on the real
+  library it returned 3 artifacts where 18 contained the string, one of them a fuzzy match
+  about SVG gradients. The alternative was pulling every artifact's `$links` payload and
+  inverting it client-side, which is capped at 200 rows and so is not merely slow but
+  incomplete. This is exhaustive, and it counts only real link targets: a short id sitting
+  in a paragraph is a string, not an edge. It is a query rather than a table on purpose —
+  the answer for one target is small even though the scan is corpus-sized, and an inversion
+  computed from the rows it inverts cannot silently disagree with them. Bundles and skills
+  carry no facts at all, so references inside their pages are never indexed, and the empty
+  answer says so rather than implying the target has no inbound links.
 - **Chat replies arrive as they are written.** An attended turn used to be a spinner
   until the whole answer landed, which on a long reply is twenty seconds of nothing.
   The model's text now streams to the asker as a `session.delta` event on their own

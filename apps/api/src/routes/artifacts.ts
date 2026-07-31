@@ -2,6 +2,7 @@ import {
   type AnyDocEdit,
   type ArtifactRecord,
   artifactUrl,
+  assertedOnly,
   type BundleDoc,
   type BundleManifest,
   bundleDoc,
@@ -945,7 +946,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       // What extraction actually STORED, read back from the rows rather than echoed from
       // the parser — so a persistence failure reads as an empty list, not a false claim.
-      const storedSlots = await meta.getVersionData(artifact.id, version.n).catch(() => [])
+      // assertedOnly: this 201 body is the REST publish receipt, and the rows now include
+      // the host's own $facts — a receipt listing $stats beside the author's numbers is
+      // the host congratulating itself, the exact thing the reward surfaces must not do.
+      const storedSlots = assertedOnly(
+        await meta.getVersionData(artifact.id, version.n).catch(() => []),
+      )
       return c.json(
         {
           ...toJson(deps.baseUrl, artifact, versions),
