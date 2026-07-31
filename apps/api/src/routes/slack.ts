@@ -386,6 +386,21 @@ export const slackRoutes = (ctx: AppContext) => {
     if (body.type === "url_verification") return c.json({ challenge: body.challenge })
 
     const ev = body.event
+    // What Slack ACTUALLY sent. Every branch below is conditional on `ev.type`, and every
+    // non-match falls through to a bare ok — so an event we don't handle, or one that arrives
+    // in a shape a condition rejects, is indistinguishable from an event that never arrived.
+    // That cost a long afternoon: link previews were silent, and the only way to ask "is Slack
+    // even sending link_shared?" was to reason backwards from the absence of a downstream log.
+    // One line makes it a fact. Cheap — Slack events are not high-frequency — and the shape
+    // fields are here because a rejected condition is as interesting as an unknown type.
+    log.info("slack event", {
+      type: body.type,
+      event: ev?.type,
+      team: body.team_id ?? null,
+      channel: ev?.channel ?? null,
+      user: ev?.user ?? null,
+      links: ev?.links?.length ?? 0,
+    })
     // Install lifecycle: the app was removed, or a token was revoked. Flag the affected installs
     // for re-auth and let the Settings banner ask for a reconnect. Flag rather than delete — the
     // members' account links must survive, and a reconnect then restores service without redoing
