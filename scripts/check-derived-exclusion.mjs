@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // The author-reward surfaces must never show host-derived facts.
 //
-// Three surfaces exist to pay authors for ASSERTING — the publish receipt, the share
-// card, the review deltas — and every version now also carries derived $rows the host
+// Four surfaces exist to pay authors for ASSERTING — the MCP publish receipt, the
+// REST publish receipt, the share card, the review deltas — and every version now also carries derived $rows the host
 // computed for itself. A reward surface that includes them buries the author's numbers
 // under the host's indexes and spends the incentive #580 shipped on self-congratulation.
 //
@@ -32,6 +32,14 @@ const REWARD_SITES = [
     file: "apps/api/src/mcp-tools/catch-up.ts",
     marker: "factDeltas",
     why: "the review deltas",
+  },
+  {
+    // Found in a later review round, AFTER the first inventory shipped: the REST 201 body
+    // is a publish receipt too, and it dodged the list because it reads rows directly
+    // instead of through factSummary. The inventory is the list above — keep auditing it.
+    file: "apps/api/src/routes/artifacts.ts",
+    marker: "storedSlots",
+    why: "the REST publish receipt",
   },
 ]
 

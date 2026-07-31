@@ -126,8 +126,8 @@ const DERIVERS: [
 /**
  * The author-reward filter, shared so it cannot be hand-rolled divergently.
  *
- * Three surfaces exist to pay authors for asserting — the publish receipt, the share
- * card, the review deltas — and every one must show ASSERTED facts only. A card leading
+ * Four surfaces exist to pay authors for asserting — the two publish receipts (MCP
+ * and REST), the share card, the review deltas — and every one must show ASSERTED facts only. A card leading
  * with $stats word-counts instead of the author's numbers, or a receipt in which the host
  * congratulates itself, destroys the exact incentive the reward surfaces shipped to
  * create. One helper, every call site, and the lint that checks those sites checks for

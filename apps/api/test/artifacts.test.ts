@@ -167,6 +167,17 @@ describe("publish html file", () => {
     expect(json.content_sha256).toBe(expected)
   })
 
+  it("the REST publish receipt lists asserted facts only, never the host's $rows", async () => {
+    // The 201 body is a reward surface — found in review after the first inventory
+    // missed it. The stored rows now include $stats (every html page derives one), and
+    // the receipt must show the author's facts, not the host congratulating itself.
+    const content =
+      "<h1>Receipt</h1><h2>Body</h2>" +
+      '<script type="application/derive-facts" data-fact="checks">{"pass":3}</script>'
+    const json = await (await upload("receipt.html", content, { title: "Receipt" })).json()
+    expect(json.data.map((d: { fact: string }) => d.fact)).toEqual(["checks"])
+  })
+
   it("serves artifact metadata and sandboxed raw content", async () => {
     // The viewer at /artifacts/:ref is the SPA (client-rendered); the server exposes the
     // artifact's metadata over the data API and the bytes over the sandboxed /raw.
