@@ -61,9 +61,17 @@ Rules, all of which degrade to advisories and **never** block a write:
 | Carrier | single-file HTML or Markdown |
 
 **The `</script>` hazard is normative, not incidental.** HTML ends a script block at the
-first literal `</script>`, whatever a JSON string wanted, and a browser does the same. An
+first close tag, whatever a JSON string wanted, and a browser does the same. An
 implementation MUST detect the truncation and say so specifically. Reporting "invalid JSON"
 sends an author hunting in the wrong place: the JSON they are looking at *is* valid.
+
+**And the close-tag grammar is the browser's, not the literal string.** A browser ends the
+element at `</script` followed by whitespace, `/`, or `>` — so `</script >` and
+`</script foo>` terminate it too. An implementation that matches only the literal
+`</script>` reads past a close the browser honors, and the two silently disagree about
+where a body ends. This clause exists because the reference implementation itself got it
+wrong, and only an external scanner re-reading moved code caught it: match the browser's
+grammar, and test against `</script >` specifically.
 
 ## 3. Reads
 
