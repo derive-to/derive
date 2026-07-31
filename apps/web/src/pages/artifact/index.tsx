@@ -25,7 +25,7 @@ import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
-import { ArtifactChat, RailTabs } from "./artifact-chat"
+import { ArtifactChat } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
@@ -1024,63 +1024,61 @@ export function Artifact() {
           </div>
 
           {!focus && (
-            <>
-              <ArtifactComments
-                rail={rail}
-                onRail={setRail}
-                chatBeta={chatBeta}
-                chatPanel={
-                  <ArtifactChat
-                    messages={chat.messages}
-                    working={chat.working}
-                    disabledReason={chat.error ?? undefined}
-                    onSend={(b) => chat.send(b, effectiveCanPublish)}
-                    onPoll={chat.poll}
-                  />
-                }
-                shortId={shortId}
-                isMobile={isMobile}
-                isAnon={isAnon}
-                canComment={canComment}
-                reviewCard={
-                  // Top of the comments rail, not its own pane; members who can act only.
-                  canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
-                }
-                onSheetHeight={setSheetInset}
-                docLive={docLive}
-                editing={inlineEdit.active}
-                panel={effectivePanel}
-                asideWidth={asideWidth}
-                openCount={openCount}
-                frameRef={frame}
-                subscribeGeom={subscribeGeom}
-                onScrollDoc={scrollBy}
-                pinned={pinned}
-                general={general}
-                resolved={resolvedThreads}
-                openThreads={openThreads}
-                activeThread={activeThread}
-                hoverThread={hoverThread}
-                inDoc={inDoc}
-                composer={composer}
-                sel={sel}
-                setPanel={setPanel}
-                setComposer={setComposer}
-                setSel={setSel}
-                setActiveThread={setActiveThread}
-                setHoverThread={setHoverThread}
-                activate={activateThread}
-                toggleResolve={toggleResolve}
-                reply={reply}
-                submitNew={submitNew}
-                jumpTo={jumpTo}
-                startSelComment={startSelComment}
-                agents={agents}
-                currentSlide={deck?.i ?? null}
-                landedSlides={landedSlides}
-                anchorConf={anchorConf}
-              />
-            </>
+            <ArtifactComments
+              rail={rail}
+              onRail={setRail}
+              chatBeta={chatBeta}
+              chatPanel={
+                <ArtifactChat
+                  messages={chat.messages}
+                  working={chat.working}
+                  disabledReason={chat.error ?? undefined}
+                  onSend={(b) => chat.send(b, effectiveCanPublish)}
+                  onPoll={chat.poll}
+                />
+              }
+              shortId={shortId}
+              isMobile={isMobile}
+              isAnon={isAnon}
+              canComment={canComment}
+              reviewCard={
+                // Top of the comments rail, not its own pane; members who can act only.
+                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
+              }
+              onSheetHeight={setSheetInset}
+              docLive={docLive}
+              editing={inlineEdit.active}
+              panel={effectivePanel}
+              asideWidth={asideWidth}
+              openCount={openCount}
+              frameRef={frame}
+              subscribeGeom={subscribeGeom}
+              onScrollDoc={scrollBy}
+              pinned={pinned}
+              general={general}
+              resolved={resolvedThreads}
+              openThreads={openThreads}
+              activeThread={activeThread}
+              hoverThread={hoverThread}
+              inDoc={inDoc}
+              composer={composer}
+              sel={sel}
+              setPanel={setPanel}
+              setComposer={setComposer}
+              setSel={setSel}
+              setActiveThread={setActiveThread}
+              setHoverThread={setHoverThread}
+              activate={activateThread}
+              toggleResolve={toggleResolve}
+              reply={reply}
+              submitNew={submitNew}
+              jumpTo={jumpTo}
+              startSelComment={startSelComment}
+              agents={agents}
+              currentSlide={deck?.i ?? null}
+              landedSlides={landedSlides}
+              anchorConf={anchorConf}
+            />
           )}
         </div>
       </div>

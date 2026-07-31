@@ -20,9 +20,9 @@
 </script>
 <script type="module">
 const steps = document.getElementById("steps")
-const step = (t) => { const li = document.createElement("li"); li.className = "run"; li.textContent = "… " + t; steps.appendChild(li); return li }
-const done = (li, t) => { li.className = "ok"; li.textContent = "✓ " + t }
-const fail = (li, e) => { li.className = "bad"; li.textContent = "✗ " + String(e && e.message ? e.message : e).slice(0, 150) }
+const step = (t) => { const li = document.createElement("li"); li.className = "run"; li.textContent = `… ${t}`; steps.appendChild(li); return li }
+const done = (li, t) => { li.className = "ok"; li.textContent = `✓ ${t}` }
+const fail = (li, e) => { li.className = "bad"; li.textContent = `✗ ${String(e?.message ? e.message : e).slice(0, 150)}` }
 
 const id = (location.pathname.match(/\/raw\/([^/]+)\//) || [])[1]
 const dataUrl = new URL(`/raw/${id}/data/checks.jsonl`, location.origin).href

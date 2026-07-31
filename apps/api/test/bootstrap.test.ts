@@ -79,4 +79,35 @@ describe("GET /v1/bootstrap", () => {
     const res = await app.request("/v1/bootstrap")
     expect(res.status).toBe(401)
   })
+
+  it("never leaks another workspace's boot data (the batch is org-scoped end to end)", async () => {
+    // The interesting property is NOT the 403 branch — a signed-in user is always a
+    // member of their OWN active workspace, so they get a legitimate 200 and the 403
+    // only fires for a stale/foreign workspace cookie. What matters is that the batch,
+    // which folds five arms into one statement, scopes every arm to the caller's org.
+    // A missing WHERE org_id in any arm would surface exactly here.
+    const stranger: TestUser = {
+      id: "u_boot_stranger",
+      email: "stranger@derive.test",
+      name: "Stranger",
+    }
+    const { app } = makeAuthedApp("bootstrap-tenant", [owner, stranger], undefined, {
+      isolated: true,
+    })
+    const oh = as(owner.email)
+    await publishAs(app, "<h1>owner secret</h1>", { title: "Owner Secret" }, oh)
+    await app.request("/v1/collections", jsonAs(oh, { title: "Owner Collection" }))
+
+    const mine = await getJson(app, "/v1/bootstrap", oh)
+    expect(mine.summary.total).toBeGreaterThan(0)
+    expect(mine.collections.length).toBeGreaterThan(0)
+
+    // The stranger's own workspace: a valid boot payload carrying NONE of the above.
+    const theirs = await getJson(app, "/v1/bootstrap", as(stranger.email))
+    expect(theirs.summary.total).toBe(0)
+    expect(theirs.collections).toEqual([])
+    expect(theirs.notifications).toEqual([])
+    expect(JSON.stringify(theirs)).not.toContain("Owner Secret")
+    expect(JSON.stringify(theirs)).not.toContain("Owner Collection")
+  })
 })

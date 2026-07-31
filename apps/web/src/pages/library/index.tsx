@@ -625,17 +625,35 @@ function LibraryBody({ view }: { view: LibraryView }) {
         // An organized manual collection. Grouping is DECOUPLED from presentation: the
         // Display menu's "Group by folder" flips grouping on/off, and BOTH states are the
         // card grid — grouping never costs you the thumbnails. Default grouped.
-        <>
-          {foldersView ? (
-            <CollectionFolders
-              collectionId={filter.id}
+        foldersView ? (
+          <CollectionFolders
+            collectionId={filter.id}
+            items={items}
+            folders={folders}
+            assignments={folderAssignments}
+            canManage={!!canManageFolders}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            scrollToFolderId={folderAnchor}
+            onOpen={(a) =>
+              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+            }
+            onToggleFavorite={toggleFavorite}
+            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+            onEditTags={setPendingTags}
+            onAddToCollection={setPendingCollections}
+            onDelete={setPendingDelete}
+            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+            selection={selection}
+          />
+        ) : (
+          <>
+            <ArtifactGrid
               items={items}
-              folders={folders}
-              assignments={folderAssignments}
-              canManage={!!canManageFolders}
+              scrollRef={scrollRef}
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
-              scrollToFolderId={folderAnchor}
+              onLoadMore={() => fetchNextPage()}
               onOpen={(a) =>
                 nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
               }
@@ -647,33 +665,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
               onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
               selection={selection}
             />
-          ) : (
-            <>
-              <ArtifactGrid
-                items={items}
-                scrollRef={scrollRef}
-                hasNextPage={!!hasNextPage}
-                isFetchingNextPage={isFetchingNextPage}
-                onLoadMore={() => fetchNextPage()}
-                onOpen={(a) =>
-                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-                }
-                onToggleFavorite={toggleFavorite}
-                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-                onEditTags={setPendingTags}
-                onAddToCollection={setPendingCollections}
-                onDelete={setPendingDelete}
-                onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
-                selection={selection}
-              />
-              {isFetchingNextPage && (
-                <div className="flex justify-center py-2" data-testid="library-loading-more">
-                  <Spinner />
-                </div>
-              )}
-            </>
-          )}
-        </>
+            {isFetchingNextPage && (
+              <div className="flex justify-center py-2" data-testid="library-loading-more">
+                <Spinner />
+              </div>
+            )}
+          </>
+        )
       ) : (
         <>
           {/* No folders yet on a manual collection → keep the card grid; an editor gets a
