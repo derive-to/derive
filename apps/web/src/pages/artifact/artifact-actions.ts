@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react"
 import { type Artifact, api, type Comment, type Mention } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { commentsQuery } from "@/lib/queries"
+import { paywallReasonFor } from "@/lib/query-client"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
@@ -152,10 +153,15 @@ export function useArtifactActions(p: {
     // single tap re-sends it. (submitNew closes the composer optimistically, so the draft only
     // lives here now.)
     errorToast: false,
-    onError: (_err, vars) =>
+    onError: (err, vars) => {
+      // Comments aren't billing-gated today, but the global MutationCache still opens the
+      // paywall dialog for any billing code (see query-client.ts) — bail before the toast
+      // below rather than assume that can't happen.
+      if (paywallReasonFor(err)) return
       toast.error("Couldn't post your comment. Check your connection and try again.", {
         action: { label: "Retry", onClick: () => comment.mutate(vars) },
-      }),
+      })
+    },
   })
   const addComment = (
     text: string,
