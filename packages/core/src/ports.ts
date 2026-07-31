@@ -1537,6 +1537,33 @@ export interface AgentStore {
     orgId: string,
     status: ConnectionStatus,
   ): Promise<ConnectionRecord | null>
+  /**
+   * Rewrite a connection's stored credential, and optionally its ref and status — the one
+   * mutation the table never had.
+   *
+   * It exists for OAuth, where the credential is not final at connect: the row is created
+   * `pending` before the redirect, and the callback later writes the token, pins the tool list
+   * into `broker_ref`, and flips it `active`. A refresh then rewrites the same field again,
+   * repeatedly, for the life of the connection. Without it there is nowhere to put a rotated
+   * token, which is why a pasted key could never be rotated either.
+   *
+   * `expectSecretEnc` is a COMPARE-AND-SWAP on the credential, and it is not optional politeness:
+   * two runs can hit an expired access token in the same second, both refresh, and the slower
+   * reply would otherwise overwrite the newer token with an older one — invalidating a grant that
+   * was working. A mismatch returns null and the caller re-reads instead of guessing. The same
+   * guard the model-credential PUT already uses, for the same reason.
+   */
+  updateConnectionCredential(
+    id: string,
+    orgId: string,
+    fields: {
+      secret_enc?: string | null
+      broker_ref?: string
+      status?: ConnectionStatus
+      scopes_label?: string | null
+    },
+    expectSecretEnc?: string | null,
+  ): Promise<ConnectionRecord | null>
   /** Resolve an agent from its bearer token (the agent's identity). */
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */

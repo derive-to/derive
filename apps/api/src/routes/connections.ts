@@ -226,14 +226,44 @@ export const connectionRoutes = (ctx: AppContext) => {
     // A server that refuses to authenticate must not be stored as a usable connection. `connect`
     // reports `pending` for both "unreachable" and "unauthorized", and a pending row is filtered
     // out of every run — so the useful thing to do is say so now, while a human is watching.
-    if (b.mcp_url && link.status !== "active")
+    if (b.mcp_url && link.status !== "active") {
+      // Say which of the four it was. These are the exact words a person reads at the moment they
+      // are deciding whether this product works, and until now all four said "did not answer".
+      const url = b.mcp_url
+      // Parse rather than string-match: a pasted URL can carry a query or a trailing slash, and
+      // the suggestion has to preserve everything except the path segment that is wrong.
+      const rootOf = (raw: string): string | null => {
+        try {
+          const u = new URL(raw)
+          if (!/\/mcp\/?$/.test(u.pathname)) return null
+          u.pathname = u.pathname.replace(/\/mcp\/?$/, "") || "/"
+          return u.toString().replace(/\/$/, "")
+        } catch {
+          return null
+        }
+      }
+      const root = rootOf(url)
+      const trimmed = root ?? url
+      const messages: Record<string, string> = {
+        auth_required: b.mcp_secret
+          ? "that server refused the token — check it is valid and has the scopes the server needs"
+          : "that server needs authorization: sign in with it, or paste a token",
+        not_mcp:
+          trimmed !== url
+            ? `no MCP server answered at ${url}. Many servers live at the root — try ${trimmed}`
+            : `no MCP server answered at ${url} — check the URL`,
+        unreachable: "could not reach that server at all — check the URL and that it is running",
+        protocol_error: "that server answered, but not in a way Derive could use",
+      }
       return fail(
         c,
         400,
-        b.mcp_secret
-          ? "that MCP server did not accept the credential (or is unreachable)"
-          : "that MCP server did not answer — if it requires authentication, pass `mcp_secret`",
+        messages[link.reason ?? ""] ??
+          "that MCP server did not answer — if it requires authentication, pass `mcp_secret`",
+        // The machine-readable half, so the UI can offer "Sign in" rather than parse prose.
+        link.reason ? { reason: link.reason } : undefined,
       )
+    }
     const rec = await meta.createConnection({
       id: newId("conn"),
       org_id: org,

@@ -1,5 +1,5 @@
 import { unbound } from "./http"
-import type { BrokerToolDef, ConnectResult, ToolBroker } from "./types"
+import type { BrokerToolDef, ConnectFailure, ConnectResult, ToolBroker } from "./types"
 
 /**
  * The MCP broker: connect ANY Model Context Protocol server as a source.
@@ -121,6 +121,29 @@ export type QuietReason = "unpinned" | "unreachable" | "pin_mismatch" | "broker_
  * plain Error, so the two are cheap to tell apart and expensive to confuse.
  */
 const ourFault = (e: unknown): boolean => e instanceof TypeError || !(e instanceof Error)
+
+/**
+ * Turn a failed connect into something a person can act on.
+ *
+ * The two cases that matter are the two a person actually hits, and they were indistinguishable:
+ * `https://mcp.stripe.com/mcp` is a 404 (the path is wrong — Stripe's server is at the root) and
+ * `https://mcp.stripe.com` is a 401 (right address, needs a token). Both used to produce
+ * "that MCP server did not answer — if it requires authentication, pass `mcp_secret`", which is
+ * actively misleading for the first: you add a token and it fails again, identically.
+ */
+const classify = (e: unknown): ConnectFailure => {
+  const status = (e as { status?: number } | null)?.status
+  if (status === 401 || status === 403) return "auth_required"
+  if (status === 404 || status === 405) return "not_mcp"
+  if (typeof status === "number") return "protocol_error"
+  // No status at all: nothing answered. Note a network failure ALSO arrives as a TypeError —
+  // undici throws `TypeError: fetch failed` with a `cause` for connection-refused — so the
+  // `ourFault` heuristic used for tool listing would misread a genuinely dead server as our bug.
+  // A thrown fetch carries a cause; the "Illegal invocation" class of defect does not.
+  const network = e instanceof TypeError && (e as { cause?: unknown }).cause !== undefined
+  if (network) return "unreachable"
+  return ourFault(e) ? "protocol_error" : "unreachable"
+}
 
 /**
  * THE ONE RULE for any URL Derive will dial server-side, carrying a credential: https anywhere,
@@ -314,7 +337,15 @@ export class McpBroker implements ToolBroker {
     })
     const sid = res.headers.get("mcp-session-id")
     if (sid) this.sessions.set(key, sid)
-    if (!res.ok) throw new Error(`MCP ${method} failed: HTTP ${res.status}`)
+    if (!res.ok) {
+      // The status is the whole diagnosis and used to die on this line. Carried on the error so
+      // `connect` can tell "needs a token" from "nothing here" instead of guessing.
+      const err = new Error(`MCP ${method} failed: HTTP ${res.status}`) as Error & {
+        status?: number
+      }
+      err.status = res.status
+      throw err
+    }
     const body = (await readRpc(res)) as RpcResult | null
     if (!body) throw new Error(`MCP ${method} returned an empty response`)
     if (body.error) throw new Error(`MCP ${method} error: ${body.error.message ?? "unknown"}`)
@@ -397,10 +428,11 @@ export class McpBroker implements ToolBroker {
       // Pin at connect: this exact tool list is what a human is approving. A later change makes
       // the connection go quiet rather than silently feeding new prompt text to every run.
       return { url, ref: encodeMcpRef(url, await pinTools(tools)), status: "active" }
-    } catch {
-      // Unreachable or not speaking MCP. `pending` (not a throw) so the connection can be stored
-      // and retried, matching how the other brokers report a not-yet-usable account.
-      return { url, ref: encodeMcpRef(url, ""), status: "pending" }
+    } catch (e) {
+      // `pending` (not a throw) so the connection can be stored and retried, matching how the
+      // other brokers report a not-yet-usable account — but WITH the reason, because "did not
+      // answer" was being said about servers that answered clearly.
+      return { url, ref: encodeMcpRef(url, ""), status: "pending", reason: classify(e) }
     }
   }
 
