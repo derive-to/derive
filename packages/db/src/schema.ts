@@ -1030,7 +1030,7 @@ export const asset = sqliteTable(
   (t) => [index("asset_org").on(t.org_id)],
 )
 
-// A structured facts extracted from a version's source (see @derive/core data-facts):
+// A structured FACT extracted from a version's source (see @derive/facts):
 // a small named JSON payload the authoring agent can query back across versions without
 // re-parsing its own old markup. Natural key (artifact_id, n, slot); rows are written once
 // when a version goes live and never mutated. `gen` marks which extraction rules produced
