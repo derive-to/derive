@@ -1,28 +1,52 @@
 ---
 name: contexts
-summary: give a workspace's live agents an instruction, or run one as its agent (find, use)
+summary: read a packaged context to load what it knows, or give it an instruction (find, read, use)
 order: 4
 ---
-# Contexts: give an instruction, or run as the agent
+# Contexts: load the package, or give it work
 
-A CONTEXT is an agent a workspace owner wired up — a manifest (its instructions), its own data
-and tools, a playbook. Think of it as a role you can step into. Every interaction is the same
-shape: **(context, instruction)** — "with this context, do this." The instruction is a question
-("what were refunds last week?") or a task ("build the walkthrough for Acme"); it always names
-the target. `find` surfaces the contexts your user may use; `use` is the one tool for both
-sides — GIVING a context an instruction, and (if you are its agent) RUNNING it.
+A CONTEXT is a named, shareable **package**: a manifest (what this is and how to work on it),
+the skills that manifest pins, and its bound sources. Think of it as a role you can step into.
+
+It has two modes, and they are equals:
+
+- **READ it** — `read({ short_id: "ctx_..." })` loads the package. One call, no run, no runner
+  needed. This is how you get ORIENTED: what the thing is, its vocabulary, its procedures.
+- **USE it** — `use({ context, instruction })` gives it work, and an agent serves that session.
+
+Reach for `read` when you want to KNOW what the context knows, and `use` when you want a job
+done. A cold session almost always wants `read` first: it is cheaper than asking, it returns
+the same thing every time, and it hands you the shape of the domain rather than answering one
+question about it.
+
+## Progressive opening
+
+A package opens in layers, so loading it never costs more than it saves:
+
+- **The manifest loads inline.** It is the small, always-read layer — deliberately sized to be
+  worth loading before you know what you need.
+- **Skills and sources come back as POINTERS** — short_ids you `read` only when a task actually
+  needs that procedure.
+
+So the read that orients you stays cheap, and the corpus is there when you go looking. Write
+manifests to match: the manifest carries the model and the vocabulary, the depth lives in
+skills the manifest pins.
 
 ## Discovering contexts with find
 
 `find` (browse, or a query matching a context name) lists the contexts you may use in a
-workspace — id, name, whether its agent is online (its last poll is recent), the manifest that
-defines it, and your own still-open sessions so you can resume one. Access is granted per
-context, so what `find` surfaces is EXACTLY what your user may use. Then call `use` with a
-context's id or name.
+workspace — id, name, whether its agent is online (its last poll is recent; that matters only
+for `use`, since reading never needs a runner), the manifest that defines it, and your own
+still-open sessions so you can resume one. Access is granted per context, so what `find`
+surfaces is EXACTLY what your user may use — and `read` is gated on that same grant, so it can
+never open a package `find` would not have shown you. Then `read` it or `use` it, by id or name.
 
-## Giving an instruction (the common path)
+## Giving an instruction
 
-Hand a context an instruction on your user's behalf, or continue an existing session:
+Hand a context an instruction on your user's behalf, or continue an existing session. Every
+SESSION is the same shape: **(context, instruction)** — "with this context, do this." The
+instruction is a question ("what were refunds last week?") or a task ("build the walkthrough
+for Acme"); it always names the target.
 
 - **GIVE** a new session: `use({ context, instruction })` (id or name + "with this context, do
   this"). Optionally pass a `dedupe_key`: a second give with the same key while one is still in

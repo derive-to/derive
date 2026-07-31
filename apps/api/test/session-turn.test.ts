@@ -436,3 +436,32 @@ describe("a document too large for a whole-document reply uses EDITS", () => {
     expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
   })
 })
+
+describe("what filename attended chat SHOWS the model", () => {
+  // The same upstream bug the run lane had: the prompt named the document by bare short_id
+  // ("doc1"), which carries no format signal, so a model asked to name its output guessed and
+  // the edits contract's fallback made that guess index.html. Correcting the content type on
+  // the way out does not cover this — a model that believes it is editing an extensionless file
+  // will also write HTML into a Markdown document's BODY.
+  it("names a markdown document doc1.md in the prompt", async () => {
+    const { meta, blobs, artifact } = await setup()
+    let system = ""
+    const d = deps(meta, blobs, revision())
+    const spy: typeof d = {
+      ...d,
+      callModel: async (input) => {
+        system = input.system ?? ""
+        return { text: revision(), toolUses: [], costUsd: null, done: true }
+      },
+    }
+    await runSessionTurn(spy, {
+      session: session(),
+      subject: { kind: "artifact", id: "doc1" },
+      artifact,
+      transcript: transcript("tighten the intro"),
+      flags: FLAGS,
+      onBehalf: ED,
+    })
+    expect(system).toContain("its filename is doc1.md")
+  })
+})

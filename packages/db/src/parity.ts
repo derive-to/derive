@@ -48,6 +48,7 @@ import type {
   SessionRecord,
   SignupAttributionRecord,
   SubscriptionRecord,
+  VersionDataRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
@@ -60,6 +61,7 @@ export type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : f
 export interface TypedTables {
   artifact: ArtifactRecord
   version: VersionRecord
+  versionData: VersionDataRecord
   comment: CommentRecord
   webhook: WebhookRecord
   webhookDelivery: DeliveryRecord

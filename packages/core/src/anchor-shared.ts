@@ -38,6 +38,10 @@ export function normWs(s: string): string {
   return s.replace(/\s+/g, " ").trim()
 }
 
+/** Ellipsis-truncate to `n` chars. The one copy of the convention (cut at n-1, "…"),
+ *  shared by anchor labels, edit error copy, and version messages. */
+export const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
+
 /**
  * The canonical content fingerprint over the four identifying fields. Each side pulls
  * {tag, src, alt, text} from its own environment — a live DOM node in the browser, a
@@ -72,14 +76,31 @@ export function findQuote(text: string, quote: string): { start: number; end: nu
  *  (never introduces whitespace), then let every whitespace run flex to `\s+`. */
 const flexPattern = (s: string): string => escapeRe(s).replace(/\s+/g, "\\s+")
 
+/** The one context pattern both the lenient (highlight) and strict (edit) matchers
+ *  compile: prefix + (exact) + suffix, whitespace-flexible, exact captured so the
+ *  `d` (indices) flag exposes its span directly. Null when there is no context at
+ *  all, or the pattern fails to compile. Kept as the single builder so the join
+ *  grammar (`\s+` at each seam) cannot drift between the read and write sides. */
+const contextPattern = (q: string, pre: string, suf: string, flags: string): RegExp | null => {
+  if (!pre && !suf) return null
+  try {
+    const joinPre = pre ? `${flexPattern(pre)}\\s+` : ""
+    const joinSuf = suf ? `\\s+${flexPattern(suf)}` : ""
+    return new RegExp(`${joinPre}(${flexPattern(q)})${joinSuf}`, flags)
+  } catch {
+    return null
+  }
+}
+
+type CaptureMatch = RegExpExecArray & { indices?: Array<[number, number]> }
+
 /**
  * Locate `exact` in `text` whitespace-flexibly, using `prefix`/`suffix` as CONTEXT to
  * disambiguate a quote that repeats — then return the span of `exact` itself (not the
- * context). The context is matched as one pattern with `exact` in a capture group, and
- * the group's own offsets are read via the RegExp `d` (indices) flag, so an `exact` that
- * also appears inside the prefix can't hijack the result. Falls back to the bare exact
- * anywhere when the context doesn't resolve. The single primitive both the browser client
- * and the server call, so a quote resolves identically on both. Returns null if unfound.
+ * context). An `exact` that also appears inside the prefix can't hijack the result
+ * (the capture group's own indices are read). Falls back to the bare exact anywhere
+ * when the context doesn't resolve. The single primitive both the browser client and
+ * the server call, so a quote resolves identically on both. Returns null if unfound.
  */
 export function findQuoteWithContext(
   text: string,
@@ -89,21 +110,11 @@ export function findQuoteWithContext(
 ): { start: number; end: number } | null {
   const q = exact.trim()
   if (!q) return null
-  const pre = (prefix ?? "").trim()
-  const suf = (suffix ?? "").trim()
-  // Context phase: prefix + (exact) + suffix, whitespace-flexible, exact captured. The
-  // `d` flag exposes the capture group's [start,end] directly.
-  if (pre || suf) {
-    try {
-      const joinPre = pre ? `${flexPattern(pre)}\\s+` : ""
-      const joinSuf = suf ? `\\s+${flexPattern(suf)}` : ""
-      const re = new RegExp(`${joinPre}(${flexPattern(q)})${joinSuf}`, "d")
-      const m = re.exec(text) as (RegExpExecArray & { indices?: Array<[number, number]> }) | null
-      const gi = m?.indices?.[1]
-      if (gi) return { start: gi[0], end: gi[1] }
-    } catch {
-      /* fall through to the bare exact */
-    }
+  const re = contextPattern(q, (prefix ?? "").trim(), (suffix ?? "").trim(), "d")
+  if (re) {
+    const m = re.exec(text) as CaptureMatch | null
+    const gi = m?.indices?.[1]
+    if (gi) return { start: gi[0], end: gi[1] }
   }
   // Exact anywhere (no/failed context).
   try {
@@ -113,4 +124,63 @@ export function findQuoteWithContext(
     const i = text.indexOf(q)
     return i >= 0 ? { start: i, end: i + q.length } : null
   }
+}
+
+/**
+ * The STRICT context matcher for destructive callers: the context must match
+ * exactly ONCE. Two identical repeated cards produce two identical context
+ * windows — a lenient matcher would silently act on the first card when the user
+ * touched the second, so `matches > 1` reports the ambiguity for the caller to
+ * refuse. `span` is null on a miss (no context given, pattern failed, or zero
+ * matches) — pair with {@link findQuoteMatches} to accept a miss only when the
+ * exact is globally unambiguous.
+ */
+export function findQuoteContextUnique(
+  text: string,
+  exact: string,
+  prefix?: string,
+  suffix?: string,
+): { span: { start: number; end: number } | null; matches: number } {
+  const q = exact.trim()
+  if (!q) return { span: null, matches: 0 }
+  const re = contextPattern(q, (prefix ?? "").trim(), (suffix ?? "").trim(), "dg")
+  if (!re) return { span: null, matches: 0 }
+  const first = re.exec(text) as CaptureMatch | null
+  const gi = first?.indices?.[1]
+  if (!first || !gi) return { span: null, matches: 0 }
+  // One more probe decides unique-vs-ambiguous; the exact count past 2 is unneeded.
+  if (first.index === re.lastIndex) re.lastIndex++ // zero-width safety
+  const second = re.exec(text)
+  return { span: second ? null : { start: gi[0], end: gi[1] }, matches: second ? 2 : 1 }
+}
+
+/**
+ * Every whitespace-flexible match of `quote` in `text` (capped so a degenerate quote
+ * on a huge document stays bounded). Lets a destructive caller distinguish "matches
+ * once — safe to act on" from "matches many — ambiguous, refuse".
+ */
+export function findQuoteMatches(
+  text: string,
+  quote: string,
+  cap = 20,
+): { start: number; end: number }[] {
+  const q = quote.trim()
+  if (!q) return []
+  const out: { start: number; end: number }[] = []
+  try {
+    const re = new RegExp(flexPattern(q), "g")
+    for (let m = re.exec(text); m && out.length < cap; m = re.exec(text)) {
+      out.push({ start: m.index, end: m.index + m[0].length })
+      // A zero-width match can't happen (q is non-empty), but never trust lastIndex
+      // to advance on its own with pathological inputs.
+      if (re.lastIndex <= m.index) re.lastIndex = m.index + 1
+    }
+  } catch {
+    let i = text.indexOf(q)
+    while (i >= 0 && out.length < cap) {
+      out.push({ start: i, end: i + q.length })
+      i = text.indexOf(q, i + 1)
+    }
+  }
+  return out
 }

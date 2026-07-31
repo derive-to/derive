@@ -329,8 +329,19 @@ wrangler secret put DERIVE_MODEL_NAME       # the provider's own model id
 ```
 
 This key pays for every attended turn on the deployment, so it is an operator decision
-rather than a per-user one. Unattended automation runs are unaffected — they still resolve
-their own credential through the payer chain.
+rather than a per-user one.
+
+**It pays for unattended runs too**, whenever they execute in-process (`DERIVE_LOOP_RUNS=1`):
+the loop substrate takes the same gateway, and the schedule materializer then skips the payer
+chain, because on a deployment that holds the key there is nothing for a chain to resolve and
+no plan for anyone to connect. That is the hosted posture; the workspace is metered against
+its tier allowance instead.
+
+Only a deployment WITHOUT these three leaves unattended runs to resolve their own credential
+per run through the payer chain. (An earlier version of this section said unattended runs were
+unaffected. They are not, and believing it cost a release: the materializer kept demanding a
+payer a hosted workspace never has, so scheduled automations silently never fired while
+`Run now` worked.)
 
 > `DERIVE_MODEL_NAME` is your **gateway's** model id and belongs only with the two vars
 > above. Unattended in-process runs (`DERIVE_LOOP_RUNS=1`) talk to the Anthropic Messages

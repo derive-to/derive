@@ -49,12 +49,12 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
   return m ? { found: true, index: m.start } : { found: false, index: -1 }
 }
 
-// Tags whose content is invisible (script/style) or a fallback that shouldn't count as
-// page text (noscript) — dropped whole before stripping the remaining tags.
-const INVISIBLE_TAGS = /<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi
-const HTML_COMMENT = /<!--[\s\S]*?-->/g
-const ANY_TAG = /<[^>]+>/g
-const ENTITY = /&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g
+// Matches one HTML character reference. Shared (via pageTextParts' segmenter) with
+// the edit path's offset map, so an entity the decoder learns is one the mapper
+// learns in the same breath — two copies of this regex once drifted a hair from
+// being a feature-wide refusal.
+export const ENTITY_RE = /&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g
+const ENTITY = ENTITY_RE
 // The five XML entities plus the common named entities real prose/documentation
 // actually uses (typographic punctuation, arrows, symbols) — found missing when
 // deep-testing the converter against real Sift/Derive docs, which use middot,
@@ -109,18 +109,178 @@ export function decodeEntities(s: string): string {
   })
 }
 
+/** One run of the page-text projection: how a slice of visible text maps onto the
+ *  raw source. `text` runs map 1:1; an `entity` run is one decoded character (or a
+ *  surrogate pair) covering the entity's whole raw span; a `gap` is the single space
+ *  a tag, comment, or invisible block collapsed to. */
+export interface PageTextSegment {
+  kind: "text" | "entity" | "gap"
+  tStart: number
+  tEnd: number
+  rStart: number
+  rEnd: number
+}
+
+export interface PageTextParts {
+  text: string
+  segments: PageTextSegment[]
+}
+
+const INVISIBLE_NAMES = ["script", "style", "noscript"]
+const isWordChar = (c: string): boolean => /[A-Za-z0-9_]/.test(c)
+
+/** Memoized left-to-right indexOf. During a forward scan, thousands of failed
+ *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
+ *  rescan to the end of the string — quadratic in aggregate. The cursor only moves
+ *  forward, so the last answer per needle stays valid until the cursor passes it;
+ *  re-searches only ever advance it, which keeps the total scan work linear. */
+const makeFinder = (haystack: string) => {
+  const cache = new Map<string, number>()
+  return (needle: string, from: number): number => {
+    const c = cache.get(needle)
+    if (c !== undefined && (c === -1 || c >= from)) return c
+    const n = haystack.indexOf(needle, from)
+    cache.set(needle, n)
+    return n
+  }
+}
+
+/** Append `raw[rFrom, rTo)` — a run with no tags in it — as text/entity segments. */
+const pushTextRun = (
+  out: PageTextSegment[],
+  parts: string[],
+  tLen: number,
+  raw: string,
+  rFrom: number,
+  rTo: number,
+): number => {
+  const run = raw.slice(rFrom, rTo)
+  let last = 0
+  // A FRESH instance from the shared source: decodeEntities (called in this loop)
+  // uses the module-level ENTITY, and a /g regex's lastIndex is shared state — one
+  // object in both places restarts this exec loop from 0 forever.
+  const entityRe = new RegExp(ENTITY_RE.source, "g")
+  for (let m = entityRe.exec(run); m; m = entityRe.exec(run)) {
+    const decoded = decodeEntities(m[0])
+    if (decoded === m[0]) continue // unknown entity: passes through as plain text
+    if (m.index > last) {
+      const plain = run.slice(last, m.index)
+      out.push({
+        kind: "text",
+        tStart: tLen,
+        tEnd: tLen + plain.length,
+        rStart: rFrom + last,
+        rEnd: rFrom + m.index,
+      })
+      parts.push(plain)
+      tLen += plain.length
+    }
+    out.push({
+      kind: "entity",
+      tStart: tLen,
+      tEnd: tLen + decoded.length,
+      rStart: rFrom + m.index,
+      rEnd: rFrom + m.index + m[0].length,
+    })
+    parts.push(decoded)
+    tLen += decoded.length
+    last = m.index + m[0].length
+  }
+  if (last < run.length) {
+    const plain = run.slice(last)
+    out.push({
+      kind: "text",
+      tStart: tLen,
+      tEnd: tLen + plain.length,
+      rStart: rFrom + last,
+      rEnd: rTo,
+    })
+    parts.push(plain)
+    tLen += plain.length
+  }
+  return tLen
+}
+
+/**
+ * The page-text projection WITH its offset map: visible text plus, per run, where
+ * it came from in the raw source. One linear indexOf-driven scan (no lazy-quantifier
+ * regexes — those backtracked polynomially on crafted documents, CodeQL
+ * js/polynomial-redos) is THE implementation: `pageText` is this function's `text`,
+ * and the edit path's raw-offset mapping reads the same `segments`, so the read
+ * side and the write side cannot disagree about what the projection is.
+ *
+ * Strip rules, tried in order at each "<" (the order the old regexes resolved to):
+ * an invisible block (script/style/noscript, attrs to the FIRST ">", closed by the
+ * first literal "</name>", case-insensitive), else a comment ("<!--" to the first
+ * "-->"), else a bare tag (1+ non-">" chars before ">"); a "<" matching none stays
+ * literal text. Each stripped construct collapses to one space; entities in text
+ * runs decode via {@link decodeEntities}.
+ */
+export function pageTextParts(html: string): PageTextParts {
+  const lower = html.toLowerCase()
+  const findRaw = makeFinder(html)
+  const findLower = makeFinder(lower)
+
+  /** The strip token starting exactly at html[i] (which is "<"), or null when this
+   *  "<" is literal text. */
+  const stripTokenAt = (i: number): number | null => {
+    // <!-- ... -->
+    if (lower.startsWith("<!--", i)) {
+      const close = findRaw("-->", i + 4)
+      if (close >= 0) return close + 3
+    }
+    // <script|style|noscript ...> ... </same>
+    for (const name of INVISIBLE_NAMES) {
+      if (!lower.startsWith(name, i + 1)) continue
+      const after = i + 1 + name.length
+      if (after < html.length && isWordChar(html[after] as string)) continue // \b
+      const open = findRaw(">", after)
+      if (open < 0) continue
+      const close = findLower(`</${name}>`, open + 1)
+      if (close >= 0) return close + name.length + 3
+      // No closer: this alternative fails; fall through to the bare-tag rule.
+    }
+    // <[^>]+>
+    const gt = findRaw(">", i + 1)
+    if (gt > i + 1) return gt + 1
+    return null
+  }
+
+  const segments: PageTextSegment[] = []
+  const parts: string[] = []
+  let tLen = 0
+  let last = 0 // start of the pending text run
+  let from = 0 // "<" search cursor
+  for (;;) {
+    const i = findRaw("<", from)
+    if (i < 0) break
+    const end = stripTokenAt(i)
+    if (end === null) {
+      from = i + 1 // a literal "<": it stays inside the text run
+      continue
+    }
+    if (i > last) tLen = pushTextRun(segments, parts, tLen, html, last, i)
+    segments.push({ kind: "gap", tStart: tLen, tEnd: tLen + 1, rStart: i, rEnd: end })
+    parts.push(" ")
+    tLen += 1
+    last = end
+    from = end
+  }
+  if (last < html.length) tLen = pushTextRun(segments, parts, tLen, html, last, html.length)
+  return { text: parts.join(""), segments }
+}
+
 /**
  * The visible text of an HTML page, for matching a text quote server-side — the
  * counterpart to the browser client's text-node concatenation. Drops script/style/
- * comment content, turns every remaining tag into a space (so words separated only by
- * markup — a multi-element quote — become whitespace-separated, which reanchor's
- * flexible match then spans), and decodes the common entities the browser would.
- * NOT a full HTML parser; findQuote's whitespace tolerance absorbs the small differences.
+ * comment content, turns every stripped construct into a space (so words separated
+ * only by markup — a multi-element quote — become whitespace-separated, which
+ * reanchor's flexible match then spans), and decodes the common entities the
+ * browser would. NOT a full HTML parser; findQuote's whitespace tolerance absorbs
+ * the small differences.
  */
 export function pageText(html: string): string {
-  return decodeEntities(
-    html.replace(INVISIBLE_TAGS, " ").replace(HTML_COMMENT, " ").replace(ANY_TAG, " "),
-  )
+  return pageTextParts(html).text
 }
 
 // The comment-anchor client that runs inside the sandboxed artifact iframe. It is real,

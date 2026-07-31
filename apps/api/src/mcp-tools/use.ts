@@ -29,8 +29,9 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Use a context (a live agent wired to data + tools — discover them with find) ON YOUR " +
-        "USER'S BEHALF (rate-limited): give it an INSTRUCTION and it works one session. GIVE: " +
+        "Give a context WORK on your user's behalf (rate-limited): an INSTRUCTION it serves in one " +
+        "session. A context is a PACKAGE — `read` loads what it knows, `use` has it act; find " +
+        "discovers them. GIVE: " +
         "`context` (id or name) + `instruction` — 'with this context, do this' (a question OR a " +
         "task; always name the target, e.g. 'for Acme'). FOLLOW UP: `session_id` + `instruction`. " +
         "CHECK/RESUME: `session_id` alone. The call waits up to `wait` seconds (default 25) for the " +
@@ -61,7 +62,7 @@ export function registerUseTool(tc: ToolContext): void {
           .describe(
             "An existing session of yours (from an earlier use, or a find context row) to follow up on or check.",
           ),
-        wait: z
+        wait: z.coerce
           .number()
           .int()
           .min(0)

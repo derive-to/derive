@@ -21,6 +21,9 @@ export function registerCatchUpTool(tc: ToolContext): void {
     {
       description:
         "With a `short_id`: START HERE on an artifact — its state in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, the review round you're waiting on, and the full version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered thread list instead — your feedback to-do queue. Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) for a line-by-line diff of the two versions' readable Markdown form. WITHOUT a short_id: your WORK QUEUE — pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons); pass `ack:[id,…]` to clear the ones you finished. WAITING ON SOMETHING? Pass `wait` (seconds, max 50) to block until the human acts (or, in queue mode, until new work lands), then return the fresh state — chain waits instead of sleeping between polls. For the diff, review states, working a request, and the wait loop, read derive://skills/loop.",
+      // Read-only except `ack`, which clears handled requests off the queue. The hint
+      // stays true so planning-mode clients don't gate the start-here call on approval.
+      annotations: { readOnlyHint: true },
       inputSchema: {
         short_id: z
           .string()
@@ -32,11 +35,11 @@ export function registerCatchUpTool(tc: ToolContext): void {
           .describe(
             "Work-queue mode (no short_id): request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
           ),
-        since_version: z
+        since_version: z.coerce
           .number()
           .optional()
           .describe("The version you last saw (the diff base). Defaults to to_version − 1."),
-        to_version: z
+        to_version: z.coerce
           .number()
           .optional()
           .describe("Compare up to this version instead of the current one (for an exact diff)."),
@@ -52,7 +55,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
           .describe(
             "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
           ),
-        wait: z
+        wait: z.coerce
           .number()
           .int()
           .min(1)

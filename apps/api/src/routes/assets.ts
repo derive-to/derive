@@ -4,7 +4,7 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail } from "../lib/http"
-import { MAX_ASSET_BYTES, sniffAssetType } from "../lib/image"
+import { assetCostNote, imageDimensions, MAX_ASSET_BYTES, sniffAssetType } from "../lib/image"
 import { verifyUploadToken } from "../lib/upload-token"
 
 const EXT_FOR_TYPE: Record<string, string> = {
@@ -90,6 +90,10 @@ export const assetRoutes = (ctx: AppContext) => {
     if (await overStorage(org, bytes.byteLength)) return fail(c, 413, "storage quota exceeded")
 
     const key = await blobs.put(bytes)
+    // Read the pixel dimensions from the header (fonts have none). These are the user's
+    // bytes, so nothing is re-encoded — but what an upload COSTS should be legible at the
+    // moment it is made, not discovered later by a viewer on a slow connection.
+    const size = imageDimensions(bytes)
     // Content-addressed row: this is the allowlist that makes GET /blob/:hash
     // servable at all (the blob store also holds manifests/HTML the route must
     // never serve) — see routes/blob.ts. A re-upload of the same bytes is a no-op.
@@ -98,9 +102,19 @@ export const assetRoutes = (ctx: AppContext) => {
       org_id: org,
       content_type: type,
       size_bytes: bytes.byteLength,
+      width: size?.width ?? null,
+      height: size?.height ?? null,
     })
     const url = `${deps.baseUrl.replace(/\/$/, "")}/blob/${key}.${EXT_FOR_TYPE[type]}`
-    return { key, url, ref: `asset:${key}`, type, size: bytes.byteLength }
+    return {
+      key,
+      url,
+      ref: `asset:${key}`,
+      type,
+      size: bytes.byteLength,
+      ...(size ? { width: size.width, height: size.height } : {}),
+      cost: assetCostNote(bytes.byteLength, size),
+    }
   }
 
   app.openapi(

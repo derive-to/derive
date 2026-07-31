@@ -1,4 +1,5 @@
 import {
+  type AnyDocEdit,
   type ArtifactRecord,
   diffLines,
   EditError,
@@ -192,7 +193,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       let filename: string
       let isBundle: boolean
       if (typeof editsField === "string") {
-        let edits: { old_str: string; new_str: string }[]
+        let edits: AnyDocEdit[]
         try {
           edits = JSON.parse(editsField)
         } catch {

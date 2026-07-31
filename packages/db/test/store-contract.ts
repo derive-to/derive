@@ -7,7 +7,7 @@ import type {
   SortMode,
   SubscriptionRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, maxRole } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -128,6 +128,76 @@ export function runStoreContract(
       expect(await store.listVersions(a.id)).toHaveLength(2)
       expect((await store.getVersion(a.id, 1))?.message).toBe("first")
       expect(await store.getVersion(a.id, 99)).toBeNull()
+    })
+
+    it("stores and reads a version's data slots by name and all-at-once", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "checks", json: `{"pass":44}`, size_bytes: 11, gen: 1 },
+        { id: uuid(), slot: "budget", json: "[1,2]", size_bytes: 5, gen: 1 },
+      ])
+      // All slots, ordered by slot name.
+      const all = await store.getVersionData(a.id, v.n)
+      expect(all.map((r) => r.slot)).toEqual(["budget", "checks"])
+      expect(all[0]?.gen).toBe(1)
+      // One slot by name.
+      const one = await store.getVersionData(a.id, v.n, "checks")
+      expect(one).toHaveLength(1)
+      expect(one[0]?.json).toBe(`{"pass":44}`)
+      expect(one[0]?.size_bytes).toBe(11)
+      // A missing slot / version ⇒ empty.
+      expect(await store.getVersionData(a.id, v.n, "nope")).toEqual([])
+      expect(await store.getVersionData(a.id, 999)).toEqual([])
+    })
+
+    it("setVersionData replaces a version's slots idempotently (delete-then-insert)", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "x", json: "1", size_bytes: 1, gen: 1 },
+      ])
+      // Re-extract the same version with a different set — the old rows are gone.
+      await store.setVersionData(a.id, v.n, [
+        { id: uuid(), slot: "y", json: "2", size_bytes: 1, gen: 1 },
+      ])
+      const all = await store.getVersionData(a.id, v.n)
+      expect(all.map((r) => r.slot)).toEqual(["y"])
+      // Empty set clears them entirely.
+      await store.setVersionData(a.id, v.n, [])
+      expect(await store.getVersionData(a.id, v.n)).toEqual([])
+    })
+
+    it("reads one slot across a version range, oldest first, in one query", async () => {
+      const a = await store.createArtifact(newArtifact())
+      // Five versions, each carrying "checks"; only some carry "other".
+      for (let day = 1; day <= 5; day++) {
+        const v = await store.addVersion(a.id, newVersion())
+        const rows = [
+          { id: uuid(), slot: "checks", json: `{"day":${day}}`, size_bytes: 11, gen: 1 },
+          ...(day % 2 === 1
+            ? [{ id: uuid(), slot: "other", json: `${day}`, size_bytes: 1, gen: 1 }]
+            : []),
+        ]
+        await store.setVersionData(a.id, v.n, rows)
+      }
+
+      const all = await store.getVersionDataSeries(a.id, "checks", 1, 5, 100)
+      expect(all.map((r) => r.n)).toEqual([1, 2, 3, 4, 5])
+      expect(all.map((r) => r.json)).toEqual([1, 2, 3, 4, 5].map((d) => `{"day":${d}}`))
+      // Scoped to the named slot only.
+      expect((await store.getVersionDataSeries(a.id, "other", 1, 5, 100)).map((r) => r.n)).toEqual([
+        1, 3, 5,
+      ])
+      // Sub-range, and a range covering versions that carry nothing.
+      expect((await store.getVersionDataSeries(a.id, "checks", 2, 3, 100)).map((r) => r.n)).toEqual(
+        [2, 3],
+      )
+      expect(await store.getVersionDataSeries(a.id, "nosuch", 1, 5, 100)).toEqual([])
+      // The limit bounds the payload and keeps the OLDEST, so paging is predictable.
+      expect((await store.getVersionDataSeries(a.id, "checks", 1, 5, 2)).map((r) => r.n)).toEqual([
+        1, 2,
+      ])
     })
 
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
@@ -661,6 +731,138 @@ export function runStoreContract(
       // Replacing drops the old tags.
       await store.setArtifactTags(a.id, ["alpha"])
       expect(await store.artifactIdsByTag("beta")).not.toContain(a.id)
+    })
+  })
+
+  describe(`${label}: list enrichment (the batched decoration call)`, () => {
+    it("matches the individual queries it batches, per artifact", async () => {
+      const me = `u_${uuid()}`
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      // a: tags, a ready preview, views, an open comment thread, an open proposal, a share.
+      await store.setArtifactTags(a.id, ["beta", "alpha"])
+      await store.addVersion(a.id, newVersion())
+      await store.setVersionPreview(a.id, 1, { preview_key: "png", preview_status: "ready" })
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: me,
+        viewer_kind: "user",
+      })
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "x",
+        viewer_kind: "anon",
+      })
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: "t1",
+        base_version: 1,
+        body_md: "mine",
+        author: "me",
+        author_id: me,
+      })
+      await store.createProposal({
+        id: uuid(),
+        artifact_id: a.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        author: "amy",
+        base_version: 1,
+      })
+      await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "editor" })
+
+      const ids = [a.id, b.id]
+      const enr = await store.listEnrichment({
+        ids,
+        ghIds: [],
+        authorIds: [],
+        viewerId: me,
+        memberId: me,
+        views: true,
+      })
+      // The batch must be indistinguishable from the calls it replaces.
+      expect(enr.views).toEqual(await store.viewCounts(ids))
+      expect(enr.tags).toEqual(await store.tagsForArtifacts(ids))
+      expect(enr.previews).toEqual(await store.previewReady(ids))
+      expect(enr.signals).toEqual(await store.commentSignals(ids, me))
+      expect(enr.proposals).toEqual(await store.openProposalCounts(ids))
+      expect(enr.shareRoles).toEqual(await store.artifactRolesFor(me, ids))
+      // Spot-check the shape is actually populated, not vacuously equal-empty.
+      expect(enr.views[a.id]).toBe(2)
+      expect(enr.tags[a.id]).toEqual(["alpha", "beta"])
+      expect(enr.previews[a.id]).toBe(true)
+      expect(enr.signals[a.id]?.open_threads).toBe(1)
+      expect(enr.proposals[a.id]).toBe(1)
+      expect(enr.shareRoles[a.id]).toBe("editor")
+      expect(enr.views[b.id]).toBeUndefined()
+    })
+
+    it("honors the gates: no views, no viewer, no member", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "x",
+        viewer_kind: "anon",
+      })
+      const enr = await store.listEnrichment({
+        ids: [a.id],
+        ghIds: [],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: false,
+      })
+      expect(enr.views).toEqual({})
+      expect(enr.signals).toEqual({})
+      expect(enr.shareRoles).toEqual({})
+    })
+
+    it("degrades the user-directory pieces to empty instead of failing the listing", async () => {
+      // The contract schemas carry no Better Auth "user"/"account" tables — exactly
+      // the deployment shape those lookups are best-effort for. The core decoration
+      // must still come back.
+      const a = await store.createArtifact(newArtifact())
+      await store.setArtifactTags(a.id, ["gamma"])
+      const enr = await store.listEnrichment({
+        ids: [a.id],
+        ghIds: ["12345"],
+        authorIds: [`u_${uuid()}`],
+        viewerId: null,
+        memberId: null,
+        views: false,
+      })
+      expect(enr.handles).toEqual([])
+      expect(enr.bylines).toEqual([])
+      expect(enr.tags[a.id]).toEqual(["gamma"])
+    })
+
+    it("returns all-empty for an empty page", async () => {
+      const enr = await store.listEnrichment({
+        ids: [],
+        ghIds: [],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: true,
+      })
+      expect(enr).toEqual({
+        views: {},
+        tags: {},
+        previews: {},
+        handles: [],
+        bylines: [],
+        signals: {},
+        proposals: {},
+        shareRoles: {},
+      })
     })
   })
 
@@ -1921,7 +2123,12 @@ export function runStoreContract(
     it("hard-deletes the artifact row and all FK-dependent rows", async () => {
       const a = await store.createArtifact(newArtifact())
       const thread = uuid()
-      await store.addVersion(a.id, newVersion())
+      const dv = await store.addVersion(a.id, newVersion())
+      // Data slots hang off the version by artifact_id — a delete that doesn't clear them
+      // first hits a FOREIGN KEY constraint (found by deleting a slot-bearing artifact live).
+      await store.setVersionData(a.id, dv.n, [
+        { id: uuid(), slot: "checks", json: `{"pass":1}`, size_bytes: 10, gen: 1 },
+      ])
       await store.createComment({
         id: uuid(),
         artifact_id: a.id,
@@ -1935,6 +2142,17 @@ export function runStoreContract(
         artifact_id: a.id,
         user_id: "bob",
         role: "viewer",
+      })
+      // An artifact-SCOPED webhook FKs to artifact.id too — the same trap as version_data,
+      // and it was live in the codebase until scripts/check-delete-cascade.mjs named it.
+      await store.createWebhook({
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: a.id,
+        url: "https://example.test/hook",
+        secret: "s",
+        kind: "generic",
+        events: "*",
       })
       await store.setFavorite(a.id, "amy")
       await store.setArtifactTags(a.id, ["del-tag"])
@@ -1953,6 +2171,7 @@ export function runStoreContract(
       expect(await store.getByShortId(a.short_id)).toBeNull()
       expect(await store.getArtifactById(a.id)).toBeNull()
       expect(await store.listVersions(a.id)).toHaveLength(0)
+      expect(await store.getVersionData(a.id, dv.n)).toHaveLength(0)
       expect(await store.listComments(a.id)).toHaveLength(0)
       expect(await store.getArtifactMember(a.id, "bob")).toBeNull()
       expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)
@@ -3156,6 +3375,178 @@ export function runStoreContract(
       // …and the rightful workspace can still remove it.
       await store.deletePlan(theirs.id, other)
       expect(await store.getPlan(theirs.id)).toBeNull()
+    })
+  })
+  // OPTIONAL FAST PATH. `artifactGrants` collapses four reads — membership, artifact share, and
+  // both halves of collectionRolesForArtifact — into one statement, and it is an authorization
+  // INPUT: a disagreement is not a slow page, it is someone seeing a document they should not,
+  // or losing one they own.
+  //
+  // So rather than assert hand-written expectations, run BOTH paths over the same fixtures and
+  // require them to agree. The four-read path is the specification. A store that does not
+  // implement the fast path skips this, which is what makes implementing it optional.
+  describe(`${label}: artifactGrants agrees with the four reads it replaces`, () => {
+    it("matches for a stranger, a member, a sharee, and both kinds of collection share", async () => {
+      if (!store.artifactGrants) return // dialect has no fast path — the fallback is the only path
+
+      const org = `org_grants_${uuid()}`
+      const other = `org_other_${uuid()}`
+      await store.setWorkspace(org, "Grants")
+      await store.setWorkspace(other, "Other")
+      const art = newArtifact({ org_id: org, workspace_access: "member", link_role: "none" })
+      await store.createArtifact(art)
+
+      const [owner, member, sharee, collab, stranger] = [
+        `u_own_${uuid()}`,
+        `u_mem_${uuid()}`,
+        `u_shr_${uuid()}`,
+        `u_col_${uuid()}`,
+        `u_str_${uuid()}`,
+      ]
+      for (const [u, role] of [
+        [owner, "owner"],
+        [member, "editor"],
+        [collab, "viewer"],
+      ] as const)
+        await store.setMembership({ id: uuid(), org_id: org, user_id: u, role })
+      // An explicit share held by a NON-member: artifact role present, org role must stay null.
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: art.id,
+        user_id: sharee,
+        role: "commenter",
+      })
+      // TWO collections holding the same artifact — one shared explicitly, one open to the
+      // workspace so members inherit their SEAT role. Several collections is precisely where a
+      // join would multiply the membership row.
+      const explicitCol = uuid()
+      const openCol = uuid()
+      await store.createCollection({
+        id: explicitCol,
+        org_id: org,
+        title: "Explicit",
+        created_by: owner,
+        workspace_access: "none",
+      })
+      await store.createCollection({
+        id: openCol,
+        org_id: org,
+        title: "Open",
+        created_by: owner,
+        workspace_access: "member",
+      })
+      await store.addCollectionItem(explicitCol, art.id)
+      await store.addCollectionItem(openCol, art.id)
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: explicitCol,
+        user_id: collab,
+        role: "editor",
+      })
+
+      const slow = async (orgId: string, userId: string) => {
+        const orgRole = (await store.getMembership(orgId, userId))?.role ?? null
+        const am = await store.getArtifactMember(art.id, userId)
+        const cRoles = await store.collectionRolesForArtifact(art.id, userId)
+        return { orgRole, artifactRole: maxRole(am?.role ?? null, ...cRoles) }
+      }
+      const fast = async (orgId: string, userId: string) => {
+        const g = await store.artifactGrants?.(art.id, orgId, userId)
+        if (!g) throw new Error("artifactGrants vanished mid-test")
+        return { orgRole: g.orgRole, artifactRole: maxRole(null, ...g.artifactRoles) }
+      }
+
+      for (const u of [owner, member, sharee, collab, stranger])
+        expect(await fast(org, u), `grants disagree for ${u}`).toEqual(await slow(org, u))
+
+      // The org arm must key on the org PASSED IN, not on the artifact's own workspace.
+      for (const u of [owner, stranger]) expect(await fast(other, u)).toEqual(await slow(other, u))
+    })
+  })
+  // CHAOS: the same question, asked both ways, over randomly-shaped access graphs.
+  //
+  // The curated case above covers the shapes I thought of. This covers the ones I did not: a
+  // seeded random walk over memberships, per-artifact shares, open and closed collections, and
+  // artifacts that sit in several collections at once — the arrangement where a join would
+  // multiply rows and the two paths would quietly disagree.
+  //
+  // Seeded so a failure reproduces: the seed is printed with the mismatch.
+  describe(`${label}: artifactGrants survives randomised access graphs`, () => {
+    it("agrees with the four reads across 40 random configurations", async () => {
+      if (!store.artifactGrants) return
+
+      // xorshift32 — small, deterministic, and dependency-free.
+      let seed = 0x9e3779b9
+      const rnd = () => {
+        seed ^= seed << 13
+        seed ^= seed >>> 17
+        seed ^= seed << 5
+        return Math.abs(seed) / 2 ** 31
+      }
+      const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)] as T
+      const ROLES = ["owner", "admin", "editor", "commenter", "viewer"] as const
+
+      for (let round = 0; round < 40; round++) {
+        const startSeed = seed
+        const org = `org_fz_${uuid()}`
+        await store.setWorkspace(org, "Fuzz")
+        const art = newArtifact({
+          org_id: org,
+          workspace_access: pick(["member", "none"]),
+          link_role: pick(["none", "viewer"]),
+        })
+        await store.createArtifact(art)
+
+        const users = Array.from({ length: 4 }, () => `u_fz_${uuid()}`)
+        for (const u of users) {
+          // Each user independently may hold: a seat, a direct share, and membership of
+          // collections that may or may not contain the artifact.
+          if (rnd() < 0.6)
+            await store.setMembership({ id: uuid(), org_id: org, user_id: u, role: pick(ROLES) })
+          if (rnd() < 0.4)
+            await store.setArtifactMember({
+              id: uuid(),
+              artifact_id: art.id,
+              user_id: u,
+              role: pick(ROLES),
+            })
+        }
+        // Between zero and three collections, each independently workspace-open or not, each
+        // independently holding the artifact, each with a random subset of members.
+        const collections = Math.floor(rnd() * 4)
+        for (let ci = 0; ci < collections; ci++) {
+          const col = uuid()
+          await store.createCollection({
+            id: col,
+            org_id: org,
+            title: `C${ci}`,
+            created_by: users[0] as string,
+            workspace_access: rnd() < 0.5 ? "member" : "none",
+          })
+          if (rnd() < 0.75) await store.addCollectionItem(col, art.id)
+          for (const u of users)
+            if (rnd() < 0.35)
+              await store.setCollectionMember({
+                id: uuid(),
+                collection_id: col,
+                user_id: u,
+                role: pick(ROLES),
+              })
+        }
+
+        for (const u of users) {
+          const orgRole = (await store.getMembership(org, u))?.role ?? null
+          const am = await store.getArtifactMember(art.id, u)
+          const cRoles = await store.collectionRolesForArtifact(art.id, u)
+          const slow = { orgRole, artifactRole: maxRole(am?.role ?? null, ...cRoles) }
+          const g = await store.artifactGrants?.(art.id, org, u)
+          const fast = {
+            orgRole: g?.orgRole ?? null,
+            artifactRole: maxRole(null, ...(g?.artifactRoles ?? [])),
+          }
+          expect(fast, `round ${round} (seed ${startSeed}) disagreed for ${u}`).toEqual(slow)
+        }
+      }
     })
   })
 }

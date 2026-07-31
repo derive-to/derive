@@ -44,7 +44,7 @@ export function registerFindTool(tc: ToolContext): void {
           online: runnerOnline(x),
           manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
           your_open_sessions: open,
-          note: "Give it an instruction on your user's behalf with `use({context, instruction})`.",
+          note: "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) gives it work.",
         }
       }),
     )
@@ -53,7 +53,8 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things in Derive — the MODE is decided by what you pass. Pass `short_id` + `query` to GREP within one artifact: matching lines with line numbers (in:'source'|'text', context lines, a past `version`), so you can then read a `lines` range or edit that spot. Pass `query` ALONE to SEARCH the whole workspace — artifacts ranked by relevance with a snippet each, so you find WHICH doc has something before opening it; this ALSO surfaces any askable context whose name matches. Pass NEITHER to BROWSE the library: every artifact (short id, title, kind, is_skill, version, access, tags — skills:true or a `tag` narrows it) PLUS the askable contexts. Rows are typed (artifact | match | context); a context row is reached with `use`, never read/opened. Includes your own unlisted work. For the browse→work rhythm, read derive://skills/loop.",
+        "Find things in Derive — the MODE is decided by what you pass. Pass `short_id` + `query` to GREP within one artifact: matching lines with line numbers (in:'source'|'text', context lines, a past `version`), so you can then read a `lines` range or edit that spot. Pass `query` ALONE to SEARCH the whole workspace — artifacts ranked by relevance with a snippet each, so you find WHICH doc has something before opening it; this ALSO surfaces any askable context whose name matches. Pass NEITHER to BROWSE the library: every artifact (short id, title, kind, is_skill, version, access, tags — skills:true or a `tag` narrows it) PLUS the askable contexts. Rows are typed (artifact | match | context); `read` a context row for its package, `use` it to give it work. Includes your own unlisted work. For the browse→work rhythm, read derive://skills/loop.",
+      annotations: { readOnlyHint: true },
       inputSchema: {
         query: z
           .string()
@@ -82,17 +83,17 @@ export function registerFindTool(tc: ToolContext): void {
           .describe(
             "Grep/search: source (default) the exact stored bytes (the positions you'd edit); text the visible text a reader sees (HTML tags stripped).",
           ),
-        context: z
+        context: z.coerce
           .number()
           .optional()
           .describe(
             "Grep/search: lines of surrounding context around each match (default 0, max 5).",
           ),
-        max_matches: z
+        max_matches: z.coerce
           .number()
           .optional()
           .describe("Grep/search: cap on matches per artifact (default 40, max 200)."),
-        version: z
+        version: z.coerce
           .number()
           .optional()
           .describe("Grep within a past version (short_id mode). Defaults to the current one."),

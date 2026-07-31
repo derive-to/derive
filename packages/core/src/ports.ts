@@ -206,6 +206,36 @@ export interface ListArtifactsOpts {
   excludeRemoved?: boolean
 }
 
+export interface ListEnrichmentOpts {
+  /** The page of artifact ids being decorated. */
+  ids: string[]
+  /** Distinct `author_gh_id`s on the page, to resolve to Derive handles. */
+  ghIds: string[]
+  /** Distinct `author_id`s on the page, to resolve to live bylines. */
+  authorIds: string[]
+  /** Comment signals are computed for this viewer; null skips them (anon listing). */
+  viewerId: string | null
+  /** Share roles are looked up for this member key; null skips them. */
+  memberId: string | null
+  /** Include view counts (the list gates this on the analytics setting). */
+  views: boolean
+}
+
+/** One page's worth of list decoration — see `ArtifactQueryStore.listEnrichment`. */
+export interface ListEnrichment {
+  views: Record<string, number>
+  tags: Record<string, string[]>
+  previews: Record<string, boolean>
+  /** gh_id → Derive username rows (the subset of `usersByGithubIds` the list needs). */
+  handles: { gh_id: string; username: string | null }[]
+  /** Live user-directory rows for the page's authors (the subset of `getUsers` the
+   *  byline self-heal needs). */
+  bylines: { id: string; name: string | null; username: string | null }[]
+  signals: Record<string, CommentSignals>
+  proposals: Record<string, number>
+  shareRoles: Record<string, Role>
+}
+
 export type PreviewStatus = "pending" | "ready" | "failed"
 
 export type RenderJobStatus = "pending" | "done" | "dead"
@@ -315,6 +345,29 @@ export interface NewVersion {
   name?: string | null
 }
 
+/** One structured data slot extracted from a version's source (see @derive/core
+ *  data-slots). The natural key is (artifact_id, n, slot); `json` is the block's stored
+ *  text, `gen` marks which extraction rules produced it. Rows are written once when a
+ *  version goes live and never mutated — a version is immutable, so its slots are too. */
+export interface VersionDataRecord {
+  id: string
+  artifact_id: string
+  n: number
+  slot: string
+  json: string
+  size_bytes: number
+  gen: number
+  created_at: string
+}
+
+export interface NewVersionData {
+  id: string
+  slot: string
+  json: string
+  size_bytes: number
+  gen: number
+}
+
 export interface ArtifactStore {
   createArtifact(a: NewArtifact): Promise<ArtifactRecord>
   /** Change an artifact's access: workspace access (member seats vs none), the
@@ -349,6 +402,37 @@ export interface ArtifactStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** Replace a version's stored data slots with `rows` (delete-then-insert, so a
+   *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
+   *  (artifact, n); called best-effort from the version-bump chain. */
+  setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
+  /** A version's data slots: one named `slot`, or all of them (slot omitted), in slot
+   *  order. Empty when the version carries none. */
+  getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
+  /** One slot's value across a RANGE of versions, oldest first — the trend read. ONE
+   *  indexed query, never a per-version loop: a thirty-version series must cost one round
+   *  trip, which is the entire point of slots. Versions in the range carrying no such slot
+   *  are simply absent from the result (they predate slots, or omitted the block), so the
+   *  caller reports coverage rather than inventing gaps. `limit` caps the rows returned so
+   *  a thousand-version artifact can never answer with an unbounded payload. */
+  getVersionDataSeries(
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]>
+  /** One slot's CURRENT value across every artifact in a workspace that carries it — the
+   *  cross-artifact read. `getVersionDataSeries` answers "how did this ONE page change over
+   *  time"; this answers "where does this metric stand everywhere", which is what a
+   *  workspace of nightly reports actually gets asked. Optionally narrowed by browse tag,
+   *  since a tag is already how a set of artifacts is named. ONE query, joined to each
+   *  artifact's current version so it can never report a superseded row. */
+  listSlotAcrossArtifacts(
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ): Promise<{ short_id: string; title: string | null; n: number; json: string; at: string }[]>
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
@@ -448,6 +532,20 @@ export interface ArtifactQueryStore {
    * `ids` array matches nothing.
    */
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
+  /**
+   * Everything the library list decorates a page of rows with, in ONE store call:
+   * view counts, tags, preview readiness, author handle + byline directory rows,
+   * the viewer's comment signals, open-proposal counts, and the viewer's per-artifact
+   * share roles. Each piece is a trivial lookup keyed on the same page of ids, but on
+   * the edge tier a Postgres round trip costs ~80ms no matter how little it fetches
+   * (one serialized `pg.Client` per invocation — see edge-pg.ts), so issuing them as
+   * seven separate calls made every listing pay seven trips for one page. Postgres
+   * answers this in a single round trip; the embedded drivers compose it from the
+   * individual queries (their round trips are free). Gates mirror the list route's:
+   * `views` only when analytics is on, a null `viewerId` skips signals (anon listing),
+   * a null `memberId` skips share roles.
+   */
+  listEnrichment(opts: ListEnrichmentOpts): Promise<ListEnrichment>
   /** Full-text search index over an artifact's current visible text (+ title), keyed by
    *  id and scoped by org — the substrate that lifts workspace search past a live-grep of
    *  the N most-recent artifacts to the whole corpus. `indexArtifact` upserts (call on every
@@ -660,6 +758,31 @@ export interface CollectionStore {
   /** This user's collection-member roles over collections containing the
    *  artifact — folded into their effective artifact role (collection sharing). */
   collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+
+  /**
+   * OPTIONAL FAST PATH: every grant one user holds over one artifact, in ONE round trip.
+   *
+   * Narrowing a principal to an Actor needs the workspace membership, the per-artifact share and
+   * the collection shares — `getMembership` + `getArtifactMember` +
+   * `collectionRolesForArtifact` — and that last one is itself two queries. Four round trips to
+   * decide one boolean, on every authorize.
+   *
+   * Affordable when the database is local, ruinous when it is a region away: on the hosted edge
+   * each trip measured ~100-900ms, and one chat request spent most of a second on permission
+   * rows alone. A store that can answer this in a single statement implements it; one that
+   * cannot omits it and context.ts falls back to the four calls, so implementing it is always
+   * optional.
+   *
+   * It never changes the ANSWER. `can()` remains the only place a decision is made; this only
+   * changes how its inputs arrive. Returns exactly what the four calls would: the org role (null
+   * when not a member) and every artifact-level role — explicit and collection-derived —
+   * unreduced, so the caller folds them with maxRole as before.
+   */
+  artifactGrants?(
+    artifactId: string,
+    orgId: string,
+    userId: string,
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }>
 
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>
@@ -1355,6 +1478,12 @@ export interface AssetRecord {
   org_id: string
   content_type: string
   size_bytes: number
+  /** Pixel dimensions, read from the image header at upload. Null for fonts, for an image
+   *  whose header couldn't be read, and for rows predating the columns. Bytes alone never
+   *  say whether an upload is big because it carries detail or because it was exported at
+   *  twice the density it needed — and pixel count is the lever that would change it. */
+  width: number | null
+  height: number | null
   created_at: string
 }
 export interface NewAsset {
@@ -1362,6 +1491,9 @@ export interface NewAsset {
   org_id: string
   content_type: string
   size_bytes: number
+  /** Omitted for fonts and unreadable headers; nullable so the columns ALTER ADD cleanly. */
+  width?: number | null
+  height?: number | null
 }
 
 export interface AssetStore {

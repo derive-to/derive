@@ -32,6 +32,8 @@ import type {
   InvitationRecord,
   LinkRole,
   ListArtifactsOpts,
+  ListEnrichment,
+  ListEnrichmentOpts,
   Listed,
   MembershipRecord,
   MetaStore,
@@ -68,6 +70,7 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewVersion,
+  NewVersionData,
   NewView,
   NewWebhook,
   NotificationRecord,
@@ -101,6 +104,7 @@ import type {
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
+  VersionDataRecord,
   VersionRecord,
   ViewStats,
   WebhookRecord,
@@ -177,6 +181,7 @@ import {
   subscription,
   userNotificationPref,
   version,
+  versionData,
   webhook,
   webhookDelivery,
   workspace,
@@ -200,6 +205,7 @@ const one = <T>(rows: T[]): T => {
 export const schema = {
   artifact,
   version,
+  versionData,
   comment,
   webhook,
   webhookDelivery,
@@ -249,6 +255,7 @@ const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   version: true,
+  versionData: true,
   comment: true,
   webhook: true,
   webhookDelivery: true,
@@ -459,6 +466,88 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
     return rows[0] ?? null
   }
+  async setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void> {
+    // Delete-then-insert so a re-extraction of the same version is idempotent (a fresh
+    // publish never has existing rows for its new n; restore/re-extract might).
+    await this.db
+      .delete(versionData)
+      .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, n)))
+    if (rows.length === 0) return
+    await this.db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+  }
+  async getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]> {
+    return this.db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          slot ? eq(versionData.slot, slot) : undefined,
+        ),
+      )
+      .orderBy(asc(versionData.slot))
+  }
+  async getVersionDataSeries(
+    artifactId: string,
+    slot: string,
+    from: number,
+    to: number,
+    limit: number,
+  ): Promise<VersionDataRecord[]> {
+    return this.db
+      .select()
+      .from(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.slot, slot),
+          gte(versionData.n, from),
+          lte(versionData.n, to),
+        ),
+      )
+      .orderBy(asc(versionData.n))
+      .limit(limit)
+  }
+  async listSlotAcrossArtifacts(
+    orgId: string,
+    slot: string,
+    opts?: { tag?: string; limit?: number },
+  ) {
+    // Joined on artifact.current_version so a superseded row can never be reported as the
+    // current state. Retired artifacts are excluded: they are out of the library.
+    const tagged = opts?.tag
+      ? this.db
+          .select({ id: artifactTag.artifact_id })
+          .from(artifactTag)
+          .where(eq(artifactTag.tag, opts.tag.trim().toLowerCase()))
+      : null
+    return this.db
+      .select({
+        short_id: artifact.short_id,
+        title: artifact.title,
+        n: versionData.n,
+        json: versionData.json,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          eq(versionData.slot, slot),
+          isNull(artifact.removed_at),
+          tagged ? inArray(artifact.id, tagged) : undefined,
+        ),
+      )
+      .orderBy(desc(versionData.created_at))
+      .limit(opts?.limit ?? 100)
+  }
   async reclassifyVersion(artifactId: string, n: number, contentType: string): Promise<void> {
     await this.db
       .update(version)
@@ -578,8 +667,7 @@ export class PgMetaStore implements MetaStore {
     artifactIds: string[],
     userId: string | null,
   ): Promise<Record<string, CommentSignals>> {
-    const out: Record<string, CommentSignals> = {}
-    if (artifactIds.length === 0) return out
+    if (artifactIds.length === 0) return {}
     const rows = await this.db
       .select({
         artifact_id: comment.artifact_id,
@@ -590,6 +678,22 @@ export class PgMetaStore implements MetaStore {
       })
       .from(comment)
       .where(inArray(comment.artifact_id, artifactIds))
+    return this.assembleCommentSignals(rows, userId)
+  }
+
+  /** Fold raw comment rows into per-artifact signals — shared by `commentSignals`
+   *  and the `listEnrichment` batch so the two paths cannot drift. */
+  private assembleCommentSignals(
+    rows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[],
+    userId: string | null,
+  ): Record<string, CommentSignals> {
+    const out: Record<string, CommentSignals> = {}
     const threads: Record<string, Set<string>> = {}
     for (const r of rows) {
       if (r.state !== "open") continue
@@ -613,6 +717,149 @@ export class PgMetaStore implements MetaStore {
       const sig = out[id]
       if (sig) sig.open_threads = set.size
     }
+    return out
+  }
+
+  /**
+   * The library list's whole decoration in ONE round trip: a UNION ALL over the seven
+   * per-id lookups, discriminated by a `kind` column and demuxed in code. On the edge
+   * tier every round trip costs ~80ms flat (one serialized pg.Client per invocation —
+   * see edge-pg.ts), so seven separate trips keyed on the same page of ids was ~560ms
+   * of pure wire time per listing; the SQL each branch runs is unchanged. All columns
+   * are text (counts cast) so the union stays type-consistent. `= ANY($n)` binds each
+   * id set as one array parameter. The "user"/"account" branches are not best-effort
+   * here the way `getUsers`/`usersByGithubIds` are: on Postgres, Better Auth shares
+   * this database (its jwks row is read on every authenticated request), so those
+   * tables existing is a precondition of reaching this route at all.
+   */
+  async listEnrichment(opts: ListEnrichmentOpts): Promise<ListEnrichment> {
+    const { ids, ghIds, authorIds, viewerId, memberId, views } = opts
+    const out: ListEnrichment = {
+      views: {},
+      tags: {},
+      previews: {},
+      handles: [],
+      bylines: [],
+      signals: {},
+      proposals: {},
+      shareRoles: {},
+    }
+    if (ids.length === 0 && ghIds.length === 0 && authorIds.length === 0) return out
+    const params: unknown[] = []
+    const bind = (v: unknown) => {
+      params.push(v)
+      return `$${params.length}`
+    }
+    const branches: string[] = []
+    if (ids.length > 0) {
+      const page = bind(ids)
+      branches.push(
+        `SELECT 'tag' kind, artifact_id k, tag c1, NULL c2, NULL c3 FROM artifact_tag WHERE artifact_id = ANY(${page})`,
+        `SELECT 'preview', a.id, NULL, NULL, NULL FROM artifact a
+           JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
+          WHERE v.preview_status = 'ready' AND a.id = ANY(${page})`,
+        `SELECT 'proposal', artifact_id, count(*)::text, NULL, NULL FROM proposal
+          WHERE state = 'open' AND artifact_id = ANY(${page}) GROUP BY artifact_id`,
+      )
+      if (views)
+        branches.push(
+          `SELECT 'view', artifact_id, count(*)::text, NULL, NULL FROM view
+            WHERE artifact_id = ANY(${page}) GROUP BY artifact_id`,
+        )
+      if (viewerId)
+        branches.push(
+          `SELECT 'comment', artifact_id, thread_id, author_id, meta FROM comment
+            WHERE state = 'open' AND artifact_id = ANY(${page})`,
+        )
+      if (memberId)
+        branches.push(
+          `SELECT 'share', artifact_id, role, NULL, NULL FROM artifact_member
+            WHERE user_id = ${bind(memberId)} AND artifact_id = ANY(${page})`,
+        )
+    }
+    // The "user"/"account" branches keep `getUsers`/`usersByGithubIds`' best-effort
+    // contract: those Better Auth tables can be absent (fresh self-host, operator-token
+    // deployments), and there they must degrade to empty — not 500 the listing. A
+    // failed union retries once without them; a union that fails WITHOUT them has a
+    // real problem and still throws.
+    const directoryBranches = (ghIds.length > 0 ? 1 : 0) + (authorIds.length > 0 ? 1 : 0)
+    if (ghIds.length > 0)
+      branches.push(
+        `SELECT 'handle', a."accountId", u.username, NULL, NULL
+           FROM "account" a JOIN "user" u ON u.id = a."userId"
+          WHERE a."providerId" = 'github' AND a."accountId" = ANY(${bind(ghIds)})`,
+      )
+    if (authorIds.length > 0)
+      branches.push(
+        `SELECT 'byline', id, name, username, NULL FROM "user" WHERE id = ANY(${bind(authorIds)})`,
+      )
+    type EnrichmentRow = {
+      kind: string
+      k: string
+      c1: string | null
+      c2: string | null
+      c3: string | null
+    }
+    let rows: EnrichmentRow[]
+    try {
+      const res = await this.pool.query<EnrichmentRow>(branches.join("\nUNION ALL\n"), params)
+      rows = res.rows
+    } catch (e) {
+      if (directoryBranches === 0) throw e
+      const core = branches.slice(0, branches.length - directoryBranches)
+      if (core.length === 0) return out
+      const res = await this.pool.query<EnrichmentRow>(
+        core.join("\nUNION ALL\n"),
+        params.slice(0, params.length - directoryBranches),
+      )
+      rows = res.rows
+    }
+    const commentRows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[] = []
+    for (const r of rows) {
+      switch (r.kind) {
+        case "tag": {
+          const list = out.tags[r.k] ?? []
+          list.push(r.c1 as string)
+          out.tags[r.k] = list
+          break
+        }
+        case "preview":
+          out.previews[r.k] = true
+          break
+        case "proposal":
+          out.proposals[r.k] = Number(r.c1)
+          break
+        case "view":
+          out.views[r.k] = Number(r.c1)
+          break
+        case "comment":
+          commentRows.push({
+            artifact_id: r.k,
+            thread_id: r.c1 as string,
+            state: "open",
+            author_id: r.c2,
+            meta: r.c3,
+          })
+          break
+        case "share":
+          out.shareRoles[r.k] = r.c1 as Role
+          break
+        case "handle":
+          out.handles.push({ gh_id: r.k, username: r.c1 })
+          break
+        case "byline":
+          out.bylines.push({ id: r.k, name: r.c1, username: r.c2 })
+          break
+      }
+    }
+    for (const k in out.tags) out.tags[k]?.sort()
+    out.signals = this.assembleCommentSignals(commentRows, viewerId)
     return out
   }
 
@@ -1086,6 +1333,54 @@ export class PgMetaStore implements MetaStore {
   }
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]> {
     return this.db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId))
+  }
+  /**
+   * Every grant one user holds over one artifact, in ONE round trip — see MetaStore.
+   *
+   * A union of the four reads it replaces, tagged by source so the caller can tell an org role
+   * from an artifact role. Deliberately a union rather than joins: an artifact can sit in many
+   * collections, and joining would multiply the membership row across them, making the result
+   * depend on collection layout. Each arm returns its own rows; the caller reduces.
+   *
+   * The arms mirror, in order, getMembership, getArtifactMember, and the two halves of
+   * collectionRolesForArtifact — the explicit collection share, then the workspace-open
+   * collection that propagates the viewer's SEAT role. Change either of those and change this.
+   */
+  async artifactGrants(
+    artifactId: string,
+    orgId: string,
+    userId: string,
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }> {
+    const res = await this.db.execute(sql`
+      select 'org' as kind, m.role as role
+        from membership m
+       where m.org_id = ${orgId} and m.user_id = ${userId}
+      union all
+      select 'artifact' as kind, am.role as role
+        from artifact_member am
+       where am.artifact_id = ${artifactId} and am.user_id = ${userId}
+      union all
+      select 'artifact' as kind, cm.role as role
+        from collection_member cm
+        join collection_item ci on ci.collection_id = cm.collection_id
+       where ci.artifact_id = ${artifactId} and cm.user_id = ${userId}
+      union all
+      select 'artifact' as kind, m2.role as role
+        from collection_item ci2
+        join collection c on c.id = ci2.collection_id
+        join membership m2 on m2.org_id = c.org_id
+       where ci2.artifact_id = ${artifactId}
+         and c.workspace_access = 'member'
+         and m2.user_id = ${userId}
+    `)
+    const rows = (res as unknown as { rows?: { kind: string; role: Role }[] }).rows ?? []
+    let orgRole: Role | null = null
+    const artifactRoles: Role[] = []
+    for (const r of rows) {
+      if (r.kind === "org") orgRole = r.role
+      else artifactRoles.push(r.role)
+    }
+    return { orgRole, artifactRoles }
   }
   async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
     if (artifactIds.length === 0) return {}
@@ -3478,6 +3773,10 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
       await tx.delete(context).where(eq(context.manifest_artifact_id, id))
       await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
+      // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
+      // survives. Found by scripts/check-delete-cascade.mjs.
+      await tx.delete(webhook).where(eq(webhook.artifact_id, id))
+      await tx.delete(versionData).where(eq(versionData.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))
       await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))
