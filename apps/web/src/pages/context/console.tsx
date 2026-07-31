@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Copy as CopyIcon } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { ApiError, api, type Session, type SessionMessage, type SessionMeta } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
 import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
+import { applyDelta, type DeltaState, EMPTY_DELTA } from "@/lib/session-delta"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -579,30 +580,13 @@ function SessionThread({
   // The answer as it is being written. Same contract as the artifact chat rail: a VIEW only,
   // never persisted, replaced by the transcript row the moment the turn settles. Anything not
   // strictly newer than the last slice is dropped, so a reconnect redelivering one is a no-op.
-  const [streaming, setStreaming] = useState("")
-  const lastSeq = useRef(0)
-  // Which model attempt the accumulated text belongs to (see the `attempt` note in
-  // lib/session-stream.ts): a re-generated reply must replace the abandoned one, not append.
-  const lastAttempt = useRef(0)
+  // The accumulation rules are shared with the artifact chat rail (lib/session-delta.ts) so the
+  // two surfaces cannot drift — they did once, and only one of them was right.
+  const [delta, setDelta] = useState<DeltaState>(EMPTY_DELTA)
+  const streaming = delta.text
   useUserEvent(
     "session.delta",
-    (e) => {
-      let p: { session_id?: string; seq?: number; text?: string; attempt?: number }
-      try {
-        p = JSON.parse(e.data) as typeof p
-      } catch {
-        return
-      }
-      if (p.session_id !== sessionId || typeof p.text !== "string") return
-      const seq = typeof p.seq === "number" ? p.seq : lastSeq.current + 1
-      if (seq <= lastSeq.current) return
-      lastSeq.current = seq
-      const at = typeof p.attempt === "number" ? p.attempt : lastAttempt.current
-      const fresh = at > lastAttempt.current
-      lastAttempt.current = at
-      const text = p.text
-      setStreaming((s) => (fresh ? text : s + text))
-    },
+    (e) => setDelta((s) => applyDelta(s, e.data, sessionId)),
     pushEnabled,
   )
   // Drop the provisional text once the persisted reply is in the transcript, so the two are
@@ -613,9 +597,7 @@ function SessionThread({
   // as the reset effects elsewhere in this file, and the rule cannot see the difference.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset trigger, see above
   useEffect(() => {
-    setStreaming("")
-    lastSeq.current = 0
-    lastAttempt.current = 0
+    setDelta(EMPTY_DELTA)
   }, [agentCount])
   // Post a follow-up / close the conversation. Defined ABOVE the `!data` guard so the
   // hooks run unconditionally (a hook can't sit below an early return).

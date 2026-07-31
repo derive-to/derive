@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { applyDelta, type DeltaState, EMPTY_DELTA, supersededBy } from "@/lib/session-delta"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import type { ChatMessage } from "../artifact-chat"
@@ -32,22 +33,13 @@ export function useArtifactChat(shortId: string) {
   const [error, setError] = useState<string | null>(null)
   // The reply as it is being written, assembled from `session.delta`. Purely a VIEW: the server
   // persists nothing until the turn settles, and the transcript that then arrives replaces this.
-  // Cleared the moment a real agent message lands, so the provisional text and the persisted
-  // one can never both be on screen saying the same thing.
-  const [streaming, setStreaming] = useState("")
-  // Highest slice applied. Slices are ordered, but a reconnect can redeliver one — ignoring
-  // anything not strictly newer makes that a no-op instead of duplicated text.
-  const lastSeq = useRef(0)
-  // Which model attempt the accumulated text belongs to (see the server note on `attempt`).
-  const lastAttempt = useRef(0)
+  // The accumulation rules live in lib/session-delta.ts, shared with the context console so the
+  // two surfaces cannot drift — they did, and one of them was wrong.
+  const [delta, setDelta] = useState<DeltaState>(EMPTY_DELTA)
   // Agent rows seen so far, so a NEW one can be told from one that was already there.
   const agentCount = useRef(0)
 
-  const clearStream = useCallback(() => {
-    setStreaming("")
-    lastSeq.current = 0
-    lastAttempt.current = 0
-  }, [])
+  const clearStream = useCallback(() => setDelta(EMPTY_DELTA), [])
 
   const refresh = useCallback(
     async (id: string) => {
@@ -62,7 +54,7 @@ export function useArtifactChat(shortId: string) {
         // bubble visibly resetting every few seconds. Turn one is unaffected, which is exactly
         // why hand-testing does not catch it.
         const agents = next.filter((m) => m.author_kind === "agent").length
-        if (agents > agentCount.current) clearStream()
+        if (supersededBy(agents, agentCount.current)) clearStream()
         agentCount.current = agents
       } catch {
         /* a poll that misses is not worth surfacing — the next one covers it */
@@ -149,30 +141,7 @@ export function useArtifactChat(shortId: string) {
   const visible = usePageVisible()
   const live = !!sessionId && working && visible
 
-  useUserEvent(
-    "session.delta",
-    (e) => {
-      let p: { session_id?: string; seq?: number; text?: string; attempt?: number }
-      try {
-        p = JSON.parse(e.data)
-      } catch {
-        return
-      }
-      if (p.session_id !== sessionId || typeof p.text !== "string") return
-      const seq = typeof p.seq === "number" ? p.seq : lastSeq.current + 1
-      if (seq <= lastSeq.current) return // a redelivery after a reconnect
-      lastSeq.current = seq
-      // A NEW ATTEMPT REPLACES, it does not append. The agent loop re-generates a reply that
-      // missed its contract, and the abandoned attempt never reaches the transcript — appending
-      // would show a garbled answer that the settled message then contradicts.
-      const at = typeof p.attempt === "number" ? p.attempt : lastAttempt.current
-      const fresh = at > lastAttempt.current
-      lastAttempt.current = at
-      const text = p.text
-      setStreaming((s) => (fresh ? text : s + text))
-    },
-    live,
-  )
+  useUserEvent("session.delta", (e) => setDelta((s) => applyDelta(s, e.data, sessionId)), live)
 
   // The turn ended. Read the transcript NOW rather than waiting out the poll — this is the
   // event the whole streaming path builds to, and it is what swaps the provisional text for
@@ -195,7 +164,7 @@ export function useArtifactChat(shortId: string) {
     working,
     /** The reply being written, or "" when there is nothing in flight. Render it as a
      *  provisional agent bubble; it is replaced by the real message when the turn settles. */
-    streaming,
+    streaming: delta.text,
     error,
     send,
     poll,
