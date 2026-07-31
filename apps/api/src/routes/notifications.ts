@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import { streamSSE } from "hono/streaming"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { Notification } from "../lib/boot-shapes"
 import { bail, readJson } from "../lib/http"
 
 /** In-app notifications (the header bell) for the signed-in user. The Notification
@@ -10,36 +11,6 @@ import { bail, readJson } from "../lib/http"
 export const notificationRoutes = (ctx: AppContext) => {
   const { meta, bus, backplane, requireUser, currentUser } = ctx
   const app = new OpenAPIHono<BlankEnv>()
-
-  const Notification = z
-    .object({
-      id: z.string(),
-      user_id: z.string().describe("The recipient this notification belongs to"),
-      actor: z
-        .string()
-        .describe("Who triggered it; for follow/publish this is the person's @handle"),
-      kind: z
-        .enum(["mention", "comment", "share", "follow", "publish", "review"])
-        .describe("What happened: mention, comment, share, follow, publish, or review"),
-      artifact_id: z.string(),
-      artifact_short_id: z
-        .string()
-        .describe("The artifact's public short id for links; empty for follows (no anchor)"),
-      artifact_title: z
-        .string()
-        .nullable()
-        .describe("The artifact's title, or null if untitled or not artifact-anchored"),
-      thread_id: z.string().describe("The comment thread anchor; empty when not comment-related"),
-      comment_id: z
-        .string()
-        .describe("The specific comment anchor; empty when not comment-related"),
-      preview: z.string().describe("Short text preview shown in the notification bell"),
-      read: z
-        .union([z.literal(0), z.literal(1)])
-        .describe("Whether the user has read it: 0 unread, 1 read"),
-      created_at: z.string(),
-    })
-    .openapi("Notification")
 
   app.openapi(
     createRoute({

@@ -21,25 +21,36 @@ export const Route = createFileRoute("/artifacts/$ref")({
     ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
   }),
   // Warm the artifact + its comments (and the rendered HTML the iframe loads) so
-  // an intent-preloaded link opens instantly. Best-effort: the page owns the
-  // auth redirect and the not-found / removed states, so a failed fetch here
-  // must not surface as a route error — hence the catch.
-  loader: async ({ context: { queryClient }, params }) => {
+  // an intent-preloaded link opens instantly. Fire-and-forget: awaiting held the
+  // whole route on a skeleton for the record round trip, when the page can
+  // already paint its header from the clicked card's list row (artifactQuery's
+  // placeholderData) and owns every fallback itself — auth redirect, not-found,
+  // removed, and a plain WorkbenchSkeleton when nothing is cached at all. The
+  // chain still runs to completion behind the mount, so an intent hover warms
+  // exactly what it always did, and the catch keeps a failed fetch out of the
+  // route error boundary as before.
+  loader: ({ context: { queryClient }, params }) => {
     const { version } = parseRef(params.ref)
-    for (const id of candidateShortIds(params.ref)) {
-      const art = await queryClient.ensureQueryData(artifactQuery(id)).catch(() => null)
-      if (art) {
-        // Comments are signed-in-only (the API 404s anon by design) — warm them
-        // only for a session the page will actually read them with.
-        if (queryClient.getQueryData(meQuery().queryKey))
-          queryClient.prefetchQuery(commentsQuery(id))
-        if (!art.removed) prefetchArtifactRaw(id, version ?? art.current_version)
-        return
+    void (async () => {
+      for (const id of candidateShortIds(params.ref)) {
+        const art = await queryClient.ensureQueryData(artifactQuery(id)).catch(() => null)
+        if (art) {
+          // Comments are signed-in-only (the API 404s anon by design) — warm them
+          // only for a session the page will actually read them with.
+          if (queryClient.getQueryData(meQuery().queryKey))
+            queryClient.prefetchQuery(commentsQuery(id))
+          if (!art.removed) prefetchArtifactRaw(id, version ?? art.current_version)
+          return
+        }
       }
-    }
+    })()
   },
   // Shape-matched workbench frame while the loader warms the artifact (replaces the
   // generic route skeleton — this is a full-bleed workbench, not a page column).
   pendingComponent: WorkbenchSkeleton,
+  // No minimum hold on that frame (see routes/index.tsx): the global
+  // defaultPendingMinMs(300) floor delays ready content on a cold deep link, and the
+  // shape-matched skeleton needs no smoothing to swap cleanly.
+  pendingMinMs: 0,
   component: Artifact,
 })

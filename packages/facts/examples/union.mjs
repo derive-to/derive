@@ -9,11 +9,11 @@ const c = await db.connect()
 const run = async (label, sql) => {
   try {
     const r = await c.runAndReadAll(sql)
-    console.log("\n### " + label)
+    console.log(`\n### ${label}`)
     for (const row of r.getRowObjects())
-      console.log("   " + JSON.stringify(row, (k, v) => (typeof v === "bigint" ? Number(v) : v)))
+      console.log(`   ${JSON.stringify(row, (_k, v) => (typeof v === "bigint" ? Number(v) : v))}`)
   } catch (e) {
-    console.log("\n### " + label + "\nFAILED: " + String(e.message).slice(0, 300))
+    console.log(`\n### ${label}\nFAILED: ${String(e.message).slice(0, 300)}`)
   }
 }
 // THREE artifacts, three URLs, one table. filename=true names which artifact a row came from.

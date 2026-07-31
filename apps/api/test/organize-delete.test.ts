@@ -120,6 +120,33 @@ describe("organize state:'deleted' — the permanent one", () => {
     expect(out.state.note).toContain("removed")
   })
 
+  it("deletes an artifact that has logged views (the raw-DDL view table's FK)", async () => {
+    // Regression: the view ledger is raw DDL with a NOT NULL FK to artifact(id) and no
+    // drizzle model, so it was invisible to check-delete-cascade and missing from every
+    // delete path. Postgres enforces the FK, so deleting any once-viewed artifact 500d
+    // in production while this suite stayed green (better-sqlite3 runs with FK
+    // enforcement off) — run under pnpm test:pg, this case is the one that catches it.
+    const { app, token, meta } = appWithGrant(
+      "orgdelviews",
+      "openid derive:read derive:publish derive:manage",
+    )
+    const a = await publish(app, token, "Viewed then deleted")
+    const rec = await meta.getByShortId(a.short_id)
+    if (!rec) throw new Error("publish did not land")
+    await meta.recordView({
+      id: "vw_orgdelviews_1",
+      artifact_id: rec.id,
+      version: 1,
+      viewer: "anon-fingerprint",
+      viewer_kind: "anon",
+    })
+    const out = await toolJson(
+      await call(app, token, "organize", { short_ids: [a.short_id], state: "deleted" }),
+    )
+    expect(out.state.deleted).toBe(1)
+    expect(await meta.getByShortId(a.short_id)).toBeNull()
+  })
+
   it("refuses below manage and names the reversible alternative", async () => {
     // publish-grade only: enough to create the artifact, deliberately not enough to
     // destroy it. The REST route draws the line in the same place.

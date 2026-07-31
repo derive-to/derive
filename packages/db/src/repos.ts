@@ -3888,6 +3888,9 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
     await db.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id)).run()
+    // The view ledger is raw DDL (no drizzle model) with an FK to artifact(id) —
+    // invisible to check-delete-cascade and enforced on Postgres. See pg.ts.
+    await db.run(sql`DELETE FROM view WHERE artifact_id = ${id}`)
     await db.delete(artifact).where(eq(artifact.id, id)).run()
     // Drop the search-index row too. Contentless FTS/tsvector rows aren't drizzle
     // tables, so they ride the same raw-SQL path unindexArtifact uses.

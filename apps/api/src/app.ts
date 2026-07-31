@@ -22,6 +22,7 @@ import { automationRoutes } from "./routes/automations"
 import { betaRoutes } from "./routes/beta"
 import { billingRoutes } from "./routes/billing"
 import { blobRoutes } from "./routes/blob"
+import { bootstrapRoutes } from "./routes/bootstrap"
 import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { conciergeRoutes } from "./routes/concierge"
@@ -426,6 +427,7 @@ export function createApp(deps: AppDeps): Hono {
     slackRoutes,
     billingRoutes,
     vitalsRoutes,
+    bootstrapRoutes,
     moderationRoutes,
     proposalRoutes,
     reviewRoutes,

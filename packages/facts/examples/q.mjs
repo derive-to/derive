@@ -6,12 +6,12 @@ const c = await db.connect()
 const run = async (label, sql) => {
   try {
     const r = await c.runAndReadAll(sql)
-    console.log("\n### " + label)
+    console.log(`\n### ${label}`)
     console.log(
-      JSON.stringify(r.getRowObjects(), (k, v) => (typeof v === "bigint" ? Number(v) : v)),
+      JSON.stringify(r.getRowObjects(), (_k, v) => (typeof v === "bigint" ? Number(v) : v)),
     )
   } catch (e) {
-    console.log("\n### " + label + "\nFAILED: " + String(e.message).slice(0, 220))
+    console.log(`\n### ${label}\nFAILED: ${String(e.message).slice(0, 220)}`)
   }
 }
 await run(

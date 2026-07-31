@@ -16,6 +16,7 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
+import { useBootGate } from "@/lib/bootstrap"
 import {
   artifactQuery,
   collectionFoldersQuery,
@@ -106,8 +107,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // bind to a single route's search shape.
   const search = useSearch({ strict: false }) as LibrarySearch
   const { me } = useAuth()
-  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me })
-  const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me })
+  // Boot-batch gated (same keys the NavRail reads — one seed serves both).
+  const bootGate = useBootGate()
+  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
+  const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me && bootGate })
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
@@ -323,10 +326,12 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const { data: feedbackData } = useQuery({ ...needsFeedbackArtifactsQuery(), enabled: homeView })
   const feedbackCount = feedbackData?.length ?? 0
 
-  // The greeting NEVER branches on a pending query: the count is preloaded in the "/"
-  // route loader, so `summary` is present on the first paint. The `totalKnown` guard is
-  // belt-and-suspenders — if the count were ever unresolved we show a neutral "Welcome,"
-  // rather than mislabelling a returning user as brand-new.
+  // The greeting NEVER branches on a pending query. The "/" loader prefetches the count
+  // without awaiting it (awaiting gated the whole grid behind this header, ~450ms on a
+  // cold boot), so on cold boots `summary` can be briefly unresolved — the `totalKnown`
+  // guard is the primary defense now, not belt-and-suspenders: neutral "Welcome," until
+  // the count says returning or new, never the wrong copy on a guess. Warm boots hit the
+  // cache and paint the full greeting on the first frame, exactly as before.
   const firstName =
     me?.name?.trim().split(/\s+/)[0] ||
     (me?.username ? `@${me.username}` : me?.email?.split("@")[0]) ||
@@ -522,12 +527,21 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
       {showPublish && <PublishCard />}
 
-      {/* The quiet triage line — one entry point to the /feedback feed, home only. */}
-      {homeView && feedbackCount > 0 && (
-        <div className="mb-6">
-          <TriageBar count={feedbackCount} />
-        </div>
-      )}
+      {/* The quiet triage line — one entry point to the /feedback feed, home only. Its
+          count is prefetched (not awaited) by the "/" loader, so on a cold boot it can
+          resolve after first paint. While unresolved, hold the bar's exact height: the
+          common outcome (a returning user with feedback) then swaps in with zero shift.
+          Resolving to zero collapses the slot once — absorbed by the grid's above-content
+          observer (artifact-grid.tsx scrollMargin), and a disappearing gap reads as a
+          tidy-up where an appearing bar would read as a jump. */}
+      {homeView &&
+        (feedbackData === undefined ? (
+          <div aria-hidden className="mb-6 h-10" />
+        ) : feedbackCount > 0 ? (
+          <div className="mb-6">
+            <TriageBar count={feedbackCount} />
+          </div>
+        ) : null)}
 
       {/* One-time, dismissible: the owner of a Brandprint-less workspace gets the
           "first on the team" setup nudge here (spec: Onboarding / Timing). */}
@@ -611,17 +625,35 @@ function LibraryBody({ view }: { view: LibraryView }) {
         // An organized manual collection. Grouping is DECOUPLED from presentation: the
         // Display menu's "Group by folder" flips grouping on/off, and BOTH states are the
         // card grid — grouping never costs you the thumbnails. Default grouped.
-        <>
-          {foldersView ? (
-            <CollectionFolders
-              collectionId={filter.id}
+        foldersView ? (
+          <CollectionFolders
+            collectionId={filter.id}
+            items={items}
+            folders={folders}
+            assignments={folderAssignments}
+            canManage={!!canManageFolders}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            scrollToFolderId={folderAnchor}
+            onOpen={(a) =>
+              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+            }
+            onToggleFavorite={toggleFavorite}
+            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
+            onEditTags={setPendingTags}
+            onAddToCollection={setPendingCollections}
+            onDelete={setPendingDelete}
+            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+            selection={selection}
+          />
+        ) : (
+          <>
+            <ArtifactGrid
               items={items}
-              folders={folders}
-              assignments={folderAssignments}
-              canManage={!!canManageFolders}
+              scrollRef={scrollRef}
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
-              scrollToFolderId={folderAnchor}
+              onLoadMore={() => fetchNextPage()}
               onOpen={(a) =>
                 nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
               }
@@ -633,33 +665,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
               onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
               selection={selection}
             />
-          ) : (
-            <>
-              <ArtifactGrid
-                items={items}
-                scrollRef={scrollRef}
-                hasNextPage={!!hasNextPage}
-                isFetchingNextPage={isFetchingNextPage}
-                onLoadMore={() => fetchNextPage()}
-                onOpen={(a) =>
-                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-                }
-                onToggleFavorite={toggleFavorite}
-                onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-                onEditTags={setPendingTags}
-                onAddToCollection={setPendingCollections}
-                onDelete={setPendingDelete}
-                onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
-                selection={selection}
-              />
-              {isFetchingNextPage && (
-                <div className="flex justify-center py-2" data-testid="library-loading-more">
-                  <Spinner />
-                </div>
-              )}
-            </>
-          )}
-        </>
+            {isFetchingNextPage && (
+              <div className="flex justify-center py-2" data-testid="library-loading-more">
+                <Spinner />
+              </div>
+            )}
+          </>
+        )
       ) : (
         <>
           {/* No folders yet on a manual collection → keep the card grid; an editor gets a

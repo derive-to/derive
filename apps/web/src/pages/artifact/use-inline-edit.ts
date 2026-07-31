@@ -120,7 +120,7 @@ export function useInlineEdit(p: {
       if (!p.frameRef.current?.contentWindow || e.source !== p.frameRef.current.contentWindow)
         return
       const d = e.data
-      if (!d || d.source !== "derive") return
+      if (d?.source !== "derive") return
       if (d.type === "edit-state") {
         setDirty(typeof d.dirty === "number" ? d.dirty : 0)
       } else if (d.type === "edit-edits") {
