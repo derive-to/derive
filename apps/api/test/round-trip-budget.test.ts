@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { MetaStore } from "@derive/core"
 import { describe, expect, it } from "vitest"
-import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { as, countingStore, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 /**
  * ROUND-TRIP BUDGETS FOR THE HOT READ PATHS.
@@ -18,11 +18,8 @@ import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
  * of these handlers is not a small cost to be measured later; it is ~80ms, on every request,
  * forever. This test makes that fact fail CI instead of relying on someone noticing in review.
  *
- * HOW IT COUNTS. A `get`-level Proxy over the store, so a call is counted wherever it is made —
- * inside a route, inside middleware, inside `authorize`. Method-patching would not work: the pg
- * test store is itself a Proxy deferring to an async-created store, so assigning over its
- * methods silently counts nothing (that mistake once made a sibling test pass on SQLite while
- * measuring nothing at all on Postgres).
+ * HOW IT COUNTS. `countingStore` (see helpers.ts) wraps the store so a call is counted wherever
+ * it is made — inside a route, inside middleware, inside `authorize`.
  *
  * WHAT A BUDGET MEANS. It is an upper bound on STORE CALLS, which is very close to but not
  * exactly Postgres round trips: a couple of store methods issue more than one statement, and
@@ -41,29 +38,13 @@ import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u_budget_own", email: "budget@derive.test", name: "Budget Owner" }
 
-/** Counts every store method call, wherever it is made. */
-const counting = (inner: MetaStore) => {
-  const calls: string[] = []
-  const proxy = new Proxy(inner, {
-    get(target, prop, recv) {
-      const value = Reflect.get(target, prop, recv)
-      if (typeof value !== "function" || typeof prop !== "string") return value
-      return (...args: unknown[]) => {
-        calls.push(prop)
-        return (value as (...a: unknown[]) => unknown).apply(target, args)
-      }
-    },
-  })
-  return { proxy, calls }
-}
-
 const base = makeAuthedApp("trip-budget", [owner])
-const { proxy, calls } = counting(base.meta as MetaStore)
+const { proxy, calls, reset } = countingStore(base.meta as MetaStore)
 const { app } = makeAuthedApp("trip-budget-probe", [owner], undefined, { deps: { meta: proxy } })
 
 /** Drive one request through the counting store and return the store calls it made. */
 const tripsFor = async (path: string, headers: Record<string, string>) => {
-  calls.length = 0
+  reset()
   const res = await app.request(path, { headers })
   // A route that 4xx'd would "pass" any budget by doing no work. Assert it actually served.
   expect(res.status, `${path} did not return 200`).toBe(200)
@@ -204,7 +185,7 @@ describe("hot read paths stay within their round-trip budget", () => {
     const a = await mk("batched-a")
     const b = await mk("batched-b")
 
-    calls.length = 0
+    reset()
     const enriched = await proxy.listEnrichment({
       ids: [a.id, b.id],
       ghIds: [],
@@ -217,7 +198,7 @@ describe("hot read paths stay within their round-trip budget", () => {
     // ONE call for the whole page, regardless of how many ids it carries.
     expect(calls.filter((c) => c === "listEnrichment")).toHaveLength(1)
 
-    calls.length = 0
+    reset()
     await proxy.currentVersions([a.id, b.id])
     expect(calls.filter((c) => c === "currentVersions")).toHaveLength(1)
     // …and specifically NOT a getVersion per artifact, which is what it replaced.

@@ -1,13 +1,13 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { MetaStore } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
+import { countingStore } from "./helpers"
 
 /**
  * ROUND-TRIP BUDGETS FOR THE MCP SURFACE.
@@ -17,7 +17,7 @@ import { sha256 } from "../src/lib/crypto"
  * throughout this program applies here too, since MCP tool calls run through the exact
  * same Hono app and MetaStore as the REST routes (see mcp.ts — `/mcp` is a route on the
  * same app, not a separate runtime). This closes that "to measure" gap with real counts,
- * using the same counting-proxy technique as round-trip-budget.test.ts.
+ * using the shared countingStore helper, same as round-trip-budget.test.ts.
  *
  * `catch_up` and `comment` are the two tools this branch already touched (the 3-listComments
  * merge in catch-up.ts, the threadId filter in comment.ts's react/set_state) — this is also
@@ -26,21 +26,6 @@ import { sha256 } from "../src/lib/crypto"
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
-
-const counting = (inner: MetaStore) => {
-  const calls: string[] = []
-  const proxy = new Proxy(inner, {
-    get(target, prop, recv) {
-      const value = Reflect.get(target, prop, recv)
-      if (typeof value !== "function" || typeof prop !== "string") return value
-      return (...args: unknown[]) => {
-        calls.push(prop)
-        return (value as (...a: unknown[]) => unknown).apply(target, args)
-      }
-    },
-  })
-  return { proxy, calls }
-}
 
 function appWithGrant(name: string, scopes: string) {
   const path = join(dir, `${name}.db`)
@@ -66,9 +51,9 @@ function appWithGrant(name: string, scopes: string) {
   )
   db.close()
   const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
-  const { proxy, calls } = counting(meta)
+  const { proxy, calls, reset } = countingStore(meta)
   const app = createApp({ meta: proxy, blobs, baseUrl: "http://derive.test", token: "tok" })
-  return { app, meta, token: `tok_${name}`, calls }
+  return { app, meta, token: `tok_${name}`, calls, reset }
 }
 
 type App = ReturnType<typeof createApp>
@@ -106,7 +91,10 @@ const call = (app: App, token: string, name: string, args: Record<string, unknow
 
 describe("MCP tool calls stay within their round-trip budget", () => {
   it("catch_up(short_id) and comment(react/set_state) — measured, not inferred", async () => {
-    const { app, meta, token, calls } = appWithGrant("rt", "openid derive:read derive:publish")
+    const { app, meta, token, calls, reset } = appWithGrant(
+      "rt",
+      "openid derive:read derive:publish",
+    )
     await rpc(app, token, initBody)
 
     // The OAuth user needs a workspace SEAT — direct createArtifact (unlike a real publish)
@@ -167,7 +155,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       author_id: "u_o",
     })
 
-    calls.length = 0
+    reset()
     const res = await call(app, token, "catch_up", { short_id: "rttest01" })
     const text = res?.result?.content?.[0]?.text ?? ""
     expect(text, "catch_up returned no content").toBeTruthy()
@@ -176,7 +164,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(text).toContain("3 open comment")
     const catchUpCalls = [...calls]
 
-    calls.length = 0
+    reset()
     const reactRes = await call(
       app,
       token,
@@ -187,7 +175,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(reactRes?.result?.isError, JSON.stringify(reactRes)).not.toBe(true)
     const reactCalls = [...calls]
 
-    calls.length = 0
+    reset()
     const resolveRes = await call(
       app,
       token,
@@ -198,7 +186,8 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(resolveRes?.result?.isError, JSON.stringify(resolveRes)).not.toBe(true)
     const resolveCalls = [...calls]
 
-    // biome-ignore lint/suspicious/noConsole: measurement output, the point of this test
+    // The measured counts, printed: this test exists to produce them, and a run's own output
+    // is what you read when a budget below moves and you need to see WHICH call was added.
     console.log(
       `MCP round trips — catch_up(short_id): ${catchUpCalls.length} [${catchUpCalls.join(", ")}]\n` +
         `MCP round trips — comment(react): ${reactCalls.length} [${reactCalls.join(", ")}]\n` +
