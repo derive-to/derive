@@ -41,7 +41,9 @@ export function ArtifactDocument({
   shown: number
   currentVersion: number
   title: string
-  rawSrc: string
+  /** null = the record is still a list-row seed (no raw_token yet) — RenderStage
+   *  holds its boot state and mounts the frame once the real source arrives. */
+  rawSrc: string | null
   view: "preview" | "diff"
   diff: Diff | null
   diffFailed?: boolean

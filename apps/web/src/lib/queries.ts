@@ -1,6 +1,11 @@
 import type { SortMode } from "@derive/core"
-import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query"
-import { API_BASE, api } from "@/api"
+import {
+  infiniteQueryOptions,
+  keepPreviousData,
+  type QueryClient,
+  queryOptions,
+} from "@tanstack/react-query"
+import { API_BASE, type Artifact, api } from "@/api"
 
 // The signed-in user (or null for an anon visitor). One key read by the thin
 // AuthProvider (useQuery) AND the route guards (ensureQueryData) — they dedupe
@@ -259,14 +264,50 @@ export const activeSyncsQuery = () =>
     refetchOnWindowFocus: true,
   })
 
+// Every cache shape that lives under the ["artifacts"] key prefix: the library's
+// infinite pages, the needs-feedback flat array, and the {artifacts} envelope the
+// target-picker stores. The seed scanner below reads them all.
+type ArtifactListCache =
+  | Artifact[]
+  | { artifacts?: Artifact[]; next_cursor?: string | null }
+  | { pages?: { artifacts?: Artifact[] }[] }
+  | undefined
+const artifactRowsOf = (data: ArtifactListCache): Artifact[] => {
+  if (!data) return []
+  if (Array.isArray(data)) return data
+  if ("pages" in data && data.pages) return data.pages.flatMap((p) => p.artifacts ?? [])
+  if ("artifacts" in data && data.artifacts) return data.artifacts
+  return []
+}
+
 // Typed query options shared by route loaders (ensureQueryData, for intent
 // preloading) and components (useQuery). One source of truth for keys +
 // fetchers, so a preloaded route and the page that renders it resolve to the
 // same cache entry — the preload warms exactly what the page reads.
-export const artifactQuery = (shortId: string) =>
+//
+// Pass the QueryClient (the component does; loaders don't need to) to seed the
+// FIRST paint from any list row already in the cache: the card the person just
+// clicked carries the title, author, version and tags, so the workbench header
+// renders on the first frame after the click while the authoritative record
+// loads. The seed is deliberately weaker than the record — a list row has no
+// raw_token and may lack viewer-specific fields — so the page gates the content
+// iframe on the REAL fetch (isPlaceholderData) and the seed never starts a
+// render it would immediately restart.
+export const artifactQuery = (shortId: string, client?: QueryClient) =>
   queryOptions({
     queryKey: ["artifact", shortId] as const,
     queryFn: () => api.getArtifact(shortId),
+    placeholderData: client
+      ? () => {
+          for (const [, data] of client.getQueriesData<ArtifactListCache>({
+            queryKey: ["artifacts"],
+          })) {
+            const hit = artifactRowsOf(data).find((a) => a?.short_id === shortId)
+            if (hit) return hit
+          }
+          return undefined
+        }
+      : undefined,
   })
 
 export const commentsQuery = (shortId: string) =>
