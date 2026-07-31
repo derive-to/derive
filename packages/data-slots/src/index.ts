@@ -356,7 +356,11 @@ const DATA_TABLE_MIN_CELLS = 4
 const HTML_CELL = /<td\b[^>]*>([^<]{1,40})<\/td>/gi
 const MD_TABLE_ROW = /^\s*\|.+\|\s*$/gm
 const MD_CELL = /\|([^|\n]{1,40})(?=\|)/g
-const NUMERIC_CELL = /^\s*[-+$]?\d[\d,]*(?:\.\d+)?\s*%?\s*$/
+// Validated on a TRIMMED capture so the pattern carries no whitespace at all — the first
+// version kept \s* runs around the optional % and was itself flagged as polynomial. The
+// second lesson of the round: the fix for an ambiguous regex is not a subtler regex.
+const NUMERIC_CELL = /^[-+$]?\d[\d,]*(?:\.\d+)?%?$/
+const isNumericCell = (s: string): boolean => NUMERIC_CELL.test(s.trim())
 
 /**
  * Does this page carry FIGURES that no slot makes queryable? The nudge that turns slots
@@ -381,10 +385,10 @@ export const missingDataSlotAdvisory = (source: string, contentType: string): st
 
   let cells = 0
   if (isHtml) {
-    for (const m of source.matchAll(HTML_CELL)) if (NUMERIC_CELL.test(m[1] ?? "")) cells++
+    for (const m of source.matchAll(HTML_CELL)) if (isNumericCell(m[1] ?? "")) cells++
   } else {
     for (const row of source.match(MD_TABLE_ROW) ?? [])
-      for (const m of row.matchAll(MD_CELL)) if (NUMERIC_CELL.test(m[1] ?? "")) cells++
+      for (const m of row.matchAll(MD_CELL)) if (isNumericCell(m[1] ?? "")) cells++
   }
   if (cells < DATA_TABLE_MIN_CELLS) return null
 
