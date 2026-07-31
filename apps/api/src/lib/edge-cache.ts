@@ -1,4 +1,5 @@
 import { edgeWaitUntil } from "../realtime-do"
+import { SESSION_COOKIE_NAMES } from "./http"
 
 /**
  * Serving an immutable response from Cloudflare's edge cache instead of rebuilding it.
@@ -54,4 +55,53 @@ export const withEdgeCache = async (
     edgeWaitUntil(cache.put(req, res.clone()).catch(() => {}))
   }
   return res
+}
+
+/**
+ * The same edge cache, for a response that is public but NOT universal: the
+ * server-rendered share page (`/artifacts/:ref`). It carries unfurl meta for crawlers and
+ * strangers, and it is the slowest shell Derive serves — TTFB 266-618ms against ~56ms for
+ * the static app shell, because `run_worker_first` sends it through the Worker and a
+ * database read on every single visit. It is also the surface a stranger judges Derive by,
+ * and the one where a regression is least likely to be noticed by anyone who works here.
+ *
+ * WHY IT CANNOT USE `withEdgeCache`. That helper's contract is "identical for every
+ * caller", and this page is not: `readable()` authorises per viewer, so a member can see a
+ * title an anonymous visitor must not. Caching it on URL alone would eventually serve a
+ * member's rendering of a private artifact to the public. That is the failure this guard
+ * exists to make impossible.
+ *
+ * THE GUARD. A request carrying ANY Better Auth session cookie skips the cache completely —
+ * it neither reads nor writes. So the cache only ever contains responses built for an
+ * anonymous viewer, and only anonymous viewers can ever read them. A signed-in member always
+ * gets a fresh render. The check is deliberately cookie-PRESENCE, not session validity: it
+ * is a routing decision, not an authorization one, and erring toward "bypass the cache" is
+ * always safe (worst case is today's behaviour, a fresh render).
+ *
+ * TTL. Short and explicit, because unfurl meta is derived from live data (title, version
+ * count, comment count) and a share link whose card is a day stale is worse than one that
+ * costs 300ms. `stale-while-revalidate` keeps the fast path during the refresh.
+ */
+export const ANON_SHELL_CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=600"
+
+export const hasSessionCookie = (req: Request): boolean => {
+  const cookie = req.headers.get("cookie")
+  return !!cookie && SESSION_COOKIE_NAMES.some((name) => cookie.includes(`${name}=`))
+}
+
+export const withAnonEdgeCache = async (
+  req: Request,
+  produce: () => Promise<Response>,
+): Promise<Response> => {
+  // A signed-in caller never touches this cache, in either direction.
+  if (hasSessionCookie(req)) return produce()
+  return withEdgeCache(req, async () => {
+    const res = await produce()
+    if (res.status !== 200) return res
+    // Set the TTL on the response the cache stores AND on the one the caller gets, so the
+    // browser and the edge agree about how long this rendering is good for.
+    const headers = new Headers(res.headers)
+    headers.set("Cache-Control", ANON_SHELL_CACHE_CONTROL)
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+  })
 }

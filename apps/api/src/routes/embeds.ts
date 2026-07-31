@@ -20,6 +20,7 @@ import {
 } from "@derive/core"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
+import { withAnonEdgeCache } from "../lib/edge-cache"
 import { fail, toBody } from "../lib/http"
 import { unfurlInfoFor } from "../lib/unfurl-info"
 
@@ -231,25 +232,32 @@ export const embedRoutes = (ctx: AppContext) => {
   const getShell = async (): Promise<string | null> =>
     ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
   if (ctx.deps.shell || ctx.deps.shellFetch)
-    app.get("/artifacts/:ref", async (c) => {
-      const shell = await getShell()
-      if (!shell) return c.notFound()
-      const ref = c.req.param("ref")
-      const artifact = await readable(c, ref)
-      // A taken-down artifact serves the bare shell (the SPA shows a tombstone) and
-      // injects NO unfurl meta, so the removed title doesn't live on for crawlers.
-      if (!artifact || artifact.removed_at) return c.html(shell)
-      // Canonicalise any non-canonical ref (bare id, stale name, legacy order) to
-      // /artifacts/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not 301)
-      // so a later rename re-canonicalises instead of being cached. Only ever for an
-      // artifact the actor may read (readable() already authorised), so a gated title
-      // can't leak via the redirect. Preserves the @vN suffix and the query string.
-      const { version } = parseRef(ref)
-      const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
-      if (ref !== canonical)
-        return c.redirect(`/artifacts/${canonical}${new URL(c.req.url).search}`, 302)
-      return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
-    })
+    app.get("/artifacts/:ref", async (c) =>
+      // Anonymous visitors (crawlers, anyone opening a shared link) get this rendering
+      // from Cloudflare's edge instead of a Worker invocation plus a database read.
+      // Signed-in callers bypass the cache entirely — see withAnonEdgeCache, the guard is
+      // the whole reason this page can be cached at all.
+      withAnonEdgeCache(c.req.raw, async () => {
+        const shell = await getShell()
+        if (!shell) return c.notFound()
+        const ref = c.req.param("ref")
+        const artifact = await readable(c, ref)
+        // A taken-down artifact serves the bare shell (the SPA shows a tombstone) and
+        // injects NO unfurl meta, so the removed title doesn't live on for crawlers.
+        if (!artifact || artifact.removed_at) return c.html(shell)
+        // Canonicalise any non-canonical ref (bare id, stale name, legacy order) to
+        // /artifacts/<name>-<shortId> so the browser/crawler holds the readable URL. 302
+        // (not 301) so a later rename re-canonicalises instead of being cached — and the
+        // edge cache only ever stores 200s, so a redirect never goes sticky either. Only
+        // ever for an artifact the actor may read (readable() already authorised), so a
+        // gated title can't leak via the redirect. Preserves @vN and the query string.
+        const { version } = parseRef(ref)
+        const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
+        if (ref !== canonical)
+          return c.redirect(`/artifacts/${canonical}${new URL(c.req.url).search}`, 302)
+        return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
+      }),
+    )
   // Server-rendered profile URL: the SPA shell with profile OG/Twitter meta injected for
   // crawlers (which don't run JS). Humans get the SPA as usual (the meta is inert). Only
   // public profile fields go into the head; an unclaimed handle serves the bare shell.
