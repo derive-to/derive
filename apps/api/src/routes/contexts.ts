@@ -29,11 +29,14 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
+import { buildChatTools } from "../lib/chat-tools"
+import { runChatTurn } from "../lib/chat-turn"
+import { previewOf } from "../lib/comments"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
-import { makeDeltaStream } from "../lib/session-stream"
+import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
 import { log } from "../log"
 
@@ -81,9 +84,130 @@ export const contextRoutes = (ctx: AppContext) => {
   const isRunBearer = (c: Context): boolean => agentRunScope(c) !== null
   const NOT_THIS_LANE = "a run token cannot act on a session"
 
+  /** How many past conversations the history picker offers. A picker, not an archive: far
+   *  enough back to find last week's thread, short enough to stay one batched read. */
+  const CHAT_HISTORY_PAGE = 50
+
+  /**
+   * WHICH MODEL this conversation was last answered with, read off the transcript.
+   *
+   * A model choice is per-conversation state, and this is where that state already lives: every
+   * agent message records the model that produced it, because a transcript that cannot say what
+   * wrote it is not a record. Reading the choice back from the same place means no column, no
+   * migration, and no way for the stored answer and the stored choice to disagree.
+   *
+   * Null when nothing has answered yet, or the messages predate the field.
+   */
+  const lastModelId = (transcript: SessionMessageRecord[]): string | null => {
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      const m = transcript[i]
+      if (!m || m.author_kind !== "agent" || !m.meta) continue
+      try {
+        const id = (JSON.parse(m.meta) as { model?: { id?: unknown } }).model?.id
+        if (typeof id === "string" && id) return id
+      } catch {
+        /* a hand-edited row must not break the next turn */
+      }
+    }
+    return null
+  }
+
   /** Is this workspace allowed to spend the operator's model key? See DERIVE_CHAT_ALLOWLIST. */
   const chatAllowed = (orgId: string): boolean =>
     !ctx.callModel || !ctx.chatAllowlist?.length || ctx.chatAllowlist.includes(orgId)
+
+  /**
+   * EVERY RUNG A CHAT ARRIVAL WALKS, in one place.
+   *
+   * Chat is the lane a person can drive by hand as fast as they can type, on a key the operator
+   * pays for, so it is guarded five times over: the workspace opted in, this deploy lets that
+   * workspace opt in, the asker is a MEMBER (not merely someone holding a link), they are within
+   * their request rate, and the workspace is within its monthly budget. Each was already
+   * enforced somewhere; collecting them is what stops the next arrival — a comment mention, a
+   * Slack mention — from quietly inheriting four of the five.
+   *
+   * Returns a Response to bail with, or null to proceed. Ordered cheapest-first, and membership
+   * before the two ceilings so a stranger can never learn a workspace's rate-limit state.
+   */
+  const chatGates = async (c: Context, orgId: string, userId: string): Promise<Response | null> => {
+    const settings = await meta.getOrgSettings(orgId).catch(() => null)
+    // A flag that only hides a button is not a gate: the route is reachable directly.
+    if (!settings?.chatBeta) return fail(c, 404, "chat is not enabled for this workspace")
+    if (!chatAllowed(orgId)) return fail(c, 404, "chat is not enabled for this workspace")
+    if (!(await meta.getMembership(orgId, userId).catch(() => null)))
+      return fail(c, 404, "not found")
+    const rl = await limited(c, askLimiter)
+    if (rl) return rl
+    // Retrospective by nature (a turn's cost is known when it settles), so this stops the NEXT
+    // turn, never the current one — which is why the limiter above is also required.
+    if (await overBudget(meta, orgId, userId).catch(() => false))
+      return fail(c, 429, "monthly model budget reached")
+    return null
+  }
+
+  /**
+   * One WORKSPACE chat turn: the model, this workspace's tools, and the transcript.
+   *
+   * The tools are Derive's own MCP tools, constructed for the ASKER (see lib/chat-tools.ts), so
+   * everything this turn can reach is what that person could reach by hand. The turn itself is
+   * turn-core's, exactly like every other lane.
+   */
+  const serveWorkspaceChat = async (
+    s: SessionRecord,
+    me: { id: string; name?: string | null; username?: string | null; email?: string },
+    reply: (body: string, state: SessionState, payload?: unknown) => Promise<void>,
+    stream: DeltaStream,
+    askedModelId: string | null,
+  ) => {
+    // The seat is re-read PER TURN, never trusted from session creation: someone removed from
+    // the workspace still holds the session id, and their tools would otherwise keep working.
+    const seat = await meta.getMembership(s.org_id, me.id).catch(() => null)
+    if (!seat) {
+      await reply(
+        "You are no longer a member of this workspace, so I cannot answer here.",
+        "failed",
+      )
+      return
+    }
+    const transcript = await meta.listSessionMessages(s.id)
+    // WHICH MODEL. What the person asked for on this turn, else the one this conversation was
+    // already using (read off the last agent message, so the choice sticks without a column),
+    // else the deploy's default.
+    const previous = lastModelId(transcript)
+    const model = ctx.models?.resolve(askedModelId ?? previous ?? null)
+    if (!model) {
+      // A named model that is gone is worth saying out loud: silently answering with a different
+      // one is a lie about which model produced the text.
+      const named = askedModelId ?? previous
+      await reply(
+        named
+          ? `The model "${named}" is not available on this deploy any more. Pick another and ask again.`
+          : "No model is configured on this deploy, so I cannot answer.",
+        "failed",
+      )
+      return
+    }
+    const ws = await meta.getWorkspace(s.org_id).catch(() => null)
+    const res = await runChatTurn(
+      { model: { ...model, callModel: stream.wrap(model.callModel) } },
+      {
+        session: s,
+        transcript,
+        tools: buildChatTools(ctx, {
+          org: s.org_id,
+          user: { id: me.id, name: me.name ?? me.username ?? null },
+          seatRole: seat.role,
+        }),
+        workspaceName: ws?.name ?? "this workspace",
+        asker: { name: me.name ?? me.username ?? null },
+      },
+    )
+    await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
+      outcome: res.outcome,
+      cost_micro_usd: res.costMicroUsd,
+      model: res.model,
+    })
+  }
 
   /**
    * Serve one attended turn for a session that names an artifact subject.
@@ -98,9 +222,20 @@ export const contextRoutes = (ctx: AppContext) => {
     me: { id: string; name?: string | null; username?: string | null; email?: string },
     /** The context's agent, or NULL for a contextless (default-agent) chat session. */
     agentId: string | null,
+    /** What the caller asked for on THIS turn. `modelId` is the person's model pick; absent
+     *  means "whatever this conversation was already using", then the deploy's default. */
+    opts?: { modelId?: string | null },
   ) => {
     const subject = parseSubject(s.subject_ref)
-    if (!subject || subject.kind !== "artifact") return
+    // WHAT THIS LANE WILL SERVE, and what it must leave alone.
+    //
+    // A subject that is not an artifact belongs to the automation lane (a collection or tag
+    // selector), so it is not ours. NO subject is two different things depending on the context:
+    // with one, it is the ORIGINAL ask lane — a packaged agent's own runner answers it, and
+    // serving it here would answer on the runner's behalf and settle a session it was about to
+    // claim. Without one, it is the workspace chat, which is ours.
+    if (subject && subject.kind !== "artifact") return
+    if (!subject && s.context_id) return
     // Slices of the answer as the model writes it, coalesced so a reply costs tens of publishes
     // rather than one per token. Ephemeral by construction — `reply()` below still writes the
     // whole transcript row, which stays the record.
@@ -162,6 +297,14 @@ export const contextRoutes = (ctx: AppContext) => {
       : await meta.claimAttendedSession(s.id, lease)
     if (!claimed) return // someone else is already serving this turn
     try {
+      // THE WORKSPACE CHAT: no document, so the ground is the workspace and the work happens
+      // through tools. Everything above this point — the claim, the delta stream, the reply
+      // writer, the settle wake — is shared with the document lane and deliberately not
+      // duplicated; what differs is only what the turn is given and what it may do.
+      if (!subject) {
+        await serveWorkspaceChat(s, me, reply, stream, opts?.modelId ?? null)
+        return
+      }
       const artifact = await meta.getByShortId(subject.id)
       if (!artifact) {
         await reply("That document no longer exists, so I have not changed anything.", "failed")
@@ -366,6 +509,21 @@ export const contextRoutes = (ctx: AppContext) => {
         .array(z.object({ short_id: z.string(), title: z.string() }))
         .optional()
         .describe("Artifacts the agent cited, each linkable by short_id."),
+      model: z
+        .object({ id: z.string(), label: z.string() })
+        .optional()
+        .describe(
+          "Which model produced this answer. Recorded per message rather than per session because the choice is per turn — a conversation can be continued on a different model, and the answers it already gave must keep saying which model wrote them.",
+        ),
+      outcome: z
+        .string()
+        .optional()
+        .describe("How the turn ended: answered, published, proposed, or failed."),
+      cost_micro_usd: z
+        .number()
+        .nullable()
+        .optional()
+        .describe("Reported spend for the turn in millionths of a USD; null when unreported."),
     })
     .openapi("SessionMeta")
 
@@ -1308,6 +1466,162 @@ export const contextRoutes = (ctx: AppContext) => {
     },
   )
 
+  // ── THE WORKSPACE CHAT ───────────────────────────────────────────────────────────────────
+  //
+  // The same session, the same turn, one thing less: no document. What that costs is the
+  // grounding a subject provides, and what it buys is reach — the turn works the whole
+  // workspace through Derive's own tools instead of one file. Sibling of the route above on
+  // purpose: both open a CONTEXTLESS session and serve it attended, so a conversation that
+  // starts on a document and one that starts nowhere are the same object with the same
+  // history, and neither needed a table.
+
+  const ChatModel = z
+    .object({
+      id: z.string().describe("The provider's model id — what to send back to pick it."),
+      label: z.string().describe("What to show a person."),
+      is_default: z.boolean().describe("The one a turn uses when nobody chose."),
+    })
+    .openapi("ChatModel")
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/chat/models",
+      tags: ["Contexts"],
+      summary: "Models this deploy can answer an attended chat turn with.",
+      responses: {
+        200: {
+          description: "The models, default first. Empty when no model is configured.",
+          content: { "application/json": { schema: z.object({ models: z.array(ChatModel) }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      // Deliberately NOT gated on chatBeta: this is the deploy's model list, not a workspace's
+      // capability, and it carries no workspace data. A signed-in person asking what models
+      // exist learns nothing about who may use them.
+      return c.json({
+        models: (ctx.models?.options ?? []).map((m) => ({
+          id: m.id,
+          label: m.label,
+          is_default: m.isDefault,
+        })),
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/chat-session",
+      tags: ["Contexts"],
+      summary: "Open a chat session about the workspace (no context, no document).",
+      responses: {
+        201: {
+          description: "The new session and its first message.",
+          content: {
+            "application/json": {
+              schema: z.object({ session: Session, messages: z.array(SessionMessage) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const b = await readJson(
+        c,
+        z.object({
+          workspace: z.string().describe("The workspace id this conversation is about."),
+          body_md: z.string().trim().min(1).max(20_000),
+          model: z
+            .string()
+            .max(200)
+            .optional()
+            .describe("A model id from /v1/chat/models; omitted = this deploy's default."),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      // EVERY rung, in one call: opt-in, allowlist, membership, rate limit, budget.
+      const gate = await chatGates(c, b.workspace, me.id)
+      if (gate) return bail(gate)
+      // A model named here must exist NOW — better a 400 the person can act on than a session
+      // that opens and then answers with something they did not choose.
+      if (b.model && !ctx.models?.resolve(b.model))
+        return bail(fail(c, 400, `unknown model "${b.model}"`))
+      const created = await meta.createSessionWithMessage(
+        {
+          id: newId("ses"),
+          // No context (nobody packaged this) and no subject (it is about the workspace).
+          context_id: null,
+          context_version: null,
+          org_id: b.workspace,
+          asker_id: me.id,
+          subject_ref: null,
+        },
+        { id: newId("sm"), author_kind: "asker", author_id: me.id, body_md: b.body_md },
+        "open",
+      )
+      // Detached, exactly like the document lane: the transcript is what the surface follows,
+      // so closing the tab mid-turn loses nothing.
+      await ctx.background(serveAttended(created.session, me, null, { modelId: b.model ?? null }))
+      return c.json(
+        { session: sessionJson(created.session), messages: [messageJson(created.message)] },
+        201,
+      )
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/chat-sessions",
+      tags: ["Contexts"],
+      summary: "Your chat conversations in a workspace, newest first.",
+      request: { query: z.object({ workspace: z.string() }) },
+      responses: {
+        200: {
+          description: "Your sessions, each with a one-line preview.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                sessions: z.array(Session.extend({ preview: z.string() })),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const org = c.req.query("workspace") ?? ""
+      // Membership only — no chatBeta gate. Turning the flag off must not hide a person's own
+      // past conversations: they are their record, and hiding them would read as data loss.
+      if (!(await meta.getMembership(org, me.id).catch(() => null)))
+        return bail(fail(c, 404, "not found"))
+      const sessions = await meta.listChatSessions(org, me.id, CHAT_HISTORY_PAGE)
+      // Previews in ONE batched read, never a query per session.
+      const msgs = sessions.length
+        ? await meta.listSessionMessagesFor(sessions.map((s) => s.id))
+        : []
+      const firstAsk = new Map<string, string>()
+      for (const m of msgs) {
+        if (m.author_kind !== "asker" || firstAsk.has(m.session_id)) continue
+        firstAsk.set(m.session_id, previewOf(m.body_md))
+      }
+      return c.json({
+        sessions: sessions.map((s) => ({
+          ...sessionJson(s),
+          preview: firstAsk.get(s.id) ?? "",
+        })),
+      })
+    },
+  )
+
   // A context's sessions: the owner sees every session (the activity view);
   // anyone else sees only their own.
   app.openapi(
@@ -1516,8 +1830,19 @@ export const contextRoutes = (ctx: AppContext) => {
       // that was missing.
       const rl = await limited(c, askLimiter)
       if (rl) return bail(rl)
-      const b = await readJson(c, z.object({ body_md: z.string().trim().min(1).max(20_000) }))
+      const b = await readJson(
+        c,
+        z.object({
+          body_md: z.string().trim().min(1).max(20_000),
+          // A model switch is a per-TURN choice, not a session setting: "answer that again with
+          // the bigger one" is the whole use case, and it must not rewrite what already answered.
+          // Absent = whatever this conversation was last answered with (see lastModelId).
+          model: z.string().max(200).optional(),
+        }),
+      )
       if (b instanceof Response) return bail(b)
+      if (b.model && !ctx.models?.resolve(b.model))
+        return bail(fail(c, 400, `unknown model "${b.model}"`))
       // THE MONTHLY BUDGET, for the same reason. Dispatch enforces it on every hosted run and
       // every queued session; an attended follow-up bypassed dispatch entirely, so the one lane
       // a person can drive by hand as fast as they can type was the one lane with no ceiling.
@@ -1559,7 +1884,9 @@ export const contextRoutes = (ctx: AppContext) => {
         const st = await meta.getOrgSettings(s.org_id).catch(() => null)
         if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
       }
-      await ctx.background(serveAttended(s, me, linked?.context.agent_id ?? null))
+      await ctx.background(
+        serveAttended(s, me, linked?.context.agent_id ?? null, { modelId: b.model ?? null }),
+      )
       return c.json({ message: messageJson(m) }, 201)
     },
   )

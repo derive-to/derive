@@ -4811,6 +4811,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/chat/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Models this deploy can answer an attended chat turn with. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The models, default first. Empty when no model is configured. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            models: components["schemas"]["ChatModel"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chat-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a chat session about the workspace (no context, no document). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new session and its first message. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            session: components["schemas"]["Session"];
+                            messages: components["schemas"]["SessionMessage"][];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chat-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your chat conversations in a workspace, newest first. */
+        get: {
+            parameters: {
+                query: {
+                    workspace: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Your sessions, each with a one-line preview. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            sessions: (components["schemas"]["Session"] & {
+                                preview: string;
+                            })[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{id}": {
         parameters: {
             query?: never;
@@ -6640,7 +6759,24 @@ export interface components {
                 short_id: string;
                 title: string;
             }[];
+            /** @description Which model produced this answer. Recorded per message rather than per session because the choice is per turn — a conversation can be continued on a different model, and the answers it already gave must keep saying which model wrote them. */
+            model?: {
+                id: string;
+                label: string;
+            };
+            /** @description How the turn ended: answered, published, proposed, or failed. */
+            outcome?: string;
+            /** @description Reported spend for the turn in millionths of a USD; null when unreported. */
+            cost_micro_usd?: number | null;
         } | null;
+        ChatModel: {
+            /** @description The provider's model id — what to send back to pick it. */
+            id: string;
+            /** @description What to show a person. */
+            label: string;
+            /** @description The one a turn uses when nobody chose. */
+            is_default: boolean;
+        };
         Viewer: {
             /** @description The viewer's id: a signed-in user's id, or a stable anonymous viewer id */
             id: string;

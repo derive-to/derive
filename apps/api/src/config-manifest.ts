@@ -376,6 +376,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "accounts/fireworks/models/deepseek-v4-flash",
   },
   {
+    name: "DERIVE_MODEL_NAMES",
+    group: "advanced",
+    doc: "Comma-separated ADDITIONAL model ids the same DERIVE_MODEL_BASE_URL serves, offered to\nchat as a choice alongside DERIVE_MODEL_NAME (which stays the default and is always\navailable whether or not it is repeated here).\n\nOne gateway serving many models is how every host this reaches works (Fireworks,\nOpenRouter, Together, vLLM), so a second model needs no second key and no second secret\nto rotate. Unset = one model, exactly as before, and the chat picker does not render.\n\nIds are the provider's own, stored on each answer, so a person can see which model wrote\nwhat. Removing an id here does not rewrite history: a conversation that used it is told\nthe model is gone rather than silently answered by a different one.",
+    example: "accounts/fireworks/models/qwen3-235b,accounts/fireworks/models/kimi-k2",
+  },
+  {
     name: "DERIVE_LOCAL_BROKER",
     group: "advanced",
     doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",

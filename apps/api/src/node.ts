@@ -25,7 +25,7 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
-import { openAiCompatModel } from "./lib/model-openai"
+import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -362,11 +362,14 @@ const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
  *  with no key would 401 every run, and a key with no model id would send an empty model — both
  *  are silent-at-boot, loud-at-3am failures, so an incomplete set is treated as unset and warned
  *  about once here. */
-const modelGateway = (): { baseUrl: string; apiKey: string; model: string } | null => {
+const modelGateway = (): GatewayConfig | null => {
   const baseUrl = process.env.DERIVE_MODEL_BASE_URL
   const apiKey = process.env.DERIVE_MODEL_API_KEY
   const model = process.env.DERIVE_MODEL_NAME
-  if (baseUrl && apiKey && model) return { baseUrl, apiKey, model }
+  // DERIVE_MODEL_NAMES is optional and additive: more model ids the SAME gateway serves, which
+  // is how every one of these hosts works. Unset ⇒ a one-model catalog, exactly as before.
+  if (baseUrl && apiKey && model)
+    return { baseUrl, apiKey, model, alsoModels: process.env.DERIVE_MODEL_NAMES }
   if (baseUrl || apiKey || model)
     log.warn("model gateway ignored: set DERIVE_MODEL_BASE_URL, _API_KEY and _NAME together", {
       baseUrl: !!baseUrl,
@@ -412,6 +415,7 @@ const hostedDispatch = cfg.hostedRuns
   : null
 
 const gateway = modelGateway()
+const models = catalogFromGateway(gateway)
 
 const app = createApp({
   meta,
@@ -420,7 +424,11 @@ const app = createApp({
   buildId: process.env.DERIVE_BUILD_SHA,
   // The ATTENDED path only. Unattended runs still resolve their own credential per run through
   // the payer chain — this key never becomes the answer to "who pays" for queued work.
-  callModel: gateway ? openAiCompatModel(gateway) : undefined,
+  //
+  // Both come from ONE construction: `callModel` is the catalog's default entry, so "the model"
+  // means the same thing to a lane that picks one and a lane that does not.
+  callModel: models?.resolve(null)?.callModel,
+  models: models ?? undefined,
   chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
     .split(",")
     .map((x) => x.trim())

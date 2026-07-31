@@ -71,7 +71,8 @@ import type { Hono } from "hono"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
 import { resolveActorBrandprint } from "./lib/brandprint"
-import { makeToolContext, type ToolContextBase } from "./mcp-tool-context"
+import type { Sandbox } from "./lib/code-sandbox"
+import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
 import { registerAutomateTool } from "./mcp-tools/automate"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
@@ -359,10 +360,7 @@ async function buildServer(
   const defaultOrg = agent.org_id
   const defaultRole = agent.role
 
-  // Assemble the per-request context, then register each tool IN ORDER. The order is
-  // load-bearing — the surface-budget test and clients depend on tool order — so it
-  // mirrors the historical inline sequence exactly. Gating (the `use` runner behavior,
-  // the `catch_up` inbox) lives inside each tool's handler, unchanged.
+  // Assemble the per-request context, then register the tools.
   const base: ToolContextBase = {
     server,
     ctx,
@@ -380,47 +378,91 @@ async function buildServer(
     bpProfile,
     profileArt,
   }
-  const tc = makeToolContext(base)
-  // The LIVE tool surface, captured as each tool registers, in two shapes because two
-  // callers need different things from it. Wrapping the registrar rather than maintaining a
-  // second list is what keeps them from drifting: a tool added tomorrow appears in both the
-  // moment it registers, with nothing to remember.
-  //
-  // `registry` maps name -> handler so derive_code can invoke a tool BY NAME without any of
-  // the tool modules knowing it exists. `toolNames` is the answer to "is my cached tool list
-  // stale?" — which only means anything if it reflects what the server actually serves, so a
-  // hand-kept list would eventually lie about the very thing it reports on.
-  const registry = new Map<string, (input: Record<string, unknown>) => Promise<unknown>>()
-  const toolNames = new Set<string>()
+  registerToolSurface(makeToolContext(base), ctx.deps.codeSandbox)
+
+  return server
+}
+
+/** Every tool, by name, exactly as the MCP transport would invoke it. */
+export type ToolHandler = (input: Record<string, unknown>) => Promise<unknown>
+
+/**
+ * The tool surface a set of registrations produced, captured as they register.
+ *
+ * `registry` maps name -> handler so a caller can invoke a tool BY NAME without any of the tool
+ * modules knowing it exists (derive_code does this in-sandbox; attended chat does it in the turn
+ * loop). `names` answers "is my cached tool list stale?" — which only means anything if it
+ * reflects what the server actually serves, so a hand-kept list would eventually lie about the
+ * very thing it reports on. `defs` carries each tool's description + input schema, which is what
+ * a NON-MCP caller needs: the MCP transport advertises those over the wire, and a model reached
+ * any other way has to be told the same thing in its own format.
+ */
+export interface ToolSurface {
+  registry: Map<string, ToolHandler>
+  names: Set<string>
+  defs: Map<string, { description: string; inputSchema: Record<string, unknown> }>
+}
+
+/**
+ * Register the tool surface onto `tc.server` and capture it.
+ *
+ * THE ORDER IS LOAD-BEARING — the surface-budget test and clients depend on tool order — so it
+ * mirrors the historical inline sequence exactly. Gating (the `use` runner behavior, the
+ * `catch_up` inbox) lives inside each tool's handler, unchanged.
+ *
+ * `only` narrows the surface to a named subset, for a caller that is not the MCP transport:
+ * attended chat offers a model a deliberate few of these, and the ones it leaves out are left
+ * out by NOT REGISTERING them, so an omitted tool has no handler to reach rather than a guard
+ * that could be forgotten. Absent ⇒ everything, which is what /mcp asks for.
+ *
+ * Wrapping the registrar rather than maintaining a second list is what keeps the captured
+ * surface from drifting: a tool added tomorrow appears in it the moment it registers, with
+ * nothing to remember.
+ */
+export function registerToolSurface(
+  tc: ToolContext,
+  codeSandbox?: Sandbox,
+  only?: ReadonlySet<string>,
+): ToolSurface {
+  const { server } = tc
+  const registry = new Map<string, ToolHandler>()
+  const names = new Set<string>()
+  const defs = new Map<string, { description: string; inputSchema: Record<string, unknown> }>()
   const originalRegister = server.registerTool.bind(server)
   server.registerTool = ((
     name: string,
     config: Parameters<typeof originalRegister>[1],
     handler: Parameters<typeof originalRegister>[2],
   ) => {
-    registry.set(name, handler as (input: Record<string, unknown>) => Promise<unknown>)
-    toolNames.add(name)
+    registry.set(name, handler as ToolHandler)
+    names.add(name)
+    // The SDK types `config` through an overload set, so read the two fields we need off a
+    // narrow structural view rather than fighting it — this is the same object every
+    // register<Name>Tool passes literally, one file away.
+    const cfg = config as { description?: string; inputSchema?: Record<string, unknown> }
+    defs.set(name, { description: cfg?.description ?? "", inputSchema: cfg?.inputSchema ?? {} })
     return originalRegister(name, config, handler)
   }) as typeof server.registerTool
 
+  const wanted = (name: string) => !only || only.has(name)
   // Read at CALL time (every tool has registered by then), never at registration time.
-  registerListWorkspacesTool(tc, () => [...toolNames].sort())
-  registerFindTool(tc)
-  registerReadTool(tc)
-  registerOrganizeTool(tc)
-  registerCatchUpTool(tc)
-  registerCommentTool(tc)
-  registerStageTool(tc)
-  registerPublishTool(tc)
-  registerCheckpointTool(tc)
-  registerUseTool(tc)
-  registerAutomateTool(tc)
+  if (wanted("list_workspaces")) registerListWorkspacesTool(tc, () => [...names].sort())
+  if (wanted("find")) registerFindTool(tc)
+  if (wanted("read")) registerReadTool(tc)
+  if (wanted("organize")) registerOrganizeTool(tc)
+  if (wanted("catch_up")) registerCatchUpTool(tc)
+  if (wanted("comment")) registerCommentTool(tc)
+  if (wanted("stage")) registerStageTool(tc)
+  if (wanted("publish")) registerPublishTool(tc)
+  if (wanted("checkpoint")) registerCheckpointTool(tc)
+  if (wanted("use")) registerUseTool(tc)
+  if (wanted("automate")) registerAutomateTool(tc)
   // LAST, so the registry it reads is complete. Registers only when an isolate exists: the Node
   // entry injects a worker-thread sandbox, and the Cloudflare entry injects nothing until the
   // Worker Loader is out of beta — so the tool is absent there rather than present and broken.
-  if (ctx.deps.codeSandbox) registerCodeTool(tc, registry, ctx.deps.codeSandbox)
+  if (codeSandbox && wanted("derive_code")) registerCodeTool(tc, registry, codeSandbox)
 
-  return server
+  return { registry, names, defs }
 }
 
 /**

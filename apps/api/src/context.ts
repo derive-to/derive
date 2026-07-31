@@ -39,6 +39,7 @@ import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
 import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
+import type { ModelCatalog } from "./lib/model-catalog"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
   clientIp,
@@ -148,6 +149,15 @@ export interface AppDeps {
    *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
    *  rather than imported so a test can script it and so no provider choice is baked into the app. */
   callModel?: AgentLoopInput["callModel"]
+  /** EVERY model this deploy can answer an attended turn with, and how to reach each one.
+   *
+   *  `callModel` above is this catalog's DEFAULT entry — one is built from the other, so the two
+   *  can never disagree about what "the model" means. The catalog exists because which model
+   *  answers is a choice a person makes mid-conversation, not a property of the process: the
+   *  workspace chat resolves the asker's pick through it, and records what answered.
+   *
+   *  Unset ⇒ no model configured (the same state as `callModel` unset). See lib/model-catalog. */
+  models?: ModelCatalog
   /** Workspace ids allowed to enable chat when `callModel` is set (an operator-paid gateway).
    *  Empty/undefined = no restriction, which is correct for a single-tenant box where the
    *  operator IS the user. On a shared host this is what stops any workspace owner from
@@ -1308,6 +1318,7 @@ export function buildContext(deps: AppDeps) {
     meta,
     blobs,
     callModel: deps.callModel,
+    models: deps.models,
     chatAllowlist: deps.chatAllowlist,
     search: deps.search,
     bus,

@@ -63,6 +63,24 @@ import { BillingBlockedError } from "./billing"
 // Which output a lane asks for, and how it reads the reply. Every one of them is @derive/core's,
 // so the container executor and the loop ask for the same thing in the same words.
 
+/**
+ * The PROSE contract: the reply IS the answer, and there is nothing to parse.
+ *
+ * Every other contract here exists because a turn has to produce a WRITE, and the block carrying
+ * it can be malformed — which is what a nudge is for. A turn whose writes all happen through
+ * TOOLS has no block: by the time the model is writing prose it has already done whatever it was
+ * going to do, so there is no failure mode to re-ask about. Reading is therefore total, this
+ * contract can never miss, and the nudge path is dead for this lane rather than something it
+ * opted out of.
+ *
+ * The contract TEXT is empty on purpose: the lane composes its own system prompt, and a
+ * "reply with a block" instruction here would ask for exactly the thing that must not appear.
+ */
+export const proseContract: ReplyContract = {
+  text: "",
+  read: (text) => ({ product: { revision: null, prose: text, ask: null } }),
+}
+
 /** The AUTOMATION contract: a <revision> block, or nothing happened. No prose channel, because
  *  nobody is reading — a run that "explained itself" instead of writing produced nothing. */
 export const revisionContract: ReplyContract = {

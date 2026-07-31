@@ -2677,9 +2677,56 @@
               ]
             },
             "description": "Artifacts the agent cited, each linkable by short_id."
+          },
+          "model": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "description": "Which model produced this answer. Recorded per message rather than per session because the choice is per turn — a conversation can be continued on a different model, and the answers it already gave must keep saying which model wrote them."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "How the turn ended: answered, published, proposed, or failed."
+          },
+          "cost_micro_usd": {
+            "type": "number",
+            "nullable": true,
+            "description": "Reported spend for the turn in millionths of a USD; null when unreported."
           }
         },
         "description": "Structured answer payload on agent messages; null on asker messages."
+      },
+      "ChatModel": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The provider's model id — what to send back to pick it."
+          },
+          "label": {
+            "type": "string",
+            "description": "What to show a person."
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "The one a turn uses when nobody chose."
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "is_default"
+        ]
       },
       "Viewer": {
         "type": "object",
@@ -7770,6 +7817,128 @@
                   "required": [
                     "session",
                     "messages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/chat/models": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Models this deploy can answer an attended chat turn with.",
+        "responses": {
+          "200": {
+            "description": "The models, default first. Empty when no model is configured.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ChatModel"
+                      }
+                    }
+                  },
+                  "required": [
+                    "models"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/chat-session": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Open a chat session about the workspace (no context, no document).",
+        "responses": {
+          "201": {
+            "description": "The new session and its first message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionMessage"
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "messages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/chat-sessions": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Your chat conversations in a workspace, newest first.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "workspace",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Your sessions, each with a one-line preview.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Session"
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "preview": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "preview"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "sessions"
                   ]
                 }
               }
