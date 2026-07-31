@@ -2,6 +2,7 @@ import * as WebBrowser from "expo-web-browser"
 import { useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Pressable, StyleSheet, Text, useColorScheme, View } from "react-native"
 import { WebView, type WebViewNavigation } from "react-native-webview"
+import { AUTH_RETURN_URL, isAuthNavigation } from "./auth"
 import { isInternal } from "./config"
 import { tokens } from "./theme"
 
@@ -32,11 +33,28 @@ export function WebStage({ uri, onNavigate }: { uri: string; onNavigate?: (url: 
     return () => clearTimeout(timer)
   }, [])
 
-  // An off-origin tap opens in the system browser instead of taking over the app frame.
-  // Returning false tells the web view not to follow it. Note this fires for top-level
-  // navigations only, so the artifact's own sandboxed iframe is unaffected.
+  // Which navigations the web view may follow. Fires for top-level navigations only, so
+  // an artifact's own sandboxed iframe is unaffected. Three outcomes, in order:
+  //
+  //   1. Sign-in goes to a REAL browser, because Google rejects OAuth from an embedded
+  //      web view (see ./auth). The auth session closes itself on AUTH_RETURN_URL.
+  //   2. Anything else off-origin opens in the system browser, so a link can never take
+  //      over the app frame.
+  //   3. Our own pages load in place.
   const onShouldStart = (req: WebViewNavigation) => {
-    if (isInternal(req.url)) return true
+    const own = isInternal(req.url)
+    if (isAuthNavigation(req.url, own)) {
+      void WebBrowser.openAuthSessionAsync(req.url, AUTH_RETURN_URL).then((result) => {
+        // A completed flow leaves the session in the BROWSER's cookie jar, not this web
+        // view's, so a reload alone does not sign the person in. Reloading anyway is the
+        // right move: it costs nothing and it picks the session up the moment the
+        // token-exchange hand-off lands. Until then this is a known gap, not a bug to
+        // hunt (see README, "auth handoff").
+        if (result.type === "success") setAttempt((n) => n + 1)
+      })
+      return false
+    }
+    if (own) return true
     void WebBrowser.openBrowserAsync(req.url)
     return false
   }

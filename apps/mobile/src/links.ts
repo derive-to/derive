@@ -47,6 +47,10 @@ export const webUrlFromDeepLink = (
   // still only if we host that origin.
   if (parsed.protocol !== "derive:") return isInternal(link, allowed) ? link : null
 
+  // `derive://auth-callback` is the auth browser reporting back, not a page. Callers
+  // handle it through isAuthCallback; it must never become a navigation.
+  if (parsed.host === "auth-callback") return null
+
   const passed = parsed.searchParams.get("url")
   if (passed) return isInternal(passed, allowed) ? passed : null
 
