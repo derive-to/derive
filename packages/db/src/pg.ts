@@ -459,6 +459,36 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(version.n))
   }
 
+  async unfurlInfo(
+    artifactId: string,
+    versionN: number,
+  ): Promise<{ versionCount: number; commentCount: number; version: VersionRecord | null }> {
+    // Counts computed IN the database rather than by reading both tables into the Worker
+    // and calling `.length` (which is what the share-link path used to do), and the
+    // current version row rides along — one round trip instead of three.
+    const { rows } = await this.pool.query<{ kind: string; n: number | null; doc: unknown }>(
+      // The NULL placeholders carry explicit casts: Postgres resolves a UNION's column
+      // types from the branches, and a bare NULL against row_to_json's `json` (or against
+      // an int) is a "could not determine data type" error rather than a null.
+      `SELECT 'versions' kind, count(*)::int n, NULL::json doc FROM version WHERE artifact_id = $1
+       UNION ALL
+       SELECT 'comments', count(*)::int, NULL::json FROM comment WHERE artifact_id = $1
+       UNION ALL
+       SELECT 'version', NULL::int, row_to_json(v) FROM version v
+        WHERE v.artifact_id = $1 AND v.n = $2`,
+      [artifactId, versionN],
+    )
+    let versionCount = 0
+    let commentCount = 0
+    let version: VersionRecord | null = null
+    for (const r of rows) {
+      if (r.kind === "versions") versionCount = r.n ?? 0
+      else if (r.kind === "comments") commentCount = r.n ?? 0
+      else if (r.doc) version = r.doc as VersionRecord
+    }
+    return { versionCount, commentCount, version }
+  }
+
   async currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>> {
     if (artifactIds.length === 0) return {}
     const { rows } = await this.pool.query<VersionRecord & { artifact_id: string }>(

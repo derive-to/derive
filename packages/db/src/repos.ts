@@ -554,6 +554,25 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
 
+  // The unfurl card's counts + current version. The counts are computed by the database
+  // rather than by reading both whole tables and taking `.length` — same reason the pg
+  // driver batches this, and correct on any dialect.
+  const unfurlInfo = async (
+    artifactId: string,
+    versionN: number,
+  ): Promise<{ versionCount: number; commentCount: number; version: VersionRecord | null }> => {
+    const [vRow, cRow, cur] = await Promise.all([
+      db.select({ n: count() }).from(version).where(eq(version.artifact_id, artifactId)).get(),
+      db.select({ n: count() }).from(comment).where(eq(comment.artifact_id, artifactId)).get(),
+      getVersion(artifactId, versionN),
+    ])
+    return {
+      versionCount: Number(vRow?.n ?? 0),
+      commentCount: Number(cRow?.n ?? 0),
+      version: cur,
+    }
+  }
+
   // Each artifact's CURRENT version in one query — the batched face of getVersion(id,
   // current_version) for callers holding a page of artifacts (workspace search's
   // grep-confirm pass). Joining on artifact.current_version keeps "current" defined in
@@ -3758,6 +3777,7 @@ export function makeRepos(db: SqliteDb) {
     listVersions,
     getVersion,
     currentVersions,
+    unfurlInfo,
     setVersionData,
     getVersionData,
     getVersionDataSeries,

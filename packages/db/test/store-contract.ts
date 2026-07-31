@@ -2018,6 +2018,52 @@ export function runStoreContract(
       expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
     })
 
+    it("unfurlInfo counts versions + comments in the database and returns the current version", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const other = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "v1" }))
+      await store.addVersion(a.id, newVersion({ message: "v2" }))
+      await store.addVersion(other.id, newVersion())
+      const thread = uuid()
+      for (const body of ["one", "two", "three"])
+        await store.createComment({
+          id: uuid(),
+          artifact_id: a.id,
+          thread_id: thread,
+          base_version: 1,
+          body_md: body,
+          author: "amy",
+        })
+      // A comment and version on ANOTHER artifact must not be counted here.
+      await store.createComment({
+        id: uuid(),
+        artifact_id: other.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "elsewhere",
+        author: "amy",
+      })
+
+      const info = await store.unfurlInfo(a.id, 2)
+      // Same numbers the whole-list reads it replaces would have produced.
+      expect(info.versionCount).toBe((await store.listVersions(a.id)).length)
+      expect(info.commentCount).toBe((await store.listComments(a.id)).length)
+      expect(info.version).toEqual(await store.getVersion(a.id, 2))
+      expect(info.versionCount).toBe(2)
+      expect(info.commentCount).toBe(3)
+      expect(info.version?.message).toBe("v2")
+      // Counts include RESOLVED threads (the card shows total discussion, not open).
+      await store.setThreadState(a.id, thread, "resolved")
+      expect((await store.unfurlInfo(a.id, 2)).commentCount).toBe(3)
+      // A bare artifact: zeroes and a null version, not a throw.
+      const bare = await store.createArtifact(newArtifact())
+      expect(await store.unfurlInfo(bare.id, 1)).toEqual({
+        versionCount: 0,
+        commentCount: 0,
+        version: null,
+      })
+    })
+
     it("currentVersions returns each artifact's CURRENT version only, matching getVersion per id", async () => {
       const a = await store.createArtifact(newArtifact())
       const b = await store.createArtifact(newArtifact())

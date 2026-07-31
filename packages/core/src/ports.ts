@@ -439,6 +439,15 @@ export interface ArtifactStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS
+   *  plus its current version row, in one query. The share-link SSR path computed the
+   *  two counts by fetching the artifact's entire version list and entire comment list
+   *  and taking `.length` — two whole-table reads for two integers, on the most-trafficked
+   *  anonymous surface, plus a third trip for the version row. */
+  unfurlInfo(
+    artifactId: string,
+    versionN: number,
+  ): Promise<{ versionCount: number; commentCount: number; version: VersionRecord | null }>
   /** Each artifact's CURRENT version, for a set of artifacts, keyed by artifact id — one
    *  query instead of a `getVersion(id, current_version)` per artifact. Workspace search
    *  grep-confirms up to 30 candidates and was fetching each one's version separately;

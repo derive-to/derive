@@ -10,7 +10,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { authorProfile, resolveHandles } from "../lib/author"
+import { authorProfile, handlesFrom } from "../lib/author"
 import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
 import { Artifact, PersonalBrandprintSchema } from "../schemas"
@@ -527,19 +527,25 @@ export const sessionRoutes = (ctx: AppContext) => {
       const page = hasMore ? rows.slice(0, limit) : rows
       const last = page[page.length - 1]
       const next_cursor = hasMore && last ? encodeCursor(last.created_at, last.id) : null
-      const pageIds = page.map((a) => a.id)
-      const counts = analyticsOn ? await meta.viewCounts(pageIds) : {}
-      const tags = await meta.tagsForArtifacts(pageIds)
-      const previews = await meta.previewReady(pageIds)
-      const handleByGhId = await resolveHandles(meta, [
-        ...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x)),
-      ])
+      // The page's decoration in ONE store call, the same batch the library list uses.
+      // These were four separate round trips (~80ms each on the edge) keyed on the same
+      // page of ids. Only the pieces this surface renders are requested: no comment
+      // signals, proposal counts or share roles, so those branches never run.
+      const enrichment = await meta.listEnrichment({
+        ids: page.map((a) => a.id),
+        ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
+        authorIds: [],
+        viewerId: null,
+        memberId: null,
+        views: analyticsOn,
+      })
+      const handleByGhId = handlesFrom(enrichment.handles)
       return c.json({
         artifacts: page.map((a) => ({
           ...toJson(deps.baseUrl, a, []),
-          views: counts[a.id] ?? 0,
-          tags: tags[a.id] ?? [],
-          has_preview: previews[a.id] === true,
+          views: enrichment.views[a.id] ?? 0,
+          tags: enrichment.tags[a.id] ?? [],
+          has_preview: enrichment.previews[a.id] === true,
           author: authorProfile(a, handleByGhId),
         })),
         next_cursor,

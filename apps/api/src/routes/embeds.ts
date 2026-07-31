@@ -45,17 +45,21 @@ export const embedRoutes = (ctx: AppContext) => {
   // Everything an unfurl/embed surface needs for one artifact, plus the absolute
   // URLs of the sibling endpoints. Counts come from the live version + comment list.
   const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
-    const [versions, comments, version] = await Promise.all([
-      meta.listVersions(artifact.id),
-      meta.listComments(artifact.id),
-      meta.getVersion(artifact.id, artifact.current_version),
-    ])
+    // One round trip. The counts used to come from `listVersions(...).length` and
+    // `listComments(...).length` — two whole-table reads to produce two integers, on the
+    // most-trafficked anonymous surface there is — plus a third trip for the version row.
+    // The Promise.all around them bought nothing: one pg.Client per request means
+    // node-postgres queues them (see edge-pg.ts).
+    const { versionCount, commentCount, version } = await meta.unfurlInfo(
+      artifact.id,
+      artifact.current_version,
+    )
     const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
     return {
       title: artifact.title ?? "Untitled",
       kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
-      versionCount: versions.length,
-      commentCount: comments.length,
+      versionCount,
+      commentCount,
       pageUrl: artifactUrl(baseUrl, artifact),
       imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
       oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
