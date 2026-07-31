@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   ANON_SHELL_CACHE_CONTROL,
+  CACHE_STATUS_HEADER,
   hasSessionCookie,
   withAnonEdgeCache,
 } from "../src/lib/edge-cache"
@@ -47,6 +48,19 @@ describe("withAnonEdgeCache", () => {
     // Built twice: no cache participation at all on the signed-in path.
     expect(built).toBe(2)
     expect(second.headers.get("Cache-Control")).not.toBe(ANON_SHELL_CACHE_CONTROL)
+    // And it SAYS so — the header is how this is provable from outside.
+    expect(first.headers.get(CACHE_STATUS_HEADER)).toBe("bypass")
+  })
+
+  it("labels the anonymous path so a curl can tell cache from no-cache", async () => {
+    const res = await withAnonEdgeCache(
+      req("https://x/artifacts/a-3"),
+      async () => new Response("anon", { status: 200 }),
+    )
+    // No `caches` global in this environment, which is itself the thing the header
+    // distinguishes: "unavailable" means the Cache API was never there to try, as
+    // opposed to "miss" (tried, nothing stored) or "hit".
+    expect(res.headers.get(CACHE_STATUS_HEADER)).toBe("unavailable")
   })
 
   it("stamps the short public TTL on an anonymous 200", async () => {
