@@ -1,3 +1,4 @@
+import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
 
 /**
@@ -157,14 +158,24 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
             // A reader who shows up later resets the count, so arriving mid-answer starts the
             // animation rather than finding a stream that already gave up.
             consecutiveMisses = delivered === 0 ? consecutiveMisses + 1 : 0
-            if (consecutiveMisses >= MISSES_BEFORE_QUIET) streaming = false
+            if (consecutiveMisses >= MISSES_BEFORE_QUIET && streaming) {
+              streaming = false
+              // Without this line the three states — "the gateway isn't streaming", "the realtime
+              // room is broken", and "nobody was watching" — are indistinguishable in production,
+              // because all three look like a reply that simply arrived whole.
+              log.info("session stream: no listener, going quiet", { slices: seq })
+            }
           })
           .catch(() => {
             /* an unanswerable probe is not a reason to stop streaming */
           })
-    } catch {
+    } catch (e) {
       // A transport blip must not abort a turn the model has already been paid for. The
-      // transcript still lands on settle, so the reader gets the whole answer regardless.
+      // transcript still lands on settle, so the reader gets the whole answer regardless — but
+      // a backplane rejecting every publish should not be silent.
+      log.warn("session stream: publish failed", {
+        error: e instanceof Error ? e.message : String(e),
+      })
     }
   }
 
