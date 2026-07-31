@@ -12,6 +12,7 @@ import { drizzle } from "drizzle-orm/d1"
 import {
   composeArtifactDetail,
   composeAutomationsWithExecutors,
+  composeBootstrap,
   composeCollectionsOverview,
   composeCommentsPage,
   composeContextsWithManifests,
@@ -54,6 +55,7 @@ export function createD1Store(d1: D1Database): MetaStore {
     | "notificationsPage"
     | "automationsWithExecutors"
     | "collectionsOverview"
+    | "bootstrap"
     | "workspaceSummary"
     | "workspacesAndOauthBinding"
     | "orgContext"
@@ -317,6 +319,7 @@ export function createD1Store(d1: D1Database): MetaStore {
       composeAutomationsWithExecutors(store, orgId, limit),
     collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
     workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
+    bootstrap: (orgId, userId, limit) => composeBootstrap(store, orgId, userId, limit),
     workspacesAndOauthBinding: (userId, clientId) =>
       composeWorkspacesAndOauthBinding(store, userId, clientId),
     orgContext: (orgId, userId) => composeOrgContext(store, orgId, userId),

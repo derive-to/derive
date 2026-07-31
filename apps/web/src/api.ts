@@ -143,6 +143,26 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
+
+/** GET /v1/bootstrap — the four boot endpoints' bodies in one response. Each field is
+ *  exactly the corresponding endpoint's shape (server-side the mappers are shared), so
+ *  seeding a query cache from it is indistinguishable from that endpoint having
+ *  answered. */
+export interface BootstrapPayload {
+  summary: {
+    total: number
+    favorites: number
+    mine: number
+    mine_private: number
+    tags: { tag: string; count: number }[]
+    /** Non-null: the server defaults a missing name, same as /v1/tags. */
+    workspace: string
+  }
+  collections: Collection[]
+  settings: OrgSettings
+  notifications: Notification[]
+  unread: number
+}
 /** The workspace's billing truth: plan, Stripe status, seats, storage. Hand-declared:
  *  routes/billing.ts is plain Hono (no OpenAPI contract — a fast-moving internal
  *  surface, not the documented public API), matching this file's other
@@ -621,6 +641,12 @@ export const api = {
     const s = qs.toString()
     return f(`/v1/artifacts${s ? `?${s}` : ""}`, opts(undefined, init)).then(j)
   },
+  // The batched boot read: exactly the four bodies below (tags summary, collections,
+  // workspace settings, notifications), one authenticated request. The client seeds
+  // the four individual query caches from it — see lib/bootstrap.ts. Typed against the
+  // same named types those methods use, so a drift is a type error here.
+  bootstrap: (init?: FetchInit): Promise<BootstrapPayload> =>
+    f("/v1/bootstrap", opts(undefined, init)).then(j),
   browseSummary: (): Promise<{
     total: number
     favorites: number

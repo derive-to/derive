@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useAuth } from "@/ctx"
+import { useBootGate } from "@/lib/bootstrap"
 import { workspaceSettingsQuery } from "@/lib/queries"
 
 /**
@@ -15,7 +16,9 @@ export function useBrandprintCollectionIds(): Set<string> {
   const { me } = useAuth()
   // staleTime Infinity — shared with the Brandprint page and Settings, so this
   // costs one fetch per session, not one per surface.
-  const { data: settings } = useQuery({ ...workspaceSettingsQuery(), enabled: !!me })
+  // Boot-batch gated: the batch carries the settings body this key stores.
+  const bootGate = useBootGate()
+  const { data: settings } = useQuery({ ...workspaceSettingsQuery(), enabled: !!me && bootGate })
   const ids = new Set<string>()
   const ws = settings?.brandprint?.collectionId
   const mine = me?.brandprint?.collectionId

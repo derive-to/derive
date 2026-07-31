@@ -9,6 +9,7 @@ import {
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { OrgSettings } from "../lib/boot-shapes"
 import { mintToken, sha256 } from "../lib/crypto"
 import { buildInviteEmail } from "../lib/email"
 import { bail, DEFAULT_WORKSPACE_NAME, fail, isWorkspaceRole, readJson } from "../lib/http"
@@ -105,66 +106,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
       members: z.array(ArtifactMember),
     })
     .openapi("Workspace")
-
-  const OrgSettings = z
-    .object({
-      emailNotifications: z.boolean().describe("When true, send workspace email notifications."),
-      githubPostComments: z
-        .boolean()
-        .describe("When true, post Derive comments onto the linked GitHub PR."),
-      githubMirrorComments: z
-        .boolean()
-        .describe("When true, mirror GitHub PR comments back into Derive."),
-      githubPreviewLink: z
-        .boolean()
-        .describe("When true, add a preview link to the linked GitHub PR."),
-      slackPost: z.boolean().describe("When true, post events to Slack."),
-      // The access a NEW publish lands with (see access-model.md): the three
-      // single-purpose fields. Factory default is the team draft — member / none / none.
-      defaultWorkspaceAccess: z
-        .enum(["none", "member"])
-        .describe("Access a new publish lands with: none, or member (factory default)."),
-      defaultLinkRole: z
-        .enum(["none", "viewer", "commenter", "editor"])
-        .describe("Share-link role a new publish lands with (factory default: none)."),
-      defaultListed: z
-        .enum(["none", "workspace", "public"])
-        .describe("Listing a new publish lands with: none (default), workspace, or public."),
-      whiteLabel: z
-        .boolean()
-        .describe(
-          "Hide the Made-with-Derive marks on public artifacts and embeds, and honor the bare ?chrome=none embed.",
-        ),
-      hostedAgentsEnabled: z
-        .boolean()
-        .describe("Master switch for Derive-hosted agent runs; off silences every hosted run."),
-      chatBeta: z
-        .boolean()
-        .describe(
-          "BETA: the Chat tab on a document. Off by default — the tab is hidden and the chat route refuses, so a workspace opts in deliberately.",
-        ),
-      automateBeta: z
-        .boolean()
-        .describe(
-          "BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately.",
-        ),
-      agentKillswitch: z
-        .boolean()
-        .describe("When true, every hosted agent write demotes to a proposal, instantly."),
-      agentAutoEnabled: z
-        .boolean()
-        .describe("Opt-in for autonomy 'auto' to live-publish (always with a review round)."),
-      defaultAgentId: z
-        .string()
-        .optional()
-        .describe(
-          "The workspace's default agent: the fallback actor for users with no connected agent. Absent = none.",
-        ),
-      brandprint: BrandprintSchema.optional().describe(
-        "The workspace's Brandprint (conventions collection + brand-profile artifact); absent until set.",
-      ),
-    })
-    .openapi("OrgSettings")
 
   const Invite = z
     .object({

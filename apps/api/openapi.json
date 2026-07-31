@@ -1862,6 +1862,92 @@
           "linked"
         ]
       },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string",
+            "description": "The recipient this notification belongs to"
+          },
+          "actor": {
+            "type": "string",
+            "description": "Who triggered it; for follow/publish this is the person's @handle"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "mention",
+              "comment",
+              "share",
+              "follow",
+              "publish",
+              "review"
+            ],
+            "description": "What happened: mention, comment, share, follow, publish, or review"
+          },
+          "artifact_id": {
+            "type": "string"
+          },
+          "artifact_short_id": {
+            "type": "string",
+            "description": "The artifact's public short id for links; empty for follows (no anchor)"
+          },
+          "artifact_title": {
+            "type": "string",
+            "nullable": true,
+            "description": "The artifact's title, or null if untitled or not artifact-anchored"
+          },
+          "thread_id": {
+            "type": "string",
+            "description": "The comment thread anchor; empty when not comment-related"
+          },
+          "comment_id": {
+            "type": "string",
+            "description": "The specific comment anchor; empty when not comment-related"
+          },
+          "preview": {
+            "type": "string",
+            "description": "Short text preview shown in the notification bell"
+          },
+          "read": {
+            "anyOf": [
+              {
+                "type": "number",
+                "enum": [
+                  0
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              }
+            ],
+            "description": "Whether the user has read it: 0 unread, 1 read"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "actor",
+          "kind",
+          "artifact_id",
+          "artifact_short_id",
+          "artifact_title",
+          "thread_id",
+          "comment_id",
+          "preview",
+          "read",
+          "created_at"
+        ]
+      },
       "Report": {
         "type": "object",
         "properties": {
@@ -2646,92 +2732,6 @@
           "perVersion",
           "daily",
           "recent"
-        ]
-      },
-      "Notification": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "user_id": {
-            "type": "string",
-            "description": "The recipient this notification belongs to"
-          },
-          "actor": {
-            "type": "string",
-            "description": "Who triggered it; for follow/publish this is the person's @handle"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "mention",
-              "comment",
-              "share",
-              "follow",
-              "publish",
-              "review"
-            ],
-            "description": "What happened: mention, comment, share, follow, publish, or review"
-          },
-          "artifact_id": {
-            "type": "string"
-          },
-          "artifact_short_id": {
-            "type": "string",
-            "description": "The artifact's public short id for links; empty for follows (no anchor)"
-          },
-          "artifact_title": {
-            "type": "string",
-            "nullable": true,
-            "description": "The artifact's title, or null if untitled or not artifact-anchored"
-          },
-          "thread_id": {
-            "type": "string",
-            "description": "The comment thread anchor; empty when not comment-related"
-          },
-          "comment_id": {
-            "type": "string",
-            "description": "The specific comment anchor; empty when not comment-related"
-          },
-          "preview": {
-            "type": "string",
-            "description": "Short text preview shown in the notification bell"
-          },
-          "read": {
-            "anyOf": [
-              {
-                "type": "number",
-                "enum": [
-                  0
-                ]
-              },
-              {
-                "type": "number",
-                "enum": [
-                  1
-                ]
-              }
-            ],
-            "description": "Whether the user has read it: 0 unread, 1 read"
-          },
-          "created_at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "user_id",
-          "actor",
-          "kind",
-          "artifact_id",
-          "artifact_short_id",
-          "artifact_title",
-          "thread_id",
-          "comment_id",
-          "preview",
-          "read",
-          "created_at"
         ]
       },
       "Webhook": {
@@ -6002,6 +6002,100 @@
         "responses": {
           "204": {
             "description": "Accepted (sendBeacon can't read the response)."
+          }
+        }
+      }
+    },
+    "/v1/bootstrap": {
+      "get": {
+        "tags": [
+          "Session"
+        ],
+        "summary": "The signed-in boot payload: sidebar summary, collections, settings, notifications.",
+        "responses": {
+          "200": {
+            "description": "Everything the app shell fetches on boot, in one round trip. Each field is exactly the corresponding endpoint's body (tags / collections / workspace settings / notifications).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "summary": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "favorites": {
+                          "type": "number"
+                        },
+                        "mine": {
+                          "type": "number"
+                        },
+                        "mine_private": {
+                          "type": "number"
+                        },
+                        "tags": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "tag": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "tag",
+                              "count"
+                            ]
+                          }
+                        },
+                        "workspace": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "total",
+                        "favorites",
+                        "mine",
+                        "mine_private",
+                        "tags",
+                        "workspace"
+                      ]
+                    },
+                    "collections": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Collection"
+                      }
+                    },
+                    "settings": {
+                      "$ref": "#/components/schemas/OrgSettings"
+                    },
+                    "notifications": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Notification"
+                      }
+                    },
+                    "unread": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "summary",
+                    "collections",
+                    "settings",
+                    "notifications",
+                    "unread"
+                  ]
+                }
+              }
+            }
           }
         }
       }

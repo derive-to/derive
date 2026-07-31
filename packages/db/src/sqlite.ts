@@ -13,6 +13,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3"
 import {
   composeArtifactDetail,
   composeAutomationsWithExecutors,
+  composeBootstrap,
   composeCollectionsOverview,
   composeCommentsPage,
   composeContextsWithManifests,
@@ -146,6 +147,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     | "notificationsPage"
     | "automationsWithExecutors"
     | "collectionsOverview"
+    | "bootstrap"
     | "workspaceSummary"
     | "workspacesAndOauthBinding"
     | "orgContext"
@@ -612,6 +614,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       composeAutomationsWithExecutors(store, orgId, limit),
     collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
     workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
+    bootstrap: (orgId, userId, limit) => composeBootstrap(store, orgId, userId, limit),
     workspacesAndOauthBinding: (userId, clientId) =>
       composeWorkspacesAndOauthBinding(store, userId, clientId),
     orgContext: (orgId, userId) => composeOrgContext(store, orgId, userId),

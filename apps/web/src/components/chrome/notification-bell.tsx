@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
+import { useBootGate } from "@/lib/bootstrap"
 import { notificationsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { usePageVisible } from "@/lib/use-page-visible"
@@ -41,9 +42,12 @@ export function NotificationBell() {
   // visibility so a hidden tab still releases the per-user room Durable Object.
   // `loaded` distinguishes "never fetched" from "fetched, genuinely empty" so the
   // panel shows row skeletons on first load instead of flashing "Nothing yet."
+  const bootGate = useBootGate()
   const { data, isFetched: loaded } = useQuery({
     ...notificationsQuery(),
-    enabled: !!me && visible,
+    // Boot-batch gated: /v1/bootstrap seeds this cache (badge + first page) in the
+    // same request as the sidebar; SSE invalidations refetch THIS key individually.
+    enabled: !!me && visible && bootGate,
   })
   const items = data?.notifications ?? []
   const unread = data?.unread ?? 0

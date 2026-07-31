@@ -16,6 +16,7 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
+import { useBootGate } from "@/lib/bootstrap"
 import {
   artifactQuery,
   collectionFoldersQuery,
@@ -106,8 +107,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // bind to a single route's search shape.
   const search = useSearch({ strict: false }) as LibrarySearch
   const { me } = useAuth()
-  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me })
-  const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me })
+  // Boot-batch gated (same keys the NavRail reads — one seed serves both).
+  const bootGate = useBootGate()
+  const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
+  const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me && bootGate })
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.

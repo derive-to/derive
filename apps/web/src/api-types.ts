@@ -3307,6 +3307,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The signed-in boot payload: sidebar summary, collections, settings, notifications. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Everything the app shell fetches on boot, in one round trip. Each field is exactly the corresponding endpoint's body (tags / collections / workspace settings / notifications). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            summary: {
+                                total: number;
+                                favorites: number;
+                                mine: number;
+                                mine_private: number;
+                                tags: {
+                                    tag: string;
+                                    count: number;
+                                }[];
+                                workspace: string | null;
+                            };
+                            collections: components["schemas"]["Collection"][];
+                            settings: components["schemas"]["OrgSettings"];
+                            notifications: components["schemas"]["Notification"][];
+                            unread: number;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/report": {
         parameters: {
             query?: never;
@@ -6176,6 +6228,32 @@ export interface components {
             /** @description Whether the caller has linked their Slack identity for the connected team */
             linked: boolean;
         };
+        Notification: {
+            id: string;
+            /** @description The recipient this notification belongs to */
+            user_id: string;
+            /** @description Who triggered it; for follow/publish this is the person's @handle */
+            actor: string;
+            /**
+             * @description What happened: mention, comment, share, follow, publish, or review
+             * @enum {string}
+             */
+            kind: "mention" | "comment" | "share" | "follow" | "publish" | "review";
+            artifact_id: string;
+            /** @description The artifact's public short id for links; empty for follows (no anchor) */
+            artifact_short_id: string;
+            /** @description The artifact's title, or null if untitled or not artifact-anchored */
+            artifact_title: string | null;
+            /** @description The comment thread anchor; empty when not comment-related */
+            thread_id: string;
+            /** @description The specific comment anchor; empty when not comment-related */
+            comment_id: string;
+            /** @description Short text preview shown in the notification bell */
+            preview: string;
+            /** @description Whether the user has read it: 0 unread, 1 read */
+            read: 0 | 1;
+            created_at: string;
+        };
         Report: {
             id: string;
             artifact_id: string;
@@ -6443,32 +6521,6 @@ export interface components {
                 /** @description The user's avatar URL, or null/absent for anonymous viewers */
                 avatar?: string | null;
             }[];
-        };
-        Notification: {
-            id: string;
-            /** @description The recipient this notification belongs to */
-            user_id: string;
-            /** @description Who triggered it; for follow/publish this is the person's @handle */
-            actor: string;
-            /**
-             * @description What happened: mention, comment, share, follow, publish, or review
-             * @enum {string}
-             */
-            kind: "mention" | "comment" | "share" | "follow" | "publish" | "review";
-            artifact_id: string;
-            /** @description The artifact's public short id for links; empty for follows (no anchor) */
-            artifact_short_id: string;
-            /** @description The artifact's title, or null if untitled or not artifact-anchored */
-            artifact_title: string | null;
-            /** @description The comment thread anchor; empty when not comment-related */
-            thread_id: string;
-            /** @description The specific comment anchor; empty when not comment-related */
-            comment_id: string;
-            /** @description Short text preview shown in the notification bell */
-            preview: string;
-            /** @description Whether the user has read it: 0 unread, 1 read */
-            read: 0 | 1;
-            created_at: string;
         };
         Webhook: {
             id: string;

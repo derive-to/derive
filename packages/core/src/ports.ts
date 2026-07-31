@@ -708,6 +708,15 @@ export interface ArtifactQueryStore {
    * list and used only `.length`.
    */
   workspaceSummary(orgId: string, userId: string | null): Promise<WorkspaceSummary>
+  /** The signed-in boot read: everything the app shell asks for in its first breath —
+   *  sidebar summary, collections + repo sources + the caller's collection roles,
+   *  workspace settings, and the notifications page — as ONE store call, so the
+   *  hosted tier answers it in one Postgres round trip instead of four requests'
+   *  worth of sequential reads. Embedded drivers compose it from the underlying
+   *  methods (composeBootstrap): they pay no wire trips, so parity here is the
+   *  SHAPE, not the statement count. Deliberately excludes /v1/me/onboarding
+   *  (its grants read is try/catch-optional and must not poison the batch). */
+  bootstrap(orgId: string, userId: string, notifLimit: number): Promise<BootstrapRead>
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>
@@ -1332,6 +1341,17 @@ export interface DirectoryStore {
 }
 
 /** See `DirectoryStore.notificationsPage`. */
+/** One round trip's worth of app-shell boot data — see MetaStore.bootstrap. */
+export interface BootstrapRead {
+  summary: WorkspaceSummary
+  collections: (CollectionRecord & { count: number })[]
+  sources: RepoSourceRecord[]
+  /** The caller's explicit per-collection roles (creator-ownership is applied by the route). */
+  collectionRoles: Record<string, Role>
+  settings: OrgSettings
+  notifications: NotificationsPage
+}
+
 export interface NotificationsPage {
   notifications: NotificationRecord[]
   unread: number
