@@ -317,7 +317,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // a caller with no standing here (or no member rows to match) has none by definition.
       if (mineScope && (publicOnly || !memberKey))
         return c.json({ artifacts: [], next_cursor: null })
-      const rows = await meta.listArtifacts({
+      const listOpts = {
         limit: limit + 1,
         cursor,
         sort,
@@ -341,7 +341,22 @@ export const artifactRoutes = (ctx: AppContext) => {
         // (all items) would outrun the list (only your explicitly-shared items).
         viewerId:
           isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
-      })
+      }
+      // THE COLD BOOT'S CRITICAL PATH. After the rest of this PR, nothing is queued in
+      // front of this request any more — the first card paints 43ms after it lands — so
+      // its own round trips are the whole remaining cost. The list and its decoration are
+      // strictly serial (the decoration keys on the ids the list returns), and `listPage`
+      // answers both in one statement on a store that can. Optional: the embedded drivers
+      // do not implement it and take the two calls below unchanged.
+      const combined = meta.listPage
+        ? await meta.listPage({
+            list: listOpts,
+            viewerId: me?.id ?? null,
+            memberId: memberKey,
+            views: analyticsOn,
+          })
+        : null
+      const rows = combined?.artifacts ?? (await meta.listArtifacts(listOpts))
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
       const last = page[page.length - 1]
@@ -355,15 +370,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       // the same page of ids; issued separately, each one was a full ~80ms edge→
       // Postgres round trip (see edge-pg.ts), which made the decoration cost more
       // than the list query itself.
-      const pageIds = page.map((a) => a.id)
-      const enrichment = await meta.listEnrichment({
-        ids: pageIds,
-        ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
-        authorIds: [...new Set(page.map((a) => a.author_id).filter((x): x is string => !!x))],
-        viewerId: me?.id ?? null,
-        memberId: memberKey,
-        views: analyticsOn,
-      })
+      const enrichment =
+        combined?.enrichment ??
+        (await meta.listEnrichment({
+          ids: page.map((a) => a.id),
+          ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
+          authorIds: [...new Set(page.map((a) => a.author_id).filter((x): x is string => !!x))],
+          viewerId: me?.id ?? null,
+          memberId: memberKey,
+          views: analyticsOn,
+        }))
       const counts = enrichment.views
       const tags = enrichment.tags
       const previews = enrichment.previews

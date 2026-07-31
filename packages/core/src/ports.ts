@@ -263,6 +263,17 @@ export interface ListEnrichmentOpts {
   views: boolean
 }
 
+/** What `listPage` needs beyond the list query itself: the same three viewer-scoped
+ *  knobs `listEnrichment` takes. `ghIds`/`authorIds` are absent on purpose — the page's
+ *  own author columns drive those joins, so they no longer make a round trip out to the
+ *  caller and back. */
+export interface ListPageOpts {
+  list: ListArtifactsOpts
+  viewerId: string | null
+  memberId: string | null
+  views: boolean
+}
+
 /** One page's worth of list decoration — see `ArtifactQueryStore.listEnrichment`. */
 export interface ListEnrichment {
   views: Record<string, number>
@@ -956,6 +967,24 @@ export interface CollectionStore {
    * place a decision is made, and the store contract runs this against the read-by-read
    * path over the same fixtures and requires them to agree.
    */
+  /**
+   * `listArtifacts` + `listEnrichment` in one statement, for a store that can.
+   *
+   * The two are strictly serial — the decoration keys on the ids the list returns — so on
+   * the edge tier they cost two round trips for one page. This request is the cold boot's
+   * critical path (measured 389ms, first card 566ms right behind it), which is what makes
+   * the second trip worth removing.
+   *
+   * Optional, like the other fast paths: a store without it takes the two calls unchanged,
+   * and the embedded drivers deliberately do (a local round trip costs nothing). The pg
+   * implementation inlines the SAME list-query builder `listArtifacts` runs, so the
+   * visibility predicate is reused rather than restated, and the store contract requires
+   * this to agree with the read-by-read pair over the same fixtures.
+   */
+  listPage?(
+    opts: ListPageOpts,
+  ): Promise<{ artifacts: ArtifactRecord[]; enrichment: ListEnrichment }>
+
   artifactWithGrants?(
     shortId: string,
     userId: string,

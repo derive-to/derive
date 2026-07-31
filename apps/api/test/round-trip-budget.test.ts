@@ -75,12 +75,18 @@ describe("hot read paths stay within their round-trip budget", () => {
     // Budgeting for the higher of the two keeps one number honest on both backends.
     const ROUTES: { path: string; budget: number; needs: string }[] = [
       {
-        // The library boot waits on THIS request — it is the long pole of every cold and
-        // warm boot (measured 444-477ms on the preview, where the whole boot to first card
-        // is ~790ms cold / 161ms warm). Was 5: the viewer's star list was fetched up front,
-        // before the list query had even run, purely to decorate rows. That read now rides
-        // `listEnrichment` as one more arm keyed on the same page of ids, so only the
-        // FAVORITES FEED (which narrows by it) still pays for it separately.
+        // THE cold boot's critical path. With the rest of this PR landed, nothing is
+        // queued in front of it any more: the first card paints 43ms after it lands, so
+        // its own round trips are the entire remaining cost.
+        //
+        // 4 here is the SQLite count. Postgres pays 2: `listPage` answers the page AND its
+        // whole decoration in one statement, leaving the workspace/membership preamble.
+        // Was 5/3 — the viewer's star list used to be fetched up front, before the list
+        // query had even run, purely to decorate rows; it rides `listEnrichment` now, so
+        // only the FAVORITES FEED (which narrows by it) still pays for it separately.
+        //
+        // The SQLite number does not move: embedded drivers implement no fast path (a
+        // local round trip costs nothing) and take the read-by-read pair.
         path: "/v1/artifacts?limit=30",
         budget: 4,
         needs: "workspace resolve, membership, the list query, one listEnrichment",

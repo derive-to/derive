@@ -4165,6 +4165,93 @@ export function runStoreContract(
       expect(await store.getPlan(theirs.id)).toBeNull()
     })
   })
+  // OPTIONAL FAST PATH. `listPage` collapses the library list AND its decoration into one
+  // statement. Two things can go wrong that a "does it return rows" test would miss: the
+  // decoration could disagree with `listEnrichment`, and the ORDER could be lost — a UNION
+  // ALL does not preserve its arms' order, and the LAST row of the page is what the keyset
+  // cursor is built from, so losing it is a pagination bug, not a cosmetic one.
+  //
+  // So this asserts against the pair it replaces, over the same fixtures, including order.
+  describe(`${label}: listPage agrees with listArtifacts + listEnrichment`, () => {
+    it("matches rows, order and every decoration arm", async () => {
+      if (!store.listPage) return // dialect has no fast path — the pair is the only path
+
+      const org = `org_page_${uuid()}`
+      const me = `u_page_${uuid()}`
+      await store.setWorkspace(org, "Page")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: me, role: "owner" })
+
+      // Enough shape to light up every arm: several artifacts (so order is observable),
+      // tags, a favorite, a share, an open proposal and an open comment.
+      const made = []
+      for (let i = 0; i < 5; i++) {
+        const a = newArtifact({ org_id: org, title: `Page ${i}` })
+        await store.createArtifact(a)
+        made.push(a)
+      }
+      const [first, second] = made as [(typeof made)[0], (typeof made)[0]]
+      await store.setArtifactTags(first.id, ["zeta", "alpha"])
+      await store.setFavorite(second.id, me)
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: first.id,
+        user_id: me,
+        role: "editor",
+      })
+
+      const list = { orgId: org, limit: 10, sort: "created" as const }
+      const opts = { list, viewerId: me, memberId: me, views: true }
+
+      const fast = await store.listPage(opts)
+      const rows = await store.listArtifacts(list)
+      const slow = await store.listEnrichment({
+        ids: rows.map((r) => r.id),
+        ghIds: [...new Set(rows.map((r) => r.author_gh_id).filter((x): x is string => !!x))],
+        authorIds: [...new Set(rows.map((r) => r.author_id).filter((x): x is string => !!x))],
+        viewerId: me,
+        memberId: me,
+        views: true,
+      })
+
+      // ORDER, not just membership — this is the one the cursor depends on.
+      expect(fast.artifacts.map((a) => a.id)).toEqual(rows.map((r) => r.id))
+      expect(fast.artifacts).toEqual(rows)
+      expect(fast.enrichment.tags).toEqual(slow.tags)
+      expect(fast.enrichment.previews).toEqual(slow.previews)
+      expect(fast.enrichment.proposals).toEqual(slow.proposals)
+      expect(fast.enrichment.views).toEqual(slow.views)
+      expect(fast.enrichment.signals).toEqual(slow.signals)
+      expect(fast.enrichment.shareRoles).toEqual(slow.shareRoles)
+      expect([...fast.enrichment.favorites].sort()).toEqual([...slow.favorites].sort())
+      // Not vacuously equal-empty: the fixtures above must actually have lit these up.
+      expect(fast.artifacts.length).toBe(5)
+      expect(fast.enrichment.tags[first.id]).toEqual(["alpha", "zeta"])
+      expect(fast.enrichment.favorites).toEqual([second.id])
+      expect(fast.enrichment.shareRoles[first.id]).toBe("editor")
+    })
+
+    it("returns an empty page for an empty id narrowing, like the pair does", async () => {
+      if (!store.listPage) return
+      const opts = { list: { ids: [], limit: 10 }, viewerId: null, memberId: null, views: false }
+      const fast = await store.listPage(opts)
+      expect(fast.artifacts).toEqual([])
+      expect(fast.enrichment.tags).toEqual({})
+    })
+
+    it("honors the limit, and keeps the page the list query would have returned", async () => {
+      if (!store.listPage) return
+      const org = `org_lim_${uuid()}`
+      await store.setWorkspace(org, "Lim")
+      for (let i = 0; i < 4; i++) await store.createArtifact(newArtifact({ org_id: org }))
+      const list = { orgId: org, limit: 2, sort: "created" as const }
+      const fast = await store.listPage({ list, viewerId: null, memberId: null, views: false })
+      expect(fast.artifacts.map((a) => a.id)).toEqual(
+        (await store.listArtifacts(list)).map((r) => r.id),
+      )
+      expect(fast.artifacts.length).toBe(2)
+    })
+  })
+
   // OPTIONAL FAST PATH. `artifactGrants` collapses four reads — membership, artifact share, and
   // both halves of collectionRolesForArtifact — into one statement, and it is an authorization
   // INPUT: a disagreement is not a slow page, it is someone seeing a document they should not,

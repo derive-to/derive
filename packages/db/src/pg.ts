@@ -38,6 +38,7 @@ import type {
   ListEnrichment,
   ListEnrichmentOpts,
   Listed,
+  ListPageOpts,
   MembershipRecord,
   MetaStore,
   ModelCredentialRecord,
@@ -1239,8 +1240,12 @@ export class PgMetaStore implements MetaStore {
     return [...ids]
   }
 
-  listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
-    if (opts?.ids && opts.ids.length === 0) return Promise.resolve([])
+  /** The list query as a BUILDER, so `listArtifacts` and `listPage` cannot diverge.
+   *  `listPage` inlines this into a CTE verbatim — which is the entire safety argument
+   *  for that fold: the visibility predicate is REUSED, never re-expressed in raw SQL.
+   *  Getting it subtly wrong is not a slow page, it is one workspace's documents
+   *  appearing in another's library. */
+  private artifactListQuery(opts?: ListArtifactsOpts) {
     const conds = artifactListConditions(artifact, opts)
     // Collection scope is a JOIN, not an `id IN (…members)` — mirrors the SQLite/D1
     // path in repos.ts so behavior matches across dialects (and never trips a param cap).
@@ -1260,6 +1265,177 @@ export class PgMetaStore implements MetaStore {
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(...artifactListOrder(artifact, opts?.sort ?? "created"))
     return opts?.limit ? q.limit(opts.limit) : q
+  }
+
+  listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
+    if (opts?.ids && opts.ids.length === 0) return Promise.resolve([])
+    return this.artifactListQuery(opts)
+  }
+
+  /**
+   * The library page AND its decoration in ONE statement — see the port doc.
+   *
+   * `listArtifacts` then `listEnrichment` are strictly serial: the decoration keys on the
+   * ids the list returns, so it cannot start until the list lands. That is ~80ms of pure
+   * wire time on the edge tier, on the request that IS the cold boot's critical path
+   * (measured 389ms, with the first card at 566ms right behind it).
+   *
+   * The list query goes in as a CTE **verbatim** — the same builder `listArtifacts` runs,
+   * inlined with its parameters — so no visibility predicate is restated here and none can
+   * drift. Every decoration arm then joins to that CTE instead of to an id list, which
+   * also means `ghIds`/`authorIds` no longer have to make the round trip out to the caller
+   * and back: the page's own author columns drive those joins.
+   */
+  async listPage(
+    opts: ListPageOpts,
+  ): Promise<{ artifacts: ArtifactRecord[]; enrichment: ListEnrichment }> {
+    const empty: ListEnrichment = {
+      views: {},
+      tags: {},
+      previews: {},
+      handles: [],
+      bylines: [],
+      signals: {},
+      proposals: {},
+      shareRoles: {},
+      favorites: [],
+    }
+    if (opts.list.ids && opts.list.ids.length === 0) return { artifacts: [], enrichment: empty }
+    const page = this.artifactListQuery(opts.list)
+    const { viewerId, memberId, views } = opts
+
+    // Same arms as `listEnrichment`, in the same order, joined to the page instead of to
+    // an id array. The store contract runs this against listArtifacts + listEnrichment
+    // over the same fixtures and requires them to agree.
+    const core = [
+      // `- '__rn'` strips the ordinal back off, so the row arm yields exactly the
+      // artifact record shape the read-by-read path returns.
+      sql`select 'row' as kind, jsonb_build_array(to_jsonb(p) - '__rn', p.__rn::text) as doc from page p`,
+      sql`select 'tag', jsonb_build_array(t.artifact_id, t.tag) from artifact_tag t join page p on p.id = t.artifact_id`,
+      sql`select 'preview', jsonb_build_array(p.id) from page p
+            join version v on v.artifact_id = p.id and v.n = p.current_version
+           where v.preview_status = 'ready'`,
+      sql`select 'proposal', jsonb_build_array(pr.artifact_id, count(*)::text) from proposal pr
+            join page p on p.id = pr.artifact_id
+           where pr.state = 'open' group by pr.artifact_id`,
+    ]
+    if (views)
+      core.push(
+        sql`select 'view', jsonb_build_array(vw.artifact_id, count(*)::text) from view vw
+              join page p on p.id = vw.artifact_id group by vw.artifact_id`,
+      )
+    if (viewerId) {
+      core.push(
+        sql`select 'comment', jsonb_build_array(cm.artifact_id, cm.thread_id, cm.author_id, cm.meta) from comment cm
+              join page p on p.id = cm.artifact_id where cm.state = 'open'`,
+        sql`select 'favorite', jsonb_build_array(f.artifact_id) from artifact_favorite f
+              join page p on p.id = f.artifact_id where f.user_id = ${viewerId}`,
+      )
+    }
+    if (memberId)
+      core.push(
+        sql`select 'share', jsonb_build_array(am.artifact_id, am.role) from artifact_member am
+              join page p on p.id = am.artifact_id where am.user_id = ${memberId}`,
+      )
+    // The Better Auth directory tables can be absent (fresh self-host, operator-token
+    // deployments) — the same best-effort contract listEnrichment keeps. A failed union
+    // retries once without them rather than failing the listing.
+    const directory = [
+      sql`select 'handle', jsonb_build_array(ac."accountId", u.username) from page p
+            join "account" ac on ac."accountId" = p.author_gh_id and ac."providerId" = 'github'
+            join "user" u on u.id = ac."userId"`,
+      sql`select 'byline', jsonb_build_array(u.id, u.name, u.username) from page p
+            join "user" u on u.id = p.author_id`,
+    ]
+
+    type Row = { kind: string; doc: unknown[] }
+    const run = async (arms: ReturnType<typeof sql>[]) => {
+      const unioned = sql.join(arms, sql` union all `)
+      // MATERIALIZED + row_number is what carries the caller's ORDER BY through: a UNION
+      // ALL does not preserve the order of its arms, and the LAST row of the page is what
+      // the keyset cursor is built from — so losing the order is a pagination bug, not a
+      // cosmetic one. Materializing pins the CTE to one evaluation whose output order the
+      // window function then numbers.
+      const res = await this.db.execute(
+        sql`with page_raw as materialized (${page}),
+                 page as (select pr.*, row_number() over () as __rn from page_raw pr)
+            ${unioned}`,
+      )
+      return ((res as unknown as { rows?: Row[] }).rows ?? []) as Row[]
+    }
+    let rows: Row[]
+    try {
+      rows = await run([...core, ...directory])
+    } catch (e) {
+      rows = await run(core).catch(() => {
+        throw e
+      })
+    }
+
+    const out: ListEnrichment = {
+      ...empty,
+      tags: {},
+      views: {},
+      previews: {},
+      proposals: {},
+      shareRoles: {},
+    }
+    const ranked: { n: number; a: ArtifactRecord }[] = []
+    const commentRows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[] = []
+    for (const r of rows) {
+      const d = r.doc as (string | null)[]
+      switch (r.kind) {
+        case "row":
+          ranked.push({ n: Number(d[1]), a: d[0] as unknown as ArtifactRecord })
+          break
+        case "tag": {
+          const list = out.tags[d[0] as string] ?? []
+          list.push(d[1] as string)
+          out.tags[d[0] as string] = list
+          break
+        }
+        case "preview":
+          out.previews[d[0] as string] = true
+          break
+        case "proposal":
+          out.proposals[d[0] as string] = Number(d[1])
+          break
+        case "view":
+          out.views[d[0] as string] = Number(d[1])
+          break
+        case "comment":
+          commentRows.push({
+            artifact_id: d[0] as string,
+            thread_id: d[1] as string,
+            state: "open",
+            author_id: d[2] ?? null,
+            meta: d[3] ?? null,
+          })
+          break
+        case "favorite":
+          out.favorites.push(d[0] as string)
+          break
+        case "share":
+          out.shareRoles[d[0] as string] = d[1] as Role
+          break
+        case "handle":
+          out.handles.push({ gh_id: d[0] as string, username: d[1] ?? null })
+          break
+        case "byline":
+          out.bylines.push({ id: d[0] as string, name: d[1] ?? null, username: d[2] ?? null })
+          break
+      }
+    }
+    for (const k in out.tags) out.tags[k]?.sort()
+    out.signals = this.assembleCommentSignals(commentRows, viewerId)
+    ranked.sort((x, y) => x.n - y.n)
+    return { artifacts: ranked.map((r) => r.a), enrichment: out }
   }
   // ---- full-text search index (workspace search substrate) — the tsvector twin of the
   // SQLite fts5 path. `ts_rank_cd` ranks (higher = more relevant). `text` is title + body
