@@ -1,4 +1,4 @@
-import { ANCHOR_CLIENT_JS, type ArtifactRecord } from "@derive/core"
+import { ANCHOR_CLIENT_JS, type ArtifactRecord, isDerivedFactName } from "@derive/core"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
@@ -7,6 +7,7 @@ import { verifyState } from "../lib/crypto"
 import { cacheControlFor, fail, TOMBSTONE } from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
+import { log } from "../log"
 import { safeJson } from "../mcp-util"
 
 // How long a minted raw_token (artifacts.ts's GET detail response) stays good for. It
@@ -113,6 +114,9 @@ export const rawRoutes = (ctx: AppContext) => {
       const body = series
         .map((r) => JSON.stringify({ n: r.n, at: r.created_at, data: safeJson(r.json) }))
         .join("\n")
+      // The raw surface is where self-reading pages consume their own data — the
+      // consumption most worth observing (fact_read: the layer's instrument).
+      log.info("fact_read", { name: slot, derived: isDerivedFactName(slot), surface: "raw" })
       return c.body(`${body}\n`, 200, {
         "Content-Type": "application/x-ndjson; charset=utf-8",
         // Grows with every publish, so never immutable — but cheap and worth a short cache.
@@ -126,6 +130,7 @@ export const rawRoutes = (ctx: AppContext) => {
     if (!row) return fail(c, 404, `no facts "${slot}" in v${v}`)
     // The stored bytes verbatim, not a re-serialization: what was published is what a
     // caller gets, and it's already valid JSON (validated at publish).
+    log.info("fact_read", { name: slot, derived: isDerivedFactName(slot), surface: "raw" })
     return c.body(row.json, 200, {
       "Content-Type": "application/json; charset=utf-8",
       // A version is immutable, so its slot is too — cache it hard. The current-version

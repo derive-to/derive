@@ -340,6 +340,189 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?doc/i)
   })
 
+  it("inverts $links into backlinks — exhaustive where search is ranked, and gated", async () => {
+    // The corpus inversion, end to end. The claim it has to earn: an index is exhaustive or
+    // it is broken. Content search returns a ranked, capped guess; this returns every edge.
+    const { app, token, teammate, meta } = appWithGrant(
+      dir,
+      "backlinks",
+      "openid derive:read derive:publish",
+    )
+    const mate = teammate("u_blmate", "tok_backlinks_mate", "openid derive:read")
+    const target = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "The Target",
+          content: "<!doctype html><html><body><h1>Target</h1><p>x</p></body></html>",
+          listed: "workspace",
+        }),
+      ),
+    )
+    const tid = target.short_id as string
+    const linkTo = (title: string, extra: Record<string, unknown> = {}) =>
+      call(app, token, "publish", {
+        title,
+        content: `<!doctype html><html><body><h1>${title}</h1><p>see <a href="/artifacts/t-${tid}">it</a></p></body></html>`,
+        listed: "workspace",
+        ...extra,
+      })
+    const one = JSON.parse(toolText(await linkTo("Linker One")))
+    const two = JSON.parse(toolText(await linkTo("Linker Two")))
+    // MENTIONS the id in prose but never links it. A reference is a link target; a string in
+    // a paragraph is not an edge, and this is the row that separates the index from search.
+    const prose = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Mentions Only",
+          content: `<!doctype html><html><body><h1>Prose</h1><p>the id ${tid} appears here</p></body></html>`,
+          listed: "workspace",
+        }),
+      ),
+    )
+    // A BUNDLE that links to the target. Extraction is single-file, so it carries no facts
+    // at all and can never be a linker — a permanent coverage gap, pinned here so a future
+    // change to bundle derivation flips this assertion instead of silently widening the graph.
+    const bundle = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Bundle Linker",
+          files: { "index.html": `<h1>B</h1><a href="/artifacts/${tid}">it</a>` },
+          listed: "workspace",
+        }),
+      ),
+    )
+
+    const back = JSON.parse(toolText(await call(app, token, "find", { links_to: tid })))
+    const ids = back.results.map((r: { short_id: string }) => r.short_id).sort()
+    expect(ids).toEqual([one.short_id, two.short_id].sort())
+    expect(back.links_to).toBe(tid)
+    expect(back.count).toBe(2)
+    expect(back.results.every((r: { type: string }) => r.type === "backlink")).toBe(true)
+    expect(ids).not.toContain(prose.short_id)
+    expect(ids).not.toContain(bundle.short_id)
+
+    // THE COMPARISON THAT JUSTIFIES THE FEATURE: search finds the prose mention too, and
+    // would happily report it as a link. The index is not merely more convenient here, it
+    // is more correct — and being ranked, search is also free to omit a real one.
+    const searched = JSON.parse(toolText(await call(app, token, "find", { query: tid })))
+    expect(searched.results.map((r: { short_id: string }) => r.short_id)).toContain(prose.short_id)
+
+    // An artifact URL and a titled ref resolve to the same edge as the bare short id, and
+    // @vN collapses: a link to v4 and a link to current are one reference.
+    for (const form of [
+      `https://derive.to/artifacts/the-target-${tid}`,
+      `/artifacts/t-${tid}`,
+      `t-${tid}@v1`,
+    ])
+      expect(JSON.parse(toolText(await call(app, token, "find", { links_to: form }))).count).toBe(2)
+
+    // THE LEAK TEST. An invite-only linker is reached by CONTENT, so the store can only
+    // scope it by org — and an org is not a read permission. Verified by breaking: with the
+    // visibleArtifactIds call removed, the teammate below sees 3 and the private title
+    // appears in the payload.
+    const hidden = JSON.parse(
+      toolText(
+        await linkTo("Board Only Linker", {
+          listed: "none",
+          workspace_access: "none",
+          link_role: "none",
+        }),
+      ),
+    )
+    expect(JSON.parse(toolText(await call(app, token, "find", { links_to: tid }))).count).toBe(3)
+    const theirs = JSON.parse(toolText(await call(app, mate, "find", { links_to: tid })))
+    expect(theirs.count).toBe(2)
+    expect(theirs.results.map((r: { short_id: string }) => r.short_id)).not.toContain(
+      hidden.short_id,
+    )
+    expect(JSON.stringify(theirs)).not.toContain("Board Only Linker")
+    expect(JSON.stringify(theirs)).not.toContain(hidden.short_id)
+    // And nothing announces that anything was filtered: a "some results hidden" note would
+    // disclose the existence of the document the gate exists to hide.
+    expect(JSON.stringify(theirs)).not.toMatch(/hidden|filtered|not shown/i)
+
+    // THE CONFIRM. The store's LIKE is a substring match over raw JSON and is exact only
+    // while $links carries nothing but `refs`. This is what a FOURTH deriver's output looks
+    // like — the ref quoted as an object KEY — and it survives the LIKE. Only parsing kills
+    // it. Verified by breaking: without the refsOf filter this artifact joins the answer.
+    const impostor = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Future Deriver Shape",
+          content: "<!doctype html><html><body><h1>F</h1><p>x</p></body></html>",
+          listed: "workspace",
+        }),
+      ),
+    )
+    const irec = await meta.getByShortId(impostor.short_id)
+    if (!irec) throw new Error("gone")
+    await meta.setDerivedVersionData(irec.id, 1, [
+      {
+        id: "vd_impostor",
+        slot: "$links",
+        json: `{"refs":["zzzz0000"],"titles":{"${tid}":"The Target"}}`,
+        size_bytes: 60,
+        gen: 2,
+      },
+    ])
+    const afterImpostor = JSON.parse(toolText(await call(app, token, "find", { links_to: tid })))
+    expect(afterImpostor.results.map((r: { short_id: string }) => r.short_id)).not.toContain(
+      impostor.short_id,
+    )
+    expect(afterImpostor.count).toBe(3)
+
+    // GEN SKEW is reported, never filtered. An old-generation row UNDER-reports the graph;
+    // dropping it under-reports more, and a corpus scan cannot re-derive on the fly (that
+    // is bounded to single-version reads). So the row stays in the answer and the answer
+    // says the index is older than the deriver.
+    const orec = await meta.getByShortId(one.short_id)
+    if (!orec) throw new Error("gone")
+    await meta.setDerivedVersionData(orec.id, 1, [
+      { id: "vd_oldgen", slot: "$links", json: `{"refs":["${tid}"]}`, size_bytes: 26, gen: 1 },
+    ])
+    const skewed = JSON.parse(toolText(await call(app, token, "find", { links_to: tid })))
+    expect(skewed.results.map((r: { short_id: string }) => r.short_id)).toContain(one.short_id)
+    expect(skewed.note).toContain("1 of these")
+    expect(skewed.note).toContain("earlier version of the link deriver")
+  })
+
+  it("never lets find(links_to:) become a short-id existence oracle", async () => {
+    // Three states must be indistinguishable: nothing links here, the linkers were never
+    // derived, and no such artifact. If they differ, the tool answers "does this id exist?"
+    // to anyone who asks, for every workspace on the host.
+    const { app, token } = appWithGrant(dir, "oracle", "openid derive:read derive:publish")
+    const real = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Unlinked",
+          content: "<!doctype html><html><body><h1>Alone</h1><p>x</p></body></html>",
+        }),
+      ),
+    )
+    const strip = (s: string, id: string) => s.split(id).join("<ID>")
+    const existing = strip(
+      toolText(await call(app, token, "find", { links_to: real.short_id })),
+      real.short_id,
+    )
+    const missing = strip(
+      toolText(await call(app, token, "find", { links_to: "zzzz9999" })),
+      "zzzz9999",
+    )
+    expect(existing).toBe(missing)
+    expect(existing).toContain("Nothing you can see links to")
+    // A MALFORMED ref is a different case and IS an error: it discloses nothing about who
+    // exists, and answering "nothing links to it" for a typo is a wrong answer.
+    const bad = toolText(await call(app, token, "find", { links_to: "hello world" }))
+    expect(bad).toContain("is not an artifact reference")
+    // Mode collisions are refused with the right error, not mode 1's "query is required".
+    expect(
+      toolText(await call(app, token, "find", { links_to: "zzzz9999", short_id: "x" })),
+    ).toContain("`links_to` asks which artifacts link to one target")
+    expect(
+      toolText(await call(app, token, "find", { links_to: "zzzz9999", version: 2 })),
+    ).toContain("no version dimension")
+  })
+
   it("NEVER surfaces an invite-only artifact's slot data to a co-member (regression)", async () => {
     // The cross-artifact slot readers reach artifacts by a METRIC NAME, so the store can
     // only scope them by org — and an org is not a read permission: workspace_access:"none"
@@ -472,6 +655,284 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(holes.series.map((p: { n: number }) => p.n)).toEqual([2])
   })
 
+  it("derives $facts at publish, keeps them out of every author surface, and lazily fills old versions", async () => {
+    // The whole derived-facts contract in one loop: the host indexes ($outline/$links/
+    // $stats appear without being authored), the author surfaces stay the author's (the
+    // receipt and the workspace catalog exclude $), the derived catalog is explicit
+    // ($*), and a version that predates derivation fills lazily on first read.
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "derivedfacts",
+      "openid derive:read derive:publish",
+    )
+    const page =
+      '<!doctype html><html><body><h1>Report</h1><p>see <a href="/artifacts/other-doc-zz88yy77">that</a></p>' +
+      "<h2>Numbers</h2>" +
+      '<script type="application/derive-facts" data-fact="checks">{"pass":9}</script>' +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Report", content: page })),
+    )
+    const shortId = pub.short_id as string
+    // THE RECEIPT IS THE AUTHOR'S: it names checks and never the host's own $rows.
+    expect(pub.data.map((d: { fact: string }) => d.fact)).toEqual(["checks"])
+
+    // The host's reading is queryable by name…
+    const outline = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "$outline" })),
+    )
+    expect(outline.data.sections.map((s: { label: string }) => s.label)).toEqual([
+      "Report",
+      "Numbers",
+    ])
+    const links = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "$links" })),
+    )
+    expect(links.data.refs).toEqual(["zz88yy77"])
+
+    // …and one artifact's own inventory shows both classes, derived rows marked.
+    const inv = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
+    )
+    const byFact = Object.fromEntries(inv.facts.map((f: { fact: string }) => [f.fact, f]))
+    expect(byFact.checks.derived).toBeUndefined()
+    expect(byFact.$stats.derived).toBe(true)
+
+    // The WORKSPACE catalog is the adoption substrate: asserted only. The derived
+    // catalog is its own explicit call.
+    const catalog = JSON.parse(toolText(await call(app, token, "find", { data: "*" })))
+    expect(catalog.facts.map((f: { fact: string }) => f.fact)).toEqual(["checks"])
+    const derivedCatalog = JSON.parse(toolText(await call(app, token, "find", { data: "$*" })))
+    expect(derivedCatalog.derived).toBe(true)
+    expect(derivedCatalog.facts.map((f: { fact: string }) => f.fact).sort()).toEqual([
+      "$links",
+      "$outline",
+      "$stats",
+    ])
+
+    // LAZY FILL: simulate a version that predates derivation by stripping its $rows,
+    // exactly the state every artifact published before this feature is in.
+    const rec = await meta.getByShortId(shortId)
+    if (!rec) throw new Error("artifact vanished")
+    const stored = await meta.getVersionData(rec.id, 1)
+    await meta.setVersionData(
+      rec.id,
+      1,
+      stored
+        .filter((r) => !r.slot.startsWith("$"))
+        .map((r) => ({
+          id: r.id,
+          slot: r.slot,
+          json: r.json,
+          size_bytes: r.size_bytes,
+          gen: r.gen,
+        })),
+    )
+    const lazy = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: shortId, data: "$stats", version: 1 })),
+    )
+    expect(lazy.data.sections).toBe(2)
+    // And it PERSISTED alongside the asserted row it must never clobber.
+    const after = await meta.getVersionData(rec.id, 1)
+    expect(after.some((r) => r.slot === "checks")).toBe(true)
+    expect(after.some((r) => r.slot === "$stats")).toBe(true)
+  })
+
+  it("stops serving a RETIRED deriver's rows, and collects them", async () => {
+    // Generations are per-deriver, read off the DERIVERS table. A `$name` the table no
+    // longer owns therefore has no generation, and the sentinel it gets back matches no
+    // stored row — so the orphan re-derives once, its prefix-scoped write drops it, and
+    // the read tells the truth about a name the host does not compute. Returning the
+    // column default instead would have served a retired deriver's output forever.
+    const { app, token, meta } = appWithGrant(dir, "retired", "openid derive:read derive:publish")
+    const page =
+      '<!doctype html><html><body><h1>Retired</h1><p>see <a href="/artifacts/other-doc-zz88yy77">that</a></p><h2>More</h2><p>x</p></body></html>'
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Retired", content: page })),
+    )
+    const rec = await meta.getByShortId(pub.short_id)
+    if (!rec) throw new Error("gone")
+    const live = await meta.getVersionData(rec.id, 1)
+    expect(live.map((r) => r.slot).sort()).toEqual(["$links", "$outline", "$stats"])
+    // Seed a row from a deriver that no longer exists, at the generation it shipped with.
+    await meta.setDerivedVersionData(rec.id, 1, [
+      ...live.map((r) => ({
+        id: r.id,
+        slot: r.slot,
+        json: r.json,
+        size_bytes: r.size_bytes,
+        gen: r.gen,
+      })),
+      { id: "vd_retired", slot: "$legacy", json: '{"old":true}', size_bytes: 12, gen: 1 },
+    ])
+    expect((await meta.getVersionData(rec.id, 1)).some((r) => r.slot === "$legacy")).toBe(true)
+
+    const miss = toolText(
+      await call(app, token, "read", { short_id: pub.short_id, data: "$legacy" }),
+    )
+    expect(miss).toContain("computed by the host")
+    expect(miss).not.toContain("old")
+    // The re-derivation swept the orphan and left the live rows intact.
+    const after = (await meta.getVersionData(rec.id, 1)).map((r) => r.slot).sort()
+    expect(after).toEqual(["$links", "$outline", "$stats"])
+  })
+
+  it("a derived write can never delete an asserted row, whatever the interleaving", async () => {
+    // The hazard this PR introduced and this test pins: lazy derivation is the SECOND
+    // writer to an old version's rows, and backfillNewSlots is the first. Done as
+    // read-union-setVersionData, a lazy fill whose read predates the backfill's write
+    // deletes the author's fact — permanently, because the next publish sees that fact
+    // already tracked and never re-walks. The write is prefix-scoped instead, so the
+    // losing interleaving cannot be expressed. Replayed here in the losing order.
+    const { app, token, meta } = appWithGrant(dir, "raceguard", "openid derive:read derive:publish")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Race", content: "<h1>A</h1><h2>B</h2>" }),
+      ),
+    )
+    const rec = await meta.getByShortId(pub.short_id)
+    if (!rec) throw new Error("gone")
+
+    // A lazy fill begins: it reads v1's rows HERE (no asserted rows yet).
+    const readBeforeBackfill = await meta.getVersionData(rec.id, 1)
+    expect(readBeforeBackfill.every((r) => r.slot.startsWith("$"))).toBe(true)
+
+    // The backfill lands an author's fact into that same old version, mid-flight.
+    await meta.setVersionData(rec.id, 1, [
+      ...readBeforeBackfill.map((r) => ({
+        id: r.id,
+        slot: r.slot,
+        json: r.json,
+        size_bytes: r.size_bytes,
+        gen: r.gen,
+      })),
+      { id: "vd_backfilled", slot: "checks", json: '{"pass":9}', size_bytes: 11, gen: 1 },
+    ])
+
+    // Now the lazy fill completes with its STALE view of the world.
+    await meta.setDerivedVersionData(rec.id, 1, [
+      { id: "vd_fresh", slot: "$stats", json: '{"chars":1}', size_bytes: 11, gen: 1 },
+    ])
+
+    const after = (await meta.getVersionData(rec.id, 1)).map((r) => r.slot)
+    expect(after).toContain("checks") // the author's row survived the race
+    expect(after).toContain("$stats") // and the derived row still landed
+    // Both directions: a delete that matched NOTHING would also satisfy the two lines
+    // above while quietly duplicating every derived row on each re-derivation.
+    expect(after.filter((n) => n === "$stats")).toHaveLength(1)
+    expect(new Set(after).size).toBe(after.length)
+  })
+
+  it("says WHY a fact is absent, instead of telling authors to do the impossible", async () => {
+    // Three absences, three different truths — all found by dogfooding the live preview,
+    // where every one of them read back as "embed a derive-facts block to add one".
+    const { app, token } = appWithGrant(dir, "absence", "openid derive:read derive:publish")
+
+    // (1) A BUNDLE whose page carries a real block. Extraction is single-file only, so the
+    // block is dropped — and the old message told this author to embed the block they
+    // just embedded. The publish must now SAY so, and the read must not misdirect.
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Bundle",
+          files: {
+            "index.html":
+              '<h1>B</h1><script type="application/derive-facts" data-fact="checks">{"pass":5}</script>',
+          },
+        }),
+      ),
+    )
+    expect(pub.note).toContain("index.html")
+    expect(pub.note).toContain("single-file")
+    const bundleMiss = toolText(
+      await call(app, token, "read", { short_id: pub.short_id, data: "checks" }),
+    )
+    expect(bundleMiss).toContain("carries no facts")
+    expect(bundleMiss).not.toContain("embed a derive-facts block to add one")
+
+    // (2) A DERIVED name nobody can embed: a one-heading page has no $outline, and the
+    // advice "embed a block" is impossible — $ is outside the author grammar.
+    const plain = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Plain", content: "<h1>Only</h1><p>x</p>" }),
+      ),
+    )
+    const derivedMiss = toolText(
+      await call(app, token, "read", { short_id: plain.short_id, data: "$outline" }),
+    )
+    expect(derivedMiss).toContain("computed by the host")
+    expect(derivedMiss).not.toContain("embed a derive-facts block to add one")
+
+    // (3) The SERIES note over underived history: those versions did not "omit the block"
+    // — series reads never lazily fill, by design, so they are simply underived.
+    await call(app, token, "publish", { short_id: plain.short_id, content: "<h1>A</h1><h2>B</h2>" })
+    const series = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: plain.short_id,
+          data: "$outline",
+          versions: "all",
+        }),
+      ),
+    )
+    if (series.note) {
+      expect(series.note).not.toContain("omitted the block")
+      expect(series.note).toContain("single-version read")
+    }
+  })
+
+  it("derived $rows in an older version never trigger the asserted backfill walk", async () => {
+    // The interplay the build doc ordered pinned (and the first commit CLAIMED was
+    // pinned without a test existing — this is that test). backfillNewSlots fires when a
+    // fact is new relative to the previous version's rows. Those rows now include $rows,
+    // and the walk must key on ASSERTED names only: a republish of an unchanged page
+    // must do no walk, because "checks" was already tracked, and the $rows beside it are
+    // not facts appearing for the first time.
+    const { app, token, meta } = appWithGrant(dir, "interplay", "openid derive:read derive:publish")
+    const page =
+      "<!doctype html><html><body><h1>A</h1><h2>B</h2>" +
+      '<script type="application/derive-facts" data-fact="checks">{"pass":1}</script>' +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Interplay", content: page })),
+    )
+    const rec = await meta.getByShortId(pub.short_id)
+    if (!rec) throw new Error("gone")
+    // v1 has checks + $rows. Wipe v1's rows entirely, then publish v2: if the walk keyed
+    // on ALL previous rows it would see nothing tracked and re-walk; if it keyed on
+    // asserted names in the CURRENT parse minus previous rows, "checks" is fresh and the
+    // walk restores v1's checks — but must write NOTHING for $names into v1 (derived
+    // rows are lazy-only for old versions; the walk never pays derivation).
+    await meta.setVersionData(rec.id, 1, [])
+    await call(app, token, "publish", { short_id: pub.short_id, content: page })
+    const v1rows = await meta.getVersionData(rec.id, 1)
+    expect(v1rows.map((r) => r.slot)).toEqual(["checks"])
+  })
+
+  it("review deltas show the author's numbers moving, never the host's", async () => {
+    // catch_up's data_changes exists so a review round sees "checks.pass 9 -> 11" beside
+    // the prose diff. Between any two versions the derived $stats ALSO moved (the page
+    // grew), and reporting that would bury the author's delta under the host's noise.
+    const { app, token } = appWithGrant(dir, "deriveddeltas", "openid derive:read derive:publish")
+    const page = (pass: number, extra: string) =>
+      `<!doctype html><html><body><h1>R</h1><h2>S</h2><p>${extra}</p>` +
+      `<script type="application/derive-facts" data-fact="checks">{"pass":${pass}}</script>` +
+      "</body></html>"
+    const pub = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Deltas", content: page(9, "one") })),
+    )
+    await call(app, token, "publish", {
+      short_id: pub.short_id,
+      content: page(11, "one two three four five six grew a lot"),
+    })
+    const cu = JSON.parse(
+      toolText(await call(app, token, "catch_up", { short_id: pub.short_id, since_version: 1 })),
+    )
+    const changes = (cu.data_changes ?? []).join(" ")
+    expect(changes).toContain("checks.pass 9 → 11")
+    expect(changes).not.toContain("$stats")
+  })
+
   it("extracts facts on publish and reads them back by name and as a list", async () => {
     const { app, token } = appWithGrant(dir, "dataslots", "openid derive:read derive:publish")
     const page =
@@ -496,7 +957,13 @@ describe("remote MCP endpoint (/mcp)", () => {
     const listed = JSON.parse(
       toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
     )
-    expect(listed.facts.map((s: { fact: string }) => s.fact)).toEqual(["budget", "checks"])
+    // The inventory now also carries the host's derived rows, marked; the author's are
+    // the unmarked ones.
+    expect(
+      listed.facts
+        .filter((s: { derived?: boolean }) => !s.derived)
+        .map((s: { fact: string }) => s.fact),
+    ).toEqual(["budget", "checks"])
 
     // A missing fact names the ones that exist rather than an opaque miss.
     const miss = await call(app, token, "read", { short_id: shortId, data: "nope" })
@@ -614,7 +1081,9 @@ describe("remote MCP endpoint (/mcp)", () => {
     const listed = JSON.parse(
       toolText(await call(app, token, "read", { short_id: out.short_id, data: "*" })),
     )
-    expect(listed.facts).toEqual([])
+    // No ASSERTED facts stored — the derived $rows the host computed are marked and
+    // are not the author's.
+    expect(listed.facts.filter((s: { derived?: boolean }) => !s.derived)).toEqual([])
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {

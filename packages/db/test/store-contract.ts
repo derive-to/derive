@@ -260,6 +260,112 @@ export function runStoreContract(
       expect((await store.listFactAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
     })
 
+    it("inverts $links into backlinks — candidates the caller confirms, current version only", async () => {
+      // The corpus inversion. Every assertion here is a way the scan can be quietly wrong,
+      // and quietly wrong is the whole risk: an index that under-reports reads exactly like
+      // an artifact nothing links to.
+      const target = "tgt99999"
+      const linker = await store.createArtifact(newArtifact({ title: "Linker" }))
+      const lv = await store.addVersion(linker.id, newVersion())
+      await store.setDerivedVersionData(linker.id, lv.n, [
+        {
+          id: uuid(),
+          slot: "$links",
+          json: `{"refs":["${target}","zzzz0000"]}`,
+          size_bytes: 40,
+          gen: 2,
+        },
+      ])
+      // SUPERSEDED: v1 links to the target, v2 does not. The current-version join must drop it.
+      const moved = await store.createArtifact(newArtifact({ title: "Moved on" }))
+      const mv1 = await store.addVersion(moved.id, newVersion())
+      await store.setDerivedVersionData(moved.id, mv1.n, [
+        { id: uuid(), slot: "$links", json: `{"refs":["${target}"]}`, size_bytes: 26, gen: 2 },
+      ])
+      const mv2 = await store.addVersion(moved.id, newVersion())
+      await store.setDerivedVersionData(moved.id, mv2.n, [
+        { id: uuid(), slot: "$links", json: '{"refs":["zzzz0000"]}', size_bytes: 26, gen: 2 },
+      ])
+      // NEAR MISSES the quote anchoring must exclude, and the one only the caller's parse
+      // can: an unquoted occurrence inside another string is a candidate, not an edge.
+      const embedded = await store.createArtifact(newArtifact({ title: "Embedded" }))
+      const ev = await store.addVersion(embedded.id, newVersion())
+      await store.setDerivedVersionData(embedded.id, ev.n, [
+        { id: uuid(), slot: "$links", json: `{"refs":["x${target}y"]}`, size_bytes: 30, gen: 2 },
+      ])
+      const substring = await store.createArtifact(newArtifact({ title: "Substring" }))
+      const sv = await store.addVersion(substring.id, newVersion())
+      await store.setDerivedVersionData(substring.id, sv.n, [
+        {
+          id: uuid(),
+          slot: "$links",
+          json: `{"refs":["zzzz0000"],"titles":{"${target}":"Some doc"}}`,
+          size_bytes: 60,
+          gen: 2,
+        },
+      ])
+
+      const rows = await store.listArtifactsLinkingTo(ORG, target)
+      const ids = rows.map((r) => r.short_id)
+      expect(ids).toContain(linker.short_id)
+      expect(ids).not.toContain(moved.short_id) // superseded, via the current-version join
+      expect(ids).not.toContain(embedded.short_id) // "xtgt99999y" is not "tgt99999"
+      // The quote anchoring is exact only while $links holds nothing but `refs`. This row is
+      // what a FOURTH deriver output looks like — the ref quoted as an object KEY — and it
+      // survives the LIKE. It must die on the caller's parse, which is why the store returns
+      // `json` and calls these candidates rather than answers.
+      const confirmed = rows.filter((r) => (JSON.parse(r.json).refs ?? []).includes(target))
+      expect(ids).toContain(substring.short_id)
+      expect(confirmed.map((r) => r.short_id)).not.toContain(substring.short_id)
+
+      // CASE: SQLite's LIKE is ASCII case-insensitive and Postgres's is not. Whatever each
+      // dialect's candidate set, the confirmed answer must be identical on both.
+      const upper = await store.createArtifact(newArtifact({ title: "Upper" }))
+      const uv = await store.addVersion(upper.id, newVersion())
+      await store.setDerivedVersionData(upper.id, uv.n, [
+        { id: uuid(), slot: "$links", json: '{"refs":["TGT99999"]}', size_bytes: 26, gen: 2 },
+      ])
+      const afterUpper = await store.listArtifactsLinkingTo(ORG, target)
+      expect(
+        afterUpper
+          .filter((r) => (JSON.parse(r.json).refs ?? []).includes(target))
+          .map((r) => r.short_id),
+      ).not.toContain(upper.short_id)
+
+      // A tombstoned linker is out of the library, so out of the graph.
+      await store.setArtifactRemoved(linker.id, new Date().toISOString())
+      expect(
+        (await store.listArtifactsLinkingTo(ORG, target)).map((r) => r.short_id),
+      ).not.toContain(linker.short_id)
+
+      // A self-link is an edge like any other — the deriver records it, so the inversion does.
+      const selfy = await store.createArtifact(newArtifact({ title: "Selfy" }))
+      const yv = await store.addVersion(selfy.id, newVersion())
+      await store.setDerivedVersionData(selfy.id, yv.n, [
+        {
+          id: uuid(),
+          slot: "$links",
+          json: `{"refs":["${selfy.short_id}"]}`,
+          size_bytes: 30,
+          gen: 2,
+        },
+      ])
+      expect(
+        (await store.listArtifactsLinkingTo(ORG, selfy.short_id)).map((r) => r.short_id),
+      ).toContain(selfy.short_id)
+
+      // gen rides along so the caller can say the index is older than the deriver, and `at`
+      // is the artifact's activity time — NOT version_data.created_at, which for a lazily
+      // derived row is when the host got round to indexing.
+      const self = (await store.listArtifactsLinkingTo(ORG, selfy.short_id))[0]
+      expect(self?.gen).toBe(2)
+      expect(self?.at).toBeTruthy()
+      // Nothing links to an id nobody references; a malformed ref is empty, never a wildcard.
+      expect(await store.listArtifactsLinkingTo(ORG, "nosuch99")).toEqual([])
+      expect(await store.listArtifactsLinkingTo(ORG, "%")).toEqual([])
+      expect((await store.listArtifactsLinkingTo(ORG, target, { limit: 1 })).length).toBe(1)
+    })
+
     it("lists the workspace's slot vocabulary as RAW rows, uncounted, carrying artifact_id", async () => {
       const rows = await store.listWorkspaceFacts(ORG)
       // Deliberately (slot, artifact) pairs rather than counts: the count has to be taken

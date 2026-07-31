@@ -80,17 +80,30 @@ interface Tag {
   end: number
 }
 
-// Comments, declarations (<!DOCTYPE …>), and element tags.
-const TOKEN = /<!--[\s\S]*?-->|<![^>]*>|<\/?[a-zA-Z][^>]*>/g
+// Comments, declarations (<!DOCTYPE …>), and element tags. Linear by construction
+// (js/polynomial-redos): no inner loop may cross a "<", so a false start never re-scans
+// what the next attempt will scan again. The comment alternative admits "<" only when it
+// isn't opening another comment; the cost is that a (malformed) comment containing a
+// literal "<!--" no longer swallows through it, and a tag whose quoted attribute value
+// contains a raw "<" (legal but rare — spec says escape it) tokenizes at the inner "<".
+const TOKEN = /<!--[^<]*(?:<(?!!--)[^<]*)*-->|<![^<>]*>|<\/?[a-zA-Z][^<>]*>/g
 
 const parseTag = (raw: string, start: number): Tag | null => {
-  const m = /^<(\/?)([a-zA-Z][a-zA-Z0-9-]*)([\s\S]*?)(\/?)>$/.exec(raw)
-  if (!m) return null
+  // By hand, not by regex: the old /^<(\/?)([a-zA-Z][a-zA-Z0-9-]*)([\s\S]*?)(\/?)>$/ left
+  // the name/attrs boundary ambiguous — quadratic on a tag that never closes
+  // (js/polynomial-redos). raw comes from TOKEN, but nothing here assumes it.
+  if (raw[0] !== "<" || raw[raw.length - 1] !== ">") return null
+  const closing = raw[1] === "/"
+  const nameStart = closing ? 2 : 1
+  if (!/[a-zA-Z]/.test(raw[nameStart] ?? "")) return null
+  let i = nameStart + 1
+  while (i < raw.length - 1 && /[a-zA-Z0-9-]/.test(raw[i] as string)) i++
+  const selfClosing = raw[raw.length - 2] === "/" && raw.length - 2 >= i
   return {
-    name: (m[2] as string).toLowerCase(),
-    attrs: m[3] as string,
-    closing: m[1] === "/",
-    selfClosing: m[4] === "/",
+    name: raw.slice(nameStart, i).toLowerCase(),
+    attrs: raw.slice(i, selfClosing ? raw.length - 2 : raw.length - 1),
+    closing,
+    selfClosing,
     start,
     end: start + raw.length,
   }
@@ -516,7 +529,10 @@ const headingSpans = (html: string): HeadingSpan[] => {
   HEADING.lastIndex = 0
   for (let m = HEADING.exec(html); m; m = HEADING.exec(html)) {
     if (inDropRange(m.index)) continue
-    const text = collapse(decodeEntities((m[2] as string).replace(/<[^>]+>/g, " "))).trim()
+    // [^<>] not [^>]: a strip that can scan across the next "<" is quadratic on a run
+    // of open brackets (js/polynomial-redos). A tag containing a raw "<" is malformed
+    // anyway — failing to strip it beats scanning the rest of the heading for it.
+    const text = collapse(decodeEntities((m[2] as string).replace(/<[^<>]+>/g, " "))).trim()
     if (!text) continue
     spans.push({ level: Number(m[1]), text, slug: slug(text), start: m.index })
   }
@@ -725,10 +741,20 @@ const mdHeadings = (src: string): MdHeading[] => {
       if (!fence) fence = run.slice(0, 1).repeat(3)
       else if (run.startsWith(fence)) fence = null
     } else if (!fence) {
-      const h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
+      const h = /^(#{1,6})\s+/.exec(line)
       if (h) {
-        const text = (h[2] as string).trim()
-        out.push({ level: (h[1] as string).length, text, slug: slug(text), start: offset })
+        // Trailing trim by hand (whitespace, then closing #s, then whitespace): the old
+        // /^(#{1,6})\s+(.+?)\s*#*\s*$/ wrapped a lazy dot in three overlapping \s loops —
+        // quadratic on a heading line ending in a run of spaces (js/polynomial-redos).
+        const rest = line.slice((h[0] as string).length)
+        let end = rest.length
+        while (end > 0 && /\s/.test(rest[end - 1] as string)) end--
+        while (end > 0 && rest[end - 1] === "#") end--
+        while (end > 0 && /\s/.test(rest[end - 1] as string)) end--
+        // An all-hash title ("# ###") keeps one hash, exactly as the lazy dot did.
+        const text = (end > 0 ? rest.slice(0, end) : rest.slice(0, 1)).trim()
+        if (text)
+          out.push({ level: (h[1] as string).length, text, slug: slug(text), start: offset })
       }
     }
     offset += line.length + 1

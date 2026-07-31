@@ -477,6 +477,24 @@ export interface ArtifactStore {
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */
   setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
+  /**
+   * Replace only the DERIVED (`$`) rows of a version, leaving asserted rows untouched.
+   *
+   * The two lifecycles share one table, and they have two different writers: extraction
+   * and backfill write asserted rows, lazy derivation writes derived ones. Doing the
+   * derived write as read-then-{@link setVersionData} would make it a read-modify-write
+   * over rows another writer owns, and the interleaving is a silent data loss: the
+   * backfill adds an author's fact to an old version between a lazy fill's read and its
+   * write, and the lazy fill's stale union deletes it. Nothing would ever restore it,
+   * because the next publish sees that fact already tracked and never re-walks.
+   *
+   * Scoping the delete to the `$` prefix removes the hazard by construction rather than
+   * narrowing the window: the derived write cannot express "remove an asserted row", so
+   * no ordering exists in which it does. This is the same predicate the rollback story
+   * rests on (`DELETE FROM version_data WHERE slot LIKE '$%'`), which is not a
+   * coincidence — it is what "recomputable cache in the same table" means.
+   */
+  setDerivedVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
   /** A version's facts: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
@@ -519,6 +537,36 @@ export interface ArtifactStore {
     opts?: { tag?: string; limit?: number },
   ): Promise<
     { id: string; short_id: string; title: string | null; n: number; json: string; at: string }[]
+  >
+  /** The BACKLINK scan: artifacts whose current version's `$links` mentions `ref`. Every
+   *  index above is per artifact; this is the inversion of one, which is the shape a corpus
+   *  question actually takes ("what points here"). Same join, one more predicate.
+   *
+   *  CANDIDATES, not answers. The `LIKE` narrows to the few rows that could contain the ref
+   *  and the CALLER CONFIRMS by parsing `json` — a substring match is not proof (the same
+   *  reasoning, and the same shape, as isManagedArtifact). The caller must then gate the
+   *  rows through api lib/visibility.ts before counting or returning them: these are the
+   *  LINKING artifacts, reached by content rather than by id, so the org scope is not a read
+   *  permission here either.
+   *
+   *  Each row carries `id` to gate on, `json` to confirm with, `gen` so the caller can say
+   *  the index is older than the deriver, and `at` = the CURRENT VERSION's publish time.
+   *  Never version_data.created_at: a lazily derived row's timestamp is when the host got
+   *  round to indexing, not when the link was made. */
+  listArtifactsLinkingTo(
+    orgId: string,
+    ref: string,
+    opts?: { tag?: string; limit?: number },
+  ): Promise<
+    {
+      id: string
+      short_id: string
+      title: string | null
+      n: number
+      json: string
+      gen: number
+      at: string
+    }[]
   >
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.

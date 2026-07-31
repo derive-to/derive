@@ -20,7 +20,16 @@ import { join } from "node:path"
 
 // Store methods that return rows for MANY artifacts scoped only by org. Adding one here is
 // the point: a new reader gets the guard for free the moment it is listed.
-const UNGATED_READERS = ["listFactAcrossArtifacts", "listWorkspaceFacts", "searchArtifactIds"]
+const UNGATED_READERS = [
+  "listFactAcrossArtifacts",
+  "listWorkspaceFacts",
+  "searchArtifactIds",
+  // The backlink inversion. NOTE the guard is a FILE-level substring test, and find.ts
+  // already mentions a gate for its other readers — so listing this name here does not by
+  // itself prove the new reader is gated. The proof is the co-member leak test in
+  // mcp.test.ts, run once against the ungated code.
+  "listArtifactsLinkingTo",
+]
 // Any one of these in the same file means the caller narrowed the rows.
 const GATES = ["visibleArtifacts", "visibleArtifactIds"]
 // The gate's own home, and the port file that DECLARES these methods: naming them is not

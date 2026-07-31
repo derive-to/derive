@@ -533,3 +533,41 @@ describe("decodeEntities extraction keeps pageText behavior", () => {
     expect(pageText("<p>x</p><script>secret()</script>")).not.toContain("secret")
   })
 })
+
+describe("linear-time tokenizing (the second CodeQL round)", () => {
+  // The four polynomial-redos alerts the scanner raised on this file's old regexes, each
+  // reproduced as the attack string CodeQL named. The bound is generous wall-clock — the
+  // point is O(n), and the old patterns took seconds-to-minutes on these inputs.
+  it("survives the attack shapes the alerts named", () => {
+    const attacks: [string, string][] = [
+      [`<A${"-".repeat(60_000)}`, "text/html"], // parseTag's ambiguous name/attrs split
+      ["<".repeat(60_000), "text/html"], // heading tag-strip scanning for a '>'
+      ["<!--".repeat(20_000), "text/html"], // comment alternative re-scanning false starts
+      ["<!".repeat(30_000), "text/html"], // declaration alternative, same shape
+      [`<h1>t</h1><h2>${"<".repeat(50_000)}</h2>`, "text/html"],
+      [`# title${" ".repeat(60_000)}x`, "text/markdown"], // three overlapping \s loops
+      [`# ${"#".repeat(60_000)}`, "text/markdown"],
+    ]
+    const started = Date.now()
+    for (const [src, ct] of attacks) {
+      sectionMarkers(src, ct)
+      if (ct === "text/html") pageText(src)
+    }
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
+  it("tokenizes real structures identically after the rewrite", () => {
+    // The rewrite must not change what well-formed documents mean: comments containing
+    // tags, self-closing tags, closing hashes on ATX headings.
+    const html =
+      "<body><!-- a <div> comment --><h1>Top</h1><main aria-label='Core'>x</main><br/></body>"
+    expect(sectionMarkers(html, "text/html")).toEqual([
+      { text: "Top", line: 1 },
+      { text: "Core", line: 1 },
+    ])
+    expect(sectionMarkers("# Closed ##\n\n## Open", "text/markdown")).toEqual([
+      { text: "Closed", line: 1 },
+      { text: "Open", line: 3 },
+    ])
+  })
+})

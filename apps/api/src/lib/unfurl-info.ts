@@ -10,6 +10,7 @@
 import {
   type ArtifactRecord,
   artifactUrl,
+  assertedOnly,
   factSummary,
   kindLabel,
   type MetaStore,
@@ -39,7 +40,10 @@ export const unfurlInfoFor = async (
     versionCount,
     commentCount,
     // The reward for publishing a fact: the shared link carries its own numbers.
-    dataSummary: factSummary(facts),
+    // assertedOnly: every consumer of this builder — OG card, oEmbed, meta tags, and now
+    // the Slack unfurl — is a reward surface, and a card leading with $stats word-counts
+    // instead of the author's numbers would spend the incentive on congratulating the host.
+    dataSummary: factSummary(assertedOnly(facts)),
     pageUrl: artifactUrl(baseUrl, artifact),
     imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
     oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
