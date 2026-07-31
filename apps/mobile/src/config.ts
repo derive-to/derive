@@ -10,10 +10,15 @@
 import Constants from "expo-constants"
 import { isInternal as isInternalIn, webUrlFromDeepLink as resolveLink } from "./links"
 
-/** The web app the shell hosts. Overridable through app.json's `extra` so a dev build
- *  can point at a laptop without editing source; falls back to production. */
+/** The web app the shell hosts.
+ *
+ *  `EXPO_PUBLIC_DERIVE_WEB_ORIGIN` wins, so pointing a dev run at a laptop is an env var
+ *  rather than an edit to a committed file — which matters because the value is a LAN
+ *  address that must never reach a commit. Then app.json's `extra`, then production. */
 export const WEB_ORIGIN: string =
-  (Constants.expoConfig?.extra?.webOrigin as string | undefined) ?? "https://derive.to"
+  process.env.EXPO_PUBLIC_DERIVE_WEB_ORIGIN?.replace(/\/+$/, "") ||
+  (Constants.expoConfig?.extra?.webOrigin as string | undefined) ||
+  "https://derive.to"
 
 /**
  * Origins the web view may navigate to IN PLACE. Anything else opens in the system

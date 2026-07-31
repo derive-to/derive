@@ -16,8 +16,16 @@ npm install
 npm start        # scan the QR with the Camera app (iOS) or Expo Go (Android)
 ```
 
-To point it at a local stack instead of production, change `extra.webOrigin` in
-`app.json` to your machine's LAN address (not `localhost` — that resolves to the phone).
+To point it at a local stack instead of production, set the origin as an env var rather
+than editing `app.json` (a LAN address must never reach a commit):
+
+```bash
+EXPO_PUBLIC_DERIVE_WEB_ORIGIN=http://<your-lan-ip>:3090 npm start
+```
+
+Use the machine's LAN address, not `localhost` — on the phone that resolves to the phone.
+The API needs `DERIVE_WEB_ORIGIN` set to the same origin, or Better Auth's CSRF check
+rejects sign-in with `INVALID_ORIGIN`.
 
 Xcode / Android Studio only become necessary for a **dev build**, which is what the
 later phases need: push notifications and the share extension cannot run in Expo Go.
