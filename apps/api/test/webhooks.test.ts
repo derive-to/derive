@@ -5,7 +5,7 @@ import { type ArtifactRecord, newId } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
-import { buildPayload, sign, slackMessage } from "../src/webhooks"
+import { buildPayload, sign, slackMessage, WEBHOOK_EVENTS } from "../src/webhooks"
 import { ownerApp } from "./helpers"
 
 const sampleArtifact = {
@@ -139,6 +139,16 @@ describe("webhook outbox", () => {
     const list = await (await app.request("/v1/webhooks")).json()
     expect(list.webhooks.length).toBeGreaterThan(0)
     expect(list.webhooks[0].secret).toBeUndefined()
+  })
+
+  // The picker used to carry its own copy of this list, three entries against the server's
+  // eleven, so eight events could not be chosen from Settings at all. The list ships with the
+  // response now, which is the only arrangement that cannot drift.
+  it("ships the event vocabulary with the list", async () => {
+    const list = await (await app.request("/v1/webhooks")).json()
+    expect(list.event_options).toEqual([...WEBHOOK_EVENTS])
+    expect(list.event_options).toContain("proposal.approved")
+    expect(list.event_options.length).toBeGreaterThan(3)
   })
 })
 

@@ -1,21 +1,49 @@
-import { newId, type SlackInstallRecord } from "@derive/core"
+import { newId, roleAllows, type SlackInstallRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { commentCreatedAction } from "../lib/comment-actions"
+import { commentDeepLink } from "../lib/comments"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { searchMatcher, searchWorkspace, toSearchHits } from "../lib/search"
 import {
   exchangeSlackOAuth,
   exchangeSlackOidc,
+  listSlackChannels,
+  openSlackView,
   postSlackResponseUrl,
   slackAuthorizeUrl,
+  slackChannelReach,
   slackOidcAuthorizeUrl,
   slackOidcUserinfo,
+  slackPermalink,
+  slackUserName,
+  unfurlSlackLinks,
   verifySlackSignature,
 } from "../lib/slack"
-import { deriveRecentBlocks, deriveResultsBlocks, notLinkedBlocks } from "../lib/slack-commands"
+import {
+  type CapturePrivateMeta,
+  captureLinkPromptModal,
+  captureModal,
+  captureOptions,
+  captureResultModal,
+  SLACK_CAPTURE_ACTION,
+  SLACK_CAPTURE_BLOCK,
+  SLACK_CAPTURE_CALLBACK,
+  SLACK_CAPTURE_NOTE_ACTION,
+  SLACK_CAPTURE_NOTE_BLOCK,
+  writeCaptureComment,
+} from "../lib/slack-capture"
+import { mrkdwnLabel } from "../lib/slack-cards"
+import {
+  deriveRecentBlocks,
+  deriveResultsBlocks,
+  helpBlocks,
+  notLinkedBlocks,
+  subscriptionBlocks,
+} from "../lib/slack-commands"
 import {
   decodeProposalAction,
   decodeThreadAction,
@@ -24,9 +52,15 @@ import {
   SLACK_THREAD_ACTION,
   threadStateBlocks,
 } from "../lib/slack-comments"
-import { flagSlackReauth } from "../lib/slack-delivery"
+import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { runSlackProposalAction } from "../lib/slack-proposal"
+import {
+  channelIsSubscribed,
+  SLACK_SUBSCRIBABLE_EVENTS,
+  subscribableEvents,
+} from "../lib/slack-subscriptions"
+import { artifactRefFromUrl, decideUnfurl } from "../lib/slack-unfurl"
 import { resolveThreadAction } from "../lib/thread-actions"
 import { log } from "../log"
 import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
@@ -39,7 +73,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
  *  the web client's type; the OAuth redirects and the Slack Events webhook stay plain
  *  routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, notify, requireUser } = ctx
+  const { meta, deps, bus, notify, requireUser, authorizeUserStanding } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
   const { blobs, sourceText, search, notifyRender, billingBlocked } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -86,6 +120,71 @@ export const slackRoutes = (ctx: AppContext) => {
     }
   }
 
+  // Render previews for the Derive links in one `link_shared` event.
+  //
+  // The unfurl is attached to the MESSAGE and seen by the whole channel (Slack has no per-viewer
+  // variant), so the gate is "may this be broadcast" — decideUnfurl owns that ladder. The one
+  // per-person surface is the sign-in prompt, which Slack shows only to the person who posted
+  // the link; that's what an unlinked sharer gets, since without a link there is no principal to
+  // authorize against.
+  const unfurlSharedLinks = async (teamId: string, ev: SlackEventPayload): Promise<void> => {
+    const links = (ev.links ?? []).slice(0, 10) // one paste shouldn't fan out unbounded
+    if (!links.length || !ev.user) return
+    // Slack dispatches link_shared for EVERY channel in the workspace, not just the ones the bot
+    // is in. Unfurling everywhere would put an artifact's title wherever any member happened to
+    // paste a link — so this stays where an admin has actually invited Derive, which is the same
+    // consent boundary the channel subscriptions use. Absent (older payloads) is treated as
+    // present so this can't silently disable previews.
+    if (ev.is_bot_user_member === false) return
+    const installs = await meta.listSlackInstallsByTeam(teamId)
+    if (!installs.length) return
+    const userLink = await meta.getSlackUserLinkBySlackId(teamId, ev.user)
+    // One Slack team can back more than one Derive workspace; unfurl into the sharer's own when
+    // we know it, else the sole/first install for the team.
+    const install = installs.find((i) => i.org_id === userLink?.org_id) ?? installs[0]
+    if (!install) return
+    const bot = await resolveBotToken(meta, install.org_id, deps.encryptionKey)
+    if (!bot) return
+    const target = {
+      channel: ev.channel,
+      ts: ev.message_ts,
+      unfurlId: ev.unfurl_id,
+      source: ev.source,
+    }
+
+    // Not linked: prompt once, and only when they actually shared an artifact link — a paste of
+    // some other page on our domain shouldn't nag them to connect an account.
+    if (!userLink) {
+      if (!links.some((l) => artifactRefFromUrl(deps.baseUrl, l.url))) return
+      await unfurlSlackLinks(
+        bot.token,
+        target,
+        {},
+        {
+          url: new URL("/v1/slack/link", deps.baseUrl).toString(),
+          message: "Connect your Derive account to preview links here.",
+        },
+      )
+      return
+    }
+
+    const unfurls: Record<string, unknown> = {}
+    for (const l of links) {
+      const d = await decideUnfurl(
+        {
+          meta,
+          baseUrl: deps.baseUrl,
+          orgId: install.org_id,
+          canRead: (userId, artifact) => authorizeUserStanding(userId, "read", artifact),
+        },
+        l.url,
+        userLink.user_id,
+      )
+      if (d.kind === "card") unfurls[d.url] = { blocks: d.blocks }
+    }
+    if (Object.keys(unfurls).length) await unfurlSlackLinks(bot.token, target, unfurls)
+  }
+
   interface ConnectState {
     org: string
     uid: string
@@ -100,10 +199,6 @@ export const slackRoutes = (ctx: AppContext) => {
         .string()
         .nullable()
         .describe("The connected Slack team's name, or null if not connected"),
-      default_channel: z
-        .string()
-        .nullable()
-        .describe("The channel Derive posts to, or null if unset"),
       needs_reauth: z
         .boolean()
         .describe(
@@ -158,7 +253,8 @@ export const slackRoutes = (ctx: AppContext) => {
     if (!code || !state) return fail(c, 400, "invalid Slack callback")
     try {
       const r = await exchangeSlackOAuth(slack.clientId, slack.clientSecret, code, redirectUri)
-      // Preserve an existing default channel across a reconnect.
+      // A reconnect keeps the workspace's channel subscriptions (they live in their own table)
+      // and its created_at; only the credentials are replaced.
       const existing = await meta.getSlackInstall(state.org)
       await meta.setSlackInstall({
         org_id: state.org,
@@ -166,7 +262,6 @@ export const slackRoutes = (ctx: AppContext) => {
         team_name: r.teamName,
         bot_token: encryptSecret(r.botToken, deps.encryptionKey),
         bot_user_id: r.botUserId,
-        default_channel: existing?.default_channel ?? null,
         needs_reauth: 0,
         created_at: existing?.created_at ?? new Date().toISOString(),
       } satisfies SlackInstallRecord)
@@ -274,8 +369,9 @@ export const slackRoutes = (ctx: AppContext) => {
     const ev = body.event
     // Install lifecycle: the app was removed, or a token was revoked. Flag the affected installs
     // for re-auth and let the Settings banner ask for a reconnect. Flag rather than delete — the
-    // default channel and the members' account links must survive, and a reconnect then restores
-    // service without redoing setup. Slack names the workspace by team_id only, hence the
+    // members' account links must survive, and a reconnect then restores service without redoing
+    // setup. (Channel subscriptions are keyed by org_id in their own table, so they survive
+    // either way; it is the install row and its links that deleting would cost.) Slack names the workspace by team_id only, hence the
     // by-team lookup, and one Slack team can back more than one Derive workspace.
     if (
       body.type === "event_callback" &&
@@ -297,6 +393,13 @@ export const slackRoutes = (ctx: AppContext) => {
             continue
           await flagSlackReauth(meta, install.org_id)
         }
+      return c.json({ ok: true })
+    }
+    // A Derive link was pasted (or is being typed). Render a preview for it. Deferred behind the
+    // ack like every other slow path here: resolving each link reads the artifact, its versions
+    // and its comments, and Slack still wants a reply inside 3s.
+    if (body.type === "event_callback" && ev?.type === "link_shared" && body.team_id && ev.user) {
+      runAfterAck(c, unfurlSharedLinks(body.team_id, ev))
       return c.json({ ok: true })
     }
     // Only human thread replies: a message with a thread_ts, no bot_id, not an edit/delete.
@@ -330,13 +433,136 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({ ok: true })
   })
 
+  // ── "Save to Derive" ────────────────────────────────────────────────────────────────────
+  // A message shortcut, so it reaches any message in any channel — not only replies under a
+  // mirrored card, which is all the reply-back path can see. See lib/slack-capture.ts for why
+  // the destination is a comment rather than a new artifact.
+
+  /** The Derive account behind a Slack user, plus the install that vouches for the team. Both
+   *  are required: the account is who the comment is authored as, and the install is what binds
+   *  the acting Slack team to a Derive workspace, exactly as the button path does. */
+  const captureActor = async (payload: SlackInteractionPayload) => {
+    const teamId = payload.team?.id
+    const slackUserId = payload.user?.id
+    if (!teamId || !slackUserId) return null
+    const link = await meta.getSlackUserLinkBySlackId(teamId, slackUserId)
+    if (!link) return null
+    const install = await meta.getSlackInstall(link.org_id)
+    // A workspace that disconnected keeps its members' account links, so re-check the install —
+    // without it the shortcut would keep writing into a workspace that cut Slack off.
+    if (!install || install.team_id !== teamId) return null
+    const [user] = await meta.getUsers([link.user_id])
+    return user ? { orgId: link.org_id, user } : null
+  }
+
+  const openCaptureModal = async (c: Context, payload: SlackInteractionPayload) => {
+    const triggerId = payload.trigger_id
+    const msg = payload.message
+    if (!triggerId || !msg?.ts || !payload.channel?.id) return c.json({ ok: true })
+    const actor = await captureActor(payload)
+    // No linked account → still open a modal, but one that asks them to connect. Falling back to
+    // the first install for the team is only used to find a bot token to open it WITH; nothing
+    // is written on this path.
+    const orgForToken =
+      actor?.orgId ?? (await meta.listSlackInstallsByTeam(payload.team?.id ?? ""))[0]?.org_id
+    if (!orgForToken) return c.json({ ok: true })
+    const bot = await resolveBotToken(meta, orgForToken, deps.encryptionKey)
+    if (!bot) return c.json({ ok: true })
+
+    const view = actor
+      ? captureModal({
+          channel: payload.channel.id,
+          channelName: payload.channel.name ?? null,
+          ts: msg.ts,
+          // A message shortcut carries the author's id but not always a name; `username` is
+          // present for bot/app messages, so prefer it and only spend a users.info lookup when
+          // there is an id to look up.
+          author:
+            msg.username || (msg.user ? await slackUserName(bot.token, msg.user) : "") || "Someone",
+          text: msg.text ?? "",
+          permalink: await slackPermalink(bot.token, payload.channel.id, msg.ts),
+        })
+      : captureLinkPromptModal(deps.baseUrl)
+    try {
+      await openSlackView(bot.token, triggerId, view)
+    } catch {
+      // The trigger expired or Slack refused the view. Nothing has been written, and there is
+      // no surface left to complain on — a message shortcut has no response_url.
+    }
+    return c.json({ ok: true })
+  }
+
+  /** Typeahead for the modal's artifact picker.
+   *
+   *  One indexed listArtifacts, not the full-text search behind `/derive <query>`: picking a doc
+   *  is a name lookup, and it has to answer on every keystroke inside Slack's 3s. `q` matches on
+   *  title through the same visibility gate the list uses, so the picker can only ever offer what
+   *  this account may already see. An empty query lists their recent artifacts, which makes the
+   *  picker useful before anything is typed at all. */
+  const captureSuggestions = async (c: Context, payload: SlackInteractionPayload) => {
+    const actor = await captureActor(payload)
+    if (!actor) return c.json({ options: [] })
+    const q = (payload.value ?? "").trim()
+    const rows = await meta.listArtifacts({
+      orgId: actor.orgId,
+      viewerId: actor.user.id,
+      publicOnly: !(await meta.getMembership(actor.orgId, actor.user.id)),
+      excludeRemoved: true,
+      limit: 20,
+      ...(q ? { q } : {}),
+    })
+    return c.json(captureOptions(rows))
+  }
+
+  const submitCapture = async (c: Context, payload: SlackInteractionPayload) => {
+    const actor = await captureActor(payload)
+    if (!actor) return c.json(captureResultModal("Connect your Derive account and try again."))
+    let m: CapturePrivateMeta
+    try {
+      m = JSON.parse(payload.view?.private_metadata ?? "") as CapturePrivateMeta
+    } catch {
+      return c.json(captureResultModal("Something went wrong reading that message."))
+    }
+    const values = payload.view?.state?.values ?? {}
+    const artifactId = values[SLACK_CAPTURE_BLOCK]?.[SLACK_CAPTURE_ACTION]?.selected_option?.value
+    const note = values[SLACK_CAPTURE_NOTE_BLOCK]?.[SLACK_CAPTURE_NOTE_ACTION]?.value ?? ""
+    if (!artifactId) return c.json(captureResultModal("Pick a doc to save this to."))
+
+    const artifact = await meta.getArtifactById(artifactId)
+    // The id came out of a modal, so it is client-supplied. Re-resolve it, confine it to the
+    // acting install's workspace, and re-check standing: the picker filtered by what they could
+    // see when it opened, which is not the same as what they may write to now.
+    if (!artifact || artifact.removed_at || artifact.org_id !== actor.orgId)
+      return c.json(captureResultModal("That doc isn't available any more."))
+    if (!(await authorizeUserStanding(actor.user.id, "comment", artifact)))
+      return c.json(captureResultModal("You don't have permission to comment on that doc."))
+
+    const comment = await writeCaptureComment(meta, artifact, m, note, {
+      id: actor.user.id,
+      name: actor.user.name ?? "Someone",
+    })
+    // The same fan-out a comment posted in the app runs — bells, webhooks, email. The channel
+    // mirror skips it on the Slack origin marker, so saving a message doesn't post it back out.
+    await commentCreatedAction(
+      { meta, bus, blobs, baseUrl: deps.baseUrl, notify },
+      artifact,
+      comment,
+      { mentions: [], actorId: actor.user.id },
+    )
+    deps.pokeWebhooks?.()
+    const link = commentDeepLink(deps.baseUrl, artifact, comment.thread_id)
+    return c.json(
+      captureResultModal(`Saved to <${link}|${mrkdwnLabel(artifact.title ?? artifact.short_id)}>.`),
+    )
+  }
+
   // Block Kit interactivity: a button on a comment card resolves / reopens that thread. Trust,
   // like reply-back, is by data not a Derive principal — but the target here comes from the
   // (attacker-influenceable) button value, so we bind it three ways: (1) the Slack signature
   // authenticates the request; (2) a slack_thread_link maps threadId→artifact→org; (3) the
   // ACTING Slack team must equal that org's connected install — so one signed workspace can't
   // act on another org's thread by carrying its ids (the events path is immune to this because
-  // it keys on Slack-assigned channel+ts, not a value). Then the org's slackPost opt-in gates it.
+  // it keys on Slack-assigned channel+ts, not a value).
   // Deliberately NOT gated on a Derive role: any member of the connected channel can resolve, the
   // same collaboration boundary reply-back already grants for posting — and resolve is reversible.
   // The state flip is applied + fanned out inline (durable before we ack); the cosmetic Slack
@@ -355,6 +581,17 @@ export const slackRoutes = (ctx: AppContext) => {
     } catch {
       return fail(c, 400, "invalid payload")
     }
+
+    // "Save to Derive" on a message → open the picker modal. The trigger_id expires in ~3s, so
+    // views.open has to be the FIRST thing that happens, and the modal IS the ack: an ephemeral
+    // message would need the bot to be in a channel a shortcut can be fired from anywhere.
+    if (payload.type === "message_action" && payload.callback_id === SLACK_CAPTURE_CALLBACK)
+      return openCaptureModal(c, payload)
+    // Each keystroke in that modal's artifact picker.
+    if (payload.type === "block_suggestion") return captureSuggestions(c, payload)
+    // …and the Save button.
+    if (payload.type === "view_submission" && payload.view?.callback_id === SLACK_CAPTURE_CALLBACK)
+      return submitCapture(c, payload)
 
     const action = payload.actions?.[0]
     if (payload.type !== "block_actions" || !action?.value) return c.json({ ok: true })
@@ -403,18 +640,35 @@ export const slackRoutes = (ctx: AppContext) => {
     // Re-establish trust from data (never the button value alone): the thread link maps this
     // thread to this artifact + org, the acting Slack team owns that org's install, and the
     // org's channel mirror is on. Any miss → ack and no-op (a click that changes nothing).
-    const link = await meta.getSlackThreadLinkByThread(threadId)
+    // Links are keyed (thread, channel), so resolve the one for the channel this click came
+    // from. No channel means no click we can place: Slack sends one on every block_actions in a
+    // conversation, and an earlier fallback to "the thread's first link" was a fail-OPEN — a
+    // payload omitting the field skipped the channel check entirely.
+    const clickedIn = payload.channel?.id
+    if (!clickedIn) return c.json({ ok: true })
+    const link = await meta.getSlackThreadLink(threadId, clickedIn)
     if (link && link.artifact_id === artifactId) {
       const install = await meta.getSlackInstall(link.org_id)
       const teamOwnsThread = !!install && !!payload.team?.id && install.team_id === payload.team.id
-      if (teamOwnsThread && (await meta.getOrgSettings(link.org_id)).slackPost) {
+      // …and the workspace still wants this channel. A thread link outlives an unsubscribe, so
+      // without this the buttons keep working in a channel an admin deliberately cut off.
+      if (teamOwnsThread && (await channelIsSubscribed(meta, link.org_id, clickedIn))) {
         const artifact = await meta.getArtifactById(artifactId)
         if (artifact) {
-          await resolveThreadAction({ meta, bus, notify }, artifact, threadId, op)
-          // Reflect the new state in Slack: keep the comment section, swap the button + footer.
-          // Fire-and-forget — the resolve above is already durable, so a slow/failed cosmetic
-          // update must not sit on the ack path (waitUntil on Workers; in-process on Node).
           const who = payload.user?.username || payload.user?.name || undefined
+          // Rewrites the card in EVERY channel this thread is mirrored into, durably, via the
+          // outbox — including this one (lib/slack-comments.ts enqueueSlackThreadState).
+          await resolveThreadAction(
+            { meta, bus, notify, baseUrl: deps.baseUrl },
+            artifact,
+            threadId,
+            op,
+            who,
+          )
+          // …and repaint this channel immediately so the clicker sees the button change now
+          // rather than on the next outbox tick. Optimistic: the durable update above is what
+          // makes it true, so a slow or failed response_url costs nothing but the instant paint,
+          // and must not sit on the ack path (waitUntil on Workers; in-process on Node).
           const section0 = payload.message?.blocks?.[0]
           const blocks = [section0, ...threadStateBlocks(op, action.value, who)].filter(Boolean)
           if (payload.response_url) {
@@ -454,10 +708,114 @@ export const slackRoutes = (ctx: AppContext) => {
     if (!teamId || !slackUserId)
       return c.json({ response_type: "ephemeral", text: "Sorry — malformed command." })
 
+    // `/derive help` is answered BEFORE the account-link gate: it describes the command and
+    // reveals nothing about the workspace, and someone who has not linked yet is exactly who
+    // needs it. Gating it behind linking would hide the instructions from the only person
+    // reading them.
+    if (text.trim().toLowerCase() === "help")
+      return c.json({ response_type: "ephemeral", blocks: helpBlocks(deps.baseUrl) })
+
     // Resolve the acting Derive user (and their workspace) from the account link. No link →
     // we can't scope results to them, so prompt them to link rather than leak or over-share.
     const link = await meta.getSlackUserLinkBySlackId(teamId, slackUserId)
     if (!link) return c.json({ response_type: "ephemeral", blocks: notLinkedBlocks(deps.baseUrl) })
+    // Disconnecting Slack drops the install but leaves the members' account links, so without
+    // this a workspace that explicitly disconnected still answered /derive — and, now that the
+    // subcommands write, still accepted changes.
+    if (!(await meta.getSlackInstall(link.org_id)))
+      return c.json({
+        response_type: "ephemeral",
+        text: "This workspace isn't connected to Slack any more.",
+      })
+
+    // Subscription subcommands, run IN the channel they act on — which is why there is no
+    // channel id to type. Managing a channel's subscription is a workspace-admin action, so it
+    // is gated on the linked user's membership role rather than on merely being linked.
+    const [verb, ...rest] = text.split(/\s+/)
+    if (verb === "subscribe" || verb === "unsubscribe" || verb === "settings") {
+      const channelId = form.get("channel_id")
+      const channelName = form.get("channel_name")
+      if (!channelId)
+        return c.json({ response_type: "ephemeral", text: "Run this inside a channel." })
+      const seat = await meta.getMembership(link.org_id, link.user_id)
+      if (!seat || !roleAllows(seat.role, "manage"))
+        return c.json({
+          response_type: "ephemeral",
+          text: "Only a workspace admin can change what Derive posts here.",
+        })
+      if (verb === "unsubscribe") {
+        await meta.deleteSlackSubscriptionsByChannel(link.org_id, channelId)
+        return c.json({ response_type: "ephemeral", text: "Done — Derive won't post here." })
+      }
+      if (verb === "settings") {
+        const subs = (await meta.listSlackSubscriptions(link.org_id)).filter(
+          (x) => x.channel_id === channelId,
+        )
+        // Resolve titles so the card can name the collection rather than print `col_9f2ac1`.
+        // Only when something here is actually scoped — most channels take the whole workspace.
+        const titles = new Map<string, string>()
+        if (subs.some((x) => x.scope_kind === "collection"))
+          for (const col of await meta.listCollections(link.org_id)) titles.set(col.id, col.title)
+        return c.json({
+          response_type: "ephemeral",
+          blocks: subscriptionBlocks(
+            deps.baseUrl,
+            subs.map((x) => ({ ...x, scope_title: titles.get(x.scope_id) ?? null })),
+          ),
+        })
+      }
+      // A private channel the app was never invited to accepts the subscription and then drops
+      // every delivery into the dead-letter queue, with nothing anywhere saying why. The bot can
+      // self-join a PUBLIC channel on its first post (postWithRecovery autoJoin), so only the
+      // unreachable case is worth stopping, and only when Slack actually answered.
+      const bot = await resolveBotToken(meta, link.org_id, deps.encryptionKey)
+      const reach = bot ? await slackChannelReach(bot.token, channelId) : null
+      if (reach && !reach.reachable)
+        return c.json({
+          response_type: "ephemeral",
+          text: "Invite me to this channel first — `/invite @Derive` — then run `/derive subscribe` again. I can't post in a private channel I'm not a member of.",
+        })
+      // `/derive subscribe [collection name]` — the collection is matched by name so nobody has
+      // to know an id; omit it to subscribe the whole workspace.
+      const wanted = rest.join(" ").trim()
+      let collection: { id: string; title: string } | null = null
+      if (wanted) {
+        const all = await meta.listCollections(link.org_id)
+        const hit = all.find((x) => x.title.toLowerCase() === wanted.toLowerCase())
+        if (!hit)
+          return c.json({
+            response_type: "ephemeral",
+            text: `No collection called "${wanted}" in this workspace.`,
+          })
+        collection = { id: hit.id, title: hit.title }
+      }
+      // Re-running `/derive subscribe` on an already-subscribed target must not quietly reset
+      // its events, author filter and paused state back to the defaults — the upsert would.
+      const scopeId = collection?.id ?? ""
+      const existing = (await meta.listSlackSubscriptions(link.org_id)).find(
+        (x) => x.channel_id === channelId && x.scope_id === scopeId,
+      )
+      if (existing)
+        return c.json({
+          response_type: "ephemeral",
+          text: "This channel is already subscribed — `/derive settings` shows what it gets.",
+        })
+      await meta.upsertSlackSubscription({
+        id: newId("sub"),
+        org_id: link.org_id,
+        channel_id: channelId,
+        channel_name: channelName ?? null,
+        scope_kind: collection ? "collection" : "workspace",
+        scope_id: scopeId,
+        created_by: link.user_id,
+      })
+      return c.json({
+        response_type: "ephemeral",
+        text: collection
+          ? `Subscribed this channel to *${collection.title}*.`
+          : "Subscribed this channel to the whole workspace.",
+      })
+    }
 
     const publicOnly = !(await meta.getMembership(link.org_id, link.user_id))
     // Bare /derive: one indexed listArtifacts query — fast enough to answer inline.
@@ -514,8 +872,10 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({ response_type: "ephemeral", text: "Searching…" })
   })
 
-  // Connection status for the Settings UI: whether Slack is configured at all, whether
-  // this workspace has connected one, and its team + default channel.
+  // Connection status for the Settings UI: whether Slack is configured at all, whether this
+  // workspace has connected one, its team name, and whether the token needs a re-auth. Where
+  // Derive posts is no longer part of the connection — that is one slack_subscription row per
+  // channel, read from GET /v1/slack/subscriptions.
   app.openapi(
     createRoute({
       method: "get",
@@ -524,7 +884,7 @@ export const slackRoutes = (ctx: AppContext) => {
       summary: "Slack connection status for the signed-in user's workspace.",
       responses: {
         200: {
-          description: "Whether Slack is available + connected, and the team + default channel.",
+          description: "Whether Slack is available + connected, the team name, and re-auth state.",
           content: { "application/json": { schema: SlackStatus } },
         },
       },
@@ -543,7 +903,6 @@ export const slackRoutes = (ctx: AppContext) => {
         available: !!slack,
         connected: !!install,
         team_name: install?.team_name ?? null,
-        default_channel: install?.default_channel ?? null,
         needs_reauth: install?.needs_reauth === 1,
         slack_dm: wantsSlackDm(pref?.prefs),
         linked,
@@ -591,18 +950,64 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({ ok: true })
   })
 
-  // Set the channel Derive posts to (Slack channel id, e.g. "C0123ABC"). Admin only.
+  // ---- Channel subscriptions -------------------------------------------------------------
+  // Which channels hear about what. Replaces the single default channel; modelled on
+  // routes/webhooks.ts, which is the house shape for workspace-scoped list CRUD.
+  const SlackSubscription = z
+    .object({
+      id: z.string(),
+      channel_id: z.string().describe("Slack channel id, e.g. C0123ABC456"),
+      channel_name: z
+        .string()
+        .nullable()
+        .describe("The channel's #name for display, or null if unknown"),
+      scope_kind: z
+        .enum(["workspace", "collection"])
+        .describe("Whether this covers the whole workspace or one collection"),
+      scope_id: z
+        .string()
+        .describe('The collection id when scope_kind is "collection"; empty for a workspace scope'),
+      scope_title: z
+        .string()
+        .nullable()
+        .describe(
+          "The scoped collection's title, resolved for display. Null for a workspace scope, and also when the collection has been deleted — the subscription then matches nothing, and saying so is more useful than a bare id.",
+        ),
+      events: z.string().describe('Comma-separated event types to deliver, or "*" for all events'),
+      authors: z
+        .enum(["all", "human", "agent"])
+        .describe("Whose activity reaches this channel: everyone, only people, or only agents"),
+      active: z
+        .union([z.literal(0), z.literal(1)])
+        .describe("Whether deliveries are enabled (1) or paused (0)"),
+      created_at: z.string(),
+    })
+    .openapi("SlackSubscription")
+
+  /** The response shape, which deliberately omits `created_by` — the declared schema has no such
+   *  field, and an internal user id has no business on a config row the client only displays. */
+  const publicSubscription = <T extends { created_by: string | null }>({
+    created_by: _c,
+    ...rest
+  }: T): Omit<T, "created_by"> => rest
+
   app.openapi(
     createRoute({
-      method: "patch",
-      path: "/v1/slack",
+      method: "get",
+      path: "/v1/slack/subscriptions",
       tags: ["Slack"],
-      summary: "Set the channel Derive posts to (Admin only).",
+      summary: "List the workspace's Slack channel subscriptions (Admin only).",
       responses: {
         200: {
-          description: "The new default channel (or null to clear it).",
+          description:
+            "The workspace's subscriptions, plus the event types one can carry — the server is the source of that list so the client can't drift from it.",
           content: {
-            "application/json": { schema: z.object({ default_channel: z.string().nullable() }) },
+            "application/json": {
+              schema: z.object({
+                subscriptions: z.array(SlackSubscription),
+                event_options: z.array(z.enum(SLACK_SUBSCRIBABLE_EVENTS)),
+              }),
+            },
           },
         },
       },
@@ -610,13 +1015,168 @@ export const slackRoutes = (ctx: AppContext) => {
     async (c) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
-      const install = await meta.getSlackInstall(org)
-      if (!install) return bail(fail(c, 404, "Slack is not connected"))
-      const b = await readJson(c, z.object({ default_channel: z.string().nullable() }))
+      const subs = await meta.listSlackSubscriptions(org)
+      // Resolve collection titles so a scoped row can NAME its collection. Without this the UI
+      // can only render the scope_kind, and two collection subscriptions on one channel are
+      // indistinguishable — you cannot tell which one you are about to remove. One extra query,
+      // and only when something is actually scoped.
+      const titles = new Map<string, string>()
+      if (subs.some((x) => x.scope_kind === "collection"))
+        for (const col of await meta.listCollections(org)) titles.set(col.id, col.title)
+      return c.json({
+        subscriptions: subs.map((x) => ({
+          ...publicSubscription(x),
+          scope_title: x.scope_kind === "collection" ? (titles.get(x.scope_id) ?? null) : null,
+        })),
+        event_options: [...SLACK_SUBSCRIBABLE_EVENTS],
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/slack/subscriptions",
+      tags: ["Slack"],
+      summary: "Subscribe a channel to workspace activity (Admin only).",
+      responses: {
+        201: {
+          description: "The created (or updated) subscription.",
+          content: { "application/json": { schema: SlackSubscription } },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const b = await readJson(
+        c,
+        z.object({
+          channel_id: z.string(),
+          channel_name: z.string().optional(),
+          collection: z.string().optional(),
+          events: z.array(z.string()).optional(),
+          authors: z.enum(["all", "human", "agent"]).optional(),
+        }),
+      )
       if (b instanceof Response) return bail(b)
-      const channel = b.default_channel?.trim() ? b.default_channel.trim() : null
-      await meta.setSlackInstall({ ...install, default_channel: channel })
-      return c.json({ default_channel: channel })
+      const channelId = b.channel_id.trim()
+      // A Slack conversation id, not a #name. Storing "#general" would make every threading
+      // lookup miss forever — the link is written with the id Slack echoes back — so each
+      // comment would post a new top-level message instead of threading under the last.
+      if (!/^[CGD][A-Z0-9]{6,}$/.test(channelId))
+        return bail(fail(c, 400, "channel_id must be a Slack channel id like C0123ABC456"))
+      // A collection scope must name a collection in THIS workspace.
+      let scopeTitle: string | null = null
+      if (b.collection) {
+        const col = await meta.getCollection(b.collection)
+        if (!col || col.org_id !== org) return bail(fail(c, 404, "collection not found"))
+        scopeTitle = col.title
+      }
+      const me = await requireUser(c)
+      const created = await meta.upsertSlackSubscription({
+        id: newId("sub"),
+        org_id: org,
+        channel_id: channelId,
+        channel_name: b.channel_name ?? null,
+        scope_kind: b.collection ? "collection" : "workspace",
+        scope_id: b.collection ?? "",
+        events: subscribableEvents(b.events),
+        authors: b.authors ?? "all",
+        created_by: me instanceof Response ? null : me.id,
+      })
+      return c.json({ ...publicSubscription(created), scope_title: scopeTitle }, 201)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/slack/subscriptions/{id}",
+      tags: ["Slack"],
+      summary: "Update a channel subscription (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The updated subscription.",
+          content: { "application/json": { schema: SlackSubscription } },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const b = await readJson(
+        c,
+        z.object({
+          events: z.array(z.string()).optional(),
+          authors: z.enum(["all", "human", "agent"]).optional(),
+          active: z.boolean().optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const updated = await meta.updateSlackSubscription(c.req.param("id"), org, {
+        ...(b.events ? { events: subscribableEvents(b.events) } : {}),
+        ...(b.authors ? { authors: b.authors } : {}),
+        ...(b.active === undefined ? {} : { active: b.active ? (1 as const) : (0 as const) }),
+      })
+      if (!updated) return bail(fail(c, 404, "subscription not found"))
+      // PATCH cannot move a subscription between scopes, but the response must still carry
+      // scope_title or a client that re-renders from it would drop the collection's name.
+      const scoped =
+        updated.scope_kind === "collection" ? await meta.getCollection(updated.scope_id) : null
+      return c.json({ ...publicSubscription(updated), scope_title: scoped?.title ?? null })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/slack/subscriptions/{id}",
+      tags: ["Slack"],
+      summary: "Remove a channel subscription (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: { 204: { description: "The subscription was removed." } },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      await meta.deleteSlackSubscription(c.req.param("id"), org)
+      return c.body(null, 204)
+    },
+  )
+
+  // The channels the bot can see, so the picker never asks anyone to paste a raw id.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/slack/channels",
+      tags: ["Slack"],
+      summary: "List public Slack channels for the subscription picker (Admin only).",
+      responses: {
+        200: {
+          description: "Public channels in the connected workspace.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                channels: z.array(z.object({ id: z.string(), name: z.string() })),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const bot = await resolveBotToken(meta, org, deps.encryptionKey)
+      if (!bot) return bail(fail(c, 404, "Slack is not connected"))
+      try {
+        return c.json({ channels: await listSlackChannels(bot.token) })
+      } catch (err) {
+        log.warn("slack channel list failed", { error: String(err) })
+        return bail(fail(c, 502, "could not list Slack channels"))
+      }
     },
   )
 
@@ -646,20 +1206,32 @@ interface SlackEventEnvelope {
   /** The Slack workspace the event came from. The only workspace identifier on an
    *  app_uninstalled / tokens_revoked event — those carry no channel to key on. */
   team_id?: string
-  event?: {
-    type?: string
-    subtype?: string
-    bot_id?: string
-    user?: string
-    text?: string
-    channel?: string
-    ts?: string
-    thread_ts?: string
-    /** On `tokens_revoked` only: which token classes were revoked, as arrays of user ids.
-     *  `oauth` = per-user tokens (a member's "Sign in with Slack" grant); `bot` = the bot's own,
-     *  the only class that invalidates the install. Either key may be absent. */
-    tokens?: { oauth?: string[]; bot?: string[] }
-  }
+  event?: SlackEventPayload
+}
+
+/** The `event` object of an Events API envelope — only the fields the handlers below read. */
+interface SlackEventPayload {
+  type?: string
+  subtype?: string
+  bot_id?: string
+  user?: string
+  text?: string
+  channel?: string
+  ts?: string
+  thread_ts?: string
+  /** On `tokens_revoked` only: which token classes were revoked, as arrays of user ids.
+   *  `oauth` = per-user tokens (a member's "Sign in with Slack" grant); `bot` = the bot's own,
+   *  the only class that invalidates the install. Either key may be absent. */
+  tokens?: { oauth?: string[]; bot?: string[] }
+  /** On `link_shared` only. `message_ts` + `channel` locate a posted message; `unfurl_id` +
+   *  `source` are the alternative handle Slack gives for a link still in the composer.
+   *  `is_bot_user_member` says whether the bot is actually in that channel — the event fires
+   *  workspace-wide regardless. */
+  links?: { url: string; domain?: string }[]
+  is_bot_user_member?: boolean
+  message_ts?: string
+  unfurl_id?: string
+  source?: string
 }
 
 /** The Block Kit interactivity payload (the JSON inside the form's `payload` field). Only the
@@ -670,7 +1242,27 @@ interface SlackInteractionPayload {
   response_url?: string
   /** The workspace the click came from; bound to the thread's org install for authz. */
   team?: { id?: string }
+  /** The conversation the click came from — which of a thread's mirrored messages it was.
+   *  `name` only arrives on a message shortcut, where it is the channel the message lives in. */
+  channel?: { id?: string; name?: string }
   user?: { id?: string; username?: string; name?: string }
   actions?: Array<{ action_id?: string; value?: string }>
-  message?: { blocks?: unknown[] }
+  message?: { blocks?: unknown[]; text?: string; ts?: string; user?: string; username?: string }
+  /** message_action only: which shortcut fired, and the token that lets us open a modal. */
+  callback_id?: string
+  trigger_id?: string
+  /** block_suggestion only: what has been typed into the select so far. */
+  value?: string
+  action_id?: string
+  /** view_submission / block_suggestion: the modal the interaction came from. */
+  view?: {
+    callback_id?: string
+    private_metadata?: string
+    state?: {
+      values?: Record<
+        string,
+        Record<string, { value?: string; selected_option?: { value?: string } }>
+      >
+    }
+  }
 }

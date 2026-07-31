@@ -636,7 +636,12 @@ export function registerPublishTool(tc: ToolContext): void {
           },
           artifact,
           version,
-          { isNew: !short_id, onBehalf: actingFor?.id ?? null, resolves: addresses ?? [] },
+          {
+            isNew: !short_id,
+            onBehalf: actingFor?.id ?? null,
+            resolves: addresses ?? [],
+            actorId: agent.id,
+          },
         )
         // Tag at publish time — the one-step "auto-tag on create". `tags` given ⇒ set them
         // (normalized, deduped, capped); an empty array clears; omitted leaves them be, so

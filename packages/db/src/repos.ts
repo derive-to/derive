@@ -65,6 +65,7 @@ import type {
   NewSession,
   NewSessionMessage,
   NewSignupAttribution,
+  NewSlackSubscription,
   NewVersion,
   NewVersionData,
   NewWebhook,
@@ -91,7 +92,9 @@ import type {
   SessionRecord,
   SessionState,
   SignupAttributionRecord,
+  SlackAuthorFilter,
   SlackInstallRecord,
+  SlackSubscriptionRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   SortMode,
@@ -180,6 +183,7 @@ import {
   sessionMessage,
   signupAttribution,
   slackInstall,
+  slackSubscription,
   slackThreadLink,
   slackUserLink,
   subscription,
@@ -2206,6 +2210,10 @@ export function makeRepos(db: SqliteDb) {
   const listSlackInstallsByTeam = async (teamId: string): Promise<SlackInstallRecord[]> =>
     await db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId)).all()
   const deleteSlackInstall = async (orgId: string): Promise<void> => {
+    // Disconnecting forgets WHERE to post as well as how. Otherwise the routing outlives the
+    // credentials, and reconnecting to a different Slack team resumes posting to the old team's
+    // channel ids — which is what the single default_channel used to do implicitly.
+    await db.delete(slackSubscription).where(eq(slackSubscription.org_id, orgId)).run()
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
   }
 
@@ -2255,14 +2263,17 @@ export function makeRepos(db: SqliteDb) {
       .from(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
       .all()
-  const getSlackThreadLinkByThread = async (
+  const getSlackThreadLink = async (
     threadId: string,
+    channel: string,
   ): Promise<SlackThreadLinkRecord | null> =>
     (await db
       .select()
       .from(slackThreadLink)
-      .where(eq(slackThreadLink.thread_id, threadId))
+      .where(and(eq(slackThreadLink.thread_id, threadId), eq(slackThreadLink.channel, channel)))
       .get()) ?? null
+  const listSlackThreadLinksByThread = async (threadId: string): Promise<SlackThreadLinkRecord[]> =>
+    await db.select().from(slackThreadLink).where(eq(slackThreadLink.thread_id, threadId)).all()
   const getSlackThreadLinkByTs = async (
     channel: string,
     ts: string,
@@ -2273,11 +2284,100 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
       .get()) ?? null
   const setSlackThreadLink = async (l: SlackThreadLinkRecord): Promise<void> => {
-    const { thread_id: _t, created_at: _c, ...set } = l
+    const { thread_id: _t, channel: _ch, created_at: _c, ...set } = l
     await db
       .insert(slackThreadLink)
       .values(l)
-      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .onConflictDoUpdate({ target: [slackThreadLink.thread_id, slackThreadLink.channel], set })
+      .run()
+  }
+  const listSlackSubscriptions = async (orgId: string): Promise<SlackSubscriptionRecord[]> =>
+    await db
+      .select()
+      .from(slackSubscription)
+      .where(eq(slackSubscription.org_id, orgId))
+      .orderBy(desc(slackSubscription.created_at))
+      .all()
+  const upsertSlackSubscription = async (
+    sub: NewSlackSubscription,
+  ): Promise<SlackSubscriptionRecord> => {
+    const row = {
+      scope_kind: "workspace" as const,
+      scope_id: "",
+      events: "*",
+      authors: "all" as const,
+      active: 1 as const,
+      channel_name: null,
+      created_by: null,
+      ...sub,
+    }
+    // Identity and provenance are not editable by an upsert — a second admin re-subscribing a
+    // channel must not re-stamp who created it.
+    const { id: _i, org_id: _o, created_by: _c, ...set } = row
+    await db
+      .insert(slackSubscription)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          slackSubscription.org_id,
+          slackSubscription.channel_id,
+          slackSubscription.scope_kind,
+          slackSubscription.scope_id,
+        ],
+        set,
+      })
+      .run()
+    const found = await db
+      .select()
+      .from(slackSubscription)
+      .where(
+        and(
+          eq(slackSubscription.org_id, row.org_id),
+          eq(slackSubscription.channel_id, row.channel_id),
+          eq(slackSubscription.scope_kind, row.scope_kind),
+          eq(slackSubscription.scope_id, row.scope_id),
+        ),
+      )
+      .get()
+    if (!found) throw new Error("slack subscription upsert did not persist")
+    return found
+  }
+  const updateSlackSubscription = async (
+    id: string,
+    orgId: string,
+    fields: {
+      events?: string
+      authors?: SlackAuthorFilter
+      active?: 0 | 1
+      channel_name?: string | null
+    },
+  ): Promise<SlackSubscriptionRecord | null> => {
+    await db
+      .update(slackSubscription)
+      .set(fields)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+      .run()
+    return (
+      (await db
+        .select()
+        .from(slackSubscription)
+        .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+        .get()) ?? null
+    )
+  }
+  const deleteSlackSubscription = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+      .run()
+  }
+  const deleteSlackSubscriptionsByChannel = async (
+    orgId: string,
+    channelId: string,
+  ): Promise<void> => {
+    await db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.org_id, orgId), eq(slackSubscription.channel_id, channelId)))
       .run()
   }
   const getSlackUserLinkBySlackId = async (
@@ -4024,7 +4124,13 @@ export function makeRepos(db: SqliteDb) {
     setModelCredential,
     deleteModelCredential,
     listModelCredentials,
-    getSlackThreadLinkByThread,
+    getSlackThreadLink,
+    listSlackThreadLinksByThread,
+    listSlackSubscriptions,
+    upsertSlackSubscription,
+    updateSlackSubscription,
+    deleteSlackSubscription,
+    deleteSlackSubscriptionsByChannel,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
     getSlackUserLinkBySlackId,

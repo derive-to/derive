@@ -418,7 +418,13 @@ const DATA_TABLE_MIN_CELLS = 4
 // bounded capture with an anchored check. The old single-regex forms interleaved \s*
 // runs around optional characters, which is the classic polynomial-backtracking shape
 // CodeQL flagged — and an advisory helper must never be the slow path of a publish.
-const HTML_CELL = /<td\b[^>]*>([^<]{1,40})<\/td>/gi
+// The attribute run is BOUNDED, and that bound is what makes this linear. Unbounded, `[^>]*`
+// scans to end-of-string from every `<td` before failing to find a `>` — so a page of
+// `<td<td<td…` (no `>` anywhere, the exact CodeQL shape) costs one full scan per start
+// position: O(n²), measured at 4s for 40k repetitions. 200 characters is far more than any
+// real cell's attributes, and the only thing over-long attributes cost is being left out of an
+// advisory's cell count — a heuristic nudge, not a correctness claim.
+const HTML_CELL = /<td\b[^>]{0,200}>([^<]{1,40})<\/td>/gi
 const MD_TABLE_ROW = /^\s*\|.+\|\s*$/gm
 const MD_CELL = /\|([^|\n]{1,40})(?=\|)/g
 // Validated on a TRIMMED capture so the pattern carries no whitespace at all — the first

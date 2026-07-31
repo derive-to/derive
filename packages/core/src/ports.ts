@@ -1019,6 +1019,26 @@ export interface IntegrationStore {
   listSlackInstallsByTeam(teamId: string): Promise<SlackInstallRecord[]>
   /** Disconnect Slack for a workspace. */
   deleteSlackInstall(orgId: string): Promise<void>
+  // ---- Slack channel subscriptions ---------------------------------------
+  /** Every subscription for a workspace, newest first. */
+  listSlackSubscriptions(orgId: string): Promise<SlackSubscriptionRecord[]>
+  /** Create a subscription, or update the existing one for the same (org, channel, scope). */
+  upsertSlackSubscription(sub: NewSlackSubscription): Promise<SlackSubscriptionRecord>
+  /** Partial update, org-scoped so a caller can't reach across tenants. Null on no match. */
+  updateSlackSubscription(
+    id: string,
+    orgId: string,
+    fields: {
+      events?: string
+      authors?: SlackAuthorFilter
+      active?: 0 | 1
+      channel_name?: string | null
+    },
+  ): Promise<SlackSubscriptionRecord | null>
+  /** Remove a subscription, org-scoped. */
+  deleteSlackSubscription(id: string, orgId: string): Promise<void>
+  /** Remove every subscription pointing at a channel (used by `/derive unsubscribe`). */
+  deleteSlackSubscriptionsByChannel(orgId: string, channelId: string): Promise<void>
   // ---- Per-user model-plan credentials -----------------------------------
   /** A user's own model credential for a provider (encrypted `secret`), or null. */
   getModelCredential(
@@ -1033,7 +1053,14 @@ export interface IntegrationStore {
   /** A user's connected credentials (all providers) — for the settings hint list. */
   listModelCredentials(orgId: string, userId: string): Promise<ModelCredentialRecord[]>
   /** The Slack message a Derive thread is mirrored to (for threading replies), or null. */
-  getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null>
+  /** The Slack message mirroring a Derive thread INTO one channel, or null. A thread mirrors
+   *  into every channel subscribed to its artifact, so the channel is part of the key. */
+  getSlackThreadLink(threadId: string, channel: string): Promise<SlackThreadLinkRecord | null>
+  /** Every channel a Derive thread has been mirrored into. No production caller today — the
+   *  senders and the interactivity handler all resolve a specific (thread, channel) — but it is
+   *  what the contract tests and the fan-out tests assert against, and the natural query for
+   *  anything that needs to show or clean up a thread's mirrors. */
+  listSlackThreadLinksByThread(threadId: string): Promise<SlackThreadLinkRecord[]>
   /** The Derive thread a Slack message maps to (for reply-back), or null. */
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
   /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
@@ -2729,7 +2756,6 @@ export interface OrgSettings {
    *  pull request linking to the Derive preview of its docs. */
   githubPreviewLink: boolean
   /** Post Derive comment activity to the connected Slack workspace (the thread mirror). */
-  slackPost: boolean
   /** The access a NEW publish lands with when the publisher doesn't say (see
    *  access-model.md). Factory default is the "team draft": `workspace_access =
    *  member` (a pasted link opens for a teammate or an on-behalf agent at their
@@ -2804,7 +2830,6 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   githubPostComments: true,
   githubMirrorComments: true,
   githubPreviewLink: true,
-  slackPost: true,
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
@@ -2821,7 +2846,10 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot
- *  token, AES-encrypted at rest. `default_channel` is where Derive posts when an artifact
+ *  token, AES-encrypted at rest. Where Derive posts is no longer a property of the install —
+ *  see `slack_subscription`, one row per subscribed channel. The `default_channel` COLUMN is
+ *  left in place unused (lint:schema forbids DROP COLUMN) but is no longer read or written.
+ *  Historically `default_channel` was where Derive posted when an artifact
  *  has no more specific channel. */
 /** A team member's own model-plan credential, encrypted at rest. `secret` is the AES-GCM
  *  blob (lib/crypto); `provider` matches a runner provider ("claude-code" | "codex"); `kind`
@@ -2847,7 +2875,6 @@ export interface SlackInstallRecord {
   team_name: string | null
   bot_token: string
   bot_user_id: string | null
-  default_channel: string | null
   /** 1 when a Slack call failed for auth/scope reasons (invalid_auth, token_revoked,
    *  missing_scope); the Settings UI shows a reconnect banner. Cleared on reconnect. */
   needs_reauth?: 0 | 1
@@ -2887,6 +2914,51 @@ export interface SlackUserLinkRecord {
   team_id: string
   slack_user_id: string
   created_at: string
+}
+
+/** Where a subscription's events come from: the whole workspace, or one collection. */
+export type SlackScopeKind = "workspace" | "collection"
+/** Which authors' activity a subscription carries. `agent` is the axis unique to Derive —
+ *  agents are first-class authors here, and a channel usually wants one or the other. */
+export type SlackAuthorFilter = "all" | "human" | "agent"
+
+/**
+ * A Slack channel subscribed to a workspace's activity. Replaces the one-channel-per-workspace
+ * `slack_install.default_channel`: several channels, each scoped and filtered independently.
+ *
+ * `events` uses the same encoding as `webhook.events` — comma-separated types, or "*" for all —
+ * so the two subscription surfaces read the same way.
+ */
+export interface SlackSubscriptionRecord {
+  id: string
+  org_id: string
+  channel_id: string
+  /** Denormalized `#name` for display. Never authoritative; the id is the key. */
+  channel_name: string | null
+  scope_kind: SlackScopeKind
+  /** The collection id when `scope_kind` is "collection"; the empty string for a workspace
+   *  scope. Empty rather than NULL because SQL treats NULLs as distinct in a UNIQUE
+   *  constraint — nullable here would silently allow duplicate workspace subscriptions. */
+  scope_id: string
+  events: string
+  authors: SlackAuthorFilter
+  /** Paused (0) subscriptions keep their config but deliver nothing. */
+  active: 0 | 1
+  created_by: string | null
+  created_at: string
+}
+
+export interface NewSlackSubscription {
+  id: string
+  org_id: string
+  channel_id: string
+  channel_name?: string | null
+  scope_kind?: SlackScopeKind
+  scope_id?: string
+  events?: string
+  authors?: SlackAuthorFilter
+  active?: 0 | 1
+  created_by?: string | null
 }
 
 export interface GitHubAppRecord {

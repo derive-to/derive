@@ -24,7 +24,7 @@ const REWARD_SITES = [
     why: "the publish receipt",
   },
   {
-    file: "apps/api/src/routes/embeds.ts",
+    file: "apps/api/src/lib/unfurl-info.ts",
     marker: "dataSummary",
     why: "the share card",
   },

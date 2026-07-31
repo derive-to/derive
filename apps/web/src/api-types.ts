@@ -3214,7 +3214,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Whether Slack is available + connected, and the team + default channel. */
+                /** @description Whether Slack is available + connected, the team name, and re-auth state. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -3248,8 +3248,18 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        /** Set the channel Derive posts to (Admin only). */
-        patch: {
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/slack/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the workspace's Slack channel subscriptions (Admin only). */
+        get: {
             parameters: {
                 query?: never;
                 header?: never;
@@ -3258,19 +3268,145 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The new default channel (or null to clear it). */
+                /** @description The workspace's subscriptions, plus the event types one can carry — the server is the source of that list so the client can't drift from it. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": {
-                            default_channel: string | null;
+                            subscriptions: components["schemas"]["SlackSubscription"][];
+                            event_options: ("comment.created" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested")[];
                         };
                     };
                 };
             };
         };
+        put?: never;
+        /** Subscribe a channel to workspace activity (Admin only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The created (or updated) subscription. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlackSubscription"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/slack/subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a channel subscription (Admin only). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The subscription was removed. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a channel subscription (Admin only). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The updated subscription. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlackSubscription"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/slack/channels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List public Slack channels for the subscription picker (Admin only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Public channels in the connected workspace. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            channels: {
+                                id: string;
+                                name: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/vitals": {
@@ -5025,7 +5161,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The workspace's webhooks, without their signing secrets. */
+                /** @description The workspace's webhooks, without their signing secrets, plus every event one can subscribe to — the server owns that list so the picker can't drift from it. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5033,6 +5169,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             webhooks: components["schemas"]["Webhook"][];
+                            event_options: ("comment.created" | "comment.mention" | "comment.resolved" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested" | "review.requested" | "review.sent_back" | "review.approved")[];
                         };
                     };
                 };
@@ -5816,8 +5953,6 @@ export interface components {
             githubMirrorComments: boolean;
             /** @description When true, add a preview link to the linked GitHub PR. */
             githubPreviewLink: boolean;
-            /** @description When true, post events to Slack. */
-            slackPost: boolean;
             /**
              * @description Access a new publish lands with: none, or member (factory default).
              * @enum {string}
@@ -6167,14 +6302,38 @@ export interface components {
             connected: boolean;
             /** @description The connected Slack team's name, or null if not connected */
             team_name: string | null;
-            /** @description The channel Derive posts to, or null if unset */
-            default_channel: string | null;
             /** @description Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked */
             needs_reauth: boolean;
             /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
             slack_dm: boolean;
             /** @description Whether the caller has linked their Slack identity for the connected team */
             linked: boolean;
+        };
+        SlackSubscription: {
+            id: string;
+            /** @description Slack channel id, e.g. C0123ABC456 */
+            channel_id: string;
+            /** @description The channel's #name for display, or null if unknown */
+            channel_name: string | null;
+            /**
+             * @description Whether this covers the whole workspace or one collection
+             * @enum {string}
+             */
+            scope_kind: "workspace" | "collection";
+            /** @description The collection id when scope_kind is "collection"; empty for a workspace scope */
+            scope_id: string;
+            /** @description The scoped collection's title, resolved for display. Null for a workspace scope, and also when the collection has been deleted — the subscription then matches nothing, and saying so is more useful than a bare id. */
+            scope_title: string | null;
+            /** @description Comma-separated event types to deliver, or "*" for all events */
+            events: string;
+            /**
+             * @description Whose activity reaches this channel: everyone, only people, or only agents
+             * @enum {string}
+             */
+            authors: "all" | "human" | "agent";
+            /** @description Whether deliveries are enabled (1) or paused (0) */
+            active: 0 | 1;
+            created_at: string;
         };
         Report: {
             id: string;

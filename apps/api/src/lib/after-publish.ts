@@ -236,6 +236,12 @@ export interface AfterPublishOpts {
   /** Thread ids to resolve in the same call (a live publish that fixes feedback). The
    *  caller has already validated these belong to `artifact`. */
   resolves?: string[]
+  /** The ACTING principal's id — an agent's own id, not the human it acts for. Distinct from
+   *  `onBehalf` on purpose: `version.author_id` is the on-behalf-of human (routes/artifacts.ts
+   *  says so explicitly, "never an agent principal"), so using it to classify the actor made
+   *  every agent publish look human and sent it to the "people only" channels while the
+   *  "agents only" ones got nothing. Null for a headless publish. */
+  actorId?: string | null
 }
 
 /**
@@ -256,6 +262,7 @@ export const afterPublish = async (
     version: version.n,
     message: version.message,
     author: version.author,
+    actor_id: opts.actorId ?? null,
   })
   // Fan out to the publisher's followers: "someone you follow published X". Gated to a
   // known HUMAN behind the publish (an agent publish fans out to the followers of the

@@ -22,11 +22,11 @@ import { webhookDeliveriesQuery, webhooksQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
-import { ALL_EVENTS } from "./webhook-events"
 
 export function WebhooksSection() {
   const qc = useQueryClient()
-  const { data: hooks, isPending, isError, refetch } = useQuery(webhooksQuery())
+  const { data, isPending, isError, refetch } = useQuery(webhooksQuery())
+  const hooks = data?.webhooks
   const reload = () => qc.invalidateQueries({ queryKey: webhooksQuery().queryKey })
 
   return (
@@ -49,7 +49,7 @@ export function WebhooksSection() {
         </>
       }
     >
-      <NewWebhook onCreated={reload} />
+      <NewWebhook eventOptions={data?.event_options ?? []} onCreated={reload} />
 
       {isPending ? (
         <SettingsListSkeleton />
@@ -82,27 +82,39 @@ export function WebhooksSection() {
   )
 }
 
-function NewWebhook({ onCreated }: { onCreated: () => void }) {
+function NewWebhook({
+  eventOptions,
+  onCreated,
+}: {
+  eventOptions: string[]
+  onCreated: () => void
+}) {
   const [url, setUrl] = useState("")
   const [kind, setKind] = useState<"generic" | "slack">("generic")
-  const [events, setEvents] = useState<string[]>([...ALL_EVENTS])
+  // Everything ticked by default, and "everything ticked" is what sends no filter at all.
+  const [events, setEvents] = useState<string[] | null>(null)
+  const selected = events ?? eventOptions
   const valid = /^https?:\/\//.test(url)
   const urlField = fieldError(
     "webhook-url-error",
     url.trim() && !valid ? "Enter a full https:// URL." : null,
   )
   const toggle = (e: string) =>
-    setEvents((cur) => (cur.includes(e) ? cur.filter((x) => x !== e) : [...cur, e]))
+    setEvents((cur) => {
+      const now = cur ?? eventOptions
+      return now.includes(e) ? now.filter((x) => x !== e) : [...now, e]
+    })
   const create = useApiMutation({
     mutationFn: () =>
       api.createWebhook({
         url,
         kind,
-        events: events.length === ALL_EVENTS.length ? undefined : events,
+        events: selected.length === eventOptions.length ? undefined : selected,
       }),
     success: "Webhook added",
     onSuccess: () => {
       setUrl("")
+      setEvents(null)
       onCreated()
     },
   })
@@ -148,14 +160,14 @@ function NewWebhook({ onCreated }: { onCreated: () => void }) {
       </div>
       {urlField.node}
       <div className="flex flex-wrap gap-3.5">
-        {ALL_EVENTS.map((e) => (
+        {eventOptions.map((e) => (
           <label
             key={e}
             className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground"
           >
             <Checkbox
               data-testid={`webhook-event-${e}`}
-              checked={events.includes(e)}
+              checked={selected.includes(e)}
               onCheckedChange={() => toggle(e)}
             />
             {e}

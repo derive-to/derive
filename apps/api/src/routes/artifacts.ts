@@ -776,6 +776,10 @@ export const artifactRoutes = (ctx: AppContext) => {
           isNew: !shortId,
           onBehalf,
           resolves: toResolve,
+          // The ACTING principal — an agent's own id, not the human it acts for. `onBehalf`
+          // (and therefore version.author_id) is deliberately the human, so it can't classify
+          // who actually published.
+          actorId: agentPrincipal?.id ?? actor?.id ?? null,
         },
       )
       // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a
@@ -1855,6 +1859,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         {
           isNew: false,
           onBehalf: null,
+          actorId: (await actingUser(c))?.id ?? null,
         },
       )
       const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord

@@ -844,10 +844,6 @@
             "type": "boolean",
             "description": "When true, add a preview link to the linked GitHub PR."
           },
-          "slackPost": {
-            "type": "boolean",
-            "description": "When true, post events to Slack."
-          },
           "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
@@ -925,7 +921,6 @@
           "githubPostComments",
           "githubMirrorComments",
           "githubPreviewLink",
-          "slackPost",
           "defaultWorkspaceAccess",
           "defaultLinkRole",
           "defaultListed",
@@ -1834,11 +1829,6 @@
             "nullable": true,
             "description": "The connected Slack team's name, or null if not connected"
           },
-          "default_channel": {
-            "type": "string",
-            "nullable": true,
-            "description": "The channel Derive posts to, or null if unset"
-          },
           "needs_reauth": {
             "type": "boolean",
             "description": "Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked"
@@ -1856,10 +1846,88 @@
           "available",
           "connected",
           "team_name",
-          "default_channel",
           "needs_reauth",
           "slack_dm",
           "linked"
+        ]
+      },
+      "SlackSubscription": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "channel_id": {
+            "type": "string",
+            "description": "Slack channel id, e.g. C0123ABC456"
+          },
+          "channel_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "The channel's #name for display, or null if unknown"
+          },
+          "scope_kind": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "collection"
+            ],
+            "description": "Whether this covers the whole workspace or one collection"
+          },
+          "scope_id": {
+            "type": "string",
+            "description": "The collection id when scope_kind is \"collection\"; empty for a workspace scope"
+          },
+          "scope_title": {
+            "type": "string",
+            "nullable": true,
+            "description": "The scoped collection's title, resolved for display. Null for a workspace scope, and also when the collection has been deleted — the subscription then matches nothing, and saying so is more useful than a bare id."
+          },
+          "events": {
+            "type": "string",
+            "description": "Comma-separated event types to deliver, or \"*\" for all events"
+          },
+          "authors": {
+            "type": "string",
+            "enum": [
+              "all",
+              "human",
+              "agent"
+            ],
+            "description": "Whose activity reaches this channel: everyone, only people, or only agents"
+          },
+          "active": {
+            "anyOf": [
+              {
+                "type": "number",
+                "enum": [
+                  0
+                ]
+              },
+              {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              }
+            ],
+            "description": "Whether deliveries are enabled (1) or paused (0)"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "channel_id",
+          "channel_name",
+          "scope_kind",
+          "scope_id",
+          "scope_title",
+          "events",
+          "authors",
+          "active",
+          "created_at"
         ]
       },
       "Report": {
@@ -5943,38 +6011,11 @@
         "summary": "Slack connection status for the signed-in user's workspace.",
         "responses": {
           "200": {
-            "description": "Whether Slack is available + connected, and the team + default channel.",
+            "description": "Whether Slack is available + connected, the team name, and re-auth state.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SlackStatus"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Slack"
-        ],
-        "summary": "Set the channel Derive posts to (Admin only).",
-        "responses": {
-          "200": {
-            "description": "The new default channel (or null to clear it).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "default_channel": {
-                      "type": "string",
-                      "nullable": true
-                    }
-                  },
-                  "required": [
-                    "default_channel"
-                  ]
                 }
               }
             }
@@ -5989,6 +6030,163 @@
         "responses": {
           "204": {
             "description": "Slack was disconnected."
+          }
+        }
+      }
+    },
+    "/v1/slack/subscriptions": {
+      "get": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "List the workspace's Slack channel subscriptions (Admin only).",
+        "responses": {
+          "200": {
+            "description": "The workspace's subscriptions, plus the event types one can carry — the server is the source of that list so the client can't drift from it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "subscriptions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SlackSubscription"
+                      }
+                    },
+                    "event_options": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "comment.created",
+                          "version.published",
+                          "proposal.created",
+                          "proposal.approved",
+                          "proposal.changes_requested"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "subscriptions",
+                    "event_options"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Subscribe a channel to workspace activity (Admin only).",
+        "responses": {
+          "201": {
+            "description": "The created (or updated) subscription.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackSubscription"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/slack/subscriptions/{id}": {
+      "patch": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Update a channel subscription (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated subscription.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlackSubscription"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "Remove a channel subscription (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The subscription was removed."
+          }
+        }
+      }
+    },
+    "/v1/slack/channels": {
+      "get": {
+        "tags": [
+          "Slack"
+        ],
+        "summary": "List public Slack channels for the subscription picker (Admin only).",
+        "responses": {
+          "200": {
+            "description": "Public channels in the connected workspace.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "channels": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "channels"
+                  ]
+                }
+              }
+            }
           }
         }
       }
@@ -7890,7 +8088,7 @@
         "summary": "List the workspace's webhooks (Admin only).",
         "responses": {
           "200": {
-            "description": "The workspace's webhooks, without their signing secrets.",
+            "description": "The workspace's webhooks, without their signing secrets, plus every event one can subscribe to — the server owns that list so the picker can't drift from it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7901,10 +8099,29 @@
                       "items": {
                         "$ref": "#/components/schemas/Webhook"
                       }
+                    },
+                    "event_options": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "comment.created",
+                          "comment.mention",
+                          "comment.resolved",
+                          "version.published",
+                          "proposal.created",
+                          "proposal.approved",
+                          "proposal.changes_requested",
+                          "review.requested",
+                          "review.sent_back",
+                          "review.approved"
+                        ]
+                      }
                     }
                   },
                   "required": [
-                    "webhooks"
+                    "webhooks",
+                    "event_options"
                   ]
                 }
               }
