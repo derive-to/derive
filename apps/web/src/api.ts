@@ -158,6 +158,7 @@ export type BillingInfo = {
   enforce_at: string | null
   beta: boolean
   subscribed: boolean
+  blocked: { code: "billing_required" | "billing_lapsed"; message: string } | null
 }
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
 export type SlackStatus = components["schemas"]["SlackStatus"]
