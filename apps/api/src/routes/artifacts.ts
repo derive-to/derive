@@ -1442,10 +1442,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Resolve the Derive user(s) behind a publish-by-hand (author_id on the artifact + each
       // version) to their live name/handle, so a byline frozen with an agent-client name self-
       // heals on read. One batched query alongside the gh_id resolve above — no N+1.
-      const authorIds = new Set<string>()
-      if (artifact.author_id) authorIds.add(artifact.author_id)
-      for (const v of versions) if (v.author_id) authorIds.add(v.author_id)
-      const bylineByUserId = await resolveUserBylines(meta, [...authorIds])
+      // No round trip: artifactDetail's `byline` arm already returned the live rows for
+      // every author_id on this artifact and its versions, in the same statement. This
+      // used to be its own resolveUserBylines call, sequential after resolveHandles —
+      // ~80ms on the edge, on the request that gates the document's rendered bytes.
+      const bylineByUserId = bylinesFrom(detail.bylines)
       const base = toJson(deps.baseUrl, artifact, versions)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client

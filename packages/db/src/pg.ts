@@ -650,8 +650,12 @@ export class PgMetaStore implements MetaStore {
     // open threads, favorite, settings, managed) collapsed into one UNION ALL. Whole
     // rows ride as JSON in `doc` so branches with different column sets can share the
     // union; the scalar branches carry a count or a marker row.
-    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
-      `SELECT 'version' kind, row_to_json(v) doc FROM version v WHERE v.artifact_id = $1
+    // The byline arm reads Better Auth's `user` table, which this package's schema does
+    // not own — a D1-only or db-package-only deployment may not have it at all. Same
+    // shape as listEnrichment's directory branches: try the whole statement, and on
+    // failure retry without that one arm rather than losing the other seven. The caller
+    // then simply gets no bylines, which is exactly what it got before this arm existed.
+    const CORE_BRANCHES = `SELECT 'version' kind, row_to_json(v) doc FROM version v WHERE v.artifact_id = $1
        UNION ALL
        SELECT 'tag', to_json(t.tag) FROM artifact_tag t WHERE t.artifact_id = $1
        UNION ALL
@@ -667,10 +671,27 @@ export class PgMetaStore implements MetaStore {
        UNION ALL
        SELECT 'settings', to_json(s.settings) FROM org_settings s WHERE s.org_id = $3
        UNION ALL
-       SELECT 'source', to_json(r.files) FROM repo_source r WHERE r.org_id = $3`,
-      [artifactId, viewerId, orgId],
-    )
+       SELECT 'source', to_json(r.files) FROM repo_source r WHERE r.org_id = $3`
+    // The live rows behind every author_id on this artifact and its versions. This was
+    // its own resolveUserBylines round trip at the end of the record route, sequential
+    // with everything above it; as an arm it costs nothing extra.
+    const BYLINE_BRANCH = `
+       UNION ALL
+       SELECT 'byline', row_to_json(u) FROM "user" u WHERE u.id IN (
+         SELECT v.author_id FROM version v WHERE v.artifact_id = $1 AND v.author_id IS NOT NULL
+         UNION
+         SELECT a.author_id FROM artifact a WHERE a.id = $1 AND a.author_id IS NOT NULL)`
+    const params = [artifactId, viewerId, orgId]
+    let rows: { kind: string; doc: unknown }[]
+    try {
+      rows = (
+        await this.pool.query<{ kind: string; doc: unknown }>(CORE_BRANCHES + BYLINE_BRANCH, params)
+      ).rows
+    } catch {
+      rows = (await this.pool.query<{ kind: string; doc: unknown }>(CORE_BRANCHES, params)).rows
+    }
     const versions: VersionRecord[] = []
+    const bylines: { id: string; name: string | null; username: string | null }[] = []
     const tags: string[] = []
     const collectionIds: string[] = []
     const proposals: ProposalRecord[] = []
@@ -682,6 +703,9 @@ export class PgMetaStore implements MetaStore {
       switch (r.kind) {
         case "version":
           versions.push(r.doc as VersionRecord)
+          break
+        case "byline":
+          bylines.push(r.doc as { id: string; name: string | null; username: string | null })
           break
         case "tag":
           tags.push(r.doc as string)
@@ -716,6 +740,7 @@ export class PgMetaStore implements MetaStore {
     tags.sort()
     return {
       versions,
+      bylines,
       tags,
       collectionIds,
       proposals,

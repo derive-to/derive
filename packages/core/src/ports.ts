@@ -231,6 +231,11 @@ export interface ArtifactDetailOpts {
 /** One page's worth of artifact-detail context — see `ArtifactQueryStore.artifactDetail`. */
 export interface ArtifactDetail {
   versions: VersionRecord[]
+  /** The live rows behind every `author_id` on this artifact and its versions, so a
+   *  byline frozen with an agent-client name self-heals on read WITHOUT its own round
+   *  trip. Same shape and purpose as `ListEnrichment.bylines`; the route maps both
+   *  through `bylinesFrom`. */
+  bylines: { id: string; name: string | null; username: string | null }[]
   tags: string[]
   /** Ids of the collections containing this artifact. */
   collectionIds: string[]

@@ -81,7 +81,7 @@ describe("hot read paths stay within their round-trip budget", () => {
       },
       {
         path: `/v1/artifacts/${short_id}`,
-        budget: 6,
+        budget: 5,
         needs: "the artifact, its grants (3 on sqlite / 1 on pg), one artifactDetail, bylines",
       },
       {
@@ -115,15 +115,17 @@ describe("hot read paths stay within their round-trip budget", () => {
         // trip here is paid before the document can even start loading. Measured at
         // 515ms on production (floor 227ms).
         //
-        // 6 here is the SQLite count; Postgres answers the middle three with one
-        // `artifactGrants`, so the hosted tier pays 4. Two further folds are possible
-        // and deliberately not taken yet: the author byline (`getUsers`) could ride the
-        // artifactDetail union as one more arm, and artifact+grants could become a
-        // single FK-chained read. Together that is 4 -> 2 on pg, ~160ms. They are not
-        // urgent because hover/pointerdown prefetch now resolves this record BEFORE the
-        // click (see rawArtifactUrl + usePrefetchArtifact), so the remaining cost lands
-        // only on opens that were never hovered — a real case, but no longer the common
-        // one. Revisit if the field data says otherwise.
+        // 5 here is the SQLite count; Postgres answers the middle three with one
+        // `artifactGrants`, so the hosted tier pays 3. Was 6/4 — the author byline
+        // (`getUsers`) now rides the artifactDetail union as one more arm instead of a
+        // sequential round trip at the end of the handler.
+        //
+        // ONE fold is left: getByShortId + the grants read could become a single
+        // FK-chained query (the artifact and the caller's grants on it, keyed on the
+        // short id), taking pg 3 -> 2. Worth doing — this request gates the document's
+        // rendered bytes, because the viewer's URL carries a token that only exists on
+        // this record, so every trip here is paid before the document can start
+        // loading. Measured at 515ms on production, floor 227ms.
         path: `/v1/artifacts/${short_id}`,
         budget: 6,
         needs:

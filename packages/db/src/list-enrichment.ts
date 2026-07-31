@@ -71,6 +71,7 @@ export const composeArtifactDetail = async (
     | "listUserFavoriteIds"
     | "getOrgSettings"
     | "managedArtifactIds"
+    | "getUsers"
   >,
   opts: ArtifactDetailOpts,
 ): Promise<ArtifactDetail> => {
@@ -86,8 +87,16 @@ export const composeArtifactDetail = async (
       store.getOrgSettings(orgId),
       store.managedArtifactIds(orgId),
     ])
+  // Same rows the pg driver's `byline` arm returns, resolved from the versions this
+  // call just read plus the artifact's own author. Embedded drivers pay no wire trips,
+  // so an extra read here costs nothing the pg fold was buying back.
+  const authorIds = [
+    ...new Set(versions.map((v) => v.author_id).filter((id): id is string => !!id)),
+  ]
+  const bylines = authorIds.length ? await store.getUsers(authorIds) : []
   return {
     versions,
+    bylines,
     tags: tagsById[artifactId] ?? [],
     collectionIds,
     proposals,
