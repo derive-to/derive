@@ -555,6 +555,48 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(after.some((r) => r.slot === "$stats")).toBe(true)
   })
 
+  it("a derived write can never delete an asserted row, whatever the interleaving", async () => {
+    // The hazard this PR introduced and this test pins: lazy derivation is the SECOND
+    // writer to an old version's rows, and backfillNewSlots is the first. Done as
+    // read-union-setVersionData, a lazy fill whose read predates the backfill's write
+    // deletes the author's fact — permanently, because the next publish sees that fact
+    // already tracked and never re-walks. The write is prefix-scoped instead, so the
+    // losing interleaving cannot be expressed. Replayed here in the losing order.
+    const { app, token, meta } = appWithGrant(dir, "raceguard", "openid derive:read derive:publish")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "Race", content: "<h1>A</h1><h2>B</h2>" }),
+      ),
+    )
+    const rec = await meta.getByShortId(pub.short_id)
+    if (!rec) throw new Error("gone")
+
+    // A lazy fill begins: it reads v1's rows HERE (no asserted rows yet).
+    const readBeforeBackfill = await meta.getVersionData(rec.id, 1)
+    expect(readBeforeBackfill.every((r) => r.slot.startsWith("$"))).toBe(true)
+
+    // The backfill lands an author's fact into that same old version, mid-flight.
+    await meta.setVersionData(rec.id, 1, [
+      ...readBeforeBackfill.map((r) => ({
+        id: r.id,
+        slot: r.slot,
+        json: r.json,
+        size_bytes: r.size_bytes,
+        gen: r.gen,
+      })),
+      { id: "vd_backfilled", slot: "checks", json: '{"pass":9}', size_bytes: 11, gen: 1 },
+    ])
+
+    // Now the lazy fill completes with its STALE view of the world.
+    await meta.setDerivedVersionData(rec.id, 1, [
+      { id: "vd_fresh", slot: "$stats", json: '{"chars":1}', size_bytes: 11, gen: 1 },
+    ])
+
+    const after = (await meta.getVersionData(rec.id, 1)).map((r) => r.slot)
+    expect(after).toContain("checks") // the author's row survived the race
+    expect(after).toContain("$stats") // and the derived row still landed
+  })
+
   it("says WHY a fact is absent, instead of telling authors to do the impossible", async () => {
     // Three absences, three different truths — all found by dogfooding the live preview,
     // where every one of them read back as "embed a derive-facts block to add one".

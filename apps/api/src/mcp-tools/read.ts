@@ -80,10 +80,14 @@ const absenceNote = (
  * single-version named read, so the cost is one blob and one pass, ever, per version.
  *
  * The response is not held for the write: the derivation is pure and fast, so the VALUE
- * returns now while the rows persist through background() (waitUntil on Workers). The
- * write is a full replace, so the fresh derived set is unioned with the ASSERTED rows the
- * version already carries — dropping an author's rows to cache the host's would be the
- * union trap after-publish.ts documents, committed in a second place.
+ * returns now while the rows persist through background() (waitUntil on Workers).
+ *
+ * The write is prefix-scoped (setDerivedVersionData) rather than a read-union-replace.
+ * That is a correctness requirement, not a tidiness one: this is the SECOND writer to an
+ * old version's rows, and the backfill is the first. A union built from a read taken
+ * before the backfill's write would delete the author's fact it just added, and nothing
+ * would restore it, because the next publish sees that fact already tracked and never
+ * re-walks. Scoping the delete to `$` means no interleaving can express that loss.
  */
 const lazyDeriveVersion = async (
   ctx: ToolContext["ctx"],
@@ -96,8 +100,6 @@ const lazyDeriveVersion = async (
   const source = await ctx.sourceText(v)
   if (source == null) return null
   const derived = deriveFacts(source, ct)
-  const existing = await ctx.meta.getVersionData(artifactId, n)
-  const asserted = existing.filter((r) => !isDerivedFactName(r.slot))
   const freshRows: VersionDataRecord[] = derived.map((s) => ({
     id: newId("vd"),
     artifact_id: artifactId,
@@ -109,22 +111,17 @@ const lazyDeriveVersion = async (
     created_at: v.created_at,
   }))
   ctx.background(
-    ctx.meta.setVersionData(artifactId, n, [
-      ...asserted.map((r) => ({
+    ctx.meta.setDerivedVersionData(
+      artifactId,
+      n,
+      freshRows.map((r) => ({
         id: r.id,
         slot: r.slot,
         json: r.json,
         size_bytes: r.size_bytes,
         gen: r.gen,
       })),
-      ...freshRows.map((r) => ({
-        id: r.id,
-        slot: r.slot,
-        json: r.json,
-        size_bytes: r.size_bytes,
-        gen: r.gen,
-      })),
-    ]),
+    ),
   )
   return freshRows
 }

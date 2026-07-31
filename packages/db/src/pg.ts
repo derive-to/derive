@@ -744,6 +744,28 @@ export class PgMetaStore implements MetaStore {
       .insert(versionData)
       .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
   }
+  async setDerivedVersionData(
+    artifactId: string,
+    n: number,
+    rows: NewVersionData[],
+  ): Promise<void> {
+    // Replace ONLY the derived ($) rows: the delete is prefix-scoped so this writer cannot
+    // express "remove an asserted row", which is what makes it safe to run concurrently with
+    // the backfill (see MetaStore.setDerivedVersionData for the interleaving it prevents).
+    await this.db
+      .delete(versionData)
+      .where(
+        and(
+          eq(versionData.artifact_id, artifactId),
+          eq(versionData.n, n),
+          like(versionData.slot, "$%"),
+        ),
+      )
+    if (rows.length === 0) return
+    await this.db
+      .insert(versionData)
+      .values(rows.map((r) => ({ ...r, artifact_id: artifactId, n })))
+  }
   async getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]> {
     return this.db
       .select()

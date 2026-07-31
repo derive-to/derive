@@ -477,6 +477,24 @@ export interface ArtifactStore {
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */
   setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
+  /**
+   * Replace only the DERIVED (`$`) rows of a version, leaving asserted rows untouched.
+   *
+   * The two lifecycles share one table, and they have two different writers: extraction
+   * and backfill write asserted rows, lazy derivation writes derived ones. Doing the
+   * derived write as read-then-{@link setVersionData} would make it a read-modify-write
+   * over rows another writer owns, and the interleaving is a silent data loss: the
+   * backfill adds an author's fact to an old version between a lazy fill's read and its
+   * write, and the lazy fill's stale union deletes it. Nothing would ever restore it,
+   * because the next publish sees that fact already tracked and never re-walks.
+   *
+   * Scoping the delete to the `$` prefix removes the hazard by construction rather than
+   * narrowing the window: the derived write cannot express "remove an asserted row", so
+   * no ordering exists in which it does. This is the same predicate the rollback story
+   * rests on (`DELETE FROM version_data WHERE slot LIKE '$%'`), which is not a
+   * coincidence — it is what "recomputable cache in the same table" means.
+   */
+  setDerivedVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
   /** A version's facts: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
