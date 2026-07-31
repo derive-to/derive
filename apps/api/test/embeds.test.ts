@@ -22,13 +22,13 @@ describe("unfurl + embed", () => {
     expect(svg).toContain("My Report")
   })
 
-  it("a slot-bearing artifact leads its unfurl with its own numbers", async () => {
-    // The single highest-leverage incentive in the whole slots bet: a link pasted in Slack
+  it("a fact-bearing artifact leads its unfurl with its own numbers", async () => {
+    // The single highest-leverage incentive in the whole facts bet: a link pasted in Slack
     // shows "pass 48 · fail 0" before anyone clicks, which is the mechanic that made
     // OpenGraph universal. It reaches the card through infoFor → dataSummary, and until
     // now NOTHING asserted it — so any refactor of the unfurl path could delete the
     // feature and leave every test green. It very nearly did: a concurrent PR extracts
-    // infoFor into a shared lib from a copy that predates the slot read.
+    // infoFor into a shared lib from a copy that predates the fact read.
     const page =
       "<!doctype html><html><body><h1>Nightly</h1>" +
       '<script type="application/derive-data" data-slot="checks">{"pass":48,"fail":0}</script>' +

@@ -821,9 +821,9 @@ export const asset = pgTable(
   (t) => [index("asset_org").on(t.org_id)],
 )
 
-// A structured data slot extracted from a version's source (see @derive/core data-slots).
+// A structured FACT extracted from a version's source (see @derive/facts).
 // Natural key (artifact_id, n, slot); rows are written once when a version goes live and
-// never mutated. `gen` (DEFAULT must equal @derive/core SLOT_GEN) marks which extraction
+// never mutated. `gen` (DEFAULT must equal @derive/core FACT_GEN) marks which extraction
 // rules produced the row. Mirrors schema.ts.
 export const versionData = pgTable(
   "version_data",

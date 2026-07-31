@@ -113,7 +113,7 @@ import {
   parseRunMeta,
   runCounter,
   sortFields,
-  WORKSPACE_SLOT_ROW_CAP,
+  WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
 import {
   and,
@@ -620,9 +620,9 @@ export function makeRepos(db: SqliteDb) {
     versionCount: number
     commentCount: number
     version: VersionRecord | null
-    slots: { slot: string; json: string }[]
+    facts: { slot: string; json: string }[]
   }> => {
-    const [vRow, cRow, cur, slotRows] = await Promise.all([
+    const [vRow, cRow, cur, factRows] = await Promise.all([
       db.select({ n: count() }).from(version).where(eq(version.artifact_id, artifactId)).get(),
       db.select({ n: count() }).from(comment).where(eq(comment.artifact_id, artifactId)).get(),
       getVersion(artifactId, versionN),
@@ -634,7 +634,7 @@ export function makeRepos(db: SqliteDb) {
       version: cur,
       // Narrowed to what slotSummary reads, matching the pg driver's projection rather
       // than handing the caller whole rows only one shape of which is contractual.
-      slots: slotRows.map((r) => ({ slot: r.slot, json: r.json })),
+      facts: factRows.map((r) => ({ slot: r.slot, json: r.json })),
     }
   }
 
@@ -761,7 +761,7 @@ export function makeRepos(db: SqliteDb) {
 
   // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
   // the caller, AFTER the visibility gate — see the port doc for why it cannot happen here.
-  const listWorkspaceSlots = async (orgId: string, opts?: { limit?: number }) =>
+  const listWorkspaceFacts = async (orgId: string, opts?: { limit?: number }) =>
     db
       .select({
         slot: versionData.slot,
@@ -775,10 +775,10 @@ export function makeRepos(db: SqliteDb) {
       )
       .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
       .orderBy(asc(versionData.slot))
-      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
+      .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
       .all()
 
-  const listSlotAcrossArtifacts = async (
+  const listFactAcrossArtifacts = async (
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },
@@ -3892,8 +3892,8 @@ export function makeRepos(db: SqliteDb) {
     setVersionData,
     getVersionData,
     getVersionDataSeries,
-    listWorkspaceSlots,
-    listSlotAcrossArtifacts,
+    listWorkspaceFacts,
+    listFactAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
     setVersionPreviewVariant,

@@ -159,14 +159,14 @@ export function runStoreContract(
       expect(await store.getVersion(a.id, 99)).toBeNull()
     })
 
-    it("stores and reads a version's data slots by name and all-at-once", async () => {
+    it("stores and reads a version's facts by name and all-at-once", async () => {
       const a = await store.createArtifact(newArtifact())
       const v = await store.addVersion(a.id, newVersion())
       await store.setVersionData(a.id, v.n, [
         { id: uuid(), slot: "checks", json: `{"pass":44}`, size_bytes: 11, gen: 1 },
         { id: uuid(), slot: "budget", json: "[1,2]", size_bytes: 5, gen: 1 },
       ])
-      // All slots, ordered by slot name.
+      // All facts, ordered by fact name.
       const all = await store.getVersionData(a.id, v.n)
       expect(all.map((r) => r.slot)).toEqual(["budget", "checks"])
       expect(all[0]?.gen).toBe(1)
@@ -180,7 +180,7 @@ export function runStoreContract(
       expect(await store.getVersionData(a.id, 999)).toEqual([])
     })
 
-    it("setVersionData replaces a version's slots idempotently (delete-then-insert)", async () => {
+    it("setVersionData replaces a version's facts idempotently (delete-then-insert)", async () => {
       const a = await store.createArtifact(newArtifact())
       const v = await store.addVersion(a.id, newVersion())
       await store.setVersionData(a.id, v.n, [
@@ -249,19 +249,19 @@ export function runStoreContract(
         { id: uuid(), slot: "xother", json: "1", size_bytes: 1, gen: 1 },
       ])
 
-      const rows = await store.listSlotAcrossArtifacts(ORG, "xchecks")
+      const rows = await store.listFactAcrossArtifacts(ORG, "xchecks")
       const byId = new Map(rows.map((r) => [r.short_id, r]))
       expect(byId.get(a.short_id)?.json).toBe('{"pass":2}') // the current version, not v1
       expect(byId.get(a.short_id)?.n).toBe(v2.n)
       expect(byId.get(b.short_id)?.json).toBe('{"pass":9}')
-      // A slot nobody carries is empty, not an error.
-      expect(await store.listSlotAcrossArtifacts(ORG, "nosuch")).toEqual([])
+      // A fact nobody carries is empty, not an error.
+      expect(await store.listFactAcrossArtifacts(ORG, "nosuch")).toEqual([])
       // The limit bounds the payload.
-      expect((await store.listSlotAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
+      expect((await store.listFactAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
     })
 
     it("lists the workspace's slot vocabulary as RAW rows, uncounted, carrying artifact_id", async () => {
-      const rows = await store.listWorkspaceSlots(ORG)
+      const rows = await store.listWorkspaceFacts(ORG)
       // Deliberately (slot, artifact) pairs rather than counts: the count has to be taken
       // AFTER the caller's visibility gate, so the artifact_id it gates on must survive
       // this far. A pre-aggregated count would already include artifacts the caller may
@@ -271,7 +271,7 @@ export function runStoreContract(
       expect(rows.filter((r) => r.slot === "xother").length).toBe(1)
       expect(checks[0]?.at).toBeTruthy()
       expect(rows.every((r) => !!r.artifact_id)).toBe(true)
-      expect((await store.listWorkspaceSlots(ORG, { limit: 1 })).length).toBe(1)
+      expect((await store.listWorkspaceFacts(ORG, { limit: 1 })).length).toBe(1)
     })
 
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
@@ -2223,8 +2223,8 @@ export function runStoreContract(
         author: "amy",
       })
 
-      // Data slots on the CURRENT version, and a decoy on v1 that must not leak into
-      // the v2 read (the slots branch is keyed on the version, not just the artifact).
+      // Facts on the CURRENT version, and a decoy on v1 that must not leak into
+      // the v2 read (the facts branch is keyed on the version, not just the artifact).
       await store.setVersionData(a.id, 1, [
         { id: uuid(), slot: "old", json: JSON.stringify({ stale: true }), size_bytes: 20, gen: 1 },
       ])
@@ -2241,29 +2241,29 @@ export function runStoreContract(
       expect(info.versionCount).toBe(2)
       expect(info.commentCount).toBe(3)
       expect(info.version?.message).toBe("v2")
-      // Slots match the getVersionData call this replaces, narrowed to slot+json and in
-      // SLOT order — slotSummary reads them in order, and a UNION ALL promises none.
-      expect(info.slots).toEqual(
+      // Facts match the getVersionData call this replaces, narrowed to slot+json and in
+      // NAME order — factSummary reads them in order, and a UNION ALL promises none.
+      expect(info.facts).toEqual(
         (await store.getVersionData(a.id, 2)).map((r) => ({ slot: r.slot, json: r.json })),
       )
-      expect(info.slots).toEqual([
+      expect(info.facts).toEqual([
         { slot: "answers", json: JSON.stringify({ n: 7 }) },
         { slot: "metrics", json: JSON.stringify({ mrr: 42 }) },
       ])
-      // v1's slot stays on v1 — asking for v2 never sees it.
-      expect((await store.unfurlInfo(a.id, 1)).slots).toEqual([
+      // v1's fact stays on v1 — asking for v2 never sees it.
+      expect((await store.unfurlInfo(a.id, 1)).facts).toEqual([
         { slot: "old", json: JSON.stringify({ stale: true }) },
       ])
       // Counts include RESOLVED threads (the card shows total discussion, not open).
       await store.setThreadState(a.id, thread, "resolved")
       expect((await store.unfurlInfo(a.id, 2)).commentCount).toBe(3)
-      // A bare artifact: zeroes, a null version and no slots, not a throw.
+      // A bare artifact: zeroes, a null version and no facts, not a throw.
       const bare = await store.createArtifact(newArtifact())
       expect(await store.unfurlInfo(bare.id, 1)).toEqual({
         versionCount: 0,
         commentCount: 0,
         version: null,
-        slots: [],
+        facts: [],
       })
     })
 
@@ -2817,8 +2817,8 @@ export function runStoreContract(
       const a = await store.createArtifact(newArtifact())
       const thread = uuid()
       const dv = await store.addVersion(a.id, newVersion())
-      // Data slots hang off the version by artifact_id — a delete that doesn't clear them
-      // first hits a FOREIGN KEY constraint (found by deleting a slot-bearing artifact live).
+      // Facts hang off the version by artifact_id — a delete that doesn't clear them
+      // first hits a FOREIGN KEY constraint (found by deleting a fact-bearing artifact live).
       await store.setVersionData(a.id, dv.n, [
         { id: uuid(), slot: "checks", json: `{"pass":1}`, size_bytes: 10, gen: 1 },
       ])

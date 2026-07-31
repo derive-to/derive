@@ -20,7 +20,7 @@ import { join } from "node:path"
 
 // Store methods that return rows for MANY artifacts scoped only by org. Adding one here is
 // the point: a new reader gets the guard for free the moment it is listed.
-const UNGATED_READERS = ["listSlotAcrossArtifacts", "listWorkspaceSlots", "searchArtifactIds"]
+const UNGATED_READERS = ["listFactAcrossArtifacts", "listWorkspaceFacts", "searchArtifactIds"]
 // Any one of these in the same file means the caller narrowed the rows.
 const GATES = ["visibleArtifacts", "visibleArtifactIds"]
 // The gate's own home, and the port file that DECLARES these methods: naming them is not
@@ -71,14 +71,14 @@ for (const file of roots.flatMap(walk)) {
 // claim. If nothing at all matched, the readers were renamed or the roots moved.
 if (checked === 0) {
   console.error(
-    "check-slot-visibility: found NO caller of any multi-artifact reader — the names in " +
+    "check-facts-visibility: found NO caller of any multi-artifact reader — the names in " +
       "UNGATED_READERS or the source roots are stale, so this guard is asserting nothing.",
   )
   process.exit(1)
 }
 
 if (failures.length) {
-  console.error("check-slot-visibility: ungated multi-artifact read\n")
+  console.error("check-facts-visibility: ungated multi-artifact read\n")
   for (const f of failures) console.error(`  ✖ ${f}`)
   console.error(
     "\nThese store methods scope by ORG, which is not a read permission: an artifact can be " +
@@ -89,4 +89,4 @@ if (failures.length) {
   process.exit(1)
 }
 
-console.log(`check-slot-visibility: ok — ${checked} multi-artifact read site(s), all gated`)
+console.log(`check-facts-visibility: ok — ${checked} multi-artifact read site(s), all gated`)

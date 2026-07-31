@@ -3,6 +3,7 @@ import {
   artifactUrl,
   candidateShortIds,
   escapeHtml,
+  factSummary,
   injectHead,
   kindLabel,
   normalizeUsername,
@@ -14,7 +15,6 @@ import {
   profileMetaTags,
   profileSummary,
   refFor,
-  slotSummary,
   type UnfurlInfo,
   unfurlMetaTags,
 } from "@derive/core"
@@ -50,11 +50,11 @@ export const embedRoutes = (ctx: AppContext) => {
     // One round trip. The counts used to come from `listVersions(...).length` and
     // `listComments(...).length` — two whole-table reads to produce two integers, on the
     // most-trafficked anonymous surface there is — plus a trip each for the version row
-    // and the data slots. The Promise.all around them bought nothing: one pg.Client per
-    // request means node-postgres queues them (see edge-pg.ts). The slots ride in the same
+    // and the facts. The Promise.all around them bought nothing: one pg.Client per
+    // request means node-postgres queues them (see edge-pg.ts). The facts ride in the same
     // query now, so they no longer need their own best-effort catch: there is no longer a
-    // slot read that can fail independently of the counts this card is built from.
-    const { versionCount, commentCount, version, slots } = await meta.unfurlInfo(
+    // fact read that can fail independently of the counts this card is built from.
+    const { versionCount, commentCount, version, facts } = await meta.unfurlInfo(
       artifact.id,
       artifact.current_version,
     )
@@ -64,8 +64,8 @@ export const embedRoutes = (ctx: AppContext) => {
       kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
       versionCount,
       commentCount,
-      // The reward for publishing a slot: the shared link carries its own numbers.
-      dataSummary: slotSummary(slots),
+      // The reward for publishing a fact: the shared link carries its own numbers.
+      dataSummary: factSummary(facts),
       pageUrl: artifactUrl(baseUrl, artifact),
       imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
       oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,

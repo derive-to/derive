@@ -6,7 +6,7 @@
 //
 // This exists because it happened: `version_data` was added with an artifact_id FK, all
 // three delete paths kept clearing every OTHER child table, and the full test suite stayed
-// green because no test deleted an artifact that carried a data slot. The bug surfaced
+// green because no test deleted an artifact that carried a facts. The bug surfaced
 // only when a live cleanup 500'd.
 //
 // The trap is that there are THREE implementations (the synchronous better-sqlite3 one the

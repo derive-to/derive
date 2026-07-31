@@ -382,10 +382,10 @@ export interface NewVersion {
   name?: string | null
 }
 
-/** One structured data slot extracted from a version's source (see @derive/core
- *  data-slots). The natural key is (artifact_id, n, slot); `json` is the block's stored
+/** One structured facts extracted from a version's source (see @derive/core
+ *  data-facts). The natural key is (artifact_id, n, slot); `json` is the block's stored
  *  text, `gen` marks which extraction rules produced it. Rows are written once when a
- *  version goes live and never mutated — a version is immutable, so its slots are too. */
+ *  version goes live and never mutated — a version is immutable, so its facts are too. */
 export interface VersionDataRecord {
   id: string
   artifact_id: string
@@ -452,11 +452,11 @@ export interface ArtifactStore {
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
   /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS,
-   *  its current version row, and that version's data slots, in one query. The share-link
+   *  its current version row, and that version's facts, in one query. The share-link
    *  SSR path computed the two counts by fetching the artifact's entire version list and
    *  entire comment list and taking `.length` — two whole-table reads for two integers, on
    *  the most-trafficked anonymous surface, plus a trip each for the version row and the
-   *  slots. `slots` carries only what slotSummary reads (slot + json), ordered by slot. */
+   *  slots. `facts` carries only what factSummary reads (slot + json), ordered by slot. */
   unfurlInfo(
     artifactId: string,
     versionN: number,
@@ -464,7 +464,7 @@ export interface ArtifactStore {
     versionCount: number
     commentCount: number
     version: VersionRecord | null
-    slots: { slot: string; json: string }[]
+    facts: { slot: string; json: string }[]
   }>
   /** Each artifact's CURRENT version, for a set of artifacts, keyed by artifact id — one
    *  query instead of a `getVersion(id, current_version)` per artifact. Workspace search
@@ -473,17 +473,17 @@ export interface ArtifactStore {
    *  `Promise.all` around them cannot help (see edge-pg.ts). Artifacts with no current
    *  version are simply absent from the result. */
   currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>>
-  /** Replace a version's stored data slots with `rows` (delete-then-insert, so a
+  /** Replace a version's stored facts with `rows` (delete-then-insert, so a
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */
   setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
-  /** A version's data slots: one named `slot`, or all of them (slot omitted), in slot
+  /** A version's facts: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
   /** One slot's value across a RANGE of versions, oldest first — the trend read. ONE
    *  indexed query, never a per-version loop: a thirty-version series must cost one round
-   *  trip, which is the entire point of slots. Versions in the range carrying no such slot
-   *  are simply absent from the result (they predate slots, or omitted the block), so the
+   *  trip, which is the entire point of facts. Versions in the range carrying no such slot
+   *  are simply absent from the result (they predate facts, or omitted the block), so the
    *  caller reports coverage rather than inventing gaps. `limit` caps the rows returned so
    *  a thousand-version artifact can never answer with an unbounded payload. */
   getVersionDataSeries(
@@ -500,7 +500,7 @@ export interface ArtifactStore {
    *  since a tag is already how a set of artifacts is named. ONE query, joined to each
    *  artifact's current version so it can never report a superseded row. */
   /** The workspace's slot VOCABULARY as RAW (slot, artifact) rows over current versions:
-   *  the discovery half of cross-artifact reads, since you cannot query a slot whose name
+   *  the discovery half of cross-artifact reads, since you cannot query a fact whose name
    *  you do not know and nothing else in the surface lists them.
    *
    *  Deliberately NOT pre-aggregated. Both slot readers scope by org, and an org is not a
@@ -508,12 +508,12 @@ export interface ArtifactStore {
    *  must therefore narrow these rows through the visibility gate (api lib/visibility.ts)
    *  before counting them. Aggregating here would hand back a count already computed over
    *  artifacts the caller may not see, with the evidence needed to correct it discarded. */
-  listWorkspaceSlots(
+  listWorkspaceFacts(
     orgId: string,
     opts?: { limit?: number },
   ): Promise<{ slot: string; artifact_id: string; at: string }[]>
   /** Carries `id` for that same reason: the caller gates on it, then drops it. */
-  listSlotAcrossArtifacts(
+  listFactAcrossArtifacts(
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },

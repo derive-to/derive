@@ -19,9 +19,9 @@ import { err, json, runnerOnline, safeJson, summarizeArtifact, text } from "../m
 const CONTEXTS_NEED_HUMAN =
   "Contexts (askable live data agents) are hidden here: this connection has no signed-in user. Reconnect with an OAuth login to see and use them."
 
-/** Rows returned by a cross-artifact slot read. The store is asked for twice this many so
+/** Rows returned by a cross-artifact fact read. The store is asked for twice this many so
  *  the visibility gate has slack to drop invisible ones without shortening the answer. */
-const SLOT_RESULT_CAP = 200
+const FACT_RESULT_CAP = 200
 
 export function registerFindTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, notFound, resolveWs, wsArg, askableContexts } = tc
@@ -81,7 +81,7 @@ export function registerFindTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe(
-            'Read one DATA SLOT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which slots exist in the workspace and how many artifacts carry each. Reaches exactly what a search would: your own artifacts plus the workspace-listed ones, never a teammate\'s invite-only doc — so a count here is what YOU can see, not what the workspace holds.',
+            'Read one FACT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which facts exist in the workspace and how many artifacts carry each. Reaches exactly what a search would: your own artifacts plus the workspace-listed ones, never a teammate\'s invite-only doc — so a count here is what YOU can see, not what the workspace holds.',
           ),
         skills: z
           .boolean()
@@ -200,7 +200,7 @@ export function registerFindTool(tc: ToolContext): void {
       if (data !== undefined) {
         if (query || short_id)
           return err(
-            "`data` reads slots across the workspace — pass it with `tag` (to scope the set) but not with `query`/`short_id`, which grep one artifact or search text.",
+            "`data` reads facts across the workspace — pass it with `tag` (to scope the set) but not with `query`/`short_id`, which grep one artifact or search text.",
           )
         // Both reads below reach artifacts by a METRIC NAME rather than by id, so the
         // store scopes them to the org and stops there. An org is not a read permission:
@@ -209,7 +209,7 @@ export function registerFindTool(tc: ToolContext): void {
         // before it is counted or returned.
         const viewer = { orgId: t.org, viewerId: actingFor?.id ?? agent.id }
         if (data === "*") {
-          const rows = await ctx.meta.listWorkspaceSlots(t.org)
+          const rows = await ctx.meta.listWorkspaceFacts(t.org)
           const allowed = await visibleArtifactIds(
             ctx.meta,
             [...new Set(rows.map((r) => r.artifact_id))],
@@ -225,18 +225,18 @@ export function registerFindTool(tc: ToolContext): void {
             byName.set(r.slot, e)
           }
           const catalog = [...byName.entries()]
-            .map(([slot, e]) => ({ slot, artifacts: e.artifacts.size, latest_at: e.latest_at }))
-            .sort((a, b) => b.artifacts - a.artifacts || a.slot.localeCompare(b.slot))
+            .map(([fact, e]) => ({ fact, artifacts: e.artifacts.size, latest_at: e.latest_at }))
+            .sort((a, b) => b.artifacts - a.artifacts || a.fact.localeCompare(b.fact))
           return json({
             workspace: t.org,
             count: catalog.length,
-            slots: catalog,
+            facts: catalog,
             ...(catalog.length
               ? {
-                  next: `Read one across the workspace with find(data:"${catalog[0]?.slot}"), or one artifact's history with read(short_id, data:"${catalog[0]?.slot}", versions:"all").`,
+                  next: `Read one across the workspace with find(data:"${catalog[0]?.fact}"), or one artifact's history with read(short_id, data:"${catalog[0]?.fact}", versions:"all").`,
                 }
               : {
-                  note: "No data slots in this workspace yet. A page carries one as a `derive-data` block (see derive://skills/publishing); it becomes queryable the moment it publishes.",
+                  note: "No facts in this workspace yet. A page carries one as a `derive-data` block (see derive://skills/publishing); it becomes queryable the moment it publishes.",
                 }),
           })
         }
@@ -245,19 +245,19 @@ export function registerFindTool(tc: ToolContext): void {
         // carries this slot" — a wrong answer dressed as an empty one. Nothing about what
         // was dropped is reported: a "some results were filtered" note would disclose the
         // existence of the very documents the gate is hiding.
-        const found = await ctx.meta.listSlotAcrossArtifacts(t.org, data, {
+        const found = await ctx.meta.listFactAcrossArtifacts(t.org, data, {
           tag: tag?.trim().toLowerCase(),
-          limit: SLOT_RESULT_CAP * 2,
+          limit: FACT_RESULT_CAP * 2,
         })
         const allowed = await visibleArtifactIds(
           ctx.meta,
           found.map((r) => r.id),
           viewer,
         )
-        const rows = found.filter((r) => allowed.has(r.id)).slice(0, SLOT_RESULT_CAP)
+        const rows = found.filter((r) => allowed.has(r.id)).slice(0, FACT_RESULT_CAP)
         return json({
           workspace: t.org,
-          slot: data,
+          fact: data,
           ...(tag ? { tag } : {}),
           count: rows.length,
           results: rows.map((r) => ({
@@ -270,7 +270,7 @@ export function registerFindTool(tc: ToolContext): void {
           ...(rows.length
             ? {}
             : {
-                note: `No artifact${tag ? ` tagged "${tag}"` : ""} carries a "${data}" slot on its current version. Pass data:"*" to see which slots exist.`,
+                note: `No artifact${tag ? ` tagged "${tag}"` : ""} carries a "${data}" slot on its current version. Pass data:"*" to see which facts exist.`,
               }),
         })
       }

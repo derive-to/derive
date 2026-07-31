@@ -121,7 +121,7 @@ import {
   mergeRunMeta,
   parseRunMeta,
   runCounter,
-  WORKSPACE_SLOT_ROW_CAP,
+  WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
 import {
   and,
@@ -499,7 +499,7 @@ export class PgMetaStore implements MetaStore {
     versionCount: number
     commentCount: number
     version: VersionRecord | null
-    slots: { slot: string; json: string }[]
+    facts: { slot: string; json: string }[]
   }> {
     // Counts computed IN the database rather than by reading both tables into the Worker
     // and calling `.length` (which is what the share-link path used to do), and the
@@ -526,19 +526,19 @@ export class PgMetaStore implements MetaStore {
     let versionCount = 0
     let commentCount = 0
     let version: VersionRecord | null = null
-    const slots: { slot: string; json: string }[] = []
-    // Branch on `kind`, never on "has a doc" — the version row and the slot rows both
-    // carry one, so a truthiness test would read a slot as the version.
+    const facts: { slot: string; json: string }[] = []
+    // Branch on `kind`, never on "has a doc" — the version row and the fact rows both
+    // carry one, so a truthiness test would read a fact as the version.
     for (const r of rows) {
       if (r.kind === "versions") versionCount = r.n ?? 0
       else if (r.kind === "comments") commentCount = r.n ?? 0
       else if (r.kind === "version") {
         if (r.doc) version = r.doc as VersionRecord
       } else if (r.kind === "slot" && r.doc) {
-        slots.push(r.doc as { slot: string; json: string })
+        facts.push(r.doc as { slot: string; json: string })
       }
     }
-    return { versionCount, commentCount, version, slots }
+    return { versionCount, commentCount, version, facts }
   }
 
   async currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>> {
@@ -688,7 +688,7 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(versionData.n))
       .limit(limit)
   }
-  async listWorkspaceSlots(orgId: string, opts?: { limit?: number }) {
+  async listWorkspaceFacts(orgId: string, opts?: { limit?: number }) {
     // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
     // the caller, AFTER the visibility gate — see the port doc for why not here.
     return this.db
@@ -704,9 +704,9 @@ export class PgMetaStore implements MetaStore {
       )
       .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
       .orderBy(asc(versionData.slot))
-      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
+      .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
   }
-  async listSlotAcrossArtifacts(
+  async listFactAcrossArtifacts(
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },
