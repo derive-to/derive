@@ -538,6 +538,36 @@ export interface ArtifactStore {
   ): Promise<
     { id: string; short_id: string; title: string | null; n: number; json: string; at: string }[]
   >
+  /** The BACKLINK scan: artifacts whose current version's `$links` mentions `ref`. Every
+   *  index above is per artifact; this is the inversion of one, which is the shape a corpus
+   *  question actually takes ("what points here"). Same join, one more predicate.
+   *
+   *  CANDIDATES, not answers. The `LIKE` narrows to the few rows that could contain the ref
+   *  and the CALLER CONFIRMS by parsing `json` — a substring match is not proof (the same
+   *  reasoning, and the same shape, as isManagedArtifact). The caller must then gate the
+   *  rows through api lib/visibility.ts before counting or returning them: these are the
+   *  LINKING artifacts, reached by content rather than by id, so the org scope is not a read
+   *  permission here either.
+   *
+   *  Each row carries `id` to gate on, `json` to confirm with, `gen` so the caller can say
+   *  the index is older than the deriver, and `at` = the CURRENT VERSION's publish time.
+   *  Never version_data.created_at: a lazily derived row's timestamp is when the host got
+   *  round to indexing, not when the link was made. */
+  listArtifactsLinkingTo(
+    orgId: string,
+    ref: string,
+    opts?: { tag?: string; limit?: number },
+  ): Promise<
+    {
+      id: string
+      short_id: string
+      title: string | null
+      n: number
+      json: string
+      gen: number
+      at: string
+    }[]
+  >
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */

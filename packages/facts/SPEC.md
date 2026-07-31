@@ -133,6 +133,35 @@ Three rules, same spirit as the rest:
   cache PR on what the probe says. A cache nobody needed is a generation-bump discipline
   paid forever for nothing.
 
+### 3.5 The inverse read
+
+Every read above is *per record*: this page's value, this page's history, this metric
+everywhere. The questions a corpus actually gets asked have the other shape — what points
+HERE, which documents carry this name — and each is an **inversion** of a per-record index.
+A host MAY expose one, under four conditions.
+
+- **One predicate, one bound parameter, never an expression.** An inversion is a named
+  question with a fixed shape, not a query language by another route (§"What is deliberately
+  NOT here"). The moment a caller can compose it, the host has inherited a cost curve.
+- **§4's gate applies to the LINKING records, not to the target.** A backlink row names the
+  document that made the reference, so an invisible linker MUST NOT appear — but the target
+  itself needs no permission, because the caller learns nothing the linker does not already
+  disclose. The target's EXISTENCE must not be confirmable either: "nothing links here",
+  "the linkers were never indexed", and "no such record" MUST be indistinguishable, or the
+  inversion is an existence oracle for every id on the host.
+- **It is exhaustive within its index, or it says so.** The only reason to build an
+  inversion is that ranked search under-reports; one that silently truncates has kept the
+  defect and added a cache. Report a scan bound, which is caller-independent and so
+  discloses nothing. Never report a visibility filter, which is neither.
+- **It SHOULD NOT be materialized until measurement says reads exceed rebuilds.** An
+  inversion computed from the rows it inverts cannot disagree with them. A second table can,
+  and nothing will ever compare the two.
+
+Build one only when the scan it replaces is a query people actually run. The client-side
+inversion is the evidence, and it is also the thing to beat: pulling every record's rows to
+fold them locally is bounded by the read cap, so it is not merely slower than a server-side
+inversion but less complete.
+
 ## 4. Visibility
 
 > **A derived read is never more readable than its source.**
@@ -334,9 +363,12 @@ Rules, all normative:
 ## What is deliberately NOT here
 
 - **A query language.** They do not travel. Expose surfaces people already hold.
-- **Server-side aggregation or joins.** At these sizes a client does the arithmetic for less
-  than the cost of designing, versioning and defending an aggregate API — and the moment a
-  host runs user queries it inherits a DoS surface and a cost curve.
+- **A query language, or server-side aggregation over caller-supplied expressions.** At
+  these sizes a client does the arithmetic for less than the cost of designing, versioning
+  and defending an aggregate API — and the moment a host runs user queries it inherits a
+  DoS surface and a cost curve. Fixed-shape joins the contract itself requires are not this
+  and never were: §3.3's current-version join is mandatory, and §3.5's inverse read is one
+  predicate with one bound parameter and no arithmetic.
 - **Mandatory schemas.** Ceremony killed CSVW. Optional, opt-in, or not at all.
 - **Auto-extraction of tables.** Guessing at the meaning of someone's numbers produces
   confidently wrong data, which is worse than none.

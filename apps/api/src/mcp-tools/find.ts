@@ -1,4 +1,11 @@
-import { isDerivedFactName, SKILL_CONTENT_TYPE } from "@derive/core"
+import {
+  artifactRefIn,
+  artifactRefOf,
+  derivedGen,
+  isDerivedFactName,
+  LINKS_FACT,
+  SKILL_CONTENT_TYPE,
+} from "@derive/core"
 import { z } from "zod"
 import {
   searchArtifactVersion,
@@ -23,6 +30,65 @@ const CONTEXTS_NEED_HUMAN =
 /** Rows returned by a cross-artifact fact read. The store is asked for twice this many so
  *  the visibility gate has slack to drop invisible ones without shortening the answer. */
 const FACT_RESULT_CAP = 200
+
+/** Backlink rows returned. Higher than FACT_RESULT_CAP deliberately: a fact row carries a
+ *  whole JSON payload (up to MAX_FACT_BYTES, 32KiB), a backlink row carries a short id, a
+ *  title and a date — about 80 bytes. 500 of them is comparable to a SINGLE page of
+ *  find(data:). An index capped by a payload-shaped constant is capped for the wrong
+ *  reason, and this one is capping the thing it exists to be exhaustive about. */
+const BACKLINK_RESULT_CAP = 500
+
+/** The refs a stored $links payload actually asserts. The CONFIRM half of the store's
+ *  narrow-then-confirm: its LIKE is a substring match over raw JSON, and a substring match
+ *  is not proof (see MetaStore.listArtifactsLinkingTo). Malformed JSON is a corrupt cache
+ *  entry — it costs that candidate, never the query. */
+const refsOf = (jsonText: string): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(jsonText)
+    const refs = (parsed as { refs?: unknown } | null)?.refs
+    return Array.isArray(refs) ? refs.filter((r): r is string => typeof r === "string") : []
+  } catch {
+    return []
+  }
+}
+
+/** The notes on a backlink answer. Pure and separate so the truncation and staleness copy
+ *  can be tested without publishing five hundred linkers.
+ *
+ *  THE EMPTY NOTE COVERS THREE STATES ON PURPOSE. "Nothing links here", "the linkers were
+ *  never derived", and "no such artifact / it lives in another workspace" must read
+ *  identically, or find(links_to:) becomes an oracle for whether a short id exists. So it
+ *  neither confirms nor denies the target, names both coverage gaps, and points at a count
+ *  that is ALREADY visibility-gated rather than inventing a new one. */
+export const backlinkNotes = (o: {
+  ref: string
+  count: number
+  truncated: boolean
+  stale: number
+  tag?: string
+}): { note?: string; next?: string } => {
+  const notes: string[] = []
+  if (!o.count)
+    notes.push(
+      `Nothing you can see links to "${o.ref}"${o.tag ? ` under tag "${o.tag}"` : ""} on its current version. This index reads the host-derived $links fact: a version published before derivation shipped carries no row until it is republished or read once, and bundles and skills carry no facts at all, so references inside their pages are never indexed. find(data:"$*") shows how many artifacts currently carry $links.`,
+    )
+  if (o.truncated)
+    notes.push(
+      `Capped at ${BACKLINK_RESULT_CAP} linking artifacts; more exist. Narrow with tag:"…".`,
+    )
+  if (o.stale)
+    notes.push(
+      `${o.stale} of these were indexed by an earlier version of the link deriver. Refresh one with read(short_id, data:"$links").`,
+    )
+  return {
+    ...(notes.length ? { note: notes.join(" ") } : {}),
+    ...(o.count
+      ? {
+          next: `$links records THAT a reference exists, never why. find(short_id:"<one of these>", query:"${o.ref}") shows the line each one sits on.`,
+        }
+      : {}),
+  }
+}
 
 export function registerFindTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, notFound, resolveWs, wsArg, askableContexts } = tc
@@ -59,7 +125,7 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things in Derive — the MODE is decided by what you pass. Pass `short_id` + `query` to GREP within one artifact: matching lines with line numbers (in:'source'|'text', context lines, a past `version`), so you can then read a `lines` range or edit that spot. Pass `query` ALONE to SEARCH the whole workspace — artifacts ranked by relevance with a snippet each, so you find WHICH doc has something before opening it; this ALSO surfaces any askable context whose name matches. Pass NEITHER to BROWSE the library: every artifact (short id, title, kind, is_skill, version, access, tags — skills:true or a `tag` narrows it) PLUS the askable contexts. Rows are typed (artifact | match | context); `read` a context row for its package, `use` it to give it work. Includes your own unlisted work. For the browse→work rhythm, read derive://skills/loop.",
+        "Find things in Derive — the MODE is decided by what you pass. Pass `short_id` + `query` to GREP within one artifact: matching lines with line numbers (in:'source'|'text', context lines, a past `version`), so you can then read a `lines` range or edit that spot. Pass `query` ALONE to SEARCH the whole workspace — artifacts ranked by relevance with a snippet each, so you find WHICH doc has something before opening it; this ALSO surfaces any askable context whose name matches. Pass `links_to` for BACKLINKS — which artifacts link TO one target, exhaustively rather than ranked, which is the question `query` cannot answer honestly. Pass NEITHER to BROWSE the library: every artifact (short id, title, kind, is_skill, version, access, tags — skills:true or a `tag` narrows it) PLUS the askable contexts. Rows are typed (artifact | match | context | backlink); `read` a context row for its package, `use` it to give it work. Includes your own unlisted work. For the browse→work rhythm, read derive://skills/loop.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         query: z
@@ -107,6 +173,12 @@ export function registerFindTool(tc: ToolContext): void {
           .number()
           .optional()
           .describe("Grep/search: cap on matches per artifact (default 40, max 200)."),
+        links_to: z
+          .string()
+          .optional()
+          .describe(
+            "BACKLINKS: which artifacts link TO this one. Pass a short id or an artifact URL; returns every artifact in the workspace whose CURRENT version references it, exhaustively — unlike `query`, which ranks and caps a guess at relevance. Combine with `tag` to scope the set. Reads the host-derived $links fact, so bundles and skills (which carry no facts) are never counted as linkers, and a version published before derivation carries no row until it is read once. A link to @v4 and a link to current are the same edge.",
+          ),
         version: z.coerce
           .number()
           .optional()
@@ -119,6 +191,7 @@ export function registerFindTool(tc: ToolContext): void {
       short_id,
       tag,
       data,
+      links_to,
       skills,
       case_sensitive,
       in: scope,
@@ -127,6 +200,18 @@ export function registerFindTool(tc: ToolContext): void {
       version,
       workspace,
     }) => {
+      // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with
+      // "`query` is required to grep" — the wrong error for a caller who asked a different
+      // question. Backlinks reach artifacts by content across the workspace; the other three
+      // modes reach one artifact by id, or rank text. They do not compose.
+      if (links_to !== undefined && (query || short_id || data !== undefined))
+        return err(
+          "`links_to` asks which artifacts link to one target — pass it with `tag` (to scope the set), but not with `query`/`short_id` (which grep or rank one artifact's text) or `data` (which reads a fact by name).",
+        )
+      if (links_to !== undefined && version !== undefined)
+        return err(
+          "`links_to` has no version dimension: the inversion joins each artifact's CURRENT version, and a reference to @v4 and one to current are the same edge.",
+        )
       // MODE 1 — GREP WITHIN ONE ARTIFACT. Byte-for-byte the former search(short_id):
       // matching lines, line numbers, in:'source'|'text', context lines, a chosen version.
       if (short_id) {
@@ -285,6 +370,78 @@ export function registerFindTool(tc: ToolContext): void {
             : {
                 note: `No artifact${tag ? ` tagged "${tag}"` : ""} carries a "${data}" slot on its current version. Pass data:"*" to see which facts exist.`,
               }),
+        })
+      }
+
+      // MODE 3b — BACKLINKS, the corpus INVERSION. Every derived fact is per artifact, per
+      // version; the question a corpus actually gets asked is the other shape. Inverting
+      // $links client-side means pulling every artifact's payload and folding it here —
+      // one call at 193 artifacts, a scan at 10k, and capped at FACT_RESULT_CAP either way,
+      // so the client-side answer is not merely slow but inexhaustive. The answer to ONE
+      // target is small even though the scan is corpus-sized, which is why this is a query
+      // and not a table: never store what you can recompute, until reads exceed rebuilds.
+      if (links_to !== undefined) {
+        const ref = artifactRefIn(links_to) ?? artifactRefOf(links_to.trim())
+        if (!ref)
+          return err(
+            `"${links_to}" is not an artifact reference. Pass a short id (abc12345), a titled ref (my-doc-abc12345) or an artifact URL.`,
+          )
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const viewer = { orgId: t.org, viewerId: actingFor?.id ?? agent.id }
+        const started = Date.now()
+        // Over-fetch, CONFIRM, then gate, then cut — same order as the named read above and
+        // for the same reason. The confirm goes BEFORE the gate so a row the LIKE matched
+        // but the payload does not actually reference never costs a visibility lookup.
+        const candidates = await ctx.meta.listArtifactsLinkingTo(t.org, ref, {
+          tag: tag?.trim().toLowerCase(),
+          limit: BACKLINK_RESULT_CAP * 2,
+        })
+        const confirmed = candidates.filter((r) => refsOf(r.json).includes(ref))
+        const allowed = await visibleArtifactIds(
+          ctx.meta,
+          confirmed.map((r) => r.id),
+          viewer,
+        )
+        const visible = confirmed.filter((r) => allowed.has(r.id))
+        const rows = visible.slice(0, BACKLINK_RESULT_CAP)
+        // TRUNCATION is reported; visibility filtering is NOT, and the difference is not a
+        // nicety. A scan bound is caller-independent — an omniscient caller hits the same
+        // cap, so saying so discloses nothing. A visibility filter is caller-dependent, so
+        // "some results were hidden" would disclose the existence of the very documents the
+        // gate exists to hide. An index that silently truncates is the failure this whole
+        // surface is a reaction to, so the first half MUST be said.
+        const truncated =
+          candidates.length >= BACKLINK_RESULT_CAP * 2 || visible.length > rows.length
+        const staleRows = rows.filter((r) => r.gen !== derivedGen(LINKS_FACT)).length
+        log.info("fact_read", { name: LINKS_FACT, derived: true, surface: "backlinks" })
+        // The pre-gate numbers, in the log where they belong: `candidates` is what decides
+        // whether this ever needs materializing. Do that when p95 ms crosses 500, or when
+        // calls/day x candidates exceeds the publish rate (reads exceeding rebuilds).
+        // Today: 193 artifacts, ~18 candidates for a real target, one 641ms call for the
+        // whole $links corpus.
+        log.info("backlinks_query", {
+          org: t.org,
+          candidates: candidates.length,
+          confirmed: confirmed.length,
+          returned: rows.length,
+          truncated,
+          ms: Date.now() - started,
+        })
+        return json({
+          workspace: t.org,
+          links_to: ref,
+          ...(tag ? { tag } : {}),
+          count: rows.length,
+          results: rows.map((r) => ({
+            type: "backlink" as const,
+            short_id: r.short_id,
+            title: r.title,
+            version: r.n,
+            at: r.at,
+            ...(r.short_id === ref ? { self: true } : {}),
+          })),
+          ...backlinkNotes({ ref, count: rows.length, truncated, stale: staleRows, tag }),
         })
       }
 

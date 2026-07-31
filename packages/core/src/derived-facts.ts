@@ -76,6 +76,39 @@ const deriveOutline = (markers: SectionMarker[]): unknown => {
 const HTML_HREF = /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi
 const MD_LINK = /\]\(([^)\s]+)\)/g
 
+/** The name of the outbound-reference fact, so the backlink inversion and the deriver that
+ *  builds the rows it scans cannot drift to different strings. */
+export const LINKS_FACT = "$links"
+
+/** The short id a REF STRING denotes — `abc12345`, `my-title-abc12345`, `…@v4` — or null
+ *  when it is not id-shaped. `parseRef` collapses the `@vN` suffix, so a link to v4 and a
+ *  link to current denote the SAME artifact and there is no version dimension to a
+ *  reference. */
+export const artifactRefOf = (ref: string): string | null => {
+  let decoded = ref
+  // Guarded: decodeURIComponent throws on malformed percent-encoding, and one bad href in
+  // someone's page must cost that edge, never the whole row.
+  try {
+    decoded = decodeURIComponent(ref)
+  } catch {
+    /* use the raw segment */
+  }
+  const { shortId } = parseRef(decoded)
+  return /^[0-9a-z]{6,12}$/.test(shortId) ? shortId : null
+}
+
+/** The short id a LINK TARGET points at, or null. Requires the `/artifacts/` path, which is
+ *  what makes a reference an edge: a bare short id in prose is a string.
+ *
+ *  ONE grammar, exported because a second reader exists. `deriveLinks` STORES what this
+ *  returns and the backlink inversion SEARCHES FOR what this returns; two copies could
+ *  disagree about what a ref is, and the index would then quietly stop matching the rows it
+ *  was built from — a failure that reads as "nothing links here". */
+export const artifactRefIn = (target: string): string | null => {
+  const m = /\/artifacts\/([^/?#\s]+)/.exec(target)
+  return m?.[1] ? artifactRefOf(m[1]) : null
+}
+
 /** Outbound references to OTHER artifacts: short ids resolved from href values or markdown
  *  link targets — `/artifacts/<ref>` paths and derive.to absolute forms. LINK TARGETS only,
  *  deliberately: a short id mentioned in prose is a string, not an edge. Null when the
@@ -95,18 +128,8 @@ const deriveLinks = (source: string): unknown => {
   for (const m of source.matchAll(MD_LINK)) targets.push(m[1] ?? "")
   const refs: string[] = []
   for (const t of targets) {
-    const m = /\/artifacts\/([^/?#\s]+)/.exec(t)
-    if (!m?.[1]) continue
-    // Guarded PER TARGET: decodeURIComponent throws on malformed percent-encoding, and
-    // one bad href in someone's page must cost that edge, never the whole row.
-    let ref = m[1]
-    try {
-      ref = decodeURIComponent(ref)
-    } catch {
-      /* use the raw segment */
-    }
-    const { shortId } = parseRef(ref)
-    if (/^[0-9a-z]{6,12}$/.test(shortId) && !refs.includes(shortId)) refs.push(shortId)
+    const shortId = artifactRefIn(t)
+    if (shortId && !refs.includes(shortId)) refs.push(shortId)
   }
   return refs.length ? { refs } : null
 }
@@ -139,7 +162,7 @@ const DERIVERS: {
   derive: (source: string, contentType: string, markers: SectionMarker[]) => unknown
 }[] = [
   { slot: "$outline", gen: 1, derive: (_s, _ct, markers) => deriveOutline(markers) },
-  { slot: "$links", gen: 2, derive: (source) => deriveLinks(source) },
+  { slot: LINKS_FACT, gen: 2, derive: (source) => deriveLinks(source) },
   { slot: "$stats", gen: 1, derive: deriveStats },
 ]
 

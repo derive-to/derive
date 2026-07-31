@@ -340,6 +340,189 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?doc/i)
   })
 
+  it("inverts $links into backlinks — exhaustive where search is ranked, and gated", async () => {
+    // The corpus inversion, end to end. The claim it has to earn: an index is exhaustive or
+    // it is broken. Content search returns a ranked, capped guess; this returns every edge.
+    const { app, token, teammate, meta } = appWithGrant(
+      dir,
+      "backlinks",
+      "openid derive:read derive:publish",
+    )
+    const mate = teammate("u_blmate", "tok_backlinks_mate", "openid derive:read")
+    const target = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "The Target",
+          content: "<!doctype html><html><body><h1>Target</h1><p>x</p></body></html>",
+          listed: "workspace",
+        }),
+      ),
+    )
+    const tid = target.short_id as string
+    const linkTo = (title: string, extra: Record<string, unknown> = {}) =>
+      call(app, token, "publish", {
+        title,
+        content: `<!doctype html><html><body><h1>${title}</h1><p>see <a href="/artifacts/t-${tid}">it</a></p></body></html>`,
+        listed: "workspace",
+        ...extra,
+      })
+    const one = JSON.parse(toolText(await linkTo("Linker One")))
+    const two = JSON.parse(toolText(await linkTo("Linker Two")))
+    // MENTIONS the id in prose but never links it. A reference is a link target; a string in
+    // a paragraph is not an edge, and this is the row that separates the index from search.
+    const prose = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Mentions Only",
+          content: `<!doctype html><html><body><h1>Prose</h1><p>the id ${tid} appears here</p></body></html>`,
+          listed: "workspace",
+        }),
+      ),
+    )
+    // A BUNDLE that links to the target. Extraction is single-file, so it carries no facts
+    // at all and can never be a linker — a permanent coverage gap, pinned here so a future
+    // change to bundle derivation flips this assertion instead of silently widening the graph.
+    const bundle = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Bundle Linker",
+          files: { "index.html": `<h1>B</h1><a href="/artifacts/${tid}">it</a>` },
+          listed: "workspace",
+        }),
+      ),
+    )
+
+    const back = JSON.parse(toolText(await call(app, token, "find", { links_to: tid })))
+    const ids = back.results.map((r: { short_id: string }) => r.short_id).sort()
+    expect(ids).toEqual([one.short_id, two.short_id].sort())
+    expect(back.links_to).toBe(tid)
+    expect(back.count).toBe(2)
+    expect(back.results.every((r: { type: string }) => r.type === "backlink")).toBe(true)
+    expect(ids).not.toContain(prose.short_id)
+    expect(ids).not.toContain(bundle.short_id)
+
+    // THE COMPARISON THAT JUSTIFIES THE FEATURE: search finds the prose mention too, and
+    // would happily report it as a link. The index is not merely more convenient here, it
+    // is more correct — and being ranked, search is also free to omit a real one.
+    const searched = JSON.parse(toolText(await call(app, token, "find", { query: tid })))
+    expect(searched.results.map((r: { short_id: string }) => r.short_id)).toContain(prose.short_id)
+
+    // An artifact URL and a titled ref resolve to the same edge as the bare short id, and
+    // @vN collapses: a link to v4 and a link to current are one reference.
+    for (const form of [
+      `https://derive.to/artifacts/the-target-${tid}`,
+      `/artifacts/t-${tid}`,
+      `t-${tid}@v1`,
+    ])
+      expect(JSON.parse(toolText(await call(app, token, "find", { links_to: form }))).count).toBe(2)
+
+    // THE LEAK TEST. An invite-only linker is reached by CONTENT, so the store can only
+    // scope it by org — and an org is not a read permission. Verified by breaking: with the
+    // visibleArtifactIds call removed, the teammate below sees 3 and the private title
+    // appears in the payload.
+    const hidden = JSON.parse(
+      toolText(
+        await linkTo("Board Only Linker", {
+          listed: "none",
+          workspace_access: "none",
+          link_role: "none",
+        }),
+      ),
+    )
+    expect(JSON.parse(toolText(await call(app, token, "find", { links_to: tid }))).count).toBe(3)
+    const theirs = JSON.parse(toolText(await call(app, mate, "find", { links_to: tid })))
+    expect(theirs.count).toBe(2)
+    expect(theirs.results.map((r: { short_id: string }) => r.short_id)).not.toContain(
+      hidden.short_id,
+    )
+    expect(JSON.stringify(theirs)).not.toContain("Board Only Linker")
+    expect(JSON.stringify(theirs)).not.toContain(hidden.short_id)
+    // And nothing announces that anything was filtered: a "some results hidden" note would
+    // disclose the existence of the document the gate exists to hide.
+    expect(JSON.stringify(theirs)).not.toMatch(/hidden|filtered|not shown/i)
+
+    // THE CONFIRM. The store's LIKE is a substring match over raw JSON and is exact only
+    // while $links carries nothing but `refs`. This is what a FOURTH deriver's output looks
+    // like — the ref quoted as an object KEY — and it survives the LIKE. Only parsing kills
+    // it. Verified by breaking: without the refsOf filter this artifact joins the answer.
+    const impostor = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Future Deriver Shape",
+          content: "<!doctype html><html><body><h1>F</h1><p>x</p></body></html>",
+          listed: "workspace",
+        }),
+      ),
+    )
+    const irec = await meta.getByShortId(impostor.short_id)
+    if (!irec) throw new Error("gone")
+    await meta.setDerivedVersionData(irec.id, 1, [
+      {
+        id: "vd_impostor",
+        slot: "$links",
+        json: `{"refs":["zzzz0000"],"titles":{"${tid}":"The Target"}}`,
+        size_bytes: 60,
+        gen: 2,
+      },
+    ])
+    const afterImpostor = JSON.parse(toolText(await call(app, token, "find", { links_to: tid })))
+    expect(afterImpostor.results.map((r: { short_id: string }) => r.short_id)).not.toContain(
+      impostor.short_id,
+    )
+    expect(afterImpostor.count).toBe(3)
+
+    // GEN SKEW is reported, never filtered. An old-generation row UNDER-reports the graph;
+    // dropping it under-reports more, and a corpus scan cannot re-derive on the fly (that
+    // is bounded to single-version reads). So the row stays in the answer and the answer
+    // says the index is older than the deriver.
+    const orec = await meta.getByShortId(one.short_id)
+    if (!orec) throw new Error("gone")
+    await meta.setDerivedVersionData(orec.id, 1, [
+      { id: "vd_oldgen", slot: "$links", json: `{"refs":["${tid}"]}`, size_bytes: 26, gen: 1 },
+    ])
+    const skewed = JSON.parse(toolText(await call(app, token, "find", { links_to: tid })))
+    expect(skewed.results.map((r: { short_id: string }) => r.short_id)).toContain(one.short_id)
+    expect(skewed.note).toContain("1 of these")
+    expect(skewed.note).toContain("earlier version of the link deriver")
+  })
+
+  it("never lets find(links_to:) become a short-id existence oracle", async () => {
+    // Three states must be indistinguishable: nothing links here, the linkers were never
+    // derived, and no such artifact. If they differ, the tool answers "does this id exist?"
+    // to anyone who asks, for every workspace on the host.
+    const { app, token } = appWithGrant(dir, "oracle", "openid derive:read derive:publish")
+    const real = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Unlinked",
+          content: "<!doctype html><html><body><h1>Alone</h1><p>x</p></body></html>",
+        }),
+      ),
+    )
+    const strip = (s: string, id: string) => s.split(id).join("<ID>")
+    const existing = strip(
+      toolText(await call(app, token, "find", { links_to: real.short_id })),
+      real.short_id,
+    )
+    const missing = strip(
+      toolText(await call(app, token, "find", { links_to: "zzzz9999" })),
+      "zzzz9999",
+    )
+    expect(existing).toBe(missing)
+    expect(existing).toContain("Nothing you can see links to")
+    // A MALFORMED ref is a different case and IS an error: it discloses nothing about who
+    // exists, and answering "nothing links to it" for a typo is a wrong answer.
+    const bad = toolText(await call(app, token, "find", { links_to: "hello world" }))
+    expect(bad).toContain("is not an artifact reference")
+    // Mode collisions are refused with the right error, not mode 1's "query is required".
+    expect(
+      toolText(await call(app, token, "find", { links_to: "zzzz9999", short_id: "x" })),
+    ).toContain("`links_to` asks which artifacts link to one target")
+    expect(
+      toolText(await call(app, token, "find", { links_to: "zzzz9999", version: 2 })),
+    ).toContain("no version dimension")
+  })
+
   it("NEVER surfaces an invite-only artifact's slot data to a co-member (regression)", async () => {
     // The cross-artifact slot readers reach artifacts by a METRIC NAME, so the store can
     // only scope them by org — and an org is not a read permission: workspace_access:"none"
