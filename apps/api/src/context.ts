@@ -27,6 +27,7 @@ import {
   roleAllows,
   type SearchIndex,
   type SubscriptionRecord,
+  type WorkspaceRecord,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
@@ -901,6 +902,32 @@ export function buildContext(deps: AppDeps) {
     return pending
   }
 
+  // MEMOIZED PER REQUEST + user, for the same reason as `cachedMembership` above: the
+  // GET /v1/workspaces boot request read the caller's workspace list TWICE — once inside
+  // `activeWorkspace` (the branch taken when there is no derive_ws cookie yet, i.e. a
+  // first login or any cookie-less client) and once for the response body. On the edge
+  // tier that duplicate is a full ~80ms round trip for rows the request already had.
+  // Caches the PROMISE, so two callers racing before the first resolves still de-dupe.
+  const workspacesCache = new WeakMap<
+    Context,
+    Map<string, Promise<(WorkspaceRecord & { role: Role })[]>>
+  >()
+  const cachedWorkspaces = (
+    c: Context,
+    userId: string,
+  ): Promise<(WorkspaceRecord & { role: Role })[]> => {
+    let perRequest = workspacesCache.get(c)
+    if (!perRequest) {
+      perRequest = new Map()
+      workspacesCache.set(c, perRequest)
+    }
+    const hit = perRequest.get(userId)
+    if (hit) return hit
+    const pending = meta.listWorkspaces(userId)
+    perRequest.set(userId, pending)
+    return pending
+  }
+
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
   const ensureMembership = async (c: Context, orgId: string, userId: string): Promise<Role> => {
@@ -966,8 +993,16 @@ export function buildContext(deps: AppDeps) {
       const ck = getCookie(c, WS_COOKIE)
       if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
       else {
-        const mine = await meta.listWorkspaces(me.id)
-        ws = mine[0]?.id ?? (await provisionPersonal(me))
+        const mine = await cachedWorkspaces(c, me.id)
+        if (mine[0]) ws = mine[0].id
+        else {
+          ws = await provisionPersonal(me)
+          // Drop the memoized EMPTY list: it predates the workspace we just created, and
+          // GET /v1/workspaces reads the list again for its body in this same request —
+          // it would have answered "you have no workspaces" moments after making one.
+          // Exactly the invalidation `ensureMembership` does after provisioning a row.
+          workspacesCache.get(c)?.delete(me.id)
+        }
       }
     }
     wsCache.set(c, ws)
@@ -1358,6 +1393,8 @@ export function buildContext(deps: AppDeps) {
      *  already resolved by `activeWorkspace`/`workspaceRole`, and a direct call re-pays a
      *  full ~80ms round trip for it. */
     membershipOf: cachedMembership,
+    /** `meta.listWorkspaces`, memoized for this request — see cachedWorkspaces. */
+    workspacesOf: cachedWorkspaces,
     activeWorkspace,
     setWsCookie,
     anonViewerId,

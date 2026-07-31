@@ -75,6 +75,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
     setWsCookie,
     workspaceRole,
     seatGrantGate,
+    workspacesOf,
   } = ctx
   const { privateOwnerId, oauthGrant, inviteLimiter, limited } = ctx
   const billing = deps.billing
@@ -736,7 +737,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
           ],
         })
       }
-      const mine = await meta.listWorkspaces(me.id)
+      // Memoized: activeWorkspace above may already have read this exact list.
+      const mine = await workspacesOf(c, me.id)
       return c.json({
         multi: true,
         active,

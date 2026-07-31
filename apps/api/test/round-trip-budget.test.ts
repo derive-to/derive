@@ -102,6 +102,15 @@ describe("hot read paths stay within their round-trip budget", () => {
       },
       { path: "/v1/notifications", budget: 1, needs: "one notificationsPage" },
       {
+        // On the boot waterfall at 404ms. Was 3: the caller's workspace list was read
+        // TWICE — once by activeWorkspace's no-cookie branch (a first login, or any
+        // cookie-less client) and once for the response body. `workspacesOf` memoizes it
+        // per request, the same way `membershipOf` already memoized getMembership.
+        path: "/v1/workspaces",
+        budget: 2,
+        needs: "ONE memoized listWorkspaces, membership",
+      },
+      {
         path: "/v1/collections",
         budget: 4,
         needs: "workspace resolve, membership, one collectionsOverview, one roles batch",
