@@ -3482,6 +3482,11 @@ export interface paths {
                             settings: components["schemas"]["OrgSettings"];
                             notifications: components["schemas"]["Notification"][];
                             unread: number;
+                            /** @description The publishing-blocked verdict, or null when the workspace is free to publish. Same value GET /v1/billing reports as `blocked`. */
+                            blocked: {
+                                code: string;
+                                message: string;
+                            } | null;
                         };
                     };
                 };

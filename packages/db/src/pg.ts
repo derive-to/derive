@@ -120,6 +120,7 @@ import type {
   WorkspaceSummary,
 } from "@derive/core"
 import {
+  BILLABLE_ROLES,
   GLOBAL_FOLLOW_ORG,
   maxRole,
   mergeRunMeta,
@@ -1407,8 +1408,13 @@ export class PgMetaStore implements MetaStore {
        SELECT 'notifications', (SELECT COALESCE(jsonb_agg(row_to_json(t) ORDER BY t.created_at DESC, t.id DESC), '[]'::jsonb) FROM (
          SELECT *, count(*) FILTER (WHERE read = 0) OVER ()::int AS unread_total
            FROM notification WHERE user_id = $2
-          ORDER BY created_at DESC LIMIT $3) t)`,
-      [orgId, userId, notifLimit],
+          ORDER BY created_at DESC LIMIT $3) t)
+       UNION ALL
+       SELECT 'subscription', (SELECT to_jsonb(s) FROM subscription s WHERE s.org_id = $1)
+       UNION ALL
+       SELECT 'seats', to_jsonb((SELECT count(*)::int FROM membership m
+                                  WHERE m.org_id = $1 AND m.role = ANY($4)))`,
+      [orgId, userId, notifLimit, [...BILLABLE_ROLES]],
     )
     const arm: Record<string, unknown> = {}
     for (const r of rows) arm[r.arm] = r.doc
@@ -1423,6 +1429,10 @@ export class PgMetaStore implements MetaStore {
       collections,
       sources,
       collectionRoles,
+      billing: {
+        subscription: (arm.subscription as SubscriptionRecord | null) ?? null,
+        billableSeats: (arm.seats as number | null) ?? 0,
+      },
       // to_jsonb of the text column yields a JSON string (or null when no row) — exactly
       // the raw value getOrgSettings hands to the same parser.
       settings: parseOrgSettings(typeof arm.settings === "string" ? arm.settings : null),

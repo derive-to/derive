@@ -397,6 +397,20 @@ export const billingQuery = () =>
     queryFn: () => api.getBilling(),
   })
 
+/** JUST the publishing-blocked verdict, for the app shell's banner.
+ *
+ *  Its own key because it is seeded by the boot batch (lib/bootstrap.ts) and therefore
+ *  normally costs no request at all. The banner used to read `billingQuery`, which meant
+ *  every authed page load called GET /v1/billing — 6 store calls and 676ms on the boot
+ *  waterfall, the most expensive request there — to be told it is not blocked. The
+ *  fallback queryFn is that same endpoint, so a failed boot batch degrades to exactly the
+ *  old behavior rather than to a missing banner. */
+export const blockedQuery = () =>
+  queryOptions({
+    queryKey: ["billing", "blocked"] as const,
+    queryFn: () => api.getBilling().then((b) => b.blocked),
+  })
+
 // Slack connection status for the Integrations section (availability, connected
 // team, default channel). Invalidated on disconnect; staleTime Infinity so a
 // background refetch can't re-seed the editable channel field mid-edit.

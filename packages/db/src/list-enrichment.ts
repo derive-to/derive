@@ -18,6 +18,7 @@ import type {
   WorkspaceRecord,
   WorkspaceSummary,
 } from "@derive/core"
+import { isBillableRole } from "@derive/core"
 
 /**
  * Batched MetaStore methods, composed from their individual queries, for the embedded
@@ -148,7 +149,10 @@ export const composeBootstrap = async (
   store: Parameters<typeof composeWorkspaceSummary>[0] &
     Parameters<typeof composeCollectionsOverview>[0] &
     Parameters<typeof composeNotificationsPage>[0] &
-    Pick<MetaStore, "collectionRolesForUser" | "getOrgSettings">,
+    Pick<
+      MetaStore,
+      "collectionRolesForUser" | "getOrgSettings" | "getSubscription" | "listMemberships"
+    >,
   orgId: string,
   userId: string,
   notifLimit: number,
@@ -161,7 +165,21 @@ export const composeBootstrap = async (
   )
   const settings = await store.getOrgSettings(orgId)
   const notifications = await composeNotificationsPage(store, userId, notifLimit)
-  return { summary, collections, sources, collectionRoles, settings, notifications }
+  // The publishing-blocked verdict's two inputs. The pg driver answers both as arms of
+  // the one bootstrap statement; here they are two more free local reads.
+  const subscription = await store.getSubscription(orgId)
+  const billableSeats = (await store.listMemberships(orgId)).filter((m) =>
+    isBillableRole(m.role),
+  ).length
+  return {
+    summary,
+    collections,
+    sources,
+    collectionRoles,
+    settings,
+    notifications,
+    billing: { subscription, billableSeats },
+  }
 }
 
 export const composeWorkspaceSummary = async (

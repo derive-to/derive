@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useAuth } from "@/ctx"
-import { billingQuery } from "@/lib/queries"
+import { useBootGate } from "@/lib/bootstrap"
+import { blockedQuery } from "@/lib/queries"
 
 // Copy by verdict code. The server's message names the URL for agents; humans
 // get the short version with the button.
@@ -17,8 +18,11 @@ const COPY: Record<string, string> = {
 // Hidden on the billing page itself, where the full comparison already is.
 export function BlockedBanner({ pathname }: { pathname: string }) {
   const { me } = useAuth()
-  const { data: billing } = useQuery({ ...billingQuery(), enabled: !!me })
-  const blocked = billing?.blocked
+  // Boot-batch gated, like the rail's summary/collections: the verdict arrives with
+  // /v1/bootstrap, so this normally issues no request. Only a failed batch opens the
+  // gate onto the fallback endpoint.
+  const bootGate = useBootGate()
+  const { data: blocked } = useQuery({ ...blockedQuery(), enabled: !!me && bootGate })
   if (!blocked || pathname === "/settings/billing") return null
   return (
     <div

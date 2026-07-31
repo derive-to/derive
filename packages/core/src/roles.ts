@@ -14,6 +14,13 @@
  */
 export type Role = "viewer" | "commenter" | "editor" | "owner"
 
+/** The roles Stripe bills a seat for: write access is metered, reading is not.
+ *  Here rather than in the API's seats.ts because the boot batch counts billable
+ *  seats in SQL, and a role list spelled out twice is a role list that drifts. */
+export const BILLABLE_ROLES: readonly Role[] = ["editor", "owner"]
+export const isBillableRole = (role: Role): boolean =>
+  (BILLABLE_ROLES as readonly string[]).includes(role)
+
 /** The v2 access model's three single-purpose fields (docs/access-model.md).
  *  They live in this leaf alongside Role so BOTH ./ports (record shapes) and
  *  ./permissions (effectiveRole) can name them without an import cycle. */

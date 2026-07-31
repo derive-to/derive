@@ -163,6 +163,9 @@ export interface BootstrapPayload {
   settings: OrgSettings
   notifications: Notification[]
   unread: number
+  /** The publishing-blocked verdict — the same value GET /v1/billing reports as
+   *  `blocked`, which is all the app shell's banner ever read it for. */
+  blocked: BillingInfo["blocked"]
 }
 /** A Slack channel subscription. Generated from the OpenAPI spec. */
 export type SlackSubscription = components["schemas"]["SlackSubscription"]

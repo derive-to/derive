@@ -1387,6 +1387,12 @@ export interface BootstrapRead {
   collectionRoles: Record<string, Role>
   settings: OrgSettings
   notifications: NotificationsPage
+  /** The two inputs a publishing-blocked verdict needs, so the app shell's banner does
+   *  not have to call GET /v1/billing on every boot to learn it is not blocked. That
+   *  endpoint is six store calls (subscription, seats, stored bytes, asset bytes, plus
+   *  the workspace preamble) and it was the single most expensive request on the boot
+   *  waterfall — 676ms measured — to render a strip that is normally invisible. */
+  billing: { subscription: SubscriptionRecord | null; billableSeats: number }
 }
 
 export interface NotificationsPage {
