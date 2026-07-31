@@ -7,6 +7,13 @@ import type { Role } from "@/api"
  *  display-only mirrors of the Stripe lookup keys seeded by the billing rail. */
 export type PaidTier = "team" | "business"
 
+// A workspace on the free tier keeps this many editor seats before an upgrade is
+// required — mirrors packages/core/src/billing.ts's FREE_SEAT_LIMIT. Not imported
+// at runtime (web never imports @derive/core — see .dependency-cruiser.mjs), so
+// the number is pinned here as a display-only constant; the one export point
+// keeps the billing page and the members page from drifting on it.
+export const FREE_SEAT_LIMIT = 3
+
 export const PLANS = [
   {
     tier: "free",

@@ -60,7 +60,7 @@ import { enqueueForEvent, type WebhookEvent } from "./webhooks"
  *  hands the human the direct upgrade link. Lives here (not lib/http.ts) because the
  *  MCP surfaces need it too, and both import from context.ts already. No em dashes
  *  (support copy convention). */
-export const billingBlockCopy = (baseUrl: string) => {
+const billingBlockCopy = (baseUrl: string) => {
   const billingUrl = `${baseUrl.replace(/\/$/, "")}/settings/billing`
   return {
     needs_team: {

@@ -20,7 +20,7 @@ import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
 import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { needsSeatConfirm, PLANS, unitPrice } from "./billing-plans"
+import { FREE_SEAT_LIMIT, needsSeatConfirm, PLANS, unitPrice } from "./billing-plans"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -32,12 +32,6 @@ import { SettingsSection } from "./settings-section"
 type SeatConfirmState =
   | { kind: "invite"; email: string; role: Role }
   | { kind: "promote"; userId: string; role: Role }
-
-// A workspace on the free tier keeps this many editor seats before an upgrade is
-// required — mirrors packages/core/src/billing.ts's FREE_SEAT_LIMIT. Not imported
-// at runtime (web never imports @derive/core — see .dependency-cruiser.mjs), so
-// the number is pinned here as a display-only constant.
-const FREE_SEAT_LIMIT = 3
 
 // Who's in the workspace and what they can do. Admins invite by @handle (a
 // discoverable-people typeahead, mirroring ShareDialog) or full email, change

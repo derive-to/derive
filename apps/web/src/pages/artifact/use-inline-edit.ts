@@ -1,7 +1,6 @@
 import { type RefObject, useEffect, useRef, useState } from "react"
 import { ApiError, type Artifact, api, type QuoteEditInput } from "@/api"
 import { toast } from "@/components/ui/sonner"
-import { paywallReasonFor } from "@/lib/query-client"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
 const clip = (s: string, n = 28): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
@@ -285,10 +284,6 @@ export function useInlineEdit(p: {
         })
         return
       }
-      // Publishing/proposing edits can hit a billing 402 or a storage 413 — the global
-      // MutationCache already opened the paywall dialog for those (see query-client.ts);
-      // bail before the bespoke toast below so the failure doesn't double-surface.
-      if (paywallReasonFor(err)) return
       // Inside useApiMutation's onError (errorToast off): the server's EditError text is
       // the product copy (WHICH edit failed and why), plus a bespoke fallback action the
       // global safety net can't carry. Opening the source editor ends the inline session

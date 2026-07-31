@@ -152,7 +152,7 @@ jobs:
           # Retried like /healthz above: a PR's FIRST deploy creates a brand-new workers.dev
           # subdomain, and the edge can answer it with a 1042-style error page for a short
           # window after creation. A single probe raced that window and failed a healthy
-          # preview (PR #605); the worker answered {"ok":true} minutes later, untouched.
+          # preview; the worker answered {"ok":true} minutes later, untouched.
           for i in $(seq 1 10); do
             ready=$(curl -s --max-time 15 "$URL/readyz" || true)
             case "$ready" in *'"ok":true'*) break ;; esac

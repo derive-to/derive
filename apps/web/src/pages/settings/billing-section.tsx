@@ -1,22 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { api, type BillingInfo } from "@/api"
-import { PlanFeatures } from "@/components/billing/plan-features"
+import { BillingCycleToggle } from "@/components/billing/billing-cycle-toggle"
+import { PlanCard } from "@/components/billing/plan-card"
+import { useCheckout } from "@/components/billing/use-checkout"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { gb } from "@/lib/bytes"
 import { billingQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { PLANS, unitPrice } from "./billing-plans"
+import { FREE_SEAT_LIMIT, type PaidTier, PLANS, unitPrice } from "./billing-plans"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
-
-// A workspace on the free tier keeps this many editor seats before an upgrade is
-// required — mirrors packages/core/src/billing.ts's FREE_SEAT_LIMIT. Not imported
-// at runtime (web never imports @derive/core — see .dependency-cruiser.mjs), so
-// the number is pinned here as a display-only constant.
-const FREE_SEAT_LIMIT = 3
 
 const TIER_LABELS: Record<BillingInfo["tier"], string> = {
   free: "Free",
@@ -116,16 +111,7 @@ export function BillingSection() {
   // The unsubscribed path: pick a billing cycle, then a tier — each starts a
   // Stripe Checkout session and redirects there. Lives here (not in PlanGrid) so
   // the same `cycle` state that drives the toggle also drives the grid's prices.
-  const checkout = useApiMutation<
-    { url: string },
-    { tier: "team" | "business"; interval: "month" | "year" }
-  >({
-    mutationFn: ({ tier, interval }) => api.startCheckout(tier, interval),
-    pendingKey: (vars) => vars.tier,
-    onSuccess: ({ url }) => {
-      window.location.href = url
-    },
-  })
+  const checkout = useCheckout()
 
   return (
     <SettingsSection title="Billing" description="Your plan, seats, and storage.">
@@ -160,28 +146,11 @@ export function BillingSection() {
       ) : billing ? (
         <>
           <CurrentPlanCard billing={billing} />
-          <ToggleGroup
-            type="single"
+          <BillingCycleToggle
             value={cycle}
-            onValueChange={(v) => v && setCycle(v as "month" | "year")}
-            data-testid="billing-interval-toggle"
-            className="gap-[3px] rounded-lg bg-secondary p-[3px]"
-          >
-            <ToggleGroupItem
-              value="month"
-              data-testid="billing-interval-toggle-month"
-              className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-            >
-              Monthly
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="year"
-              data-testid="billing-interval-toggle-year"
-              className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-            >
-              Annual
-            </ToggleGroupItem>
-          </ToggleGroup>
+            onChange={setCycle}
+            testIdPrefix="billing-interval-toggle"
+          />
           <PlanGrid
             billing={billing}
             cycle={cycle}
@@ -285,7 +254,7 @@ function PlanGrid({
   billing: BillingInfo
   cycle: "month" | "year"
   isAdmin: boolean
-  onCheckout: (tier: "team" | "business") => void
+  onCheckout: (tier: PaidTier) => void
   pendingTier: (tier: string) => boolean
   /** True while ANY tier's checkout is in flight — disables every button so a click on
    *  Business while Team's session is still opening can't fire two Stripe sessions. */
@@ -293,50 +262,30 @@ function PlanGrid({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      {PLANS.map((p) => {
-        const current = billing.tier === p.tier
-        return (
-          <div
-            key={p.tier}
-            data-testid={`billing-plan-card-${p.tier}`}
-            className={
-              p.tier === "team"
-                ? "flex flex-col gap-3 rounded-xl bg-muted p-4 ring-2 ring-primary"
-                : "flex flex-col gap-3 rounded-xl bg-muted p-4 ring-1 ring-border"
-            }
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-base font-medium text-foreground">{p.name}</span>
-              {"badge" in p && p.badge && (
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                  {p.badge}
-                </span>
-              )}
-              {current && (
-                <span className="ml-auto rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                  Current plan
-                </span>
-              )}
-            </div>
-            <p className="text-sm font-medium text-foreground">{p.price[cycle]}</p>
-            <p className="text-sm text-muted-foreground">{p.tagline}</p>
-            <PlanFeatures plan={p} />
-            {isAdmin && !billing.subscribed && p.tier !== "free" && (
-              <Button
-                data-testid={`billing-upgrade-${p.tier}`}
-                size="sm"
-                variant={p.tier === "team" ? "default" : "outline"}
-                className="mt-auto"
-                loading={pendingTier(p.tier)}
-                disabled={checkoutPending}
-                onClick={() => onCheckout(p.tier as "team" | "business")}
-              >
-                {`Upgrade to ${p.name}`}
-              </Button>
-            )}
-          </div>
-        )
-      })}
+      {PLANS.map((p) => (
+        <PlanCard
+          key={p.tier}
+          plan={p}
+          cycle={cycle}
+          current={billing.tier === p.tier}
+          showTagline
+          testId={`billing-plan-card-${p.tier}`}
+        >
+          {isAdmin && !billing.subscribed && p.tier !== "free" && (
+            <Button
+              data-testid={`billing-upgrade-${p.tier}`}
+              size="sm"
+              variant={p.tier === "team" ? "default" : "outline"}
+              className="mt-auto"
+              loading={pendingTier(p.tier)}
+              disabled={checkoutPending}
+              onClick={() => onCheckout(p.tier as PaidTier)}
+            >
+              {`Upgrade to ${p.name}`}
+            </Button>
+          )}
+        </PlanCard>
+      ))}
     </div>
   )
 }

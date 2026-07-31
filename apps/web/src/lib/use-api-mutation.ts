@@ -1,17 +1,21 @@
 import { type QueryClient, type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useState } from "react"
 import { toast } from "@/components/ui/sonner"
+import { paywallReasonFor } from "./query-client"
 
 /**
  * The one governed mutation primitive — every write in the app goes through here so
  * feedback is uniform and can't drift. It is the `use-follows` pattern extracted once
  * instead of hand-copied per site: snapshot → apply optimistic edit → call → roll back
- * + toast on error → invalidate on settle. Three guarantees fall out of that:
+ * + toast on error → invalidate on settle. Four guarantees fall out of that:
  *
  *  1. A rejected write ALWAYS surfaces — the global MutationCache toasts it (see
  *     query-client.ts) unless this mutation sets `errorToast:false` to render inline.
  *  2. An optimistic edit ALWAYS rolls back on failure — you can't forget the `catch`.
  *  3. Pending state is always available for a spinner / disabled button.
+ *  4. A billing-blocked failure surfaces as the paywall dialog (the global
+ *     MutationCache, see query-client.ts) instead of a toast — the caller's `onError`
+ *     is skipped so it can't double-surface; rollback still runs.
  *
  * Built on react-query's useMutation, so `isPending` and cache integration are free.
  * For a list where each row toggles independently, pass `pendingKey` and read
@@ -36,7 +40,9 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
   onSuccess?: (data: TData, vars: TVars) => void
   /** Extra failure side-effect (offer a retry, restore a draft) once the write rejects —
    *  runs AFTER the optimistic rollback. The symmetric counterpart to onSuccess; the error
-   *  toast stays the MutationCache's job (honoring meta.errorToast), so don't toast here. */
+   *  toast stays the MutationCache's job (honoring meta.errorToast), so don't toast here.
+   *  Skipped entirely on a billing-blocked failure (guarantee 4 above) — that one's the
+   *  paywall dialog's alone. */
   onError?: (err: Error, vars: TVars) => void
 }) {
   const qc = useQueryClient()
@@ -62,10 +68,12 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
       return { rollback, pendingKey }
     },
     onError: (err, vars, ctx) => {
-      // Undo the optimistic edit first, then run any caller failure side-effect. The TOAST
-      // is the MutationCache's job (it honors meta.errorToast), so toasting here too would
-      // double up.
+      // Undo the optimistic edit first. The MutationCache (query-client.ts) owns
+      // surfacing the failure — a toast, or the paywall dialog for a billing-blocked
+      // write — so a billing failure skips the caller's onError entirely: running it
+      // too would risk a second, redundant error UI on top of the dialog.
       ctx?.rollback?.()
+      if (paywallReasonFor(err)) return
       config.onError?.(err, vars)
     },
     onSuccess: (data, vars) => {

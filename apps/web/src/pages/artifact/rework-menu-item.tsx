@@ -14,7 +14,6 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { artifactAgentsQuery, workspaceSettingsQuery } from "@/lib/queries"
-import { paywallReasonFor } from "@/lib/query-client"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ALREADY_QUEUED, queuedFor, usableAgents } from "./ask-agent"
 import { resolveRework } from "./rework-state"
@@ -67,9 +66,6 @@ export function ReworkMenuItem({
       else if (code === "brandprintDisabled")
         toast.error("Brandprint is turned off in your settings. Turn it on to rework.")
       else if (code === "alreadyQueued") toast(ALREADY_QUEUED)
-      // The global MutationCache already opened the paywall dialog for billing codes
-      // (see query-client.ts) — bail before the catch-all toast so it doesn't double up.
-      else if (paywallReasonFor(err)) return
       else toast.error("Rework request failed — try again.")
     },
   })

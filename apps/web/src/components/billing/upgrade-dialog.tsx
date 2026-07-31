@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { api } from "@/api"
-import { PlanFeatures } from "@/components/billing/plan-features"
+import { BillingCycleToggle } from "@/components/billing/billing-cycle-toggle"
+import { PlanCard } from "@/components/billing/plan-card"
+import { useCheckout } from "@/components/billing/use-checkout"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -11,17 +12,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { gb } from "@/lib/bytes"
 import { closePaywall, type PaywallReason, usePaywall } from "@/lib/paywall"
 import { billingQuery, workspaceQuery } from "@/lib/queries"
-import { useApiMutation } from "@/lib/use-api-mutation"
 import { type PaidTier, PLANS, type Plan } from "@/pages/settings/billing-plans"
 
 // One dialog for every paywall hit, opened by the global mutation-error funnel
 // (query-client.ts). The reason decides the headline; the sell is Team and
 // Business side by side (mirrors billing-section.tsx's PlanGrid card look via
-// the shared PlanFeatures component) so the step-up to Business is visible from
+// the shared PlanCard component) so the step-up to Business is visible from
 // the first block, not an afterthought. Owners check out right here; everyone
 // else learns who can.
 export function UpgradeDialog() {
@@ -43,13 +42,7 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
     .filter((m) => m.role === "owner")
     .map((m) => m.name ?? m.handle ?? "a workspace admin")
 
-  const checkout = useApiMutation<{ url: string }, { tier: PaidTier; interval: "month" | "year" }>({
-    mutationFn: ({ tier, interval }) => api.startCheckout(tier, interval),
-    pendingKey: (vars) => vars.tier,
-    onSuccess: ({ url }) => {
-      window.location.href = url
-    },
-  })
+  const checkout = useCheckout()
 
   const heads: Record<PaywallReason, { title: string; sub: string }> = {
     seats: {
@@ -81,46 +74,14 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
         {/* Shown to everyone (not gated on `ws`): the prices it drives on the cards
             below flip for admins and non-admins alike; only the buttons/AskAdmin
             footer needs the workspace role. */}
-        <ToggleGroup
-          type="single"
+        <BillingCycleToggle
           value={cycle}
-          onValueChange={(v) => v && setCycle(v as "month" | "year")}
-          data-testid="paywall-interval-toggle"
-          className="w-fit gap-[3px] rounded-lg bg-secondary p-[3px]"
-        >
-          <ToggleGroupItem
-            value="month"
-            className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-          >
-            Monthly
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="year"
-            className="rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
-          >
-            Annual
-          </ToggleGroupItem>
-        </ToggleGroup>
+          onChange={setCycle}
+          testIdPrefix="paywall-interval-toggle"
+        />
         <div className="grid gap-3 sm:grid-cols-2">
           {CARD_PLANS.map((p) => (
-            <div
-              key={p.tier}
-              className={
-                p.tier === "team"
-                  ? "flex flex-col gap-3 rounded-xl bg-muted p-4 ring-2 ring-primary"
-                  : "flex flex-col gap-3 rounded-xl bg-muted p-4 ring-1 ring-border"
-              }
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-base font-medium text-foreground">{p.name}</span>
-                {"badge" in p && p.badge && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    {p.badge}
-                  </span>
-                )}
-              </div>
-              <p className="text-sm font-medium text-foreground">{p.price[cycle]}</p>
-              <PlanFeatures plan={p} />
+            <PlanCard key={p.tier} plan={p} cycle={cycle}>
               {/* Wait for ws to load before showing a checkout button, avoiding a flash of
                   a button a non-admin can't use: see the AskAdmin gating below for the
                   matching wsError fallback. */}
@@ -137,7 +98,7 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
                   {`Upgrade to ${p.name}`}
                 </Button>
               )}
-            </div>
+            </PlanCard>
           ))}
         </div>
         {/* Wait for ws to load before picking the role-dependent branch, avoiding a flash of
