@@ -59,9 +59,9 @@ describe("a run token cannot act in the session lane", () => {
         jsonAs(as(owner.email), {
           trigger: { kind: "manual" },
           instruction: "Do the scheduled thing.",
-          // camelCase, and asserted below. Spelled `context_id` this silently binds NOTHING —
-          // zod strips unknown keys, a fresh managed agent is minted, and every crossing below
-          // then gets an honest 404 for the wrong reason. That typo cost a full debugging cycle.
+          // camelCase. Zod strips unknown keys, so `context_id` binds nothing, mints a fresh
+          // agent, and every crossing below then 404s for the wrong reason — hence the assertion
+          // on agent_id rather than trusting this line.
           contextId: ctx.id,
         }),
       )
@@ -75,10 +75,10 @@ describe("a run token cannot act in the session lane", () => {
     return { ctx, auto }
   }
 
-  /** Drain dispatch and hand back the token it minted for one work item. Pass the literal
-   *  "*first-run*" to take whatever RUN it started first — used when the run id isn't known
-   *  yet, because learning it by claiming would consume the very run we want dispatched. */
-  const dispatchedTokenFor = async (workId: string) => {
+  /** Drain dispatch (several passes: it starts at most `perOrgLimit` per pass, and this suite
+   *  leaves earlier work queued) and hand back everything it booted, with the token it minted
+   *  for each. */
+  const dispatchAll = async () => {
     const started: { runId: string; token: string }[] = []
     const substrate: Substrate = {
       name: "fake",
@@ -86,7 +86,7 @@ describe("a run token cannot act in the session lane", () => {
         started.push(input)
       },
     }
-    for (let pass = 0; pass < 6; pass++) {
+    for (let pass = 0; pass < 6; pass++)
       await dispatchPass({
         meta,
         substrate,
@@ -94,66 +94,65 @@ describe("a run token cannot act in the session lane", () => {
         secret: SECRET,
         perOrgLimit: 50,
       })
-      const hit =
-        workId === "*first-run*"
-          ? started.find((s) => s.token.startsWith("dkrun_"))
-          : started.find((s) => s.runId === workId)
-      if (hit) return hit.token
-    }
-    return ""
+    return started
   }
 
-  it("is refused at the session tool door, the messages door, and the state door", async () => {
-    const { ctx, auto } = await contextBoundAutomation()
-    expect(auto.id).toBeTruthy()
-    // Let DISPATCH mint the run's pass — deliberately without claiming the run ourselves first,
-    // which would move it out of the queue dispatch draws from and leave us with no token to
-    // test the crossing with.
-    const runToken = await dispatchedTokenFor("*first-run*")
+  /** The run token out of a dispatch sweep. Fails loudly rather than returning "" — an empty
+   *  token would make every refusal below pass for the wrong reason. */
+  const runTokenFrom = (started: { runId: string; token: string }[]): string => {
+    const hit = started.find((s) => s.token.startsWith("dkrun_"))
+    if (!hit) throw new Error("dispatch minted no run token; nothing to test the crossing with")
+    return hit.token
+  }
 
-    // A real session on the SAME context, so ownership checks will pass.
+  /** Run one request with `fetch` stubbed, so a tool call that gets past the door attempts a
+   *  real outbound call and returns 200 rather than a network error we would have to squint at. */
+  const withStubbedFetch = async (send: () => Promise<Response> | Response) => {
+    const real = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ ok: 1 }), { status: 200 })) as typeof fetch
+    try {
+      return await send()
+    } finally {
+      globalThis.fetch = real
+    }
+  }
+
+  it("is refused at every session door its ownership check would otherwise let through", async () => {
+    const { ctx } = await contextBoundAutomation()
+    // Dispatch mints the run's pass. Deliberately not claimed first: claiming moves the run out
+    // of the queue dispatch draws from, leaving no token to test the crossing with.
+    const runToken = runTokenFrom(await dispatchAll())
+
     const ask = await app.request(
       `/v1/contexts/${ctx.id}/sessions`,
       jsonAs(as(owner.email), { body_md: "what is our refund rate?" }),
     )
     const session = ((await ask.json()) as { session: { id: string } }).session.id
-    const sessToken = await dispatchedTokenFor(session)
-    expect(sessToken).toBeTruthy()
+    const sessToken = (await dispatchAll()).find((s) => s.runId === session)?.token ?? ""
 
-    // Only meaningful if we actually obtained a run-scoped pass; otherwise this test would
-    // pass vacuously and prove nothing.
-    if (!runToken) throw new Error("expected a dispatched run token to test the crossing with")
+    // Both kinds in hand, or the refusals below prove nothing.
     expect(runToken.startsWith("dkrun_")).toBe(true)
     expect(sessToken.startsWith("dksess_")).toBe(true)
 
-    // 1. Tools. A run's pass must not reach a session's tool surface. Uses the context's REAL
-    //    tool: unfixed this returns 502 (`callTool` attached the decrypted credential and
-    //    actually attempted the outbound call), which is the crossing, visible.
-    const realFetch = globalThis.fetch
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ ok: 1 }), { status: 200 })) as typeof fetch
-    let tool: Response
-    try {
-      tool = await app.request(
+    // The context's real tool, so getting past the door executes an outbound call and returns
+    // 200 — the crossing is visible rather than hidden behind "tool not allowed".
+    const tool = await withStubbedFetch(() =>
+      app.request(
         `/v1/agent/sessions/${session}/tool`,
         jsonAs(bearer(runToken), { tool: "game.get", args: { path: "/x" } }),
-      )
-    } finally {
-      globalThis.fetch = realFetch
-    }
+      ),
+    )
     expect([403, 404]).toContain(tool.status)
-    // Specifically NOT 200/502 — either would mean the call was executed.
-    expect(tool.status).not.toBe(200)
 
-    // 2. Settling. It must not answer somebody's question either — that would post an agent
-    //    message as this context and close the ask.
+    // Answering: would post an agent message as this context and settle someone's ask.
     const answer = await app.request(
       `/v1/sessions/${session}/messages`,
       jsonAs(bearer(runToken), { body_md: "answered by the wrong lane", state: "answered" }),
     )
     expect([401, 403, 404]).toContain(answer.status)
 
-    // 3. State. Nor may it fail the session out from under the executor that owns it.
+    // State: would fail the session out from under the executor that owns it.
     const patch = await app.request(`/v1/sessions/${session}`, {
       method: "PATCH",
       headers: { "content-type": "application/json", ...bearer(runToken) },
@@ -161,27 +160,20 @@ describe("a run token cannot act in the session lane", () => {
     })
     expect([401, 403, 404]).toContain(patch.status)
 
-    // 4. The queue. Crossing here CLAIMS sessions (open → working) as a side effect, so a run's
-    //    pass could quietly take over the ask lane's work.
+    // The queue: reading it claims sessions (open → working), so crossing here takes over the
+    // ask lane's work.
     const queue = await app.request(`/v1/contexts/${ctx.id}/queue`, { headers: bearer(runToken) })
     expect([403, 404]).toContain(queue.status)
 
-    // CONTROL — the session's OWN pass still reaches the same tool door, so the refusals above
-    // are about the LANE and not about these routes being broken for everyone.
-    const realFetch2 = globalThis.fetch
-    globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ ok: 1 }), { status: 200 })) as typeof fetch
-    let rightLane: Response
-    try {
-      rightLane = await app.request(
+    // The session's OWN pass still reaches both, so the refusals are about the lane and not
+    // about these routes being broken for everyone.
+    const rightLane = await withStubbedFetch(() =>
+      app.request(
         `/v1/agent/sessions/${session}/tool`,
         jsonAs(bearer(sessToken), { tool: "game.get", args: { path: "/x" } }),
-      )
-    } finally {
-      globalThis.fetch = realFetch2
-    }
+      ),
+    )
     expect(rightLane.status).toBe(200)
-    // And its own queue read is served.
     const ownQueue = await app.request(`/v1/contexts/${ctx.id}/queue`, {
       headers: bearer(ctx.agent_token),
     })
