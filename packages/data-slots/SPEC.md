@@ -157,6 +157,36 @@ Two caveats a host should know rather than discover:
   series can be missed, and the fix is the reader's (`sample_size=-1`), not the host's —
   but the failure looks like missing data, so say it out loud.
 
+### 5.2 In the page, in a sandbox: also verified
+
+§5.1 was run from Node, which is the easy environment. The interesting claim is SQL **in
+the document**, and the sandbox is where every constraint lives. So it was run there too:
+`examples/duckdb-in-page.html`, loaded in a real browser, screenshot in
+`examples/duckdb-in-page.png`.
+
+Every step of the hostile path worked from inside an opaque origin:
+
+1. A cross-origin ESM import of duckdb-wasm from a CDN.
+2. A **Web Worker spawned from a blob URL** — the step most likely to be refused by a
+   sandbox, and the one worth checking before promising anyone SQL in a page.
+3. `registerFileURL(…, HTTP)` against the record's own export, then `read_json_auto` over
+   it: ten versions, no fetching by hand.
+4. A window function computing per-version deltas, entirely in the browser.
+
+So the requirement really is only §6.1's three conditions plus a CDN reachable from the
+page. The host contributes a static file and a CORS header, and never sees the query.
+
+**And the engine confirmed the caveat above in its own words.** The console carried exactly
+one warning:
+
+```
+falling back to full HTTP read for: …/data/checks.jsonl
+```
+
+DuckDB attempted range requests, the export did not advertise `Accept-Ranges`, and it
+degraded to a whole-file read rather than failing. That is the good failure mode, and it is
+also the argument for fixing it before a series gets large.
+
 ## 6. Serving (learned the hard way)
 
 These are not theory. Each one was a live defect.
