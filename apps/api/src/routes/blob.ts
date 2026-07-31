@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import type { AppContext } from "../context"
+import { withEdgeCache } from "../lib/edge-cache"
 import { RAW_HEADERS, toBody } from "../lib/http"
 
 const HASH_RE = /^([0-9a-f]{64})(?:\.[a-zA-Z0-9]+)?$/
@@ -24,11 +25,19 @@ export const blobRoutes = (ctx: AppContext) => {
     const m = HASH_RE.exec(c.req.param("file"))
     if (!m) return c.text("not found", 404, RAW_HEADERS)
     const hash = m[1] as string
-    const row = await meta.getAsset(hash)
-    if (!row) return c.text("not found", 404, RAW_HEADERS)
-    const data = await blobs.get(hash)
-    if (!data) return c.text("blob missing", 500)
-    return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": row.content_type })
+    // SERVED FROM THE EDGE ON A REPEAT HIT, and this is the safest possible place to start doing
+    // that: the URL is a sha256 OF THE BYTES, so it is content-addressed and can never come to
+    // mean something else, and the route is deliberately unauthenticated — there is no
+    // per-caller variation for a URL-keyed cache to get wrong. Every image and font in every
+    // published page comes through here, and each hit was paying a Postgres round trip for the
+    // `asset` row plus an R2 fetch, to return bytes already marked `immutable`.
+    return withEdgeCache(c.req.raw, async () => {
+      const row = await meta.getAsset(hash)
+      if (!row) return c.text("not found", 404, RAW_HEADERS)
+      const data = await blobs.get(hash)
+      if (!data) return c.text("blob missing", 500)
+      return c.body(toBody(data), 200, { ...RAW_HEADERS, "Content-Type": row.content_type })
+    })
   })
 
   return app
