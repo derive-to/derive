@@ -486,9 +486,9 @@ describe("remote MCP endpoint (/mcp)", () => {
     // The CATALOG counts what the caller can see, not what the workspace holds: a count of
     // 2 here would disclose the existence of the document just as surely as naming it.
     const catalog = JSON.parse(toolText(await call(app, mate, "find", { data: "*" })))
-    expect(catalog.facts.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(1)
+    expect(catalog.facts.find((s: { fact: string }) => s.fact === "revenue")?.artifacts).toBe(1)
     const ownerCatalog = JSON.parse(toolText(await call(app, token, "find", { data: "*" })))
-    expect(ownerCatalog.facts.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(
+    expect(ownerCatalog.facts.find((s: { fact: string }) => s.fact === "revenue")?.artifacts).toBe(
       2,
     )
   })
@@ -573,14 +573,14 @@ describe("remote MCP endpoint (/mcp)", () => {
     const checks = JSON.parse(
       toolText(await call(app, token, "read", { short_id: shortId, data: "checks" })),
     )
-    expect(checks.slot).toBe("checks")
+    expect(checks.fact).toBe("checks")
     expect(checks.data).toEqual({ pass: 44, fail: 0 })
 
     // The facts this version carries (ordered by name).
     const listed = JSON.parse(
       toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
     )
-    expect(listed.facts.map((s: { slot: string }) => s.slot)).toEqual(["budget", "checks"])
+    expect(listed.facts.map((s: { fact: string }) => s.fact)).toEqual(["budget", "checks"])
 
     // A missing fact names the ones that exist rather than an opaque miss.
     const miss = await call(app, token, "read", { short_id: shortId, data: "nope" })

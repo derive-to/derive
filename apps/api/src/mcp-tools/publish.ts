@@ -779,7 +779,7 @@ export function registerPublishTool(tc: ToolContext): void {
           url,
           ...(storedSlots.length
             ? {
-                data: storedSlots.map((s) => ({ slot: s.slot, bytes: s.size_bytes })),
+                data: storedSlots.map((s) => ({ fact: s.slot, bytes: s.size_bytes })),
                 data_next: `Queryable now: read(short_id:"${artifact.short_id}", data:"${storedSlots[0]?.slot}") for this version, or versions:"all" for the whole series.`,
               }
             : {}),

@@ -950,7 +950,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           // blob, so there is no single-file hash to report.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
           ...(storedSlots.length
-            ? { data: storedSlots.map((s) => ({ slot: s.slot, bytes: s.size_bytes })) }
+            ? { data: storedSlots.map((s) => ({ fact: s.slot, bytes: s.size_bytes })) }
             : {}),
           ...(advisories.length ? { advisories } : {}),
           ...(roundCreated ? { review_requested: true } : {}),

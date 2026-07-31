@@ -357,7 +357,7 @@ export function registerReadTool(tc: ToolContext): void {
           const missing = span - kept.length
           return json({
             short_id,
-            slot: data,
+            fact: data,
             versions: `${range.from}-${range.to} of ${a.current_version}`,
             count: kept.length,
             series: kept.map((r) => ({
@@ -383,7 +383,7 @@ export function registerReadTool(tc: ToolContext): void {
           return json({
             short_id,
             version: n,
-            facts: rows.map((r) => ({ slot: r.slot, bytes: r.size_bytes })),
+            facts: rows.map((r) => ({ fact: r.slot, bytes: r.size_bytes })),
             ...(rows.length
               ? {}
               : {
@@ -405,7 +405,7 @@ export function registerReadTool(tc: ToolContext): void {
         return json({
           short_id,
           version: n,
-          slot: row.slot,
+          fact: row.slot,
           data: safeJson(row.json),
           ...(stale ? { note: stale } : {}),
         })
