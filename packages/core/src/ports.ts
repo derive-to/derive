@@ -206,6 +206,20 @@ export interface ListArtifactsOpts {
   excludeRemoved?: boolean
 }
 
+/** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */
+export interface WorkspaceSummary {
+  total: number
+  tags: { tag: string; count: number }[]
+  /** The workspace's display name, or null when there is no workspace row. */
+  workspace: string | null
+  /** Favorited artifacts in THIS workspace (0 for an anonymous caller). */
+  favorites: number
+  /** Artifacts the caller owns here — the "Created by me" badge. */
+  mine: number
+  /** …of those, the ones not surfaced anywhere yet (`listed = none`). */
+  minePrivate: number
+}
+
 export interface ArtifactDetailOpts {
   artifactId: string
   /** The artifact's workspace — settings + managed-mirror status are keyed on it. */
@@ -630,6 +644,17 @@ export interface ArtifactQueryStore {
   storageBytes(orgId: string): Promise<number>
   /** Tag → usage count, scoped to a workspace when orgId is given (browse sidebar). */
   tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]>
+  /**
+   * The browse sidebar's whole summary for one workspace, in ONE store call: total
+   * artifacts, tag→count, the workspace's name, and — for a signed-in caller — their
+   * favorite count, owned count, and not-yet-surfaced owned count. Six calls all keyed
+   * on the same org (or org+user), which on the edge tier was six ~80ms round trips to
+   * render one sidebar. `userId` null ⇒ the three per-user counts come back 0.
+   *
+   * `favorites` is a COUNT: the route it replaces fetched the user's whole favorite id
+   * list and used only `.length`.
+   */
+  workspaceSummary(orgId: string, userId: string | null): Promise<WorkspaceSummary>
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>

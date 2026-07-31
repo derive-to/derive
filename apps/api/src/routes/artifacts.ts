@@ -449,28 +449,22 @@ export const artifactRoutes = (ctx: AppContext) => {
           tags: [],
           workspace: null,
         })
-      const [total, tags, favIds, ws, mine, minePrivate] = await Promise.all([
-        meta.countArtifacts(org),
-        meta.tagCounts(org),
-        // Scope the favorites count to THIS workspace's live artifacts — the favorites
-        // view is workspace-scoped, so a favorite of an artifact in another workspace
-        // must not inflate the count (otherwise "Favorites · 1" with an empty list).
-        me ? meta.listUserFavoriteIds(me.id, org) : Promise.resolve([]),
-        meta.getWorkspace(org),
-        // The caller's owned artifacts — the "Created by me" filter's badge.
-        me ? meta.countOwnedBy(org, me.id) : Promise.resolve(0),
-        // …and how many of those aren't surfaced anywhere yet: the "waiting on you
-        // to share it" signal (a fresh publish is listed=none until promoted).
-        me ? meta.countOwnedBy(org, me.id, "none") : Promise.resolve(0),
-      ])
-      tags.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+      // The sidebar's whole summary in ONE store call. These were six reads all scoped
+      // to this workspace (or this workspace + caller) — six ~80ms round trips on the
+      // edge for one sidebar. Semantics preserved by workspaceSummary: `favorites`
+      // counts only THIS workspace's live artifacts (a favorite in another workspace, or
+      // of a removed one, must not inflate the badge), and `mine`/`mine_private` key on
+      // the OWNER member row rather than the author_id denorm. `favorites` is also now a
+      // count rather than a whole id list the route only took `.length` of.
+      const summary = await meta.workspaceSummary(org, me?.id ?? null)
+      const tags = [...summary.tags].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
       return c.json({
-        total,
-        favorites: favIds.length,
-        mine,
-        mine_private: minePrivate,
+        total: summary.total,
+        favorites: summary.favorites,
+        mine: summary.mine,
+        mine_private: summary.minePrivate,
         tags,
-        workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+        workspace: summary.workspace ?? DEFAULT_WORKSPACE_NAME,
       })
     },
   )

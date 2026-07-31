@@ -2018,6 +2018,76 @@ export function runStoreContract(
       expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
     })
 
+    it("workspaceSummary matches the six calls it replaces, and keeps each one's scoping rules", async () => {
+      const org = `org_${uuid()}`
+      const otherOrg = `org_${uuid()}`
+      await store.setWorkspace(org, "Summary WS")
+      await store.setWorkspace(otherOrg, "Elsewhere")
+      const me = `u_${uuid()}`
+
+      // Owned + listed, owned + unlisted, and one owned by someone else.
+      const listedMine = await store.createArtifact(newArtifact({ org_id: org, listed: "public" }))
+      const unlistedMine = await store.createArtifact(newArtifact({ org_id: org, listed: "none" }))
+      const theirs = await store.createArtifact(newArtifact({ org_id: org }))
+      for (const a of [listedMine, unlistedMine])
+        await store.setArtifactMember({
+          id: uuid(),
+          artifact_id: a.id,
+          user_id: me,
+          role: "owner",
+        })
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: theirs.id,
+        user_id: `u_${uuid()}`,
+        role: "owner",
+      })
+      await store.setArtifactTags(listedMine.id, ["alpha", "beta"])
+      await store.setArtifactTags(theirs.id, ["alpha"])
+
+      // Favorites: one live in-org (counts), one in ANOTHER workspace (must not),
+      // one removed (must not) — the scoping the route's comment calls out.
+      await store.setFavorite(listedMine.id, me)
+      const elsewhere = await store.createArtifact(newArtifact({ org_id: otherOrg }))
+      await store.setFavorite(elsewhere.id, me)
+      const removed = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.setFavorite(removed.id, me)
+      await store.setArtifactsRemoved([removed.id], "2026-01-01T00:00:00.000Z")
+
+      const s = await store.workspaceSummary(org, me)
+      // Indistinguishable from the calls it replaces.
+      expect(s.total).toBe(await store.countArtifacts(org))
+      expect([...s.tags].sort((a, b) => a.tag.localeCompare(b.tag))).toEqual(
+        await store.tagCounts(org),
+      )
+      expect(s.workspace).toBe((await store.getWorkspace(org))?.name ?? null)
+      expect(s.favorites).toBe((await store.listUserFavoriteIds(me, org)).length)
+      expect(s.mine).toBe(await store.countOwnedBy(org, me))
+      expect(s.minePrivate).toBe(await store.countOwnedBy(org, me, "none"))
+      // …and the values are the ones the scoping rules demand.
+      expect(s.workspace).toBe("Summary WS")
+      expect(s.mine).toBe(2)
+      expect(s.minePrivate).toBe(1)
+      expect(s.favorites).toBe(1) // NOT 3: the other workspace's and the removed one drop
+      expect(s.tags.find((t) => t.tag === "alpha")?.count).toBe(2)
+      expect(s.tags.find((t) => t.tag === "beta")?.count).toBe(1)
+
+      // An anonymous caller gets the workspace-level facts and zero per-user counts.
+      const anon = await store.workspaceSummary(org, null)
+      expect(anon.total).toBe(s.total)
+      expect(anon.workspace).toBe("Summary WS")
+      expect(anon.favorites).toBe(0)
+      expect(anon.mine).toBe(0)
+      expect(anon.minePrivate).toBe(0)
+
+      // A workspace that doesn't exist ⇒ null name and zeroes, not a throw.
+      const missing = await store.workspaceSummary(`org_${uuid()}`, me)
+      expect(missing.workspace).toBeNull()
+      expect(missing.total).toBe(0)
+      expect(missing.tags).toEqual([])
+      expect(missing.favorites).toBe(0)
+    })
+
     it("collectionsOverview matches listCollections + listRepoSources for the same org", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Overview")

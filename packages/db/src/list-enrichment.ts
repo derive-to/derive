@@ -12,6 +12,7 @@ import type {
   NotificationsPage,
   RepoSourceRecord,
   VersionRecord,
+  WorkspaceSummary,
 } from "@derive/core"
 
 /**
@@ -90,6 +91,33 @@ export const composeArtifactDetail = async (
     favorite: favIds.includes(artifactId),
     settings,
     managed: managedIds.includes(artifactId),
+  }
+}
+
+/** See `composeListEnrichment` — the browse sidebar's twin. */
+export const composeWorkspaceSummary = async (
+  store: Pick<
+    MetaStore,
+    "countArtifacts" | "tagCounts" | "getWorkspace" | "listUserFavoriteIds" | "countOwnedBy"
+  >,
+  orgId: string,
+  userId: string | null,
+): Promise<WorkspaceSummary> => {
+  const [total, tags, ws, favIds, mine, minePrivate] = await Promise.all([
+    store.countArtifacts(orgId),
+    store.tagCounts(orgId),
+    store.getWorkspace(orgId),
+    userId ? store.listUserFavoriteIds(userId, orgId) : Promise.resolve<string[]>([]),
+    userId ? store.countOwnedBy(orgId, userId) : Promise.resolve(0),
+    userId ? store.countOwnedBy(orgId, userId, "none") : Promise.resolve(0),
+  ])
+  return {
+    total,
+    tags,
+    workspace: ws?.name ?? null,
+    favorites: favIds.length,
+    mine,
+    minePrivate,
   }
 }
 

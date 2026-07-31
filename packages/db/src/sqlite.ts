@@ -18,6 +18,7 @@ import {
   composeContextsWithManifests,
   composeListEnrichment,
   composeNotificationsPage,
+  composeWorkspaceSummary,
 } from "./list-enrichment"
 import { makeRepos, schema } from "./repos"
 import {
@@ -143,6 +144,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     | "notificationsPage"
     | "automationsWithExecutors"
     | "collectionsOverview"
+    | "workspaceSummary"
   > & { close(): void } = {
     ...repos,
 
@@ -602,6 +604,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     automationsWithExecutors: (orgId, limit) =>
       composeAutomationsWithExecutors(store, orgId, limit),
     collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
+    workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
   }
 }
 

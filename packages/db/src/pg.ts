@@ -112,6 +112,7 @@ import type {
   WebhookRecord,
   WorkspaceAccess,
   WorkspaceRecord,
+  WorkspaceSummary,
 } from "@derive/core"
 import { GLOBAL_FOLLOW_ORG, maxRole, mergeRunMeta, parseRunMeta, runCounter } from "@derive/core"
 import {
@@ -1123,6 +1124,68 @@ export class PgMetaStore implements MetaStore {
       .select({ s: sql<number>`coalesce(sum(${perBlob.mx}), 0)` })
       .from(perBlob)
     return Number(rows[0]?.s ?? 0)
+  }
+  async workspaceSummary(orgId: string, userId: string | null): Promise<WorkspaceSummary> {
+    // The browse sidebar's six org/user-scoped reads in one round trip. Each branch is
+    // the same SQL the individual method runs — including the semantics that are easy to
+    // lose: `favorites` joins the artifact so a favorite of a REMOVED or other-workspace
+    // artifact is excluded, `mine`/`minePrivate` require an OWNER member row (not the
+    // author_id denorm), and tags come back ordered by tag.
+    const { rows } = await this.pool.query<{ kind: string; k: string | null; n: number | null }>(
+      `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1
+       UNION ALL
+       SELECT 'tag', t.tag, count(*)::int FROM artifact_tag t
+         JOIN artifact a ON a.id = t.artifact_id
+        WHERE a.org_id = $1 GROUP BY t.tag
+       UNION ALL
+       SELECT 'workspace', w.name, NULL FROM workspace w WHERE w.id = $1
+       UNION ALL
+       SELECT 'favorites', NULL, count(*)::int FROM artifact_favorite f
+         JOIN artifact a ON a.id = f.artifact_id
+        WHERE $2::text IS NOT NULL AND f.user_id = $2
+          AND a.org_id = $1 AND a.removed_at IS NULL
+       UNION ALL
+       SELECT 'mine', NULL, count(*)::int FROM artifact a
+         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
+        WHERE $2::text IS NOT NULL AND a.org_id = $1
+       UNION ALL
+       SELECT 'mine_private', NULL, count(*)::int FROM artifact a
+         JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
+        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none'`,
+      [orgId, userId],
+    )
+    const out: WorkspaceSummary = {
+      total: 0,
+      tags: [],
+      workspace: null,
+      favorites: 0,
+      mine: 0,
+      minePrivate: 0,
+    }
+    for (const r of rows) {
+      switch (r.kind) {
+        case "total":
+          out.total = r.n ?? 0
+          break
+        case "tag":
+          if (r.k !== null) out.tags.push({ tag: r.k, count: r.n ?? 0 })
+          break
+        case "workspace":
+          out.workspace = r.k
+          break
+        case "favorites":
+          out.favorites = r.n ?? 0
+          break
+        case "mine":
+          out.mine = r.n ?? 0
+          break
+        case "mine_private":
+          out.minePrivate = r.n ?? 0
+          break
+      }
+    }
+    out.tags.sort((a, b) => a.tag.localeCompare(b.tag))
+    return out
   }
   async tagCounts(orgId?: string): Promise<{ tag: string; count: number }[]> {
     const base = this.db
