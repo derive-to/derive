@@ -4,7 +4,7 @@ import { parseProgress } from "@/api"
 import { Spinner } from "@/components/shared/spinner"
 import { SidebarMenuButton, SidebarMenuItem, useIconRail } from "@/components/ui/sidebar"
 import { activeSyncsQuery } from "@/lib/queries"
-import { useIdleGate } from "@/lib/use-idle-gate"
+import { useDeferredGate } from "@/lib/use-deferred-gate"
 import { cn } from "@/lib/utils"
 
 /**
@@ -19,9 +19,9 @@ import { cn } from "@/lib/utils"
 export function SyncChip() {
   const iconMode = useIconRail()
   // Ambient status chip (renders null with no active sync) — and it POLLS, so its
-  // first fetch is the least urgent request on the page. Waits for idle.
-  const idle = useIdleGate()
-  const { data } = useQuery({ ...activeSyncsQuery(), enabled: idle })
+  // first fetch is the least urgent request on the page. Waits for the boot to settle.
+  const deferred = useDeferredGate()
+  const { data } = useQuery({ ...activeSyncsQuery(), enabled: deferred })
 
   const active = data?.active ?? []
   if (active.length === 0) return null

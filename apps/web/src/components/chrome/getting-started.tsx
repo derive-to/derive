@@ -7,7 +7,7 @@ import { SidebarMenuItem } from "@/components/ui/sidebar"
 import { useAuth } from "@/ctx"
 import { onboardingQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
-import { useIdleGate } from "@/lib/use-idle-gate"
+import { useDeferredGate } from "@/lib/use-deferred-gate"
 import { cn } from "@/lib/utils"
 
 // Reads a per-browser checklist flag; storage failures (private mode) read as unset.
@@ -35,7 +35,7 @@ export function GettingStarted() {
   // One dismissal state for the session; reading localStorage once per mount is
   // fine — the pill is chrome, not data.
   const [dismissed, setDismissed] = useState(() => flag(STORAGE_KEYS.gettingStartedDismissed))
-  const idle = useIdleGate()
+  const deferred = useDeferredGate()
   // Re-read the share flag whenever the popover opens, so a copy-link in another
   // tab is picked up without any event plumbing.
   const [open, setOpen] = useState(false)
@@ -45,9 +45,9 @@ export function GettingStarted() {
   // freeze this checklist for the whole session; focus is exactly the moment to look.
   const { data: ob } = useQuery({
     ...onboardingQuery(),
-    // Ambient: the pill renders nothing until this resolves, so it waits for idle
-    // rather than competing with the library list for boot round trips.
-    enabled: !!me && !dismissed && idle,
+    // Ambient: the pill renders nothing until this resolves, so it waits until the
+    // boot's real reads have settled rather than competing with them.
+    enabled: !!me && !dismissed && deferred,
     refetchOnWindowFocus: true,
   })
 
