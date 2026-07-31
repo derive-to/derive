@@ -142,6 +142,29 @@ These are not theory. Each one was a live defect.
   has no credentials to prove with, and no header changes that. Say so plainly rather than
   shipping an example that cannot run.
 
+### 6.1 The three conditions for a self-reading page
+
+Demonstrated end to end against a live server (`examples/self-charting.html`), because the
+first two are invisible until you try it, and a host that documents only the third ships an
+example that returns one data point and looks broken.
+
+| # | Condition | If missing |
+| --- | --- | --- |
+| 1 | The record's **world link** grants read | `fetch` gets 404 — an opaque origin sends no credentials |
+| 2 | **Public history** is enabled on the record | The series returns **exactly one point**, the current version |
+| 3 | The data response carries **CORS** | `fetch` throws before any response is visible |
+
+Condition 2 is the one nobody predicts. A history export MUST NOT become a way around
+whatever gate guards a record's older versions, so the correct behaviour for an anonymous
+caller on a record that has not opted into public history is to serve the current value
+only. That is right, and it means **a public record's own page charts a single point by
+default**. Measured on a six-version record: anonymous read returned 1 line, the authorized
+read returned 6, and enabling public history made the anonymous read return 6.
+
+A host SHOULD say which condition is missing rather than failing blank. "HTTP 404 — this
+record needs a world link" and "one point: enable public history to chart the series" are
+both one-line fixes; a bare `TypeError: Failed to fetch` is an afternoon.
+
 ## 7. Adoption
 
 Extraction happens at write time, so a slot added to a record with existing versions would

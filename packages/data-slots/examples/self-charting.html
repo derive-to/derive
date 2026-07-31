@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nightly checks</title>
+<style>
+ body{margin:0;background:#0b0d10;color:#e6e9ee;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:36px 24px}
+ .wrap{max-width:640px;margin:0 auto}
+ h1{font-size:1.4rem;margin:0 0 4px} .sub{color:#9aa4b2;font-size:.85rem;margin:0 0 22px}
+ .card{border:1px solid #232830;border-radius:10px;padding:18px 20px;background:#12151a}
+ .state{font:13px/1.5 ui-monospace,Menlo,monospace;color:#9aa4b2}
+ .err{color:#f85149} .ok{color:#3fb950}
+ svg{display:block;width:100%;height:150px;margin-top:10px}
+ table{width:100%;border-collapse:collapse;margin-top:14px;font:13px/1.5 ui-monospace,Menlo,monospace}
+ td,th{text-align:left;padding:4px 8px;border-bottom:1px solid #232830} th{color:#9aa4b2;font-weight:600}
+</style></head>
+<body><div class="wrap">
+<h1>Nightly checks</h1>
+<p class="sub">This page draws its own history. Nothing server-side renders the chart.</p>
+<div class="card">
+  <div class="state" id="state">reading my own series…</div>
+  <svg id="chart" viewBox="0 0 600 150" preserveAspectRatio="none" aria-label="pass over runs"></svg>
+  <table id="tbl"></table>
+</div>
+<script type="application/derive-data" data-slot="checks">
+{"run":7,"pass":52,"fail":0}
+</script>
+<script>
+const S = (id) => document.getElementById(id)
+;(async () => {
+  const m = location.pathname.match(/\/raw\/([^/]+)\//)
+  if (!m) { S("state").textContent = "cannot self-identify from " + location.pathname; S("state").className = "state err"; return }
+  const id = m[1]
+  let res
+  try { res = await fetch(`/raw/${id}/data/checks.jsonl`) }
+  catch (e) { S("state").innerHTML = '<span class="err">fetch threw: ' + e + '</span>'; return }
+  if (!res.ok) { S("state").innerHTML = '<span class="err">HTTP ' + res.status + ' — needs a world link AND public history</span>'; return }
+  const text = await res.text()
+  const pts = text.trim().split("\n").filter(Boolean).map(JSON.parse)
+  // The spec's own rule: a version with no value is ABSENT, never a zero.
+  const series = pts.filter((p) => p.data && typeof p.data.pass === "number")
+  S("state").innerHTML = '<span class="ok">' + series.length + ' versions read from my own JSONL export</span>'
+  const xs = series.map((_, i) => (i / Math.max(1, series.length - 1)) * 580 + 10)
+  const vals = series.map((p) => p.data.pass)
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1
+  const ys = vals.map((v) => 140 - ((v - lo) / span) * 120)
+  const d = xs.map((x, i) => (i ? "L" : "M") + x.toFixed(1) + " " + ys[i].toFixed(1)).join(" ")
+  S("chart").innerHTML =
+    '<path d="' + d + '" fill="none" stroke="#7aa2f7" stroke-width="2"/>' +
+    xs.map((x, i) => '<circle cx="' + x.toFixed(1) + '" cy="' + ys[i].toFixed(1) + '" r="3" fill="#7aa2f7"/>').join("")
+  S("tbl").innerHTML = "<tr><th>version</th><th>pass</th><th>fail</th></tr>" +
+    series.map((p) => "<tr><td>v" + p.n + "</td><td>" + p.data.pass + "</td><td>" + p.data.fail + "</td></tr>").join("")
+})()
+</script>
+</div></body></html>
