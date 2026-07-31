@@ -37,6 +37,7 @@ const QUERY_ALLOW = new Set([
   "components/chrome/app-shell.tsx", // workspace switcher, ambient
   "components/chrome/command-palette.tsx", // renders whatever's cached
   "components/chrome/sync-chip.tsx", // ambient status indicator
+  "components/chrome/notification-bell.tsx", // ambient badge; a failed load stays quiet, SSE/visibility retries
   "components/chrome/getting-started.tsx", // ambient checklist pill; hides itself on any failure
   "pages/library/connect-nudge.tsx", // ambient activation card; hides itself on any failure
   "pages/artifact/artifact-breadcrumb.tsx", // collections/siblings reads degrade to the title (no switcher)

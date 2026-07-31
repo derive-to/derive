@@ -1183,8 +1183,8 @@ export const api = {
     const qs = p.toString()
     return f(`/v1/users${qs ? `?${qs}` : ""}`, opts()).then(j)
   },
-  notifications: (): Promise<{ notifications: Notification[]; unread: number }> =>
-    f("/v1/notifications", opts()).then(j),
+  notifications: (init?: FetchInit): Promise<{ notifications: Notification[]; unread: number }> =>
+    f("/v1/notifications", opts(undefined, init)).then(j),
   markNotificationsRead: (sel: { ids: string[] } | { all: true }): Promise<{ unread: number }> =>
     f("/v1/notifications/read", opts(sel)).then(j),
   notificationsStreamUrl: (): string => u("/v1/notifications/events"),

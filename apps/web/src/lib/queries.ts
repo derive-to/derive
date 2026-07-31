@@ -318,6 +318,18 @@ export const artifactQuery = (shortId: string, client?: QueryClient) =>
       : undefined,
   })
 
+// The bell's badge + panel — a real query rather than the raw fetch it replaced, so
+// it dedupes with anything else that asks, persists (the badge paints warm on boot,
+// before the network answers), and cancels a superseded fetch. The SSE "notification"
+// event invalidates it, so staleness is only the fallback path.
+export const notificationsQuery = () =>
+  queryOptions({
+    // Annotated ctx (not inferred): the bell spreads these options to add `enabled`,
+    // the same inference collapse peopleQuery documents.
+    queryKey: ["notifications"] as const,
+    queryFn: ({ signal }: { signal: AbortSignal }) => api.notifications({ signal }),
+  })
+
 export const commentsQuery = (shortId: string) =>
   queryOptions({
     queryKey: ["comments", shortId] as const,

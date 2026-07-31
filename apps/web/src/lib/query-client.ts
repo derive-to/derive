@@ -100,3 +100,11 @@ export const queryClient = new QueryClient({
     },
   }),
 })
+
+// Reference data moves a few times a week, not every 30 seconds. The sidebar's
+// vocabulary (tag summary, collections, workspace list) gets a longer staleness so
+// warm navigation stops refetching what has not changed — invalidations and the
+// SSE-driven reloads still update them the moment they actually do. The artifact
+// feed itself stays on the 30s default: it is the thing that changes constantly.
+for (const key of [["summary"], ["collections"], ["workspaces"]] as const)
+  queryClient.setQueryDefaults(key, { staleTime: 5 * 60_000 })

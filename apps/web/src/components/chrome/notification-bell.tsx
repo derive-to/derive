@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useState } from "react"
 import { api, type Notification } from "@/api"
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
+import { notificationsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
@@ -29,34 +31,39 @@ export function NotificationBell() {
   // Icon rail: the unread signal collapses to the ink dot on the bell (never a solid
   // count block). The hook lives here so it runs before the early return below.
   const iconMode = useIconRail()
-  const [items, setItems] = useState<Notification[]>([])
-  const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
-  // items starts [] — distinguish "haven't fetched yet" from "fetched, genuinely
-  // empty" so the panel shows row skeletons on first load instead of flashing the
-  // "Nothing yet." empty state. Flips true once (never back) on the first settle.
-  const [loaded, setLoaded] = useState(false)
   const visible = usePageVisible()
+  const qc = useQueryClient()
 
-  const load = useCallback(() => {
-    api
-      .notifications()
-      .then((r) => {
-        setItems(r.notifications)
-        setUnread(r.unread)
-      })
-      .catch(() => {})
-      .finally(() => setLoaded(true))
-  }, [])
+  // The badge + panel data, through the query cache instead of the raw fetch this
+  // replaced: it now dedupes with any other consumer, persists (a warm boot paints
+  // the badge before the network answers), and cancels a superseded fetch. Gated on
+  // visibility so a hidden tab still releases the per-user room Durable Object.
+  // `loaded` distinguishes "never fetched" from "fetched, genuinely empty" so the
+  // panel shows row skeletons on first load instead of flashing "Nothing yet."
+  const { data, isFetched: loaded } = useQuery({
+    ...notificationsQuery(),
+    enabled: !!me && visible,
+  })
+  const items = data?.notifications ?? []
+  const unread = data?.unread ?? 0
+  type Cache = { notifications: Notification[]; unread: number }
+  const setCache = useCallback(
+    (fn: (cur: Cache) => Cache) =>
+      qc.setQueryData(notificationsQuery().queryKey, (cur: Cache | undefined) =>
+        fn(cur ?? { notifications: [], unread: 0 }),
+      ),
+    [qc],
+  )
 
-  // Initial load + live updates over the SHARED per-user stream (one EventSource
-  // per tab, refcounted in use-user-events; the agent-push listener rides the same
-  // stream). Gated on visibility so a hidden tab still releases the per-user room
-  // Durable Object; re-loads on focus return.
-  useEffect(() => {
-    if (!me || !visible) return
-    load()
-  }, [me, load, visible])
+  // Live updates over the SHARED per-user stream (one EventSource per tab,
+  // refcounted in use-user-events; the agent-push listener rides the same stream).
+  // An SSE event invalidates rather than refetching by hand, so React Query
+  // dedupes the reload with any concurrent consumer.
+  const load = useCallback(
+    () => void qc.invalidateQueries({ queryKey: notificationsQuery().queryKey }),
+    [qc],
+  )
   useUserEvent("notification", load, !!me && visible)
 
   // Mirror the unread count into the tab title — "(3) Derive" (the house
@@ -71,11 +78,13 @@ export function NotificationBell() {
   const openItem = (n: Notification) => {
     setOpen(false)
     if (!n.read) {
-      setUnread((u) => Math.max(0, u - 1))
-      setItems((cur) => cur.map((x) => (x.id === n.id ? { ...x, read: 1 } : x)))
+      setCache((cur) => ({
+        notifications: cur.notifications.map((x) => (x.id === n.id ? { ...x, read: 1 } : x)),
+        unread: Math.max(0, cur.unread - 1),
+      }))
       api
         .markNotificationsRead({ ids: [n.id] })
-        .then((r) => setUnread(r.unread))
+        .then((r) => setCache((cur) => ({ ...cur, unread: r.unread })))
         .catch(() => {})
     }
     // A follow notification has no artifact — open the follower's profile instead.
@@ -92,11 +101,13 @@ export function NotificationBell() {
   }
 
   const markAll = () => {
-    setUnread(0)
-    setItems((cur) => cur.map((x) => ({ ...x, read: 1 })))
+    setCache((cur) => ({
+      notifications: cur.notifications.map((x) => ({ ...x, read: 1 })),
+      unread: 0,
+    }))
     api
       .markNotificationsRead({ all: true })
-      .then((r) => setUnread(r.unread))
+      .then((r) => setCache((cur) => ({ ...cur, unread: r.unread })))
       .catch(() => {})
   }
 
