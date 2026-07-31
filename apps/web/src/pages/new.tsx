@@ -4,7 +4,7 @@ import { useRef, useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
-import { artifactQuery, collectionsQuery, prefetchArtifactRaw, summaryQuery } from "@/lib/queries"
+import { artifactQuery, collectionsQuery, summaryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { refFor } from "./artifact/parse-ref"
@@ -73,7 +73,6 @@ export function NewArtifact() {
       // and start the raw-content fetch now so the iframe finds a warm HTTP cache.
       // Publish is the moment a person is most likely to be watching the screen.
       qc.setQueryData(artifactQuery(a.short_id).queryKey, a)
-      prefetchArtifactRaw(a.short_id, a.current_version, a.raw_token)
       // Drop the unsaved guard before navigating to the artifact (this nav IS the save,
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.

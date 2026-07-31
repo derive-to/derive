@@ -618,7 +618,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           onEditTags={setPendingTags}
           onAddToCollection={setPendingCollections}
           onDelete={setPendingDelete}
-          onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+          onPrefetch={(a) => prefetch(a.short_id)}
           selection={selection}
         />
       ) : isManualCollection && folders.length > 0 ? (
@@ -643,7 +643,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
             onEditTags={setPendingTags}
             onAddToCollection={setPendingCollections}
             onDelete={setPendingDelete}
-            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+            onPrefetch={(a) => prefetch(a.short_id)}
             selection={selection}
           />
         ) : (
@@ -662,7 +662,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
               onEditTags={setPendingTags}
               onAddToCollection={setPendingCollections}
               onDelete={setPendingDelete}
-              onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+              onPrefetch={(a) => prefetch(a.short_id)}
               selection={selection}
             />
             {isFetchingNextPage && (
@@ -693,7 +693,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
             onEditTags={setPendingTags}
             onAddToCollection={setPendingCollections}
             onDelete={setPendingDelete}
-            onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
+            onPrefetch={(a) => prefetch(a.short_id)}
             selection={selection}
           />
           {isFetchingNextPage && (

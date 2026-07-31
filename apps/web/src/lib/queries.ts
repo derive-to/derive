@@ -348,31 +348,14 @@ export const commentsQuery = (shortId: string) =>
     queryFn: () => api.listComments(shortId).then((r) => r.comments),
   })
 
-// Warm the artifact's rendered HTML so its sandboxed iframe paints from the HTTP
-// cache instead of a cold fetch on open. The raw route is version-explicit, so
-// callers pass the version they intend to show. Idempotent per (id, version).
 /** The URL the sandboxed viewer loads for an artifact's rendered bytes. ONE builder,
- *  because there used to be two: the prefetch built a tokenless URL while the frame
- *  built a tokenized one, so every signed-in open paid a wasted prefetch AND a cold
- *  real fetch. The token is the frame's proof of access (an opaque origin cannot send
- *  our cookie), so it is part of the URL and therefore part of the cache key — which
- *  is exactly why both callers have to derive it the same way. */
+ *  shared by the viewer and by the test that pins its shape, because there used to be
+ *  two that disagreed. The token is the frame's proof of access (an opaque origin cannot
+ *  send our cookie), so it is part of the URL and therefore part of the HTTP cache key —
+ *  which is why it is minted on a time BUCKET (RAW_TOKEN_WINDOW_MS) rather than on `now`:
+ *  a URL that changes every request can never hit the browser cache. */
 export const rawArtifactUrl = (shortId: string, version: number, rawToken?: string) =>
   `${API_BASE}/raw/${shortId}/v/${version}${rawToken ? `/t/${rawToken}` : ""}/index.html`
-
-export function prefetchArtifactRaw(shortId: string, version: number, rawToken?: string) {
-  if (typeof document === "undefined") return
-  const key = `${shortId}@${version}@${rawToken ?? "anon"}`
-  if (document.querySelector(`link[data-raw="${key}"]`)) return
-  // A plain rel=prefetch (no `as`) warms the HTTP cache for the iframe's later
-  // navigation. `as="document"` isn't a reflected destination in Chrome and can
-  // stop the iframe from reusing the response, so we leave it off.
-  const link = document.createElement("link")
-  link.rel = "prefetch"
-  link.href = rawArtifactUrl(shortId, version, rawToken)
-  link.dataset.raw = key
-  document.head.appendChild(link)
-}
 
 // ---- Settings ---------------------------------------------------------------
 
