@@ -16,3 +16,21 @@ export function useIsMobile(bp = 640): boolean {
   }, [bp])
   return m
 }
+
+// Is the primary input a FINGER? Width is a proxy for "phone" and a bad proxy for
+// "touch": a phone in landscape is 844px wide and a tablet is wider still, while a
+// narrow desktop window is neither. Anything sized for thumbs (hit targets, "tap"
+// rather than "click") should ask this instead of the breakpoint.
+export function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)")
+    const on = () => setCoarse(mq.matches)
+    on()
+    mq.addEventListener("change", on)
+    return () => mq.removeEventListener("change", on)
+  }, [])
+  return coarse
+}

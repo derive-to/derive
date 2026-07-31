@@ -111,7 +111,14 @@ import type {
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
-import { GLOBAL_FOLLOW_ORG, maxRole, mergeRunMeta, parseRunMeta, runCounter } from "@derive/core"
+import {
+  GLOBAL_FOLLOW_ORG,
+  maxRole,
+  mergeRunMeta,
+  parseRunMeta,
+  runCounter,
+  WORKSPACE_SLOT_ROW_CAP,
+} from "@derive/core"
 import {
   and,
   asc,
@@ -511,6 +518,24 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(versionData.n))
       .limit(limit)
   }
+  async listWorkspaceSlots(orgId: string, opts?: { limit?: number }) {
+    // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
+    // the caller, AFTER the visibility gate — see the port doc for why not here.
+    return this.db
+      .select({
+        slot: versionData.slot,
+        artifact_id: versionData.artifact_id,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .orderBy(asc(versionData.slot))
+      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
+  }
   async listSlotAcrossArtifacts(
     orgId: string,
     slot: string,
@@ -526,6 +551,7 @@ export class PgMetaStore implements MetaStore {
       : null
     return this.db
       .select({
+        id: artifact.id,
         short_id: artifact.short_id,
         title: artifact.title,
         n: versionData.n,

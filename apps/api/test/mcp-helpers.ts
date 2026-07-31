@@ -42,6 +42,43 @@ export function appWithGrant(
     new Date(Date.now() + 3_600_000).toISOString(),
   )
   db.close()
+  // A SECOND workspace member with their own grant, for the tests that need a caller who
+  // is legitimately in the workspace yet has no claim on a particular artifact. Off by
+  // default so every other case keeps its single-identity setup.
+  const teammate = (userId: string, tokenName: string, tokenScopes: string): string => {
+    const raw = new Database(path)
+    raw.exec(`
+      CREATE TABLE IF NOT EXISTS workspace (id TEXT PRIMARY KEY, name TEXT);
+      CREATE TABLE IF NOT EXISTS membership (id TEXT PRIMARY KEY, org_id TEXT, user_id TEXT, role TEXT);
+    `)
+    raw.prepare(`INSERT OR IGNORE INTO workspace(id,name) VALUES('default','Default')`).run()
+    // Both identities hold a workspace SEAT: that is what makes the leak test meaningful,
+    // since a non-member would be filtered by the org predicate alone and the assertion
+    // would pass without the visibility gate ever running.
+    for (const [uid, role] of [
+      ["u_o", "owner"],
+      [userId, "editor"],
+    ] as const)
+      raw
+        .prepare(`INSERT OR IGNORE INTO membership(id,org_id,user_id,role) VALUES(?,'default',?,?)`)
+        .run(`m_${uid}`, uid, role)
+    raw
+      .prepare(`INSERT OR IGNORE INTO "user"(id,email,name) VALUES(?,?,?)`)
+      .run(userId, `${userId}@x.test`, "Teammate")
+    raw
+      .prepare(
+        `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
+      )
+      .run(
+        sha256(tokenName),
+        "cli",
+        userId,
+        JSON.stringify(tokenScopes.split(/\s+/).filter(Boolean)),
+        new Date(Date.now() + 3_600_000).toISOString(),
+      )
+    raw.close()
+    return tokenName
+  }
   const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
   const app = createApp({
     meta,
@@ -50,7 +87,7 @@ export function appWithGrant(
     token: "tok",
     ...extra,
   })
-  return { app, token: `tok_${name}`, meta, blobs }
+  return { app, token: `tok_${name}`, meta, blobs, teammate }
 }
 
 // POST one JSON-RPC message and return the parsed response, handling both a plain

@@ -330,12 +330,29 @@ interface ElReg {
   // document moves it here): the host's window listener can't see it, so forward
   // it for host-level dismissals (exiting focus mode, cancelling a composer).
   document.addEventListener("keydown", (e) => {
+    // Save from the keyboard while editing. The keystroke happens INSIDE the frame,
+    // so the host's own window listener can never see it — forward it, and swallow
+    // the browser's Save-page dialog that ⌘S would otherwise open over the document.
+    if (
+      editOn &&
+      (e.metaKey || e.ctrlKey) &&
+      (e.key === "s" || e.key === "S" || e.key === "Enter")
+    ) {
+      e.preventDefault()
+      post({ type: "edit-save" })
+      return
+    }
     if (e.key === "Escape") {
-      // Editing a block: the first Escape just leaves the block (native undo and
-      // the typed text survive); the host's Done/Discard bar owns exiting the mode.
-      if (editOn && asEl(document.activeElement)?.closest("[data-derive-editable]")) {
-        ;(document.activeElement as HTMLElement).blur()
-        return
+      // Two steps, deliberately. With the caret in a block, Escape drops the caret
+      // and stops there — the typed text and the session both survive, which is what
+      // "get this cursor out of the way" should mean. Only an Escape with no block
+      // focused asks the host to leave the MODE (it exits clean, confirms dirty).
+      if (editOn) {
+        const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
+        if (focused instanceof HTMLElement) {
+          focused.blur()
+          return
+        }
       }
       post({ type: "esc" })
     }
@@ -383,7 +400,22 @@ interface ElReg {
        family as the comment highlights — one visual voice, nothing loud. */
     "[data-derive-editable]{cursor:text}" +
     "[data-derive-editable]:focus{outline:2px solid rgba(100,116,139,.6);outline-offset:3px;border-radius:3px}" +
-    ".derive-edited{background-color:rgba(100,116,139,.08);border-radius:2px}"
+    ".derive-edited{background-color:rgba(100,116,139,.08);border-radius:2px}" +
+    /* The invitation. In edit mode the block under the pointer lifts slightly, so the
+       document itself shows which runs are editable BEFORE you commit a click —
+       without it, edit mode is pixel-identical to reading and you have to click
+       something to discover what counts as text. Tracks exactly what a click would
+       activate (same editContainerFor), so it can never promise the wrong region. */
+    ".derive-edit-hover{background-color:rgba(100,116,139,.09);border-radius:3px;outline:1px solid rgba(100,116,139,.22);outline-offset:2px;cursor:text}" +
+    /* ...and again derived from the block's OWN text colour, which by definition
+       contrasts with whatever the artifact painted behind it. The slate wash above
+       composites to ~1:1 on a dark page — invisible exactly where the invitation
+       matters most. Declared second so it wins wherever color-mix is supported, and
+       the rgba rule remains the fallback where it is not. */
+    "@supports (color: color-mix(in srgb, currentColor 10%, transparent)){" +
+    ".derive-edit-hover{background-color:color-mix(in srgb, currentColor 8%, transparent);outline-color:color-mix(in srgb, currentColor 38%, transparent)}" +
+    "[data-derive-editable]:focus{outline-color:color-mix(in srgb, currentColor 70%, transparent)}" +
+    "}"
   ;(document.head || document.documentElement).appendChild(st)
 
   /* === Element anchors ========================================================
@@ -1186,6 +1218,15 @@ interface ElReg {
     })
   }
   window.addEventListener("resize", reflow)
+  /* The frame is resized when the host gives back the on-screen keyboard's height —
+     which happens a beat AFTER the tap that opened it, by which time the block the
+     caret is in may be behind the keyboard. revealBlock already ran (and correctly
+     did nothing, the frame being full height then), so re-run it on the shrink. */
+  window.addEventListener("resize", () => {
+    if (!editOn) return
+    const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
+    if (focused instanceof HTMLElement) revealBlock(focused)
+  })
   /* images/fonts settle after load — re-measure a few times so pins AND geometry land right */
   window.addEventListener("load", () => {
     const remeasure = () => {
@@ -1422,7 +1463,17 @@ interface ElReg {
     dirtyT = window.setTimeout(postDirty, 120)
   }
 
-  const setEditMode = (on: boolean) => {
+  /* The hover invitation: the block a click WOULD activate, lit as the pointer moves.
+     Same resolver as editClick, so what lights up is exactly what becomes editable. */
+  let editHoverEl: HTMLElement | null = null
+  const setEditHover = (el: HTMLElement | null) => {
+    if (el === editHoverEl) return
+    editHoverEl?.classList.remove("derive-edit-hover")
+    editHoverEl = el
+    el?.classList.add("derive-edit-hover")
+  }
+
+  const setEditMode = (on: boolean, keep?: boolean) => {
     if (on === editOn) return
     editOn = on
     if (on) {
@@ -1443,16 +1494,30 @@ interface ElReg {
       setHover(null)
       hideChip()
     } else {
-      // Leaving edit mode always restores un-saved content — the host only exits
-      // clean (after a save the frame reloads with the new version anyway).
-      restoreEdits()
+      // `keep`: drop the editing chrome but leave the typed text standing. Used right
+      // after a PUBLISH — the text on screen is what was just saved, and the version
+      // swap will reload the frame a moment later; restoring here would flash the
+      // pre-edit wording in between and make a successful save look like it failed.
+      if (keep) settleEdits()
+      else restoreEdits()
       editBase = null
+      setEditHover(null)
     }
   }
   const disableTarget = (t: EditTarget) => {
     t.el.removeAttribute("contenteditable")
     t.el.removeAttribute("data-derive-editable")
     t.el.classList.remove("derive-edited")
+    t.el.classList.remove("derive-edit-hover")
+  }
+  /** Leave the text exactly as typed; just remove the editing chrome. */
+  const settleEdits = () => {
+    for (const t of editTargets) if (document.contains(t.el)) disableTarget(t)
+    editTargets = []
+    if (lastDirty !== 0) {
+      lastDirty = 0
+      post({ type: "edit-state", dirty: 0 })
+    }
   }
   const restoreEdits = () => {
     for (const t of editTargets) {
@@ -1521,6 +1586,10 @@ interface ElReg {
   const editClick = (e: MouseEvent) => {
     const base = editBase
     if (!base) return
+    // A keyboard-synthesized click (Enter/Space on a focused link) reports
+    // clientX/clientY 0, which would resolve a caret at the frame's top-left and
+    // silently arm an unrelated block. Editing is pointer-driven; ignore it.
+    if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
     const el0 = asEl(e.target)
     // Never navigate while editing — a click on a link edits its text instead.
     if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
@@ -1580,7 +1649,52 @@ interface ElReg {
         sel2.addRange(r)
       } catch (_e) {}
     }
+    setEditHover(null) // it's the focused block now; the focus ring speaks for it
+    revealBlock(target.el)
   }
+
+  /* Bring the block being edited into view. On a phone the host shrinks the frame by
+     the keyboard's height, so "visible" here already means "above the keyboard" —
+     which is the only reason a tap near the bottom of the screen doesn't put the
+     caret somewhere the typist can't see. Only scrolls when the block is actually
+     clipped, so an ordinary click on a comfortably-visible paragraph never moves
+     the page under the reader. */
+  const revealBlock = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    const vh = window.innerHeight || document.documentElement.clientHeight
+    if (r.top >= 8 && r.bottom <= vh - 8) return
+    // Same answer fastScrollTo gives: an OS-level motion preference outranks the
+    // nicety of an animated scroll.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    try {
+      el.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" })
+    } catch (_e) {
+      el.scrollIntoView()
+    }
+  }
+
+  /* Light the block under the pointer while editing. Throttled like the comment
+     hit-test, and skipped over controls/media that can't be edited anyway, so the
+     invitation never appears where a click would be refused. */
+  let editHoverTick = 0
+  document.addEventListener("mousemove", (e) => {
+    if (!editOn || editHoverTick) return
+    const x = e.clientX
+    const y = e.clientY
+    const target = e.target
+    editHoverTick = window.setTimeout(() => {
+      editHoverTick = 0
+      if (!editOn) return setEditHover(null)
+      if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
+      const c = caretAt(x, y)
+      const node = c && c.node.nodeType === 3 ? (c.node as Text) : null
+      if (!node) return setEditHover(null)
+      const cand = editContainerFor(node)
+      // A block that's already editable wears the focus ring; don't double-decorate.
+      setEditHover(cand && !cand.hasAttribute("data-derive-editable") ? cand : null)
+    }, 50)
+  })
+  document.addEventListener("mouseleave", () => setEditHover(null))
 
   document.addEventListener(
     "beforeinput",
@@ -1607,6 +1721,15 @@ interface ElReg {
   document.addEventListener("input", (e) => {
     if (!editOn) return
     if (!asEl(e.target)?.closest("[data-derive-editable]")) return
+    // Tell the host it is dirty on the FIRST keystroke, before the debounce. The
+    // exact count can wait 120ms; the fact that there is unsaved work cannot — the
+    // host's unsaved-work guard is armed by this number, and typing then
+    // immediately hitting Escape or a link inside that window dropped the edit
+    // silently. An optimistic 1 is corrected by the settled count either way.
+    if (lastDirty <= 0) {
+      lastDirty = 1
+      post({ type: "edit-state", dirty: 1 })
+    }
     scheduleDirty()
   })
 
@@ -1732,7 +1855,7 @@ interface ElReg {
     if (d.type === "anchors") applyAnchors(d.anchors || [])
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
-    else if (d.type === "edit-mode") setEditMode(!!d.on)
+    else if (d.type === "edit-mode") setEditMode(!!d.on, !!d.keep)
     else if (d.type === "edit-collect") {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.

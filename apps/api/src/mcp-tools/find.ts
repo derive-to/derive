@@ -7,8 +7,9 @@ import {
   searchWorkspace,
   toSearchHits,
 } from "../lib/search"
+import { visibleArtifactIds } from "../lib/visibility"
 import type { ToolContext } from "../mcp-tool-context"
-import { err, json, runnerOnline, summarizeArtifact, text } from "../mcp-util"
+import { err, json, runnerOnline, safeJson, summarizeArtifact, text } from "../mcp-util"
 
 // FIND — one tool over BROWSE (list_artifacts) + GREP/SEARCH (search) + the askable
 // CONTEXTS (list_contexts), discriminated by argument. The mode is decided by what's
@@ -17,6 +18,10 @@ import { err, json, runnerOnline, summarizeArtifact, text } from "../mcp-util"
 // unambiguous. -----------------------------------------------------------------------
 const CONTEXTS_NEED_HUMAN =
   "Contexts (askable live data agents) are hidden here: this connection has no signed-in user. Reconnect with an OAuth login to see and use them."
+
+/** Rows returned by a cross-artifact slot read. The store is asked for twice this many so
+ *  the visibility gate has slack to drop invisible ones without shortening the answer. */
+const SLOT_RESULT_CAP = 200
 
 export function registerFindTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, notFound, resolveWs, wsArg, askableContexts } = tc
@@ -69,7 +74,15 @@ export function registerFindTool(tc: ToolContext): void {
         tag: z
           .string()
           .optional()
-          .describe("Browse only: artifacts carrying this browse tag (case-insensitive)."),
+          .describe(
+            "Browse only: artifacts carrying this browse tag (case-insensitive). Also narrows `data` to that tagged set.",
+          ),
+        data: z
+          .string()
+          .optional()
+          .describe(
+            'Read one DATA SLOT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which slots exist in the workspace and how many artifacts carry each. Reaches exactly what a search would: your own artifacts plus the workspace-listed ones, never a teammate\'s invite-only doc — so a count here is what YOU can see, not what the workspace holds.',
+          ),
         skills: z
           .boolean()
           .optional()
@@ -104,6 +117,7 @@ export function registerFindTool(tc: ToolContext): void {
       query,
       short_id,
       tag,
+      data,
       skills,
       case_sensitive,
       in: scope,
@@ -175,11 +189,95 @@ export function registerFindTool(tc: ToolContext): void {
         })
       }
 
-      // MODE 3 — BROWSE the library: list_artifacts rows (skills:/tag facets), plus every
-      // askable context. A tag filter resolves to an id set first (mirrors the HTTP ?tag=
-      // path); viewerId keeps private rows scoped to the agent's human (mirrors `reach`).
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
+
+      // MODE 3 — CROSS-ARTIFACT DATA. read(data, versions) answers "how did this ONE page
+      // change over time"; this answers "where does this metric stand everywhere", which
+      // is the question a workspace of nightly reports actually gets asked. Every row is
+      // an artifact's CURRENT version, joined at the store so a superseded row can never
+      // be reported as the present state.
+      if (data !== undefined) {
+        if (query || short_id)
+          return err(
+            "`data` reads slots across the workspace — pass it with `tag` (to scope the set) but not with `query`/`short_id`, which grep one artifact or search text.",
+          )
+        // Both reads below reach artifacts by a METRIC NAME rather than by id, so the
+        // store scopes them to the org and stops there. An org is not a read permission:
+        // an artifact can be invite-only within its own workspace. Everything the store
+        // hands back therefore passes the same visibility gate workspace search uses
+        // before it is counted or returned.
+        const viewer = { orgId: t.org, viewerId: actingFor?.id ?? agent.id }
+        if (data === "*") {
+          const rows = await ctx.meta.listWorkspaceSlots(t.org)
+          const allowed = await visibleArtifactIds(
+            ctx.meta,
+            [...new Set(rows.map((r) => r.artifact_id))],
+            viewer,
+          )
+          // Count over what this caller can actually see, not over the workspace.
+          const byName = new Map<string, { artifacts: Set<string>; latest_at: string }>()
+          for (const r of rows) {
+            if (!allowed.has(r.artifact_id)) continue
+            const e = byName.get(r.slot) ?? { artifacts: new Set<string>(), latest_at: r.at }
+            e.artifacts.add(r.artifact_id)
+            if (r.at > e.latest_at) e.latest_at = r.at
+            byName.set(r.slot, e)
+          }
+          const catalog = [...byName.entries()]
+            .map(([slot, e]) => ({ slot, artifacts: e.artifacts.size, latest_at: e.latest_at }))
+            .sort((a, b) => b.artifacts - a.artifacts || a.slot.localeCompare(b.slot))
+          return json({
+            workspace: t.org,
+            count: catalog.length,
+            slots: catalog,
+            ...(catalog.length
+              ? {
+                  next: `Read one across the workspace with find(data:"${catalog[0]?.slot}"), or one artifact's history with read(short_id, data:"${catalog[0]?.slot}", versions:"all").`,
+                }
+              : {
+                  note: "No data slots in this workspace yet. A page carries one as a `derive-data` block (see derive://skills/publishing); it becomes queryable the moment it publishes.",
+                }),
+          })
+        }
+        // Over-fetch, THEN gate, then cut to the display cap. Gating a hard 200 would let a
+        // run of artifacts the caller cannot see eat the whole page and answer "no artifact
+        // carries this slot" — a wrong answer dressed as an empty one. Nothing about what
+        // was dropped is reported: a "some results were filtered" note would disclose the
+        // existence of the very documents the gate is hiding.
+        const found = await ctx.meta.listSlotAcrossArtifacts(t.org, data, {
+          tag: tag?.trim().toLowerCase(),
+          limit: SLOT_RESULT_CAP * 2,
+        })
+        const allowed = await visibleArtifactIds(
+          ctx.meta,
+          found.map((r) => r.id),
+          viewer,
+        )
+        const rows = found.filter((r) => allowed.has(r.id)).slice(0, SLOT_RESULT_CAP)
+        return json({
+          workspace: t.org,
+          slot: data,
+          ...(tag ? { tag } : {}),
+          count: rows.length,
+          results: rows.map((r) => ({
+            short_id: r.short_id,
+            title: r.title,
+            version: r.n,
+            at: r.at,
+            data: safeJson(r.json),
+          })),
+          ...(rows.length
+            ? {}
+            : {
+                note: `No artifact${tag ? ` tagged "${tag}"` : ""} carries a "${data}" slot on its current version. Pass data:"*" to see which slots exist.`,
+              }),
+        })
+      }
+
+      // MODE 4 — BROWSE the library: list_artifacts rows (skills:/tag facets), plus every
+      // askable context. A tag filter resolves to an id set first (mirrors the HTTP ?tag=
+      // path); viewerId keeps private rows scoped to the agent's human (mirrors `reach`).
       const ids = tag ? await ctx.meta.artifactIdsByTag(tag.trim().toLowerCase()) : undefined
       const arts =
         ids && ids.length === 0

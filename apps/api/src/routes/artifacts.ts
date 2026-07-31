@@ -941,6 +941,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           )),
         )
       }
+      // What extraction actually STORED, read back from the rows rather than echoed from
+      // the parser — so a persistence failure reads as an empty list, not a false claim.
+      const storedSlots = await meta.getVersionData(artifact.id, version.n).catch(() => [])
       return c.json(
         {
           ...toJson(deps.baseUrl, artifact, versions),
@@ -950,6 +953,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           // to catch content corrupted on the way in. Bundles store a manifest
           // blob, so there is no single-file hash to report.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
+          ...(storedSlots.length
+            ? { data: storedSlots.map((s) => ({ slot: s.slot, bytes: s.size_bytes })) }
+            : {}),
           ...(advisories.length ? { advisories } : {}),
           ...(roundCreated ? { review_requested: true } : {}),
           ...(openedInTab !== null ? { opened_in_tab: openedInTab } : {}),

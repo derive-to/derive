@@ -7,6 +7,7 @@ import { verifyState } from "../lib/crypto"
 import { cacheControlFor, fail, TOMBSTONE } from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
+import { safeJson } from "../mcp-util"
 
 // How long a minted raw_token (artifacts.ts's GET detail response) stays good for. It
 // doesn't re-check role/visibility live the way the cookie path's authorize() does, so
@@ -50,8 +51,42 @@ export const rawRoutes = (ctx: AppContext) => {
   // otherwise swallow `data/checks.json` as a file path inside the artifact; the more
   // specific route has to win the match, exactly like the `/t/:token/` route above.
   // `.json` is optional so both spellings work rather than one 404ing mysteriously.
+  //
+  // A slot's bytes reach only a caller who cleared `authorize`, so for an artifact with no
+  // world link (or a locked one) the response is CALLER-SPECIFIC. Nothing here varies on
+  // the credential that produced it, so marking it `public` would invite a CDN or corporate
+  // proxy to hand one member's figures to anyone who asks, and the version-pinned variant
+  // asks to keep them for a year. A world-readable artifact keeps the hard cache that makes
+  // these URLs cheap for a page to poll. Same line the OG card draws in embeds.ts.
+  const slotCache = (a: ArtifactRecord, directives: string): string =>
+    a.link_role === "none" || a.password_hash ? `private, ${directives}` : `public, ${directives}`
+
+  /**
+   * A slot response must be READABLE BY THE ARTIFACT'S OWN PAGE, which is the entire
+   * point of "a page charts its own history".
+   *
+   * Artifacts are served into an OPAQUE ORIGIN (the sandbox CSP grants no
+   * allow-same-origin), so a page fetching its own data is making a cross-origin request
+   * from a null origin. Without this header the browser refuses to hand the body to the
+   * script and `fetch` throws a bare "Failed to fetch" before any response is visible.
+   * Every other raw route already carries it via RAW_HEADERS; these routes built their
+   * headers from scratch and lost it, which is why a live probe page could self-discover
+   * its own short_id and then fail on the very next line.
+   *
+   * It grants no access. An opaque origin cannot send credentials, and `*` forbids
+   * credentialed reads anyway, so a cross-origin caller sees exactly what an anonymous
+   * one sees — which for a gated artifact is the 404 the authorize check above already
+   * returned. This makes a PUBLIC artifact's data readable by its own page; a gated one
+   * still cannot self-read, because the page has no credentials to prove with.
+   */
+  const SLOT_CORS = { "Access-Control-Allow-Origin": "*" }
+
   const serveSlot = async (c: Context, shortId: string, n: number | null, slotRaw: string) => {
-    const slot = slotRaw.replace(/\.json$/i, "")
+    // `.jsonl` asks for the WHOLE SERIES, `.json` (or bare) for one version's value. The
+    // two share this handler rather than living on separate routes because the `.json`
+    // pattern matches `checks.jsonl` first — a sibling route could never win the match.
+    const wantsSeries = /\.jsonl$/i.test(slotRaw) && n === null
+    const slot = slotRaw.replace(/\.jsonl$/i, "").replace(/\.json$/i, "")
     const artifact = await meta.getByShortId(shortId)
     if (!artifact) return fail(c, 404, "not found")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
@@ -60,6 +95,32 @@ export const rawRoutes = (ctx: AppContext) => {
       return fail(c, 404, `no version ${v}`)
     if (!(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
     if (await anonHistoryBlocked(c, artifact, v)) return fail(c, 404, "not found")
+
+    // THE SERIES EXPORT: one JSON object per version, oldest first. This is the substrate
+    // the rest of the querying story stands on — a page charts its own history from it, an
+    // agent pulls a series without an MCP client, a shell pipes it to jq, and anything
+    // wanting real SQL points DuckDB-WASM at it. Derive precomputes and serves; the
+    // consumer queries, which is why there is no query language here to defend.
+    // JSONL on purpose: a new version is a LINE append, and it streams.
+    if (wantsSeries) {
+      // An anonymous caller who may not read history gets only the current point — the
+      // export must never be a way around the public-history gate.
+      const anonCurrentOnly = await anonHistoryBlocked(c, artifact, 1)
+      const series = anonCurrentOnly
+        ? await meta.getVersionData(artifact.id, artifact.current_version, slot)
+        : await meta.getVersionDataSeries(artifact.id, slot, 1, artifact.current_version, 5000)
+      if (!series.length) return fail(c, 404, `no data slot "${slot}"`)
+      const body = series
+        .map((r) => JSON.stringify({ n: r.n, at: r.created_at, data: safeJson(r.json) }))
+        .join("\n")
+      return c.body(`${body}\n`, 200, {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        // Grows with every publish, so never immutable — but cheap and worth a short cache.
+        "Cache-Control": slotCache(artifact, "max-age=60"),
+        "X-Content-Type-Options": "nosniff",
+        ...SLOT_CORS,
+      })
+    }
     const rows = await meta.getVersionData(artifact.id, v, slot)
     const row = rows[0]
     if (!row) return fail(c, 404, `no data slot "${slot}" in v${v}`)
@@ -69,7 +130,8 @@ export const rawRoutes = (ctx: AppContext) => {
       "Content-Type": "application/json; charset=utf-8",
       // A version is immutable, so its slot is too — cache it hard. The current-version
       // alias can't be, since the next publish changes what it points at.
-      "Cache-Control": n === null ? "no-cache" : "public, max-age=31536000, immutable",
+      "Cache-Control": n === null ? "no-cache" : slotCache(artifact, "max-age=31536000, immutable"),
+      ...SLOT_CORS,
     })
   }
   app.get("/raw/:shortId/v/:n/data/:slot", (c) =>

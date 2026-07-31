@@ -340,6 +340,138 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?doc/i)
   })
 
+  it("NEVER surfaces an invite-only artifact's slot data to a co-member (regression)", async () => {
+    // The cross-artifact slot readers reach artifacts by a METRIC NAME, so the store can
+    // only scope them by org — and an org is not a read permission: workspace_access:"none"
+    // means invite-only WITHIN the workspace. Without the visibility gate, asking for a
+    // metric returned the title and the actual figures of documents the caller was
+    // deliberately left off.
+    const { app, token, teammate } = appWithGrant(
+      dir,
+      "slotvis",
+      "openid derive:read derive:publish",
+    )
+    const mate = teammate("u_mate", "tok_slotvis_mate", "openid derive:read")
+    const page = (n: number) =>
+      `<!doctype html><html><body><h1>Report</h1>` +
+      `<script type="application/derive-data" data-slot="revenue">{"usd":${n}}</script>` +
+      "</body></html>"
+
+    // listed:"workspace" is what actually puts an artifact in front of a teammate. An
+    // unlisted team draft stays out of cross-artifact discovery for exactly the reason it
+    // stays out of search: this gate is the same one, deliberately.
+    const open = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Team Report",
+          content: page(100),
+          listed: "workspace",
+        }),
+      ),
+    )
+    const secret = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Board Only",
+          content: page(999),
+          workspace_access: "none",
+          link_role: "none",
+        }),
+      ),
+    )
+
+    // The publisher sees both: this is scoped visibility, not a broken feature.
+    const mine = JSON.parse(toolText(await call(app, token, "find", { data: "revenue" })))
+    expect(mine.results.map((r: { short_id: string }) => r.short_id).sort()).toEqual(
+      [open.short_id, secret.short_id].sort(),
+    )
+
+    // The teammate holds a real workspace seat, so the org predicate alone would let the
+    // invite-only artifact through. Only the gate keeps it out.
+    const theirs = JSON.parse(toolText(await call(app, mate, "find", { data: "revenue" })))
+    expect(theirs.results.map((r: { short_id: string }) => r.short_id)).toEqual([open.short_id])
+    expect(theirs.count).toBe(1)
+    // Neither the title nor the figure leaks anywhere in the payload.
+    expect(JSON.stringify(theirs)).not.toContain("Board Only")
+    expect(JSON.stringify(theirs)).not.toContain("999")
+
+    // The CATALOG counts what the caller can see, not what the workspace holds: a count of
+    // 2 here would disclose the existence of the document just as surely as naming it.
+    const catalog = JSON.parse(toolText(await call(app, mate, "find", { data: "*" })))
+    expect(catalog.slots.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(1)
+    const ownerCatalog = JSON.parse(toolText(await call(app, token, "find", { data: "*" })))
+    expect(ownerCatalog.slots.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(
+      2,
+    )
+  })
+
+  it("backfills a slot's history the first time it appears on an artifact", async () => {
+    // The sharp edge this closes: extraction runs at publish, so without a backfill a slot
+    // added to an existing artifact starts its series today and silently loses everything
+    // before it — even though those older pages usually already carried the block.
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "databackfill",
+      "openid derive:read derive:publish",
+    )
+    const withSlot = (n: number) =>
+      `<!doctype html><html><body><h1>Night ${n}</h1>` +
+      `<script type="application/derive-data" data-slot="checks">{"night":${n}}</script>` +
+      "</body></html>"
+
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Nightly", content: withSlot(1) })),
+    )
+    const shortId = created.short_id as string
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(2) })
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(3) })
+
+    // Simulate history that was never extracted: the pages carry the block, but no rows
+    // exist for them — exactly the state of every artifact published before slots shipped.
+    const rec = await meta.getByShortId(shortId)
+    if (!rec) throw new Error("artifact vanished")
+    for (const n of [1, 2, 3]) await meta.setVersionData(rec.id, n, [])
+    const before = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(before.count).toBe(0)
+
+    // v4 makes "checks" new relative to v3, so the backfill walks back and extracts it
+    // from the pages that carried it all along.
+    await call(app, token, "publish", { short_id: shortId, content: withSlot(4) })
+    const after = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
+      ),
+    )
+    expect(after.count).toBe(4)
+    expect(after.series.map((p: { n: number }) => p.n)).toEqual([1, 2, 3, 4])
+    expect(after.series.map((p: { data: { night: number } }) => p.data.night)).toEqual([1, 2, 3, 4])
+
+    // A version that genuinely never carried the block stays absent rather than inventing one.
+    const sparse = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Sparse",
+          content: "<!doctype html><html><body><h1>Night 1</h1></body></html>",
+        }),
+      ),
+    )
+    await call(app, token, "publish", { short_id: sparse.short_id, content: withSlot(2) })
+    const holes = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: sparse.short_id,
+          data: "checks",
+          versions: "all",
+        }),
+      ),
+    )
+    expect(holes.series.map((p: { n: number }) => p.n)).toEqual([2])
+  })
+
   it("extracts data slots on publish and reads them back by name and as a list", async () => {
     const { app, token } = appWithGrant(dir, "dataslots", "openid derive:read derive:publish")
     const page =
