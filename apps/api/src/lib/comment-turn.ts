@@ -26,19 +26,9 @@ import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
 import { overBudget } from "./budget"
 import { type CommentActionDeps, commentCreatedAction } from "./comment-actions"
-import { quoteOf } from "./comments"
+import { DERIVE_AUTHOR_ID, quoteOf } from "./comments"
 import type { ModelCatalog, ResolvedChatModel } from "./model-catalog"
 import { documentBlock, documentContract, documentName, runTurn } from "./turn-core"
-
-/** The author id every Derive-written comment carries. Not an agent record: the same synthetic
- *  principal the chat lanes use, which is what keeps this from needing a seat, an owner, or a
- *  provisioning step. It is also the recursion guard — a comment authored by this id never
- *  triggers another turn. */
-export const DERIVE_AUTHOR_ID = "derive"
-
-/** The mention id the composer offers for Derive. Deliberately the same string as the author id,
- *  so "who was mentioned" and "who answered" are the one identity in both directions. */
-export const DERIVE_MENTION_ID = DERIVE_AUTHOR_ID
 
 /** Exactly what this lane needs: the comment fan-out's deps (its settle IS a comment) plus a
  *  model. Deliberately NOT AfterPublishDeps — this turn only ever files a proposal, so it never
@@ -207,11 +197,6 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
   })
   await reply(out.reply || "(no reply)")
 }
-
-/** Does this comment ask Derive to answer? A mention of the reserved id, and not from Derive
- *  itself — the recursion guard, stated where the branch is taken rather than inside the turn. */
-export const mentionsDerive = (comment: CommentRecord, mentions: { id: string }[]): boolean =>
-  comment.author_id !== DERIVE_AUTHOR_ID && mentions.some((m) => m.id === DERIVE_MENTION_ID)
 
 /** Whether an asker may have a revision filed on their behalf here. Kept beside the turn so the
  *  branch and the land port cannot disagree about it. */

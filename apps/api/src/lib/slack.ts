@@ -552,6 +552,10 @@ export const SLACK_BOT_SCOPES = [
   "users:read",
   "users:read.email",
   "im:write",
+  // @Derive in any channel the bot is in. Distinct from channels:history, which is what lets
+  // the reply-mirror read a THREAD: this one delivers the mention event itself, and an install
+  // predating it will not receive app_mention until the workspace reconnects.
+  "app_mentions:read",
 ]
 
 /** The OAuth authorize URL for the "Add to Slack" button. */

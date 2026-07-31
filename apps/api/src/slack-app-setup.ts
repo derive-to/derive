@@ -94,6 +94,11 @@ export const buildSlackManifest = (baseUrl: string) => {
           "message.channels",
           "message.groups",
           "link_shared",
+          // @Derive, anywhere the bot is invited — the mention lane that does not need a
+          // mirrored thread underneath it. Paired with the `app_mentions:read` scope in
+          // SLACK_BOT_SCOPES: Slack refuses a manifest that declares one without the other,
+          // which is how the two previous scope/event mismatches shipped broken.
+          "app_mention",
           "app_uninstalled",
           "tokens_revoked",
         ],

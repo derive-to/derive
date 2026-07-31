@@ -54,6 +54,7 @@ import {
 } from "../lib/slack-comments"
 import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
+import { handleSlackMention } from "../lib/slack-mention"
 import { runSlackProposalAction } from "../lib/slack-proposal"
 import {
   channelIsSubscribed,
@@ -434,6 +435,49 @@ export const slackRoutes = (ctx: AppContext) => {
     // and its comments, and Slack still wants a reply inside 3s.
     if (body.type === "event_callback" && ev?.type === "link_shared" && body.team_id && ev.user) {
       runAfterAck(c, unfurlSharedLinks(body.team_id, ev))
+      return c.json({ ok: true })
+    }
+    // @Derive, anywhere the bot is invited. Deferred behind the ack like every other slow path:
+    // a turn takes seconds and Slack wants a reply inside three.
+    //
+    // Ordered BEFORE the thread-reply branch on purpose: Slack delivers an app_mention as its
+    // own event type, and this lane answers with the workspace chat rather than mirroring a
+    // comment, so treating it as a plain message would send it down the wrong path.
+    if (
+      body.type === "event_callback" &&
+      ev?.type === "app_mention" &&
+      body.team_id &&
+      ev.channel &&
+      ev.user &&
+      ev.text &&
+      !ev.bot_id
+    ) {
+      // Built here rather than injected: this route already holds the whole AppContext, and the
+      // turn needs it (the tool surface is constructed per asker). No model on the deploy means
+      // no answerer, which is the honest "nothing answers" state rather than a silent failure.
+      if (deps.models)
+        runAfterAck(
+          c,
+          handleSlackMention(
+            {
+              meta,
+              bus,
+              baseUrl: deps.baseUrl,
+              models: deps.models,
+              encryptionKey: deps.encryptionKey,
+              ctx,
+              chatAllowlist: deps.chatAllowlist,
+            },
+            {
+              teamId: body.team_id,
+              channel: ev.channel,
+              ts: ev.ts ?? "",
+              threadTs: ev.thread_ts,
+              userId: ev.user,
+              text: ev.text,
+            },
+          ),
+        )
       return c.json({ ok: true })
     }
     // Only human thread replies: a message with a thread_ts, no bot_id, not an edit/delete.
