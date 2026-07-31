@@ -320,4 +320,44 @@ describe("seat gate on granting a billable role", () => {
     })
     expect(r.status).toBe(200)
   })
+
+  it("enforced: a 4th-editor invite for an existing account 402s through POST /v1/workspace/invites", async () => {
+    const { app, meta } = makeAuthedApp("sg_invites_existing", [u(1), u(2), u(3), u(4)], "editor", {
+      isolated: true,
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
+
+    const r = await app.request("/v1/workspace/invites", {
+      ...jsonAs(as("u1@x.test"), { email: "u4@x.test", role: "editor" }),
+      method: "POST",
+    })
+    expect(r.status).toBe(402)
+    const body = await r.json()
+    expect(body.code).toBe("billing_required")
+    expect(body.error).toContain("/settings/billing")
+  })
+
+  it("enforced: a 4th-editor invite to an unknown email 402s before creating a pending invite", async () => {
+    const { app, meta } = makeAuthedApp("sg_invites_unknown", [u(1), u(2), u(3)], "editor", {
+      isolated: true,
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
+
+    const r = await app.request("/v1/workspace/invites", {
+      ...jsonAs(as("u1@x.test"), { email: "stranger@x.test", role: "editor" }),
+      method: "POST",
+    })
+    expect(r.status).toBe(402)
+    const body = await r.json()
+    expect(body.code).toBe("billing_required")
+    expect(body.error).toContain("/settings/billing")
+  })
 })
