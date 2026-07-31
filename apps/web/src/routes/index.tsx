@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { libraryArtifactsQuery, needsFeedbackArtifactsQuery, summaryQuery } from "../lib/queries"
+import { bootstrapQuery } from "../lib/bootstrap"
+import { libraryArtifactsQuery, needsFeedbackArtifactsQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
 import { Library } from "../pages/library"
 import { LibraryPending } from "../pages/library/library-skeleton"
@@ -27,7 +28,12 @@ export const Route = createFileRoute("/")({
   loader: ({ context: { queryClient }, deps }) => {
     // prefetchQuery never throws — a failed warm just leaves the in-component useQuery
     // to retry, which is the same fallback the awaited version defended with .catch().
-    void queryClient.prefetchQuery(summaryQuery())
+    // The summary rides the boot BATCH (/v1/bootstrap seeds it with the collections,
+    // settings and notifications the shell is about to ask for) — prefetching it here
+    // starts that one request in the loader instead of on the nav rail's mount, and
+    // prefetching summaryQuery individually would fire the exact request the batch
+    // exists to remove.
+    void queryClient.prefetchQuery(bootstrapQuery(queryClient))
     void queryClient.prefetchQuery(needsFeedbackArtifactsQuery())
     // Warm the EXACT list this URL renders, keyed the way the body keys it (the param
     // object below mirrors LibraryBody's construction — keep them in step), so hovering

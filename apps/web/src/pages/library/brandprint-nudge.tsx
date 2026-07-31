@@ -4,6 +4,7 @@ import { useState } from "react"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
+import { useBootGate } from "@/lib/bootstrap"
 import { workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 
@@ -22,9 +23,12 @@ export function BrandprintNudge() {
     }
   })
   const { data: ws, isError: wsError } = useQuery({ ...workspaceQuery(), enabled: !!me })
+  // Boot-batch gated: /v1/bootstrap seeds the settings cache; this read then costs
+  // nothing on boot. workspaceQuery above is not in the batch and keeps its timing.
+  const bootGate = useBootGate()
   const { data: settings, isError: settingsError } = useQuery({
     ...workspaceSettingsQuery(),
-    enabled: !!me,
+    enabled: !!me && bootGate,
   })
   const dismiss = () => {
     setDismissed(true)
