@@ -94,13 +94,16 @@ export const contextRoutes = (ctx: AppContext) => {
     // rather than one per token. Ephemeral by construction — `reply()` below still writes the
     // whole transcript row, which stays the record.
     const stream = makeDeltaStream({
-      publish: ({ seq, text }) =>
-        bus.publish(`u:${s.asker_id}`, {
-          type: "session.delta",
-          session_id: s.id,
-          seq,
-          text,
-        }),
+      publish: ({ seq, text }) => {
+        const channel = `u:${s.asker_id}`
+        const event = { type: "session.delta" as const, session_id: s.id, seq, text }
+        // Prefer the receipt-bearing publish: its delivery count is what lets the stream switch
+        // itself off when no tab is open, which is most turns (an MCP ask, an API caller, a
+        // closed page). Falls back to a plain publish on a backplane that cannot count.
+        return bus.publishWithReceipt
+          ? bus.publishWithReceipt(channel, event)
+          : bus.publish(channel, event)
+      },
     })
     const reply = async (body: string, state: SessionState, payload?: unknown) => {
       // Push the tail before the terminal event, so a client can never receive "settled" while

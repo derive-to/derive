@@ -17,7 +17,12 @@ const emitting = (pieces: string[]): AgentLoopInput["callModel"] =>
 
 const harness = (over: { now?: () => number; flushChars?: number; flushMs?: number } = {}) => {
   const sent: { seq: number; text: string }[] = []
-  const stream = makeDeltaStream({ publish: (s) => sent.push(s), ...over })
+  const stream = makeDeltaStream({
+    publish: (s) => {
+      sent.push(s)
+    },
+    ...over,
+  })
   return { sent, stream }
 }
 
@@ -97,5 +102,118 @@ describe("delta coalescing", () => {
     }) as AgentLoopInput["callModel"])
     await wrapped({ system: "be helpful", messages: [], tools: [] })
     expect(seen[0]).toEqual({ system: "be helpful", tools: 0 })
+  })
+})
+
+// ---- Cost control ---------------------------------------------------------
+// Each publish is a Durable Object fetch on the hosted tier, so how OFTEN this publishes is a
+// real bill, not a detail. Two levers: the age boundary (which is the one that actually fires),
+// and switching off entirely when no tab is listening — which is most turns.
+
+describe("publish cost", () => {
+  it("the age boundary, not the size one, sets the rate for a normal model", async () => {
+    // ~300 chars/sec, the shape of a real reply: 30 chars every 100ms.
+    let t = 0
+    const sent: { seq: number; text: string }[] = []
+    const stream = makeDeltaStream({
+      publish: (s) => {
+        sent.push(s)
+      },
+      now: () => t,
+      flushMs: 250,
+    })
+    const wrapped = stream.wrap((async ({ onDelta }) => {
+      for (let i = 0; i < 60; i++) {
+        onDelta?.("x".repeat(30))
+        t += 100
+      }
+      return { text: "", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    await wrapped({ system: "", messages: [], tools: [] })
+    stream.flush()
+    // Six seconds of generation. At the old 80ms boundary this would have been ~60 publishes;
+    // the size cap alone would never have bounded it, because 250ms of text is under 200 chars.
+    expect(sent.length).toBeLessThanOrEqual(25)
+    expect(sent.length).toBeGreaterThan(5) // still genuinely streaming, not one lump at the end
+  })
+
+  it("stops publishing once the first slice reaches nobody", async () => {
+    let t = 0
+    const sent: { seq: number; text: string }[] = []
+    const stream = makeDeltaStream({
+      // Zero live streams: the tab is closed, or this is an MCP/API ask with no browser at all.
+      publish: (s) => {
+        sent.push(s)
+        return Promise.resolve(0)
+      },
+      now: () => t,
+      flushMs: 10,
+    })
+    const wrapped = stream.wrap((async ({ onDelta }) => {
+      onDelta?.("first")
+      t += 100
+      onDelta?.("second") // flushes, and the probe from the first resolves around here
+      await Promise.resolve()
+      await Promise.resolve()
+      for (let i = 0; i < 50; i++) {
+        onDelta?.("more")
+        t += 100
+      }
+      return { text: "whole answer", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    const turn = await wrapped({ system: "", messages: [], tools: [] })
+    stream.flush()
+    // A couple of slices go out before the probe answers; then it goes quiet for good, instead
+    // of paying ~50 more DO fetches for a reply nobody is watching.
+    expect(sent.length).toBeLessThanOrEqual(3)
+    // ...and the ANSWER is completely unaffected — that is the whole safety argument.
+    expect(turn.text).toBe("whole answer")
+  })
+
+  it("keeps streaming while someone is listening", async () => {
+    let t = 0
+    const sent: { seq: number; text: string }[] = []
+    const stream = makeDeltaStream({
+      publish: (s) => {
+        sent.push(s)
+        return Promise.resolve(1) // one open tab
+      },
+      now: () => t,
+      flushMs: 10,
+    })
+    const wrapped = stream.wrap((async ({ onDelta }) => {
+      for (let i = 0; i < 10; i++) {
+        onDelta?.("tick")
+        t += 100
+        await Promise.resolve()
+      }
+      return { text: "", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    await wrapped({ system: "", messages: [], tools: [] })
+    // 10 deltas at one flush per two ticks — the point is it never went quiet, not the exact count.
+    expect(sent.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it("a backplane that cannot count keeps streaming rather than going silent", async () => {
+    let t = 0
+    const sent: { seq: number; text: string }[] = []
+    const stream = makeDeltaStream({
+      publish: (s) => {
+        sent.push(s) // void return: no receipt available
+      },
+      now: () => t,
+      flushMs: 10,
+    })
+    const wrapped = stream.wrap((async ({ onDelta }) => {
+      for (let i = 0; i < 8; i++) {
+        onDelta?.("tick")
+        t += 100
+        await Promise.resolve()
+      }
+      return { text: "", toolUses: [], costUsd: null, done: true }
+    }) as AgentLoopInput["callModel"])
+    await wrapped({ system: "", messages: [], tools: [] })
+    // No receipt to read, so it must keep going rather than assume nobody is there.
+    expect(sent.length).toBeGreaterThanOrEqual(3)
   })
 })

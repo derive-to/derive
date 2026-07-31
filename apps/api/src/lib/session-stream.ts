@@ -24,8 +24,17 @@ import type { AgentLoopInput } from "./agent-loop"
 /** Flush when the buffer reaches this many characters. A paragraph-ish slice: large enough to
  *  keep publish counts low, small enough that the text still visibly streams. */
 export const DELTA_FLUSH_CHARS = 200
-/** ...or when the oldest buffered text is this old, so a slow model still shows progress. */
-export const DELTA_FLUSH_MS = 80
+/**
+ * ...or when the oldest buffered text is this old, so a slow model still shows progress.
+ *
+ * THIS NUMBER IS THE COST DIAL, and it is the one that actually fires. A model emitting a few
+ * hundred characters a second reaches the age boundary long before the size one, so the publish
+ * rate is essentially `1000 / DELTA_FLUSH_MS` per second — at 80ms that is ~12 Durable Object
+ * fetches a second, or ~250 for a twenty-second answer, which is exactly the many-small-round-
+ * trips shape the rest of this work exists to remove. At 250ms it is 4 a second, and a reader
+ * cannot tell the difference: prose arrives faster than anyone reads it either way.
+ */
+export const DELTA_FLUSH_MS = 250
 
 export interface DeltaStream {
   /** Wrap `callModel` so its text deltas publish, coalesced.
@@ -41,8 +50,15 @@ export interface DeltaStream {
 }
 
 export interface DeltaStreamOpts {
-  /** Publish one coalesced slice. Failures are swallowed by the caller of this. */
-  publish: (slice: { seq: number; text: string }) => void
+  /**
+   * Publish one coalesced slice.
+   *
+   * MAY RETURN A DELIVERY COUNT (a promise of how many live streams received it). When the
+   * FIRST slice reports zero, streaming switches off for the rest of the turn — see the
+   * no-listener note on `makeDeltaStream`. A `void` return means "no receipt available", and
+   * streaming simply continues.
+   */
+  publish: (slice: { seq: number; text: string }) => void | Promise<number>
   /** Injectable clock, so tests do not sleep. */
   now?: () => number
   flushChars?: number
@@ -56,15 +72,34 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
   let buffer = ""
   let oldestAt = 0
   let seq = 0
+  // Flipped off when the first slice reports nobody received it. Most turns have no watcher —
+  // an MCP `use()` ask, an API caller, a tab closed mid-generation — and for those every
+  // further publish is pure waste. Costing one probe to skip the rest is the single biggest
+  // saving here: those turns go from tens of Durable Object fetches to exactly one.
+  //
+  // A reader who opens the page mid-answer is not stranded: the terminal `session.settled`
+  // still fires, and settling is what makes a client re-read the transcript. They lose the
+  // animation, not the answer.
+  let streaming = true
 
   const flush = () => {
-    if (!buffer) return
+    if (!buffer || !streaming) return
     seq += 1
     const slice = { seq, text: buffer }
     buffer = ""
     oldestAt = 0
     try {
-      opts.publish(slice)
+      const receipt = opts.publish(slice)
+      // Only the FIRST slice is probed. Later ones would pay a promise per publish to learn
+      // something that rarely changes mid-turn.
+      if (seq === 1 && receipt && typeof receipt.then === "function")
+        void receipt
+          .then((delivered) => {
+            if (delivered === 0) streaming = false
+          })
+          .catch(() => {
+            /* an unanswerable probe is not a reason to stop streaming */
+          })
     } catch {
       // A transport blip must not abort a turn the model has already been paid for. The
       // transcript still lands on settle, so the reader gets the whole answer regardless.
@@ -80,7 +115,9 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
       inner({
         ...input,
         onDelta: (text) => {
-          if (!text) return
+          // Once nobody is listening, stop even ACCUMULATING: the returned ModelTurn is the
+          // answer, so buffering text no one will receive just holds memory for the turn.
+          if (!text || !streaming) return
           if (!buffer) oldestAt = now()
           buffer += text
           if (buffer.length >= maxChars || now() - oldestAt >= maxMs) flush()

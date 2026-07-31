@@ -619,6 +619,14 @@ describe("an attended reply streams, then settles", () => {
         seen.push({ channel, type: String(e.type), body: e })
         inner.publish(channel, e as never)
       },
+      // Deltas take the RECEIPT-bearing publish (that count is what lets the stream switch
+      // itself off when no tab is open), so the capture has to cover it too. Returning 1 stands
+      // in for an open tab; the zero-listener shutoff is unit-tested in session-stream.test.ts.
+      async publishWithReceipt(channel: string, e: Record<string, unknown>) {
+        seen.push({ channel, type: String(e.type), body: e })
+        inner.publish(channel, e as never)
+        return 1
+      },
     }
     const users = [{ id: "u-st", email: "st@x.com", name: "St" }]
     const { app, meta } = makeAuthedApp("chat-stream", users, undefined, {
