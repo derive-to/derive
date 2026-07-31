@@ -29,7 +29,7 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
-import { buildChatTools } from "../lib/chat-tools"
+import { buildChatTools, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
 import { sha256 } from "../lib/crypto"
@@ -396,6 +396,24 @@ export const contextRoutes = (ctx: AppContext) => {
           subject: effective,
           artifact,
           transcript: await meta.listSessionMessages(s.id),
+          // READ-ONLY reach for the document rail: the conversation can look something up in
+          // the workspace, and the DOCUMENT's own write stays on the landing port below. The
+          // subset is enforced by not registering the rest (see chat-tools), so this is a
+          // narrower surface than the workspace chat rather than the same one with a guard.
+          ...(() => {
+            const t = seat
+              ? buildChatTools(
+                  ctx,
+                  {
+                    org: artifact.org_id,
+                    user: { id: me.id, name: me.name ?? me.username ?? null },
+                    seatRole: seat.role,
+                  },
+                  RAIL_CHAT_TOOLS,
+                )
+              : null
+            return t ? { tools: t, skills: t.skills } : {}
+          })(),
           // REAL workspace flags, not hardcoded ones. Hardcoding these made chat ignore the
           // killswitch entirely and granted the `auto` opt-in that a workspace has to enable
           // deliberately (it defaults OFF) — so an operator who flipped the killswitch after a

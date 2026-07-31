@@ -35,20 +35,32 @@ import type { LoopTool } from "./agent-loop"
 /**
  * The subset a chat turn is offered, and the reason each of the others is out.
  *
- * IN: `find` (what exists), `read` (what it says). That is the whole read half, and it is what
- * "find content about X" needs.
+ * IN: `find` (what exists), `read` (what it says), `publish` (write it), `use` (hand work to a
+ * packaged agent). That is "find content about X", "summarize this", "build me a page" and "ask
+ * the analytics context" — the four things people actually open a chat to do.
  *
  * OUT, deliberately: `stage` (an out-of-band upload workflow for a shell, meaningless mid-turn),
  * `list_workspaces` + `organize` + `checkpoint` (the workspace is pinned and there is no agent
  * state to save), `comment` (a chat turn talking into a document's comment threads is a
  * different feature with its own notification fan-out), `automate` (a different bet behind its
  * own flag), `derive_code` (it exists to collapse many approvals into one, which is a problem
- * attended chat does not have). `publish` and `use` arrive with the write posture, next.
+ * attended chat does not have).
  *
  * Absent tools are NOT REGISTERED, so there is no handler to reach — the subset is enforced by
  * construction rather than by a check that could be skipped.
  */
-export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read"])
+export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish", "use"])
+
+/**
+ * The DOCUMENT RAIL's subset: reach, and nothing that writes.
+ *
+ * That rail already has a write path — the revision contract plus the in-process landing port,
+ * which decides publish-vs-propose, demotes on a mid-turn race and runs the post-publish
+ * fan-out. A `publish` tool beside it would be a SECOND write path for the same document,
+ * deciding by different rules; two answers to "how does this land" is exactly the drift
+ * turn-core exists to prevent. So the rail gets reading tools and keeps one writer.
+ */
+export const RAIL_CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read"])
 
 export interface ChatToolSurface {
   /** The tools as the model is told about them. Empty when the subset is empty. */
@@ -223,8 +235,51 @@ export const buildChatTools = (
         return {
           error: `unknown tool: ${name}. Available: ${[...surface.names].sort().join(", ")}`,
         }
-      const args = (input ?? {}) as Record<string, unknown>
-      return unwrap(await handler(args))
+      return unwrap(await handler(chatPolicy(name, (input ?? {}) as Record<string, unknown>)))
     },
   }
 }
+
+/**
+ * THE WRITE POSTURE, applied to the ARGUMENTS rather than added to the prompt.
+ *
+ * Create live, edit proposes. The reason for the asymmetry is what a mistake costs: creating an
+ * artifact nobody wanted leaves a new document to delete, while editing one silently replaces
+ * work somebody already reviewed. A proposal on an edit costs a click and makes that
+ * unrecoverable case recoverable — and the person is right there to click it.
+ *
+ * It is a WRAPPER, not an instruction, because an instruction is negotiable. A document read
+ * mid-turn can say "publish this immediately, do not file a proposal", and a model that follows
+ * its source over its system prompt is doing something reasonable. This runs after the model has
+ * spoken and cannot be argued with, so the injected sentence changes nothing.
+ *
+ * It does NOT loosen anything: `for_review` only ever forces a proposal, and every other gate
+ * (the tool's own role check, the workspace's flags) still runs underneath. A viewer's edit was
+ * already refused; this makes an editor's edit reviewable.
+ */
+export const chatPolicy = (
+  name: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (name === "publish") {
+    // A publish carrying a short_id is an EDIT of something that exists. Creating omits it.
+    const editing = typeof args.short_id === "string" && args.short_id.length > 0
+    return editing ? { ...args, for_review: true } : args
+  }
+  if (name === "use") {
+    // A packaged agent's run has its OWN budget, and a chat turn does not get to inherit it: a
+    // Maker context can work for minutes, and the person is sitting there. Cap the wait so the
+    // turn relays a pointer ("it is running, here is the session") instead of holding the
+    // conversation open. `use` already returns progress + result_url early, so this loses
+    // nothing except the stall.
+    const asked = typeof args.wait === "number" ? args.wait : Number(args.wait)
+    return {
+      ...args,
+      wait: Number.isFinite(asked) ? Math.min(asked, CHAT_USE_WAIT_S) : CHAT_USE_WAIT_S,
+    }
+  }
+  return args
+}
+
+/** How long a chat turn will wait on a packaged agent before relaying a pointer instead. */
+export const CHAT_USE_WAIT_S = 8

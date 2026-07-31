@@ -33,9 +33,9 @@ describe("the chat tool surface", () => {
       user: { id: "u1", name: "U" },
       seatRole: "owner",
     })
-    const out = (await tools.execute("publish", { title: "x", content: "y" })) as {
-      error?: string
-    }
+    // `stage` is out of the chat subset (an out-of-band upload workflow for a shell), so there
+    // is nothing to call — not a handler that checks whether it is allowed and declines.
+    const out = (await tools.execute("stage", { target: "doc" })) as { error?: string }
     expect(out.error).toMatch(/unknown tool/i)
   })
 
@@ -70,7 +70,7 @@ describe("the chat tool surface", () => {
     const owner = { id: "u-ow", email: "ow@x.com", name: "Ow" }
     const viewer = { id: "u-vi", email: "vi@x.com", name: "Vi" }
     // The whole workspace at `viewer` grade — the seat is the ceiling, and the tool enforces it.
-    const { app, ctx } = makeAuthedApp("ct-seat", [owner, viewer], "viewer")
+    const { app, ctx, meta: metaOf } = makeAuthedApp("ct-seat", [owner, viewer], "viewer")
     await app.request("/v1/me", { headers: as(viewer.email) })
     const doc = await (
       await publishAs(app, "# Private planning", { title: "Planning" }, as(owner.email))
@@ -93,9 +93,18 @@ describe("the chat tool surface", () => {
     })
     const out = await asViewer.execute("read", { short_id: doc.short_id })
     expect(JSON.stringify(out)).toContain("Private planning") // a viewer CAN read
-    // ...but the write tools were never registered for chat at all, which is the point of
-    // the subset: there is nothing here for a viewer to be refused BY.
-    expect(asViewer.tools.some((t) => t.name === "publish")).toBe(false)
+
+    // ...and where the seat REALLY shows is the write. The viewer holds the same publish tool
+    // the owner does — the subset is per-surface, not per-person — and the TOOL refuses them,
+    // which is the whole point of running the asker's own principal instead of a chat-specific
+    // permission check that could disagree with it.
+    expect(asViewer.tools.some((t) => t.name === "publish")).toBe(true)
+    const before = (await metaOf.getByShortId(doc.short_id))?.current_version
+    await asViewer.execute("publish", {
+      short_id: doc.short_id,
+      content: "# Rewritten by a viewer",
+    })
+    expect((await metaOf.getByShortId(doc.short_id))?.current_version).toBe(before)
   })
 
   it("has no agent inbox: a chat principal is not an @mentionable identity", async () => {
