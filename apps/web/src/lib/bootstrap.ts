@@ -1,5 +1,5 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
-import { api } from "@/api"
+import { api, type BootstrapPayload } from "@/api"
 import { useAuth } from "@/ctx"
 import {
   collectionsQuery,
@@ -26,6 +26,20 @@ import {
 //   re-fired by cache churn.
 // - Never persisted: it exists to seed the persisted per-endpoint caches; a second
 //   copy in IndexedDB would only lengthen the restore every boot pays.
+/** Fan the batched payload into the four individual query caches, each under the key
+ *  and in the shape its own endpoint would have produced. Pure and exported so it can
+ *  be tested without a DOM: the whole safety argument for the batch is that a seeded
+ *  cache is indistinguishable from the endpoint having answered. */
+export const seedFromBootstrap = (client: QueryClient, b: BootstrapPayload) => {
+  client.setQueryData(summaryQuery().queryKey, b.summary)
+  client.setQueryData(collectionsQuery().queryKey, b.collections)
+  client.setQueryData(workspaceSettingsQuery().queryKey, b.settings)
+  client.setQueryData(notificationsQuery().queryKey, {
+    notifications: b.notifications,
+    unread: b.unread,
+  })
+}
+
 export const bootstrapQuery = (client: QueryClient) =>
   queryOptions({
     queryKey: ["bootstrap"] as const,
@@ -33,14 +47,7 @@ export const bootstrapQuery = (client: QueryClient) =>
     retry: false,
     meta: { persist: false },
     queryFn: async ({ signal }: { signal: AbortSignal }) => {
-      const b = await api.bootstrap({ signal })
-      client.setQueryData(summaryQuery().queryKey, b.summary)
-      client.setQueryData(collectionsQuery().queryKey, b.collections)
-      client.setQueryData(workspaceSettingsQuery().queryKey, b.settings)
-      client.setQueryData(notificationsQuery().queryKey, {
-        notifications: b.notifications,
-        unread: b.unread,
-      })
+      seedFromBootstrap(client, await api.bootstrap({ signal }))
       return true
     },
   })
