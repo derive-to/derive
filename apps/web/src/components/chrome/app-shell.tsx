@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRouterState } from "@tanstack/react-router"
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { api } from "@/api"
+import { BlockedBanner } from "@/components/billing/blocked-banner"
 import { UpgradeDialog } from "@/components/billing/upgrade-dialog"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -240,6 +241,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             tabIndex={-1}
             className="min-h-0 min-w-0 overflow-hidden outline-none"
           >
+            <BlockedBanner pathname={pathname} />
             {/* Mobile navbar: the rail hides behind the drawer below sm, so the
                 sticky bar answers "where am I" (current-page label) and keeps
                 navigation + search reachable mid-scroll. Desktop has no top bar

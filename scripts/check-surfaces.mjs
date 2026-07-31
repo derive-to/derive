@@ -42,6 +42,8 @@ const QUERY_ALLOW = new Set([
   // degrades on purpose (generic fallback copy when billing is undefined, the
   // non-admin "ask an admin" branch when workspace is undefined) — never a spinner
   // or blank flash, so there is no error state to add.
+  "components/billing/blocked-banner.tsx", // blocking-state banner; billing read degrades by returning null
+  // (no error UI needed; if query fails, the banner simply does not render)
   "components/chrome/getting-started.tsx", // ambient checklist pill; hides itself on any failure
   "pages/library/connect-nudge.tsx", // ambient activation card; hides itself on any failure
   "pages/artifact/artifact-breadcrumb.tsx", // collections/siblings reads degrade to the title (no switcher)
