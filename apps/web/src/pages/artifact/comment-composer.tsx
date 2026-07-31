@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query"
 import { ArrowUp } from "lucide-react"
 import {
   type CSSProperties,
@@ -8,6 +9,12 @@ import {
   useState,
 } from "react"
 import { api, type DirUser, type Mention } from "@/api"
+import { workspaceSettingsQuery } from "@/lib/queries"
+
+/** The reserved mention id for the built-in agent — the same string the server answers as
+ *  (lib/comment-turn.ts), so "who was mentioned" and "who replied" are one identity. */
+const DERIVE_MENTION_ID = "derive"
+
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
@@ -96,6 +103,13 @@ export function MentionField({
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
   const { shortId } = useCommentScope()
+  // Is @derive worth offering? Same flag, same cached read the artifact page already made
+  // (staleTime keeps this a cache hit, not a second request).
+  // surface-ignore: an ambient read that degrades to "Derive is not offered in the picker".
+  // A failure here costs one optional menu row; every other mention keeps working, so a
+  // page-level error state would be wildly out of proportion to what was lost.
+  const chatEnabled =
+    useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data?.chatBeta === true
   const isMobile = useIsMobile()
   const [menu, setMenu] = useState<{ at: number; end: number; q: string } | null>(null)
   const [results, setResults] = useState<DirUser[]>([])
@@ -141,7 +155,16 @@ export function MentionField({
       .users(menu.q, shortId ?? undefined)
       .then((r) => {
         if (!cancelled) {
-          setResults(r.users.slice(0, 6))
+          // DERIVE IS PINNED FIRST when chat is on. It is not a directory row — there is no
+          // agent record, no seat and no owner — so it is added here rather than returned by
+          // the people search, which is exactly what keeps it from needing to be administered.
+          // The contrast with the rows below it is the feature: Derive answers in the thread
+          // now, a registered agent's mention waits in its pull inbox, a person gets a bell.
+          const derive: DirUser[] =
+            chatEnabled && "derive".startsWith(menu.q.toLowerCase())
+              ? [{ id: DERIVE_MENTION_ID, name: "Derive", handle: "derive" } as DirUser]
+              : []
+          setResults([...derive, ...r.users.filter((u) => u.id !== DERIVE_MENTION_ID)].slice(0, 6))
           setActive(0)
         }
       })
@@ -149,7 +172,7 @@ export function MentionField({
     return () => {
       cancelled = true
     }
-  }, [menu, shortId])
+  }, [menu, shortId, chatEnabled])
 
   // Is the caret sitting at the end of an "@token"? If so, open the popover.
   const detect = (el: HTMLTextAreaElement | HTMLInputElement) => {

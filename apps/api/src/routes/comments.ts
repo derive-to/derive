@@ -203,7 +203,16 @@ export const commentRoutes = (ctx: AppContext) => {
       bus.publish(artifact.id, { type: "comment.created" })
       await background(
         commentCreatedAction(
-          { meta, bus, blobs, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+          {
+            meta,
+            bus,
+            blobs,
+            baseUrl: deps.baseUrl,
+            notify,
+            pokeWebhooks: deps.pokeWebhooks,
+            // @derive in a thread answers from HERE too — same fan-out, same turn.
+            answerDeriveMention: ctx.answerDeriveMention,
+          },
           artifact,
           created,
           // onBehalfOf satisfies the contract commentCreatedAction states: requireArtifact

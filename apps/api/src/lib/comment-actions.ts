@@ -13,6 +13,7 @@ import type { ArtifactRecord, BlobStore, CommentRecord, MetaStore } from "@deriv
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
 import { log } from "../log"
+import { mentionsDerive } from "./comment-turn"
 import { isCollaboratorAuthor, type Mention, quoteOf } from "./comments"
 import { enqueueGithubPrComment } from "./github-comments"
 import { notifyMentions } from "./mentions"
@@ -29,6 +30,19 @@ export interface CommentActionDeps {
   notify: (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) => Promise<void>
   /** Drain the outbox now rather than on the next tick. Absent on runtimes without a drainer. */
   pokeWebhooks?: () => void
+  /**
+   * Answer an @derive mention in this thread, when the deploy has chat.
+   *
+   * Injected rather than imported so this module keeps its shape — a fan-out over channels —
+   * and so the turn (which needs a model, the gate and the whole publish path) does not become
+   * a dependency of every caller that merely posts a comment. Absent ⇒ a mention of Derive
+   * simply reaches no one, which is what a deploy with no model configured should do.
+   */
+  answerDeriveMention?: (
+    artifact: ArtifactRecord,
+    comment: CommentRecord,
+    asker: { id: string; name: string } | null,
+  ) => Promise<void>
 }
 
 /**
@@ -131,4 +145,32 @@ export const commentCreatedAction = async (
   // applies its event + author filters.
   if (trustedAuthor) await enqueueSlackComment({ meta, baseUrl }, artifact, comment)
   deps.pokeWebhooks?.()
+
+  // @derive — LAST, and deliberately here rather than in each route.
+  //
+  // This is the one fan-out every comment path already runs (the HTTP route, the MCP tool, the
+  // rework flow, and the Slack reply ingest), so a mention typed in Slack answers for exactly
+  // the same reason one typed in the web app does: same code, one place. Anything earlier in
+  // this function is a notification; this is work, so it goes after the notifications have
+  // landed and never blocks them.
+  //
+  // The gates, the recursion guard and the model all live behind `answerDeriveMention`, because
+  // whether a mention should be answered is a question about the workspace and the deploy, not
+  // about this comment.
+  if (deps.answerDeriveMention && mentionsDerive(comment, mentions))
+    await deps
+      .answerDeriveMention(
+        artifact,
+        comment,
+        actorId ? { id: actorId, name: comment.author } : null,
+      )
+      .catch((e) =>
+        // Best-effort like every other channel here: a failed turn must not fail the comment
+        // that triggered it, which is already saved and already visible.
+        log.warn("derive mention turn failed", {
+          artifact: artifact.id,
+          comment: comment.id,
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      )
 }

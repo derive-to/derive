@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router"
-import type { MouseEvent, ReactNode } from "react"
+import type { ReactNode } from "react"
 import { useEffect, useRef } from "react"
 import { Icon } from "@/components/icons"
 import { cn } from "@/lib/utils"
@@ -50,22 +50,37 @@ export function ChatThread(props: {
 }) {
   const { messages, working, streaming, empty, onPoll, className, row } = props
   const endRef = useRef<HTMLDivElement | null>(null)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
   const navigate = useNavigate()
   const wrap = row ?? ((c: ReactNode) => c)
 
-  // An answer's citations are ROOT-RELATIVE anchors inside markdown we rendered (see mdToHtml),
-  // so a plain click would reload the whole SPA to open a document that is one route away.
-  // Caught here, once, for every row: external links (they carry target=_blank) and modified
-  // clicks (open-in-new-tab, which people do deliberately) are left entirely alone.
-  const onClick = (e: MouseEvent<HTMLDivElement>) => {
-    const a = (e.target as HTMLElement).closest("a")
-    if (!a || a.target === "_blank") return
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
-    const href = a.getAttribute("href")
-    if (!href?.startsWith("/")) return
-    e.preventDefault()
-    void navigate({ to: href })
-  }
+  // CITATIONS OPEN IN-APP. An answer's citations are ROOT-RELATIVE anchors inside markdown we
+  // rendered (see mdToHtml), so a plain click would reload the whole SPA to reach a document
+  // one route away. This intercepts them once for every row.
+  //
+  // A NATIVE delegated listener rather than an onClick prop, because that is what this actually
+  // is: the interactive elements are the anchors themselves (already focusable, already
+  // keyboard-operable — Enter on a link dispatches a click, which bubbles to here), and the
+  // scroll container is not a control. Hanging a React handler on the static div would claim
+  // otherwise, which is exactly what the a11y rules object to.
+  //
+  // Left alone: external links (they carry target=_blank) and modified clicks (open-in-new-tab,
+  // which people do deliberately).
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onClick = (e: globalThis.MouseEvent) => {
+      const a = (e.target as HTMLElement | null)?.closest("a")
+      if (!a || a.target === "_blank") return
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
+      const href = a.getAttribute("href")
+      if (!href?.startsWith("/")) return
+      e.preventDefault()
+      void navigate({ to: href })
+    }
+    el.addEventListener("click", onClick)
+    return () => el.removeEventListener("click", onClick)
+  }, [navigate])
 
   // Follow the tail as turns land. Depends on the message COUNT (and the working flag, which
   // adds the thinking row) — with empty deps this fired on mount only and every reply landed
@@ -87,7 +102,7 @@ export function ChatThread(props: {
   }, [working, streamAlive, onPoll])
 
   return (
-    <div className={cn("min-h-0 flex-1 overflow-y-auto", className)} onClick={onClick}>
+    <div ref={scrollRef} className={cn("min-h-0 flex-1 overflow-y-auto", className)}>
       {messages.length === 0 ? (
         empty
       ) : (

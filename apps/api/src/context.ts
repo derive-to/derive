@@ -37,6 +37,7 @@ import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { BillingDriver } from "./lib/billing"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
+import { answerDeriveMention } from "./lib/comment-turn"
 import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import type { ModelCatalog } from "./lib/model-catalog"
@@ -1336,6 +1337,25 @@ export function buildContext(deps: AppDeps) {
     notify,
     notifyRender,
     background,
+    /**
+     * Answer an @derive mention in a comment thread — the comment lane's arrival, built once
+     * here because it needs the model catalog, the store and the publish path in one hand.
+     *
+     * Passed INTO commentCreatedAction by every caller that creates a comment, so a mention
+     * typed in the web app, over MCP, or in a synced Slack thread all reach the same turn.
+     * Undefined when this deploy has no model, which is the honest "nothing answers" state.
+     */
+    answerDeriveMention: deps.models
+      ? answerDeriveMention({
+          meta,
+          blobs,
+          bus,
+          baseUrl: deps.baseUrl,
+          models: deps.models,
+          notify,
+          chatAllowlist: deps.chatAllowlist,
+        })
+      : undefined,
     currentUser,
     agentFor,
     // The run id a dkrun_ capability bearer is pinned to (null for every other principal).

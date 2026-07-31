@@ -21,6 +21,7 @@ import { signupAttributionHook } from "./lib/attribution"
 import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nodeSandbox } from "./lib/code-sandbox-node"
+import { answerDeriveMention } from "./lib/comment-turn"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
@@ -314,6 +315,31 @@ const marketing =
 // worker, outside a request) can publish comment.created to live viewers over the same
 // in-process bus the request handlers use. Passed into createApp below so both share it.
 const backplane = createInProcessBackplane()
+/** An operator-configured OpenAI-compatible endpoint, or null. ALL THREE vars or none: a base URL
+ *  with no key would 401 every run, and a key with no model id would send an empty model — both
+ *  are silent-at-boot, loud-at-3am failures, so an incomplete set is treated as unset and warned
+ *  about once here. */
+const modelGateway = (): GatewayConfig | null => {
+  const baseUrl = process.env.DERIVE_MODEL_BASE_URL
+  const apiKey = process.env.DERIVE_MODEL_API_KEY
+  const model = process.env.DERIVE_MODEL_NAME
+  // DERIVE_MODEL_NAMES is optional and additive: more model ids the SAME gateway serves, which
+  // is how every one of these hosts works. Unset ⇒ a one-model catalog, exactly as before.
+  if (baseUrl && apiKey && model)
+    return { baseUrl, apiKey, model, alsoModels: process.env.DERIVE_MODEL_NAMES }
+  if (baseUrl || apiKey || model)
+    log.warn("model gateway ignored: set DERIVE_MODEL_BASE_URL, _API_KEY and _NAME together", {
+      baseUrl: !!baseUrl,
+      apiKey: !!apiKey,
+      model: !!model,
+    })
+  return null
+}
+
+// The model catalog, built before the channel senders because the Slack ingest sender needs
+// it (an @Derive mention typed in a thread runs the same turn the web app's mention does).
+const gatewayModels = catalogFromGateway(modelGateway())
+
 const channelSenders: ChannelSenders = {
   email: emailDeliverySender(
     cfg.resendApiKey && cfg.emailFrom
@@ -330,7 +356,27 @@ const channelSenders: ChannelSenders = {
   slack_dm: makeSlackDmSender(meta, authSecret),
   // Inbound: a Slack thread reply the events endpoint deferred — resolve the author and
   // write the Derive comment here, off the ack path, publishing to the shared bus.
-  slack_ingest: makeSlackIngestSender(meta, authSecret, backplane),
+  // The 4th argument is @Derive typed in a Slack thread: the same turn a mention in the web
+  // app runs, using the same model catalog. Absent on a deploy with no model.
+  slack_ingest: makeSlackIngestSender(
+    meta,
+    authSecret,
+    backplane,
+    gatewayModels
+      ? answerDeriveMention({
+          meta,
+          blobs,
+          bus: backplane,
+          baseUrl: cfg.baseUrl,
+          models: gatewayModels,
+          notify: async () => {},
+          chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean),
+        })
+      : undefined,
+  ),
 }
 const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
 
@@ -358,26 +404,6 @@ const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 // each due run as a `derive runner run` child process on this box, so an automation updates its
 // artifact with no separate machine and no polling runner. Off by default because it spawns
 // processes and spends the run initiator's model plan; a deployment opts in deliberately. When
-/** An operator-configured OpenAI-compatible endpoint, or null. ALL THREE vars or none: a base URL
- *  with no key would 401 every run, and a key with no model id would send an empty model — both
- *  are silent-at-boot, loud-at-3am failures, so an incomplete set is treated as unset and warned
- *  about once here. */
-const modelGateway = (): GatewayConfig | null => {
-  const baseUrl = process.env.DERIVE_MODEL_BASE_URL
-  const apiKey = process.env.DERIVE_MODEL_API_KEY
-  const model = process.env.DERIVE_MODEL_NAME
-  // DERIVE_MODEL_NAMES is optional and additive: more model ids the SAME gateway serves, which
-  // is how every one of these hosts works. Unset ⇒ a one-model catalog, exactly as before.
-  if (baseUrl && apiKey && model)
-    return { baseUrl, apiKey, model, alsoModels: process.env.DERIVE_MODEL_NAMES }
-  if (baseUrl || apiKey || model)
-    log.warn("model gateway ignored: set DERIVE_MODEL_BASE_URL, _API_KEY and _NAME together", {
-      baseUrl: !!baseUrl,
-      apiKey: !!apiKey,
-      model: !!model,
-    })
-  return null
-}
 
 // off, runs stay queued for a polling `derive runner` exactly as before.
 const hostedDispatch = cfg.hostedRuns
@@ -415,7 +441,6 @@ const hostedDispatch = cfg.hostedRuns
   : null
 
 const gateway = modelGateway()
-const models = catalogFromGateway(gateway)
 
 const app = createApp({
   meta,
@@ -427,8 +452,8 @@ const app = createApp({
   //
   // Both come from ONE construction: `callModel` is the catalog's default entry, so "the model"
   // means the same thing to a lane that picks one and a lane that does not.
-  callModel: models?.resolve(null)?.callModel,
-  models: models ?? undefined,
+  callModel: gatewayModels?.resolve(null)?.callModel,
+  models: gatewayModels ?? undefined,
   chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
     .split(",")
     .map((x) => x.trim())
