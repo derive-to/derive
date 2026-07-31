@@ -15,6 +15,7 @@ import {
   openSlackView,
   postSlackResponseUrl,
   slackAuthorizeUrl,
+  slackChannelReach,
   slackOidcAuthorizeUrl,
   slackOidcUserinfo,
   slackPermalink,
@@ -39,6 +40,7 @@ import { mrkdwnLabel } from "../lib/slack-cards"
 import {
   deriveRecentBlocks,
   deriveResultsBlocks,
+  helpBlocks,
   notLinkedBlocks,
   subscriptionBlocks,
 } from "../lib/slack-commands"
@@ -706,6 +708,13 @@ export const slackRoutes = (ctx: AppContext) => {
     if (!teamId || !slackUserId)
       return c.json({ response_type: "ephemeral", text: "Sorry — malformed command." })
 
+    // `/derive help` is answered BEFORE the account-link gate: it describes the command and
+    // reveals nothing about the workspace, and someone who has not linked yet is exactly who
+    // needs it. Gating it behind linking would hide the instructions from the only person
+    // reading them.
+    if (text.trim().toLowerCase() === "help")
+      return c.json({ response_type: "ephemeral", blocks: helpBlocks(deps.baseUrl) })
+
     // Resolve the acting Derive user (and their workspace) from the account link. No link →
     // we can't scope results to them, so prompt them to link rather than leak or over-share.
     const link = await meta.getSlackUserLinkBySlackId(teamId, slackUserId)
@@ -742,11 +751,30 @@ export const slackRoutes = (ctx: AppContext) => {
         const subs = (await meta.listSlackSubscriptions(link.org_id)).filter(
           (x) => x.channel_id === channelId,
         )
+        // Resolve titles so the card can name the collection rather than print `col_9f2ac1`.
+        // Only when something here is actually scoped — most channels take the whole workspace.
+        const titles = new Map<string, string>()
+        if (subs.some((x) => x.scope_kind === "collection"))
+          for (const col of await meta.listCollections(link.org_id)) titles.set(col.id, col.title)
         return c.json({
           response_type: "ephemeral",
-          blocks: subscriptionBlocks(deps.baseUrl, subs),
+          blocks: subscriptionBlocks(
+            deps.baseUrl,
+            subs.map((x) => ({ ...x, scope_title: titles.get(x.scope_id) ?? null })),
+          ),
         })
       }
+      // A private channel the app was never invited to accepts the subscription and then drops
+      // every delivery into the dead-letter queue, with nothing anywhere saying why. The bot can
+      // self-join a PUBLIC channel on its first post (postWithRecovery autoJoin), so only the
+      // unreachable case is worth stopping, and only when Slack actually answered.
+      const bot = await resolveBotToken(meta, link.org_id, deps.encryptionKey)
+      const reach = bot ? await slackChannelReach(bot.token, channelId) : null
+      if (reach && !reach.reachable)
+        return c.json({
+          response_type: "ephemeral",
+          text: "Invite me to this channel first — `/invite @Derive` — then run `/derive subscribe` again. I can't post in a private channel I'm not a member of.",
+        })
       // `/derive subscribe [collection name]` — the collection is matched by name so nobody has
       // to know an id; omit it to subscribe the whole workspace.
       const wanted = rest.join(" ").trim()

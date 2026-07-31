@@ -41,8 +41,12 @@ export const buildSlackManifest = (baseUrl: string) => {
         {
           command: "/derive",
           url: u("/v1/slack/commands"),
-          description: "Search your Derive artifacts",
-          usage_hint: "[query]",
+          // Slack shows BOTH of these in the autocomplete as soon as someone types `/derive`,
+          // and they are the only place the subcommands are discoverable — there is no other
+          // surface that lists them. A description naming only search is why `/derive subscribe`
+          // reads as if it does not exist.
+          description: "Search Derive, or choose what this channel gets",
+          usage_hint: "[query] | subscribe [collection] | unsubscribe | settings | help",
           should_escape: false,
         },
       ],

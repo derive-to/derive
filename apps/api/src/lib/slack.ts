@@ -223,6 +223,38 @@ export const postSlackMessage = async (
   return { ts: data.ts, channel: data.channel ?? args.channel }
 }
 
+/** Whether the bot can actually post in a conversation.
+ *
+ *  `conversations.info` answers `channel_not_found` for a PRIVATE channel the bot is not in —
+ *  it cannot see one — so a miss is itself the signal, not an error to surface. A public channel
+ *  needs no membership: the sender self-joins on the first `not_in_channel` (postWithRecovery's
+ *  autoJoin). A private one cannot be joined by the app at all, and that is the case worth
+ *  catching early, because otherwise the subscription is accepted and every delivery to it
+ *  quietly dead-letters. Returns null when Slack could not be asked — never block on a maybe. */
+export const slackChannelReach = async (
+  token: string,
+  channel: string,
+): Promise<{ reachable: boolean; name: string | null } | null> => {
+  try {
+    const q = new URLSearchParams({ channel })
+    const res = await fetch(`${API}/conversations.info?${q}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(2500),
+    })
+    const data = (await res.json()) as {
+      ok: boolean
+      error?: string
+      channel?: { is_private?: boolean; is_member?: boolean; name?: string }
+    }
+    if (!data.ok)
+      return data.error === "channel_not_found" ? { reachable: false, name: null } : null
+    const c = data.channel ?? {}
+    return { reachable: !c.is_private || c.is_member === true, name: c.name ?? null }
+  } catch {
+    return null
+  }
+}
+
 /** Open a modal via views.open. `triggerId` is single-use and expires ~3s after the interaction
  *  that produced it, which is why the caller must reach this BEFORE doing any slow work — the
  *  modal is the ack. Throws SlackApiError(code) on a Slack-level failure. */
