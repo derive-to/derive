@@ -4,7 +4,8 @@ import { libraryArtifactsQuery, needsFeedbackArtifactsQuery } from "../lib/queri
 import { requireOnboarded } from "../lib/route-guards"
 import { Library } from "../pages/library"
 import { LibraryPending } from "../pages/library/library-skeleton"
-import { DEFAULT_SORT, parseLibrarySort } from "../pages/library/sort"
+import { libraryFeedParams } from "../pages/library/params"
+import { parseLibrarySort } from "../pages/library/sort"
 import type { LibrarySearch } from "../pages/library/types"
 
 export const Route = createFileRoute("/")({
@@ -35,19 +36,10 @@ export const Route = createFileRoute("/")({
     // exists to remove.
     void queryClient.prefetchQuery(bootstrapQuery(queryClient))
     void queryClient.prefetchQuery(needsFeedbackArtifactsQuery())
-    // Warm the EXACT list this URL renders, keyed the way the body keys it (the param
-    // object below mirrors LibraryBody's construction — keep them in step), so hovering
-    // "#architecture" in the rail paints that filtered grid from cache on click.
-    void queryClient.prefetchInfiniteQuery(
-      libraryArtifactsQuery({
-        q: deps.query || undefined,
-        tag: deps.tag,
-        collection: deps.collection,
-        author: deps.author,
-        scope: deps.tab === "mine" ? "mine" : undefined,
-        sort: deps.sort ?? DEFAULT_SORT,
-      }),
-    )
+    // Warm the EXACT list this URL renders, keyed the way the body keys it — through the
+    // one shared builder (pages/library/params.ts), not a second copy of the mapping — so
+    // hovering "#architecture" in the rail paints that filtered grid from cache on click.
+    void queryClient.prefetchInfiniteQuery(libraryArtifactsQuery(libraryFeedParams("all", deps)))
   },
   // Shape-matched pending frame for the cold-load auth/loader window.
   pendingComponent: LibraryPending,

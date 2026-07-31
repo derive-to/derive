@@ -43,6 +43,7 @@ import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
+import { libraryFeedParams } from "./params"
 import { PublishCard } from "./publish-card"
 import { LibraryCollectionsDialog, LibraryTagsDialog } from "./quick-organize"
 import { RepoPullRequests } from "./repo-pull-requests"
@@ -64,18 +65,6 @@ import { type LibrarySelection, useLibrarySelection } from "./use-library-select
 // job — your work, most-recently-updated.
 export function Library({ view }: { view: LibraryView }) {
   return <LibraryBody view={view} />
-}
-
-// Map a route view to the base library feed's scope param (all/favorites carry no scope;
-// favorites rides the `favorite` flag). Kept beside deriveFilter so the two stay in step.
-function scopeFor(view: LibraryView) {
-  return view === "following"
-    ? ("following" as const)
-    : view === "shared"
-      ? ("shared" as const)
-      : view === "feedback"
-        ? ("needs_feedback" as const)
-        : undefined
 }
 
 // The active filter = the base feed (from the route: `view`) unless it's the home
@@ -144,15 +133,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   // Server-side search + filter + keyset pagination, plus the optimistic star/delete —
   // all in the feed hook, keyed by the active filter.
-  const params = {
-    q: debouncedQ || undefined,
-    tag: search.tag,
-    collection: search.collection,
-    favorite: view === "favorites" || undefined,
-    author: search.author,
-    scope: filter.kind === "mine" ? ("mine" as const) : scopeFor(view),
-    sort: search.sort ?? DEFAULT_SORT,
-  }
+  // Same builder every library route's loader uses, so an intent hover warms the exact
+  // key this body reads (see ./params.ts).
+  const params = libraryFeedParams(view, search, debouncedQ)
   const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed
   // Multi-select, scoped to THIS feed: the params are the feed's identity, so changing
