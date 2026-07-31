@@ -116,6 +116,9 @@ const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi
 interface RawBlock {
   slot: string
   body: string
+  /** Written with the pre-rename spelling. Parsed identically; recorded only so the
+   *  publish response can OFFER the current one. Never a reason to store less. */
+  legacy?: boolean
 }
 
 const htmlBlocks = (source: string): RawBlock[] => {
@@ -132,17 +135,20 @@ const htmlBlocks = (source: string): RawBlock[] => {
     if (type && isFactScriptType(type.toLowerCase())) {
       // Either spelling of the name attribute; the first one present wins.
       let name: string | null = null
+      let usedLegacyAttr = false
       for (const a of NAME_ATTRS) {
         const v = attr(attrs, a)?.trim()
         if (v != null) {
           name = v
+          usedLegacyAttr = a !== FACT_NAME_ATTR
           break
         }
       }
+      const legacy = usedLegacyAttr || type.toLowerCase() !== FACT_SCRIPT_TYPE
       // A fact-typed script with no name attribute is a usage error worth naming, but with
       // no name there's nothing to key it on — surface it as a synthetic empty name so the
       // validation pass below advises about it uniformly.
-      out.push({ slot: name ?? "", body: m[2] ?? "" })
+      out.push({ slot: name ?? "", body: m[2] ?? "", legacy })
     }
     m = SCRIPT_RE.exec(source)
   }
@@ -170,7 +176,11 @@ const markdownBlocks = (source: string): RawBlock[] => {
     for (let j = i + 1; j < lines.length; j++) {
       const line = (lines[j] as string).replace(/\r$/, "")
       if (FENCE_CLOSE.test(line)) {
-        out.push({ slot: open[2] ?? "", body: body.join("\n") })
+        out.push({
+          slot: open[2] ?? "",
+          body: body.join("\n"),
+          legacy: (open[1] ?? "") !== FACT_FENCE_LANG,
+        })
         i = j // resume after the closer
         closed = true
         break
@@ -415,7 +425,10 @@ export const missingFactAdvisory = (source: string, contentType: string): string
   if (!isHtml && !ct.includes("markdown")) return null
   // Already carries data (or tried to — a malformed block gets its own advisory).
   if (parseFacts(source, contentType).facts.length > 0) return null
-  if (/derive-data/.test(source)) return null
+  // BOTH spellings count as "already tried". Matching only the current one would nag an
+  // author to add a fact their page already carries, because their block was written
+  // before the rename and merely failed to parse — the most irritating possible advice.
+  if (/derive-facts|derive-data/.test(source)) return null
 
   let cells = 0
   if (isHtml) {
@@ -446,6 +459,21 @@ export const parseFacts = (source: string, contentType: string): FactsResult => 
   const facts: ParsedFact[] = []
   const advisories: string[] = []
   const seen = new Set<string>()
+
+  // Self-heal by INVITATION, once per publish rather than once per block.
+  //
+  // The old spelling parses forever, so nothing is broken and nothing is withheld. What
+  // this adds is the only migration a byte-faithful host is allowed: telling the author
+  // the current spelling and letting them decide. Rewriting their source would be faster
+  // and is forbidden — a version is the author's bytes, and a host that edits them to
+  // suit its own vocabulary has broken the promise the whole provenance story rests on.
+  if (raw.some((b) => b.legacy))
+    advisories.push(
+      `Written with the original spelling (\`${LEGACY_SCRIPT_TYPES[0]}\` / \`data-slot\`), which parses ` +
+        `exactly the same and always will. The current spelling is \`${FACT_SCRIPT_TYPE}\` with ` +
+        `\`${FACT_NAME_ATTR}="…"\` (markdown: \`\`\`${FACT_FENCE_LANG}). Switch when it suits you; ` +
+        `nothing here rewrites what you published.`,
+    )
 
   for (const block of raw) {
     if (facts.length >= MAX_FACTS_PER_VERSION) {

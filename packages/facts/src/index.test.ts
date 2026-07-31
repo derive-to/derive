@@ -13,7 +13,7 @@ import {
 
 const html = (body: string) => `<!doctype html><html><body>${body}</body></html>`
 const slot = (name: string, json: string) =>
-  `<script type="application/derive-data" data-slot="${name}">${json}</script>`
+  `<script type="application/derive-facts" data-fact="${name}">${json}</script>`
 
 describe("parseFacts — HTML", () => {
   it("extracts a well-formed slot with its trimmed json and byte size", () => {
@@ -31,8 +31,8 @@ describe("parseFacts — HTML", () => {
     expect(facts.map((s) => s.slot)).toEqual(["a", "b"])
   })
 
-  it("tolerates attribute order (data-slot before type) and single quotes", () => {
-    const src = html(`<script data-slot='m' type='application/derive-data'>[1,2,3]</script>`)
+  it("tolerates attribute order (data-fact before type) and single quotes", () => {
+    const src = html(`<script data-fact='m' type='application/derive-facts'>[1,2,3]</script>`)
     const { facts } = parseFacts(src, "text/html")
     expect(facts).toEqual([{ slot: "m", json: "[1,2,3]", bytes: 7 }])
   })
@@ -40,7 +40,7 @@ describe("parseFacts — HTML", () => {
   it("ignores ordinary scripts and other script types", () => {
     const src = html(
       `<script>console.log(1)</script>` +
-        `<script type="application/json" data-slot="x">{"a":1}</script>` +
+        `<script type="application/json" data-fact="x">{"a":1}</script>` +
         slot("real", "true"),
     )
     const { facts } = parseFacts(src, "text/html")
@@ -61,7 +61,7 @@ describe("parseFacts — HTML", () => {
   })
 
   it("advises a data-typed script with no fact name", () => {
-    const src = html(`<script type="application/derive-data">1</script>`)
+    const src = html(`<script type="application/derive-facts">1</script>`)
     const { facts, advisories } = parseFacts(src, "text/html")
     expect(facts).toEqual([])
     expect(advisories[0]).toContain("no fact name")
@@ -118,8 +118,8 @@ describe("parseFacts — HTML", () => {
 
   // Browsers trim the type attribute; without the trim this was a SILENT no-op — no slot
   // stored and no advisory to notice, the worst of both.
-  it("trims the type and data-slot attributes", () => {
-    const src = html(`<script type="application/derive-data " data-slot=" a ">1</script>`)
+  it("trims the type and data-fact attributes", () => {
+    const src = html(`<script type="application/derive-facts " data-fact=" a ">1</script>`)
     expect(parseFacts(src, "text/html").facts).toEqual([{ slot: "a", json: "1", bytes: 1 }])
   })
 
@@ -149,7 +149,7 @@ describe("parseFacts — HTML", () => {
 })
 
 describe("parseFacts — markdown", () => {
-  const md = (name: string, body: string) => "```derive-data " + name + "\n" + body + "\n```"
+  const md = (name: string, body: string) => "```derive-facts " + name + "\n" + body + "\n```"
 
   it("extracts a fenced data block", () => {
     const src = `# Report\n\n${md("checks", `{"pass":41,"fail":2}`)}\n\nprose`
@@ -285,7 +285,7 @@ describe("parseFacts — content type gating", () => {
 
   it("is total and deterministic — same input, same result twice", () => {
     const src = html(
-      slot("a", "1") + slot("a", "2") + `<script type="application/derive-data">bad</script>`,
+      slot("a", "1") + slot("a", "2") + `<script type="application/derive-facts">bad</script>`,
     )
     expect(parseFacts(src, "text/html")).toEqual(parseFacts(src, "text/html"))
   })
@@ -457,7 +457,9 @@ describe("the rename: both spellings parse, forever", () => {
     const page = '<script type="application/derive-data" data-slot="checks">{"pass":48}</script>'
     const { facts, advisories } = parseFacts(page, "text/html")
     expect(facts.map((s) => [s.slot, s.json])).toEqual([["checks", '{"pass":48}']])
-    expect(advisories).toEqual([])
+    // The ONLY note is the invitation to switch: never an error, never a withheld fact.
+    expect(advisories).toHaveLength(1)
+    expect(advisories[0]).toContain("original spelling")
   })
 
   it("reads a mixed document, because one page may carry both", () => {
@@ -475,5 +477,35 @@ describe("the rename: both spellings parse, forever", () => {
   it("leaves an ordinary fenced code block alone", () => {
     const md = "```js foo\nconst a = 1\n```\n"
     expect(parseFacts(md, "text/markdown").facts).toEqual([])
+  })
+})
+
+describe("self-heal by invitation", () => {
+  it("offers the current spelling once per publish, and stores everything anyway", () => {
+    const page =
+      '<script type="application/derive-data" data-slot="a">{"x":1}</script>' +
+      '<script type="application/derive-data" data-slot="b">{"y":2}</script>'
+    const { facts: slots, advisories } = parseFacts(page, "text/html")
+    // Nothing withheld: the old spelling is not a degraded mode.
+    expect(slots.map((s) => s.slot)).toEqual(["a", "b"])
+    // ONE advisory for the document, not one per block.
+    const migration = advisories.filter((a) => a.includes("original spelling"))
+    expect(migration).toHaveLength(1)
+    expect(migration[0]).toContain("application/derive-facts")
+    expect(migration[0]).toContain('data-fact="…"')
+    // And it promises what the host must never do.
+    expect(migration[0]).toContain("nothing here rewrites what you published")
+  })
+
+  it("says nothing when the page already uses the current spelling", () => {
+    const page = '<script type="application/derive-facts" data-fact="a">{"x":1}</script>'
+    expect(parseFacts(page, "text/html").advisories).toEqual([])
+  })
+
+  it("offers it for a legacy markdown fence too", () => {
+    const md = '```derive-data checks\n{"pass":1}\n```\n'
+    const { facts: slots, advisories } = parseFacts(md, "text/markdown")
+    expect(slots.map((s) => s.slot)).toEqual(["checks"])
+    expect(advisories.some((a) => a.includes("original spelling"))).toBe(true)
   })
 })
