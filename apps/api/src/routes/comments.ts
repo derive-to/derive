@@ -27,6 +27,7 @@ export const commentRoutes = (ctx: AppContext) => {
     notify,
     background,
     actingUser,
+    privateOwnerId,
     anonLocked,
     requireArtifact,
     authorize,
@@ -205,7 +206,15 @@ export const commentRoutes = (ctx: AppContext) => {
           { meta, bus, blobs, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
           artifact,
           created,
-          { mentions, actorId: acting?.id ?? null },
+          // onBehalfOf satisfies the contract commentCreatedAction states: requireArtifact
+          // above already authorized this request for `comment` AS this principal, and
+          // privateOwnerId is that principal's human — the grantor for an OAuth agent, the
+          // caller themselves for a session. Without it an OAuth-authenticated comment authors
+          // as the synthetic `oauth:<client>` id, which is a row in no table the collaborator
+          // check reads, so the author is untrusted and the Slack and GitHub mirrors are
+          // skipped in silence. The MCP tool has always passed it; this route never did, and it
+          // is the same REST surface every non-MCP integration comments through.
+          { mentions, actorId: acting?.id ?? null, onBehalfOf: await privateOwnerId(c) },
         ),
       )
       return c.json(commentJson(created), 201)
