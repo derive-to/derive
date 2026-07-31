@@ -72,6 +72,15 @@ export const exchangeSlackOAuth = async (
  *  scopes in one call, so linking a personal identity is its own lightweight flow. `nonce` is
  *  required by OIDC; we read identity from the back-channel userinfo, so the signed `state`
  *  (not the id_token) is what binds the callback to the Derive user who started it. */
+/** The USER scopes behind "Sign in with Slack" — the per-member account link, not the bot
+ *  install. Shared with the generated app manifest (slack-app-setup.ts) because declaring one
+ *  without the other is silently broken in the direction that is hardest to notice: the manifest
+ *  already lists /v1/slack/link/callback as a redirect URL, so the flow looks configured, and it
+ *  is only when a member actually clicks Link account that Slack refuses the authorize call for
+ *  scopes the app never asked for. An app built from a manifest missing these can never link
+ *  anyone, and nothing about the install says so. */
+export const SLACK_USER_SCOPES = ["openid", "profile", "email"] as const
+
 export const slackOidcAuthorizeUrl = (
   clientId: string,
   redirectUri: string,
@@ -81,7 +90,7 @@ export const slackOidcAuthorizeUrl = (
 ): string => {
   const u = new URL("https://slack.com/openid/connect/authorize")
   u.searchParams.set("response_type", "code")
-  u.searchParams.set("scope", "openid profile email")
+  u.searchParams.set("scope", SLACK_USER_SCOPES.join(" "))
   u.searchParams.set("client_id", clientId)
   u.searchParams.set("redirect_uri", redirectUri)
   u.searchParams.set("state", state)
