@@ -18,7 +18,7 @@ import type { EventBus } from "../bus"
 import type { WebhookEvent } from "../events"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, parseMeta } from "./comments"
-import { slackUserName } from "./slack"
+import { SlackApiError, slackUserName, updateSlackMessage } from "./slack"
 import {
   actionButton,
   actions,
@@ -28,7 +28,7 @@ import {
   mrkdwnLabel,
   section,
 } from "./slack-cards"
-import { postWithRecovery, resolveBotToken } from "./slack-delivery"
+import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
 import { authorKind, channelIsSubscribed, resolveChannels } from "./slack-subscriptions"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
@@ -43,6 +43,85 @@ interface SlackCommentPayload {
   link: string
   title: string
   author: string
+}
+
+/** The payload for a `chat.update` that re-states a mirrored thread's resolved/open state.
+ *
+ *  Carries everything needed to REBUILD the card rather than a diff, because chat.update
+ *  replaces a message's blocks wholesale — there is no partial update. The card fields are the
+ *  same ones SlackCommentPayload carries, re-read from the thread's root comment at enqueue
+ *  time, so an edited comment re-renders with its current text. */
+interface SlackThreadStatePayload {
+  channel: string
+  /** The Slack message to rewrite — the root card for this (thread, channel). */
+  messageTs: string
+  orgId: string
+  artifactId: string
+  threadId: string
+  state: "open" | "resolved"
+  /** Who acted, for the footer. Undefined when the actor has no display name to show. */
+  actor?: string
+  text: string
+  link: string
+  title: string
+  author: string
+}
+
+/** Bring every mirrored copy of a thread's card in line with the thread's real state.
+ *
+ *  Fixes two halves of the same gap. Resolving a thread in Derive's UI, over the API or by an
+ *  agent used to reach Slack not at all: the card kept offering "Resolve thread" for a thread
+ *  that was already closed. And resolving from a BUTTON only rewrote the card in the channel the
+ *  click came from (that is all a response_url can address), so a thread mirrored into three
+ *  channels left two of them stale.
+ *
+ *  Both are the same fix — every linked channel gets a chat.update — so this runs on every
+ *  resolve, whatever triggered it, including the clicked channel. The click path also repaints
+ *  through response_url for instant feedback; that is an optimistic paint and this is the
+ *  durable one, so a failed or expired response_url self-heals instead of leaving a stale button
+ *  forever. Writing the same blocks twice is visually a no-op.
+ *
+ *  Returns the number of channels enqueued. */
+export const enqueueSlackThreadState = async (
+  deps: { meta: MetaStore; baseUrl: string },
+  artifact: ArtifactRecord,
+  threadId: string,
+  state: "open" | "resolved",
+  actor?: string,
+): Promise<number> => {
+  const { meta, baseUrl } = deps
+  const links = await meta.listSlackThreadLinksByThread(threadId)
+  if (!links.length) return 0
+  // The card's section is the thread's FIRST comment — the one the root message was posted for.
+  // Later replies in the thread posted as Slack replies underneath it, so they are not what a
+  // rewrite of the root should show.
+  const root = (await meta.listComments(artifact.id))
+    .filter((cm) => cm.thread_id === threadId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))[0]
+  if (!root) return 0
+  const link = commentDeepLink(baseUrl, artifact, threadId)
+  let n = 0
+  for (const l of links) {
+    // A thread link outlives an unsubscribe, so without this an admin who cut a channel off
+    // would still see its cards mutate. Same gate the inbound reply path uses.
+    if (!(await channelIsSubscribed(meta, artifact.org_id, l.channel))) continue
+    const payload: SlackThreadStatePayload = {
+      channel: l.channel,
+      messageTs: l.message_ts,
+      orgId: artifact.org_id,
+      artifactId: artifact.id,
+      threadId,
+      state,
+      ...(actor ? { actor } : {}),
+      text: root.body_md,
+      link,
+      title: artifact.title ?? artifact.short_id,
+      author: root.author,
+    }
+    await enqueueChannelDelivery(meta, "slack_app", "comment.resolved", payload)
+    n++
+  }
+  return n
 }
 
 /** Enqueue a Slack post for a Derive comment, unless the comment came FROM Slack or there's
@@ -274,10 +353,13 @@ export const threadStateBlocks = (
  *  body is authored prose (`mrkdwnBody` — escaped, then its markdown rendered). They land in a
  *  mrkdwn section, so an unescaped `<!channel>` would ping the channel and a `>` would break
  *  out of the link — same treatment eventBlocks gives its fields. */
-const blocksFor = (p: SlackCommentPayload): unknown[] => [
+const threadSection = (p: { author: string; link: string; title: string; text: string }) =>
   section(
     `:speech_balloon: *${mrkdwnLabel(p.author)}* commented on <${p.link}|${mrkdwnLabel(p.title)}>\n${mrkdwnBody(p.text, 600)}`,
-  ),
+  )
+
+const blocksFor = (p: SlackCommentPayload): unknown[] => [
+  threadSection(p),
   ...threadStateBlocks("open", encodeThreadAction(p.artifactId, p.threadId)),
 ]
 
@@ -288,6 +370,33 @@ const blocksFor = (p: SlackCommentPayload): unknown[] => [
 export const makeSlackSender =
   (meta: MetaStore, encryptionKey: string | undefined) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
+    // A resolve/reopen REWRITES an existing card rather than posting anything, so it branches
+    // before the two posting paths. Checked first: it shares the kind with them and would
+    // otherwise fall into the event-card branch and post a second, top-level message.
+    if (d.event_type === "comment.resolved") {
+      const p = JSON.parse(d.payload) as SlackThreadStatePayload
+      const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
+      if (!bot) return { ok: true, status: "skipped: slack not connected" }
+      try {
+        await updateSlackMessage(bot.token, {
+          channel: p.channel,
+          ts: p.messageTs,
+          text: `${mrkdwnLabel(p.author)} commented on ${mrkdwnLabel(p.title)}`,
+          blocks: [
+            threadSection(p),
+            ...threadStateBlocks(p.state, encodeThreadAction(p.artifactId, p.threadId), p.actor),
+          ],
+        })
+        return { ok: true, status: `updated ${p.messageTs}` }
+      } catch (err) {
+        // message_not_found means the card was deleted in Slack — the thread link points at
+        // nothing, and retrying can never succeed. Report delivered-but-skipped so the row
+        // doesn't burn its retries and dead-letter over a message someone tidied away.
+        if (err instanceof SlackApiError && err.code === "message_not_found")
+          return { ok: true, status: "skipped: message deleted" }
+        return slackFailure(meta, p.orgId, err)
+      }
+    }
     // Event cards (publish / proposal lifecycle) ride the same kind but a different event_type,
     // and post top-level (not threaded under an artifact's comment message).
     if (d.event_type !== "comment.created") {

@@ -500,11 +500,20 @@ export const slackRoutes = (ctx: AppContext) => {
       if (teamOwnsThread && (await channelIsSubscribed(meta, link.org_id, clickedIn))) {
         const artifact = await meta.getArtifactById(artifactId)
         if (artifact) {
-          await resolveThreadAction({ meta, bus, notify }, artifact, threadId, op)
-          // Reflect the new state in Slack: keep the comment section, swap the button + footer.
-          // Fire-and-forget — the resolve above is already durable, so a slow/failed cosmetic
-          // update must not sit on the ack path (waitUntil on Workers; in-process on Node).
           const who = payload.user?.username || payload.user?.name || undefined
+          // Rewrites the card in EVERY channel this thread is mirrored into, durably, via the
+          // outbox — including this one (lib/slack-comments.ts enqueueSlackThreadState).
+          await resolveThreadAction(
+            { meta, bus, notify, baseUrl: deps.baseUrl },
+            artifact,
+            threadId,
+            op,
+            who,
+          )
+          // …and repaint this channel immediately so the clicker sees the button change now
+          // rather than on the next outbox tick. Optimistic: the durable update above is what
+          // makes it true, so a slow or failed response_url costs nothing but the instant paint,
+          // and must not sit on the ack path (waitUntil on Workers; in-process on Node).
           const section0 = payload.message?.blocks?.[0]
           const blocks = [section0, ...threadStateBlocks(op, action.value, who)].filter(Boolean)
           if (payload.response_url) {

@@ -214,6 +214,40 @@ export const postSlackMessage = async (
   return { ts: data.ts, channel: data.channel ?? args.channel }
 }
 
+/** Rewrite an already-posted message via chat.update. Used to keep a comment card honest when
+ *  the thread is resolved somewhere OTHER than the button on that card — in Derive's UI, over
+ *  the API, by an agent, or from a different Slack channel the same thread is mirrored into.
+ *
+ *  Unlike response_url this needs no interaction to have happened and does not expire, which is
+ *  exactly why it is the durable path: `response_url` is only valid ~30 min after a click, so it
+ *  cannot express "this thread was resolved in the web app an hour later". Same escaping rules
+ *  as chat.postMessage — the caller passes rendered blocks, and `text` is the notification
+ *  fallback, parsed as mrkdwn. Throws SlackApiError(code) on a Slack-level failure. */
+export const updateSlackMessage = async (
+  token: string,
+  args: { channel: string; ts: string; text: string; blocks?: unknown },
+): Promise<void> => {
+  const res = await fetch(`${API}/chat.update`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      channel: args.channel,
+      ts: args.ts,
+      text: args.text,
+      // As chat.postMessage: our own card already renders the artifact, so don't let the
+      // update re-unfurl the link in the fallback text underneath it.
+      unfurl_links: false,
+      unfurl_media: false,
+      ...(args.blocks ? { blocks: args.blocks } : {}),
+    }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+}
+
 /** Update the message an interaction came from, via its `response_url` (a signed URL valid
  *  ~30 min, no token needed). `replace_original` swaps the whole message. Best-effort +
  *  time-bounded: the interactivity ack must return well under Slack's 3s, and the action it
