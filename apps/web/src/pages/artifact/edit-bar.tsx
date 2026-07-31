@@ -17,6 +17,7 @@ export function EditBar({
   dirty,
   canPublish,
   saving,
+  touch = false,
   onSave,
   onDiscard,
   onDone,
@@ -24,10 +25,15 @@ export function EditBar({
   dirty: number
   canPublish: boolean
   saving: boolean
+  /** Phone/tablet: the verbs get real 44px touch targets and the hint says "tap". */
+  touch?: boolean
   onSave: () => void
   onDiscard: () => void
   onDone: () => void
 }) {
+  // Apple's 44px minimum. The strip grows a few px on a phone; a target you can
+  // actually hit is worth more there than the vertical space it costs.
+  const hit = touch ? "h-11 px-4" : ""
   return (
     <div
       data-testid="inline-edit-bar"
@@ -37,7 +43,9 @@ export function EditBar({
       <span className="font-medium text-foreground text-xs">Editing</span>
       <span className="truncate text-2xs text-muted-foreground">
         {dirty === 0
-          ? "click any text to change it"
+          ? touch
+            ? "tap any text to change it"
+            : "click any text to change it"
           : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -49,6 +57,7 @@ export function EditBar({
               data-testid="inline-edit-discard"
               onClick={onDiscard}
               disabled={saving}
+              className={hit}
             >
               Discard
             </Button>
@@ -58,13 +67,20 @@ export function EditBar({
               data-testid="inline-edit-save"
               onClick={onSave}
               loading={saving}
+              className={hit}
             >
               {canPublish ? "Save" : "Suggest"}
               <Kbd className="max-sm:hidden">⌘S</Kbd>
             </Button>
           </>
         ) : (
-          <Button variant="ghost" size="sm" data-testid="inline-edit-done" onClick={onDone}>
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="inline-edit-done"
+            onClick={onDone}
+            className={hit}
+          >
             Done
             <Kbd className="max-sm:hidden">Esc</Kbd>
           </Button>

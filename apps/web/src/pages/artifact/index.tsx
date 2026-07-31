@@ -21,6 +21,7 @@ import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useIsMobile } from "@/lib/use-is-mobile"
+import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
@@ -154,6 +155,11 @@ export function Artifact() {
   // Phones: px the comment sheet occupies at the bottom, reported by MobileComments.
   // The document column reserves exactly this so nothing black is left beneath it.
   const [sheetInset, setSheetInset] = useState(0)
+  // What the on-screen keyboard covers. Inline editing types INTO the document, so
+  // the stage has to give back exactly this much or the line under the caret sits
+  // behind the keyboard — the iframe can't discover that on its own (its own
+  // viewport never shrinks; only the host's visual viewport does).
+  const keyboard = useKeyboardInset()
   // Editable title while editing (seeded from the artifact in startEdit); editors
   // can rename, and it republishes with the new name.
   const [editTitle, setEditTitle] = useState("")
@@ -614,7 +620,12 @@ export function Artifact() {
   // entry point — there's no top-bar toggle or `c` key on a phone, and a hidden
   // panel made comments unreachable). Computed here rather than in the panel hook
   // so a desktop→mobile resize with a persisted "hidden" can't strand a phone.
-  const effectivePanel = isMobile && !isAnon ? "open" : panel
+  // On phones the sheet's peek bar is normally always docked (it IS the entry point
+  // to comments there). An inline-edit session is the one exception: selection edits
+  // text instead of quoting it, so the panel behind that bar can only explain what it
+  // can't do right now — while costing ~60px of the little height a keyboard leaves.
+  // It comes straight back on Done, which is one tap away in the strip.
+  const effectivePanel = isMobile && !isAnon ? (inlineEdit.active ? "hidden" : "open") : panel
 
   // The rendered artifact frame — identical for the anon public viewer and the authed
   // workbench, so build it once and place it in both branches (no prop drift).
@@ -879,10 +890,14 @@ export function Artifact() {
             // black band below. `sheetInset` tracks the sheet's real height (peek
             // bar, full list, or keyboard-pinned composer), so this never over- or
             // under-reserves the way a fixed `pb-[50vh]` did.
+            // Exactly one thing occupies the bottom at a time: the comments sheet
+            // when reading, the keyboard when editing (the sheet is stood down).
             style={
-              isMobile && !focus && effectivePanel === "open"
-                ? { paddingBottom: sheetInset }
-                : undefined
+              isMobile && !focus && inlineEdit.active
+                ? { paddingBottom: keyboard?.inset ?? 0 }
+                : isMobile && !focus && effectivePanel === "open"
+                  ? { paddingBottom: sheetInset }
+                  : undefined
             }
           >
             {art.bundle && !editing && (
@@ -896,6 +911,7 @@ export function Artifact() {
                 dirty={inlineEdit.dirty}
                 canPublish={effectiveCanPublish}
                 saving={inlineEdit.saving}
+                touch={isMobile}
                 onSave={inlineEdit.save}
                 onDiscard={inlineEdit.discard}
                 onDone={inlineEdit.done}

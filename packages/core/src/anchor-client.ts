@@ -1624,6 +1624,24 @@ interface ElReg {
       } catch (_e) {}
     }
     setEditHover(null) // it's the focused block now; the focus ring speaks for it
+    revealBlock(target.el)
+  }
+
+  /* Bring the block being edited into view. On a phone the host shrinks the frame by
+     the keyboard's height, so "visible" here already means "above the keyboard" —
+     which is the only reason a tap near the bottom of the screen doesn't put the
+     caret somewhere the typist can't see. Only scrolls when the block is actually
+     clipped, so an ordinary click on a comfortably-visible paragraph never moves
+     the page under the reader. */
+  const revealBlock = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect()
+    const vh = window.innerHeight || document.documentElement.clientHeight
+    if (r.top >= 8 && r.bottom <= vh - 8) return
+    try {
+      el.scrollIntoView({ block: "center", behavior: "smooth" })
+    } catch (_e) {
+      el.scrollIntoView()
+    }
   }
 
   /* Light the block under the pointer while editing. Throttled like the comment
