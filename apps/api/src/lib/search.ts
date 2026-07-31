@@ -38,6 +38,7 @@ export interface WorkspaceSearchDeps extends SearchDeps {
       limit?: number
     }): Promise<ArtifactRecord[]>
     getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+    currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>>
     searchArtifactIds(
       orgId: string,
       query: string,
@@ -612,8 +613,16 @@ export const searchWorkspace = async (
   // bundles each opens its own 8-wide page fan-out), so peak blob reads is the product
   // — 4×8=32 keeps that worst case reasonable without a cross-cutting semaphore.
   const CONCURRENCY = 4
+  // Every candidate's current version in ONE query, before the scan loop. This used to
+  // be a `getVersion(a.id, a.current_version)` inside `scanArtifact` — i.e. one Postgres
+  // round trip per candidate, and on the edge tier those are ~80ms each and strictly
+  // serialised no matter what the CONCURRENCY fan-out below does (one pg.Client per
+  // request; see edge-pg.ts). At the results page's cap of 30 candidates that was ~2.4s
+  // of pure wire time inside a single search. The blob reads stay per-artifact and
+  // concurrent — those are R2, which really does parallelise.
+  const versionByArtifact = await deps.meta.currentVersions(toGrep.map((a) => a.id))
   const scanArtifact = async (a: ArtifactRecord): Promise<WorkspaceSearchResult | null> => {
-    const v = await deps.meta.getVersion(a.id, a.current_version)
+    const v = versionByArtifact[a.id]
     if (!v) return null
     const { groups, total } = await searchArtifactVersion(
       deps,

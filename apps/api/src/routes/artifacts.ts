@@ -135,6 +135,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     actingHuman,
     privateOwnerId,
     activeWorkspace,
+    membershipOf,
     actorFor,
     agentFor,
     authorize,
@@ -288,7 +289,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // workspace (the same scoping actorFor applies).
       const isOperator = isToken(c)
       const baselineRole = me
-        ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+        ? ((await membershipOf(c, listOrg, me.id))?.role ?? null)
         : agent && agent.org_id === listOrg
           ? agent.role
           : null
@@ -1170,7 +1171,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const listOrg = await activeWorkspace(c)
     const isOperator = isToken(c)
     const baselineRole = me
-      ? ((await meta.getMembership(listOrg, me.id))?.role ?? null)
+      ? ((await membershipOf(c, listOrg, me.id))?.role ?? null)
       : agent && agent.org_id === listOrg
         ? agent.role
         : null
@@ -1263,11 +1264,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const artifact = await meta.getByShortId(c.req.param("shortId"))
-      // For a missing artifact, fall back to a no-access placeholder so an anonymous
-      // probe can't learn anything (only id/password_hash/org_id are read by actorFor,
-      // and we 404 immediately after).
-      const actor = await actorFor(c, artifact ?? ({ id: "" } as ArtifactRecord))
+      // 404 BEFORE resolving an actor. This used to run actorFor against a placeholder
+      // artifact first, which for a signed-in caller meant a full artifactGrants round
+      // trip (~80ms) against an empty id on every miss — paid, then thrown away one line
+      // later. Nothing about the response differs: a miss is a bare 404 either way, so
+      // an anonymous probe still learns nothing.
       if (!artifact) return bail(fail(c, 404, "not found"))
+      const actor = await actorFor(c, artifact)
       if (!can(actor, "read", artifact.workspace_access, artifact.link_role))
         // A locked artifact isn't hidden, it's lockable: tell the client to prompt for
         // the password (401) rather than claim it doesn't exist (404). A lock only ever

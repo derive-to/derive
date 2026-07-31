@@ -1191,6 +1191,11 @@ export function buildContext(deps: AppDeps) {
     limited,
     overStorage,
     ensureMembership,
+    /** `meta.getMembership`, memoized for this request. Routes that need a caller's role
+     *  in a workspace should call THIS, not the store directly — the same row is usually
+     *  already resolved by `activeWorkspace`/`workspaceRole`, and a direct call re-pays a
+     *  full ~80ms round trip for it. */
+    membershipOf: cachedMembership,
     activeWorkspace,
     setWsCookie,
     anonViewerId,

@@ -2018,6 +2018,32 @@ export function runStoreContract(
       expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
     })
 
+    it("currentVersions returns each artifact's CURRENT version only, matching getVersion per id", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      const noVersions = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "a1" }))
+      await store.addVersion(a.id, newVersion({ message: "a2" }))
+      await store.addVersion(a.id, newVersion({ message: "a3" }))
+      await store.addVersion(b.id, newVersion({ message: "b1" }))
+
+      expect(await store.currentVersions([])).toEqual({})
+      const cur = await store.currentVersions([a.id, b.id, noVersions.id, "art_missing"])
+      // Indistinguishable from a getVersion(id, current_version) per artifact…
+      const freshA = await store.getArtifactById(a.id)
+      expect(cur[a.id]).toEqual(await store.getVersion(a.id, freshA?.current_version ?? 0))
+      // …and it is the CURRENT one (3), not the first or an arbitrary row.
+      expect(cur[a.id]?.n).toBe(3)
+      expect(cur[a.id]?.message).toBe("a3")
+      expect(cur[b.id]?.n).toBe(1)
+      // An artifact with no versions, and an id that doesn't exist, are simply absent.
+      expect(cur[noVersions.id]).toBeUndefined()
+      expect(cur.art_missing).toBeUndefined()
+      // Each entry belongs to the artifact it is keyed under — no cross-wiring.
+      expect(cur[a.id]?.artifact_id).toBe(a.id)
+      expect(cur[b.id]?.artifact_id).toBe(b.id)
+    })
+
     it("workspaceSummary matches the six calls it replaces, and keeps each one's scoping rules", async () => {
       const org = `org_${uuid()}`
       const otherOrg = `org_${uuid()}`

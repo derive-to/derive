@@ -459,6 +459,19 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(version.n))
   }
 
+  async currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>> {
+    if (artifactIds.length === 0) return {}
+    const { rows } = await this.pool.query<VersionRecord & { artifact_id: string }>(
+      `SELECT v.* FROM version v
+         JOIN artifact a ON a.id = v.artifact_id AND a.current_version = v.n
+        WHERE v.artifact_id = ANY($1)`,
+      [artifactIds],
+    )
+    const out: Record<string, VersionRecord> = {}
+    for (const r of rows) out[r.artifact_id] = r
+    return out
+  }
+
   async artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail> {
     const { artifactId, orgId, viewerId } = opts
     // Seven sequential ~80ms round trips (versions, tags, collection ids, proposals,

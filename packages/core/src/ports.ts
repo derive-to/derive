@@ -439,6 +439,13 @@ export interface ArtifactStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
+  /** Each artifact's CURRENT version, for a set of artifacts, keyed by artifact id — one
+   *  query instead of a `getVersion(id, current_version)` per artifact. Workspace search
+   *  grep-confirms up to 30 candidates and was fetching each one's version separately;
+   *  on the edge tier that is 30 sequential ~80ms round trips inside one request, and a
+   *  `Promise.all` around them cannot help (see edge-pg.ts). Artifacts with no current
+   *  version are simply absent from the result. */
+  currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>>
   /** Replace a version's stored data slots with `rows` (delete-then-insert, so a
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */

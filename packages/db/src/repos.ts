@@ -554,6 +554,26 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
 
+  // Each artifact's CURRENT version in one query — the batched face of getVersion(id,
+  // current_version) for callers holding a page of artifacts (workspace search's
+  // grep-confirm pass). Joining on artifact.current_version keeps "current" defined in
+  // exactly one place.
+  const currentVersions = async (artifactIds: string[]): Promise<Record<string, VersionRecord>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ v: version })
+      .from(version)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, version.artifact_id), eq(artifact.current_version, version.n)),
+      )
+      .where(inArray(version.artifact_id, artifactIds))
+      .all()
+    const out: Record<string, VersionRecord> = {}
+    for (const r of rows) out[(r.v as VersionRecord).artifact_id] = r.v as VersionRecord
+    return out
+  }
+
   // Sequential add (used by D1, which has no interactive transactions; the
   // UNIQUE(artifact_id, n) constraint turns a race into a clean error). The
   // better-sqlite3 driver overrides this with a synchronous transaction.
@@ -3737,6 +3757,7 @@ export function makeRepos(db: SqliteDb) {
     addVersion,
     listVersions,
     getVersion,
+    currentVersions,
     setVersionData,
     getVersionData,
     getVersionDataSeries,
