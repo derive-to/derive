@@ -595,6 +595,10 @@ describe("remote MCP endpoint (/mcp)", () => {
     const after = (await meta.getVersionData(rec.id, 1)).map((r) => r.slot)
     expect(after).toContain("checks") // the author's row survived the race
     expect(after).toContain("$stats") // and the derived row still landed
+    // Both directions: a delete that matched NOTHING would also satisfy the two lines
+    // above while quietly duplicating every derived row on each re-derivation.
+    expect(after.filter((n) => n === "$stats")).toHaveLength(1)
+    expect(new Set(after).size).toBe(after.length)
   })
 
   it("says WHY a fact is absent, instead of telling authors to do the impossible", async () => {
