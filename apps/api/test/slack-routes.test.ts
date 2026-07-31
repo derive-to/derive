@@ -984,6 +984,95 @@ describe("/derive subscription subcommands", () => {
     expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
   })
 
+  // The subcommands live in exactly two places a person can find them: the slash-command
+  // autocomplete (one line, from the manifest) and this. Nothing else lists them.
+  it("answers /derive help — and answers it without an account link", async () => {
+    const { app, meta } = make("cmd-help")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    // Deliberately NO setSlackUserLink: someone who has not linked yet is exactly who needs to
+    // read what the command does, so help must not sit behind the link prompt.
+    const body = JSON.stringify((await (await cmd(app, "help")).json()).blocks)
+    for (const verb of ["subscribe", "unsubscribe", "settings", "Save to Derive"])
+      expect(body).toContain(verb)
+    expect(body).not.toContain("Connect your Derive account")
+  })
+
+  // Naming the collection matters most here: a channel can carry several subscriptions, and the
+  // card used to print the opaque scope_id, which identifies nothing to a human.
+  it("names the collection in /derive settings rather than printing its id", async () => {
+    const { app, meta } = make("cmd-settings-title")
+    await linked(meta)
+    await meta.createCollection({
+      id: "col_9f2ac1",
+      org_id: "default",
+      title: "API docs",
+      created_by: owner.id,
+    })
+    await cmd(app, "subscribe API docs")
+    const shown = JSON.stringify((await (await cmd(app, "settings")).json()).blocks)
+    expect(shown).toContain("API docs")
+    expect(shown).not.toContain("col_9f2ac1")
+  })
+
+  // A private channel the app was never invited to accepts the subscription and then drops every
+  // delivery into the dead-letter queue with nothing saying why.
+  it("refuses to subscribe a channel it cannot post in, and says how to fix it", async () => {
+    const { app, meta } = make("cmd-unreachable")
+    await linked(meta)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: string) =>
+        String(u).includes("conversations.info")
+          ? new Response(JSON.stringify({ ok: false, error: "channel_not_found" }), { status: 200 })
+          : new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ),
+    )
+    const r = await (await cmd(app, "subscribe")).json()
+    expect(String(r.text)).toContain("/invite @Derive")
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(0)
+  })
+
+  // A PUBLIC channel needs no membership — the sender self-joins on its first not_in_channel —
+  // so the guard must not stand in the way of the common case.
+  it("subscribes a public channel the bot has not joined yet", async () => {
+    const { app, meta } = make("cmd-public-ok")
+    await linked(meta)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: string) =>
+        String(u).includes("conversations.info")
+          ? new Response(
+              JSON.stringify({ ok: true, channel: { is_private: false, is_member: false } }),
+              { status: 200 },
+            )
+          : new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ),
+    )
+    await cmd(app, "subscribe")
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
+  })
+
+  // Slack unreachable must not block an admin from configuring their own workspace.
+  it("subscribes anyway when Slack could not be asked", async () => {
+    const { app, meta } = make("cmd-reach-unknown")
+    await linked(meta)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down")
+      }),
+    )
+    await cmd(app, "subscribe")
+    expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
+  })
+
   it("unsubscribes the channel, and reports settings", async () => {
     const { app, meta } = make("cmd-unsubscribe")
     await linked(meta)
