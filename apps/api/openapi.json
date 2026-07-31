@@ -8088,7 +8088,7 @@
         "summary": "List the workspace's webhooks (Admin only).",
         "responses": {
           "200": {
-            "description": "The workspace's webhooks, without their signing secrets.",
+            "description": "The workspace's webhooks, without their signing secrets, plus every event one can subscribe to — the server owns that list so the picker can't drift from it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8099,10 +8099,29 @@
                       "items": {
                         "$ref": "#/components/schemas/Webhook"
                       }
+                    },
+                    "event_options": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "comment.created",
+                          "comment.mention",
+                          "comment.resolved",
+                          "version.published",
+                          "proposal.created",
+                          "proposal.approved",
+                          "proposal.changes_requested",
+                          "review.requested",
+                          "review.sent_back",
+                          "review.approved"
+                        ]
+                      }
                     }
                   },
                   "required": [
-                    "webhooks"
+                    "webhooks",
+                    "event_options"
                   ]
                 }
               }

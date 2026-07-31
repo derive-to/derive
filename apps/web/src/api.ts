@@ -1081,7 +1081,8 @@ export const api = {
       credentials: "include",
     }).then(() => undefined),
 
-  listWebhooks: (): Promise<{ webhooks: Webhook[] }> => f("/v1/webhooks", opts()).then(j),
+  listWebhooks: (): Promise<{ webhooks: Webhook[]; event_options: string[] }> =>
+    f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {
     url: string
     kind: "generic" | "slack"

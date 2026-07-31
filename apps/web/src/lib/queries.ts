@@ -353,10 +353,13 @@ export const slackChannelsQuery = () =>
   })
 
 // The workspace's outbound webhooks. Invalidated on add / remove.
+// Keeps the whole response: `event_options` travels with the list so the picker offers exactly
+// what the server accepts. The client used to carry its own three-entry copy of that list while
+// the server emitted eleven, which silently made eight events unpickable from Settings.
 export const webhooksQuery = () =>
   queryOptions({
     queryKey: ["webhooks"] as const,
-    queryFn: () => api.listWebhooks().then((r) => r.webhooks),
+    queryFn: () => api.listWebhooks(),
   })
 
 // One webhook's recent delivery log, fetched lazily when its row's log opens

@@ -5161,7 +5161,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The workspace's webhooks, without their signing secrets. */
+                /** @description The workspace's webhooks, without their signing secrets, plus every event one can subscribe to — the server owns that list so the picker can't drift from it. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5169,6 +5169,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             webhooks: components["schemas"]["Webhook"][];
+                            event_options: ("comment.created" | "comment.mention" | "comment.resolved" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested" | "review.requested" | "review.sent_back" | "review.approved")[];
                         };
                     };
                 };
