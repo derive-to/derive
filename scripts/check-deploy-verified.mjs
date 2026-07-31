@@ -59,12 +59,17 @@ if (/continue-on-error:\s*true/.test(region))
 // healthy. /readyz shipped that way: it returned 200 text/html no matter what the database was
 // doing, making a readiness probe that could never report unready.
 const OPERATIONAL = ["/healthz", "/readyz"]
-const toml = readFileSync("wrangler.toml", "utf8")
+// apps/api/wrangler.toml, NOT a root one: this is the file `pnpm --filter @derive/api exec
+// wrangler deploy` reads, the file CI injects binding ids into, and the file
+// scripts/preview-config.mjs derives a preview from. A byte-identical copy briefly existed at
+// the repo root and was read twice as if it were live — a fix applied there changed nothing.
+const WRANGLER = "apps/api/wrangler.toml"
+const toml = readFileSync(WRANGLER, "utf8")
 const workerFirst = /run_worker_first\s*=\s*\[([^\]]*)\]/.exec(toml)?.[1] ?? ""
 for (const route of OPERATIONAL) {
   if (!workerFirst.includes(`"${route}"`))
     fail(
-      `${route} is not in run_worker_first — the asset handler will serve the SPA shell for it ` +
+      `${route} is not in ${WRANGLER} run_worker_first — the asset handler will serve the SPA shell for it ` +
         `with a 200, so any probe pointed at it reports healthy unconditionally.`,
     )
 }
