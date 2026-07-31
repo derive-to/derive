@@ -80,6 +80,35 @@ export function runStoreContract(
       await store.removeMembership(ORG, "temp")
       expect(await store.getMembership(ORG, "temp")).toBeNull()
     })
+
+    it("workspacesAndOauthBinding matches the two calls it replaces", async () => {
+      const orgA = `org_${uuid()}`
+      const orgB = `org_${uuid()}`
+      const user = `owc_${uuid()}`
+      const client = `client_${uuid()}`
+      await store.setWorkspace(orgA, "A")
+      await store.setWorkspace(orgB, "B")
+      await store.setMembership({ id: uuid(), org_id: orgA, user_id: user, role: "owner" })
+      await store.setMembership({ id: uuid(), org_id: orgB, user_id: user, role: "editor" })
+
+      // No grant binding yet — bound is empty ("all workspaces"), mine is unaffected.
+      const unbound = await store.workspacesAndOauthBinding(user, client)
+      expect(unbound.mine).toEqual(await store.listWorkspaces(user))
+      expect(unbound.bound).toEqual([])
+
+      // The consent multi-select narrows to orgA only.
+      await store.setOAuthClientWorkspaces(user, client, [orgA])
+      const bound = await store.workspacesAndOauthBinding(user, client)
+      expect(bound.mine).toEqual(await store.listWorkspaces(user))
+      expect(bound.bound).toEqual([orgA])
+
+      // A DIFFERENT client's binding never leaks into this one's `bound`.
+      const otherClient = `client_${uuid()}`
+      expect((await store.workspacesAndOauthBinding(user, otherClient)).bound).toEqual([])
+
+      // Empty clientId (a registered dk_agt_ token has none) never matches any binding.
+      expect((await store.workspacesAndOauthBinding(user, "")).bound).toEqual([])
+    })
   })
 
   describe(`${label}: artifacts + versions`, () => {

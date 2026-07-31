@@ -761,6 +761,15 @@ export interface WorkspaceStore {
   deleteWorkspace(orgId: string): Promise<void>
   /** Every workspace a user belongs to, with their role, oldest first (the switcher). */
   listWorkspaces(userId: string): Promise<(WorkspaceRecord & { role: Role })[]>
+  /** listWorkspaces(userId) + getOAuthClientWorkspaces(userId, clientId) as ONE round
+   *  trip — `bound` is already a subset of `mine` (a LEFT JOIN on the Postgres driver, so
+   *  a workspace the grant names but the user has since left never appears). Empty
+   *  clientId ⇒ bound is always []. The oauth-agent default-workspace resolution is the
+   *  only caller — reach for listWorkspaces / getOAuthClientWorkspaces directly elsewhere. */
+  workspacesAndOauthBinding(
+    userId: string,
+    clientId: string,
+  ): Promise<{ mine: (WorkspaceRecord & { role: Role })[]; bound: string[] }>
   getMembership(orgId: string, userId: string): Promise<MembershipRecord | null>
   listMemberships(orgId: string): Promise<MembershipRecord[]>
   /** Every membership across a set of orgs in ONE query (org_id ∈ orgIds); callers group
@@ -960,6 +969,15 @@ export interface IntegrationStore {
   /** The workspace's integration preferences, merged over defaults (so a workspace
    *  that never saved any returns all-enabled). */
   getOrgSettings(orgId: string): Promise<OrgSettings>
+  /** getOrgSettings(orgId) + getUserBrandprint(userId) as ONE round trip — the pg driver
+   *  batches (a UNION ALL, falling back to settings-alone on an older user table with no
+   *  brandprint column); embedded composes. userId null ⇒ personalBrandprint always null
+   *  (that read is skipped entirely). resolveActorBrandprint (MCP connect, context
+   *  runner, rework endpoint) is the only caller. */
+  orgSettingsAndBrandprint(
+    orgId: string,
+    userId: string | null,
+  ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
   // ---- Slack App (connected workspace + thread links) ---------------------

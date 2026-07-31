@@ -431,12 +431,20 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       )
     }
     const ownerId = await ctx.privateOwnerId(c)
-    const actingFor = ownerId ? ((await ctx.meta.getUsers([ownerId]))[0] ?? null) : null
     // The grant's uncapped scope role (OAuth) — or the agent's own role for a
     // registered dk_agt_ token — is what a roamed workspace's role is re-capped
     // from, mirroring agentFor's X-Derive-Workspace re-home. boundWorkspaces is the
     // consent multi-select (empty = all): the MCP surface clamps to it.
     const grant = await ctx.oauthGrant(c)
+    // An OAuth/JWT grant already carries the owner's name (the token resolution had to
+    // look it up, or already had it) — reuse it instead of a fresh getUsers round trip.
+    // Only a registered dk_agt_ token or a nameless minted-dkapi_ claim falls back.
+    const actingFor =
+      grant?.ownerId === ownerId && grant.ownerName
+        ? { id: grant.ownerId, name: grant.ownerName }
+        : ownerId
+          ? ((await ctx.meta.getUsers([ownerId]))[0] ?? null)
+          : null
     const scopeForCap = grant?.scopeRole ?? agent.role
     const boundWorkspaces = grant?.boundWorkspaces ?? []
     // A minted dkapi_ bearer resolves to the same principal shape as its grant, so the

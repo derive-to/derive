@@ -21,9 +21,6 @@ export const resolveActorBrandprint = async (
   orgId: string,
   userId: string | null,
 ): Promise<ResolvedBrandprint> => {
-  const [settings, personal] = await Promise.all([
-    meta.getOrgSettings(orgId),
-    userId ? meta.getUserBrandprint(userId) : null,
-  ])
-  return resolveBrandprint(settings.brandprint, parseBrandprint(personal))
+  const { settings, personalBrandprint } = await meta.orgSettingsAndBrandprint(orgId, userId)
+  return resolveBrandprint(settings.brandprint, parseBrandprint(personalBrandprint))
 }

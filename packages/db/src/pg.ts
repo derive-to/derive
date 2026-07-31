@@ -1566,6 +1566,42 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(workspace.created_at))
   }
 
+  // listWorkspaces + getOAuthClientWorkspaces in ONE round trip: a LEFT JOIN against
+  // oauth_client_workspace tells each row whether it's in the grant's bound set, rather
+  // than a second query the caller then filters `mine` against anyway (see
+  // oauth-agent.ts's oauthWorkspace, the only caller). `bound` this way is already a
+  // subset of `mine` — a workspace the grant names but the user has since left can never
+  // appear, matching the two-query version's existing `scoped = mine.filter(...)` step.
+  async workspacesAndOauthBinding(
+    userId: string,
+    clientId: string,
+  ): Promise<{ mine: (WorkspaceRecord & { role: Role })[]; bound: string[] }> {
+    const rows = await this.db
+      .select({
+        id: workspace.id,
+        name: workspace.name,
+        created_at: workspace.created_at,
+        role: membership.role,
+        boundRowId: oauthClientWorkspace.id,
+      })
+      .from(membership)
+      .innerJoin(workspace, eq(workspace.id, membership.org_id))
+      .leftJoin(
+        oauthClientWorkspace,
+        and(
+          eq(oauthClientWorkspace.org_id, workspace.id),
+          eq(oauthClientWorkspace.user_id, membership.user_id),
+          eq(oauthClientWorkspace.client_id, clientId),
+        ),
+      )
+      .where(eq(membership.user_id, userId))
+      .orderBy(asc(workspace.created_at))
+    return {
+      mine: rows.map(({ boundRowId: _b, ...w }) => w),
+      bound: rows.filter((r) => r.boundRowId !== null).map((r) => r.id),
+    }
+  }
+
   async getArtifactMember(
     artifactId: string,
     userId: string,
@@ -2298,6 +2334,32 @@ export class PgMetaStore implements MetaStore {
   async getOrgSettings(orgId: string): Promise<OrgSettings> {
     const rows = await this.db.select().from(orgSettings).where(eq(orgSettings.org_id, orgId))
     return parseOrgSettings(rows[0]?.settings ?? null)
+  }
+  // getOrgSettings + getUserBrandprint in ONE round trip: independent tables, no join
+  // key between them, so a discriminated UNION ALL (same technique as unfurlInfo) rather
+  // than a JOIN. Both branches select a plain `text` column, so — unlike a bare NULL
+  // literal — no explicit cast is needed for type resolution. resolveActorBrandprint
+  // (MCP connect, context runner, rework endpoint) is the only caller.
+  async orgSettingsAndBrandprint(
+    orgId: string,
+    userId: string | null,
+  ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }> {
+    if (!userId) return { settings: await this.getOrgSettings(orgId), personalBrandprint: null }
+    try {
+      const { rows } = await this.pool.query<{ kind: string; val: string | null }>(
+        `SELECT 'settings' kind, os.settings val FROM org_settings os WHERE os.org_id = $1
+         UNION ALL
+         SELECT 'brandprint', u."brandprint" FROM "user" u WHERE u.id = $2`,
+        [orgId, userId],
+      )
+      const settingsRaw = rows.find((r) => r.kind === "settings")?.val ?? null
+      const brandprintRaw = rows.find((r) => r.kind === "brandprint")?.val ?? null
+      return { settings: parseOrgSettings(settingsRaw), personalBrandprint: brandprintRaw }
+    } catch {
+      // Older/minimal user table with no brandprint column — same fallback as
+      // getUserBrandprint's own try/catch.
+      return { settings: await this.getOrgSettings(orgId), personalBrandprint: null }
+    }
   }
   async setOrgSettings(orgId: string, settings: OrgSettings): Promise<void> {
     await this.db

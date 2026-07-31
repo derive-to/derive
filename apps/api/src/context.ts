@@ -30,7 +30,7 @@ import { type Backplane, createInProcessBackplane } from "./bus"
 import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
-import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
+import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
@@ -481,7 +481,13 @@ export function buildContext(deps: AppDeps) {
   // token carries only a runtime role.
   const oauthGrantCache = new WeakMap<
     Context,
-    { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
+    {
+      ownerId: string
+      ownerName: string | null
+      scopeRole: Role
+      clientId: string
+      boundWorkspaces: string[]
+    }
   >()
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
   // refuse chaining (see isMintedApiToken).
@@ -526,6 +532,9 @@ export function buildContext(deps: AppDeps) {
           mintedApiCache.set(c, true)
           oauthGrantCache.set(c, {
             ownerId: claim.userId,
+            // The capability claim carries no display name — mcp.ts falls back to a
+            // getUsers lookup for this one path (minted dkapi_ tokens are rare).
+            ownerName: null,
             // The minted role IS the scope ceiling — a token minted for `publish`
             // must not reach management just because its human is an owner.
             scopeRole: claim.role,
@@ -592,7 +601,10 @@ export function buildContext(deps: AppDeps) {
       // user who registered it (created_by; null for pre-column agents) — or an
       // OAuth access token from the browser consent flow, which carries the user
       // who authed it. Both resolve to an on-behalf human where one is known.
-      const reg = await meta.getAgentByToken(sha256(b))
+      // Every registered token is minted with AGENT_TOKEN_PREFIX, so a bearer without
+      // it (every OAuth/JWT MCP token) can never match — skip the guaranteed-miss
+      // round trip instead of paying it on every one of those calls.
+      const reg = b.startsWith(AGENT_TOKEN_PREFIX) ? await meta.getAgentByToken(sha256(b)) : null
       if (reg) {
         a = reg
         owner = reg.created_by ?? null
@@ -603,6 +615,7 @@ export function buildContext(deps: AppDeps) {
           owner = o.ownerId
           oauthGrantCache.set(c, {
             ownerId: o.ownerId,
+            ownerName: o.ownerName,
             scopeRole: o.scopeRole,
             clientId: o.clientId,
             boundWorkspaces: o.boundWorkspaces,
@@ -664,6 +677,7 @@ export function buildContext(deps: AppDeps) {
     c: Context,
   ): Promise<{
     ownerId: string
+    ownerName: string | null
     scopeRole: Role
     clientId: string
     boundWorkspaces: string[]

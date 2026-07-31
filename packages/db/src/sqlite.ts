@@ -18,7 +18,9 @@ import {
   composeContextsWithManifests,
   composeListEnrichment,
   composeNotificationsPage,
+  composeOrgSettingsAndBrandprint,
   composeWorkspaceSummary,
+  composeWorkspacesAndOauthBinding,
 } from "./list-enrichment"
 import { makeRepos, schema } from "./repos"
 import {
@@ -145,6 +147,8 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     | "automationsWithExecutors"
     | "collectionsOverview"
     | "workspaceSummary"
+    | "workspacesAndOauthBinding"
+    | "orgSettingsAndBrandprint"
   > & { close(): void } = {
     ...repos,
 
@@ -605,6 +609,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       composeAutomationsWithExecutors(store, orgId, limit),
     collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
     workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
+    workspacesAndOauthBinding: (userId, clientId) =>
+      composeWorkspacesAndOauthBinding(store, userId, clientId),
+    orgSettingsAndBrandprint: (orgId, userId) =>
+      composeOrgSettingsAndBrandprint(store, orgId, userId),
   }
 }
 

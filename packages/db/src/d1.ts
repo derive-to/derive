@@ -17,7 +17,9 @@ import {
   composeContextsWithManifests,
   composeListEnrichment,
   composeNotificationsPage,
+  composeOrgSettingsAndBrandprint,
   composeWorkspaceSummary,
+  composeWorkspacesAndOauthBinding,
 } from "./list-enrichment"
 import { makeRepos, schema } from "./repos"
 
@@ -53,6 +55,8 @@ export function createD1Store(d1: D1Database): MetaStore {
     | "automationsWithExecutors"
     | "collectionsOverview"
     | "workspaceSummary"
+    | "workspacesAndOauthBinding"
+    | "orgSettingsAndBrandprint"
   > = {
     ...repos,
 
@@ -313,6 +317,10 @@ export function createD1Store(d1: D1Database): MetaStore {
       composeAutomationsWithExecutors(store, orgId, limit),
     collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
     workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
+    workspacesAndOauthBinding: (userId, clientId) =>
+      composeWorkspacesAndOauthBinding(store, userId, clientId),
+    orgSettingsAndBrandprint: (orgId, userId) =>
+      composeOrgSettingsAndBrandprint(store, orgId, userId),
   }
 }
 

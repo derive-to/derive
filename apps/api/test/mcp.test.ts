@@ -2998,7 +2998,10 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
     const shortId = (await (await publish(app, token, "Quarterly notes")).json()).short_id as string
     const art = await meta.getByShortId(shortId)
     if (!art) throw new Error("no artifact")
-    const agentToken = `agtok_${name}`
+    // AGENT_TOKEN_PREFIX (dk_agt_), not an arbitrary string — agentFor now skips the
+    // getAgentByToken lookup entirely for any bearer without this prefix (a guaranteed
+    // miss on every real OAuth/JWT MCP call), so a fixture token has to look real too.
+    const agentToken = `dk_agt_${name}`
     const agent = await meta.createAgent({
       id: `ag_${name}`,
       org_id: art.org_id,

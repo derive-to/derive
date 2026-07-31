@@ -10,8 +10,11 @@ import type {
   ListEnrichmentOpts,
   MetaStore,
   NotificationsPage,
+  OrgSettings,
   RepoSourceRecord,
+  Role,
   VersionRecord,
+  WorkspaceRecord,
   WorkspaceSummary,
 } from "@derive/core"
 
@@ -92,6 +95,32 @@ export const composeArtifactDetail = async (
     settings,
     managed: managedIds.includes(artifactId),
   }
+}
+
+/** See `composeListEnrichment` — the oauth-agent default-workspace resolution's twin. */
+export const composeWorkspacesAndOauthBinding = async (
+  store: Pick<MetaStore, "listWorkspaces" | "getOAuthClientWorkspaces">,
+  userId: string,
+  clientId: string,
+): Promise<{ mine: (WorkspaceRecord & { role: Role })[]; bound: string[] }> => {
+  const [mine, bound] = await Promise.all([
+    store.listWorkspaces(userId),
+    clientId ? store.getOAuthClientWorkspaces(userId, clientId) : Promise.resolve<string[]>([]),
+  ])
+  return { mine, bound }
+}
+
+/** See `composeListEnrichment` — the Brandprint resolution's twin. */
+export const composeOrgSettingsAndBrandprint = async (
+  store: Pick<MetaStore, "getOrgSettings" | "getUserBrandprint">,
+  orgId: string,
+  userId: string | null,
+): Promise<{ settings: OrgSettings; personalBrandprint: string | null }> => {
+  const [settings, personalBrandprint] = await Promise.all([
+    store.getOrgSettings(orgId),
+    userId ? store.getUserBrandprint(userId) : Promise.resolve<string | null>(null),
+  ])
+  return { settings, personalBrandprint }
 }
 
 /** See `composeListEnrichment` — the browse sidebar's twin. */
