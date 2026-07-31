@@ -600,7 +600,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
             githubPostComments: z.boolean(),
             githubMirrorComments: z.boolean(),
             githubPreviewLink: z.boolean(),
-            slackPost: z.boolean(),
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),

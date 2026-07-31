@@ -144,8 +144,15 @@ jobs:
             sleep 6
           done
           [ "$code" = "200" ] || { echo "preview never served /healthz (last: $code)"; exit 1; }
-          ready=$(curl -s -o /dev/null -w '%{http_code}' "$URL/readyz" || true)
-          [ "$ready" = "200" ] || { echo "preview reached /healthz but /readyz returned $ready — bindings are wrong"; exit 1; }
+          # Assert the BODY, not just the status. /readyz is only meaningful if it reached the
+          # worker: with SPA not-found handling the asset handler answers 200 + index.html for
+          # any path missing from run_worker_first, so a status-only check reports healthy for
+          # a route that was never served. That is how /readyz sat shadowed in production.
+          ready=$(curl -s --max-time 15 "$URL/readyz" || true)
+          case "$ready" in
+            *'"ok":true'*) : ;;
+            *) echo "preview /readyz did not answer as the worker probe (got: ${ready:0:120})"; exit 1 ;;
+          esac
           echo "preview healthy: $URL"
 
       - name: Comment the preview URL

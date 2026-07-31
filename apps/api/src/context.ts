@@ -105,6 +105,14 @@ export interface AppDeps {
    *  edge entry injects a Durable Object backplane. */
   backplane?: Backplane
   baseUrl: string
+  /** The commit this build was cut from, echoed by /healthz.
+   *
+   *  Exists so "what is actually running?" is answerable from OUTSIDE the deploy pipeline. A
+   *  deploy can fail while its CI job is read as green — the job that ships it is one step among
+   *  several, and a transient registry error there leaves the previous worker serving with
+   *  nothing about the running system to say so. That happened: a fix sat undeployed for two
+   *  hours while its symptoms were debugged against code that was never live. Unset ⇒ "dev". */
+  buildId?: string
   /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
   /** Passphrase for encrypting stored third-party secrets at rest (GitHub PATs).
@@ -353,7 +361,7 @@ export function buildContext(deps: AppDeps) {
       })
       .catch(logEnqueueError("webhook", a, event))
     // The connected Slack App's channel — a top-level card for artifact-lifecycle events
-    // (publish / proposal), gated inside the helper on visibility + connected channel + slackPost.
+    // (publish / proposal), gated inside the helper on visibility + the channel subscriptions.
     // Skipped entirely when no Slack app is configured on this instance (no wasted lookup).
     const channel = deps.slack
       ? enqueueSlackChannelEvent(meta, deps.baseUrl, a, event, data)

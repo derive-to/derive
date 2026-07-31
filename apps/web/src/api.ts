@@ -163,6 +163,8 @@ export interface BootstrapPayload {
   notifications: Notification[]
   unread: number
 }
+/** A Slack channel subscription. Generated from the OpenAPI spec. */
+export type SlackSubscription = components["schemas"]["SlackSubscription"]
 /** The workspace's billing truth: plan, Stripe status, seats, storage. Hand-declared:
  *  routes/billing.ts is plain Hono (no OpenAPI contract — a fast-moving internal
  *  surface, not the documented public API), matching this file's other
@@ -1026,11 +1028,9 @@ export const api = {
   openBillingPortal: (): Promise<{ url: string }> =>
     f("/v1/billing/portal", { ...opts({}), method: "POST" }).then(j),
 
-  // Slack App: status, set default channel, disconnect. Connect is a redirect to
+  // Slack App: status, disconnect, per-user prefs. Connect is a redirect to
   // /v1/slack/install (a full-page navigation, not a fetch).
   getSlack: (): Promise<SlackStatus> => f("/v1/slack", opts()).then(j),
-  setSlackChannel: (default_channel: string | null): Promise<{ default_channel: string | null }> =>
-    f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
   disconnectSlack: (): Promise<void> =>
     f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
   setSlackDm: (slack_dm: boolean): Promise<{ slack_dm: boolean }> =>
@@ -1038,6 +1038,28 @@ export const api = {
   sendSlackTestDm: (): Promise<{ ok: boolean }> =>
     f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
   // Link is a redirect to /v1/slack/link (full-page navigation); only unlink is a fetch.
+  listSlackSubscriptions: (): Promise<{
+    subscriptions: SlackSubscription[]
+    event_options: string[]
+  }> => f("/v1/slack/subscriptions", opts()).then(j),
+  createSlackSubscription: (body: {
+    channel_id: string
+    channel_name?: string
+    collection?: string
+    events?: string[]
+    authors?: "all" | "human" | "agent"
+  }): Promise<SlackSubscription> => f("/v1/slack/subscriptions", opts(body)).then(j),
+  updateSlackSubscription: (
+    id: string,
+    body: { events?: string[]; authors?: "all" | "human" | "agent"; active?: boolean },
+  ): Promise<SlackSubscription> =>
+    f(`/v1/slack/subscriptions/${id}`, { ...opts(body), method: "PATCH" }).then(j),
+  deleteSlackSubscription: (id: string): Promise<void> =>
+    f(`/v1/slack/subscriptions/${id}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+  listSlackChannels: (): Promise<{ channels: { id: string; name: string }[] }> =>
+    f("/v1/slack/channels", opts()).then(j),
   unlinkSlack: (): Promise<void> =>
     f("/v1/slack/link", { method: "DELETE", credentials: "include" }).then(() => undefined),
 
@@ -1139,7 +1161,8 @@ export const api = {
       credentials: "include",
     }).then(() => undefined),
 
-  listWebhooks: (): Promise<{ webhooks: Webhook[] }> => f("/v1/webhooks", opts()).then(j),
+  listWebhooks: (): Promise<{ webhooks: Webhook[]; event_options: string[] }> =>
+    f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {
     url: string
     kind: "generic" | "slack"

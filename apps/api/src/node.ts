@@ -415,6 +415,9 @@ const gateway = modelGateway()
 
 const app = createApp({
   meta,
+  // Self-host: whatever the image was built from. Docker builds can pass it; a source run
+  // reports "dev". Same contract as the edge — /healthz answers "what is running".
+  buildId: process.env.DERIVE_BUILD_SHA,
   // The ATTENDED path only. Unattended runs still resolve their own credential per run through
   // the payer chain — this key never becomes the answer to "who pays" for queued work.
   callModel: gateway ? openAiCompatModel(gateway) : undefined,

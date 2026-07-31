@@ -88,6 +88,9 @@ export interface Env {
   // Postgres and DB (D1) sits idle (the binding stays because the runtime requires
   // every declared binding to resolve). Unbound ⇒ D1 is the store (the default).
   HYPERDRIVE?: Hyperdrive
+  /** The commit this worker was deployed from, set by `wrangler deploy --var` in CI. Absent on
+   *  a hand-run deploy, which then reports "dev" — honest rather than wrong. */
+  BUILD_SHA?: string
   BUCKET: R2Bucket
   // Optional semantic search: Workers AI embeddings (bge-m3) for the dense arm, stored in pgvector
   // in the Hyperdrive Postgres. Bind AI (+ HYPERDRIVE) to add the dense/hybrid arm; omit ⇒ search
@@ -280,6 +283,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // had omitted it, so operator-token auth (reindex, and any DERIVE_TOKEN automation)
         // was dead on prod. Undefined when unset ⇒ isToken stays false, as before.
         token: env.DERIVE_TOKEN,
+        buildId: env.BUILD_SHA,
         // ATTENDED chat needs a model here too. Without it the Chat tab renders, accepts a
         // message, and answers "no model is configured" — the surface works and the product
         // does not. Same three vars as self-host, delivered as Worker secrets. Unattended runs

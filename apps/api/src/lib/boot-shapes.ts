@@ -21,7 +21,6 @@ export const OrgSettings = z
     githubPreviewLink: z
       .boolean()
       .describe("When true, add a preview link to the linked GitHub PR."),
-    slackPost: z.boolean().describe("When true, post events to Slack."),
     // The access a NEW publish lands with (see access-model.md): the three
     // single-purpose fields. Factory default is the team draft — member / none / none.
     defaultWorkspaceAccess: z

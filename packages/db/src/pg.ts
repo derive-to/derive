@@ -72,6 +72,7 @@ import type {
   NewSession,
   NewSessionMessage,
   NewSignupAttribution,
+  NewSlackSubscription,
   NewVersion,
   NewVersionData,
   NewView,
@@ -100,7 +101,9 @@ import type {
   SessionRecord,
   SessionState,
   SignupAttributionRecord,
+  SlackAuthorFilter,
   SlackInstallRecord,
+  SlackSubscriptionRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   SubscriptionRecord,
@@ -189,6 +192,7 @@ import {
   sessionMessage,
   signupAttribution,
   slackInstall,
+  slackSubscription,
   slackThreadLink,
   slackUserLink,
   subscription,
@@ -2517,6 +2521,8 @@ export class PgMetaStore implements MetaStore {
     return await this.db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId))
   }
   async deleteSlackInstall(orgId: string): Promise<void> {
+    // See the repos.ts twin: disconnect forgets where to post, not just how.
+    await this.db.delete(slackSubscription).where(eq(slackSubscription.org_id, orgId))
     await this.db.delete(slackInstall).where(eq(slackInstall.org_id, orgId))
   }
   async getModelCredential(
@@ -2562,12 +2568,21 @@ export class PgMetaStore implements MetaStore {
       .from(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
   }
-  async getSlackThreadLinkByThread(threadId: string): Promise<SlackThreadLinkRecord | null> {
+  async getSlackThreadLink(
+    threadId: string,
+    channel: string,
+  ): Promise<SlackThreadLinkRecord | null> {
     const rows = await this.db
       .select()
       .from(slackThreadLink)
-      .where(eq(slackThreadLink.thread_id, threadId))
+      .where(and(eq(slackThreadLink.thread_id, threadId), eq(slackThreadLink.channel, channel)))
     return rows[0] ?? null
+  }
+  async listSlackThreadLinksByThread(threadId: string): Promise<SlackThreadLinkRecord[]> {
+    return await this.db
+      .select()
+      .from(slackThreadLink)
+      .where(eq(slackThreadLink.thread_id, threadId))
   }
   async getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null> {
     const rows = await this.db
@@ -2577,11 +2592,89 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
   async setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void> {
-    const { thread_id: _t, created_at: _c, ...set } = l
+    const { thread_id: _t, channel: _ch, created_at: _c, ...set } = l
     await this.db
       .insert(slackThreadLink)
       .values(l)
-      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .onConflictDoUpdate({ target: [slackThreadLink.thread_id, slackThreadLink.channel], set })
+  }
+  async listSlackSubscriptions(orgId: string): Promise<SlackSubscriptionRecord[]> {
+    return await this.db
+      .select()
+      .from(slackSubscription)
+      .where(eq(slackSubscription.org_id, orgId))
+      .orderBy(desc(slackSubscription.created_at))
+  }
+  async upsertSlackSubscription(sub: NewSlackSubscription): Promise<SlackSubscriptionRecord> {
+    const row = {
+      scope_kind: "workspace" as const,
+      scope_id: "",
+      events: "*",
+      authors: "all" as const,
+      active: 1 as const,
+      channel_name: null,
+      created_by: null,
+      ...sub,
+    }
+    // Identity and provenance are not editable by an upsert — a second admin re-subscribing a
+    // channel must not re-stamp who created it.
+    const { id: _i, org_id: _o, created_by: _c, ...set } = row
+    await this.db
+      .insert(slackSubscription)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          slackSubscription.org_id,
+          slackSubscription.channel_id,
+          slackSubscription.scope_kind,
+          slackSubscription.scope_id,
+        ],
+        set,
+      })
+    const rows = await this.db
+      .select()
+      .from(slackSubscription)
+      .where(
+        and(
+          eq(slackSubscription.org_id, row.org_id),
+          eq(slackSubscription.channel_id, row.channel_id),
+          eq(slackSubscription.scope_kind, row.scope_kind),
+          eq(slackSubscription.scope_id, row.scope_id),
+        ),
+      )
+    const found = rows[0]
+    if (!found) throw new Error("slack subscription upsert did not persist")
+    return found
+  }
+  async updateSlackSubscription(
+    id: string,
+    orgId: string,
+    fields: {
+      events?: string
+      authors?: SlackAuthorFilter
+      active?: 0 | 1
+      channel_name?: string | null
+    },
+  ): Promise<SlackSubscriptionRecord | null> {
+    await this.db
+      .update(slackSubscription)
+      .set(fields)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+    const rows = await this.db
+      .select()
+      .from(slackSubscription)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+    return rows[0] ?? null
+  }
+  async deleteSlackSubscription(id: string, orgId: string): Promise<void> {
+    await this.db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+  }
+  async deleteSlackSubscriptionsByChannel(orgId: string, channelId: string): Promise<void> {
+    await this.db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.org_id, orgId), eq(slackSubscription.channel_id, channelId)))
   }
   async getSlackUserLinkBySlackId(
     teamId: string,

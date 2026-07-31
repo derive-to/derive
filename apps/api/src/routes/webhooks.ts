@@ -72,8 +72,16 @@ export const webhookRoutes = (ctx: AppContext) => {
       summary: "List the workspace's webhooks (Admin only).",
       responses: {
         200: {
-          description: "The workspace's webhooks, without their signing secrets.",
-          content: { "application/json": { schema: z.object({ webhooks: z.array(Webhook) }) } },
+          description:
+            "The workspace's webhooks, without their signing secrets, plus every event one can subscribe to — the server owns that list so the picker can't drift from it.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                webhooks: z.array(Webhook),
+                event_options: z.array(z.enum(WEBHOOK_EVENTS)),
+              }),
+            },
+          },
         },
       },
     }),
@@ -81,7 +89,7 @@ export const webhookRoutes = (ctx: AppContext) => {
       const org = await requireWorkspace(c, "manage")
       if (org instanceof Response) return bail(org)
       const hooks = await meta.listWebhooks(org)
-      return c.json({ webhooks: hooks.map(publicWebhook) })
+      return c.json({ webhooks: hooks.map(publicWebhook), event_options: [...WEBHOOK_EVENTS] })
     },
   )
 

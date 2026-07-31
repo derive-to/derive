@@ -38,6 +38,9 @@ export const approveProposalAction = async (
   proposal: ProposalRecord,
   approver: string | null,
   note: string | null,
+  /** The decider's stable id. `approver` is a display name and can't be classified; this is
+   *  what tells a subscription's human/agent filter who acted. */
+  actorId?: string | null,
 ): Promise<VersionRecord> => {
   const { meta, blobs, bus, notify, notifyRender, search } = deps
   const version = await approveProposal(meta, blobs, proposal, approver, note)
@@ -52,6 +55,7 @@ export const approveProposalAction = async (
     proposal_id: proposal.id,
     version: version.n,
     approver,
+    actor_id: actorId ?? null,
   })
   return version
 }
@@ -63,6 +67,8 @@ export const requestChangesAction = async (
   proposal: ProposalRecord,
   reviewer: string | null,
   note: string | null,
+  /** As approveProposalAction — the decider's stable id, for the author filter. */
+  actorId?: string | null,
 ): Promise<void> => {
   const { meta, bus, notify } = deps
   await meta.decideProposal(proposal.id, {
@@ -75,5 +81,9 @@ export const requestChangesAction = async (
   // The fix didn't land — reopen the threads it had staged as addressed.
   for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
     bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })
-  await notify(artifact, "proposal.changes_requested", { proposal_id: proposal.id, reviewer })
+  await notify(artifact, "proposal.changes_requested", {
+    proposal_id: proposal.id,
+    reviewer,
+    actor_id: actorId ?? null,
+  })
 }

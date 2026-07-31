@@ -59,6 +59,12 @@ const renderProse = (s: string): string =>
     .replace(/__(.+?)__/g, "*$1*")
     // Markdown's strikethrough is `~~x~~`; mrkdwn's is a single tilde.
     .replace(/~~(.+?)~~/g, "~$1~")
+    // Markdown's ``` fence takes a language; mrkdwn's does not, and renders the tag as the code
+    // block's FIRST LINE — a ```ts block arrived with a stray "ts" sitting above the code. Only
+    // a line that is ENTIRELY a fence plus an identifier is an opening fence, so a line of code
+    // that happens to begin with backticks is left alone. The language is dropped rather than
+    // kept because mrkdwn has no syntax highlighting to give it to.
+    .replace(/^```[a-zA-Z0-9+#._-]+[ \t]*$/gm, "```")
     .replace(/^#{1,6}\s+(.+)$/gm, "*$1*")
     .replace(/^\s*[-*]\s+/gm, "• ")
     // Restore a line-leading block quote, which mrkdwn supports and the escape pass above had
