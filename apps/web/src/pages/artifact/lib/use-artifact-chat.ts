@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useUserEvent } from "@/lib/use-user-events"
 import type { ChatMessage } from "../artifact-chat"
 
 // The data half of the chat rail. Deliberately plain fetch + local state rather than a query
@@ -28,16 +29,35 @@ export function useArtifactChat(shortId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [state, setState] = useState<string>("answered")
   const [error, setError] = useState<string | null>(null)
+  // The reply as it is being written, assembled from `session.delta`. Purely a VIEW: the server
+  // persists nothing until the turn settles, and the transcript that then arrives replaces this.
+  // Cleared the moment a real agent message lands, so the provisional text and the persisted
+  // one can never both be on screen saying the same thing.
+  const [streaming, setStreaming] = useState("")
+  // Highest slice applied. Slices are ordered, but a reconnect can redeliver one — ignoring
+  // anything not strictly newer makes that a no-op instead of duplicated text.
+  const lastSeq = useRef(0)
 
-  const refresh = useCallback(async (id: string) => {
-    try {
-      const p = await json<SessionPayload>(`/v1/sessions/${id}`)
-      setMessages(p.messages ?? [])
-      setState(p.session?.state ?? "answered")
-    } catch {
-      /* a poll that misses is not worth surfacing — the next one covers it */
-    }
+  const clearStream = useCallback(() => {
+    setStreaming("")
+    lastSeq.current = 0
   }, [])
+
+  const refresh = useCallback(
+    async (id: string) => {
+      try {
+        const p = await json<SessionPayload>(`/v1/sessions/${id}`)
+        const next = p.messages ?? []
+        setMessages(next)
+        setState(p.session?.state ?? "answered")
+        // The persisted reply is here, so the provisional text has been superseded.
+        if (next.some((m) => m.author_kind === "agent")) clearStream()
+      } catch {
+        /* a poll that misses is not worth surfacing — the next one covers it */
+      }
+    },
+    [clearStream],
+  )
 
   // Reset when the document changes. `shortId` MUST be in the deps: the route reuses this
   // component instance across /artifacts/$ref changes, so without it doc A's session id
@@ -105,11 +125,54 @@ export function useArtifactChat(shortId: string) {
     if (sessionId) void refresh(sessionId)
   }, [sessionId, refresh])
 
+  // `working` is the server's own view of whose turn it is, not a local flag that can desync —
+  // a reload mid-turn still shows the spinner because the SESSION says working.
+  const working = state === "working" || state === "open"
+  // Subscribe only while a turn is actually in flight. That is also what tells the SERVER
+  // somebody is watching: the first slice is published with a receipt, and a turn whose slice
+  // reaches nobody stops publishing for the rest of the run.
+  const live = !!sessionId && working
+
+  useUserEvent(
+    "session.delta",
+    (e) => {
+      let p: { session_id?: string; seq?: number; text?: string }
+      try {
+        p = JSON.parse(e.data)
+      } catch {
+        return
+      }
+      if (p.session_id !== sessionId || typeof p.text !== "string") return
+      const seq = typeof p.seq === "number" ? p.seq : lastSeq.current + 1
+      if (seq <= lastSeq.current) return // a redelivery after a reconnect
+      lastSeq.current = seq
+      setStreaming((s) => s + p.text)
+    },
+    live,
+  )
+
+  // The turn ended. Read the transcript NOW rather than waiting out the poll — this is the
+  // event the whole streaming path builds to, and it is what swaps the provisional text for
+  // the persisted reply.
+  useUserEvent(
+    "session.settled",
+    (e) => {
+      try {
+        if ((JSON.parse(e.data) as { session_id?: string }).session_id !== sessionId) return
+      } catch {
+        return
+      }
+      if (sessionId) void refresh(sessionId)
+    },
+    live,
+  )
+
   return {
     messages,
-    // `working` is the server's own view of whose turn it is, not a local flag that can
-    // desync — a reload mid-turn still shows the spinner because the SESSION says working.
-    working: state === "working" || state === "open",
+    working,
+    /** The reply being written, or "" when there is nothing in flight. Render it as a
+     *  provisional agent bubble; it is replaced by the real message when the turn settles. */
+    streaming,
     error,
     send,
     poll,
