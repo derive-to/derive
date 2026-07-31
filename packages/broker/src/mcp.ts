@@ -397,7 +397,7 @@ export class McpBroker implements ToolBroker {
       // Namespace by host so two servers exposing `search` do not collide, and so the run's tool
       // list shows an operator WHERE each tool comes from.
       const host = safeHost(parsed.url)
-      for (const t of tools) out.push({ ...t, name: `${host}.${t.name}` })
+      for (const t of tools) out.push({ ...t, name: toolName(host, t.name) })
     }
     return out
   }
@@ -407,8 +407,7 @@ export class McpBroker implements ToolBroker {
   async execute(opts: { ref: string; tool: string; args: unknown }): Promise<unknown> {
     const parsed = parseMcpRef(opts.ref)
     if (!parsed) throw new Error("not an MCP connection")
-    const host = safeHost(parsed.url)
-    const bare = opts.tool.startsWith(`${host}.`) ? opts.tool.slice(host.length + 1) : opts.tool
+    const bare = stripNamespace(safeHost(parsed.url), opts.tool)
     const body = await this.rpc(opts.ref, parsed.url, "tools/call", {
       name: bare,
       arguments: opts.args ?? {},
@@ -430,3 +429,65 @@ const safeHost = (url: string): string => {
     return "mcp"
   }
 }
+
+/**
+ * WHAT A MODEL PROVIDER WILL ACCEPT AS A TOOL NAME: `^[a-zA-Z0-9_-]{1,64}$`. Anthropic and
+ * OpenAI publish the same rule, and it is the whole reason this function exists.
+ *
+ * The name used to be `${host}.${tool}`, which breaks that contract twice over: a DOT is not in
+ * the allowed set, and the host half is attacker-and-DNS-controlled, so the total length is
+ * unbounded — a real server under test produced a 74-character name. Neither problem is visible
+ * from inside this repo, because every test that names a tool uses a short `localhost_PORT` host
+ * and no test calls a real provider. Deployed, it meant a run could not use an MCP tool at all:
+ * the model either sees the request rejected or answers with a name that no longer matches the
+ * least-privilege list, and a mismatch reads as "tool not allowed" and burns the run's turns.
+ *
+ * Truncate the NAMESPACE, never the tool: the tool half is what the model reasons about and what
+ * `stripNamespace` must hand back to the server verbatim. A truncated namespace keeps a short
+ * hash of the full host so two servers that share a prefix stay distinct.
+ */
+const MAX_TOOL_NAME = 64
+const NAME_OK = /^[a-zA-Z0-9_-]{1,64}$/
+
+/** A short, stable discriminator for a namespace too long to keep whole. */
+const shortHash = (s: string): string => {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(36).slice(0, 6)
+}
+
+export const toolName = (host: string, tool: string): string => {
+  // The tool half is inviolable. A server that publishes a name longer than the whole budget is
+  // beyond namespacing, so hand it back trimmed rather than emit something illegal.
+  const bare = tool.replace(/[^a-zA-Z0-9_-]+/g, "_")
+  if (bare.length >= MAX_TOOL_NAME) return bare.slice(0, MAX_TOOL_NAME)
+  const room = MAX_TOOL_NAME - bare.length - 1 // the joining underscore
+  const ns =
+    host.length <= room ? host : `${host.slice(0, Math.max(0, room - 7))}_${shortHash(host)}`
+  return ns ? `${ns}_${bare}` : bare
+}
+
+/**
+ * Undo `toolName`, so the server sees the name it published.
+ *
+ * Deterministic without knowing how long the namespace ended up: either the host survived whole
+ * and the name starts with it, or it was truncated — and a truncated namespace always ends in
+ * `_<hash of the full host>`, which is computable from the host alone. Splitting on the last
+ * separator instead would corrupt any tool whose own name contains one.
+ *
+ * Falls through unchanged for a name carrying no namespace, and still accepts the old dotted
+ * form so a claim already in flight when this shipped keeps working.
+ */
+export const stripNamespace = (host: string, name: string): string => {
+  if (host && name.startsWith(`${host}_`)) return name.slice(host.length + 1)
+  if (host && name.startsWith(`${host}.`)) return name.slice(host.length + 1)
+  const marker = `_${shortHash(host)}_`
+  const at = name.indexOf(marker)
+  return at >= 0 ? name.slice(at + marker.length) : name
+}
+
+/** Exported for the test that holds every generated name to the providers' published pattern. */
+export const isProviderLegalToolName = (name: string): boolean => NAME_OK.test(name)

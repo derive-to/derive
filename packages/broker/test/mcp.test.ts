@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { LocalBroker, refRouter } from "../src/index"
-import { encodeMcpRef, McpBroker, parseMcpRef, pinTools } from "../src/mcp"
+import {
+  encodeMcpRef,
+  isProviderLegalToolName,
+  McpBroker,
+  parseMcpRef,
+  pinTools,
+  stripNamespace,
+  toolName,
+} from "../src/mcp"
 
 // The MCP broker: connect any Model Context Protocol server as a source.
 //
@@ -85,7 +93,9 @@ describe("MCP broker: connect + list + call", () => {
     const tools = await broker.toolsFor([link.ref])
     // Namespaced so two servers exposing `search` cannot collide, and so an operator reading a
     // run's tool list can see WHERE each tool came from.
-    expect(tools.map((t) => t.name)).toEqual(["docs_example_com.search", "docs_example_com.fetch"])
+    // Underscore, not a dot: a dot is not in the `^[a-zA-Z0-9_-]{1,64}$` a model provider
+    // accepts for a tool name, so the dotted form could never be offered to a real model.
+    expect(tools.map((t) => t.name)).toEqual(["docs_example_com_search", "docs_example_com_fetch"])
     expect(tools[0]?.description).toBe("Search the docs.")
   })
 
@@ -420,5 +430,58 @@ describe("MCP broker: round trips", () => {
     const added = server.calls.slice(afterConnect).map((c) => c.method)
     // Two listings, two calls — no repeated initialize.
     expect(added).toEqual(["tools/list", "tools/list"])
+  })
+})
+
+// TOOL NAMES MUST BE SOMETHING A MODEL PROVIDER WILL ACCEPT.
+//
+// Anthropic and OpenAI both publish `^[a-zA-Z0-9_-]{1,64}$` for a tool/function name. The old
+// scheme was `${host}.${tool}`, which breaks it twice: a dot is not in the allowed set, and the
+// host half comes from DNS, so length is unbounded.
+//
+// Nothing in this repo could see it. Every other test here uses a short `localhost_PORT` host,
+// and no test calls a real provider — so the suite was green while a deployed run could not use
+// an MCP tool at all. The host below is the real one from the run that exposed it: it produced a
+// 74-character name.
+describe("tool names are legal for a model provider", () => {
+  const HOSTS = [
+    "localhost_8940",
+    "mcp_deepwiki_com",
+    "illustration_push_conjunction_editing_trycloudflare_com",
+    "a".repeat(300),
+  ]
+  const TOOLS = ["search", "get_current_weather", "a_very_long_tool_name_that_a_server_published"]
+
+  it("every host/tool combination matches the published pattern", () => {
+    for (const h of HOSTS)
+      for (const t of TOOLS) {
+        const name = toolName(h, t)
+        expect(isProviderLegalToolName(name), `${h} + ${t} -> ${name}`).toBe(true)
+      }
+  })
+
+  it("the real 74-character case is now legal, and keeps the tool readable", () => {
+    const name = toolName(
+      "illustration_push_conjunction_editing_trycloudflare_com",
+      "get_current_weather",
+    )
+    expect(name.length).toBeLessThanOrEqual(64)
+    expect(name).not.toContain(".")
+    expect(name.endsWith("get_current_weather")).toBe(true)
+  })
+
+  it("round-trips: whatever the model is offered strips back to what the server published", () => {
+    for (const h of HOSTS)
+      for (const t of TOOLS) expect(stripNamespace(h, toolName(h, t)), `${h} + ${t}`).toBe(t)
+  })
+
+  it("two servers sharing a long prefix stay distinct", () => {
+    const a = `${"x".repeat(60)}_alpha_com`
+    const b = `${"x".repeat(60)}_beta_com`
+    expect(toolName(a, "search")).not.toBe(toolName(b, "search"))
+  })
+
+  it("still accepts the old dotted name, so a claim in flight keeps working", () => {
+    expect(stripNamespace("mcp_deepwiki_com", "mcp_deepwiki_com.ask_question")).toBe("ask_question")
   })
 })

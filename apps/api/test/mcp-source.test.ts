@@ -101,7 +101,7 @@ describe("MCP as a source: connect, list, call", () => {
     // answers for this connection.
     const fallback = new LocalBroker()
     const tools = await toolsForRun(meta, fallback, "default", [created.body.id as string])
-    expect(tools.map((t) => t.def.name)).toEqual([`${mcp.host}.search`])
+    expect(tools.map((t) => t.def.name)).toEqual([`${mcp.host}_search`])
 
     const out = await callTool({
       meta,
@@ -110,7 +110,7 @@ describe("MCP as a source: connect, list, call", () => {
       encryptionKey: undefined,
       allowed: tools,
       subject: "this run",
-      tool: `${mcp.host}.search`,
+      tool: `${mcp.host}_search`,
       args: { q: "hello" },
     })
     expect(out.ok).toBe(true)
