@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { useRef, useState } from "react"
 import { type ArtifactMember, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -17,11 +18,17 @@ import {
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
 import { getInitials } from "@/lib/initials"
-import { workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
+import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
+
+// A workspace on the free tier keeps this many editor seats before an upgrade is
+// required — mirrors packages/core/src/billing.ts's FREE_SEAT_LIMIT. Not imported
+// at runtime (web never imports @derive/core — see .dependency-cruiser.mjs), so
+// the number is pinned here as a display-only constant.
+const FREE_SEAT_LIMIT = 3
 
 // Who's in the workspace and what they can do. Admins invite by @handle (a
 // discoverable-people typeahead, mirroring ShareDialog) or full email, change
@@ -29,6 +36,7 @@ import { SettingsSection } from "./settings-section"
 export function MembersSection({ meId }: { meId: string }) {
   const qc = useQueryClient()
   const { data: ws, isPending, isError, refetch } = useQuery(workspaceQuery())
+  const { data: billing } = useQuery(billingQuery())
   const [email, setEmail] = useState("")
   const [addRole, setAddRole] = useState<Role>("commenter")
   // A ref, not just the mutation's isPending: state updates are batched/async, so a
@@ -140,6 +148,25 @@ export function MembersSection({ meId }: { meId: string }) {
           </Button>
         </form>
       )}
+
+      {billing &&
+        billing.tier === "free" &&
+        !billing.subscribed &&
+        billing.seats >= FREE_SEAT_LIMIT &&
+        (addRole === "editor" || addRole === "owner") && (
+          <p data-testid="members-seat-warning" className="text-sm text-muted-foreground">
+            {billing.beta
+              ? "Adding a 4th editor will require the Team plan once billing starts, $15 per editor for everyone. "
+              : "Free covers 3 editor seats. Upgrading to Team adds unlimited editors, $15 per editor for everyone. "}
+            <Link
+              to="/settings/$section"
+              params={{ section: "billing" }}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              See plans
+            </Link>
+          </p>
+        )}
 
       {isPending ? (
         <SettingsListSkeleton />
