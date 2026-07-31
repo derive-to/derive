@@ -49,7 +49,7 @@ export const billingRoutes = (ctx: AppContext) => {
     const healed = await syncSeats({ meta, billing }, org, { sub, seats })
     const subOut = healed ?? sub
     const state = await billingState(org, { sub: subOut, seatCount: seats })
-    const beta = state.whiteLabelEntitled && !state.subscriptionActive
+    const beta = state.betaGrace
     return c.json({
       tier: state.tier,
       status: subOut?.status ?? null,

@@ -34,6 +34,7 @@ describe("resolveBillingState", () => {
       canPublishApprove: true,
       storageCapBytes: 123,
       whiteLabelEntitled: true,
+      betaGrace: true,
     })
   })
 
@@ -133,5 +134,27 @@ describe("resolveBillingState", () => {
     })
     expect(s.canPublishApprove).toBe(true)
     expect(s.whiteLabelEntitled).toBe(true)
+  })
+
+  it("betaGrace is true only pre-enforcement without an active subscription", () => {
+    const now = new Date("2026-07-30T00:00:00Z")
+    const pre = resolveBillingState({ subscription: null, seatCount: 1, now, enforceAt: null })
+    expect(pre.betaGrace).toBe(true)
+
+    const enforced = resolveBillingState({
+      subscription: null,
+      seatCount: 1,
+      now,
+      enforceAt: new Date("2026-07-01T00:00:00Z"),
+    })
+    expect(enforced.betaGrace).toBe(false)
+
+    const active = resolveBillingState({
+      subscription: sub({ status: "active" }),
+      seatCount: 5,
+      now,
+      enforceAt: null,
+    })
+    expect(active.betaGrace).toBe(false)
   })
 })
