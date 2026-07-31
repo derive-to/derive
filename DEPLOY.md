@@ -331,6 +331,22 @@ wrangler secret put DERIVE_MODEL_NAME       # the provider's own model id
 This key pays for every attended turn on the deployment, so it is an operator decision
 rather than a per-user one.
 
+**Streaming: the gateway should speak SSE, but need not.** When a browser is watching an
+attended reply, the request carries `stream: true` and `stream_options: {include_usage: true}`
+(the latter is what makes a streamed turn report cost at all — a stream otherwise omits usage),
+and the answer is rendered as it arrives. A gateway that rejects those fields, or answers with
+ordinary JSON anyway, is **retried once without them** and the turn completes normally; the
+person just sees the reply appear all at once. So streaming is an enhancement, never a
+deployment requirement. Unattended runs and automations never ask for a stream at all. To check
+whether yours streams:
+
+```
+curl -sN "$DERIVE_MODEL_BASE_URL/chat/completions" \
+  -H "authorization: Bearer $DERIVE_MODEL_API_KEY" -H 'content-type: application/json' \
+  -d '{"model":"'"$DERIVE_MODEL_NAME"'","stream":true,"stream_options":{"include_usage":true},
+       "messages":[{"role":"user","content":"hi"}]}'
+```
+
 **It pays for unattended runs too**, whenever they execute in-process (`DERIVE_LOOP_RUNS=1`):
 the loop substrate takes the same gateway, and the schedule materializer then skips the payer
 chain, because on a deployment that holds the key there is nothing for a chain to resolve and

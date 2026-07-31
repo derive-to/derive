@@ -402,3 +402,102 @@ describe("streaming", () => {
     expect(turn.text).toBe("beforeafter")
   })
 })
+
+describe("streaming failure modes", () => {
+  it("a stream that just stops is a FAILURE, not a short answer", async () => {
+    // No finish_reason, no [DONE] — a gateway died, a proxy timed out, the last chunk was
+    // dropped. The buffered path throws here (res.json() on a truncated body), and the loop
+    // reads that as retryable. Returning the partial text as a finished reply would both
+    // disable the truncation guard and launder a retryable fault into an unretryable one.
+    const { impl } = streamImpl([
+      JSON.stringify({ choices: [{ delta: { content: "Here is the fir" } }] }),
+    ])
+    await expect(
+      model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} }),
+    ).rejects.toThrow(/terminal frame/)
+  })
+
+  it("accepts a stream terminated by [DONE] alone", async () => {
+    const { impl } = streamImpl([
+      JSON.stringify({ choices: [{ delta: { content: "done properly" } }] }),
+      "[DONE]",
+    ])
+    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
+    expect(turn.text).toBe("done properly")
+  })
+
+  it("reads an event whose first line is not data: (event:/id:/comment)", async () => {
+    // Spec-legal framing that a proxy or self-hosted gateway really does emit. Testing
+    // startsWith on the whole frame dropped these silently and yielded an empty reply.
+    const wire =
+      `event: message\ndata: ${JSON.stringify({ choices: [{ delta: { content: "hello " } }] })}\n\n` +
+      `id: 42\ndata: ${JSON.stringify({ choices: [{ delta: { content: "world" } }] })}\n\n` +
+      `: keep-alive\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`
+    const impl = (async () =>
+      new Response(new TextEncoder().encode(wire), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })) as unknown as typeof fetch
+    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
+    expect(turn.text).toBe("hello world")
+  })
+
+  it("keeps a tool call's arguments on their OWN call when a fragment omits index", async () => {
+    // Defaulting a missing index to 0 stapled one call's arguments onto another, so BOTH tools
+    // then ran wrong: one with a foreign input, one with {}.
+    const { impl } = streamImpl([
+      JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 0, id: "t1", function: { name: "a" } }] } }],
+      }),
+      JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ index: 1, id: "t2", function: { name: "b" } }] } }],
+      }),
+      JSON.stringify({
+        choices: [{ delta: { tool_calls: [{ function: { arguments: '{"x":1}' } }] } }],
+      }),
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+      "[DONE]",
+    ])
+    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
+    expect(turn.toolUses).toEqual([
+      { id: "t1", name: "a", input: {} },
+      { id: "t2", name: "b", input: { x: 1 } },
+    ])
+  })
+
+  it("falls back to a buffered request when the gateway refuses to stream", async () => {
+    // "OpenAI-compatible" is a wire format, not a guarantee: plenty of gateways 400 on the
+    // unknown stream_options field. Streaming must never break a request that worked before.
+    const bodies: Record<string, unknown>[] = []
+    const impl = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      bodies.push(body)
+      if (body.stream) return new Response("unknown field stream_options", { status: 400 })
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "buffered reply" }, finish_reason: "stop" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }) as unknown as typeof fetch
+    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0]?.stream).toBe(true)
+    expect(bodies[1]?.stream).toBeUndefined()
+    expect(turn.text).toBe("buffered reply") // the person loses the animation, not the answer
+  })
+
+  it("parses a JSON answer even when it was asked to stream", async () => {
+    // A gateway that ignores `stream` and replies with ordinary JSON. Parsing that as SSE finds
+    // no data: frames and would produce a silent empty reply.
+    const impl = (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "plain json" }, finish_reason: "stop" }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch
+    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
+    expect(turn.text).toBe("plain json")
+  })
+})

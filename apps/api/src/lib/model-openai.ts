@@ -86,15 +86,23 @@ interface StreamChunk {
  */
 async function readStream(res: Response, onDelta: (text: string) => void): Promise<CompletionBody> {
   const body = res.body
-  if (!body) return { choices: [{ message: { content: "" }, finish_reason: "stop" }] }
+  // No body at all is a broken response, not an empty answer. Returning a tidy "" here would
+  // hand the contract a finished, blank reply; the buffered branch throws on this, and the
+  // loop's retry is the right judgement for both.
+  if (!body) throw new Error("model stream had no body")
   const reader = body.getReader()
   const decode = new TextDecoder()
   let buffered = ""
   let text = ""
   let finish: string | undefined
   let usage: { cost?: unknown } | undefined
+  // Did the provider actually tell us the answer ENDED? See the throw at the bottom.
+  let sawTerminal = false
   // Keyed by the frame's `index` so two concurrent tool calls cannot interleave into one.
   const calls = new Map<number, { id?: string; name?: string; args: string }>()
+  // The last index we saw. A fragment that omits `index` continues the call it was already
+  // building — defaulting to 0 instead would staple its arguments onto an unrelated call.
+  let lastIndex = 0
 
   const emit = (chunk: string) => {
     try {
@@ -105,10 +113,23 @@ async function readStream(res: Response, onDelta: (text: string) => void): Promi
   }
 
   const handle = (frame: string) => {
-    if (!frame.startsWith("data:")) return
-    const payload = frame.slice(5).trim()
+    // An SSE event is a set of LINES, and only the `data:` ones carry payload. Testing
+    // `startsWith` on the whole frame drops any event that leads with `event:`, `id:` or a
+    // `:` comment — spec-legal shapes a proxy or self-hosted gateway really does emit — and
+    // silently yields an empty answer. Multiple `data:` lines in one event are joined with a
+    // newline, which is what the spec says they mean.
+    const payload = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .join("\n")
+      .trim()
+    if (!payload) return
     // The terminal sentinel, not JSON.
-    if (!payload || payload === "[DONE]") return
+    if (payload === "[DONE]") {
+      sawTerminal = true
+      return
+    }
     let parsed: StreamChunk
     try {
       parsed = JSON.parse(payload) as StreamChunk
@@ -118,14 +139,18 @@ async function readStream(res: Response, onDelta: (text: string) => void): Promi
     if (parsed.usage) usage = parsed.usage
     const choice = parsed.choices?.[0]
     if (!choice) return
-    if (choice.finish_reason) finish = choice.finish_reason
+    if (choice.finish_reason) {
+      finish = choice.finish_reason
+      sawTerminal = true
+    }
     const piece = choice.delta?.content
     if (piece) {
       text += piece
       emit(piece)
     }
     for (const t of choice.delta?.tool_calls ?? []) {
-      const i = t.index ?? 0
+      const i = t.index ?? lastIndex
+      lastIndex = i
       const slot = calls.get(i) ?? { args: "" }
       if (t.id) slot.id = t.id
       if (t.function?.name) slot.name = t.function.name
@@ -147,8 +172,25 @@ async function readStream(res: Response, onDelta: (text: string) => void): Promi
     }
     if (buffered.trim()) handle(buffered.trim())
   } finally {
-    reader.releaseLock()
+    // CANCEL, not just releaseLock. Releasing the lock leaves the underlying body un-cancelled,
+    // so the producer's teardown never runs and the subrequest is left open on workerd — the
+    // leak this `finally` was meant to prevent. cancel() releases the lock as part of its
+    // contract, so it covers both.
+    await reader.cancel().catch(() => {})
   }
+
+  // A STREAM THAT JUST STOPS IS A FAILURE, NOT A SHORT ANSWER. Without a terminal signal
+  // (`finish_reason`, or the `[DONE]` sentinel) the reply is simply however much arrived before
+  // the gateway died, a proxy timed out, or the final chunk was dropped. The buffered branch
+  // could never reach here — `res.json()` throws on a truncated body — and the loop reads that
+  // throw as a retryable model failure, which is the right judgement for both transports.
+  //
+  // Two things go wrong if this is allowed through. The truncation guard below keys on
+  // `finish_reason === "length"`, so a lost final frame silently disables the one check that
+  // stops a half-written document being treated as a finished reply. And a retryable transport
+  // fault gets laundered into a "the model answered" outcome that the contract then rejects as
+  // unretryable, killing the run instead of trying again.
+  if (!sawTerminal) throw new Error("model stream ended without a terminal frame")
 
   const toolCalls = [...calls.entries()]
     .sort(([a], [b]) => a - b)
@@ -292,35 +334,57 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
     // substrate, automations) keeps the exact behaviour — and a gateway that does not support
     // SSE is only ever asked for one when a caller actually wants deltas.
     const wantStream = typeof onDelta === "function"
-    const res = await doFetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${opts.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: opts.model,
-        max_tokens: opts.maxTokens ?? 8_000,
-        messages: [
-          { role: "system", content: system },
-          ...(messages as ModelMessage[]).flatMap(asMessages),
-        ],
-        ...(tools.length ? { tools: asTools(tools), tool_choice: "auto" } : {}),
-        // `stream_options` asks the gateway to send a final usage frame, which a stream
-        // otherwise omits — without it every streamed turn would report cost as unknown.
-        ...(wantStream ? { stream: true, stream_options: { include_usage: true } } : {}),
-      }),
-      signal: AbortSignal.timeout(120_000),
-    })
+    const send = (stream: boolean) =>
+      doFetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${opts.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: opts.model,
+          max_tokens: opts.maxTokens ?? 8_000,
+          messages: [
+            { role: "system", content: system },
+            ...(messages as ModelMessage[]).flatMap(asMessages),
+          ],
+          ...(tools.length ? { tools: asTools(tools), tool_choice: "auto" } : {}),
+          // `stream_options` asks the gateway to send a final usage frame, which a stream
+          // otherwise omits — without it every streamed turn would report cost as unknown.
+          ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
+        }),
+        signal: AbortSignal.timeout(120_000),
+      })
+
+    let res = await send(wantStream)
+    // STREAMING MUST NEVER MAKE A REQUEST FAIL THAT WOULD OTHERWISE HAVE SUCCEEDED.
+    //
+    // "OpenAI-compatible" is a wire format, not a guarantee: plenty of gateways this adapter
+    // exists to reach (older vLLM, some Azure api-versions, hand-rolled proxies) reject the
+    // unknown `stream_options` field, or SSE itself, with a 4xx. Without this retry the ONLY
+    // lane that asks for a stream — attended chat — would break on those deployments while
+    // every other lane kept working, which is a baffling thing to debug and a regression
+    // against behaviour that shipped fine before. One buffered retry costs a round trip on a
+    // request that already failed, and the person just loses the animation.
+    let streamed = wantStream
+    if (wantStream && !res.ok && res.status >= 400 && res.status < 500) {
+      res = await send(false)
+      streamed = false
+    }
     if (!res.ok) {
       // Thrown, not returned — the loop treats a failed model CALL as retryable, which is the
       // right judgement for a 429 or a 5xx. Same contract as the Anthropic client.
       throw new Error(`model call failed (${res.status}): ${(await res.text()).slice(0, 300)}`)
     }
+    // A gateway may also honour the request and answer with ordinary JSON anyway. Trust the
+    // content type over what we asked for: parsing a JSON body as SSE finds no `data:` frames
+    // and would yield a silent empty reply.
+    if (streamed && !(res.headers.get("content-type") ?? "").includes("text/event-stream"))
+      streamed = false
     // A streamed response is reassembled into the SAME shape the buffered branch parses below,
     // so everything after this point — truncation, tool calls, cost, `done` — is one code path
     // and cannot drift between streaming and non-streaming callers.
-    const body = wantStream
+    const body = streamed
       ? await readStream(res, onDelta as (t: string) => void)
       : ((await res.json()) as CompletionBody)
     const choice = body.choices?.[0]

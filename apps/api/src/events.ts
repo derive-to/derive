@@ -44,7 +44,9 @@ const DOMAIN_EVENTS = [
   // re-reads the transcript); the session stays `working`; not webhook-eligible.
   "session.progress",
   // A slice of the answer being written, for a reply the model is streaming. Emitted
-  // on the ASKER's `u:<id>` channel with `session_id`, a monotonic `seq`, and `text`.
+  // on the ASKER's `u:<id>` channel with `session_id`, a monotonic `seq`, `text`, and the
+  // `attempt` it belongs to — a reply the loop re-generates starts a new attempt, and a reader
+  // must REPLACE on one rather than append (see lib/session-stream.ts).
   //
   // UNLIKE ITS SIBLINGS THIS ONE CARRIES CONTENT rather than being a bare wake — which
   // is the point, since re-reading is the round trip streaming exists to avoid. It is

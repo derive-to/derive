@@ -40,24 +40,30 @@ describe("delta coalescing", () => {
 
   it("flushes on the size boundary mid-reply", async () => {
     const { sent, stream } = harness({ now: () => 0 })
-    const big = "x".repeat(DELTA_FLUSH_CHARS)
+    const big = "x".repeat(DELTA_FLUSH_CHARS * 2)
     await call(stream.wrap(emitting([big, "tail"])))
-    expect(sent).toMatchObject([{ seq: 1, text: big }])
+    // The size boundary fired mid-reply rather than everything waiting for the final flush.
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.seq).toBe(1)
+    expect(sent[0]?.text.length).toBeGreaterThanOrEqual(DELTA_FLUSH_CHARS)
     stream.flush()
-    expect(sent[1]).toMatchObject({ seq: 2, text: "tail" })
+    // Nothing is lost across the boundary: the slices concatenate to the whole reply. The split
+    // is not exactly at `big` because a marker-length tail is held back (see MARKER_HOLDBACK).
+    expect(sent.map((s) => s.text).join("")).toBe(`${big}tail`)
   })
 
   it("flushes on the age boundary when the model is slow", async () => {
     let t = 0
     const { sent, stream } = harness({ now: () => t, flushMs: 50 })
     const wrapped = stream.wrap((async ({ onDelta }) => {
-      onDelta?.("slow ")
+      onDelta?.("slow reply that is comfortably longer than the marker holdback ")
       t = 100 // the next token arrives well after the age boundary
-      onDelta?.("reply")
-      return { text: "slow reply", toolUses: [], costUsd: null, done: true }
+      onDelta?.("and then some more")
+      return { text: "x", toolUses: [], costUsd: null, done: true }
     }) as AgentLoopInput["callModel"])
     await call(wrapped)
-    expect(sent).toMatchObject([{ seq: 1, text: "slow reply" }])
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.text).toContain("slow reply that is comfortably longer")
   })
 
   it("never loses or reorders text, whatever the boundaries", async () => {
@@ -272,13 +278,13 @@ describe("the startup race", () => {
     const wrapped = stream.wrap((async ({ onDelta }) => {
       // Two misses — one short of going quiet — then somebody opens the page.
       for (let i = 0; i < 2; i++) {
-        onDelta?.("x")
+        onDelta?.("a chunk long enough to clear the holdback ")
         t += 100
         await Promise.resolve()
       }
       listeners = 1
       for (let i = 0; i < 6; i++) {
-        onDelta?.("y")
+        onDelta?.("another chunk long enough to clear the holdback ")
         t += 100
         await Promise.resolve()
       }
@@ -357,5 +363,51 @@ describe("a re-generated reply", () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]?.text).toBe("real answer")
     expect(sent[0]?.text).not.toContain("abandoned")
+  })
+})
+
+describe("the machinery block never reaches the reader", () => {
+  // The attended contract asks the model to answer in prose and then END with a <revision>
+  // block whose JSON carries the COMPLETE new document source. proseOf strips it from the
+  // TRANSCRIPT, but the stream is upstream of that — so without a cut the person watching sees
+  // their answer followed by kilobytes of escaped JSON, on the commonest action there is.
+  const revision = `<revision>${JSON.stringify({ content: "<!doctype html><html>…".repeat(50), filename: "d.html" })}</revision>`
+
+  it("streams the prose and stops dead at the block", async () => {
+    const { sent, stream } = harness({ now: () => 0 })
+    await call(
+      stream.wrap(emitting(["I shortened the intro and tightened the headings. ", revision])),
+    )
+    stream.flush()
+    const shown = sent.map((s) => s.text).join("")
+    expect(shown).toBe("I shortened the intro and tightened the headings. ")
+    expect(shown).not.toContain("<revision")
+    expect(shown).not.toContain("doctype")
+  })
+
+  it("cuts even when the marker is split across slices", async () => {
+    // `<revi` in one slice and `sion>` in the next must not leak the opening tag.
+    const { sent, stream } = harness({ now: () => 0 })
+    await call(stream.wrap(emitting(["Done. ", "<revi", "sion>", '{"content":"secret"}'])))
+    stream.flush()
+    const shown = sent.map((s) => s.text).join("")
+    expect(shown).toBe("Done. ")
+    expect(shown).not.toContain("<")
+    expect(shown).not.toContain("secret")
+  })
+
+  it("cuts an <edits> block too, and shows nothing when the reply is only a block", async () => {
+    const { sent, stream } = harness({ now: () => 0 })
+    await call(stream.wrap(emitting(['<edits>[{"old_str":"a","new_str":"b"}]</edits>'])))
+    stream.flush()
+    expect(sent.map((s) => s.text).join("")).toBe("")
+  })
+
+  it("leaves an ordinary answer completely untouched", async () => {
+    const { sent, stream } = harness({ now: () => 0 })
+    const prose = "There are five sections, and the last one is a status check."
+    await call(stream.wrap(emitting([prose])))
+    stream.flush()
+    expect(sent.map((s) => s.text).join("")).toBe(prose)
   })
 })

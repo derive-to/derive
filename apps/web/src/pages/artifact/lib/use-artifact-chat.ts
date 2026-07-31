@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
+import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import type { ChatMessage } from "../artifact-chat"
 
@@ -39,6 +40,8 @@ export function useArtifactChat(shortId: string) {
   const lastSeq = useRef(0)
   // Which model attempt the accumulated text belongs to (see the server note on `attempt`).
   const lastAttempt = useRef(0)
+  // Agent rows seen so far, so a NEW one can be told from one that was already there.
+  const agentCount = useRef(0)
 
   const clearStream = useCallback(() => {
     setStreaming("")
@@ -53,8 +56,14 @@ export function useArtifactChat(shortId: string) {
         const next = p.messages ?? []
         setMessages(next)
         setState(p.session?.state ?? "answered")
-        // The persisted reply is here, so the provisional text has been superseded.
-        if (next.some((m) => m.author_kind === "agent")) clearStream()
+        // Clear on a NEW agent row, not on the existence of any. "Does this transcript contain
+        // an agent message" is permanently true from turn two onward, so every poll during a
+        // follow-up would wipe the reply mid-write and restart it from the next slice — the
+        // bubble visibly resetting every few seconds. Turn one is unaffected, which is exactly
+        // why hand-testing does not catch it.
+        const agents = next.filter((m) => m.author_kind === "agent").length
+        if (agents > agentCount.current) clearStream()
+        agentCount.current = agents
       } catch {
         /* a poll that misses is not worth surfacing — the next one covers it */
       }
@@ -131,10 +140,14 @@ export function useArtifactChat(shortId: string) {
   // `working` is the server's own view of whose turn it is, not a local flag that can desync —
   // a reload mid-turn still shows the spinner because the SESSION says working.
   const working = state === "working" || state === "open"
-  // Subscribe only while a turn is actually in flight. That is also what tells the SERVER
-  // somebody is watching: the first slice is published with a receipt, and a turn whose slice
-  // reaches nobody stops publishing for the rest of the run.
-  const live = !!sessionId && working
+  // Subscribe only while a turn is actually in flight AND the tab is in front. Visibility is
+  // not politeness: use-user-events' contract is that subscribers gate on it so a hidden tab
+  // releases the per-user room Durable Object, and on this path it is also what makes the
+  // server's no-listener shutoff work — a backgrounded tab that stays subscribed keeps
+  // reporting a live reader, so the turn keeps paying to publish into a page nobody is looking
+  // at. Every other useUserEvent caller in the app composes usePageVisible for the same reason.
+  const visible = usePageVisible()
+  const live = !!sessionId && working && visible
 
   useUserEvent(
     "session.delta",

@@ -45,6 +45,32 @@ export const DELTA_FLUSH_MS = 250
  */
 export const MISSES_BEFORE_QUIET = 3
 
+/**
+ * Where the prose stops and the machinery starts.
+ *
+ * The attended reply contract asks the model to answer in prose and then END with a single
+ * `<revision>` (or `<edits>`) block whose JSON carries the COMPLETE new document source. The
+ * settled transcript never shows that — `proseOf` strips it in turn-core once the loop
+ * returns — but the stream is upstream of all of it, so without this the person watching sees
+ * their answer followed by twelve kilobytes of escaped JSON scrolling past, on the single most
+ * common chat action there is: asking for a change.
+ *
+ * The contract guarantees prose comes FIRST, so a prefix check is enough; no parser needed.
+ */
+const BLOCK_MARKERS = ["<revision", "<edits"] as const
+/** Longest marker minus one: the most that could be a marker split across two slices. */
+const MARKER_HOLDBACK = Math.max(...BLOCK_MARKERS.map((m) => m.length)) - 1
+
+/** Index where the reply stops being prose, or -1 while it is all still prose. */
+const blockStart = (s: string): number => {
+  let at = -1
+  for (const m of BLOCK_MARKERS) {
+    const i = s.indexOf(m)
+    if (i !== -1 && (at === -1 || i < at)) at = i
+  }
+  return at
+}
+
 export interface DeltaStream {
   /** Wrap `callModel` so its text deltas publish, coalesced.
    *
@@ -54,8 +80,6 @@ export interface DeltaStream {
   wrap(inner: AgentLoopInput["callModel"]): AgentLoopInput["callModel"]
   /** Publish anything still buffered. Call before settling the turn. */
   flush(): void
-  /** Slices published so far — the sequence a client uses to order and spot gaps. */
-  readonly seq: number
 }
 
 export interface DeltaStreamOpts {
@@ -109,8 +133,15 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
   // one and show a garbled reply that never matches what gets persisted. Slices carry the
   // attempt they came from so a reader can drop everything older the moment a new one starts.
   let attempt = 0
+  // Everything the model has emitted for THIS attempt, and how much of it has been queued for
+  // publication. Tracked separately from `buffer` because what the reader should see is a
+  // prefix of the reply, not all of it — see BLOCK_MARKERS.
+  let seen = ""
+  let published = 0
+  // Latched once the reply reaches its machinery block: nothing after it is ever shown.
+  let suppressed = false
 
-  const flush = () => {
+  const flushBuffer = () => {
     if (!buffer || !streaming) return
     seq += 1
     const slice = { seq, text: buffer, attempt }
@@ -137,27 +168,50 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
     }
   }
 
+  /** Queue the prose up to `upto` that has not been queued yet. */
+  const queue = (upto: string) => {
+    if (upto.length <= published) return
+    if (!buffer) oldestAt = now()
+    buffer += upto.slice(published)
+    published = upto.length
+  }
+
   return {
-    get seq() {
-      return seq
+    // Release the held-back tail (nothing more is coming, so it cannot be a partial marker)
+    // and publish whatever is left. Called once, by `reply()`, before the turn settles.
+    flush: () => {
+      if (!suppressed) queue(seen)
+      flushBuffer()
     },
-    flush,
     wrap: (inner) => (input) => {
-      // A new model attempt. Anything still buffered belongs to the attempt being abandoned,
-      // so it is dropped rather than flushed — publishing it would put text on screen that the
-      // transcript is never going to contain.
+      // A new model attempt. Everything about the previous one is dropped rather than flushed —
+      // publishing it would put text on screen the transcript is never going to contain.
       attempt += 1
       buffer = ""
       oldestAt = 0
+      seen = ""
+      published = 0
+      suppressed = false
       return inner({
         ...input,
         onDelta: (text) => {
           // Once nobody is listening, stop even ACCUMULATING: the returned ModelTurn is the
           // answer, so buffering text no one will receive just holds memory for the turn.
-          if (!text || !streaming) return
-          if (!buffer) oldestAt = now()
-          buffer += text
-          if (buffer.length >= maxChars || now() - oldestAt >= maxMs) flush()
+          if (!text || !streaming || suppressed) return
+          seen += text
+          const cut = blockStart(seen)
+          if (cut !== -1) {
+            // The prose ended and the machinery began. Show the prose, then go quiet for the
+            // rest of this attempt.
+            queue(seen.slice(0, cut))
+            suppressed = true
+            flushBuffer()
+            return
+          }
+          // Hold back a marker-length tail: `<revi` now could be `<revision` next slice, and
+          // showing it and retracting it would be worse than showing it a beat later.
+          queue(seen.slice(0, Math.max(0, seen.length - MARKER_HOLDBACK)))
+          if (buffer.length >= maxChars || now() - oldestAt >= maxMs) flushBuffer()
         },
       })
     },
