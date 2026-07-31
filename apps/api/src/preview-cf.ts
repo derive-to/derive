@@ -1,5 +1,5 @@
 import puppeteer, { type BrowserWorker } from "@cloudflare/puppeteer"
-import type { Renderer, ScreenshotOpts } from "./previews"
+import { assertNavigationOk, type Renderer, type ScreenshotOpts } from "./previews"
 
 /**
  * A Renderer backed by Cloudflare Browser Rendering. One warm browser per DO
@@ -18,7 +18,10 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
         // Mirrors the Node renderer, so the two runtimes cannot disagree about a variant.
         ...(opts.deviceScaleFactor ? { deviceScaleFactor: opts.deviceScaleFactor } : {}),
       })
-      await page.goto(url, { waitUntil: "networkidle0", timeout: opts.timeoutMs })
+      assertNavigationOk(
+        await page.goto(url, { waitUntil: "networkidle0", timeout: opts.timeoutMs }),
+        url,
+      )
       const buf = (await page.screenshot({ type: "png", fullPage: !!opts.fullPage })) as Uint8Array
       return buf
     } finally {

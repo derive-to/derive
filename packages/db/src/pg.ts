@@ -102,6 +102,7 @@ import type {
   SlackInstallRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
+  SubscriptionRecord,
   TakedownInput,
   UserDir,
   UserNotificationPrefRecord,
@@ -114,7 +115,14 @@ import type {
   WorkspaceRecord,
   WorkspaceSummary,
 } from "@derive/core"
-import { GLOBAL_FOLLOW_ORG, maxRole, mergeRunMeta, parseRunMeta, runCounter } from "@derive/core"
+import {
+  GLOBAL_FOLLOW_ORG,
+  maxRole,
+  mergeRunMeta,
+  parseRunMeta,
+  runCounter,
+  WORKSPACE_SLOT_ROW_CAP,
+} from "@derive/core"
 import {
   and,
   asc,
@@ -182,6 +190,7 @@ import {
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  subscription,
   userNotificationPref,
   version,
   versionData,
@@ -232,6 +241,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  subscription,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -279,6 +289,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactInvite: true,
   betaSignup: true,
   signupAttribution: true,
+  subscription: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -484,10 +495,15 @@ export class PgMetaStore implements MetaStore {
   async unfurlInfo(
     artifactId: string,
     versionN: number,
-  ): Promise<{ versionCount: number; commentCount: number; version: VersionRecord | null }> {
+  ): Promise<{
+    versionCount: number
+    commentCount: number
+    version: VersionRecord | null
+    slots: { slot: string; json: string }[]
+  }> {
     // Counts computed IN the database rather than by reading both tables into the Worker
     // and calling `.length` (which is what the share-link path used to do), and the
-    // current version row rides along — one round trip instead of three.
+    // current version row and its data slots ride along — one round trip instead of four.
     const { rows } = await this.pool.query<{ kind: string; n: number | null; doc: unknown }>(
       // The NULL placeholders carry explicit casts: Postgres resolves a UNION's column
       // types from the branches, and a bare NULL against row_to_json's `json` (or against
@@ -497,18 +513,32 @@ export class PgMetaStore implements MetaStore {
        SELECT 'comments', count(*)::int, NULL::json FROM comment WHERE artifact_id = $1
        UNION ALL
        SELECT 'version', NULL::int, row_to_json(v) FROM version v
-        WHERE v.artifact_id = $1 AND v.n = $2`,
+        WHERE v.artifact_id = $1 AND v.n = $2
+       UNION ALL
+       -- Ordered here, not in the caller: slotSummary reads them in slot order, and a
+       -- UNION ALL makes no ordering promise of its own.
+       SELECT 'slot', NULL::int, row_to_json(d) FROM (
+         SELECT slot, json FROM version_data
+          WHERE artifact_id = $1 AND n = $2 ORDER BY slot
+       ) d`,
       [artifactId, versionN],
     )
     let versionCount = 0
     let commentCount = 0
     let version: VersionRecord | null = null
+    const slots: { slot: string; json: string }[] = []
+    // Branch on `kind`, never on "has a doc" — the version row and the slot rows both
+    // carry one, so a truthiness test would read a slot as the version.
     for (const r of rows) {
       if (r.kind === "versions") versionCount = r.n ?? 0
       else if (r.kind === "comments") commentCount = r.n ?? 0
-      else if (r.doc) version = r.doc as VersionRecord
+      else if (r.kind === "version") {
+        if (r.doc) version = r.doc as VersionRecord
+      } else if (r.kind === "slot" && r.doc) {
+        slots.push(r.doc as { slot: string; json: string })
+      }
     }
-    return { versionCount, commentCount, version }
+    return { versionCount, commentCount, version, slots }
   }
 
   async currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>> {
@@ -658,6 +688,24 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(versionData.n))
       .limit(limit)
   }
+  async listWorkspaceSlots(orgId: string, opts?: { limit?: number }) {
+    // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
+    // the caller, AFTER the visibility gate — see the port doc for why not here.
+    return this.db
+      .select({
+        slot: versionData.slot,
+        artifact_id: versionData.artifact_id,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .orderBy(asc(versionData.slot))
+      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
+  }
   async listSlotAcrossArtifacts(
     orgId: string,
     slot: string,
@@ -673,6 +721,7 @@ export class PgMetaStore implements MetaStore {
       : null
     return this.db
       .select({
+        id: artifact.id,
         short_id: artifact.short_id,
         title: artifact.title,
         n: versionData.n,
@@ -2369,6 +2418,24 @@ export class PgMetaStore implements MetaStore {
         target: orgSettings.org_id,
         set: { settings: JSON.stringify(settings) },
       })
+  }
+  async getSubscription(orgId: string): Promise<SubscriptionRecord | null> {
+    const rows = await this.db.select().from(subscription).where(eq(subscription.org_id, orgId))
+    return rows[0] ?? null
+  }
+  async getSubscriptionByStripeId(sid: string): Promise<SubscriptionRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(subscription)
+      .where(eq(subscription.stripe_subscription_id, sid))
+    return rows[0] ?? null
+  }
+  async upsertSubscription(s: SubscriptionRecord): Promise<void> {
+    const { org_id: _org, created_at: _created, ...set } = s
+    await this.db
+      .insert(subscription)
+      .values(s)
+      .onConflictDoUpdate({ target: subscription.org_id, set })
   }
 
   // ---- Slack App ----------------------------------------------------------

@@ -1,5 +1,12 @@
 import { randomUUID as uuid } from "node:crypto"
-import type { MetaStore, NewArtifact, NewRun, NewVersion, SortMode } from "@derive/core"
+import type {
+  MetaStore,
+  NewArtifact,
+  NewRun,
+  NewVersion,
+  SortMode,
+  SubscriptionRecord,
+} from "@derive/core"
 import { DEFAULT_ORG_SETTINGS, maxRole } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
@@ -220,6 +227,51 @@ export function runStoreContract(
       expect((await store.getVersionDataSeries(a.id, "checks", 1, 5, 2)).map((r) => r.n)).toEqual([
         1, 2,
       ])
+    })
+
+    it("reads one slot across artifacts, and only from each one's CURRENT version", async () => {
+      // Two artifacts carry "xchecks"; one of them moves on to a new version, and the
+      // cross-artifact read must report the NEW value — reporting a superseded row as the
+      // present state is the failure that would make this quietly wrong.
+      const a = await store.createArtifact(newArtifact({ title: "Nightly A" }))
+      const v1 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v1.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":1}', size_bytes: 11, gen: 1 },
+      ])
+      const v2 = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, v2.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":2}', size_bytes: 11, gen: 1 },
+      ])
+      const b = await store.createArtifact(newArtifact({ title: "Nightly B" }))
+      const bv = await store.addVersion(b.id, newVersion())
+      await store.setVersionData(b.id, bv.n, [
+        { id: uuid(), slot: "xchecks", json: '{"pass":9}', size_bytes: 11, gen: 1 },
+        { id: uuid(), slot: "xother", json: "1", size_bytes: 1, gen: 1 },
+      ])
+
+      const rows = await store.listSlotAcrossArtifacts(ORG, "xchecks")
+      const byId = new Map(rows.map((r) => [r.short_id, r]))
+      expect(byId.get(a.short_id)?.json).toBe('{"pass":2}') // the current version, not v1
+      expect(byId.get(a.short_id)?.n).toBe(v2.n)
+      expect(byId.get(b.short_id)?.json).toBe('{"pass":9}')
+      // A slot nobody carries is empty, not an error.
+      expect(await store.listSlotAcrossArtifacts(ORG, "nosuch")).toEqual([])
+      // The limit bounds the payload.
+      expect((await store.listSlotAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
+    })
+
+    it("lists the workspace's slot vocabulary as RAW rows, uncounted, carrying artifact_id", async () => {
+      const rows = await store.listWorkspaceSlots(ORG)
+      // Deliberately (slot, artifact) pairs rather than counts: the count has to be taken
+      // AFTER the caller's visibility gate, so the artifact_id it gates on must survive
+      // this far. A pre-aggregated count would already include artifacts the caller may
+      // not read, with the evidence needed to correct it thrown away.
+      const checks = rows.filter((r) => r.slot === "xchecks")
+      expect(new Set(checks.map((r) => r.artifact_id)).size).toBeGreaterThanOrEqual(2)
+      expect(rows.filter((r) => r.slot === "xother").length).toBe(1)
+      expect(checks[0]?.at).toBeTruthy()
+      expect(rows.every((r) => !!r.artifact_id)).toBe(true)
+      expect((await store.listWorkspaceSlots(ORG, { limit: 1 })).length).toBe(1)
     })
 
     it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
@@ -2171,6 +2223,16 @@ export function runStoreContract(
         author: "amy",
       })
 
+      // Data slots on the CURRENT version, and a decoy on v1 that must not leak into
+      // the v2 read (the slots branch is keyed on the version, not just the artifact).
+      await store.setVersionData(a.id, 1, [
+        { id: uuid(), slot: "old", json: JSON.stringify({ stale: true }), size_bytes: 20, gen: 1 },
+      ])
+      await store.setVersionData(a.id, 2, [
+        { id: uuid(), slot: "metrics", json: JSON.stringify({ mrr: 42 }), size_bytes: 16, gen: 1 },
+        { id: uuid(), slot: "answers", json: JSON.stringify({ n: 7 }), size_bytes: 12, gen: 1 },
+      ])
+
       const info = await store.unfurlInfo(a.id, 2)
       // Same numbers the whole-list reads it replaces would have produced.
       expect(info.versionCount).toBe((await store.listVersions(a.id)).length)
@@ -2179,15 +2241,29 @@ export function runStoreContract(
       expect(info.versionCount).toBe(2)
       expect(info.commentCount).toBe(3)
       expect(info.version?.message).toBe("v2")
+      // Slots match the getVersionData call this replaces, narrowed to slot+json and in
+      // SLOT order — slotSummary reads them in order, and a UNION ALL promises none.
+      expect(info.slots).toEqual(
+        (await store.getVersionData(a.id, 2)).map((r) => ({ slot: r.slot, json: r.json })),
+      )
+      expect(info.slots).toEqual([
+        { slot: "answers", json: JSON.stringify({ n: 7 }) },
+        { slot: "metrics", json: JSON.stringify({ mrr: 42 }) },
+      ])
+      // v1's slot stays on v1 — asking for v2 never sees it.
+      expect((await store.unfurlInfo(a.id, 1)).slots).toEqual([
+        { slot: "old", json: JSON.stringify({ stale: true }) },
+      ])
       // Counts include RESOLVED threads (the card shows total discussion, not open).
       await store.setThreadState(a.id, thread, "resolved")
       expect((await store.unfurlInfo(a.id, 2)).commentCount).toBe(3)
-      // A bare artifact: zeroes and a null version, not a throw.
+      // A bare artifact: zeroes, a null version and no slots, not a throw.
       const bare = await store.createArtifact(newArtifact())
       expect(await store.unfurlInfo(bare.id, 1)).toEqual({
         versionCount: 0,
         commentCount: 0,
         version: null,
+        slots: [],
       })
     })
 
@@ -3237,6 +3313,42 @@ export function runStoreContract(
       // Deleting the workspace clears the pool sentinel too — nothing orphaned.
       await store.deleteWorkspace(org)
       expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
+    })
+  })
+
+  describe(`${label}: subscriptions (Stripe billing cache)`, () => {
+    it("subscription: absent → null; upsert inserts then updates; stripe-id lookup", async () => {
+      const org = `sub_org_${uuid()}`
+      expect(await store.getSubscription(org)).toBeNull()
+      expect(await store.getSubscriptionByStripeId("sub_nope")).toBeNull()
+      const now = new Date().toISOString()
+      const stripeSubscriptionId = `sub_stripe_${uuid()}`
+      await store.upsertSubscription({
+        org_id: org,
+        stripe_customer_id: "cus_1",
+        stripe_subscription_id: stripeSubscriptionId,
+        tier: "team",
+        billing_interval: "month",
+        status: "active",
+        quantity: 4,
+        current_period_end: "2026-08-30T00:00:00.000Z",
+        created_at: now,
+        updated_at: now,
+      })
+      const row = await store.getSubscription(org)
+      expect(row?.tier).toBe("team")
+      expect(row?.quantity).toBe(4)
+      expect((await store.getSubscriptionByStripeId(stripeSubscriptionId))?.org_id).toBe(org)
+      // Second upsert for the same org exercises the onConflict update path.
+      await store.upsertSubscription({
+        ...(row as SubscriptionRecord),
+        status: "canceled",
+        quantity: 5,
+        updated_at: new Date().toISOString(),
+      })
+      const updated = await store.getSubscription(org)
+      expect(updated?.status).toBe("canceled")
+      expect(updated?.quantity).toBe(5)
     })
   })
 

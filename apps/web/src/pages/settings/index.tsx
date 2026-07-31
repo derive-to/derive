@@ -9,6 +9,7 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
 import { AutomationsSection } from "./automations-section"
+import { BillingSection } from "./billing-section"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
 import { GithubSection } from "./github-section"
@@ -34,6 +35,7 @@ const SECTION_TITLES: Record<string, string> = {
   appearance: "Appearance",
   general: "General",
   members: "Members",
+  billing: "Billing",
   integrations: "Integrations",
   github: "GitHub",
   webhooks: "Webhooks",
@@ -82,6 +84,7 @@ export function Settings() {
       items: [
         { id: "general", label: "General", testId: "settings-tab-general" },
         { id: "members", label: "Members", testId: "settings-tab-members" },
+        { id: "billing", label: "Billing", testId: "settings-tab-billing" },
         { id: "integrations", label: "Integrations", testId: "settings-tab-integrations" },
       ],
     },
@@ -142,6 +145,7 @@ export function Settings() {
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
             {active === "members" && <MembersSection meId={me.id} />}
+            {active === "billing" && <BillingSection />}
             {active === "integrations" && <IntegrationsSection />}
             {active === "github" && <GithubSection />}
             {active === "webhooks" && <WebhooksSection />}

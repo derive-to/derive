@@ -12,6 +12,7 @@ import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-referen
 import { cleanPath } from "../lib/bundle"
 import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant } from "../lib/collect-render"
+import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
 import { log } from "../log"
@@ -29,6 +30,7 @@ import {
   PAGE_MAP_MAX,
   parseLineRange,
   parseVersionRange,
+  runnerOnline,
   safeJson,
   sleep,
   toBase64,
@@ -37,20 +39,33 @@ import { enqueueRender } from "../previews"
 import { CORE_SKILLS } from "../skills-reference.gen"
 
 export function registerReadTool(tc: ToolContext): void {
-  const { server, ctx, bpProfile, profileArt, reach, notFound, wsArg, num, staleNote } = tc
+  const {
+    server,
+    ctx,
+    bpProfile,
+    profileArt,
+    reach,
+    notFound,
+    wsArg,
+    num,
+    staleNote,
+    actingFor,
+    resolveWs,
+    askableContexts,
+  } = tc
 
   // READ CONTENT --------------------------------------------------------------
   server.registerTool(
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short_id. A small doc returns whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug (or a `lines` range) for just that part. Markdown by default; a styled HTML page is FLATTENED to text here, so pass render:'top' or 'full' to SEE it as a viewer does (do this after publishing a designed page to catch visual breakage). Bundle: omit `section` for the page list, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required BEFORE publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead.",
+        "Read an artifact's CONTENT by short_id — or a CONTEXT's package by its ctx_ id/name (manifest inline, skills as pointers; `use` gives it work instead). A small doc returns whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug (or a `lines` range) for just that part. Markdown by default; a styled HTML page is FLATTENED to text here, so pass render:'top' or 'full' to SEE it as a viewer does (do this after publishing a designed page to catch visual breakage). Bundle: omit `section` for the page list, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required BEFORE publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also accepts a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /assets, /contexts, /checkpoint, /organize), so the strings the instructions name are readable here even where MCP resources aren't.",
+            "The artifact's short id, e.g. nk0dsral. Also a CONTEXT id (ctx_…) or name — loads that package, not a document. Also a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /assets, /contexts, /checkpoint, /organize), so the strings the instructions name are readable here even where MCP resources aren't.",
           ),
         section: z
           .string()
@@ -130,6 +145,46 @@ export function registerReadTool(tc: ToolContext): void {
           )
         return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
       }
+      // A CONTEXT id or name loads the PACKAGE rather than a document: manifest inline,
+      // skills and sources as pointers. Same gate as asking — askableContexts is the
+      // per-human canUserAskContext check `find` uses — so reading can never surface a
+      // context the caller could not already see, and no second access path exists.
+      // Returns null when this ref is not a context the caller can reach, so the artifact
+      // path stays in charge: only a `ctx_` id short-circuits, and a bare NAME is tried
+      // only after the artifact lookup misses (below), so a context can never shadow a doc.
+      const contextPackage = async () => {
+        if (!actingFor)
+          return err(
+            "Contexts need a signed-in user. Reconnect with an OAuth login to read or use them.",
+          )
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const rows = await askableContexts(t.org, actingFor.id)
+        const hit =
+          rows.find(({ x }) => x.id === short_id) ??
+          rows.find(({ x }) => x.name.toLowerCase() === short_id.trim().toLowerCase())
+        if (!hit) return null
+        const pkg = await assembleContextPackage(
+          ctx.meta,
+          hit.x,
+          hit.manifest,
+          (v) => ctx.sourceText(v),
+          runnerOnline(hit.x),
+        )
+        return json({
+          ...pkg,
+          how: "The package, opened progressively: the manifest is loaded; skills and sources are pointers — read one by its short_id when a task needs it. To have the context DO work instead, use({context, instruction}).",
+        })
+      }
+      if (short_id.startsWith("ctx_")) {
+        const pkg = await contextPackage()
+        return (
+          pkg ??
+          err(
+            `No context "${short_id}" you can reach here. Call find to list the contexts you may use.`,
+          )
+        )
+      }
       const BP = "derive://brandprint/"
       let docId = short_id
       if (short_id.startsWith(BP)) {
@@ -156,7 +211,9 @@ export function registerReadTool(tc: ToolContext): void {
       }
       const r = await reach(docId, workspace)
       if (r && "error" in r) return err(r.error)
-      if (!r) return notFound(docId)
+      // A bare name that matches no artifact may still name a CONTEXT — tried only here,
+      // after the artifact lookup, so a context named like a doc can never shadow it.
+      if (!r) return (await contextPackage()) ?? notFound(docId)
       const a = r.a
       const n = version ?? a.current_version
       if (n < 1 || n > a.current_version)

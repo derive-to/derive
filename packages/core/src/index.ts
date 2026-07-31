@@ -1,6 +1,7 @@
 export * from "./advisories"
 export * from "./anchor"
 export * from "./autonomy"
+export * from "./billing"
 export * from "./brandprint"
 export * from "./change-classifier"
 export * from "./cross-doc"

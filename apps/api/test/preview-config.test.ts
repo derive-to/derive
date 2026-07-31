@@ -1,0 +1,76 @@
+import { execFileSync } from "node:child_process"
+import { readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { describe, expect, it } from "vitest"
+
+// The generator is a build script, so exercise it the way CI does — run it and read
+// the config it prints. These assertions are the difference between a preview that
+// demonstrates the branch and one that quietly demonstrates production.
+const scriptPath = join(dirname(fileURLToPath(import.meta.url)), "../scripts/preview-config.mjs")
+const script = scriptPath
+const generate = (name = "derive-pr-1234", url = "https://derive-pr-1234.example.workers.dev") =>
+  execFileSync(process.execPath, [script, name, url], { encoding: "utf8" })
+
+describe("preview-config", () => {
+  const out = generate()
+
+  it("renames the worker and repoints BASE_URL at the preview", () => {
+    expect(out).toContain('name = "derive-pr-1234"')
+    expect(out).not.toMatch(/^name = "derive"$/m)
+    expect(out).toContain('BASE_URL = "https://derive-pr-1234.example.workers.dev"')
+  })
+
+  it("unsets DERIVE_SANDBOX_URL so /raw/* — and the injected iframe client — is served by THIS deployment", () => {
+    // With the production value inherited, a preview 302s every /raw/* request to
+    // raw.derive.page, so the frame runs PRODUCTION's derive-client.js and every
+    // frame-side change under review (anchoring, cursors, decks, inline editing) is
+    // invisible in the preview built to show it.
+    expect(out).not.toMatch(/^DERIVE_SANDBOX_URL = /m)
+    expect(out).toContain("DERIVE_SANDBOX_URL intentionally unset for previews")
+  })
+
+  it("strips the OG renderer, whose sweep is limit-scoped and writes to the shared database", () => {
+    // versionsMissingPreview(limit) has no org or artifact scope, so a preview's
+    // renderer picks up arbitrary PRODUCTION versions. Harmless while previews
+    // screenshotted production's bytes; once a preview serves /raw/* itself it
+    // would overwrite real artifacts' cards with the branch's rendering — and the
+    // sweep never revisits a version that already has an image.
+    expect(out).not.toMatch(/^\[browser\]/m)
+    expect(out).not.toContain('name = "PREVIEW_RENDERER"')
+    // The DO's migration stays: the class is still declared in the script, and
+    // dropping an applied migration is what wrangler refuses.
+    expect(out).toContain('new_sqlite_classes = ["PreviewRenderer"]')
+  })
+
+  it("unsets the vanity-subdomain base, which a preview has no route for", () => {
+    // A draft minted on a preview would otherwise write a live domain row into
+    // production's table and then be served by production, not the branch.
+    expect(out).not.toMatch(/^DERIVE_SUBDOMAIN_BASE = /m)
+    expect(out).toContain("DERIVE_SUBDOMAIN_BASE intentionally unset for previews")
+  })
+
+  it("fails loudly if a rewrite silently matches nothing", () => {
+    // The guards assert the marker each replacement WRITES, not the absence of one
+    // spelling — otherwise reformatting wrangler.toml (KEY="v", aligned spaces, a
+    // tab, an indented table) makes the replace a no-op that the guard also misses,
+    // and the script exits 0 having changed nothing.
+    const script = readFileSync(scriptPath, "utf8")
+    expect(script).toContain('out.includes("DERIVE_SANDBOX_URL intentionally unset for previews")')
+    expect(script).toContain(
+      'out.includes("DERIVE_SUBDOMAIN_BASE intentionally unset for previews")',
+    )
+    expect(script).toContain("out.includes(`BASE_URL =")
+  })
+
+  it("still strips everything that would reach production", () => {
+    expect(out).not.toContain("[[routes]]")
+    expect(out).not.toContain("[triggers]")
+    expect(out).not.toContain("queues.consumers")
+  })
+
+  it("keeps the shared data bindings (a preview with an empty database proves nothing)", () => {
+    expect(out).toContain("[[d1_databases]]")
+    expect(out).toContain("[[hyperdrive]]")
+  })
+})

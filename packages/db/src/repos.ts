@@ -95,6 +95,7 @@ import type {
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   SortMode,
+  SubscriptionRecord,
   TakedownInput,
   UserNotificationPrefRecord,
   UserProfile,
@@ -112,6 +113,7 @@ import {
   parseRunMeta,
   runCounter,
   sortFields,
+  WORKSPACE_SLOT_ROW_CAP,
 } from "@derive/core"
 import {
   and,
@@ -180,6 +182,7 @@ import {
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  subscription,
   userNotificationPref,
   version,
   versionData,
@@ -306,6 +309,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  subscription,
   oauthClientWorkspace,
   context,
   contextAsker,
@@ -353,6 +357,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactInvite: true,
   betaSignup: true,
   signupAttribution: true,
+  subscription: true,
   context: true,
   contextAsker: true,
   contextSession: true,
@@ -611,16 +616,25 @@ export function makeRepos(db: SqliteDb) {
   const unfurlInfo = async (
     artifactId: string,
     versionN: number,
-  ): Promise<{ versionCount: number; commentCount: number; version: VersionRecord | null }> => {
-    const [vRow, cRow, cur] = await Promise.all([
+  ): Promise<{
+    versionCount: number
+    commentCount: number
+    version: VersionRecord | null
+    slots: { slot: string; json: string }[]
+  }> => {
+    const [vRow, cRow, cur, slotRows] = await Promise.all([
       db.select({ n: count() }).from(version).where(eq(version.artifact_id, artifactId)).get(),
       db.select({ n: count() }).from(comment).where(eq(comment.artifact_id, artifactId)).get(),
       getVersion(artifactId, versionN),
+      getVersionData(artifactId, versionN),
     ])
     return {
       versionCount: Number(vRow?.n ?? 0),
       commentCount: Number(cRow?.n ?? 0),
       version: cur,
+      // Narrowed to what slotSummary reads, matching the pg driver's projection rather
+      // than handing the caller whole rows only one shape of which is contractual.
+      slots: slotRows.map((r) => ({ slot: r.slot, json: r.json })),
     }
   }
 
@@ -745,6 +759,25 @@ export function makeRepos(db: SqliteDb) {
       .limit(limit)
       .all()
 
+  // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
+  // the caller, AFTER the visibility gate — see the port doc for why it cannot happen here.
+  const listWorkspaceSlots = async (orgId: string, opts?: { limit?: number }) =>
+    db
+      .select({
+        slot: versionData.slot,
+        artifact_id: versionData.artifact_id,
+        at: versionData.created_at,
+      })
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .orderBy(asc(versionData.slot))
+      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
+      .all()
+
   const listSlotAcrossArtifacts = async (
     orgId: string,
     slot: string,
@@ -761,6 +794,7 @@ export function makeRepos(db: SqliteDb) {
       : null
     return db
       .select({
+        id: artifact.id,
         short_id: artifact.short_id,
         title: artifact.title,
         n: versionData.n,
@@ -2144,6 +2178,18 @@ export function makeRepos(db: SqliteDb) {
         set: { settings: JSON.stringify(settings) },
       })
       .run()
+  }
+  const getSubscription = async (orgId: string): Promise<SubscriptionRecord | null> =>
+    (await db.select().from(subscription).where(eq(subscription.org_id, orgId)).get()) ?? null
+  const getSubscriptionByStripeId = async (sid: string): Promise<SubscriptionRecord | null> =>
+    (await db
+      .select()
+      .from(subscription)
+      .where(eq(subscription.stripe_subscription_id, sid))
+      .get()) ?? null
+  const upsertSubscription = async (s: SubscriptionRecord): Promise<void> => {
+    const { org_id: _org, created_at: _created, ...set } = s
+    await db.insert(subscription).values(s).onConflictDoUpdate({ target: subscription.org_id, set })
   }
 
   // ---- Slack App ----------------------------------------------------------
@@ -3846,6 +3892,7 @@ export function makeRepos(db: SqliteDb) {
     setVersionData,
     getVersionData,
     getVersionDataSeries,
+    listWorkspaceSlots,
     listSlotAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
@@ -3966,6 +4013,9 @@ export function makeRepos(db: SqliteDb) {
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    getSubscription,
+    getSubscriptionByStripeId,
+    upsertSubscription,
     getSlackInstall,
     setSlackInstall,
     listSlackInstallsByTeam,

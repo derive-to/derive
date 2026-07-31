@@ -451,15 +451,21 @@ export interface ArtifactStore {
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
-  /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS
-   *  plus its current version row, in one query. The share-link SSR path computed the
-   *  two counts by fetching the artifact's entire version list and entire comment list
-   *  and taking `.length` — two whole-table reads for two integers, on the most-trafficked
-   *  anonymous surface, plus a third trip for the version row. */
+  /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS,
+   *  its current version row, and that version's data slots, in one query. The share-link
+   *  SSR path computed the two counts by fetching the artifact's entire version list and
+   *  entire comment list and taking `.length` — two whole-table reads for two integers, on
+   *  the most-trafficked anonymous surface, plus a trip each for the version row and the
+   *  slots. `slots` carries only what slotSummary reads (slot + json), ordered by slot. */
   unfurlInfo(
     artifactId: string,
     versionN: number,
-  ): Promise<{ versionCount: number; commentCount: number; version: VersionRecord | null }>
+  ): Promise<{
+    versionCount: number
+    commentCount: number
+    version: VersionRecord | null
+    slots: { slot: string; json: string }[]
+  }>
   /** Each artifact's CURRENT version, for a set of artifacts, keyed by artifact id — one
    *  query instead of a `getVersion(id, current_version)` per artifact. Workspace search
    *  grep-confirms up to 30 candidates and was fetching each one's version separately;
@@ -493,11 +499,27 @@ export interface ArtifactStore {
    *  workspace of nightly reports actually gets asked. Optionally narrowed by browse tag,
    *  since a tag is already how a set of artifacts is named. ONE query, joined to each
    *  artifact's current version so it can never report a superseded row. */
+  /** The workspace's slot VOCABULARY as RAW (slot, artifact) rows over current versions:
+   *  the discovery half of cross-artifact reads, since you cannot query a slot whose name
+   *  you do not know and nothing else in the surface lists them.
+   *
+   *  Deliberately NOT pre-aggregated. Both slot readers scope by org, and an org is not a
+   *  read permission: an artifact can be invite-only WITHIN its own workspace. The caller
+   *  must therefore narrow these rows through the visibility gate (api lib/visibility.ts)
+   *  before counting them. Aggregating here would hand back a count already computed over
+   *  artifacts the caller may not see, with the evidence needed to correct it discarded. */
+  listWorkspaceSlots(
+    orgId: string,
+    opts?: { limit?: number },
+  ): Promise<{ slot: string; artifact_id: string; at: string }[]>
+  /** Carries `id` for that same reason: the caller gates on it, then drops it. */
   listSlotAcrossArtifacts(
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },
-  ): Promise<{ short_id: string; title: string | null; n: number; json: string; at: string }[]>
+  ): Promise<
+    { id: string; short_id: string; title: string | null; n: number; json: string; at: string }[]
+  >
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
    *  Used to repair mis-classified content (e.g. HTML that was tagged markdown). */
@@ -980,6 +1002,11 @@ export interface IntegrationStore {
   ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** The workspace's cached Stripe subscription, absent ⇒ null (free). */
+  getSubscription(orgId: string): Promise<SubscriptionRecord | null>
+  /** Webhook resolution fallback when metadata.org_id is missing. */
+  getSubscriptionByStripeId(stripeSubscriptionId: string): Promise<SubscriptionRecord | null>
+  upsertSubscription(s: SubscriptionRecord): Promise<void>
   // ---- Slack App (connected workspace + thread links) ---------------------
   /** The Slack workspace connected to this Derive workspace, or null. */
   getSlackInstall(orgId: string): Promise<SlackInstallRecord | null>
@@ -2136,6 +2163,24 @@ export interface SignupAttributionRecord {
 }
 
 export type NewSignupAttribution = Omit<SignupAttributionRecord, "created_at">
+
+/** One workspace's Stripe subscription state, webhook-fed; Stripe is the source
+ *  of truth and this row is the local cache the request-path gate reads. A row
+ *  with a null stripe_subscription_id and status "incomplete" is a checkout
+ *  stub (customer created, nothing paid yet) and grants nothing. */
+export interface SubscriptionRecord {
+  org_id: string
+  stripe_customer_id: string
+  stripe_subscription_id: string | null
+  tier: "team" | "business"
+  billing_interval: "month" | "year"
+  /** Stripe's subscription status, verbatim (active, trialing, past_due, canceled, ...). */
+  status: string
+  quantity: number
+  current_period_end: string | null
+  created_at: string
+  updated_at: string
+}
 
 /**
  * A pending per-artifact share invitation: an email invited to one artifact at a

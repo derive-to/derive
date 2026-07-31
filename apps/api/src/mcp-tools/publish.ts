@@ -89,6 +89,13 @@ export function registerPublishTool(tc: ToolContext): void {
         error:
           "This workspace has no Brandprint profile yet, and only an Admin/Owner can set one up. Ask an Admin to publish to derive://brandprint/profile once (that scaffolds it); after that anyone with publish rights can propose revisions.",
       }
+    // The scaffold below is a real live write (a collection create + a placeholder
+    // publish) — unlike the profile's own reveal/revision, which always routes to a
+    // human-approved proposal (see `profileForReview` in the caller) and so stays free
+    // of this gate. A billing-blocked workspace must refuse the scaffold exactly like
+    // any other live publish, and BEFORE any of it writes.
+    const blocked = await ctx.billingBlocked(targetOrg)
+    if (blocked) return { error: blocked.message }
     // Reuse an in-tenant collection pointer; otherwise create the conventions collection
     // (workspace-open so teammates read the docs + the reveal).
     let collectionId = bp?.collectionId
@@ -515,7 +522,11 @@ export function registerPublishTool(tc: ToolContext): void {
         }
       }
 
-      // Live publish path.
+      // Live publish path. Gated on billing here, not up with the `edits` storage check
+      // above — that check also runs for the propose branch (which stays free), so the
+      // billing gate has to sit strictly after the review/propose split.
+      const blocked = await ctx.billingBlocked(targetOrg)
+      if (blocked) return err(blocked.message)
       if (merge) {
         if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
         if (!existing) return text("`merge` needs the `short_id` of an existing bundle to add to.")
@@ -763,6 +774,13 @@ export function registerPublishTool(tc: ToolContext): void {
                 ctx.meta,
               )
             : []
+        // What the extraction actually STORED for this version, read back from the rows
+        // rather than echoed from the parser. Reporting the store is strictly more honest:
+        // it reflects what is now queryable, so a persistence failure shows up as an empty
+        // list instead of a confident claim. Until now success was silent — a slot was
+        // only ever mentioned when something went wrong, which is a poor way to teach a
+        // capability whose whole point is that it accrues.
+        const storedSlots = await ctx.meta.getVersionData(artifact.id, version.n).catch(() => [])
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -770,6 +788,12 @@ export function registerPublishTool(tc: ToolContext): void {
           kind: artifact.kind,
           version: version.n,
           url,
+          ...(storedSlots.length
+            ? {
+                data: storedSlots.map((s) => ({ slot: s.slot, bytes: s.size_bytes })),
+                data_next: `Queryable now: read(short_id:"${artifact.short_id}", data:"${storedSlots[0]?.slot}") for this version, or versions:"all" for the whole series.`,
+              }
+            : {}),
           // Single-file publishes report the stored bytes' sha256 (the content-
           // addressed blob key) so callers can verify what landed matches what
           // they sent.

@@ -5,6 +5,14 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 
 const clip = (s: string, n = 28): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
+/** One wording for "you are about to lose edits", wherever the user tries to leave:
+ *  in-app navigation (the blocker), Escape, and Done. */
+export const unsavedEditsCopy = (n: number) => ({
+  title: "Discard your unsaved edits?",
+  description: `This document has ${n} unsaved change${n === 1 ? "" : "s"}. Leaving now discards ${n === 1 ? "it" : "them"} — that can't be undone.`,
+  confirmLabel: "Discard edits",
+})
+
 // The auto version message: a single edit reads as what changed; a batch as a count.
 const editMessage = (edits: QuoteEditInput[]): string => {
   const first = edits[0]
@@ -50,25 +58,38 @@ export function useInlineEdit(p: {
   // updates metadata without reloading the iframe out from under typed text.
   const [frozenVersion, setFrozenVersion] = useState<number | null>(null)
   const [dirty, setDirty] = useState(0)
+  // Escape (or Done) pressed with unsaved edits: the confirm the page renders.
+  const [exitPrompt, setExitPrompt] = useState(false)
   const active = frozenVersion !== null
   const activeRef = useRef(false)
   activeRef.current = active
+  const dirtyRef = useRef(0)
+  dirtyRef.current = dirty
   const collectWait = useRef<{
     nonce: number
     resolve: (e: QuoteEditInput[] | { desync: true }) => void
     timer: number
   } | null>(null)
   const nonceSeq = useRef(0)
+  // The listener is registered once; the save mutation is created below it. A ref
+  // bridges the two without re-subscribing the listener on every render.
+  const saveRef = useRef<() => void>(() => {})
+  const savingRef = useRef(false)
 
-  // Every way out of the mode funnels through here. `restoreFrame` posts mode-off
-  // (the frame reverts unsaved text and re-arms its normal grammar) — right for
-  // Done/stale exits and for a filed PROPOSAL (nothing is live until approval, so
-  // the preview must not keep the suggested text painted); wrong for a PUBLISH,
-  // where the version bump reloads the frame onto the saved content anyway.
-  const exit = (restoreFrame: boolean) => {
+  // Every way out of the mode funnels through here.
+  //   "restore" — revert unsaved text and re-arm the read grammar (Done, Escape,
+  //               discard-and-leave, and a filed PROPOSAL: nothing is live until
+  //               approval, so the page must not keep the suggestion painted).
+  //   "settle"  — keep the text, drop the editing chrome. Right after a PUBLISH the
+  //               text on screen IS what was saved; restoring would flash the old
+  //               wording for the beat before the version swap reloads the frame.
+  //   "none"    — the frame is already gone (reload); there is nothing to talk to.
+  const exit = (frame: "restore" | "settle" | "none") => {
     setFrozenVersion(null)
     setDirty(0)
-    if (restoreFrame) p.post({ type: "edit-mode", on: false })
+    setExitPrompt(false)
+    if (frame === "restore") p.post({ type: "edit-mode", on: false })
+    else if (frame === "settle") p.post({ type: "edit-mode", on: false, keep: true })
   }
 
   // Leaving the artifact ends the session: without this, edit mode (and the frozen
@@ -106,16 +127,31 @@ export function useInlineEdit(p: {
         const w = collectWait.current
         // The nonce pins the reply to THIS collect: a slow page can answer a
         // timed-out collect after a newer one started, and those stale edits must
-        // not save (they'd be missing the user's latest typing).
-        if (!w || d.nonce !== w.nonce) return
+        // not save (they'd be missing the user's latest typing). A client cached
+        // from before the nonce existed (the served client has a 5-minute cache, so
+        // this is every deploy's first few minutes) replies without one — accept
+        // that rather than making saving look broken until the cache turns over.
+        if (!w || (d.nonce !== undefined && d.nonce !== w.nonce)) return
         collectWait.current = null
         clearTimeout(w.timer)
         const edits = Array.isArray(d.edits) ? (d.edits as QuoteEditInput[]) : []
-        // The frame counted changed blocks it could not express as edits (or the
-        // frame reloaded and lost them): saving "nothing" now would present data
-        // loss as success — surface it instead.
+        // Blocks the frame changed but could NOT express as an edit. Saving the rest
+        // would publish some of the user's work and let the post-save reload wipe
+        // the remainder — data loss presented as success. `uncaptured` is reported
+        // per block, because one dirty block can legitimately yield several edits, so
+        // counts alone can't tell a partial failure from a normal multi-edit save.
+        const uncaptured = typeof d.uncaptured === "number" ? d.uncaptured : 0
         const frameDirty = typeof d.dirty === "number" ? d.dirty : 0
-        w.resolve(edits.length === 0 && frameDirty > 0 ? { desync: true } : edits)
+        const lost = uncaptured > 0 || (edits.length === 0 && frameDirty > 0)
+        w.resolve(lost ? { desync: true } : edits)
+      } else if (d.type === "edit-save") {
+        // ⌘S / ⌘Enter pressed inside the frame. Deliberately NOT gated on the dirty
+        // count: that number arrives on a debounce, and gating on it dropped the
+        // save when you typed and hit ⌘S in one motion — with the frame having
+        // already swallowed the browser's own Save dialog, so nothing happened at
+        // all. A save with nothing to collect is a no-op (see onSuccess), and the
+        // in-flight guard is what stops key-repeat from stacking versions.
+        if (activeRef.current && !savingRef.current) saveRef.current()
       } else if (d.type === "edit-blocked") {
         // A click landed somewhere inline editing can't reach. Quiet + deduped —
         // information, not an alarm.
@@ -135,7 +171,9 @@ export function useInlineEdit(p: {
     new Promise((resolve, reject) => {
       const nonce = ++nonceSeq.current
       const timer = window.setTimeout(() => {
-        collectWait.current = null
+        // Only clear the slot if it is still OURS — a newer collect may already own
+        // it, and nulling that one would strand a save that can never resolve.
+        if (collectWait.current?.nonce === nonce) collectWait.current = null
         reject(new Error("The page didn't report its edits. Try again."))
       }, 4000)
       collectWait.current = { nonce, resolve, timer }
@@ -151,14 +189,24 @@ export function useInlineEdit(p: {
   }
   // Done only ever exits CLEAN (the bar swaps to Discard/Save once dirty); the
   // frame-side mode-off also restores any stragglers as a belt-and-suspenders.
-  const done = () => exit(true)
+  /** Leave the mode. With unsaved edits this asks first — Escape and Done both land
+   *  here, so "get me out" never silently throws typing away. */
+  const requestExit = () => {
+    if (!activeRef.current) return
+    if (dirtyRef.current > 0) setExitPrompt(true)
+    else exit("restore")
+  }
+  const done = requestExit
+  /** The confirm's destructive answer: drop the edits and leave. */
+  const confirmExit = () => exit("restore")
+  const cancelExit = () => setExitPrompt(false)
   const discard = () => p.post({ type: "edit-restore" })
   /** The frame reloaded (version swap, retry, source editor) — the edit session
    *  died with it. Exit and say so if anything was pending. */
   const onFrameGone = () => {
     if (!activeRef.current) return
-    const hadEdits = dirty > 0
-    exit(false) // the frame is a fresh document; there is nothing to restore
+    const hadEdits = dirtyRef.current > 0
+    exit("none") // the frame is a fresh document; there is nothing to restore
     if (hadEdits)
       toast.warning("The document reloaded, so unsaved inline edits were discarded.", {
         id: "inline-edit-stale",
@@ -198,7 +246,7 @@ export function useInlineEdit(p: {
           action: {
             label: "Open source editor",
             onClick: () => {
-              exit(true)
+              exit("restore")
               p.onOpenSourceEditor()
             },
           },
@@ -206,20 +254,21 @@ export function useInlineEdit(p: {
         return
       }
       if (!r) {
-        exit(true) // nothing actually changed — just leave edit mode
+        // Nothing to save (a shortcut on a clean document, or everything reverted).
+        // Stay in the mode: exiting on a no-op would make ⌘S feel like a cancel.
         return
       }
       if (r.kind === "published") {
         // The version bump reloads the frame onto the published content; posting
         // mode-off here would flash the pre-edit text for a beat first.
-        exit(false)
+        exit("settle")
         toast.success(`Saved v${r.version}`)
       } else {
         // A proposal does NOT change the live document — no version bump, no frame
         // reload. Mode-off restores the pre-edit text (the suggestion lives in the
         // review queue now) and re-arms the normal read grammar; without it the
         // frame stays edit-locked forever.
-        exit(true)
+        exit("restore")
         toast.success("Suggestion sent for review")
       }
       p.load()
@@ -247,7 +296,7 @@ export function useInlineEdit(p: {
         action: {
           label: "Open source editor",
           onClick: () => {
-            exit(true)
+            exit("restore")
             p.onOpenSourceEditor()
           },
         },
@@ -255,14 +304,23 @@ export function useInlineEdit(p: {
     },
   })
 
+  saveRef.current = () => save.mutate()
+  savingRef.current = save.isPending
+
   return {
     active,
     dirty,
     frozenVersion,
     saving: save.isPending,
+    /** Unsaved edits exist — drives the navigation blocker and the exit confirm. */
+    blocking: active && dirty > 0,
+    exitPrompt,
     start,
     done,
     discard,
+    requestExit,
+    confirmExit,
+    cancelExit,
     onFrameGone,
     save: () => save.mutate(),
   }

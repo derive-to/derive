@@ -146,6 +146,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     collectionRole,
     limited,
     overStorage,
+    billingGate,
+    effectiveWhiteLabel,
     publishLimiter,
     unlockLimiter,
     sourceText,
@@ -538,6 +540,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     // org, a new artifact against the caller's active workspace (or, for a
     // tokened create, the workspace the token was minted for).
     const org = existing ? existing.org_id : tokenAuth ? tokenAuth.org : await activeWorkspace(c)
+    const blocked = await billingGate(c, org)
+    if (blocked) return blocked
     const rl = await limited(c, publishLimiter)
     if (rl) return rl
     // A new artifact counts against the artifact cap; republishes don't.
@@ -932,6 +936,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           )),
         )
       }
+      // What extraction actually STORED, read back from the rows rather than echoed from
+      // the parser — so a persistence failure reads as an empty list, not a false claim.
+      const storedSlots = await meta.getVersionData(artifact.id, version.n).catch(() => [])
       return c.json(
         {
           ...toJson(deps.baseUrl, artifact, versions),
@@ -941,6 +948,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           // to catch content corrupted on the way in. Bundles store a manifest
           // blob, so there is no single-file hash to report.
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
+          ...(storedSlots.length
+            ? { data: storedSlots.map((s) => ({ slot: s.slot, bytes: s.size_bytes })) }
+            : {}),
           ...(advisories.length ? { advisories } : {}),
           ...(roundCreated ? { review_requested: true } : {}),
           ...(openedInTab !== null ? { opened_in_tab: openedInTab } : {}),
@@ -1102,6 +1112,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     const org = await activeWorkspace(c)
     if (!(await workspaceCan(c, "publish")))
       return fail(c, 403, "you need publish rights in this workspace to claim a draft")
+    // Claiming moves the draft INTO this workspace as a real publish — a billing-blocked
+    // destination must refuse it exactly like any other publish would.
+    const blocked = await billingGate(c, org)
+    if (blocked) return blocked
     const url = artifactUrl(deps.baseUrl, a)
     // Order matters: the host must be unbound before the org move (the move path
     // refuses to relocate a domain-bound artifact), and the signpost keeps the
@@ -1455,9 +1469,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         sessions: groupSessions(versions, versionWindowMs),
         my_role: myRole,
         // Show the Made-with-Derive mark on this artifact's public surfaces? False
-        // only for white-label workspaces; the viewer reads this single boolean so
-        // workspace settings never travel to anonymous clients.
-        badge: !detail.settings.whiteLabel,
+        // only for white-label workspaces that are also entitled to it (beta, or an
+        // active subscription); the viewer reads this single boolean so workspace
+        // settings and billing state never travel to anonymous clients. The settings
+        // ride in from artifactDetail's batch, so the common case (white-label off)
+        // costs no round trip at all here.
+        badge: !(await effectiveWhiteLabel(artifact.org_id, detail.settings)),
         // Owner opt-in: the anonymous public page shows version history. The
         // client uses it to render the byline dropdown; the server enforces it
         // above (trimmed versions) and in raw.ts (old-version bytes).
@@ -1806,6 +1823,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     async (c) => {
       const artifact = await requireArtifact(c, "publish", { split: true })
       if (artifact instanceof Response) return bail(artifact)
+      // A restore is a publish (it writes a new version), so it's gated the same way:
+      // a billing-blocked workspace can't add a version by restoring one either.
+      const blocked = await billingGate(c, artifact.org_id)
+      if (blocked) return bail(blocked)
       const body = await readJson(c, z.object({ version: z.number().int("version required") }))
       if (body instanceof Response) return bail(body)
       const src = await meta.getVersion(artifact.id, body.version)

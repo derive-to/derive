@@ -203,6 +203,7 @@ export const contextRoutes = (ctx: AppContext) => {
           background: ctx.background,
           search: ctx.search,
           callModel: ctx.callModel,
+          billingBlocked: ctx.billingBlocked,
         },
         {
           session: s,

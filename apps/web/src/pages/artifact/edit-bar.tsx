@@ -1,17 +1,23 @@
+import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Kbd } from "@/components/ui/kbd"
 
 /**
- * The floating control for inline edit mode — a quiet pill bottom-center over the
- * document, on the same surface recipe as the selection menu (popover + ring + pop
- * shadow). Two states, one place: clean shows the invitation and Done; dirty shows
- * the change count with Discard / Save (Suggest for commenters and locked
- * artifacts). Everything else about editing happens IN the document.
+ * The mode strip for inline editing — a slim band between the workbench header and
+ * the document, IN FLOW rather than floating over it.
+ *
+ * It floated once, bottom-center, and did two things wrong at the same time: it
+ * covered the document text it sat on (swallowing clicks meant for that text), and
+ * edit mode was otherwise pixel-identical to reading, so nothing on screen said the
+ * page had become editable. A band in the layout can't occlude anything, and it
+ * states the mode where the eye already is — under the title, beside the verb that
+ * opened it. It stays quiet: one line, muted copy, actions right-aligned.
  */
 export function EditBar({
   dirty,
   canPublish,
   saving,
-  bottomInset = 0,
+  touch = false,
   onSave,
   onDiscard,
   onDone,
@@ -19,51 +25,76 @@ export function EditBar({
   dirty: number
   canPublish: boolean
   saving: boolean
-  /** Extra bottom offset (px) — phones pass the comments sheet's height so the bar
-   *  floats above it instead of hiding behind it. */
-  bottomInset?: number
+  /** Phone/tablet: the verbs get real 44px touch targets and the hint says "tap". */
+  touch?: boolean
   onSave: () => void
   onDiscard: () => void
   onDone: () => void
 }) {
+  // Apple's 44px minimum. The strip grows a few px on a phone; a target you can
+  // actually hit is worth more there than the vertical space it costs.
+  const hit = touch ? "h-11 px-4" : ""
   return (
+    // role=status + aria-live: entering the mode unmounts the Edit button the user
+    // just pressed, so focus falls to body and a screen reader would otherwise get
+    // no signal at all that the document became editable.
     <div
       data-testid="inline-edit-bar"
-      className="absolute left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-lg bg-popover py-1 pr-1 pl-3 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
-      style={{ bottom: bottomInset + 18 }}
+      role="status"
+      aria-live="polite"
+      className="flex shrink-0 items-center gap-2 border-border border-b bg-accent/40 py-1.5 pr-2 pl-4"
     >
-      {dirty === 0 ? (
-        <>
-          <span className="text-xs text-muted-foreground">Click any text to edit</span>
-          <Button variant="ghost" size="sm" data-testid="inline-edit-done" onClick={onDone}>
-            Done
-          </Button>
-        </>
-      ) : (
-        <>
-          <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-            {dirty} change{dirty === 1 ? "" : "s"}
-          </span>
+      <Icon name="pencil" size={14} className="shrink-0 text-muted-foreground" />
+      <span className="font-medium text-foreground text-xs">Editing</span>
+      <span className="truncate text-2xs text-muted-foreground">
+        {dirty === 0
+          ? touch
+            ? "tap any text to change it"
+            : "click any text to change it"
+          : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
+      </span>
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        {dirty > 0 ? (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="inline-edit-discard"
+              onClick={onDiscard}
+              disabled={saving}
+              className={hit}
+            >
+              Discard
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              data-testid="inline-edit-save"
+              onClick={onSave}
+              loading={saving}
+              className={hit}
+            >
+              {canPublish ? "Save" : "Suggest"}
+              <Kbd aria-hidden className="max-sm:hidden">
+                ⌘S
+              </Kbd>
+            </Button>
+          </>
+        ) : (
           <Button
             variant="ghost"
             size="sm"
-            data-testid="inline-edit-discard"
-            onClick={onDiscard}
-            disabled={saving}
+            data-testid="inline-edit-done"
+            onClick={onDone}
+            className={hit}
           >
-            Discard
+            Done
+            <Kbd aria-hidden className="max-sm:hidden">
+              Esc
+            </Kbd>
           </Button>
-          <Button
-            variant="default"
-            size="sm"
-            data-testid="inline-edit-save"
-            onClick={onSave}
-            loading={saving}
-          >
-            {canPublish ? "Save" : "Suggest"}
-          </Button>
-        </>
-      )}
+        )}
+      </div>
     </div>
   )
 }
