@@ -7,7 +7,8 @@
 // is born with the events config, so a fresh "Add to Slack" is two-way from the first
 // message — nothing to toggle by hand.
 import { esc, brandShell as SHELL } from "./brand-page"
-import { SLACK_BOT_SCOPES } from "./lib/slack"
+import { SLACK_BOT_SCOPES, SLACK_USER_SCOPES } from "./lib/slack"
+import { SLACK_CAPTURE_CALLBACK } from "./lib/slack-capture"
 
 /** The Slack app manifest, born with everything Derive's Slack integration needs and
  *  every URL pointed at THIS instance. Single source of truth: the setup page renders
@@ -29,20 +30,51 @@ export const buildSlackManifest = (baseUrl: string) => {
     },
     features: {
       bot_user: { display_name: "Derive", always_online: true },
+      // The domains whose links this app unfurls. A registered domain matches all of its
+      // SUBDOMAINS and paths, so one entry covers the instance host and every vanity
+      // subdomain under it. Slack caps this at 5 and — unlike the events below — a change
+      // here only takes effect after the app is REINSTALLED in each workspace. A workspace
+      // on its own BYO custom domain is therefore out of reach: those hosts aren't known at
+      // manifest time and there is no room to enumerate them.
+      unfurl_domains: [hostOf(baseUrl)],
       slash_commands: [
         {
           command: "/derive",
           url: u("/v1/slack/commands"),
-          description: "Search your Derive artifacts",
-          usage_hint: "[query]",
+          // Slack shows BOTH of these in the autocomplete as soon as someone types `/derive`,
+          // and they are the only place the subcommands are discoverable — there is no other
+          // surface that lists them. A description naming only search is why `/derive subscribe`
+          // reads as if it does not exist.
+          description: "Search Derive, or choose what this channel gets",
+          usage_hint: "[query] | subscribe [collection] | unsubscribe | settings | help",
           should_escape: false,
+        },
+      ],
+      // "Save to Derive" on any message's overflow menu — the capture path (lib/slack-capture.ts).
+      // A MESSAGE shortcut rather than a global one: it needs the message it was fired on, and a
+      // global shortcut carries none. It belongs under `features`, beside slash_commands, NOT
+      // under `settings` beside interactivity — Slack's manifest schema rejects unknown keys, so
+      // the misplacement did not degrade to "shortcut missing", it failed the whole manifest.
+      // A manifest is the only way to declare one; an existing app picks it up when the manifest
+      // is re-applied, and the shortcut then appears without a per-workspace reinstall (it needs
+      // no new scope — `commands` already covers it).
+      shortcuts: [
+        {
+          name: "Save to Derive",
+          type: "message",
+          callback_id: SLACK_CAPTURE_CALLBACK,
+          description: "Save this message as a comment on a Derive doc",
         },
       ],
     },
     oauth_config: {
       // The bot install callback + the per-user "Sign in with Slack" (OIDC) link callback.
       redirect_urls: [u("/v1/slack/oauth/callback"), u("/v1/slack/link/callback")],
-      scopes: { bot: SLACK_BOT_SCOPES },
+      // BOTH lists, and the user one is not optional: this manifest declares the link callback
+      // above, so an app built without the user scopes looks configured for account linking and
+      // refuses the very first authorize call. Sourced from lib/slack.ts so the manifest and the
+      // authorize URL cannot drift.
+      scopes: { bot: SLACK_BOT_SCOPES, user: SLACK_USER_SCOPES },
     },
     settings: {
       event_subscriptions: {
@@ -58,7 +90,13 @@ export const buildSlackManifest = (baseUrl: string) => {
         // app_uninstalled / tokens_revoked need no scope, and they are the only way to learn
         // that the stored bot token died without waiting for a delivery to fail — which never
         // happens on a workspace with no Slack traffic, leaving Settings claiming "connected".
-        bot_events: ["message.channels", "message.groups", "app_uninstalled", "tokens_revoked"],
+        bot_events: [
+          "message.channels",
+          "message.groups",
+          "link_shared",
+          "app_uninstalled",
+          "tokens_revoked",
+        ],
       },
       // Buttons on comment cards (resolve / reopen a thread) POST here.
       interactivity: {

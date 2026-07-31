@@ -14,6 +14,11 @@ const ENV_EXAMPLE = join(process.cwd(), ".env.example")
 // Vars the server reads that are NOT user-facing self-host config, so they don't belong
 // in `.env.example`. Each must be justified — this list is the deliberate exceptions.
 const NON_CONFIG = new Set([
+  // Stamped onto the worker by `wrangler deploy --var` in CI so /healthz can report which
+  // commit is serving. Never operator-set: a hand-run deploy leaves it unset and /healthz
+  // honestly reports "dev". The self-host equivalent, DERIVE_BUILD_SHA, IS operator-facing
+  // and is documented in .env.example.
+  "BUILD_SHA",
   // Cloudflare Workers bindings (configured in wrangler.toml, not env)
   "DB",
   "ROOMS",

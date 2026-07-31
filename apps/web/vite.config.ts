@@ -57,6 +57,7 @@ export default defineConfig({
         "/raw",
         "/blob",
         "/healthz",
+        "/readyz",
         "/oauth",
         "/.well-known/skills",
         "/mcp",

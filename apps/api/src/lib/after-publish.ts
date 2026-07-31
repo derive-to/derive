@@ -11,11 +11,11 @@
 import {
   type ArtifactRecord,
   type BlobStore,
+  FACT_GEN,
   type MetaStore,
   newId,
-  parseDataSlots,
+  parseFacts,
   type SearchIndex,
-  SLOT_GEN,
   type VersionRecord,
 } from "@derive/core"
 import type { Backplane } from "../bus"
@@ -63,7 +63,7 @@ export const emitVersionBump = async (
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
   }
-  // Extract this version's structured data slots into queryable rows. Sibling to search
+  // Extract this version's structured facts into queryable rows. Sibling to search
   // indexing — same "every publish/restore/proposal-approve" reach, same best-effort
   // contract (a hiccup must never fail a publish that already went live). The publish
   // response already advises about any UNstored slot via publishAdvisories; this is the
@@ -75,8 +75,8 @@ export const emitVersionBump = async (
   }
 }
 
-/** Extract a single-file HTML/markdown version's data slots and persist them (see
- *  @derive/core data-slots). Bundles, decks and non-text versions carry no slots and are
+/** Extract a single-file HTML/markdown version's facts and persist them (see
+ *  @derive/core data-facts). Bundles, decks and non-text versions carry no facts and are
  *  skipped. Writes only when at least one slot parsed — a fresh version has no prior rows,
  *  so there is nothing to clear when it has none. */
 const extractVersionData = async (
@@ -89,17 +89,17 @@ const extractVersionData = async (
   if (ct !== "text/html" && ct !== "text/markdown") return
   const bytes = await blobs.get(version.blob_key)
   if (!bytes) return
-  const { slots } = parseDataSlots(new TextDecoder().decode(bytes), ct)
-  if (slots.length === 0) return
+  const { facts } = parseFacts(new TextDecoder().decode(bytes), ct)
+  if (facts.length === 0) return
   await meta.setVersionData(
     version.artifact_id,
     version.n,
-    slots.map((s) => ({
+    facts.map((s) => ({
       id: newId("vd"),
       slot: s.slot,
       json: s.json,
       size_bytes: s.bytes,
-      gen: SLOT_GEN,
+      gen: FACT_GEN,
     })),
   )
   // Off the hot path where the caller can: the walk-back costs a blob read per version.
@@ -107,29 +107,29 @@ const extractVersionData = async (
     meta,
     blobs,
     version,
-    slots.map((s) => s.slot),
+    facts.map((s) => s.slot),
   )
   await (background ? background(backfill) : backfill)
 }
 
-/** Versions walked back when a slot first appears. Bounded because each one costs a blob
+/** Versions walked back when a fact first appears. Bounded because each one costs a blob
  *  read: enough to cover a month of daily publishing, short of scanning an artifact with
  *  a thousand versions on a whim. */
 const BACKFILL_MAX_VERSIONS = 50
 
 /**
- * When a slot appears on an artifact for the FIRST time, extract it from the versions
+ * When a fact appears on an artifact for the FIRST time, extract it from the versions
  * that came before.
  *
- * Extraction runs at publish, so without this a slot's series begins the day it was added
- * and the history is silently lost — the first sharp edge anyone adding a slot to a real
+ * Extraction runs at publish, so without this a fact's series begins the day it was added
+ * and the history is silently lost — the first sharp edge anyone adding a fact to a real
  * artifact meets, and the one that made this repo's own fourteen-version demo come back
  * empty. The blocks were usually already in those older pages (a page that carried its
- * figures before slots existed still carries them); nothing had ever read them.
+ * figures before facts existed still carries them); nothing had ever read them.
  *
- * Fires only on the transition — a slot present in the previous version is already being
+ * Fires only on the transition — a fact present in the previous version is already being
  * tracked, so an ordinary republish does no extra work. Merges rather than replaces, since
- * setVersionData is a full replace and an older version may already have other slots.
+ * setVersionData is a full replace and an older version may already have other facts.
  * Best-effort and bounded: this must never fail or noticeably slow a publish that already
  * went live.
  */
@@ -155,7 +155,7 @@ const backfillNewSlots = async (
       if (ct !== "text/html" && ct !== "text/markdown") continue
       const bytes = await blobs.get(old.blob_key)
       if (!bytes) continue
-      const found = parseDataSlots(new TextDecoder().decode(bytes), ct).slots.filter((s) =>
+      const found = parseFacts(new TextDecoder().decode(bytes), ct).facts.filter((s) =>
         fresh.has(s.slot),
       )
       if (!found.length) continue
@@ -177,7 +177,7 @@ const backfillNewSlots = async (
           slot: s.slot,
           json: s.json,
           size_bytes: s.bytes,
-          gen: SLOT_GEN,
+          gen: FACT_GEN,
         })),
       ])
       filled++
@@ -190,7 +190,7 @@ const backfillNewSlots = async (
     if (filled)
       log.info("data-slot backfill", {
         artifact: version.artifact_id,
-        slots: [...fresh],
+        facts: [...fresh],
         versions_filled: filled,
         oldest_scanned: oldest,
         truncated: oldest > 1,
@@ -216,6 +216,12 @@ export interface AfterPublishOpts {
   /** Thread ids to resolve in the same call (a live publish that fixes feedback). The
    *  caller has already validated these belong to `artifact`. */
   resolves?: string[]
+  /** The ACTING principal's id — an agent's own id, not the human it acts for. Distinct from
+   *  `onBehalf` on purpose: `version.author_id` is the on-behalf-of human (routes/artifacts.ts
+   *  says so explicitly, "never an agent principal"), so using it to classify the actor made
+   *  every agent publish look human and sent it to the "people only" channels while the
+   *  "agents only" ones got nothing. Null for a headless publish. */
+  actorId?: string | null
 }
 
 /**
@@ -236,6 +242,7 @@ export const afterPublish = async (
     version: version.n,
     message: version.message,
     author: version.author,
+    actor_id: opts.actorId ?? null,
   })
   // Fan out to the publisher's followers: "someone you follow published X". Gated to a
   // known HUMAN behind the publish (an agent publish fans out to the followers of the

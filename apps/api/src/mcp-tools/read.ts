@@ -101,7 +101,7 @@ export function registerReadTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe(
-            'A version\'s structured DATA slot: the JSON a `derive-data` block on the page stored under this name (see the publishing skill), so you can read back data you published instead of re-parsing old markup. Pass "*" to list the slots this version carries. Reads the current version unless `version` is set.',
+            'A version\'s structured DATA slot: the JSON a `derive-data` block on the page stored under this name (see the publishing skill), so you can read back data you published instead of re-parsing old markup. Pass "*" to list the facts this version carries. Reads the current version unless `version` is set.',
           ),
         versions: z
           .string()
@@ -196,7 +196,7 @@ export function registerReadTool(tc: ToolContext): void {
         if (seg === "profile") {
           if (!(bpProfile?.state === "live" && profileArt))
             return err(
-              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, build the profile, then publish it to derive://brandprint/profile (an Admin's first publish there scaffolds the slot; it lands as a proposal a human approves).",
+              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, build the profile, then publish it to derive://brandprint/profile (an Admin's first publish there scaffolds the fact; it lands as a proposal a human approves).",
             )
           const pv = await ctx.meta.getVersion(profileArt.id, profileArt.current_version)
           const body = pv ? await ctx.sourceText(pv) : null
@@ -324,20 +324,20 @@ export function registerReadTool(tc: ToolContext): void {
           `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly, or pass \`wait\` (seconds, max 30) to block for it.`,
         )
       }
-      // The data rung: a version's structured slots, queried instead of re-parsed. A
+      // The data rung: a version's structured facts, queried instead of re-parsed. A
       // whole-version view like `render`, so it can't combine with a within-doc selector.
       if (data !== undefined) {
         if (section || lines || render)
           return err(
-            "`data` reads a version's stored slots — pass it alone (with `version` for history), not with section/lines/render.",
+            "`data` reads a version's stored facts — pass it alone (with `version` for history), not with section/lines/render.",
           )
         // The TREND read: one slot across a range of versions, in one call and one query.
-        // Versions are already the time axis, so this is the whole reason slots exist —
+        // Versions are already the time axis, so this is the whole reason facts exist —
         // "how did this move over thirty days" without fetching thirty versions.
         if (versions !== undefined) {
           if (data === "*")
             return err(
-              'Name a single slot to read across versions (data:"checks"); `data:"*"` lists one version\'s slots.',
+              'Name a single slot to read across versions (data:"checks"); `data:"*"` lists one version\'s facts.',
             )
           const range = parseVersionRange(versions, a.current_version)
           if (!range)
@@ -357,7 +357,7 @@ export function registerReadTool(tc: ToolContext): void {
           const missing = span - kept.length
           return json({
             short_id,
-            slot: data,
+            fact: data,
             versions: `${range.from}-${range.to} of ${a.current_version}`,
             count: kept.length,
             series: kept.map((r) => ({
@@ -373,7 +373,7 @@ export function registerReadTool(tc: ToolContext): void {
                 }
               : missing > 0
                 ? {
-                    note: `${missing} version(s) in this range carry no "${data}" slot — they predate slots or omitted the block.`,
+                    note: `${missing} version(s) in this range carry no "${data}" slot — they predate facts or omitted the block.`,
                   }
                 : {}),
           })
@@ -383,11 +383,11 @@ export function registerReadTool(tc: ToolContext): void {
           return json({
             short_id,
             version: n,
-            slots: rows.map((r) => ({ slot: r.slot, bytes: r.size_bytes })),
+            facts: rows.map((r) => ({ fact: r.slot, bytes: r.size_bytes })),
             ...(rows.length
               ? {}
               : {
-                  note: `Version ${n} of "${short_id}" carries no data slots. Embed a derive-data block (see the publishing skill) to make one queryable.`,
+                  note: `Version ${n} of "${short_id}" carries no facts. Embed a derive-data block (see the publishing skill) to make one queryable.`,
                 }),
           })
         }
@@ -397,15 +397,15 @@ export function registerReadTool(tc: ToolContext): void {
           const all = await ctx.meta.getVersionData(a.id, n)
           return err(
             all.length
-              ? `No data slot "${data}" in "${short_id}" v${n} — slots: ${all.map((r) => r.slot).join(", ")}. Pass data:"*" to list them.`
-              : `"${short_id}" v${n} carries no data slots — embed a derive-data block to add one.`,
+              ? `No facts "${data}" in "${short_id}" v${n} — facts: ${all.map((r) => r.slot).join(", ")}. Pass data:"*" to list them.`
+              : `"${short_id}" v${n} carries no facts — embed a derive-data block to add one.`,
           )
         }
         const stale = staleNote()
         return json({
           short_id,
           version: n,
-          slot: row.slot,
+          fact: row.slot,
           data: safeJson(row.json),
           ...(stale ? { note: stale } : {}),
         })

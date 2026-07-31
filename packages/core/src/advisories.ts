@@ -6,12 +6,7 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
-import {
-  missingDataSlotAdvisory,
-  parseDataSlots,
-  shapeOfJson,
-  slotDriftAdvisories,
-} from "./data-slots"
+import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } from "./facts"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
 
@@ -19,14 +14,14 @@ import { needsReflow } from "./reflow"
 export const publishAdvisories = (content: string, contentType: string): string[] => {
   const out: string[] = []
 
-  // Structured data slots that couldn't be stored (bad name, invalid JSON, oversize,
-  // duplicate, over the per-version cap). The SAME parser persists the good slots in the
+  // Structured facts that couldn't be stored (bad name, invalid JSON, oversize,
+  // duplicate, over the per-version cap). The SAME parser persists the good facts in the
   // version-bump chain, so what's advised here and what's stored can never disagree.
-  out.push(...parseDataSlots(content, contentType).advisories)
+  out.push(...parseFacts(content, contentType).advisories)
 
-  // A page full of figures with no slot: the nudge that keeps slots from depending on the
+  // A page full of figures with no slot: the nudge that keeps facts from depending on the
   // author remembering. Last, so it never crowds out something that is actually wrong.
-  const noSlot = missingDataSlotAdvisory(content, contentType)
+  const noSlot = missingFactAdvisory(content, contentType)
   if (noSlot) out.push(noSlot)
 
   // A temporary asset UPLOAD url (the mint-and-curl target) embedded as if it were
@@ -141,12 +136,12 @@ export const slotShapeDriftAdvisories = async (
 ): Promise<string[]> => {
   if (previousVersion < 1) return []
   try {
-    const { slots } = parseDataSlots(content, contentType)
-    if (!slots.length) return []
+    const { facts } = parseFacts(content, contentType)
+    if (!facts.length) return []
     const prior = await meta.getVersionData(artifactId, previousVersion)
     if (!prior.length) return []
-    return slotDriftAdvisories(
-      slots.map((s) => ({ slot: s.slot, json: s.json })),
+    return factDriftAdvisories(
+      facts.map((s) => ({ slot: s.slot, json: s.json })),
       prior.map((p) => ({ slot: p.slot, shape: shapeOfJson(p.json) })),
     )
   } catch {

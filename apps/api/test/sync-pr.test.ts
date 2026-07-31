@@ -352,7 +352,6 @@ describe("github pr preview: sticky comment on the PR", () => {
       githubPostComments: true,
       githubMirrorComments: true,
       githubPreviewLink: false,
-      slackPost: true,
     })
     prFiles = [{ filename: "docs/guide.md", status: "modified" }]
     await postWebhook("opened", { number: 21, title: "No comment", head: { sha: "s30" } })
@@ -365,7 +364,6 @@ describe("github pr preview: sticky comment on the PR", () => {
       githubPostComments: true,
       githubMirrorComments: true,
       githubPreviewLink: true,
-      slackPost: true,
     })
   })
 })

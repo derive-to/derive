@@ -65,6 +65,7 @@ import type {
   NewSession,
   NewSessionMessage,
   NewSignupAttribution,
+  NewSlackSubscription,
   NewVersion,
   NewVersionData,
   NewWebhook,
@@ -91,7 +92,9 @@ import type {
   SessionRecord,
   SessionState,
   SignupAttributionRecord,
+  SlackAuthorFilter,
   SlackInstallRecord,
+  SlackSubscriptionRecord,
   SlackThreadLinkRecord,
   SlackUserLinkRecord,
   SortMode,
@@ -113,7 +116,7 @@ import {
   parseRunMeta,
   runCounter,
   sortFields,
-  WORKSPACE_SLOT_ROW_CAP,
+  WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
 import {
   and,
@@ -180,6 +183,7 @@ import {
   sessionMessage,
   signupAttribution,
   slackInstall,
+  slackSubscription,
   slackThreadLink,
   slackUserLink,
   subscription,
@@ -492,6 +496,10 @@ export function makeRepos(db: SqliteDb) {
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
+  const getByShortIds = async (shortIds: string[]): Promise<ArtifactRecord[]> =>
+    shortIds.length === 0
+      ? []
+      : db.select().from(artifact).where(inArray(artifact.short_id, shortIds)).all()
   const getArtifactById = async (id: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
   const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
@@ -558,6 +566,101 @@ export function makeRepos(db: SqliteDb) {
       .from(version)
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
+
+  // "Is THIS artifact synced?" without materializing the workspace's whole managed set.
+  // The ids live inside each repo source's `files` JSON, so there is no column to filter on —
+  // but a LIKE on the raw text narrows to the few sources that could possibly contain it, and
+  // the parse then CONFIRMS, because a substring match is not proof (an id can appear inside a
+  // longer one, or in another field). Same answer as `managedArtifactIds(org).includes(id)`,
+  // without reading every manifest in the workspace to get it.
+  const isManagedArtifact = async (orgId: string, artifactId: string): Promise<boolean> => {
+    const rows = await db
+      .select({ files: repoSource.files })
+      .from(repoSource)
+      .where(and(eq(repoSource.org_id, orgId), like(repoSource.files, `%${artifactId}%`)))
+      .all()
+    return collectManagedIds(rows).includes(artifactId)
+  }
+
+  // The artifact + its workspace's settings. One join here too — the embedded dialects can
+  // express it just as well, and it keeps the two drivers' shapes identical.
+  const artifactWithSettings = async (
+    shortId: string,
+  ): Promise<{ artifact: ArtifactRecord | null; settings: OrgSettings }> => {
+    const row = await db
+      .select({ a: artifact, settings: orgSettings.settings })
+      .from(artifact)
+      .leftJoin(orgSettings, eq(orgSettings.org_id, artifact.org_id))
+      .where(eq(artifact.short_id, shortId))
+      .get()
+    return {
+      artifact: (row?.a as ArtifactRecord | undefined) ?? null,
+      settings: parseOrgSettings(row?.settings ?? null),
+    }
+  }
+
+  // Session + first message + state, together. The embedded drivers run the three writes
+  // sequentially (their round trips are free); the Postgres driver overrides this with one
+  // CTE chain, which is also where the atomicity matters.
+  const createSessionWithMessage = async (
+    s: NewSession,
+    m: Omit<NewSessionMessage, "session_id">,
+    state: SessionState,
+  ): Promise<{ session: SessionRecord; message: SessionMessageRecord }> => {
+    const session = await createSession(s)
+    const message = await addSessionMessage({ ...m, session_id: session.id }, state)
+    // The state update happens inside addSessionMessage, so re-read to return the row as it
+    // now stands rather than the pre-update one.
+    return { session: (await getSession(session.id)) ?? session, message }
+  }
+
+  // The unfurl card's counts + current version. The counts are computed by the database
+  // rather than by reading both whole tables and taking `.length` — same reason the pg
+  // driver batches this, and correct on any dialect.
+  const unfurlInfo = async (
+    artifactId: string,
+    versionN: number,
+  ): Promise<{
+    versionCount: number
+    commentCount: number
+    version: VersionRecord | null
+    facts: { slot: string; json: string }[]
+  }> => {
+    const [vRow, cRow, cur, factRows] = await Promise.all([
+      db.select({ n: count() }).from(version).where(eq(version.artifact_id, artifactId)).get(),
+      db.select({ n: count() }).from(comment).where(eq(comment.artifact_id, artifactId)).get(),
+      getVersion(artifactId, versionN),
+      getVersionData(artifactId, versionN),
+    ])
+    return {
+      versionCount: Number(vRow?.n ?? 0),
+      commentCount: Number(cRow?.n ?? 0),
+      version: cur,
+      // Narrowed to what slotSummary reads, matching the pg driver's projection rather
+      // than handing the caller whole rows only one shape of which is contractual.
+      facts: factRows.map((r) => ({ slot: r.slot, json: r.json })),
+    }
+  }
+
+  // Each artifact's CURRENT version in one query — the batched face of getVersion(id,
+  // current_version) for callers holding a page of artifacts (workspace search's
+  // grep-confirm pass). Joining on artifact.current_version keeps "current" defined in
+  // exactly one place.
+  const currentVersions = async (artifactIds: string[]): Promise<Record<string, VersionRecord>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ v: version })
+      .from(version)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, version.artifact_id), eq(artifact.current_version, version.n)),
+      )
+      .where(inArray(version.artifact_id, artifactIds))
+      .all()
+    const out: Record<string, VersionRecord> = {}
+    for (const r of rows) out[(r.v as VersionRecord).artifact_id] = r.v as VersionRecord
+    return out
+  }
 
   // Sequential add (used by D1, which has no interactive transactions; the
   // UNIQUE(artifact_id, n) constraint turns a race into a clean error). The
@@ -662,7 +765,7 @@ export function makeRepos(db: SqliteDb) {
 
   // Raw (slot, artifact) rows over each artifact's CURRENT version. Counting happens in
   // the caller, AFTER the visibility gate — see the port doc for why it cannot happen here.
-  const listWorkspaceSlots = async (orgId: string, opts?: { limit?: number }) =>
+  const listWorkspaceFacts = async (orgId: string, opts?: { limit?: number }) =>
     db
       .select({
         slot: versionData.slot,
@@ -676,10 +779,10 @@ export function makeRepos(db: SqliteDb) {
       )
       .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
       .orderBy(asc(versionData.slot))
-      .limit(opts?.limit ?? WORKSPACE_SLOT_ROW_CAP)
+      .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
       .all()
 
-  const listSlotAcrossArtifacts = async (
+  const listFactAcrossArtifacts = async (
     orgId: string,
     slot: string,
     opts?: { tag?: string; limit?: number },
@@ -1015,8 +1118,20 @@ export function makeRepos(db: SqliteDb) {
     const where = and(
       eq(comment.artifact_id, artifactId),
       opts?.state ? eq(comment.state, opts.state) : undefined,
+      opts?.threadId ? eq(comment.thread_id, opts.threadId) : undefined,
     )
     return db.select().from(comment).where(where).orderBy(asc(comment.created_at)).all()
+  }
+
+  // Just the DISTINCT author ids — the @mention directory's actual question. It was reading
+  // every comment row on the artifact, bodies and all, to collect them in the Worker.
+  const commentAuthorIds = async (artifactId: string): Promise<string[]> => {
+    const rows = await db
+      .selectDistinct({ id: comment.author_id })
+      .from(comment)
+      .where(and(eq(comment.artifact_id, artifactId), isNotNull(comment.author_id)))
+      .all()
+    return rows.map((r) => r.id).filter((x): x is string => !!x)
   }
 
   const setThreadState = async (
@@ -2095,6 +2210,10 @@ export function makeRepos(db: SqliteDb) {
   const listSlackInstallsByTeam = async (teamId: string): Promise<SlackInstallRecord[]> =>
     await db.select().from(slackInstall).where(eq(slackInstall.team_id, teamId)).all()
   const deleteSlackInstall = async (orgId: string): Promise<void> => {
+    // Disconnecting forgets WHERE to post as well as how. Otherwise the routing outlives the
+    // credentials, and reconnecting to a different Slack team resumes posting to the old team's
+    // channel ids — which is what the single default_channel used to do implicitly.
+    await db.delete(slackSubscription).where(eq(slackSubscription.org_id, orgId)).run()
     await db.delete(slackInstall).where(eq(slackInstall.org_id, orgId)).run()
   }
 
@@ -2144,14 +2263,17 @@ export function makeRepos(db: SqliteDb) {
       .from(modelCredential)
       .where(and(eq(modelCredential.org_id, orgId), eq(modelCredential.user_id, userId)))
       .all()
-  const getSlackThreadLinkByThread = async (
+  const getSlackThreadLink = async (
     threadId: string,
+    channel: string,
   ): Promise<SlackThreadLinkRecord | null> =>
     (await db
       .select()
       .from(slackThreadLink)
-      .where(eq(slackThreadLink.thread_id, threadId))
+      .where(and(eq(slackThreadLink.thread_id, threadId), eq(slackThreadLink.channel, channel)))
       .get()) ?? null
+  const listSlackThreadLinksByThread = async (threadId: string): Promise<SlackThreadLinkRecord[]> =>
+    await db.select().from(slackThreadLink).where(eq(slackThreadLink.thread_id, threadId)).all()
   const getSlackThreadLinkByTs = async (
     channel: string,
     ts: string,
@@ -2162,11 +2284,100 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(slackThreadLink.channel, channel), eq(slackThreadLink.message_ts, ts)))
       .get()) ?? null
   const setSlackThreadLink = async (l: SlackThreadLinkRecord): Promise<void> => {
-    const { thread_id: _t, created_at: _c, ...set } = l
+    const { thread_id: _t, channel: _ch, created_at: _c, ...set } = l
     await db
       .insert(slackThreadLink)
       .values(l)
-      .onConflictDoUpdate({ target: slackThreadLink.thread_id, set })
+      .onConflictDoUpdate({ target: [slackThreadLink.thread_id, slackThreadLink.channel], set })
+      .run()
+  }
+  const listSlackSubscriptions = async (orgId: string): Promise<SlackSubscriptionRecord[]> =>
+    await db
+      .select()
+      .from(slackSubscription)
+      .where(eq(slackSubscription.org_id, orgId))
+      .orderBy(desc(slackSubscription.created_at))
+      .all()
+  const upsertSlackSubscription = async (
+    sub: NewSlackSubscription,
+  ): Promise<SlackSubscriptionRecord> => {
+    const row = {
+      scope_kind: "workspace" as const,
+      scope_id: "",
+      events: "*",
+      authors: "all" as const,
+      active: 1 as const,
+      channel_name: null,
+      created_by: null,
+      ...sub,
+    }
+    // Identity and provenance are not editable by an upsert — a second admin re-subscribing a
+    // channel must not re-stamp who created it.
+    const { id: _i, org_id: _o, created_by: _c, ...set } = row
+    await db
+      .insert(slackSubscription)
+      .values(row)
+      .onConflictDoUpdate({
+        target: [
+          slackSubscription.org_id,
+          slackSubscription.channel_id,
+          slackSubscription.scope_kind,
+          slackSubscription.scope_id,
+        ],
+        set,
+      })
+      .run()
+    const found = await db
+      .select()
+      .from(slackSubscription)
+      .where(
+        and(
+          eq(slackSubscription.org_id, row.org_id),
+          eq(slackSubscription.channel_id, row.channel_id),
+          eq(slackSubscription.scope_kind, row.scope_kind),
+          eq(slackSubscription.scope_id, row.scope_id),
+        ),
+      )
+      .get()
+    if (!found) throw new Error("slack subscription upsert did not persist")
+    return found
+  }
+  const updateSlackSubscription = async (
+    id: string,
+    orgId: string,
+    fields: {
+      events?: string
+      authors?: SlackAuthorFilter
+      active?: 0 | 1
+      channel_name?: string | null
+    },
+  ): Promise<SlackSubscriptionRecord | null> => {
+    await db
+      .update(slackSubscription)
+      .set(fields)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+      .run()
+    return (
+      (await db
+        .select()
+        .from(slackSubscription)
+        .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+        .get()) ?? null
+    )
+  }
+  const deleteSlackSubscription = async (id: string, orgId: string): Promise<void> => {
+    await db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.id, id), eq(slackSubscription.org_id, orgId)))
+      .run()
+  }
+  const deleteSlackSubscriptionsByChannel = async (
+    orgId: string,
+    channelId: string,
+  ): Promise<void> => {
+    await db
+      .delete(slackSubscription)
+      .where(and(eq(slackSubscription.org_id, orgId), eq(slackSubscription.channel_id, channelId)))
       .run()
   }
   const getSlackUserLinkBySlackId = async (
@@ -3768,17 +3979,21 @@ export function makeRepos(db: SqliteDb) {
     setLocked,
     setPublicHistory,
     getByShortId,
+    getByShortIds,
+    artifactWithSettings,
     getArtifactById,
     getArtifactsByIds,
     siblingsBySourcePaths,
     addVersion,
     listVersions,
     getVersion,
+    currentVersions,
+    unfurlInfo,
     setVersionData,
     getVersionData,
     getVersionDataSeries,
-    listWorkspaceSlots,
-    listSlotAcrossArtifacts,
+    listWorkspaceFacts,
+    listFactAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
     setVersionPreviewVariant,
@@ -3805,6 +4020,7 @@ export function makeRepos(db: SqliteDb) {
     getComment,
     updateComment,
     listComments,
+    commentAuthorIds,
     setThreadState,
     deleteThread,
     commentSignals,
@@ -3892,6 +4108,7 @@ export function makeRepos(db: SqliteDb) {
     listRepoSourcesByInstallation,
     listSyncingRepoSources,
     managedArtifactIds,
+    isManagedArtifact,
     getGithubApp,
     setGithubApp,
     getOrgSettings,
@@ -3907,7 +4124,13 @@ export function makeRepos(db: SqliteDb) {
     setModelCredential,
     deleteModelCredential,
     listModelCredentials,
-    getSlackThreadLinkByThread,
+    getSlackThreadLink,
+    listSlackThreadLinksByThread,
+    listSlackSubscriptions,
+    upsertSlackSubscription,
+    updateSlackSubscription,
+    deleteSlackSubscription,
+    deleteSlackSubscriptionsByChannel,
     getSlackThreadLinkByTs,
     setSlackThreadLink,
     getSlackUserLinkBySlackId,
@@ -3945,6 +4168,7 @@ export function makeRepos(db: SqliteDb) {
     addContextAsker,
     removeContextAsker,
     createSession,
+    createSessionWithMessage,
     getSession,
     listSessions,
     pendingSessions,

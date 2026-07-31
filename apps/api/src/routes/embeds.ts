@@ -3,6 +3,7 @@ import {
   artifactUrl,
   candidateShortIds,
   escapeHtml,
+  factSummary,
   injectHead,
   kindLabel,
   normalizeUsername,
@@ -14,13 +15,13 @@ import {
   profileMetaTags,
   profileSummary,
   refFor,
-  slotSummary,
   type UnfurlInfo,
   unfurlMetaTags,
 } from "@derive/core"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail, toBody } from "../lib/http"
+import { unfurlInfoFor } from "../lib/unfurl-info"
 
 /**
  * Unfurl + embed surface. Turns a `/artifacts/:ref` share link into a rich card and an
@@ -43,30 +44,10 @@ export const embedRoutes = (ctx: AppContext) => {
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
 
-  // Everything an unfurl/embed surface needs for one artifact, plus the absolute
-  // URLs of the sibling endpoints. Counts come from the live version + comment list.
-  const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
-    const [versions, comments, version, slots] = await Promise.all([
-      meta.listVersions(artifact.id),
-      meta.listComments(artifact.id),
-      meta.getVersion(artifact.id, artifact.current_version),
-      // Best-effort: a share card must never fail to render because a slot read hiccuped.
-      meta.getVersionData(artifact.id, artifact.current_version).catch(() => []),
-    ])
-    const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
-    return {
-      title: artifact.title ?? "Untitled",
-      kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
-      versionCount: versions.length,
-      commentCount: comments.length,
-      // The reward for publishing a slot: the shared link carries its own numbers.
-      dataSummary: slotSummary(slots),
-      pageUrl: artifactUrl(baseUrl, artifact),
-      imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
-      oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
-      embedUrl: `${baseUrl}/v1/embed/${ref}`,
-    }
-  }
+  // Everything an unfurl/embed surface needs for one artifact (lib/unfurl-info.ts — shared with
+  // the Slack link-unfurl builder so the two can't describe the same artifact differently).
+  const infoFor = (artifact: ArtifactRecord): Promise<UnfurlInfo> =>
+    unfurlInfoFor(meta, baseUrl, artifact)
 
   /**
    * The cache directive for a response whose CONTENT depends on who asked.

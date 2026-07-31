@@ -18,7 +18,7 @@ import type { EventBus } from "../bus"
 import type { WebhookEvent } from "../events"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, parseMeta } from "./comments"
-import { slackUserName } from "./slack"
+import { SlackApiError, slackUserName, updateSlackMessage } from "./slack"
 import {
   actionButton,
   actions,
@@ -28,10 +28,14 @@ import {
   mrkdwnLabel,
   section,
 } from "./slack-cards"
-import { postWithRecovery, resolveBotToken } from "./slack-delivery"
+import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
+import { authorKind, channelIsSubscribed, resolveChannels } from "./slack-subscriptions"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
 interface SlackCommentPayload {
+  /** The channel this row delivers to. One outbox row per subscribed channel, so a failure in
+   *  one channel retries and dead-letters on its own. */
+  channel: string
   orgId: string
   artifactId: string
   threadId: string
@@ -41,37 +45,133 @@ interface SlackCommentPayload {
   author: string
 }
 
+/** The payload for a `chat.update` that re-states a mirrored thread's resolved/open state.
+ *
+ *  Carries everything needed to REBUILD the card rather than a diff, because chat.update
+ *  replaces a message's blocks wholesale — there is no partial update. The card fields are the
+ *  same ones SlackCommentPayload carries, re-read from the thread's root comment at enqueue
+ *  time, so an edited comment re-renders with its current text. */
+interface SlackThreadStatePayload {
+  channel: string
+  /** The Slack message to rewrite — the root card for this (thread, channel). */
+  messageTs: string
+  orgId: string
+  artifactId: string
+  threadId: string
+  state: "open" | "resolved"
+  /** Who acted, for the footer. Undefined when the actor has no display name to show. */
+  actor?: string
+  text: string
+  link: string
+  title: string
+  author: string
+}
+
+/** Bring every mirrored copy of a thread's card in line with the thread's real state.
+ *
+ *  Fixes two halves of the same gap. Resolving a thread in Derive's UI, over the API or by an
+ *  agent used to reach Slack not at all: the card kept offering "Resolve thread" for a thread
+ *  that was already closed. And resolving from a BUTTON only rewrote the card in the channel the
+ *  click came from (that is all a response_url can address), so a thread mirrored into three
+ *  channels left two of them stale.
+ *
+ *  Both are the same fix — every linked channel gets a chat.update — so this runs on every
+ *  resolve, whatever triggered it, including the clicked channel. The click path also repaints
+ *  through response_url for instant feedback; that is an optimistic paint and this is the
+ *  durable one, so a failed or expired response_url self-heals instead of leaving a stale button
+ *  forever. Writing the same blocks twice is visually a no-op.
+ *
+ *  Returns the number of channels enqueued. */
+export const enqueueSlackThreadState = async (
+  deps: { meta: MetaStore; baseUrl: string },
+  artifact: ArtifactRecord,
+  threadId: string,
+  state: "open" | "resolved",
+  actor?: string,
+): Promise<number> => {
+  const { meta, baseUrl } = deps
+  // One indexed lookup keyed on thread_id, and the ONLY cost a workspace with no Slack pays:
+  // a thread that was never mirrored has no links and returns here, before anything else is
+  // read. Deliberately first for that reason — every resolve in the product runs this.
+  const links = await meta.listSlackThreadLinksByThread(threadId)
+  if (!links.length) return 0
+  // A thread link outlives an unsubscribe, so a channel an admin cut off must not keep watching
+  // its cards mutate — same gate the inbound reply path uses. Resolved BEFORE the comment read
+  // below so a thread whose channels have all unsubscribed costs nothing further.
+  const live: typeof links = []
+  for (const l of links)
+    if (await channelIsSubscribed(meta, artifact.org_id, l.channel)) live.push(l)
+  if (!live.length) return 0
+  // The card's section is the thread's FIRST comment — the one the root message was posted for.
+  // Later replies in the thread posted as Slack replies underneath it, so they are not what a
+  // rewrite of the root should show.
+  const root = (await meta.listComments(artifact.id))
+    .filter((cm) => cm.thread_id === threadId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))[0]
+  if (!root) return 0
+  const link = commentDeepLink(baseUrl, artifact, threadId)
+  let n = 0
+  for (const l of live) {
+    const payload: SlackThreadStatePayload = {
+      channel: l.channel,
+      messageTs: l.message_ts,
+      orgId: artifact.org_id,
+      artifactId: artifact.id,
+      threadId,
+      state,
+      ...(actor ? { actor } : {}),
+      text: root.body_md,
+      link,
+      title: artifact.title ?? artifact.short_id,
+      author: root.author,
+    }
+    await enqueueChannelDelivery(meta, "slack_app", "comment.resolved", payload)
+    n++
+  }
+  return n
+}
+
 /** Enqueue a Slack post for a Derive comment, unless the comment came FROM Slack or there's
  *  no connected Slack workspace. The delivery sender resolves the channel + threading. */
 export const enqueueSlackComment = async (
   deps: { meta: MetaStore; baseUrl: string },
   artifact: ArtifactRecord,
   cm: CommentRecord,
-): Promise<void> => {
+): Promise<number> => {
   const { meta, baseUrl } = deps
-  if (parseMeta(cm.meta).slack) return // came from Slack — don't echo back
-  // Only mirror feed-visible artifacts (same gate as the event cards): a comment on a private
-  // draft must not post its title + body to the org-wide channel where non-collaborators see it.
-  if (artifact.listed === "none") return
-  const install = await meta.getSlackInstall(artifact.org_id)
-  if (!install?.default_channel) return
+  if (parseMeta(cm.meta).slack) return 0 // came from Slack — don't echo back
+  // resolveChannels keeps the visibility gate (a private draft never reaches a channel) and
+  // applies each subscription's event + author filters.
+  const channels = await resolveChannels(
+    meta,
+    artifact,
+    "comment.created",
+    await authorKind(meta, artifact.org_id, cm.author_id),
+  )
+  if (!channels.length) return 0
   const link = commentDeepLink(baseUrl, artifact, cm.thread_id)
-  const payload: SlackCommentPayload = {
-    orgId: artifact.org_id,
-    artifactId: artifact.id,
-    threadId: cm.thread_id,
-    text: cm.body_md,
-    link,
-    title: artifact.title ?? artifact.short_id,
-    author: cm.author,
+  for (const sub of channels) {
+    const payload: SlackCommentPayload = {
+      channel: sub.channel_id,
+      orgId: artifact.org_id,
+      artifactId: artifact.id,
+      threadId: cm.thread_id,
+      text: cm.body_md,
+      link,
+      title: artifact.title ?? artifact.short_id,
+      author: cm.author,
+    }
+    await enqueueChannelDelivery(meta, "slack_app", "comment.created", payload)
   }
-  await enqueueChannelDelivery(meta, "slack_app", "comment.created", payload)
+  return channels.length
 }
 
 /** The self-contained payload for a channel EVENT card (publish / proposal lifecycle). Carried
  *  on a `slack_app` delivery whose `event_type` is the event — the sender routes on that, so
  *  event cards and the comment mirror share the kind without a payload discriminator. */
 interface SlackEventPayload {
+  /** As SlackCommentPayload.channel — one row per subscribed channel. */
+  channel: string
   orgId: string
   artifactId: string
   event: WebhookEvent
@@ -120,7 +220,7 @@ const CHANNEL_EVENTS = new Set<WebhookEvent>([
 ])
 
 /** Enqueue a top-level channel card for an artifact-lifecycle event, when the org has a
- *  connected channel and the mirror (slackPost) is on. Returns whether it enqueued (so the
+ *  matching channel subscription. Returns whether it enqueued (so the
  *  caller can poke the drainer). Cheap no-op for the common case — the event whitelist is
  *  checked before any DB lookup. */
 export const enqueueSlackChannelEvent = async (
@@ -131,25 +231,35 @@ export const enqueueSlackChannelEvent = async (
   data: Record<string, unknown>,
 ): Promise<boolean> => {
   if (!CHANNEL_EVENTS.has(event)) return false
-  // Only broadcast feed-visible artifacts. A private draft (listed "none") is visible to its
-  // owner + explicit shares — its publish/proposal title must not leak to the org-wide channel.
-  if (artifact.listed === "none") return false
-  const install = await meta.getSlackInstall(artifact.org_id)
-  if (!install?.default_channel) return false
-  if (!(await meta.getOrgSettings(artifact.org_id)).slackPost) return false
-  const actor = [data.author, data.approver, data.reviewer].find((v) => typeof v === "string")
-  const payload: SlackEventPayload = {
-    orgId: artifact.org_id,
-    artifactId: artifact.id,
+  // `actor_id` is the stable id of whoever caused this (notify's callers pass it alongside the
+  // display name), and is what the human/agent subscription filter keys on.
+  const channels = await resolveChannels(
+    meta,
+    artifact,
     event,
-    title: artifact.title ?? artifact.short_id,
-    link: artifactUrl(baseUrl, artifact),
-    author: typeof actor === "string" ? actor : "someone",
-    version: typeof data.version === "number" ? data.version : null,
-    message: typeof data.message === "string" ? data.message : null,
-    proposalId: typeof data.proposal_id === "string" ? data.proposal_id : null,
+    await authorKind(
+      meta,
+      artifact.org_id,
+      typeof data.actor_id === "string" ? data.actor_id : null,
+    ),
+  )
+  if (!channels.length) return false
+  const actor = [data.author, data.approver, data.reviewer].find((v) => typeof v === "string")
+  for (const sub of channels) {
+    const payload: SlackEventPayload = {
+      channel: sub.channel_id,
+      orgId: artifact.org_id,
+      artifactId: artifact.id,
+      event,
+      title: artifact.title ?? artifact.short_id,
+      link: artifactUrl(baseUrl, artifact),
+      author: typeof actor === "string" ? actor : "someone",
+      version: typeof data.version === "number" ? data.version : null,
+      message: typeof data.message === "string" ? data.message : null,
+      proposalId: typeof data.proposal_id === "string" ? data.proposal_id : null,
+    }
+    await enqueueChannelDelivery(meta, "slack_app", event, payload)
   }
-  await enqueueChannelDelivery(meta, "slack_app", event, payload)
   return true
 }
 
@@ -250,10 +360,13 @@ export const threadStateBlocks = (
  *  body is authored prose (`mrkdwnBody` — escaped, then its markdown rendered). They land in a
  *  mrkdwn section, so an unescaped `<!channel>` would ping the channel and a `>` would break
  *  out of the link — same treatment eventBlocks gives its fields. */
-const blocksFor = (p: SlackCommentPayload): unknown[] => [
+const threadSection = (p: { author: string; link: string; title: string; text: string }) =>
   section(
     `:speech_balloon: *${mrkdwnLabel(p.author)}* commented on <${p.link}|${mrkdwnLabel(p.title)}>\n${mrkdwnBody(p.text, 600)}`,
-  ),
+  )
+
+const blocksFor = (p: SlackCommentPayload): unknown[] => [
+  threadSection(p),
   ...threadStateBlocks("open", encodeThreadAction(p.artifactId, p.threadId)),
 ]
 
@@ -264,6 +377,33 @@ const blocksFor = (p: SlackCommentPayload): unknown[] => [
 export const makeSlackSender =
   (meta: MetaStore, encryptionKey: string | undefined) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
+    // A resolve/reopen REWRITES an existing card rather than posting anything, so it branches
+    // before the two posting paths. Checked first: it shares the kind with them and would
+    // otherwise fall into the event-card branch and post a second, top-level message.
+    if (d.event_type === "comment.resolved") {
+      const p = JSON.parse(d.payload) as SlackThreadStatePayload
+      const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
+      if (!bot) return { ok: true, status: "skipped: slack not connected" }
+      try {
+        await updateSlackMessage(bot.token, {
+          channel: p.channel,
+          ts: p.messageTs,
+          text: `${mrkdwnLabel(p.author)} commented on ${mrkdwnLabel(p.title)}`,
+          blocks: [
+            threadSection(p),
+            ...threadStateBlocks(p.state, encodeThreadAction(p.artifactId, p.threadId), p.actor),
+          ],
+        })
+        return { ok: true, status: `updated ${p.messageTs}` }
+      } catch (err) {
+        // message_not_found means the card was deleted in Slack — the thread link points at
+        // nothing, and retrying can never succeed. Report delivered-but-skipped so the row
+        // doesn't burn its retries and dead-letter over a message someone tidied away.
+        if (err instanceof SlackApiError && err.code === "message_not_found")
+          return { ok: true, status: "skipped: message deleted" }
+        return slackFailure(meta, p.orgId, err)
+      }
+    }
     // Event cards (publish / proposal lifecycle) ride the same kind but a different event_type,
     // and post top-level (not threaded under an artifact's comment message).
     if (d.event_type !== "comment.created") {
@@ -272,13 +412,13 @@ export const makeSlackSender =
       // guard against a future comment-shaped payload mis-routing here (no `event` → skip).
       if (typeof e.event !== "string") return { ok: true, status: "skipped: not an event payload" }
       const bot = await resolveBotToken(meta, e.orgId, encryptionKey)
-      if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
+      if (!bot) return { ok: true, status: "skipped: slack not connected" }
       return postWithRecovery(
         meta,
         e.orgId,
         bot.token,
         {
-          channel: bot.install.default_channel,
+          channel: e.channel,
           // The fallback text is parsed as mrkdwn too (notifications, blocks-failed render), so
           // untrusted author/title must be escaped here as well — else a name like `<!channel>`
           // could ping the channel via the fallback even though the blocks escape it.
@@ -292,9 +432,11 @@ export const makeSlackSender =
     }
     const p = JSON.parse(d.payload) as SlackCommentPayload
     const bot = await resolveBotToken(meta, p.orgId, encryptionKey)
-    if (!bot?.install.default_channel) return { ok: true, status: "skipped: slack not connected" }
-    const existing = await meta.getSlackThreadLinkByThread(p.threadId)
-    const channel = existing?.channel ?? bot.install.default_channel
+    if (!bot) return { ok: true, status: "skipped: slack not connected" }
+    // The row names its channel; the link tells us whether this thread already has a message
+    // THERE to thread under. A thread mirrored into three channels has three of each.
+    const channel = p.channel
+    const existing = await meta.getSlackThreadLink(p.threadId, channel)
 
     const res = await postWithRecovery(
       meta,
@@ -359,8 +501,10 @@ export const makeSlackIngestSender =
     const p = JSON.parse(d.payload) as SlackIngestPayload
     const link = await meta.getSlackThreadLinkByTs(p.channel, p.threadTs)
     if (!link) return { ok: true, status: "skipped: no thread link" }
-    if (!(await meta.getOrgSettings(link.org_id)).slackPost)
-      return { ok: true, status: "skipped: channel mirror off" }
+    // A thread link outlives an unsubscribe (nothing deletes them), so the subscription is what
+    // says whether this channel is still connected — in BOTH directions.
+    if (!(await channelIsSubscribed(meta, link.org_id, p.channel)))
+      return { ok: true, status: "skipped: channel not subscribed" }
     const bot = await resolveBotToken(meta, link.org_id, encryptionKey)
     if (!bot) return { ok: true, status: "skipped: slack not connected" }
     const name = await slackUserName(bot.token, p.userId)

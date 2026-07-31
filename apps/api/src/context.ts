@@ -14,9 +14,11 @@ import {
   FREE_SEAT_LIMIT,
   isAuthenticated,
   isBundleContentType,
+  type MembershipRecord,
   type MetaStore,
   maxRole,
   newId,
+  type OrgSettings,
   type Principal,
   principalActor,
   principalOwnerId,
@@ -34,7 +36,8 @@ import type { AgentLoopInput } from "./lib/agent-loop"
 import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { BillingDriver } from "./lib/billing"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
-import { safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
+import type { Sandbox } from "./lib/code-sandbox"
+import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
@@ -111,12 +114,32 @@ export interface AppDeps {
    *  edge entry injects a Durable Object backplane. */
   backplane?: Backplane
   baseUrl: string
+  /** The commit this build was cut from, echoed by /healthz.
+   *
+   *  Exists so "what is actually running?" is answerable from OUTSIDE the deploy pipeline. A
+   *  deploy can fail while its CI job is read as green — the job that ships it is one step among
+   *  several, and a transient registry error there leaves the previous worker serving with
+   *  nothing about the running system to say so. That happened: a fix sat undeployed for two
+   *  hours while its symptoms were debugged against code that was never live. Unset ⇒ "dev". */
+  buildId?: string
   /** A static token (CI/agents) authorizes writes + gated reads, alongside a login session. */
   token?: string
   /** Passphrase for encrypting stored third-party secrets at rest (GitHub PATs).
    *  The Node + Worker entries pass the auth secret. Unset (e.g. tests) ⇒ tokens
    *  are stored as-is; set ⇒ AES-256-GCM encrypted (see lib/crypto encryptSecret). */
   encryptionKey?: string
+  /** Allow the ECHO broker stub for a workspace with no broker plan. Dev and tests only.
+   *
+   *  Off (the default), such a workspace gets a broker that REFUSES. On, it gets LocalBroker,
+   *  whose `execute` returns the caller's own arguments — which is a fixture, not an integration,
+   *  and in production is a run that reports success over data that never existed. */
+  allowEchoStub?: boolean
+  /** The isolate `derive_code` runs model-written JavaScript in. The Node entry passes a worker
+   *  thread; the Worker entry passes nothing until Cloudflare's Worker Loader is out of beta, and
+   *  the tool simply does not register without one — no runtime sniffing, no half-working tool.
+   *  Injected rather than imported so the API never drags `node:worker_threads` into a Workers
+   *  bundle, and so a test can supply a fake. */
+  codeSandbox?: Sandbox
   /** How an ATTENDED turn calls the model — the chat path, where someone is waiting and the work
    *  runs in this request rather than through the queue. Unattended runs do NOT use this: they
    *  resolve their own credential per run through the payer chain, so who pays never depends on
@@ -347,7 +370,7 @@ export function buildContext(deps: AppDeps) {
       })
       .catch(logEnqueueError("webhook", a, event))
     // The connected Slack App's channel — a top-level card for artifact-lifecycle events
-    // (publish / proposal), gated inside the helper on visibility + connected channel + slackPost.
+    // (publish / proposal), gated inside the helper on visibility + the channel subscriptions.
     // Skipped entirely when no Slack app is configured on this instance (no wasted lookup).
     const channel = deps.slack
       ? enqueueSlackChannelEvent(meta, deps.baseUrl, a, event, data)
@@ -517,7 +540,13 @@ export function buildContext(deps: AppDeps) {
   // token carries only a runtime role.
   const oauthGrantCache = new WeakMap<
     Context,
-    { ownerId: string; scopeRole: Role; clientId: string; boundWorkspaces: string[] }
+    {
+      ownerId: string
+      ownerName: string | null
+      scopeRole: Role
+      clientId: string
+      boundWorkspaces: string[]
+    }
   >()
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
   // refuse chaining (see isMintedApiToken).
@@ -562,6 +591,9 @@ export function buildContext(deps: AppDeps) {
           mintedApiCache.set(c, true)
           oauthGrantCache.set(c, {
             ownerId: claim.userId,
+            // The capability claim carries no display name — mcp.ts falls back to a
+            // getUsers lookup for this one path (minted dkapi_ tokens are rare).
+            ownerName: null,
             // The minted role IS the scope ceiling — a token minted for `publish`
             // must not reach management just because its human is an owner.
             scopeRole: claim.role,
@@ -628,7 +660,10 @@ export function buildContext(deps: AppDeps) {
       // user who registered it (created_by; null for pre-column agents) — or an
       // OAuth access token from the browser consent flow, which carries the user
       // who authed it. Both resolve to an on-behalf human where one is known.
-      const reg = await meta.getAgentByToken(sha256(b))
+      // Every registered token is minted with AGENT_TOKEN_PREFIX, so a bearer without
+      // it (every OAuth/JWT MCP token) can never match — skip the guaranteed-miss
+      // round trip instead of paying it on every one of those calls.
+      const reg = b.startsWith(AGENT_TOKEN_PREFIX) ? await meta.getAgentByToken(sha256(b)) : null
       if (reg) {
         a = reg
         owner = reg.created_by ?? null
@@ -639,6 +674,7 @@ export function buildContext(deps: AppDeps) {
           owner = o.ownerId
           oauthGrantCache.set(c, {
             ownerId: o.ownerId,
+            ownerName: o.ownerName,
             scopeRole: o.scopeRole,
             clientId: o.clientId,
             boundWorkspaces: o.boundWorkspaces,
@@ -700,6 +736,7 @@ export function buildContext(deps: AppDeps) {
     c: Context,
   ): Promise<{
     ownerId: string
+    ownerName: string | null
     scopeRole: Role
     clientId: string
     boundWorkspaces: string[]
@@ -814,9 +851,11 @@ export function buildContext(deps: AppDeps) {
   // Show the Made-with-Derive mark, or not? A workspace's whiteLabel toggle only takes
   // effect when it's also ENTITLED (beta, or an active subscription) — the settings
   // check runs first so the billing queries short-circuit away entirely once
-  // white-label is off, which is the common case.
-  const effectiveWhiteLabel = async (orgId: string): Promise<boolean> =>
-    (await meta.getOrgSettings(orgId)).whiteLabel === true &&
+  // white-label is off, which is the common case. `pre` skips the settings read when the
+  // caller already holds the row (a batched artifactDetail), same shape as billingState:
+  // with white-label off that makes this whole call free.
+  const effectiveWhiteLabel = async (orgId: string, pre?: OrgSettings): Promise<boolean> =>
+    (pre ?? (await meta.getOrgSettings(orgId))).whiteLabel === true &&
     (await billingState(orgId)).whiteLabelEntitled
 
   // Would storing `incoming` more bytes push THIS workspace over its storage cap?
@@ -837,13 +876,41 @@ export function buildContext(deps: AppDeps) {
     return stored + assets + incoming > cap
   }
 
+  // MEMOIZED PER REQUEST + (org, user), same technique as `actorCache` below and for the
+  // same reason: `activeWorkspace`'s cookie-validation branch and `ensureMembership` (called
+  // from `workspaceRole` and the `/v1/me` route) both ask `getMembership` for the identical
+  // pair within one request — every call that resolves a workspace + role paid for it twice.
+  // Caches the PROMISE, not the value, so two callers racing before the first resolves still
+  // de-dupe to one query.
+  const membershipCache = new WeakMap<Context, Map<string, Promise<MembershipRecord | null>>>()
+  const cachedMembership = (
+    c: Context,
+    orgId: string,
+    userId: string,
+  ): Promise<MembershipRecord | null> => {
+    let perRequest = membershipCache.get(c)
+    if (!perRequest) {
+      perRequest = new Map()
+      membershipCache.set(c, perRequest)
+    }
+    const key = `${orgId}:${userId}`
+    const hit = perRequest.get(key)
+    if (hit) return hit
+    const pending = meta.getMembership(orgId, userId)
+    perRequest.set(key, pending)
+    return pending
+  }
+
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
-  const ensureMembership = async (orgId: string, userId: string): Promise<Role> => {
-    const existing = await meta.getMembership(orgId, userId)
+  const ensureMembership = async (c: Context, orgId: string, userId: string): Promise<Role> => {
+    const existing = await cachedMembership(c, orgId, userId)
     if (existing) return existing.role
     const role: Role = (await meta.countMemberships(orgId)) === 0 ? "owner" : defaultRole
     await meta.setMembership({ id: newId("m"), org_id: orgId, user_id: userId, role })
+    // Drop the memoized "no membership" miss — a later read in this same request must see
+    // the row just provisioned, not the stale null.
+    membershipCache.get(c)?.delete(`${orgId}:${userId}`)
     await syncSeats({ meta, billing: deps.billing }, orgId)
     return role
   }
@@ -897,7 +964,7 @@ export function buildContext(deps: AppDeps) {
       ws = getCookie(c, WS_COOKIE) || defaultOrg
     } else {
       const ck = getCookie(c, WS_COOKIE)
-      if (ck && (await meta.getMembership(ck, me.id))) ws = ck
+      if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
       else {
         const mine = await meta.listWorkspaces(me.id)
         ws = mine[0]?.id ?? (await provisionPersonal(me))
@@ -1119,7 +1186,7 @@ export function buildContext(deps: AppDeps) {
     if (ag) return ag.role
     const me = await currentUser(c)
     if (!me) return null
-    return ensureMembership(await activeWorkspace(c), me.id)
+    return ensureMembership(c, await activeWorkspace(c), me.id)
   }
   const workspaceCan = async (c: Context, action: Action): Promise<boolean> => {
     const r = await workspaceRole(c)
@@ -1286,6 +1353,11 @@ export function buildContext(deps: AppDeps) {
     blockCopy,
     effectiveWhiteLabel,
     ensureMembership,
+    /** `meta.getMembership`, memoized for this request. Routes that need a caller's role
+     *  in a workspace should call THIS, not the store directly — the same row is usually
+     *  already resolved by `activeWorkspace`/`workspaceRole`, and a direct call re-pays a
+     *  full ~80ms round trip for it. */
+    membershipOf: cachedMembership,
     activeWorkspace,
     setWsCookie,
     anonViewerId,

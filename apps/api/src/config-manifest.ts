@@ -98,6 +98,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "1",
   },
   {
+    name: "DERIVE_BUILD_SHA",
+    group: "core",
+    doc: 'The commit this build was cut from. /healthz echoes it as `build`, so "which version is\nactually running" is answerable with curl rather than inferred from a deploy log — a deploy\ncan fail while the pipeline around it reads green, and liveness alone cannot tell a fresh\nprocess from the one already serving. Unset reports "dev". Set it in your image build.',
+    example: "",
+  },
+  {
     name: "DERIVE_TOKEN",
     group: "core",
     doc: "A static bearer token for headless CI/agent writes (and reading gated artifacts).\nSigned-in users can always write; anonymous callers are read-only either way.",
@@ -368,6 +374,12 @@ const CONFIG_VARS: ConfigVar[] = [
     group: "advanced",
     doc: "Model id to send to DERIVE_MODEL_BASE_URL, exactly as that provider names it.",
     example: "accounts/fireworks/models/deepseek-v4-flash",
+  },
+  {
+    name: "DERIVE_LOCAL_BROKER",
+    group: "advanced",
+    doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",
+    example: "1",
   },
   {
     name: "DERIVE_RUNNER_BIN",

@@ -41,10 +41,10 @@ export const rawRoutes = (ctx: AppContext) => {
     }),
   )
 
-  // A version's data slot as JSON, for everything that isn't an MCP client: a fetch()
+  // A version's facts as JSON, for everything that isn't an MCP client: a fetch()
   // from the artifact's own page (a chart reading its own history), a curl in a shell,
-  // a script with a bearer. Same slots the `read` tool returns, same authorization and
-  // anon-history gate as the bytes — a slot is part of the version, so it can never be
+  // a script with a bearer. Same facts the `read` tool returns, same authorization and
+  // anon-history gate as the bytes — a fact is part of the version, so it can never be
   // more readable than the page carrying it.
   //
   // Registered BEFORE the `/raw/:shortId/v/:n/*` catch-all, whose trailing wildcard would
@@ -52,7 +52,7 @@ export const rawRoutes = (ctx: AppContext) => {
   // specific route has to win the match, exactly like the `/t/:token/` route above.
   // `.json` is optional so both spellings work rather than one 404ing mysteriously.
   //
-  // A slot's bytes reach only a caller who cleared `authorize`, so for an artifact with no
+  // A fact's bytes reach only a caller who cleared `authorize`, so for an artifact with no
   // world link (or a locked one) the response is CALLER-SPECIFIC. Nothing here varies on
   // the credential that produced it, so marking it `public` would invite a CDN or corporate
   // proxy to hand one member's figures to anyone who asks, and the version-pinned variant
@@ -62,7 +62,7 @@ export const rawRoutes = (ctx: AppContext) => {
     a.link_role === "none" || a.password_hash ? `private, ${directives}` : `public, ${directives}`
 
   /**
-   * A slot response must be READABLE BY THE ARTIFACT'S OWN PAGE, which is the entire
+   * A fact response must be READABLE BY THE ARTIFACT'S OWN PAGE, which is the entire
    * point of "a page charts its own history".
    *
    * Artifacts are served into an OPAQUE ORIGIN (the sandbox CSP grants no
@@ -109,7 +109,7 @@ export const rawRoutes = (ctx: AppContext) => {
       const series = anonCurrentOnly
         ? await meta.getVersionData(artifact.id, artifact.current_version, slot)
         : await meta.getVersionDataSeries(artifact.id, slot, 1, artifact.current_version, 5000)
-      if (!series.length) return fail(c, 404, `no data slot "${slot}"`)
+      if (!series.length) return fail(c, 404, `no facts "${slot}"`)
       const body = series
         .map((r) => JSON.stringify({ n: r.n, at: r.created_at, data: safeJson(r.json) }))
         .join("\n")
@@ -123,7 +123,7 @@ export const rawRoutes = (ctx: AppContext) => {
     }
     const rows = await meta.getVersionData(artifact.id, v, slot)
     const row = rows[0]
-    if (!row) return fail(c, 404, `no data slot "${slot}" in v${v}`)
+    if (!row) return fail(c, 404, `no facts "${slot}" in v${v}`)
     // The stored bytes verbatim, not a re-serialization: what was published is what a
     // caller gets, and it's already valid JSON (validated at publish).
     return c.body(row.json, 200, {

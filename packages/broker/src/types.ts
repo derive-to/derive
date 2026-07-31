@@ -14,11 +14,23 @@ export interface BrokerConnection {
   status: "active" | "pending"
 }
 
-/** One tool a connected account exposes. `params` is a loose JSON-schema-ish shape. */
+/** One tool a connected account exposes. `params` is a loose JSON-schema-ish shape.
+ *
+ *  Everything below `params` is OPTIONAL because only the MCP broker carries it, and it exists
+ *  for one reason: the pin has to cover the whole contract a server can change under us. A tool
+ *  whose `annotations` flip from read-only to destructive is a different tool, and a pin that
+ *  ignored them would call that "unchanged". */
 export interface BrokerToolDef {
   name: string
   description: string
   params: Record<string, unknown>
+  /** Display title. Server-supplied, so it is untrusted text like the description. */
+  title?: string
+  /** Structured output shape, when the server declares one. */
+  outputSchema?: Record<string, unknown>
+  /** Behavioural hints (readOnlyHint, destructiveHint, …). UNVERIFIED server self-description:
+   *  they may inform UX and caching, never authorization. Pinned so an escalation is visible. */
+  annotations?: Record<string, unknown>
 }
 
 /** The result of starting a connection: where to authorize, the broker ref to persist, and

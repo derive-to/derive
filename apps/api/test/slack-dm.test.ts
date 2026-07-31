@@ -37,7 +37,6 @@ const connect = (meta: ReturnType<typeof make>) =>
     team_name: "Acme",
     bot_token: "xoxb-plain",
     bot_user_id: "UBOT",
-    default_channel: "C1",
     created_at: new Date().toISOString(),
   })
 

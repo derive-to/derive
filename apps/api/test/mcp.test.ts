@@ -398,15 +398,15 @@ describe("remote MCP endpoint (/mcp)", () => {
     // The CATALOG counts what the caller can see, not what the workspace holds: a count of
     // 2 here would disclose the existence of the document just as surely as naming it.
     const catalog = JSON.parse(toolText(await call(app, mate, "find", { data: "*" })))
-    expect(catalog.slots.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(1)
+    expect(catalog.facts.find((s: { fact: string }) => s.fact === "revenue")?.artifacts).toBe(1)
     const ownerCatalog = JSON.parse(toolText(await call(app, token, "find", { data: "*" })))
-    expect(ownerCatalog.slots.find((s: { slot: string }) => s.slot === "revenue")?.artifacts).toBe(
+    expect(ownerCatalog.facts.find((s: { fact: string }) => s.fact === "revenue")?.artifacts).toBe(
       2,
     )
   })
 
-  it("backfills a slot's history the first time it appears on an artifact", async () => {
-    // The sharp edge this closes: extraction runs at publish, so without a backfill a slot
+  it("backfills a fact's history the first time it appears on an artifact", async () => {
+    // The sharp edge this closes: extraction runs at publish, so without a backfill a fact
     // added to an existing artifact starts its series today and silently loses everything
     // before it — even though those older pages usually already carried the block.
     const { app, token, meta } = appWithGrant(
@@ -427,7 +427,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     await call(app, token, "publish", { short_id: shortId, content: withSlot(3) })
 
     // Simulate history that was never extracted: the pages carry the block, but no rows
-    // exist for them — exactly the state of every artifact published before slots shipped.
+    // exist for them — exactly the state of every artifact published before facts shipped.
     const rec = await meta.getByShortId(shortId)
     if (!rec) throw new Error("artifact vanished")
     for (const n of [1, 2, 3]) await meta.setVersionData(rec.id, n, [])
@@ -472,7 +472,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(holes.series.map((p: { n: number }) => p.n)).toEqual([2])
   })
 
-  it("extracts data slots on publish and reads them back by name and as a list", async () => {
+  it("extracts facts on publish and reads them back by name and as a list", async () => {
     const { app, token } = appWithGrant(dir, "dataslots", "openid derive:read derive:publish")
     const page =
       "<!doctype html><html><body><h1>Nightly</h1>" +
@@ -489,23 +489,23 @@ describe("remote MCP endpoint (/mcp)", () => {
     const checks = JSON.parse(
       toolText(await call(app, token, "read", { short_id: shortId, data: "checks" })),
     )
-    expect(checks.slot).toBe("checks")
+    expect(checks.fact).toBe("checks")
     expect(checks.data).toEqual({ pass: 44, fail: 0 })
 
-    // The slots this version carries (ordered by name).
+    // The facts this version carries (ordered by name).
     const listed = JSON.parse(
       toolText(await call(app, token, "read", { short_id: shortId, data: "*" })),
     )
-    expect(listed.slots.map((s: { slot: string }) => s.slot)).toEqual(["budget", "checks"])
+    expect(listed.facts.map((s: { fact: string }) => s.fact)).toEqual(["budget", "checks"])
 
-    // A missing slot names the ones that exist rather than an opaque miss.
+    // A missing fact names the ones that exist rather than an opaque miss.
     const miss = await call(app, token, "read", { short_id: shortId, data: "nope" })
     const missText =
       (miss.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
     expect(missText).toContain("checks")
   })
 
-  it("reads a data slot across a range of versions in ONE call (the trend read)", async () => {
+  it("reads a fact across a range of versions in ONE call (the trend read)", async () => {
     const { app, token } = appWithGrant(dir, "dataseries", "openid derive:read derive:publish")
     const page = (day: number, pass: number) =>
       `<!doctype html><html><body><h1>Night ${day}</h1>` +
@@ -600,7 +600,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(starText).toContain("single slot")
   })
 
-  it("advises about a data slot it could not store, without failing the publish", async () => {
+  it("advises about a facts it could not store, without failing the publish", async () => {
     const { app, token } = appWithGrant(dir, "dataslotbad", "openid derive:read derive:publish")
     const page =
       '<!doctype html><html><body><script type="application/derive-data" data-slot="broken">{not json}</script></body></html>'
@@ -614,7 +614,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const listed = JSON.parse(
       toolText(await call(app, token, "read", { short_id: out.short_id, data: "*" })),
     )
-    expect(listed.slots).toEqual([])
+    expect(listed.facts).toEqual([])
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
@@ -931,14 +931,14 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(uris).toContain(`derive://brandprint/${personalDocId}`)
   })
 
-  it("publish to derive://brandprint/profile scaffolds the slot, is idempotent, and the loop goes live", async () => {
+  it("publish to derive://brandprint/profile scaffolds the fact, is idempotent, and the loop goes live", async () => {
     const { app, token, meta } = appWithGrant(
       dir,
       "bp-setup",
       "openid derive:read derive:publish derive:manage",
     )
     // setup_brandprint is folded into publish: an Admin's first publish to the
-    // profile URI scaffolds the slot. The profile is always filed for_review (its
+    // profile URI scaffolds the fact. The profile is always filed for_review (its
     // reveal is human-approved), so the response is a PROPOSAL, never a live publish.
     const out = JSON.parse(
       toolText(
@@ -3146,7 +3146,10 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
     const shortId = (await (await publish(app, token, "Quarterly notes")).json()).short_id as string
     const art = await meta.getByShortId(shortId)
     if (!art) throw new Error("no artifact")
-    const agentToken = `agtok_${name}`
+    // AGENT_TOKEN_PREFIX (dk_agt_), not an arbitrary string — agentFor now skips the
+    // getAgentByToken lookup entirely for any bearer without this prefix (a guaranteed
+    // miss on every real OAuth/JWT MCP call), so a fixture token has to look real too.
+    const agentToken = `dk_agt_${name}`
     const agent = await meta.createAgent({
       id: `ag_${name}`,
       org_id: art.org_id,

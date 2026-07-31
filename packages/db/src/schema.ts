@@ -24,6 +24,8 @@ import type {
   RunStatus,
   SessionMessageAuthor,
   SessionState,
+  SlackAuthorFilter,
+  SlackScopeKind,
   VersionSource,
   WebhookKind,
   WorkspaceAccess,
@@ -674,7 +676,6 @@ export const slackInstall = sqliteTable("slack_install", {
   team_name: text("team_name"),
   bot_token: text("bot_token").notNull(),
   bot_user_id: text("bot_user_id"),
-  default_channel: text("default_channel"),
   // Flipped to 1 when the stored bot token is known to be unusable: either Slack rejected a
   // call for auth/scope reasons (invalid_auth, token_revoked, missing_scope), or Slack told us
   // outright via app_uninstalled / tokens_revoked. The Settings UI shows a reconnect banner.
@@ -731,7 +732,10 @@ export const slackThreadLink = sqliteTable(
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [
-    uniqueIndex("slack_thread_link_thread").on(t.thread_id),
+    // One Slack message per (Derive thread, channel): a thread mirrors into every channel
+    // subscribed to its artifact, so the same thread legitimately has several messages.
+    // Reply-back still resolves uniquely off (channel, message_ts) below.
+    uniqueIndex("slack_thread_link_thread").on(t.thread_id, t.channel),
     uniqueIndex("slack_thread_link_msg").on(t.channel, t.message_ts),
   ],
 )
@@ -752,6 +756,41 @@ export const slackUserLink = sqliteTable(
   (t) => [
     uniqueIndex("slack_user_link_slack").on(t.team_id, t.slack_user_id),
     index("slack_user_link_user").on(t.team_id, t.user_id),
+  ],
+)
+
+// A Slack channel subscribed to a workspace's activity. Replaces the single
+// `slack_install.default_channel`: a team routes design docs to one channel and specs to
+// another, scoped to a collection and filtered by event — and by whether the author was a
+// HUMAN or an AGENT, which is the axis no other product's integration needs.
+export const slackSubscription = sqliteTable(
+  "slack_subscription",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    channel_id: text("channel_id").notNull(),
+    /** Denormalized `#name` for display; refreshed opportunistically, never authoritative. */
+    channel_name: text("channel_name"),
+    /** "workspace" (everything in the org) or "collection" (only its artifacts). */
+    scope_kind: text("scope_kind").notNull().default("workspace").$type<SlackScopeKind>(),
+    /** The collection id, or "" for a workspace scope. NOT NULL and empty-as-sentinel on
+     *  purpose: SQL treats NULLs as DISTINCT in a UNIQUE constraint, so a nullable column here
+     *  would let the same channel be subscribed to the workspace twice and would stop the
+     *  upsert from ever matching — the common case, silently broken. Measured, not assumed. */
+    scope_id: text("scope_id").notNull().default(""),
+    /** Comma-separated event types, or "*" for all — the same encoding `webhook.events` uses. */
+    events: text("events").notNull().default("*"),
+    /** "all" | "human" | "agent" — which authors' activity reaches this channel. */
+    authors: text("authors").notNull().default("all").$type<SlackAuthorFilter>(),
+    active: integer("active").notNull().default(1).$type<0 | 1>(),
+    created_by: text("created_by"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [
+    // One subscription per channel per scope: subscribing the same channel to the same
+    // collection twice is the same subscription, edited.
+    uniqueIndex("slack_subscription_target").on(t.org_id, t.channel_id, t.scope_kind, t.scope_id),
+    index("slack_subscription_org").on(t.org_id, t.active),
   ],
 )
 
@@ -1030,11 +1069,11 @@ export const asset = sqliteTable(
   (t) => [index("asset_org").on(t.org_id)],
 )
 
-// A structured data slot extracted from a version's source (see @derive/core data-slots):
+// A structured FACT extracted from a version's source (see @derive/facts):
 // a small named JSON payload the authoring agent can query back across versions without
 // re-parsing its own old markup. Natural key (artifact_id, n, slot); rows are written once
 // when a version goes live and never mutated. `gen` marks which extraction rules produced
-// the row (its DEFAULT must equal @derive/core SLOT_GEN) so a grammar change can re-extract
+// the row (its DEFAULT must equal @derive/core FACT_GEN) so a grammar change can re-extract
 // older versions lazily — the generation lever the derived-view cache uses.
 export const versionData = sqliteTable(
   "version_data",
@@ -1100,6 +1139,7 @@ const TABLES = [
   slackInstall,
   slackThreadLink,
   slackUserLink,
+  slackSubscription,
   userNotificationPref,
   githubApp,
   githubInstallation,
@@ -1203,6 +1243,38 @@ export const MIGRATION_STATEMENTS: string[] = ddl.alters
  * Column order matches the CREATE in ddl.ts; `subject_ref` is last because it was the most
  * recent add.
  */
+/**
+ * Re-key `slack_thread_link` from UNIQUE(thread_id) to UNIQUE(thread_id, channel).
+ *
+ * A Derive thread now mirrors into every channel subscribed to its artifact, so one thread
+ * legitimately has several Slack messages. The old single-column constraint makes the second
+ * one fail with `UNIQUE constraint failed` — and unlike a new column, a constraint change has
+ * no additive form: `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table and
+ * MIGRATION_STATEMENTS only ever emits ADD COLUMN. So an upgraded database would silently keep
+ * the old constraint and break the moment a second channel subscribed.
+ *
+ * Hence the documented SQLite create-copy-drop-rename, same as CONTEXT_SESSION_RELAX_SQLITE.
+ * Applied only when a stale single-column unique on thread_id is actually present (see
+ * sqlite.ts), so it runs once and is a no-op on a fresh database.
+ */
+export const SLACK_THREAD_LINK_REKEY_SQLITE: string[] = [
+  `CREATE TABLE slack_thread_link__new (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  message_ts TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (thread_id, channel),
+  UNIQUE (channel, message_ts)
+)`,
+  `INSERT INTO slack_thread_link__new (id, org_id, artifact_id, thread_id, channel, message_ts, created_at)
+   SELECT id, org_id, artifact_id, thread_id, channel, message_ts, created_at FROM slack_thread_link`,
+  `DROP TABLE slack_thread_link`, // schema-ignore: middle step of the rebuild above
+  `ALTER TABLE slack_thread_link__new RENAME TO slack_thread_link`,
+]
+
 export const CONTEXT_SESSION_RELAX_SQLITE: string[] = [
   `CREATE TABLE context_session__new (
   id TEXT PRIMARY KEY,

@@ -1,6 +1,6 @@
 import { LocalBroker } from "@derive/broker"
 import { describe, expect, it } from "vitest"
-import { executeHttpTool, toolsForRun } from "../src/lib/broker"
+import { callTool, executeHttpTool, toolsForRun } from "../src/lib/broker"
 import { encryptSecret } from "../src/lib/crypto"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -27,6 +27,30 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     expect(tools.some((t) => t.def.name.startsWith("gmail"))).toBe(false)
     // Each tool carries the connected-account ref it executes through.
     expect(tools.every((t) => t.ref.includes("stripe"))).toBe(true)
+  })
+
+  it("an AMBIGUOUS tool name is refused, never resolved to whichever came first", async () => {
+    // `safeHost` folds every non-alphanumeric run to `_`, so `sub.example.com` and
+    // `sub-example.com` — unrelated domains — namespace identically. Taking the first match
+    // would execute one server's tool against ANOTHER server's ref and credential.
+    const dup = { def: { name: "same_tool", description: "d", params: {} }, kind: "mcp" as const }
+    const out = await callTool({
+      meta,
+      broker: new LocalBroker(),
+      orgId: "default",
+      encryptionKey: undefined,
+      allowed: [
+        { ...dup, ref: "mcp:s256-a:https://sub.example.com/mcp", connectionId: "c1" },
+        { ...dup, ref: "mcp:s256-b:https://sub-example.com/mcp", connectionId: "c2" },
+      ],
+      subject: "this run",
+      tool: "same_tool",
+    })
+    expect(out.ok).toBe(false)
+    if (!out.ok) {
+      expect(out.status).toBe(409)
+      expect(out.message).toContain("ambiguous")
+    }
   })
 
   it("a revoked connection contributes no tools", async () => {
@@ -161,7 +185,6 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       team_name: "Derive HQ",
       bot_token: encryptSecret("xoxb-real-bot-token", "k"),
       bot_user_id: "U1",
-      default_channel: null,
       needs_reauth: 0,
       created_at: new Date().toISOString(),
     })

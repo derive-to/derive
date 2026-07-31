@@ -2,20 +2,29 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     "apps/api": {
-      "entry": ["gen-auth-schema.ts", "test/e2e/*.mts", "scripts/stripe-seed.mjs"]
+      "entry": [
+        "gen-auth-schema.ts",
+        "test/e2e/*.mts",
+        "scripts/stripe-seed.mjs",
+        "test/**/*.manual.ts",
+        "test/weather-mcp-server.mjs"
+      ]
     },
     "apps/web": {
       "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
     },
+    "packages/cli": {
+      "ignore": ["src/runner.d.ts"]
+    },
     "packages/core": {
       "entry": ["src/anchor-client.ts"]
+    },
+    "packages/facts": {
+      "ignore": ["examples/**"]
     },
     "packages/db": {
       "ignore": ["test/env.d.ts"],
       "ignoreDependencies": ["cloudflare"]
-    },
-    "packages/cli": {
-      "ignore": ["src/runner.d.ts"]
     }
   },
   "rules": {

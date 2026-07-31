@@ -19,6 +19,7 @@
     "test:coverage": "vitest run --coverage --passWithNoTests"
   },
   "dependencies": {
+    "@derive/facts": "workspace:*",
     "fflate": "^0.8.2",
     "marked": "^18.0.5",
     "nanoid": "^5.0.0",

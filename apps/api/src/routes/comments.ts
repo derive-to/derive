@@ -27,6 +27,7 @@ export const commentRoutes = (ctx: AppContext) => {
     notify,
     background,
     actingUser,
+    privateOwnerId,
     anonLocked,
     requireArtifact,
     authorize,
@@ -205,7 +206,15 @@ export const commentRoutes = (ctx: AppContext) => {
           { meta, bus, blobs, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
           artifact,
           created,
-          { mentions, actorId: acting?.id ?? null },
+          // onBehalfOf satisfies the contract commentCreatedAction states: requireArtifact
+          // above already authorized this request for `comment` AS this principal, and
+          // privateOwnerId is that principal's human — the grantor for an OAuth agent, the
+          // caller themselves for a session. Without it an OAuth-authenticated comment authors
+          // as the synthetic `oauth:<client>` id, which is a row in no table the collaborator
+          // check reads, so the author is untrusted and the Slack and GitHub mirrors are
+          // skipped in silence. The MCP tool has always passed it; this route never did, and it
+          // is the same REST surface every non-MCP integration comments through.
+          { mentions, actorId: acting?.id ?? null, onBehalfOf: await privateOwnerId(c) },
         ),
       )
       return c.json(commentJson(created), 201)
@@ -242,10 +251,16 @@ export const commentRoutes = (ctx: AppContext) => {
       // out-of-enum ?state= is rejected with a 400 before we reach here, so consume
       // the typed value directly rather than re-coercing. Absent ⇒ undefined ⇒ all.
       const { state } = c.req.valid("query")
-      const comments = await meta.listComments(artifact.id, { state })
+      // The comments AND the version their anchors re-resolve against, in one store
+      // call — both are keyed on this artifact, so issuing them separately paid two
+      // full ~80ms edge round trips for one panel (see edge-pg.ts).
+      const { comments, version: cur } = await meta.commentsPage(
+        artifact.id,
+        artifact.current_version,
+        { state },
+      )
       // Flag whether each anchor still resolves against the current version. Build the
       // anchor content once (tag-stripping HTML for text-quote matching) and reuse it.
-      const cur = await meta.getVersion(artifact.id, artifact.current_version)
       const raw = cur ? await sourceText(cur) : null
       const content = raw === null ? null : anchorContentFor(raw, cur?.content_type ?? "")
       return c.json({
@@ -291,11 +306,15 @@ export const commentRoutes = (ctx: AppContext) => {
       const body = await readJson(c, z.object({ state: z.string().optional() }))
       if (body instanceof Response) return bail(body)
       const state: "open" | "resolved" = body.state === "open" ? "open" : "resolved"
+      // requireArtifact already established the caller; this only reads their display name for
+      // the Slack card's footer, so a miss degrades to an unattributed "resolved".
+      const actor = await actingUser(c)
       const updated = await resolveThreadAction(
-        { meta, bus, notify },
+        { meta, bus, notify, baseUrl: deps.baseUrl },
         artifact,
         cm.thread_id,
         state,
+        actor?.name ?? undefined,
       )
       return c.json({ thread_id: cm.thread_id, state, updated })
     },

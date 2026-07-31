@@ -7,7 +7,7 @@ import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 
-// The raw JSON route for data slots: how everything that ISN'T an MCP client reads a
+// The raw JSON route for facts: how everything that ISN'T an MCP client reads a
 // slot — a fetch() from the artifact's own page, a curl, a script with a bearer. The
 // slot is part of the version, so it must never be more readable than the page.
 const dir = mkdtempSync(join(tmpdir(), "derive-rawslot-"))
@@ -73,7 +73,7 @@ describe("raw data-slot route", () => {
     expect(await r.json()).toEqual({ day: 3 })
   })
 
-  it("accepts the slot name with or without the .json suffix", async () => {
+  it("accepts the fact name with or without the .json suffix", async () => {
     await seed("slot3", "public")
     expect((await app.request("/raw/slot3/v/1/data/checks")).status).toBe(200)
     expect((await app.request("/raw/slot3/v/1/data/checks.json")).status).toBe(200)
@@ -156,7 +156,7 @@ describe("raw data-slot route", () => {
     ).toContain("public")
   })
 
-  it("does not let the slot route bypass the anonymous history gate", async () => {
+  it("does not let the fact route bypass the anonymous history gate", async () => {
     // A public artifact without public_history: anon reads only the CURRENT version, so
     // an OLD version's slot must be as hidden as that version's bytes.
     await seed("slot7", "public", 2)
@@ -166,7 +166,7 @@ describe("raw data-slot route", () => {
 
   it("does not shadow a bundle's own file path named data/", async () => {
     // The route is registered before the /v/:n/* catch-all; make sure a real artifact
-    // path that merely looks like the slot route still reaches the content server.
+    // path that merely looks like the fact route still reaches the content server.
     await seed("slot8", "public")
     // No such file in this single-file artifact -> the content route answers, not a crash.
     const r = await app.request("/raw/slot8/v/1/data/checks/extra")
@@ -194,7 +194,7 @@ describe("raw data-slot JSONL export", () => {
     expect(points[0].at).toBeTruthy()
   })
 
-  it("accepts the slot name with or without the .jsonl suffix", async () => {
+  it("accepts the fact name with or without the .jsonl suffix", async () => {
     await seed("jl2", "public", 2)
     const bare = await app.request("/raw/jl2/data/checks.jsonl", {
       headers: { authorization: "Bearer tok" },

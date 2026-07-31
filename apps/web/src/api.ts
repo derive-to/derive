@@ -143,6 +143,8 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
+/** A Slack channel subscription. Generated from the OpenAPI spec. */
+export type SlackSubscription = components["schemas"]["SlackSubscription"]
 /** The workspace's billing truth: plan, Stripe status, seats, storage. Hand-declared:
  *  routes/billing.ts is plain Hono (no OpenAPI contract — a fast-moving internal
  *  surface, not the documented public API), matching this file's other
@@ -410,6 +412,11 @@ export interface Connection {
   user_id: string
   broker: string
   toolkit: string
+  /** How it authenticates. `mcp` is a Model Context Protocol server connected by URL — it needs
+   *  no vendor account and no broker plan, which is why it is the one kind you can add here. */
+  kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp"
+  /** kind `mcp`: the server URL. Display only — the credential never comes back. */
+  base_url?: string | null
   scopes_label: string | null
   status: "active" | "pending" | "revoked"
   created_at: string
@@ -980,11 +987,9 @@ export const api = {
   openBillingPortal: (): Promise<{ url: string }> =>
     f("/v1/billing/portal", { ...opts({}), method: "POST" }).then(j),
 
-  // Slack App: status, set default channel, disconnect. Connect is a redirect to
+  // Slack App: status, disconnect, per-user prefs. Connect is a redirect to
   // /v1/slack/install (a full-page navigation, not a fetch).
   getSlack: (): Promise<SlackStatus> => f("/v1/slack", opts()).then(j),
-  setSlackChannel: (default_channel: string | null): Promise<{ default_channel: string | null }> =>
-    f("/v1/slack", { ...opts({ default_channel }), method: "PATCH" }).then(j),
   disconnectSlack: (): Promise<void> =>
     f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
   setSlackDm: (slack_dm: boolean): Promise<{ slack_dm: boolean }> =>
@@ -992,6 +997,28 @@ export const api = {
   sendSlackTestDm: (): Promise<{ ok: boolean }> =>
     f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
   // Link is a redirect to /v1/slack/link (full-page navigation); only unlink is a fetch.
+  listSlackSubscriptions: (): Promise<{
+    subscriptions: SlackSubscription[]
+    event_options: string[]
+  }> => f("/v1/slack/subscriptions", opts()).then(j),
+  createSlackSubscription: (body: {
+    channel_id: string
+    channel_name?: string
+    collection?: string
+    events?: string[]
+    authors?: "all" | "human" | "agent"
+  }): Promise<SlackSubscription> => f("/v1/slack/subscriptions", opts(body)).then(j),
+  updateSlackSubscription: (
+    id: string,
+    body: { events?: string[]; authors?: "all" | "human" | "agent"; active?: boolean },
+  ): Promise<SlackSubscription> =>
+    f(`/v1/slack/subscriptions/${id}`, { ...opts(body), method: "PATCH" }).then(j),
+  deleteSlackSubscription: (id: string): Promise<void> =>
+    f(`/v1/slack/subscriptions/${id}`, { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+  listSlackChannels: (): Promise<{ channels: { id: string; name: string }[] }> =>
+    f("/v1/slack/channels", opts()).then(j),
   unlinkSlack: (): Promise<void> =>
     f("/v1/slack/link", { method: "DELETE", credentials: "include" }).then(() => undefined),
 
@@ -1093,7 +1120,8 @@ export const api = {
       credentials: "include",
     }).then(() => undefined),
 
-  listWebhooks: (): Promise<{ webhooks: Webhook[] }> => f("/v1/webhooks", opts()).then(j),
+  listWebhooks: (): Promise<{ webhooks: Webhook[]; event_options: string[] }> =>
+    f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {
     url: string
     kind: "generic" | "slack"
@@ -1242,6 +1270,15 @@ export const api = {
   },
   connect(toolkit: string): Promise<Connection & { connect_url: string }> {
     return f("/v1/connections", opts({ toolkit })).then(j)
+  },
+  /** Connect an MCP server as a source. The server is contacted immediately and its tool list
+   *  pinned, so a 201 here means it really answered — not that a row was stored hopefully. */
+  connectMcp(input: {
+    toolkit: string
+    mcp_url: string
+    mcp_secret?: string
+  }): Promise<Connection> {
+    return f("/v1/connections", opts(input)).then(j)
   },
   async revokeConnection(id: string): Promise<void> {
     const r = await f(`/v1/connections/${id}`, { credentials: "include", method: "DELETE" })
