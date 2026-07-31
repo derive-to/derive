@@ -1,5 +1,12 @@
 packages:
   - "apps/*"
+  # The Expo shell is deliberately NOT a workspace member. React Native's dependency
+  # graph wants a hoisted node_modules, and the usual fix (node-linker=hoisted) is
+  # repo-wide: it would change resolution for the API and the web app to suit Metro.
+  # The shell needs nothing from the workspace anyway — it reaches the API over HTTP
+  # and loads the web app over HTTPS — so it keeps its own lockfile and installs on
+  # its own. See apps/mobile/README.md.
+  - "!apps/mobile"
   - "packages/*"
 
 # Supply-chain cooldown (pnpm ≥10.16): refuse to *resolve* a dependency version

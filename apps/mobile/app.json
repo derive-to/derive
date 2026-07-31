@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Derive",
+    "slug": "derive",
+    "scheme": "derive",
+    "version": "0.1.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "to.derive.app",
+      "associatedDomains": ["applinks:derive.to"]
+    },
+    "android": {
+      "package": "to.derive.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0b0d",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [{ "scheme": "https", "host": "derive.to" }],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": ["expo-router", "expo-web-browser"],
+    "extra": {
+      "webOrigin": "https://derive.to"
+    }
+  }
+}
