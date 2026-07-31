@@ -21,6 +21,7 @@ import {
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail, toBody } from "../lib/http"
+import { unfurlInfoFor } from "../lib/unfurl-info"
 
 /**
  * Unfurl + embed surface. Turns a `/artifacts/:ref` share link into a rich card and an
@@ -43,35 +44,10 @@ export const embedRoutes = (ctx: AppContext) => {
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
 
-  // Everything an unfurl/embed surface needs for one artifact, plus the absolute
-  // URLs of the sibling endpoints. Counts are computed in the database, not by
-  // measuring lists read into the Worker — see the round-trip note below.
-  const infoFor = async (artifact: ArtifactRecord): Promise<UnfurlInfo> => {
-    // One round trip. The counts used to come from `listVersions(...).length` and
-    // `listComments(...).length` — two whole-table reads to produce two integers, on the
-    // most-trafficked anonymous surface there is — plus a trip each for the version row
-    // and the facts. The Promise.all around them bought nothing: one pg.Client per
-    // request means node-postgres queues them (see edge-pg.ts). The facts ride in the same
-    // query now, so they no longer need their own best-effort catch: there is no longer a
-    // fact read that can fail independently of the counts this card is built from.
-    const { versionCount, commentCount, version, facts } = await meta.unfurlInfo(
-      artifact.id,
-      artifact.current_version,
-    )
-    const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
-    return {
-      title: artifact.title ?? "Untitled",
-      kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
-      versionCount,
-      commentCount,
-      // The reward for publishing a fact: the shared link carries its own numbers.
-      dataSummary: factSummary(facts),
-      pageUrl: artifactUrl(baseUrl, artifact),
-      imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
-      oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
-      embedUrl: `${baseUrl}/v1/embed/${ref}`,
-    }
-  }
+  // Everything an unfurl/embed surface needs for one artifact (lib/unfurl-info.ts — shared with
+  // the Slack link-unfurl builder so the two can't describe the same artifact differently).
+  const infoFor = (artifact: ArtifactRecord): Promise<UnfurlInfo> =>
+    unfurlInfoFor(meta, baseUrl, artifact)
 
   /**
    * The cache directive for a response whose CONTENT depends on who asked.

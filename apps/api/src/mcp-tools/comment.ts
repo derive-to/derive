@@ -141,10 +141,11 @@ export function registerCommentTool(tc: ToolContext): void {
         // — it flips the thread, publishes on the bus AND fans comment.resolved out to webhooks.
         // The hand-rolled pair of calls this replaced skipped that last step.
         await resolveThreadAction(
-          { meta: ctx.meta, bus: ctx.bus, notify: ctx.notify },
+          { meta: ctx.meta, bus: ctx.bus, notify: ctx.notify, baseUrl: ctx.deps.baseUrl },
           a,
           thread,
           set_state,
+          agent.name,
         )
       }
       return json({

@@ -187,7 +187,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
           },
           artifact,
           version,
-          { isNew: !existing, onBehalf: actingFor?.id ?? null, resolves: [] },
+          { isNew: !existing, onBehalf: actingFor?.id ?? null, resolves: [], actorId: agent.id },
         )
         return json({
           checkpointed: true,

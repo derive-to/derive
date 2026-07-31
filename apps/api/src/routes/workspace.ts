@@ -118,7 +118,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
       githubPreviewLink: z
         .boolean()
         .describe("When true, add a preview link to the linked GitHub PR."),
-      slackPost: z.boolean().describe("When true, post events to Slack."),
       // The access a NEW publish lands with (see access-model.md): the three
       // single-purpose fields. Factory default is the team draft — member / none / none.
       defaultWorkspaceAccess: z
@@ -659,7 +658,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
             githubPostComments: z.boolean(),
             githubMirrorComments: z.boolean(),
             githubPreviewLink: z.boolean(),
-            slackPost: z.boolean(),
             defaultWorkspaceAccess: z.enum(["none", "member"]),
             defaultLinkRole: z.enum(["none", "viewer", "commenter", "editor"]),
             defaultListed: z.enum(["none", "workspace", "public"]),

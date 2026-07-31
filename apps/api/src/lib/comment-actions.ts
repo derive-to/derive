@@ -112,7 +112,8 @@ export const commentCreatedAction = async (
     (await isCollaboratorAuthor(meta, artifact, actorId))
   if (trustedAuthor && settings.githubPostComments)
     await enqueueGithubPrComment({ meta, blobs, baseUrl }, artifact, comment)
-  if (trustedAuthor && settings.slackPost)
-    await enqueueSlackComment({ meta, baseUrl }, artifact, comment)
+  // No global on/off any more: a channel subscription is the switch, and resolveChannels
+  // applies its event + author filters.
+  if (trustedAuthor) await enqueueSlackComment({ meta, baseUrl }, artifact, comment)
   deps.pokeWebhooks?.()
 }

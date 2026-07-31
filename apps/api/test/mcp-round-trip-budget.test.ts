@@ -211,6 +211,13 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // silence a red run.
     expect(catchUpCalls.length).toBeLessThanOrEqual(10)
     expect(reactCalls.length).toBeLessThanOrEqual(7)
-    expect(resolveCalls.length).toBeLessThanOrEqual(8)
+    // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
+    // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the
+    // listSlackThreadLinksByThread that asks whether this thread is mirrored anywhere — one
+    // indexed lookup on thread_id, and the only one a workspace with no Slack ever pays, since
+    // an empty result returns before any further read. It cannot be folded into a call already
+    // being made: nothing else on this path touches slack_thread_link, and skipping it would
+    // mean a card that keeps offering "Resolve thread" for a thread an agent already closed.
+    expect(resolveCalls.length).toBeLessThanOrEqual(9)
   })
 })

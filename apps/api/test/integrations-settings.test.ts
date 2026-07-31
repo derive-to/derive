@@ -18,7 +18,6 @@ describe("workspace integration settings", () => {
       githubPostComments: true,
       githubMirrorComments: true,
       githubPreviewLink: true,
-      slackPost: true,
       // The access NEW publishes land with — the team draft (see access-model.md).
       defaultWorkspaceAccess: "member",
       defaultLinkRole: "none",
@@ -41,17 +40,17 @@ describe("workspace integration settings", () => {
     const r = await app.request("/v1/workspace/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ slackPost: false }),
+      body: JSON.stringify({ githubPostComments: false }),
     })
     expect(r.status).toBe(200)
     const s = await r.json()
-    expect(s.slackPost).toBe(false)
+    expect(s.githubPostComments).toBe(false)
     expect(s.emailNotifications).toBe(true)
     // Persisted across reads.
     const again = await (
       await app.request("/v1/workspace/settings", { headers: as(owner.email) })
     ).json()
-    expect(again.slackPost).toBe(false)
+    expect(again.githubPostComments).toBe(false)
   })
 
   it("a non-admin can read but not change settings", async () => {

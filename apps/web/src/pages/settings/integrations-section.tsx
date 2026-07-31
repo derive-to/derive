@@ -13,21 +13,16 @@ import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
+import { SlackSubscriptionsSection } from "./slack-subscriptions-section"
 
-// The five workspace activity channels (email + GitHub mirroring + Slack posting)
-// as instant toggles, plus the Slack connection. Toggles apply optimistically
+// The workspace activity toggles (email + GitHub mirroring) plus the Slack connection.
+// Where Slack posts is per-channel now — see slack-subscriptions-section.tsx. Toggles apply optimistically
 // with no save (the toggle contract); the Slack channel id is an explicit save.
 export function IntegrationsSection() {
   const qc = useQueryClient()
   const { data: settings, isPending, isError, refetch } = useQuery(workspaceSettingsQuery())
   const { data: slack } = useQuery(slackQuery())
-  const [channel, setChannel] = useState("")
   const [disconnecting, setDisconnecting] = useState(false)
-
-  // Seed the editable channel id from the Slack status once it loads.
-  useEffect(() => {
-    if (slack) setChannel(slack.default_channel ?? "")
-  }, [slack])
 
   // Toggle a single settings key, optimistically flipping the shared cache entry so the
   // switch stays live; the primitive rolls back + toasts on failure, and the server's
@@ -45,11 +40,6 @@ export function IntegrationsSection() {
   const flip = (key: keyof OrgSettings) => (next: boolean) =>
     update.mutate({ [key]: next } as Partial<OrgSettings>)
 
-  const saveCh = useApiMutation({
-    mutationFn: () => api.setSlackChannel(channel.trim() || null),
-    success: "Slack channel saved",
-  })
-  const saveChannel = () => saveCh.mutate()
   const disconnect = useApiMutation({
     mutationFn: () => api.disconnectSlack(),
     success: "Slack disconnected",
@@ -152,18 +142,6 @@ export function IntegrationsSection() {
               onCheckedChange={flip("githubPreviewLink")}
             />
           </SettingRow>
-          <SettingRow
-            htmlFor="toggle-slack-post"
-            label="Post activity to Slack"
-            description="Send comments to the connected Slack channel; replies there post back to Derive."
-          >
-            <Switch
-              id="toggle-slack-post"
-              data-testid="toggle-slack-post"
-              checked={settings.slackPost}
-              onCheckedChange={flip("slackPost")}
-            />
-          </SettingRow>
         </SettingsGroup>
       ) : null}
 
@@ -245,30 +223,9 @@ export function IntegrationsSection() {
                 </Button>
               )}
             </SettingRow>
-            <FormField label="Default channel ID" htmlFor="slack-channel" className="max-w-sm">
-              <div className="flex gap-2">
-                <Input
-                  id="slack-channel"
-                  data-testid="slack-channel"
-                  value={channel}
-                  onChange={(e) => setChannel(e.target.value)}
-                  placeholder="C0123ABC456"
-                  className="flex-1 font-mono"
-                />
-                <Button
-                  data-testid="slack-channel-save"
-                  variant="default"
-                  size="sm"
-                  onClick={saveChannel}
-                  loading={saveCh.isPending}
-                >
-                  Save
-                </Button>
-              </div>
-            </FormField>
             <p className="text-sm text-muted-foreground">
-              Find a channel ID in Slack: open the channel, click its name, and copy the ID at the
-              bottom. Invite the Derive app to that channel.
+              Choose which channels hear about what under <strong>Slack channels</strong> below, or
+              run <code>/derive subscribe</code> in the channel itself.
             </p>
             <div>
               <Button
@@ -312,6 +269,9 @@ export function IntegrationsSection() {
           </div>
         )}
       </SettingsGroup>
+
+      {/* Where Derive posts, per channel. Only meaningful once a workspace is connected. */}
+      {slack?.connected ? <SlackSubscriptionsSection /> : null}
     </SettingsSection>
   )
 }

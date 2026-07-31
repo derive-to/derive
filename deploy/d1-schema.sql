@@ -436,7 +436,6 @@ CREATE TABLE IF NOT EXISTS slack_install (
   team_name TEXT,
   bot_token TEXT NOT NULL,
   bot_user_id TEXT,
-  default_channel TEXT,
   needs_reauth INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -449,7 +448,7 @@ CREATE TABLE IF NOT EXISTS slack_thread_link (
   channel TEXT NOT NULL,
   message_ts TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (thread_id),
+  UNIQUE (thread_id, channel),
   UNIQUE (channel, message_ts)
 );
 
@@ -464,6 +463,23 @@ CREATE TABLE IF NOT EXISTS slack_user_link (
 );
 
 CREATE INDEX IF NOT EXISTS slack_user_link_user ON slack_user_link (team_id, user_id);
+
+CREATE TABLE IF NOT EXISTS slack_subscription (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  channel_name TEXT,
+  scope_kind TEXT NOT NULL DEFAULT 'workspace',
+  scope_id TEXT NOT NULL DEFAULT '',
+  events TEXT NOT NULL DEFAULT '*',
+  authors TEXT NOT NULL DEFAULT 'all',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (org_id, channel_id, scope_kind, scope_id)
+);
+
+CREATE INDEX IF NOT EXISTS slack_subscription_org ON slack_subscription (org_id, active);
 
 CREATE TABLE IF NOT EXISTS user_notification_pref (
   id TEXT PRIMARY KEY,

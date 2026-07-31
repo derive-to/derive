@@ -297,11 +297,15 @@ export const commentRoutes = (ctx: AppContext) => {
       const body = await readJson(c, z.object({ state: z.string().optional() }))
       if (body instanceof Response) return bail(body)
       const state: "open" | "resolved" = body.state === "open" ? "open" : "resolved"
+      // requireArtifact already established the caller; this only reads their display name for
+      // the Slack card's footer, so a miss degrades to an unattributed "resolved".
+      const actor = await actingUser(c)
       const updated = await resolveThreadAction(
-        { meta, bus, notify },
+        { meta, bus, notify, baseUrl: deps.baseUrl },
         artifact,
         cm.thread_id,
         state,
+        actor?.name ?? undefined,
       )
       return c.json({ thread_id: cm.thread_id, state, updated })
     },

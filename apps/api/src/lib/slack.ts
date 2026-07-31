@@ -199,13 +199,10 @@ export const postSlackMessage = async (
       channel: args.channel,
       text: args.text,
       // The bot's own posts already render the artifact as a card, so don't let Slack
-      // ALSO unfurl a link in the text — that repeats the same card right below it.
-      // A link a PERSON pastes may still unfurl, but by a different route than this flag:
-      // Slackbot crawls the page and reads its OG tags (packages/core/src/unfurl.ts). That is
-      // Slack's own crawler, not this app — Derive subscribes to no `link_shared` event, requests
-      // no `links:read` scope, and never calls chat.unfurl. Which also means it only works for a
-      // link an ANONYMOUS fetch can read: the meta is emitted behind the same `readable()` gate as
-      // the page (routes/embeds.ts), so a workspace-only artifact shows Slack nothing.
+      // ALSO unfurl a link in the text — that repeats the same card right below it. Belt and
+      // braces: Slack does not dispatch `link_shared` for a message posted by an app either,
+      // so our own cards can't round-trip through the unfurl handler (lib/slack-unfurl.ts).
+      // A link a PERSON pastes is the case that handler exists for.
       unfurl_links: false,
       unfurl_media: false,
       ...(args.blocks ? { blocks: args.blocks } : {}),
@@ -215,6 +212,81 @@ export const postSlackMessage = async (
   const data = (await res.json()) as { ok: boolean; error?: string; ts?: string; channel?: string }
   if (!data.ok || !data.ts) throw new SlackApiError(data.error ?? "unknown")
   return { ts: data.ts, channel: data.channel ?? args.channel }
+}
+
+/** Open a modal via views.open. `triggerId` is single-use and expires ~3s after the interaction
+ *  that produced it, which is why the caller must reach this BEFORE doing any slow work — the
+ *  modal is the ack. Throws SlackApiError(code) on a Slack-level failure. */
+export const openSlackView = async (
+  token: string,
+  triggerId: string,
+  view: unknown,
+): Promise<void> => {
+  const res = await fetch(`${API}/views.open`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ trigger_id: triggerId, view }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+}
+
+/** A permanent link to one Slack message, for citing it from Derive. Returns null on any
+ *  failure: the link is a nicety on a comment that is worth saving without it, and the bot is
+ *  not necessarily a member of the channel a shortcut was fired in. */
+export const slackPermalink = async (
+  token: string,
+  channel: string,
+  messageTs: string,
+): Promise<string | null> => {
+  try {
+    const q = new URLSearchParams({ channel, message_ts: messageTs })
+    const res = await fetch(`${API}/chat.getPermalink?${q}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(2500),
+    })
+    const data = (await res.json()) as { ok: boolean; permalink?: string }
+    return data.ok && data.permalink ? data.permalink : null
+  } catch {
+    return null
+  }
+}
+
+/** Rewrite an already-posted message via chat.update. Used to keep a comment card honest when
+ *  the thread is resolved somewhere OTHER than the button on that card — in Derive's UI, over
+ *  the API, by an agent, or from a different Slack channel the same thread is mirrored into.
+ *
+ *  Unlike response_url this needs no interaction to have happened and does not expire, which is
+ *  exactly why it is the durable path: `response_url` is only valid ~30 min after a click, so it
+ *  cannot express "this thread was resolved in the web app an hour later". Same escaping rules
+ *  as chat.postMessage — the caller passes rendered blocks, and `text` is the notification
+ *  fallback, parsed as mrkdwn. Throws SlackApiError(code) on a Slack-level failure. */
+export const updateSlackMessage = async (
+  token: string,
+  args: { channel: string; ts: string; text: string; blocks?: unknown },
+): Promise<void> => {
+  const res = await fetch(`${API}/chat.update`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      channel: args.channel,
+      ts: args.ts,
+      text: args.text,
+      // As chat.postMessage: our own card already renders the artifact, so don't let the
+      // update re-unfurl the link in the fallback text underneath it.
+      unfurl_links: false,
+      unfurl_media: false,
+      ...(args.blocks ? { blocks: args.blocks } : {}),
+    }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
 }
 
 /** Update the message an interaction came from, via its `response_url` (a signed URL valid
@@ -241,6 +313,86 @@ export const postSlackResponseUrl = async (
   } catch {
     return false
   }
+}
+
+/** Where an unfurl attaches. Slack accepts either the message coordinates (`channel` + `ts`) or
+ *  the opaque pair from the event (`unfurl_id` + `source`); `source` is "composer" when the link
+ *  is still being typed and "conversations_history" once posted. The two forms are mutually
+ *  exclusive, so pass through whichever the event gave us. */
+export interface SlackUnfurlTarget {
+  channel?: string
+  ts?: string
+  unfurlId?: string
+  source?: string
+}
+
+/** Attach unfurl cards to the links in a message (chat.unfurl).
+ *
+ *  `unfurls` maps each URL to its card. There is deliberately NO per-viewer variant: Slack
+ *  renders one unfurl for the message and everyone in the channel sees it, which is why the
+ *  caller gates on "may this be broadcast" rather than "may this viewer read it".
+ *
+ *  `auth` switches to the sign-in prompt instead: Slack shows an ephemeral message — to the
+ *  person who POSTED the link, not to viewers — inviting them to connect their account, with
+ *  built-in "Not now" / "Never ask me again" buttons. Sent with no cards, since we have nothing
+ *  to show until they link. */
+export const unfurlSlackLinks = async (
+  token: string,
+  target: SlackUnfurlTarget,
+  unfurls: Record<string, unknown>,
+  auth?: { url: string; message: string },
+): Promise<void> => {
+  const res = await fetch(`${API}/chat.unfurl`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      ...(target.channel && target.ts
+        ? { channel: target.channel, ts: target.ts }
+        : { unfurl_id: target.unfurlId, source: target.source }),
+      unfurls: auth ? {} : unfurls,
+      ...(auth
+        ? { user_auth_required: true, user_auth_url: auth.url, user_auth_message: auth.message }
+        : {}),
+    }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+}
+
+/** The public channels the bot can see, for the subscription picker — so nobody has to paste a
+ *  raw channel id. Paginated; capped rather than exhaustive, because a picker only needs enough
+ *  to choose from and a huge workspace would otherwise page for a long time. This is what
+ *  `channels:read` is for. */
+export const listSlackChannels = async (
+  token: string,
+  cap = 400,
+): Promise<{ id: string; name: string }[]> => {
+  const out: { id: string; name: string }[] = []
+  let cursor = ""
+  do {
+    const q = new URLSearchParams({
+      exclude_archived: "true",
+      limit: "200",
+      types: "public_channel",
+      ...(cursor ? { cursor } : {}),
+    })
+    const res = await fetch(`${API}/conversations.list?${q}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const data = (await res.json()) as {
+      ok: boolean
+      error?: string
+      channels?: { id?: string; name?: string }[]
+      response_metadata?: { next_cursor?: string }
+    }
+    if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+    for (const c of data.channels ?? []) if (c.id && c.name) out.push({ id: c.id, name: c.name })
+    cursor = data.response_metadata?.next_cursor ?? ""
+  } while (cursor && out.length < cap)
+  return out.slice(0, cap)
 }
 
 /** Join a public channel so the bot can post to it (best-effort; private channels must
@@ -317,6 +469,8 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *
  *    chat:write        chat.postMessage — the comment mirror, event cards, DMs
  *    commands          the /derive slash command (Slack rejects the manifest without it)
+ *    links:read        delivery of link_shared — a Derive link pasted into a channel
+ *    links:write       chat.unfurl — attaching the preview card to it
  *    channels:join     conversations.join, so the bot can self-add to a public channel
  *    channels:history  delivery of message.channels — public-channel reply-back
  *    groups:history    delivery of message.groups — private-channel reply-back
@@ -326,12 +480,13 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *                      im:history, which we deliberately do NOT request (see the
  *                      bot_events note in slack-app-setup.ts).
  *
- *  channels:read / groups:read back no call Derive makes today — they cover conversation
- *  metadata (conversations.list/info), which nothing here reads; the channel is configured by
- *  pasting its id. They are kept rather than trimmed on purpose: the cost of holding them is
- *  a line on the consent screen, while the cost of being wrong about an event-delivery
- *  dependency is silent (see the re-auth note below) — Slack would simply stop delivering
- *  private-channel replies with nothing to detect. Revisit only with a live check.
+ *  channels:read / groups:read back `conversations.list`, which is how the Settings channel
+ *  picker offers channels to subscribe instead of asking an admin to paste an id. They were
+ *  held speculatively for two releases before that — kept rather than trimmed because the cost
+ *  of holding a scope is a line on the consent screen, while the cost of being wrong about an
+ *  event-delivery dependency is SILENT (see the re-auth note below): Slack would just stop
+ *  delivering private-channel replies with nothing to detect. That bet paid off; do not read
+ *  it as licence to hoard scopes.
  *
  *  Re-auth on scope drift is only automatic for scopes an OUTBOUND call needs: a stale
  *  install hits `missing_scope`, which flags needs_reauth and shows the reconnect banner.
@@ -346,10 +501,12 @@ export const SLACK_BOT_SCOPES = [
   // did not accompany it until #558. An install predating that fix lacks it, and its slash
   // command stays dead until the workspace reconnects.
   "commands",
-  "channels:read", // backs no call today — see the note above
+  "links:read",
+  "links:write",
+  "channels:read", // conversations.list, for the channel picker
   "channels:join",
   "channels:history",
-  "groups:read", // backs no call today — see the note above
+  "groups:read", // ditto, for private channels the bot is in
   "groups:history",
   "users:read",
   "users:read.email",

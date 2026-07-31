@@ -8,6 +8,7 @@
 // message — nothing to toggle by hand.
 import { esc, brandShell as SHELL } from "./brand-page"
 import { SLACK_BOT_SCOPES } from "./lib/slack"
+import { SLACK_CAPTURE_CALLBACK } from "./lib/slack-capture"
 
 /** The Slack app manifest, born with everything Derive's Slack integration needs and
  *  every URL pointed at THIS instance. Single source of truth: the setup page renders
@@ -29,6 +30,13 @@ export const buildSlackManifest = (baseUrl: string) => {
     },
     features: {
       bot_user: { display_name: "Derive", always_online: true },
+      // The domains whose links this app unfurls. A registered domain matches all of its
+      // SUBDOMAINS and paths, so one entry covers the instance host and every vanity
+      // subdomain under it. Slack caps this at 5 and — unlike the events below — a change
+      // here only takes effect after the app is REINSTALLED in each workspace. A workspace
+      // on its own BYO custom domain is therefore out of reach: those hosts aren't known at
+      // manifest time and there is no room to enumerate them.
+      unfurl_domains: [hostOf(baseUrl)],
       slash_commands: [
         {
           command: "/derive",
@@ -58,8 +66,26 @@ export const buildSlackManifest = (baseUrl: string) => {
         // app_uninstalled / tokens_revoked need no scope, and they are the only way to learn
         // that the stored bot token died without waiting for a delivery to fail — which never
         // happens on a workspace with no Slack traffic, leaving Settings claiming "connected".
-        bot_events: ["message.channels", "message.groups", "app_uninstalled", "tokens_revoked"],
+        bot_events: [
+          "message.channels",
+          "message.groups",
+          "link_shared",
+          "app_uninstalled",
+          "tokens_revoked",
+        ],
       },
+      // "Save to Derive" on any message's overflow menu — the capture path (lib/slack-capture.ts).
+      // A MESSAGE shortcut rather than a global one: it needs the message it was fired on, and a
+      // global shortcut carries none. Declared here because a manifest is the only way to add
+      // one; an existing install picks it up on reinstall, like the unfurl domains.
+      shortcuts: [
+        {
+          name: "Save to Derive",
+          type: "message",
+          callback_id: SLACK_CAPTURE_CALLBACK,
+          description: "Save this message as a comment on a Derive doc",
+        },
+      ],
       // Buttons on comment cards (resolve / reopen a thread) POST here.
       interactivity: {
         is_enabled: true,
