@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { slackOidcAuthorizeUrl } from "../src/lib/slack"
 import { SLACK_CAPTURE_CALLBACK } from "../src/lib/slack-capture"
 import { buildSlackManifest, slackSetupHTML } from "../src/slack-app-setup"
 
@@ -42,6 +43,22 @@ describe("buildSlackManifest", () => {
 
   // Regression: /derive shipped in #454 but `commands` was never added, so Slack refused the
   // manifest ("Slash Commands requires `commands` bot scope") — the app was uncreatable.
+  // The manifest lists /v1/slack/link/callback as a redirect URL, so an app built from it LOOKS
+  // configured for account linking. Without the user scopes it refuses the first authorize call
+  // a member makes, and nothing about the install hints at it. The live app carried these only
+  // because someone added them by hand; the generator omitted them entirely.
+  it("declares the user scopes Sign in with Slack needs, not just the bot ones", () => {
+    expect(m.oauth_config.scopes.user).toEqual(["openid", "profile", "email"])
+    expect(m.oauth_config.redirect_urls).toContain(`${BASE}/v1/slack/link/callback`)
+  })
+
+  // The authorize URL and the manifest must ask for the SAME set — a scope in one and not the
+  // other fails at the point of use, long after install.
+  it("asks for exactly the scopes its own authorize URL sends", () => {
+    const sent = new URL(slackOidcAuthorizeUrl("cid", `${BASE}/cb`, "st", "nonce")).searchParams
+    expect(sent.get("scope")?.split(" ").sort()).toEqual([...m.oauth_config.scopes.user].sort())
+  })
+
   it("declares the commands scope its slash command requires", () => {
     expect(m.oauth_config.scopes.bot).toContain("commands")
   })

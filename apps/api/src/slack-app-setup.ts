@@ -7,7 +7,7 @@
 // is born with the events config, so a fresh "Add to Slack" is two-way from the first
 // message — nothing to toggle by hand.
 import { esc, brandShell as SHELL } from "./brand-page"
-import { SLACK_BOT_SCOPES } from "./lib/slack"
+import { SLACK_BOT_SCOPES, SLACK_USER_SCOPES } from "./lib/slack"
 import { SLACK_CAPTURE_CALLBACK } from "./lib/slack-capture"
 
 /** The Slack app manifest, born with everything Derive's Slack integration needs and
@@ -66,7 +66,11 @@ export const buildSlackManifest = (baseUrl: string) => {
     oauth_config: {
       // The bot install callback + the per-user "Sign in with Slack" (OIDC) link callback.
       redirect_urls: [u("/v1/slack/oauth/callback"), u("/v1/slack/link/callback")],
-      scopes: { bot: SLACK_BOT_SCOPES },
+      // BOTH lists, and the user one is not optional: this manifest declares the link callback
+      // above, so an app built without the user scopes looks configured for account linking and
+      // refuses the very first authorize call. Sourced from lib/slack.ts so the manifest and the
+      // authorize URL cannot drift.
+      scopes: { bot: SLACK_BOT_SCOPES, user: SLACK_USER_SCOPES },
     },
     settings: {
       event_subscriptions: {
