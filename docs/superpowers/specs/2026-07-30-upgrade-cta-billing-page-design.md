@@ -164,3 +164,14 @@ Live verification (end of build, like the rail's E2E): Playwright pass over the 
 - Queued auto-retry of a refused invite after upgrade (admin re-sends by hand).
 - Founding-member annual (GTM step 12).
 - Marketing pricing page changes (it already matches; the FAQ's activity-based editor wording remains a pre-enforcement follow-up from the rail).
+
+## Copy + dialog revision, 2026-07-31
+
+Two changes from Connor's review of the shipped upgrade-CTA feature.
+
+Blocked-banner copy (section 3) is replaced with:
+
+- billing_required: "Your team has outgrown the Free plan, so publishing is paused. Upgrade to keep Deriving."
+- billing_lapsed: "Your plan has lapsed, so publishing is paused. Renew to keep Deriving."
+
+The upgrade dialog (section 2c) drops the single Team feature list with two small checkout buttons in favor of a side-by-side Team and Business comparison, each card carrying its full feature breakdown and its own upgrade button at the bottom, Business on the right to anchor the higher price (Connor's decision).

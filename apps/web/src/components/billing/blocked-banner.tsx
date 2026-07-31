@@ -6,8 +6,9 @@ import { billingQuery } from "@/lib/queries"
 // Copy by verdict code. The server's message names the URL for agents; humans
 // get the short version with the button.
 const COPY: Record<string, string> = {
-  billing_required: "Publishing paused. Upgrade to Team to add more editors.",
-  billing_lapsed: "Publishing paused. Renew your plan to resume publishing.",
+  billing_required:
+    "Your team has outgrown the Free plan, so publishing is paused. Upgrade to keep Deriving.",
+  billing_lapsed: "Your plan has lapsed, so publishing is paused. Renew to keep Deriving.",
 }
 
 // The workspace-is-blocked strip: non-dismissable by design (the state, not the

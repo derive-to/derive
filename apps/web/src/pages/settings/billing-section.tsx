@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { api, type BillingInfo } from "@/api"
-import { Icon } from "@/components/icons"
+import { PlanFeatures } from "@/components/billing/plan-features"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -305,17 +305,7 @@ function PlanGrid({
             </div>
             <p className="text-sm font-medium text-foreground">{p.price[cycle]}</p>
             <p className="text-sm text-muted-foreground">{p.tagline}</p>
-            <ul className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-              {"everythingIn" in p && p.everythingIn && (
-                <li className="font-medium text-foreground">{p.everythingIn}</li>
-              )}
-              {p.features.map((f) => (
-                <li key={f} className="flex items-start gap-2">
-                  <Icon name="check" size={14} className="mt-0.5 shrink-0 text-primary" />
-                  <span>{f}</span>
-                </li>
-              ))}
-            </ul>
+            <PlanFeatures plan={p} />
             {isAdmin && !billing.subscribed && p.tier !== "free" && (
               <Button
                 data-testid={`billing-upgrade-${p.tier}`}
