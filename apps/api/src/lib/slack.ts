@@ -214,6 +214,47 @@ export const postSlackMessage = async (
   return { ts: data.ts, channel: data.channel ?? args.channel }
 }
 
+/** Open a modal via views.open. `triggerId` is single-use and expires ~3s after the interaction
+ *  that produced it, which is why the caller must reach this BEFORE doing any slow work — the
+ *  modal is the ack. Throws SlackApiError(code) on a Slack-level failure. */
+export const openSlackView = async (
+  token: string,
+  triggerId: string,
+  view: unknown,
+): Promise<void> => {
+  const res = await fetch(`${API}/views.open`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ trigger_id: triggerId, view }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+}
+
+/** A permanent link to one Slack message, for citing it from Derive. Returns null on any
+ *  failure: the link is a nicety on a comment that is worth saving without it, and the bot is
+ *  not necessarily a member of the channel a shortcut was fired in. */
+export const slackPermalink = async (
+  token: string,
+  channel: string,
+  messageTs: string,
+): Promise<string | null> => {
+  try {
+    const q = new URLSearchParams({ channel, message_ts: messageTs })
+    const res = await fetch(`${API}/chat.getPermalink?${q}`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(2500),
+    })
+    const data = (await res.json()) as { ok: boolean; permalink?: string }
+    return data.ok && data.permalink ? data.permalink : null
+  } catch {
+    return null
+  }
+}
+
 /** Rewrite an already-posted message via chat.update. Used to keep a comment card honest when
  *  the thread is resolved somewhere OTHER than the button on that card — in Derive's UI, over
  *  the API, by an agent, or from a different Slack channel the same thread is mirrored into.

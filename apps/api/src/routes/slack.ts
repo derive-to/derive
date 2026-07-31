@@ -3,6 +3,8 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { commentCreatedAction } from "../lib/comment-actions"
+import { commentDeepLink } from "../lib/comments"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { searchMatcher, searchWorkspace, toSearchHits } from "../lib/search"
@@ -10,13 +12,30 @@ import {
   exchangeSlackOAuth,
   exchangeSlackOidc,
   listSlackChannels,
+  openSlackView,
   postSlackResponseUrl,
   slackAuthorizeUrl,
   slackOidcAuthorizeUrl,
   slackOidcUserinfo,
+  slackPermalink,
+  slackUserName,
   unfurlSlackLinks,
   verifySlackSignature,
 } from "../lib/slack"
+import {
+  type CapturePrivateMeta,
+  captureLinkPromptModal,
+  captureModal,
+  captureOptions,
+  captureResultModal,
+  SLACK_CAPTURE_ACTION,
+  SLACK_CAPTURE_BLOCK,
+  SLACK_CAPTURE_CALLBACK,
+  SLACK_CAPTURE_NOTE_ACTION,
+  SLACK_CAPTURE_NOTE_BLOCK,
+  writeCaptureComment,
+} from "../lib/slack-capture"
+import { mrkdwnLabel } from "../lib/slack-cards"
 import {
   deriveRecentBlocks,
   deriveResultsBlocks,
@@ -412,6 +431,129 @@ export const slackRoutes = (ctx: AppContext) => {
     return c.json({ ok: true })
   })
 
+  // ── "Save to Derive" ────────────────────────────────────────────────────────────────────
+  // A message shortcut, so it reaches any message in any channel — not only replies under a
+  // mirrored card, which is all the reply-back path can see. See lib/slack-capture.ts for why
+  // the destination is a comment rather than a new artifact.
+
+  /** The Derive account behind a Slack user, plus the install that vouches for the team. Both
+   *  are required: the account is who the comment is authored as, and the install is what binds
+   *  the acting Slack team to a Derive workspace, exactly as the button path does. */
+  const captureActor = async (payload: SlackInteractionPayload) => {
+    const teamId = payload.team?.id
+    const slackUserId = payload.user?.id
+    if (!teamId || !slackUserId) return null
+    const link = await meta.getSlackUserLinkBySlackId(teamId, slackUserId)
+    if (!link) return null
+    const install = await meta.getSlackInstall(link.org_id)
+    // A workspace that disconnected keeps its members' account links, so re-check the install —
+    // without it the shortcut would keep writing into a workspace that cut Slack off.
+    if (!install || install.team_id !== teamId) return null
+    const [user] = await meta.getUsers([link.user_id])
+    return user ? { orgId: link.org_id, user } : null
+  }
+
+  const openCaptureModal = async (c: Context, payload: SlackInteractionPayload) => {
+    const triggerId = payload.trigger_id
+    const msg = payload.message
+    if (!triggerId || !msg?.ts || !payload.channel?.id) return c.json({ ok: true })
+    const actor = await captureActor(payload)
+    // No linked account → still open a modal, but one that asks them to connect. Falling back to
+    // the first install for the team is only used to find a bot token to open it WITH; nothing
+    // is written on this path.
+    const orgForToken =
+      actor?.orgId ?? (await meta.listSlackInstallsByTeam(payload.team?.id ?? ""))[0]?.org_id
+    if (!orgForToken) return c.json({ ok: true })
+    const bot = await resolveBotToken(meta, orgForToken, deps.encryptionKey)
+    if (!bot) return c.json({ ok: true })
+
+    const view = actor
+      ? captureModal({
+          channel: payload.channel.id,
+          channelName: payload.channel.name ?? null,
+          ts: msg.ts,
+          // A message shortcut carries the author's id but not always a name; `username` is
+          // present for bot/app messages, so prefer it and only spend a users.info lookup when
+          // there is an id to look up.
+          author:
+            msg.username || (msg.user ? await slackUserName(bot.token, msg.user) : "") || "Someone",
+          text: msg.text ?? "",
+          permalink: await slackPermalink(bot.token, payload.channel.id, msg.ts),
+        })
+      : captureLinkPromptModal(deps.baseUrl)
+    try {
+      await openSlackView(bot.token, triggerId, view)
+    } catch {
+      // The trigger expired or Slack refused the view. Nothing has been written, and there is
+      // no surface left to complain on — a message shortcut has no response_url.
+    }
+    return c.json({ ok: true })
+  }
+
+  /** Typeahead for the modal's artifact picker.
+   *
+   *  One indexed listArtifacts, not the full-text search behind `/derive <query>`: picking a doc
+   *  is a name lookup, and it has to answer on every keystroke inside Slack's 3s. `q` matches on
+   *  title through the same visibility gate the list uses, so the picker can only ever offer what
+   *  this account may already see. An empty query lists their recent artifacts, which makes the
+   *  picker useful before anything is typed at all. */
+  const captureSuggestions = async (c: Context, payload: SlackInteractionPayload) => {
+    const actor = await captureActor(payload)
+    if (!actor) return c.json({ options: [] })
+    const q = (payload.value ?? "").trim()
+    const rows = await meta.listArtifacts({
+      orgId: actor.orgId,
+      viewerId: actor.user.id,
+      publicOnly: !(await meta.getMembership(actor.orgId, actor.user.id)),
+      excludeRemoved: true,
+      limit: 20,
+      ...(q ? { q } : {}),
+    })
+    return c.json(captureOptions(rows))
+  }
+
+  const submitCapture = async (c: Context, payload: SlackInteractionPayload) => {
+    const actor = await captureActor(payload)
+    if (!actor) return c.json(captureResultModal("Connect your Derive account and try again."))
+    let m: CapturePrivateMeta
+    try {
+      m = JSON.parse(payload.view?.private_metadata ?? "") as CapturePrivateMeta
+    } catch {
+      return c.json(captureResultModal("Something went wrong reading that message."))
+    }
+    const values = payload.view?.state?.values ?? {}
+    const artifactId = values[SLACK_CAPTURE_BLOCK]?.[SLACK_CAPTURE_ACTION]?.selected_option?.value
+    const note = values[SLACK_CAPTURE_NOTE_BLOCK]?.[SLACK_CAPTURE_NOTE_ACTION]?.value ?? ""
+    if (!artifactId) return c.json(captureResultModal("Pick a doc to save this to."))
+
+    const artifact = await meta.getArtifactById(artifactId)
+    // The id came out of a modal, so it is client-supplied. Re-resolve it, confine it to the
+    // acting install's workspace, and re-check standing: the picker filtered by what they could
+    // see when it opened, which is not the same as what they may write to now.
+    if (!artifact || artifact.removed_at || artifact.org_id !== actor.orgId)
+      return c.json(captureResultModal("That doc isn't available any more."))
+    if (!(await authorizeUserStanding(actor.user.id, "comment", artifact)))
+      return c.json(captureResultModal("You don't have permission to comment on that doc."))
+
+    const comment = await writeCaptureComment(meta, artifact, m, note, {
+      id: actor.user.id,
+      name: actor.user.name ?? "Someone",
+    })
+    // The same fan-out a comment posted in the app runs — bells, webhooks, email. The channel
+    // mirror skips it on the Slack origin marker, so saving a message doesn't post it back out.
+    await commentCreatedAction(
+      { meta, bus, blobs, baseUrl: deps.baseUrl, notify },
+      artifact,
+      comment,
+      { mentions: [], actorId: actor.user.id },
+    )
+    deps.pokeWebhooks?.()
+    const link = commentDeepLink(deps.baseUrl, artifact, comment.thread_id)
+    return c.json(
+      captureResultModal(`Saved to <${link}|${mrkdwnLabel(artifact.title ?? artifact.short_id)}>.`),
+    )
+  }
+
   // Block Kit interactivity: a button on a comment card resolves / reopens that thread. Trust,
   // like reply-back, is by data not a Derive principal — but the target here comes from the
   // (attacker-influenceable) button value, so we bind it three ways: (1) the Slack signature
@@ -437,6 +579,17 @@ export const slackRoutes = (ctx: AppContext) => {
     } catch {
       return fail(c, 400, "invalid payload")
     }
+
+    // "Save to Derive" on a message → open the picker modal. The trigger_id expires in ~3s, so
+    // views.open has to be the FIRST thing that happens, and the modal IS the ack: an ephemeral
+    // message would need the bot to be in a channel a shortcut can be fired from anywhere.
+    if (payload.type === "message_action" && payload.callback_id === SLACK_CAPTURE_CALLBACK)
+      return openCaptureModal(c, payload)
+    // Each keystroke in that modal's artifact picker.
+    if (payload.type === "block_suggestion") return captureSuggestions(c, payload)
+    // …and the Save button.
+    if (payload.type === "view_submission" && payload.view?.callback_id === SLACK_CAPTURE_CALLBACK)
+      return submitCapture(c, payload)
 
     const action = payload.actions?.[0]
     if (payload.type !== "block_actions" || !action?.value) return c.json({ ok: true })
@@ -1061,9 +1214,27 @@ interface SlackInteractionPayload {
   response_url?: string
   /** The workspace the click came from; bound to the thread's org install for authz. */
   team?: { id?: string }
-  /** The conversation the click came from — which of a thread's mirrored messages it was. */
-  channel?: { id?: string }
+  /** The conversation the click came from — which of a thread's mirrored messages it was.
+   *  `name` only arrives on a message shortcut, where it is the channel the message lives in. */
+  channel?: { id?: string; name?: string }
   user?: { id?: string; username?: string; name?: string }
   actions?: Array<{ action_id?: string; value?: string }>
-  message?: { blocks?: unknown[] }
+  message?: { blocks?: unknown[]; text?: string; ts?: string; user?: string; username?: string }
+  /** message_action only: which shortcut fired, and the token that lets us open a modal. */
+  callback_id?: string
+  trigger_id?: string
+  /** block_suggestion only: what has been typed into the select so far. */
+  value?: string
+  action_id?: string
+  /** view_submission / block_suggestion: the modal the interaction came from. */
+  view?: {
+    callback_id?: string
+    private_metadata?: string
+    state?: {
+      values?: Record<
+        string,
+        Record<string, { value?: string; selected_option?: { value?: string } }>
+      >
+    }
+  }
 }

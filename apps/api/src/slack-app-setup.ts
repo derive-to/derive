@@ -8,6 +8,7 @@
 // message — nothing to toggle by hand.
 import { esc, brandShell as SHELL } from "./brand-page"
 import { SLACK_BOT_SCOPES } from "./lib/slack"
+import { SLACK_CAPTURE_CALLBACK } from "./lib/slack-capture"
 
 /** The Slack app manifest, born with everything Derive's Slack integration needs and
  *  every URL pointed at THIS instance. Single source of truth: the setup page renders
@@ -73,6 +74,18 @@ export const buildSlackManifest = (baseUrl: string) => {
           "tokens_revoked",
         ],
       },
+      // "Save to Derive" on any message's overflow menu — the capture path (lib/slack-capture.ts).
+      // A MESSAGE shortcut rather than a global one: it needs the message it was fired on, and a
+      // global shortcut carries none. Declared here because a manifest is the only way to add
+      // one; an existing install picks it up on reinstall, like the unfurl domains.
+      shortcuts: [
+        {
+          name: "Save to Derive",
+          type: "message",
+          callback_id: SLACK_CAPTURE_CALLBACK,
+          description: "Save this message as a comment on a Derive doc",
+        },
+      ],
       // Buttons on comment cards (resolve / reopen a thread) POST here.
       interactivity: {
         is_enabled: true,

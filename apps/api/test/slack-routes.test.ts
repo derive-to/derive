@@ -1619,3 +1619,225 @@ describe("subscription CRUD over REST", () => {
     expect(rows[0]).toMatchObject({ channel_id: "C0ENG123", active: 1 })
   })
 })
+
+// "Save to Derive" — the capture path. Three interactions, none of them a block_actions: a
+// message_action opens the modal, a block_suggestion feeds its picker, a view_submission writes.
+describe("Save to Derive", () => {
+  const setup = async (name: string, opts: { link?: boolean } = {}) => {
+    const { app, meta } = make(name)
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    if (opts.link !== false)
+      await meta.setSlackUserLink({
+        id: newId("sul"),
+        org_id: "default",
+        user_id: owner.id,
+        team_id: "T1",
+        slack_user_id: "U1",
+        created_at: new Date().toISOString(),
+      })
+    const artifact = await meta.createArtifact({
+      id: `a-${name}`,
+      short_id: `c${name}`.slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "The Spec",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    return { app, meta, artifact }
+  }
+  const message = {
+    ts: "1700000001.1",
+    user: "U9",
+    username: "Dana",
+    text: "we should ship the smaller version",
+  }
+  const shortcut = {
+    type: "message_action",
+    callback_id: "derive_capture",
+    trigger_id: "trig-1",
+    team: { id: "T1" },
+    user: { id: "U1" },
+    channel: { id: "C-eng", name: "eng" },
+    message,
+  }
+  const submission = (artifactId: string, note = "") => ({
+    type: "view_submission",
+    team: { id: "T1" },
+    user: { id: "U1" },
+    view: {
+      callback_id: "derive_capture",
+      private_metadata: JSON.stringify({
+        channel: "C-eng",
+        channelName: "eng",
+        ts: message.ts,
+        author: "Dana",
+        text: message.text,
+        permalink: "https://acme.slack.com/archives/C-eng/p1700000001",
+      }),
+      state: {
+        values: {
+          derive_capture_artifact: {
+            derive_capture_pick: { selected_option: { value: artifactId } },
+          },
+          derive_capture_note_block: { derive_capture_note: { value: note } },
+        },
+      },
+    },
+  })
+
+  it("opens a picker modal on the message, quoting it", async () => {
+    const { app } = await setup("cap-open")
+    const calls: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: string, init: RequestInit) => {
+        if (String(u).includes("chat.getPermalink"))
+          return new Response(JSON.stringify({ ok: true, permalink: "https://s/p" }), {
+            status: 200,
+          })
+        calls.push({ url: String(u), body: JSON.parse(String(init?.body ?? "{}")) })
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }),
+    )
+    expect((await postInteract(app, shortcut)).status).toBe(200)
+    const open = calls.find((x) => String(x.url).endsWith("/views.open"))
+    expect(open).toBeTruthy()
+    const view = JSON.stringify((open as { body: { view: unknown } }).body.view)
+    expect(view).toContain("Save to Derive")
+    expect(view).toContain("we should ship the smaller version")
+    // The message travels in private_metadata: a view_submission arrives with no channel and
+    // no message, so anything not carried here is gone by the time Save is pressed.
+    expect(view).toContain("private_metadata")
+    expect(view).toContain("1700000001.1")
+  })
+
+  it("asks an unlinked user to connect instead of writing as nobody", async () => {
+    const { app } = await setup("cap-unlinked", { link: false })
+    const calls: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (u: string, init: RequestInit) => {
+        calls.push({ url: String(u), body: JSON.parse(String(init?.body ?? "{}")) })
+        return new Response(JSON.stringify({ ok: true }), { status: 200 })
+      }),
+    )
+    await postInteract(app, shortcut)
+    const open = calls.find((x) => String(x.url).endsWith("/views.open"))
+    expect(JSON.stringify(open)).toContain("Connect your Derive account")
+  })
+
+  it("suggests only artifacts the linked account can see", async () => {
+    const { app, meta } = await setup("cap-suggest")
+    // A second workspace's artifact must never appear in the picker.
+    await meta.createArtifact({
+      id: "a-other",
+      short_id: "other1",
+      org_id: "someone-else",
+      slug: null,
+      title: "Their Spec",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    const r = await postInteract(app, {
+      type: "block_suggestion",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      value: "Spec",
+      view: { callback_id: "derive_capture" },
+    })
+    const body = (await r.json()) as { options: { text: { text: string }; value: string }[] }
+    expect(body.options.map((o) => o.text.text)).toContain("The Spec")
+    expect(body.options.map((o) => o.text.text)).not.toContain("Their Spec")
+  })
+
+  it("saves the message as a quoted comment, authored by the linked account", async () => {
+    const { app, meta, artifact } = await setup("cap-save")
+    const r = await postInteract(app, submission(artifact.id, "worth capturing"))
+    expect(r.status).toBe(200)
+    // The modal is replaced in place — no ephemeral message, so no dependency on the bot being
+    // a member of the channel the shortcut was fired in.
+    expect((await r.json()).response_action).toBe("update")
+
+    const comments = await meta.listComments(artifact.id)
+    expect(comments).toHaveLength(1)
+    const cm = comments[0]
+    expect(cm?.author_id).toBe(owner.id)
+    expect(cm?.body_md).toContain("worth capturing")
+    // Quoted line by line, so the message can't break out of its blockquote, and cited.
+    expect(cm?.body_md).toContain("> we should ship the smaller version")
+    expect(cm?.body_md).toContain("Dana in #eng")
+    // Tagged with its Slack origin — which is what stops the mirror posting it straight back
+    // into every subscribed channel.
+    expect(JSON.parse(cm?.meta ?? "{}").slack?.ts).toBe(message.ts)
+  })
+
+  it("does not echo a captured message back into the channel", async () => {
+    const { app, meta, artifact } = await setup("cap-noecho")
+    await meta.upsertSlackSubscription({
+      id: newId("sub"),
+      org_id: "default",
+      channel_id: "C-eng",
+    })
+    await postInteract(app, submission(artifact.id))
+    // The comment really was written — otherwise "nothing was mirrored" proves nothing.
+    expect(await meta.listComments(artifact.id)).toHaveLength(1)
+    const due = await meta.claimDueDeliveries(
+      new Date(Date.now() + 60_000).toISOString(),
+      100,
+      new Date(Date.now() + 120_000).toISOString(),
+    )
+    expect(due.filter((d) => d.kind === "slack_app")).toHaveLength(0)
+  })
+
+  // The artifact id rides in the modal's state, which is client-supplied. It is re-resolved and
+  // re-checked on submit — the picker's filter is not the authorization.
+  it("refuses an artifact from another workspace", async () => {
+    const { app, meta } = await setup("cap-xorg")
+    const theirs = await meta.createArtifact({
+      id: "a-theirs",
+      short_id: "theirs1",
+      org_id: "someone-else",
+      slug: null,
+      title: "Theirs",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    const r = await postInteract(app, submission(theirs.id))
+    expect(JSON.stringify(await r.json())).toContain("isn't available")
+    expect(await meta.listComments(theirs.id)).toHaveLength(0)
+  })
+
+  it("refuses a submission from an unlinked user", async () => {
+    const { app, meta, artifact } = await setup("cap-sub-unlinked", { link: false })
+    const r = await postInteract(app, submission(artifact.id))
+    expect(JSON.stringify(await r.json())).toContain("Connect your Derive account")
+    expect(await meta.listComments(artifact.id)).toHaveLength(0)
+  })
+
+  // Disconnecting Slack leaves the members' account links behind, so the link alone is not
+  // enough to keep writing into the workspace.
+  it("refuses once the workspace has disconnected Slack", async () => {
+    const { app, meta, artifact } = await setup("cap-disconnected")
+    await meta.deleteSlackInstall("default")
+    const r = await postInteract(app, submission(artifact.id))
+    expect(JSON.stringify(await r.json())).toContain("Connect your Derive account")
+    expect(await meta.listComments(artifact.id)).toHaveLength(0)
+  })
+})
