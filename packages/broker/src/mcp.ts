@@ -1,5 +1,5 @@
 import { unbound } from "./http"
-import type { BrokerToolDef, ConnectResult, ToolBroker } from "./types"
+import type { BrokerToolDef, ConnectFailure, ConnectResult, ToolBroker } from "./types"
 
 /**
  * The MCP broker: connect ANY Model Context Protocol server as a source.
@@ -123,6 +123,29 @@ export type QuietReason = "unpinned" | "unreachable" | "pin_mismatch" | "broker_
 const ourFault = (e: unknown): boolean => e instanceof TypeError || !(e instanceof Error)
 
 /**
+ * Turn a failed connect into something a person can act on.
+ *
+ * The two cases that matter are the two a person actually hits, and they were indistinguishable:
+ * `https://mcp.stripe.com/mcp` is a 404 (the path is wrong — Stripe's server is at the root) and
+ * `https://mcp.stripe.com` is a 401 (right address, needs a token). Both used to produce
+ * "that MCP server did not answer — if it requires authentication, pass `mcp_secret`", which is
+ * actively misleading for the first: you add a token and it fails again, identically.
+ */
+const classify = (e: unknown): ConnectFailure => {
+  const status = (e as { status?: number } | null)?.status
+  if (status === 401 || status === 403) return "auth_required"
+  if (status === 404 || status === 405) return "not_mcp"
+  if (typeof status === "number") return "protocol_error"
+  // No status at all: nothing answered. Note a network failure ALSO arrives as a TypeError —
+  // undici throws `TypeError: fetch failed` with a `cause` for connection-refused — so the
+  // `ourFault` heuristic used for tool listing would misread a genuinely dead server as our bug.
+  // A thrown fetch carries a cause; the "Illegal invocation" class of defect does not.
+  const network = e instanceof TypeError && (e as { cause?: unknown }).cause !== undefined
+  if (network) return "unreachable"
+  return ourFault(e) ? "protocol_error" : "unreachable"
+}
+
+/**
  * THE ONE RULE for any URL Derive will dial server-side, carrying a credential: https anywhere,
  * plain http only to the loopback host for local development.
  *
@@ -213,26 +236,159 @@ export const pinTools = async (tools: BrokerToolDef[]): Promise<string> => {
   )
 }
 
-/** One JSON-RPC response, whether the server answered as JSON or as a single SSE frame.
- *  Streamable-HTTP servers may reply either way to the same request, so both are handled. */
-const readRpc = async (res: Response): Promise<unknown> => {
-  const text = await res.text()
-  const trimmed = text.trim()
-  if (!trimmed) return null
-  if (trimmed.startsWith("{")) return JSON.parse(trimmed)
-  // SSE: take the LAST data: line, which carries the response for the request just sent.
-  const frames = trimmed
-    .split("\n")
-    .filter((l) => l.startsWith("data:"))
-    .map((l) => l.slice(5).trim())
-    .filter(Boolean)
-  const last = frames[frames.length - 1]
-  return last ? JSON.parse(last) : null
+/** One SSE `data:` payload as a JSON-RPC message, or null if it is not one (a comment, a
+ *  keep-alive, or a partial write). Never throws — a stream must not die on one bad frame. */
+const parseFrame = (data: string): { id?: unknown } | null => {
+  try {
+    const msg = JSON.parse(data)
+    return msg && typeof msg === "object" ? (msg as { id?: unknown }) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One JSON-RPC response, whether the server answered as JSON or over an SSE stream.
+ *
+ * READ UNTIL OUR ANSWER ARRIVES, NOT UNTIL THE STREAM ENDS. This was `await res.text()`, which
+ * waits for the server to CLOSE the connection — and the spec explicitly lets a server keep the
+ * stream open after replying, to push notifications and its own requests down it. Servers really
+ * do (gitmcp.io holds it open; DeepWiki closes it), so every call to one of them stalled until the
+ * 20-second abort and was then reported as a failure. The server was fine and the response had
+ * arrived in milliseconds; we were still waiting for an EOF that was never coming.
+ *
+ * Matching on the request id matters for the same reason: once a stream can carry more than one
+ * message, "the last frame" is whatever happened to be in the buffer, not our answer.
+ */
+const readRpc = async (res: Response, id: number): Promise<unknown> => {
+  const body = res.body
+  // Only an SSE response can be held open, so only that one needs to be read incrementally.
+  // Everything else is buffered, which keeps the common JSON reply on the simplest path — and
+  // still parses SSE framing, because a server may use it without declaring the content type.
+  if (!body || !(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+    const trimmed = (await res.text()).trim()
+    if (!trimmed) return null
+    if (trimmed.startsWith("{")) return JSON.parse(trimmed)
+    const frames = trimmed
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith("data:"))
+      .map((l) => l.slice(5).trim())
+      .filter(Boolean)
+    // Prefer OUR reply; fall back to the last frame, which is what a single-reply body holds.
+    for (const f of frames) {
+      const msg = parseFrame(f)
+      if (msg && String(msg.id) === String(id)) return msg
+    }
+    const last = frames[frames.length - 1]
+    return last ? JSON.parse(last) : null
+  }
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ""
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      for (;;) {
+        // Events are separated by a blank line; a chunk can end mid-line, so only complete ones.
+        const end = /\r?\n\r?\n/.exec(buf)
+        if (!end) break
+        const frame = buf.slice(0, end.index)
+        buf = buf.slice(end.index + end[0].length)
+        // `data:` may be split across several lines of one event, and is rejoined with newlines.
+        const data = frame
+          .split(/\r?\n/)
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim())
+          .join("\n")
+        if (!data) continue
+        // Notifications carry no id; another request's reply carries a different one.
+        const msg = parseFrame(data)
+        if (msg && msg.id !== undefined && String(msg.id) === String(id)) return msg
+      }
+    }
+  } finally {
+    // Hang up rather than leaving a socket held open for a stream we are done reading.
+    await reader.cancel().catch(() => undefined)
+  }
+  return null
 }
 
 interface RpcResult {
   result?: Record<string, unknown>
   error?: { message?: string }
+}
+
+/**
+ * Ceiling on ONE tool result, because a source's answer lands verbatim in the run's prompt.
+ *
+ * Found on a real cloud MCP: DeepWiki's `read_wiki_contents` returns an entire wiki, and one call
+ * produced a 1,040,577-token prompt against a 1,048,576-token model limit. Every following turn
+ * failed the same way, so the run burned its whole turn budget and finished "agent did not produce
+ * a revision within 12 turns" -- naming the symptom, and never the cause.
+ *
+ * 80k chars matches apps/api's own `clip`, which bounds Derive's responses for exactly this reason
+ * in the other direction ("so no single read/search result can blow a client's context budget").
+ * A source deserves the same ceiling: nothing about it being remote makes its output smaller.
+ *
+ * CLIPPED, NEVER DROPPED, and always with the cut declared. A truncated answer the model knows is
+ * truncated can be worked with -- it can narrow the question and call again. A silently shortened
+ * one is indistinguishable from the whole truth, which is the worse failure by far.
+ */
+const MAX_RESULT_CHARS = 80_000
+
+interface ContentBlock {
+  type?: string
+  text?: string
+}
+
+const clipToolResult = (result: unknown): unknown => {
+  let whole: string
+  try {
+    whole = JSON.stringify(result) ?? ""
+  } catch {
+    return result // not serializable is not our problem to solve here
+  }
+  if (whole.length <= MAX_RESULT_CHARS) return result
+
+  const blocks = (result as { content?: unknown })?.content
+  if (!Array.isArray(blocks)) {
+    // A shape we do not model, and too big to pass on. Say so rather than forward it.
+    return {
+      content: [
+        {
+          type: "text",
+          text: `[this source returned ${whole.length} characters, past the ${MAX_RESULT_CHARS}-character limit for one tool result, in a shape that cannot be trimmed — ask it for less]`,
+        },
+      ],
+    }
+  }
+
+  let budget = MAX_RESULT_CHARS
+  const kept: ContentBlock[] = []
+  let clipped = 0
+  for (const raw of blocks as ContentBlock[]) {
+    const text = typeof raw?.text === "string" ? raw.text : null
+    if (text === null) {
+      kept.push(raw)
+      continue
+    }
+    if (text.length <= budget) {
+      kept.push(raw)
+      budget -= text.length
+      continue
+    }
+    clipped += text.length - budget
+    kept.push({ ...raw, text: text.slice(0, budget) })
+    budget = 0
+  }
+  const dropped = (blocks as ContentBlock[]).length - kept.length
+  kept.push({
+    type: "text",
+    text: `…[truncated ${clipped} characters${dropped > 0 ? ` and ${dropped} further block(s)` : ""} — this source returned more than one tool result may carry. Ask it something narrower.]`,
+  })
+  return { ...(result as object), content: kept }
 }
 
 export class McpBroker implements ToolBroker {
@@ -252,6 +408,9 @@ export class McpBroker implements ToolBroker {
 
   /** Always a plain function, never the raw global — see `unbound`. */
   private readonly fetchImpl: typeof fetch
+
+  /** Monotonic JSON-RPC request ids, so a reply can be matched to its request on a stream. */
+  private nextRpcId = 0
 
   constructor(
     fetchImpl: typeof fetch = fetch,
@@ -293,6 +452,9 @@ export class McpBroker implements ToolBroker {
     params?: unknown,
   ): Promise<RpcResult> {
     const bearer = await this.authFor(target)
+    // A COUNTER, not Date.now(): the id is now what picks our reply out of a stream that may
+    // carry several messages, and two calls inside the same millisecond shared a Date.now() id.
+    const id = ++this.nextRpcId
     const key = this.sessionKey(url, bearer)
     const session = this.sessions.get(key)
     const version = this.versions.get(key)
@@ -308,14 +470,22 @@ export class McpBroker implements ToolBroker {
         ...(session ? { "mcp-session-id": session } : {}),
         ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params: params ?? {} }),
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} }),
       // A hung MCP server must never wedge a dispatch tick or a claim.
       signal: AbortSignal.timeout(20_000),
     })
     const sid = res.headers.get("mcp-session-id")
     if (sid) this.sessions.set(key, sid)
-    if (!res.ok) throw new Error(`MCP ${method} failed: HTTP ${res.status}`)
-    const body = (await readRpc(res)) as RpcResult | null
+    if (!res.ok) {
+      // The status is the whole diagnosis and used to die on this line. Carried on the error so
+      // `connect` can tell "needs a token" from "nothing here" instead of guessing.
+      const err = new Error(`MCP ${method} failed: HTTP ${res.status}`) as Error & {
+        status?: number
+      }
+      err.status = res.status
+      throw err
+    }
+    const body = (await readRpc(res, id)) as RpcResult | null
     if (!body) throw new Error(`MCP ${method} returned an empty response`)
     if (body.error) throw new Error(`MCP ${method} error: ${body.error.message ?? "unknown"}`)
     return body
@@ -397,10 +567,11 @@ export class McpBroker implements ToolBroker {
       // Pin at connect: this exact tool list is what a human is approving. A later change makes
       // the connection go quiet rather than silently feeding new prompt text to every run.
       return { url, ref: encodeMcpRef(url, await pinTools(tools)), status: "active" }
-    } catch {
-      // Unreachable or not speaking MCP. `pending` (not a throw) so the connection can be stored
-      // and retried, matching how the other brokers report a not-yet-usable account.
-      return { url, ref: encodeMcpRef(url, ""), status: "pending" }
+    } catch (e) {
+      // `pending` (not a throw) so the connection can be stored and retried, matching how the
+      // other brokers report a not-yet-usable account — but WITH the reason, because "did not
+      // answer" was being said about servers that answered clearly.
+      return { url, ref: encodeMcpRef(url, ""), status: "pending", reason: classify(e) }
     }
   }
 
@@ -467,7 +638,8 @@ export class McpBroker implements ToolBroker {
       name: bare,
       arguments: opts.args ?? {},
     })
-    return body.result ?? null
+    // Bounded HERE, at the one point every MCP source passes through, rather than at each caller.
+    return body.result === undefined ? null : clipToolResult(body.result)
   }
 
   /** Nothing is held server-side: a connection IS its ref, so revoking is the caller deleting

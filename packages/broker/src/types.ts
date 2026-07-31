@@ -39,7 +39,26 @@ export interface ConnectResult {
   url: string
   ref: string
   status: "active" | "pending"
+  /**
+   * Why a connect did not land ACTIVE, in a form a caller can act on. Absent when it did.
+   *
+   * `connect` used to swallow every failure into `pending`, so "no MCP server at that URL" and
+   * "the server is there and wants a token" arrived as the same sentence — and the natural
+   * recovery from the wrong one (paste a key) fails again saying nothing new. Stripe returns
+   * exactly those two for the two URLs a person is most likely to try.
+   */
+  reason?: ConnectFailure
 }
+
+export type ConnectFailure =
+  /** 401/403 with no credential, or the one we sent was refused. */
+  | "auth_required"
+  /** 404, or a 200 that is not JSON-RPC — nothing MCP-shaped is listening there. */
+  | "not_mcp"
+  /** DNS, TLS, timeout: nothing answered at all. */
+  | "unreachable"
+  /** The server answered but the exchange failed for some other reason. */
+  | "protocol_error"
 
 export interface ToolBroker {
   /** Provider slug, e.g. "local" | "composio". */

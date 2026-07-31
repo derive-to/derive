@@ -28,6 +28,10 @@ export default defineConfig({
     },
   },
   test: {
+    // test/worker/** belongs to the workerd lane (vitest.worker.config.ts) and must not run here.
+    // Node picked it up and ran it OUTSIDE workerd, which is the exact silent degradation its
+    // runtime assertion exists to catch — and did, on the first run after this lane was added.
+    exclude: ["node_modules/**", "dist/**", "test/worker/**"],
     coverage: {
       provider: "v8",
       // TypeScript only: src/skills/*.md (the MCP skill sources) live under src,
