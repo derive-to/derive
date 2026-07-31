@@ -12,6 +12,20 @@
 //   [triggers]            the every-minute cron → a second scheduler against the same rows,
 //                         materializing and dispatching real automations.
 //   [[queues.consumers]]  → the preview would steal run-dispatch messages from production.
+//   [[queues.producers]]  → the OTHER direction, and the one that was missed. Dropping only the
+//                         consumer left the preview POKING production's `derive-runs` queue on
+//                         every run-now, with no consumer of its own to answer. So every hosted
+//                         run started from a preview was executed by PRODUCTION, running MAIN's
+//                         code, against the shared database — the branch under test never ran
+//                         its own automations, and a reviewer reading the result was reading
+//                         main's behaviour with the PR's name on it. It cost a day of chasing a
+//                         "bug" that was only ever main's missing fix. It is also a real
+//                         cross-environment leak: a PR's automations executing on production's
+//                         deployment with production's credentials.
+//
+//                         With both gone, `pokeRun` is a no-op and (the cron being stripped too)
+//                         a preview's hosted runs simply stay queued. Hosted execution is OFF on
+//                         previews, visibly, rather than silently delegated to production.
 //   [[containers]]        not needed on the loop substrate, and skips a multi-minute image build.
 //   [browser] + PREVIEW_RENDERER
 //                         the OG/preview screenshotter. Its sweep (versionsMissingPreview)
@@ -91,6 +105,7 @@ const DROP = new Set([
   "[[routes]]",
   "[triggers]",
   "[[queues.consumers]]",
+  "[[queues.producers]]",
   "[[containers]]",
   "[browser]",
 ])
@@ -142,6 +157,13 @@ const must = (cond, msg) => {
 must(!out.includes("[[routes]]"), "routes survived — the preview would serve production hostnames")
 must(!out.includes("[triggers]"), "cron survived — a second scheduler on production's rows")
 must(!out.includes("queues.consumers"), "queue consumer survived — it would steal run messages")
+// The producer is the direction that was missed for a long time: with it, a preview pokes
+// PRODUCTION's run queue and production executes the branch's automations with main's code.
+must(
+  !out.includes("queues.producers"),
+  "queue producer survived — the preview would hand its runs to production, which would " +
+    "execute them with MAIN's code",
+)
 // A plain line match, NOT `new RegExp(...${name}...)`. The name arrives on argv, so building a
 // pattern out of it is regex injection — a name containing regex metacharacters would change
 // what this guard tests, and the guard is the thing standing between a preview and production's
