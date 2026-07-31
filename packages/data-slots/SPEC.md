@@ -91,6 +91,27 @@ Reading the latest *slot row* instead is the natural implementation and it is wr
 report a superseded value as the present state, which is the failure mode that makes the
 whole surface quietly untrustworthy rather than visibly broken.
 
+### 3.4 Partial reads of one version
+
+Structured slots are not the only read this layer owes. A version is often too large to
+hand to an agent whole, so the same addressing story extends INTO a document: an
+**outline** (headings, or landmark regions for a headless page), a **named section**, a
+**line window**. A reader should be able to spend tokens proportional to the part it
+needs, not to the document that contains it.
+
+Three rules, same spirit as the rest:
+
+- **A partial read obeys §4 unchanged.** An outline, a section map, or a search snippet is
+  derived from the source and is never more readable than it.
+- **Derived views are recomputable, so they may be cached content-addressed** — keyed by
+  the source hash plus a generation number, and the generation MUST be bumped on any
+  change to the deriving code, or stale views serve forever. (Slots are NOT this: they are
+  canonical rows that must survive any eviction. Different lifecycle, different store.)
+- **Measure before caching.** The cost of recomputing a derived view is an empirical
+  number, not an intuition; this host ships a per-read timing probe and gates its own
+  cache PR on what the probe says. A cache nobody needed is a generation-bump discipline
+  paid forever for nothing.
+
 ## 4. Visibility
 
 > **A derived read is never more readable than its source.**
