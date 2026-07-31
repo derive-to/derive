@@ -105,6 +105,9 @@ the default role. Sign up at `/login`.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | (none) | Optional Slack app (all three required). Create it from **Settings → Integrations → Set up Slack app**; connect from Settings → Integrations. Bot tokens are encrypted at rest with `DERIVE_AUTH_SECRET`. |
+| `STRIPE_SECRET_KEY` | (none) | Stripe secret key (`sk_test_`/`sk_live_`). Unset disables the billing routes entirely; self-host never needs it. |
+| `STRIPE_WEBHOOK_SECRET` | (none) | Signing secret for the Stripe webhook endpoint (`whsec_...`). Required for `/v1/billing/webhook` to accept events. |
+| `DERIVE_BILLING_ENFORCE_AT` | (none) | ISO instant after which free-tier boundaries enforce (3 editor seats, 1 GB). Unset means beta grace: nothing is blocked and white-label stays free. |
 
 ### Preview screenshots (optional)
 
@@ -435,3 +438,37 @@ the D1 database itself will be idle.
 PlanetScale note: its connection strings end in `sslrootcert=system`, which
 node-postgres reads as a file path — drop that parameter (keep `sslmode`); the deploy
 scripts already tolerate it.
+
+### Billing (Stripe)
+
+This is the tier the hosted product runs, so it is the one that turns billing on. Set
+`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` as Worker secrets, same as the other
+secrets above:
+
+```bash
+wrangler secret put STRIPE_SECRET_KEY
+wrangler secret put STRIPE_WEBHOOK_SECRET
+```
+
+Leave both unset on a self-hosted deploy: the billing routes are disabled entirely
+without `STRIPE_SECRET_KEY`, so nothing here is required outside the hosted tier.
+
+1. **Seed the prices once per Stripe account** (test or live), idempotent to re-run:
+   ```bash
+   STRIPE_SECRET_KEY=sk_... node apps/api/scripts/stripe-seed.mjs
+   ```
+   Creates the four subscription prices (`team_monthly`, `team_annual`,
+   `business_monthly`, `business_annual`) the checkout route resolves by lookup key.
+   Existing lookup keys are left alone, so a re-run only fills in what's missing.
+2. **Point a Stripe webhook endpoint** at `https://<host>/v1/billing/webhook` and
+   subscribe it to:
+   - `checkout.session.completed`
+   - `customer.subscription.created`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+   - `invoice.payment_failed`
+
+   Stripe issues a signing secret for the endpoint; that value is
+   `STRIPE_WEBHOOK_SECRET`.
+3. **Enforcement day runbook**: set `DERIVE_BILLING_ENFORCE_AT` to the ISO instant free-tier
+   boundaries should start enforcing, and verify the announcement went out first.
