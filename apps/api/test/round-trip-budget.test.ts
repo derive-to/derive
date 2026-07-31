@@ -145,6 +145,41 @@ describe("hot read paths stay within their round-trip budget", () => {
     ).toBe("")
   })
 
+  // The ANONYMOUS unfurl path, budgeted by the same rule but measured without a cookie.
+  // It is the highest-traffic surface Derive has — every shared link, every Slack/iMessage
+  // preview — and the one where a regression is least likely to be noticed, because nobody
+  // signed in ever sees it.
+  it("the anonymous unfurl path stays batched", async () => {
+    const shared = await publishAs(
+      base.app,
+      "# Shared\n\nA world-readable doc.\n",
+      { link_role: "viewer" },
+      as(owner.email),
+    )
+    expect(shared.status).toBe(201)
+    const sharedId = ((await shared.json()) as { short_id: string }).short_id
+
+    const made = await tripsFor(`/v1/oembed?url=http://localhost/artifacts/${sharedId}`, {})
+    // unfurlInfo answers the version count, the comment count, the current version row AND
+    // its data slots in ONE call. Those were four separate reads (two of them whole-table
+    // `.length` scans); if this budget grows, one of them has come back rather than joining
+    // the batch — see MetaStore.unfurlInfo.
+    expect(
+      made.filter((m) => m === "unfurlInfo").length,
+      `unfurlInfo should be called exactly once; made: ${made.join(", ")}`,
+    ).toBe(1)
+    for (const gone of ["listVersions", "listComments", "getVersionData", "getVersion"])
+      expect(made, `${gone} is back on the unfurl path; it belongs in unfurlInfo`).not.toContain(
+        gone,
+      )
+    // Exactly two: resolve the artifact, then one batched unfurlInfo. Before the batching
+    // (and with main's data slots added as their own read) this was five.
+    expect(
+      made.length,
+      `anonymous unfurl grew past its budget. made: ${made.join(", ")}`,
+    ).toBeLessThanOrEqual(2)
+  })
+
   it("the batched store calls really are one call each, not a loop in disguise", async () => {
     // A future refactor could keep the budget green while turning a batched method back into a
     // per-item loop internally — same call count at this boundary, N round trips underneath.
