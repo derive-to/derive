@@ -24,6 +24,10 @@ import { SettingsSection } from "./settings-section"
 // Only MCP is addable. The other connection kinds are either created by their own integration
 // flow (GitHub, Slack) or need a broker plan that cannot currently complete a connection.
 
+/** What the OAuth callback writes into `scopes_label` for a connection authenticated by sign-in
+ *  rather than by a pasted token. Kept in one place so the row can caption it correctly. */
+const SIGNED_IN_LABEL = "signed in"
+
 export function SourcesSection() {
   const qc = useQueryClient()
   const { data: connections, isPending, isError, refetch } = useQuery(connectionsQuery())
@@ -257,7 +261,13 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
           {needsSignIn
             ? "Sign in with this server to finish connecting. Nothing can read from it until you do."
             : (conn.base_url ?? "—")}
-          {!needsSignIn && conn.scopes_label ? ` · token ${conn.scopes_label}` : ""}
+          {/* A signed-in connection has no token to caption, and "token signed in" is what the
+              generic form produced. The label says which of the two ways this one authenticates. */}
+          {!needsSignIn && conn.scopes_label
+            ? conn.scopes_label === SIGNED_IN_LABEL
+              ? " · signed in"
+              : ` · token ${conn.scopes_label}`
+            : ""}
         </p>
         {error ? (
           <p className="text-destructive text-xs" data-testid={`source-signin-error-${conn.id}`}>
