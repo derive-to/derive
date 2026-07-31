@@ -122,10 +122,14 @@ export function ReviewOverlay({
     } catch (e) {
       // approveProposal is a raw api.* call, not a useApiMutation, so the global
       // MutationCache interceptor never sees it — a billing 402 must open the paywall
-      // here, or it renders as raw inline text instead of the upgrade funnel.
+      // here, or it renders as raw inline text instead of the upgrade funnel. The
+      // overlay itself is z-80; the paywall dialog portals at z-50, so we must close
+      // the overlay first or the dialog opens invisibly behind it.
       const reason = paywallReasonFor(e)
-      if (reason) openPaywall(reason)
-      else setErr(e instanceof Error ? e.message : "Action failed")
+      if (reason) {
+        onClose()
+        openPaywall(reason)
+      } else setErr(e instanceof Error ? e.message : "Action failed")
     } finally {
       setBusy(false)
     }
