@@ -11,6 +11,7 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  FREE_SEAT_LIMIT,
   isAuthenticated,
   isBundleContentType,
   type MetaStore,
@@ -44,7 +45,7 @@ import {
   rateLimited,
 } from "./lib/rate-limit"
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
-import { billableSeatCount, syncSeats } from "./lib/seats"
+import { billableSeatCount, isBillableRole, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
@@ -789,6 +790,27 @@ export function buildContext(deps: AppDeps) {
     return b ? fail(c, 402, b.message, { code: b.code }) : null
   }
 
+  // Granting `role` must not add a billable seat the workspace's plan doesn't cover.
+  // The target's current role rides along so a re-role of an already-billable member
+  // (editor to owner) sails through: it adds nothing. Subscribed workspaces always
+  // pass; the grant just becomes a billed seat on the next syncSeats. Beta grace
+  // passes: this gate arrives with enforcement, like every other billing gate.
+  const seatGrantGate = async (
+    c: Context,
+    orgId: string,
+    role: Role,
+    existingRole?: Role | null,
+  ): Promise<Response | null> => {
+    if (!isBillableRole(role) || (existingRole && isBillableRole(existingRole))) return null
+    const [sub, seats] = await Promise.all([
+      meta.getSubscription(orgId),
+      billableSeatCount(meta, orgId),
+    ])
+    const s = await billingState(orgId, { sub, seatCount: seats })
+    if (s.subscriptionActive || s.betaGrace || seats < FREE_SEAT_LIMIT) return null
+    return fail(c, 402, blockCopy.seat_limit.message, { code: blockCopy.seat_limit.code })
+  }
+
   // Show the Made-with-Derive mark, or not? A workspace's whiteLabel toggle only takes
   // effect when it's also ENTITLED (beta, or an active subscription) — the settings
   // check runs first so the billing queries short-circuit away entirely once
@@ -1260,6 +1282,7 @@ export function buildContext(deps: AppDeps) {
     billingState,
     billingBlocked,
     billingGate,
+    seatGrantGate,
     blockCopy,
     effectiveWhiteLabel,
     ensureMembership,
