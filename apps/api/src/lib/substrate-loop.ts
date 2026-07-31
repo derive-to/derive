@@ -530,6 +530,11 @@ const serveOneRun = async (
         // used to say only "the agent produced nothing" — which reads as a broken model and sent
         // the last investigation looking in the wrong place for hours. Carry it on every failure.
         ...(run.sources_quiet?.length ? { sources_quiet: run.sources_quiet } : {}),
+        // HOW MANY HANDS IT HAD. "Failed with zero tools" and "failed holding three" are
+        // different diagnoses — the first is a binding or reachability problem and the second is
+        // the model or the contract — and the ledger could not tell them apart at all, so every
+        // investigation started by guessing which one it was looking at.
+        tools_offered: run.tools?.length ?? 0,
       },
     })
     return

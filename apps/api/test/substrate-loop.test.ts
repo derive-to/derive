@@ -1220,6 +1220,8 @@ describe("loop substrate: a source that contributed nothing is explained", () =>
     const meta = api.rec.finishes[0]?.meta as Record<string, unknown>
     expect(meta?.outcome).toBe("failed")
     expect(meta?.sources_quiet).toEqual(quiet)
+    // "Failed with zero tools" is a different diagnosis from "failed holding three".
+    expect(meta?.tools_offered).toBe(0)
     await api.close()
   })
 })
