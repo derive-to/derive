@@ -49,7 +49,6 @@ import {
   Smile,
   Sparkles,
   Star,
-  Tag,
   Trash2,
   User,
   Users,
@@ -74,7 +73,6 @@ const REG = {
   context: Bot,
   // Brandprint — the brand's fingerprint.
   brandprint: Fingerprint,
-  tag: Tag,
   search: Search,
   settings: Settings,
   // pod / workspace

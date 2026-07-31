@@ -608,7 +608,6 @@ export const api = {
   listArtifacts: (
     params?: {
       q?: string
-      tag?: string
       collection?: string
       favorite?: boolean
       /** Narrow to artifacts last changed by this GitHub login. */
@@ -636,7 +635,6 @@ export const api = {
   }> => {
     const qs = new URLSearchParams()
     if (params?.q) qs.set("query", params.q)
-    if (params?.tag) qs.set("tag", params.tag)
     if (params?.collection) qs.set("collection", params.collection)
     if (params?.favorite) qs.set("favorite", "true")
     if (params?.author) qs.set("author", params.author)
@@ -816,16 +814,11 @@ export const api = {
 
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
-  setTags: (id: string, tags: string[]): Promise<{ tags: string[] }> =>
-    f(`/v1/artifacts/${id}/tags`, { ...opts({ tags }), method: "PUT" }).then(j),
 
   // Bulk organize — the library multi-select bar. Each is ONE call over a set of
   // short_ids; the server authorizes every artifact on its own and returns a
   // {ok, skipped, failed} tally (skipped = not yours to touch), so the client sends the
-  // whole selection and shows what actually landed. Tags ADD (never replace); the server
-  // computes the per-artifact union, so the client sends only the tags to add.
-  bulkTags: (shortIds: string[], add: string[]): Promise<BulkSummary> =>
-    f("/v1/bulk/tags", opts({ shortIds, add })).then(j),
+  // whole selection and shows what actually landed.
   bulkFavorite: (shortIds: string[], favorite: boolean): Promise<BulkSummary> =>
     f("/v1/bulk/favorite", opts({ shortIds, favorite })).then(j),
   bulkAddToCollections: (shortIds: string[], collectionIds: string[]): Promise<BulkSummary> =>

@@ -28,14 +28,12 @@ import { ProposalSignal } from "./proposal-signal"
 // accent (a persistent "needs you" state) shows at rest.
 //
 // Stretched-link pattern: the open button's ::after covers the whole card (preview
-// included), while the actions / author / tag chips sit above it (z-20) and stay
-// independently clickable.
+// included), while the actions and author sit above it (z-20) and stay independently
+// clickable.
 export function ArtifactCard({
   artifact: a,
   onOpen,
   onToggleFavorite,
-  onPickTag,
-  onEditTags,
   onAddToCollection,
   onDelete,
   onPrefetch,
@@ -46,11 +44,9 @@ export function ArtifactCard({
   artifact: Artifact
   onOpen: () => void
   onToggleFavorite: () => void
-  onPickTag: (tag: string) => void
-  // Quick actions in the ⋯ menu — organize without opening the artifact. Tags
-  // are gated per-item (owner/editor), collections apply to any signed-in
-  // viewer (you're organizing your collections, not mutating the artifact).
-  onEditTags?: () => void
+  // Quick action in the ⋯ menu — organize without opening the artifact.
+  // Collections apply to any signed-in viewer (you're organizing your
+  // collections, not mutating the artifact).
   onAddToCollection?: () => void
   onDelete?: () => void
   // Warm the artifact (metadata + comments + rendered HTML) when the card is
@@ -67,15 +63,13 @@ export function ArtifactCard({
 }) {
   const titleRef = useRef<HTMLSpanElement>(null)
   const isOwner = a.my_role === "owner"
-  const showTags = !!onEditTags && (a.my_role === "owner" || a.my_role === "editor")
   const showDelete = isOwner && !!onDelete
-  const showMenu = showTags || !!onAddToCollection || showDelete
+  const showMenu = !!onAddToCollection || showDelete
   const author = a.author ?? null
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const versionDepth = Math.max(a.current_version, a.versions.length)
   const sourceDir = a.source_path ? dirOf(a.source_path) : ""
-  const tags = a.tags ?? []
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
   // Proposals you can act on (owner/editor) are a "needs you" signal — they soft-ink
   // the card edge (the `i_participated` tier) and the review count.
@@ -168,17 +162,7 @@ export function ArtifactCard({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
-                {/* Same organize order as the workbench ⋯ menu: Tags, then
-                    Add to collection; Delete stays last behind a separator. */}
-                {showTags && (
-                  <DropdownMenuItem
-                    data-testid={`artifact-card-tags-${a.short_id}`}
-                    onSelect={() => onEditTags?.()}
-                  >
-                    <Icon name="tag" size={16} />
-                    Tags
-                  </DropdownMenuItem>
-                )}
+                {/* Delete stays last, behind a separator — same as the workbench ⋯ menu. */}
                 {onAddToCollection && (
                   <DropdownMenuItem
                     data-testid={`artifact-card-collections-${a.short_id}`}
@@ -190,7 +174,7 @@ export function ArtifactCard({
                 )}
                 {showDelete && (
                   <>
-                    {(showTags || onAddToCollection) && <DropdownMenuSeparator />}
+                    {onAddToCollection && <DropdownMenuSeparator />}
                     <DropdownMenuItem
                       data-testid={`artifact-card-delete-${a.short_id}`}
                       variant="destructive"
@@ -323,45 +307,6 @@ export function ArtifactCard({
             )}
           </span>
         </div>
-
-        {tags.length > 0 && (
-          // One row only — chips are `nowrap` + clipped so a heavily-tagged artifact
-          // can't grow the card taller than its siblings. First three are interactive
-          // filter chips; a trailing "+N" counts the rest.
-          <div className="relative z-20 flex min-w-0 items-center gap-1.5 overflow-hidden">
-            {tags.slice(0, 3).map((t) => (
-              <Badge
-                key={t}
-                asChild
-                variant="outline"
-                className="max-w-32 shrink-0 border-border-soft px-1.5 font-mono text-2xs text-muted-foreground hover:border-foreground/25 hover:text-foreground"
-              >
-                <button
-                  type="button"
-                  data-testid={`artifact-card-tag-${t}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onPickTag(t)
-                  }}
-                >
-                  <span className="truncate">#{t}</span>
-                </button>
-              </Badge>
-            ))}
-            {tags.length > 3 && (
-              <Badge
-                variant="outline"
-                className="shrink-0 border-border-soft px-1.5 font-mono text-2xs text-muted-foreground/70"
-                title={tags
-                  .slice(3)
-                  .map((t) => `#${t}`)
-                  .join(" ")}
-              >
-                +{tags.length - 3}
-              </Badge>
-            )}
-          </div>
-        )}
       </CardContent>
     </Card>
   )

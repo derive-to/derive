@@ -34,20 +34,6 @@ test.describe("multiselect screens", () => {
     await owner.screenshot({ path: `${OUT}/desktop-dark.png` })
   })
 
-  test("desktop — the add-tags dialog", async ({ owner }) => {
-    await owner.setViewportSize({ width: 1280, height: 900 })
-    const ids = await seed(owner, ["Q3 Roadmap", "Launch Brief", "Retro Notes"])
-    await owner.getByTestId(`artifact-card-select-${ids[0]}`).click()
-    await owner.getByTestId(`artifact-card-select-${ids[1]}`).click()
-    await owner.getByTestId("library-selection-tags").click()
-    await owner.getByTestId("bulk-tag-input").fill("q3")
-    await owner.getByTestId("bulk-tag-stage").click()
-    await owner.getByTestId("bulk-tag-input").fill("planning")
-    await owner.getByTestId("bulk-tag-stage").click()
-    await owner.getByTestId("bulk-tag-apply").waitFor()
-    await owner.screenshot({ path: `${OUT}/desktop-tags-dialog.png` })
-  })
-
   test("mobile — checkboxes + collapsed bar", async ({ owner }) => {
     await owner.setViewportSize({ width: 390, height: 844 })
     const ids = await seed(owner, ["Q3 Roadmap", "Launch Brief", "Retro Notes"])

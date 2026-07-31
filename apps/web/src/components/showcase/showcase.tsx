@@ -198,7 +198,6 @@ const TINTS = [
   { cls: "bg-collection", label: "collection" },
   { cls: "bg-share", label: "share" },
   { cls: "bg-comments", label: "comments" },
-  { cls: "bg-tag", label: "tag" },
   { cls: "bg-gold", label: "gold" },
 ]
 
@@ -256,7 +255,6 @@ const ICONS: IconName[] = [
   "favorites",
   "following",
   "collections",
-  "tag",
   "search",
   "settings",
   "user",

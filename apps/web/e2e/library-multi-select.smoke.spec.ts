@@ -10,7 +10,7 @@ import { expect, publishArtifact, test } from "./fixtures"
  *
  * The mobile block is not a duplicate of the desktop one: it pins the two things that a
  * hover-built selection UI gets wrong on a phone — a checkbox that only appears on hover
- * (there is no hover), and a four-action bar that silently overflows a 375px viewport.
+ * (there is no hover), and an action bar that silently overflows a 375px viewport.
  */
 
 // Publish n artifacts and land on the library with all of them on screen.
@@ -25,58 +25,6 @@ async function seedLibrary(page: Parameters<typeof publishArtifact>[0], n: numbe
   }
   return ids
 }
-
-test("select cards, tag the set, and the tags land on every artifact", async ({ owner }) => {
-  const [a, b, c] = await seedLibrary(owner, 3)
-
-  // No selection, no bar — the library is a gallery until you say otherwise.
-  await expect(owner.getByTestId("library-selection-bar")).toBeHidden()
-
-  await owner.getByTestId(`artifact-card-select-${a}`).click()
-  await owner.getByTestId(`artifact-card-select-${b}`).click()
-
-  await expect(owner.getByTestId("library-selection-bar")).toBeVisible()
-  await expect(owner.getByTestId("library-selection-count")).toHaveText("2")
-
-  await owner.getByTestId("library-selection-tags").click()
-  await owner.getByTestId("bulk-tag-input").fill("q3")
-  await owner.getByTestId("bulk-tag-stage").click()
-  await owner.getByTestId("bulk-tag-apply").click()
-
-  await expect(owner.getByText("Tagged 2 artifacts")).toBeVisible()
-  // The write cleared the selection, so the bar retires on its own.
-  await expect(owner.getByTestId("library-selection-bar")).toBeHidden()
-
-  // The real assertion: the server says both artifacts carry the tag, and the third —
-  // never selected — was not touched.
-  for (const id of [a, b]) {
-    const res = await owner.request.get(`/v1/artifacts/${id}`)
-    expect(res.ok()).toBeTruthy()
-    expect(((await res.json()) as { tags: string[] }).tags).toContain("q3")
-  }
-  const untouched = await owner.request.get(`/v1/artifacts/${c}`)
-  expect(((await untouched.json()) as { tags: string[] }).tags).not.toContain("q3")
-})
-
-test("tagging a set MERGES — it never replaces the tags an artifact already has", async ({
-  owner,
-}) => {
-  const [a] = await seedLibrary(owner, 2)
-  // Pre-existing tag, set the way the single-artifact dialog would.
-  await owner.request.put(`/v1/artifacts/${a}/tags`, { data: { tags: ["keepme"] } })
-  await owner.reload()
-
-  await owner.getByTestId(`artifact-card-select-${a}`).click()
-  await owner.getByTestId("library-selection-tags").click()
-  await owner.getByTestId("bulk-tag-input").fill("added")
-  await owner.getByTestId("bulk-tag-stage").click()
-  await owner.getByTestId("bulk-tag-apply").click()
-  await expect(owner.getByText("Tagged 1 artifact")).toBeVisible()
-
-  // Both, not just the new one — the bulk path unions against each artifact's own set.
-  const tags = (await (await owner.request.get(`/v1/artifacts/${a}`)).json()) as { tags: string[] }
-  expect(tags.tags.sort()).toEqual(["added", "keepme"])
-})
 
 test("shift-click selects the range between two cards", async ({ owner }) => {
   const [a, , c] = await seedLibrary(owner, 3)
@@ -215,27 +163,32 @@ test.describe("mobile", () => {
     )
     expect(overflows, "the library must not scroll horizontally").toBe(false)
 
-    // All four actions are reachable — they collapse to icons, they don't disappear into
+    // Every action is reachable — they collapse to icons, they don't disappear into
     // an overflow menu.
-    for (const id of ["tags", "collections", "favorite", "delete"]) {
+    for (const id of ["collections", "favorite", "delete"]) {
       await expect(owner.getByTestId(`library-selection-${id}`)).toBeVisible()
     }
   })
 
-  test("the full tag flow works on a phone", async ({ owner }) => {
+  test("the full add-to-collection flow works on a phone", async ({ owner }) => {
     const [a, b] = await seedLibrary(owner, 2)
 
     await owner.getByTestId(`artifact-card-select-${a}`).tap()
     await owner.getByTestId(`artifact-card-select-${b}`).tap()
-    await owner.getByTestId("library-selection-tags").tap()
-    await owner.getByTestId("bulk-tag-input").fill("mobile")
-    await owner.getByTestId("bulk-tag-stage").tap()
-    await owner.getByTestId("bulk-tag-apply").tap()
+    await owner.getByTestId("library-selection-collections").tap()
+    await owner.getByTestId("bulk-collection-new-input").fill("Mobile")
+    await owner.getByTestId("bulk-collection-create").tap()
+    await owner.getByTestId("bulk-collection-apply").tap()
 
-    await expect(owner.getByText("Tagged 2 artifacts")).toBeVisible()
-    for (const id of [a, b]) {
-      const res = await owner.request.get(`/v1/artifacts/${id}`)
-      expect(((await res.json()) as { tags: string[] }).tags).toContain("mobile")
+    await expect(owner.getByText("Added 2 artifacts")).toBeVisible()
+    const cols = (await (await owner.request.get("/v1/collections")).json()) as {
+      collections: { id: string; title: string }[]
     }
+    const col = cols.collections.find((x) => x.title === "Mobile")
+    expect(col, "the collection was created").toBeTruthy()
+    const listed = (await (
+      await owner.request.get(`/v1/artifacts?collection=${col?.id}`)
+    ).json()) as { artifacts: { short_id: string }[] }
+    expect(listed.artifacts.map((x) => x.short_id).sort()).toEqual([a, b].sort())
   })
 })

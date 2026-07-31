@@ -344,7 +344,7 @@ export function RailSkeleton() {
 // recessed surface (bg-sidebar, distinct from the content canvas); inactive rows
 // sit dim and the active row lifts off it as a raised chip (ui/sidebar). Reads as
 // calm tiers top to bottom: brand + search → primary nav → your library
-// (collections + tags) → tools → account — separated by whitespace, not dividers.
+// (collections) → tools → account — separated by whitespace, not dividers.
 export function NavRail() {
   const { switchWorkspace } = useShell()
   const { me, loading } = useAuth()
@@ -372,9 +372,9 @@ export function NavRail() {
   const loc = useLocation()
   const search = loc.search as LibrarySearch
   const onLibrary = loc.pathname === "/"
-  // Feeds are routes now; the home library reads "active > All" only when no tag/
-  // collection filter narrows it. (A ?query= search doesn't change which feed you're in.)
-  const isAll = onLibrary && !search.tag && !search.collection
+  // Feeds are routes now; the home library reads "active > All" only when no collection
+  // filter narrows it. (A ?query= search doesn't change which feed you're in.)
+  const isAll = onLibrary && !search.collection
   const isFav = loc.pathname === "/favorites"
   const onShared = loc.pathname === "/shared"
   // People + its Activity sub-view (the /following feed) are one tab; the row lights for both.
@@ -382,7 +382,6 @@ export function NavRail() {
   const onContexts = loc.pathname.startsWith("/contexts")
   const onBrandprint = loc.pathname === "/brandprint"
   const onSettings = loc.pathname.startsWith("/settings")
-  const tags = summary?.tags ?? []
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
@@ -709,27 +708,6 @@ export function NavRail() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-        {tags.length > 0 && (
-          <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-            <SidebarGroupLabel>Tags</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {tags.map(({ tag, count }) => (
-                  <FilterItem
-                    key={tag}
-                    icon="tag"
-                    label={tag}
-                    count={count}
-                    search={{ tag }}
-                    active={onLibrary && search.tag === tag}
-                    testId={`sidebar-tag-${tag}`}
-                  />
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
 
         {/* Tools — a running sync, notifications, Settings. Pinned to the foot of
             the scroll (mt-auto); the whitespace above sets them apart, no divider. */}

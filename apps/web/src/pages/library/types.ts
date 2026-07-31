@@ -18,10 +18,7 @@ export type Filter =
   // member row — written at creation, agents' on-behalf publishes included), any
   // visibility.
   | { kind: "mine" }
-  | { kind: "tag"; tag: string }
   | { kind: "collection"; id: string; title: string }
-
-export type TagCount = { tag: string; count: number }
 
 export type Summary = {
   total: number
@@ -29,7 +26,6 @@ export type Summary = {
   mine: number
   // Owned docs still private — the "waiting to be shared" signal.
   mine_private: number
-  tags: TagCount[]
   workspace: string
 }
 
@@ -41,10 +37,9 @@ export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedba
 // The library's URL-encoded filters + search (query params on the home route), so
 // the persistent nav rail can drive them from any page and a filtered/searched
 // library is shareable and survives reload. These compose ON TOP of the base view
-// (a tag within all, a search within favorites). The named feeds themselves are
-// routes, not params — see LibraryView.
+// (a collection within all, a search within favorites). The named feeds themselves
+// are routes, not params — see LibraryView.
 export type LibrarySearch = {
-  tag?: string
   collection?: string
   // Anchor a collection view to one of its folders — scroll that section into view on
   // open. Set by the artifact breadcrumb's folder segment; ignored outside a collection.

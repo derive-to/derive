@@ -44,7 +44,7 @@ import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibrarySkeleton } from "./library-skeleton"
 import { PublishCard } from "./publish-card"
-import { LibraryCollectionsDialog, LibraryTagsDialog } from "./quick-organize"
+import { LibraryCollectionsDialog } from "./quick-organize"
 import { RepoPullRequests } from "./repo-pull-requests"
 import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
@@ -56,7 +56,7 @@ import { type LibrarySelection, useLibrarySelection } from "./use-library-select
 
 // The library surface, shared by five routes: "/" (your work), "/favorites",
 // "/following", "/shared", and "/feedback". The base feed comes from the route (the
-// `view` prop); the tag/collection/author filters + free-text search come from the URL
+// `view` prop); the collection/author filters + free-text search come from the URL
 // query. The persistent AppShell owns the rail/pod + auth gate, so this renders the
 // library body only. Reconceived from a 660-line god-component: the feed + its optimistic
 // mutations live in useLibraryFeed; the promoted "needs feedback" / "shared" card-strips
@@ -79,8 +79,8 @@ function scopeFor(view: LibraryView) {
 }
 
 // The active filter = the base feed (from the route: `view`) unless it's the home
-// library, where a tag/collection query param narrows it. The named feeds are their own
-// routes, so their filters (tag/collection) can't apply.
+// library, where a collection query param narrows it. The named feeds are their own
+// routes, so their collection filter can't apply.
 function deriveFilter(
   view: LibraryView,
   search: LibrarySearch,
@@ -91,7 +91,6 @@ function deriveFilter(
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
   if (search.tab === "mine") return { kind: "mine" }
-  if (search.tag) return { kind: "tag", tag: search.tag }
   if (search.collection)
     return {
       kind: "collection",
@@ -126,7 +125,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // Reflect the SETTLED search in the URL so a filtered library is shareable/deep-linkable —
   // the field seeds FROM ?query= above but must also write back. `replace` so keystrokes
   // don't stack history; the guard skips a no-op nav (and its re-render loop). Keeps the
-  // current route (one of five feeds) and the other params (tag/collection/author).
+  // current route (one of five feeds) and the other params (collection/author).
   useEffect(() => {
     if (debouncedQ === (search.query ?? "").trim()) return
     nav({
@@ -146,7 +145,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // all in the feed hook, keyed by the active filter.
   const params = {
     q: debouncedQ || undefined,
-    tag: search.tag,
     collection: search.collection,
     favorite: view === "favorites" || undefined,
     author: search.author,
@@ -262,30 +260,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // Destructive intent is confirmed in the shared ConfirmDialog — rows only stage here.
   const [pendingDelete, setPendingDelete] = useState<Artifact | null>(null)
 
-  // Quick organize from the card ⋯ menu (edit tags / add to collection). The dialogs own
-  // the API calls and report the result here; these handlers sync the caches that render
-  // the artifact's tags/collections — the CURRENT view's feed page + the artifact detail —
-  // plus the rail counts. The named-feed caches (/shared, /feedback) aren't synced: they're
-  // not the visible view, and refetchOnMount:"always" makes them fresh on navigation.
-  const [pendingTags, setPendingTags] = useState<Artifact | null>(null)
+  // Quick organize from the card ⋯ menu. The dialog owns the API call and reports the
+  // result here; this syncs what a membership change affects — the artifact detail, and
+  // the rail's per-collection counts. Feed cards don't render collections, so the list
+  // caches are left alone.
   const [pendingCollections, setPendingCollections] = useState<Artifact | null>(null)
-  const tagsChanged = (shortId: string, tags: string[]) => {
-    qc.setQueryData(listQuery.queryKey, (old) =>
-      old
-        ? {
-            ...old,
-            pages: old.pages.map((pg) => ({
-              ...pg,
-              artifacts: pg.artifacts.map((x) => (x.short_id === shortId ? { ...x, tags } : x)),
-            })),
-          }
-        : old,
-    )
-    qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, tags } : a))
-    // Tag counts in the rail come from the summary.
-    qc.invalidateQueries({ queryKey: summaryQuery().queryKey })
-    if (filter.kind === "tag") qc.invalidateQueries({ queryKey: listQuery.queryKey })
-  }
   const collectionsChanged = (shortId: string, ids: string[]) => {
     qc.setQueryData(artifactQuery(shortId).queryKey, (a) => (a ? { ...a, collections: ids } : a))
     // Collection counts in the rail.
@@ -321,7 +300,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   // The home greeting + publish launcher + the quiet triage line span BOTH home tabs
   // ("All artifacts" / "Created by me") — the tab only filters the grid, it doesn't
-  // leave home. Searching or a tag/collection filter drops the home chrome.
+  // leave home. Searching or a collection filter drops the home chrome.
   const homeView = (filter.kind === "all" || filter.kind === "mine") && !isSearching
   const { data: feedbackData } = useQuery({ ...needsFeedbackArtifactsQuery(), enabled: homeView })
   const feedbackCount = feedbackData?.length ?? 0
@@ -356,10 +335,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
               ? "Needs your feedback"
               : filter.kind === "mine"
                 ? "Created by me"
-                : filter.kind === "tag"
-                  ? `#${filter.tag}`
-                  : collectionTitle
-  // The tab names the view — a tag, a collection, Favorites, Created by me… —
+                : collectionTitle
+  // The tab names the view — a collection, Favorites, Created by me… —
   // while the unfiltered home stays plain "Derive".
   useDocumentTitle(filter.kind === "all" ? null : heading)
   // Only the counts the server can state authoritatively (preloaded summary / the
@@ -373,18 +350,12 @@ function LibraryBody({ view }: { view: LibraryView }) {
         ? summary?.favorites
         : filter.kind === "mine"
           ? summary?.mine
-          : filter.kind === "tag"
-            ? summary?.tags.find((t) => t.tag === filter.tag)?.count
-            : filter.kind === "collection"
-              ? activeCollection?.count
-              : undefined
+          : filter.kind === "collection"
+            ? activeCollection?.count
+            : undefined
 
   const showPublish =
-    !isSearching &&
-    (filter.kind === "all" ||
-      filter.kind === "mine" ||
-      filter.kind === "tag" ||
-      filter.kind === "favorites")
+    !isSearching && (filter.kind === "all" || filter.kind === "mine" || filter.kind === "favorites")
 
   const emptyProps = emptyStateFor(filter, isSearching, debouncedQ, nav)
   // The first-run guide is for a genuinely blank home (your work is empty and you're not
@@ -444,20 +415,14 @@ function LibraryBody({ view }: { view: LibraryView }) {
           hotkey
           className="min-w-50 flex-1"
         />
-        {(filter.kind === "tag" || filter.kind === "collection") && (
+        {filter.kind === "collection" && (
           <Button
             variant="outline"
             size="sm"
             data-testid="library-clear-filter"
             onClick={() => nav({ to: "/", search: {} })}
           >
-            {filter.kind === "tag" ? (
-              `#${filter.tag}`
-            ) : (
-              <>
-                <Icon name="collection" size={16} /> {collectionTitle}
-              </>
-            )}
+            <Icon name="collection" size={16} /> {collectionTitle}
             <Icon name="close" size={16} />
           </Button>
         )}
@@ -613,9 +578,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
             nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
           }
           onToggleFavorite={toggleFavorite}
-          onPickTag={(tag) => nav({ to: "/", search: { tag } })}
           onPickAuthor={pickAuthor}
-          onEditTags={setPendingTags}
           onAddToCollection={setPendingCollections}
           onDelete={setPendingDelete}
           onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
@@ -639,8 +602,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
               nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
             }
             onToggleFavorite={toggleFavorite}
-            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-            onEditTags={setPendingTags}
             onAddToCollection={setPendingCollections}
             onDelete={setPendingDelete}
             onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
@@ -658,8 +619,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
               }
               onToggleFavorite={toggleFavorite}
-              onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-              onEditTags={setPendingTags}
               onAddToCollection={setPendingCollections}
               onDelete={setPendingDelete}
               onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
@@ -689,8 +648,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
               nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
             }
             onToggleFavorite={toggleFavorite}
-            onPickTag={(tag) => nav({ to: "/", search: { tag } })}
-            onEditTags={setPendingTags}
             onAddToCollection={setPendingCollections}
             onDelete={setPendingDelete}
             onPrefetch={(a) => prefetch(a.short_id, a.current_version)}
@@ -734,14 +691,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           if (pendingDelete) deleteArtifact(pendingDelete)
         }}
       />
-      {/* Quick-organize dialogs — opened from a card/row ⋯ menu (edit tags / collections). */}
-      {pendingTags && (
-        <LibraryTagsDialog
-          artifact={pendingTags}
-          onChange={tagsChanged}
-          onClose={() => setPendingTags(null)}
-        />
-      )}
+      {/* Quick-organize dialog — opened from a card/row ⋯ menu. */}
       {pendingCollections && (
         <LibraryCollectionsDialog
           artifact={pendingCollections}
@@ -765,9 +715,7 @@ function SyncedCollection({
   onLoadMore,
   onOpen,
   onToggleFavorite,
-  onPickTag,
   onPickAuthor,
-  onEditTags,
   onAddToCollection,
   onDelete,
   onPrefetch,
@@ -781,9 +729,7 @@ function SyncedCollection({
   onLoadMore: () => void
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
-  onPickTag: (tag: string) => void
   onPickAuthor: (login: string) => void
-  onEditTags: (a: Artifact) => void
   onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
@@ -817,9 +763,7 @@ function SyncedCollection({
           onLoadMore={onLoadMore}
           onOpen={onOpen}
           onToggleFavorite={onToggleFavorite}
-          onPickTag={onPickTag}
           onPickAuthor={onPickAuthor}
-          onEditTags={onEditTags}
           onAddToCollection={onAddToCollection}
           onDelete={onDelete}
           onPrefetch={onPrefetch}
@@ -833,9 +777,7 @@ function SyncedCollection({
               artifact={a}
               onOpen={() => onOpen(a)}
               onToggleFavorite={() => onToggleFavorite(a)}
-              onPickTag={onPickTag}
               onPickAuthor={onPickAuthor}
-              onEditTags={() => onEditTags(a)}
               onAddToCollection={() => onAddToCollection(a)}
               onDelete={() => onDelete(a)}
               onPrefetch={() => onPrefetch(a)}
@@ -962,12 +904,6 @@ function emptyStateFor(
         icon: <Icon name="check" strokeWidth={1.75} />,
         title: "You’re all caught up.",
         description: "Artifacts with an open thread that needs you show up here.",
-      }
-    case "tag":
-      return {
-        icon: <Icon name="tag" strokeWidth={1.75} />,
-        title: `Nothing tagged #${filter.tag} yet.`,
-        description: "Tag artifacts to group them here.",
       }
     case "collection":
       return {

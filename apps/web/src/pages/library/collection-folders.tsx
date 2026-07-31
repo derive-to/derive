@@ -23,8 +23,6 @@ import type { LibrarySelection } from "./use-library-selection"
 interface CardHandlers {
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
-  onPickTag: (tag: string) => void
-  onEditTags: (a: Artifact) => void
   onAddToCollection: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
@@ -355,8 +353,6 @@ function Section({
                 artifact={a}
                 onOpen={() => handlers.onOpen(a)}
                 onToggleFavorite={() => handlers.onToggleFavorite(a)}
-                onPickTag={handlers.onPickTag}
-                onEditTags={() => handlers.onEditTags(a)}
                 onAddToCollection={() => handlers.onAddToCollection(a)}
                 onDelete={() => handlers.onDelete(a)}
                 onPrefetch={() => handlers.onPrefetch(a)}
