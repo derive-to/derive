@@ -103,31 +103,33 @@ done
 echo "run $RUN_ID is $ST; will call $TOOL"
 
 step "6. read live weather THROUGH THE PROXY (the run never holds the URL or a credential)"
-ROWS=""
+READINGS=$(mktemp); echo "[]" > "$READINGS"
 for CITY in London Tokyo Reykjavik; do
   OUT=$(curl -sS -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
     -X POST "$BASE/v1/agent/runs/$RUN_ID/tool" -d "{\"tool\":\"$TOOL\",\"args\":{\"city\":\"$CITY\"}}")
   echo "$OUT" | grep -q '"result"' || { echo "  $CITY -> $OUT"; continue; }
-  echo "$OUT" | python3 -c "
-import json,sys
-w=json.load(sys.stdin)['result']['structuredContent']
-print(f\"  {w['place']}: {w['temperature_c']}°C, wind {w['wind_kph']} km/h, {w['condition']} @ {w['observed_at']}\")"
-  ROWS="$ROWS$(echo "$OUT" | python3 -c "
-import json,sys
-w=json.load(sys.stdin)['result']['structuredContent']
-print(f\"<tr><td>{w['place']}</td><td>{w['temperature_c']} °C</td><td>{w['wind_kph']} km/h</td><td>{w['condition']}</td><td>{w['observed_at']}</td></tr>\")")
-"
+  # Accumulate the STRUCTURED result; the renderer owns presentation. Mashing HTML together here
+  # is how the shell copy and the in-process copy drift into two different documents.
+  echo "$OUT" | python3 -c '
+import json, sys
+w = json.load(sys.stdin)["result"]["structuredContent"]
+print("  {}: {}°C, wind {} km/h, {} @ {}".format(
+    w["place"], w["temperature_c"], w["wind_kph"], w["condition"], w["observed_at"]))
+rows = json.load(open(sys.argv[1]))
+rows.append(w)
+json.dump(rows, open(sys.argv[1], "w"))
+' "$READINGS"
 done
 
 step "7. write the document (the executor's turn, done here)"
-REPORT="<h1>Weather watch</h1>
-<table>
-<tr><th>Place</th><th>Temp</th><th>Wind</th><th>Conditions</th><th>Observed</th></tr>
-$ROWS</table>
-<p>Read from a connected MCP server through Derive's tool proxy, on $BASE. Every figure came off the wire during this run.</p>"
+# ONE renderer, shared with weather-artifact.manual.ts, so both proofs publish the same page.
+node apps/api/test/weather-report.mjs --source "$WEATHER" --via "$BASE" --run "$RUN_ID" \
+  < "$READINGS" > "$READINGS.html"
 curl -sS -b "$J" -X POST "$BASE/v1/artifacts/$SHORT/versions" -H 'accept: application/json' \
-  -F "file=@-;filename=index.html;type=text/html" -F "message=Weather from the connected source" \
-  <<< "$REPORT" -o /dev/null
+  -F "file=@$READINGS.html;filename=index.html;type=text/html" \
+  -F "message=Weather from the connected source" -o /dev/null
+echo "  published $(wc -c < "$READINGS.html" | tr -d ' ') bytes"
+rm -f "$READINGS" "$READINGS.html"
 
 step "8. what the hosted run itself did"
 # NOT settled from here — the hosted executor owns this claim. Whatever it reports is reported.
@@ -144,9 +146,7 @@ import json,sys
 r=[x for x in json.load(sys.stdin)['runs'] if x['id']=='$RUN_ID']
 print('  hosted run:', r[0]['status'], r[0].get('meta') if r else '')"
 
-step "9. what the document says now"
-curl -sS -b "$J" "$BASE/v1/artifacts/$SHORT/content"
-echo
+step "9. the document"
 echo "ARTIFACT  $BASE/artifacts/$SHORT"
 echo "RUN       $RUN_ID"
 curl -sS -b "$J" "$BASE/v1/workspace/runs" | python3 -c "

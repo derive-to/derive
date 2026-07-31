@@ -12,6 +12,7 @@
 // (turn a tool result into prose) is done inline. Everything either side of it is the real path.
 import { describe, expect, it } from "vitest"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { type Reading, renderWeatherReport } from "./weather-report.mjs"
 
 const WEATHER = process.env.WEATHER_MCP_URL ?? "http://localhost:8940/mcp"
 const CITIES = ["London", "Tokyo", "Reykjavik"]
@@ -73,7 +74,7 @@ describe("LIVE: weather MCP -> claim -> tool proxy -> artifact", () => {
     expect(tool, "the weather tool reached the run").toBeTruthy()
 
     // 5. Read live weather THROUGH THE PROXY — the run never holds a credential or a URL.
-    const rows: string[] = []
+    const readings: Reading[] = []
     for (const city of CITIES) {
       const res = await app.request(
         `/v1/agent/runs/${run?.id}/tool`,
@@ -83,21 +84,15 @@ describe("LIVE: weather MCP -> claim -> tool proxy -> artifact", () => {
       const body = (await res.json()) as {
         result?: { structuredContent?: Record<string, unknown> }
       }
-      const w = body.result?.structuredContent as Record<string, string | number> | undefined
+      const w = body.result?.structuredContent as Reading | undefined
       expect(w?.place, `${city} resolved`).toBeTruthy()
-      rows.push(
-        `<tr><td>${w?.place}</td><td>${w?.temperature_c} °C</td><td>${w?.wind_kph} km/h</td>` +
-          `<td>${w?.condition}</td><td>${w?.observed_at}</td></tr>`,
-      )
+      if (w) readings.push(w)
     }
 
-    // 6. The write. This is the executor's turn, done inline.
-    const report =
-      `<h1>Weather watch</h1>\n<table>\n` +
-      `<tr><th>Place</th><th>Temp</th><th>Wind</th><th>Conditions</th><th>Observed</th></tr>\n` +
-      `${rows.join("\n")}\n</table>\n` +
-      `<p>Source: a connected MCP server, read through Derive's tool proxy. ` +
-      `Every figure above came off the wire during this run.</p>\n`
+    // 6. The write. This is the executor's turn, done inline. The page itself comes from the
+    //    renderer the deployed proof uses (live-preview-weather.sh), so the two cannot publish
+    //    two different documents while claiming to prove the same thing.
+    const report = renderWeatherReport(readings, { server: WEATHER })
     const put = await publishAs(
       app,
       report,
@@ -122,10 +117,8 @@ describe("LIVE: weather MCP -> claim -> tool proxy -> artifact", () => {
     const back = await (
       await app.request(`/v1/artifacts/${art.short_id}/content`, { headers: as(owner.email) })
     ).text()
-    for (const row of rows) {
-      const place = row.split("<td>")[1]?.split("</td>")[0] ?? ""
-      expect(back, `${place} is in the published document`).toContain(place)
-    }
+    for (const r of readings)
+      expect(back, `${r.place} is in the published document`).toContain(r.place)
 
     // 9. The ledger: one accountable row for the whole thing, read from the workspace feed a
     //    human actually looks at.
