@@ -5,8 +5,6 @@ import type { Artifact, PublicProfile } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
-import { PageHeader } from "@/components/shared/page-header"
-import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -25,16 +23,15 @@ import {
 } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
-import { useDocumentTitle } from "@/lib/use-document-title"
 import { refFor } from "@/pages/artifact/parse-ref"
 
-// The People tab — the people you work with. It folds the old Following nav item
-// in: browse leads with the people you follow, then the rest of your workspace
-// teammates. Search filters within those same people (the server scopes /v1/people
+// The people directory — who you work with. Lives in Settings (and folds in the old
+// Following nav item): browse leads with the people you follow, then the rest of your
+// workspace teammates. Heading-less on purpose — the settings section that mounts it
+// owns the title, so this is search + results only. Search filters within those same people (the server scopes /v1/people
 // to your workspaces — there is deliberately no global directory at launch);
 // results stay put (dimmed) while the next set loads — never a flash.
-export function People() {
-  useDocumentTitle("People")
+export function PeopleDirectory() {
   const [q, setQ] = useState("")
   const [debounced, setDebounced] = useState("")
   useEffect(() => {
@@ -95,21 +92,16 @@ export function People() {
   const nothing = searching ? results.length === 0 : followed.length === 0 && mateOnly.length === 0
 
   return (
-    <PageShell className="flex flex-col gap-5">
-      {/* Title + description + search — one tight header block; the PageShell gap makes
-          the larger step down to the results. */}
-      <div className="flex flex-col gap-4">
-        <PageHeader title="People" subtitle="The people you work with, and what they’re making." />
-        <SearchField
-          value={q}
-          onValueChange={setQ}
-          placeholder="Search people…"
-          aria-label="Search people by name or handle"
-          testId="people-search"
-          hotkey
-          loading={isFetching}
-        />
-      </div>
+    <div className="flex flex-col gap-5">
+      <SearchField
+        value={q}
+        onValueChange={setQ}
+        placeholder="Search people…"
+        aria-label="Search people by name or handle"
+        testId="people-search"
+        hotkey
+        loading={isFetching}
+      />
 
       {loading ? (
         showSkeleton ? (
@@ -173,7 +165,7 @@ export function People() {
           )}
         </div>
       )}
-    </PageShell>
+    </div>
   )
 }
 
@@ -373,9 +365,8 @@ function PersonSkeletonCard() {
 
 // The results-region first-load placeholder — the SAME grid the live results use, filled
 // with person-card silhouettes. The blocks are AT-hidden (baked into Skeleton); the region
-// announces via role="status" + sr-only. Shared by the in-component first load and the
-// route-level PeoplePending.
-export function PeopleResultsSkeleton() {
+// announces via role="status" + sr-only.
+function PeopleResultsSkeleton() {
   return (
     <div role="status">
       <span className="sr-only">Loading people…</span>
@@ -385,22 +376,5 @@ export function PeopleResultsSkeleton() {
         ))}
       </ul>
     </div>
-  )
-}
-
-// Route-level pending frame (the /people pendingComponent): the real static chrome — the
-// PageHeader (always "People") and a SearchField-well silhouette — over the results
-// skeleton. Shown on a cold nav while the auth guard resolves; the in-component
-// PeopleResultsSkeleton (same rows) carries the data load, so the two are seamless.
-export function PeoplePending() {
-  return (
-    <PageShell className="flex flex-col gap-5">
-      <div className="flex flex-col gap-4">
-        <PageHeader title="People" subtitle="The people you work with, and what they’re making." />
-        {/* The SearchField's InputGroup well is h-8, rounded-lg. */}
-        <Skeleton className="h-8 w-full rounded-lg" />
-      </div>
-      <PeopleResultsSkeleton />
-    </PageShell>
   )
 }

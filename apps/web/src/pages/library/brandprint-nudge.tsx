@@ -57,7 +57,8 @@ export function BrandprintNudge() {
       <Icon name="brandprint" size={16} className="shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 text-pretty text-foreground">
         <Link
-          to="/brandprint"
+          to="/settings/$section"
+          params={{ section: "brand" }}
           data-testid="library-brandprint-nudge"
           className="font-medium underline-offset-4 hover:underline"
         >
