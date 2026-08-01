@@ -24,7 +24,7 @@ import {
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
-import { overBudget } from "./budget"
+import { chatArrival } from "./chat-gate"
 import { type CommentActionDeps, commentCreatedAction } from "./comment-actions"
 import { DERIVE_AUTHOR_ID, quoteOf } from "./comments"
 import type { ModelCatalog, ResolvedChatModel } from "./model-catalog"
@@ -235,19 +235,17 @@ export const answerDeriveMention =
 
     // An anonymous or agent author has no seat to act through, and this lane acts AS the asker.
     if (!asker) return quiet("no human asker")
-    const settings = await meta.getOrgSettings(artifact.org_id).catch(() => null)
-    if (!settings?.chatBeta) return quiet("chat not enabled")
-    if (deps.chatAllowlist?.length && !deps.chatAllowlist.includes(artifact.org_id))
-      return quiet("workspace not allowlisted")
-    // MEMBERSHIP, not merely the ability to comment: a signed-in holder of a commenter LINK can
-    // leave a comment, and that is not standing to spend the workspace's model budget.
-    const seat = await meta.getMembership(artifact.org_id, asker.id).catch(() => null)
-    if (!seat) return quiet("asker is not a member")
-    if (await overBudget(meta, artifact.org_id, asker.id).catch(() => false))
-      return quiet("monthly model budget reached")
 
-    const model = deps.models.resolve(null)
-    if (!model) return quiet("no model configured")
+    // EVERY RUNG, ONCE (lib/chat-gate.ts). No rate key: this arrival rides the comment route's
+    // own limiter, so a second one here would charge the same person twice for one action.
+    const gate = await chatArrival(
+      { meta, models: deps.models, chatAllowlist: deps.chatAllowlist },
+      { org: artifact.org_id, userId: asker.id },
+    )
+    // Silence (logged), not a message: unlike Slack, nobody is waiting on a reply that never
+    // existed — the comment they wrote posted fine.
+    if (!gate.ok) return quiet(gate.reason)
+    const { settings, seatRole, model } = gate
 
     // The whole thread, oldest first — the conversation this answer joins.
     const thread = await meta
@@ -269,7 +267,7 @@ export const answerDeriveMention =
         comment,
         thread: thread.length ? thread : [comment],
         asker,
-        canWrite: askerCanPropose(seat.role),
+        canWrite: askerCanPropose(seatRole),
         flags: {
           agentKillswitch: settings.agentKillswitch,
           agentAutoEnabled: settings.agentAutoEnabled,

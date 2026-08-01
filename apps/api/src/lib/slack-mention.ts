@@ -12,7 +12,7 @@
 import { type ArtifactRecord, type MetaStore, newId } from "@derive/core"
 import type { Backplane } from "../bus"
 import { log } from "../log"
-import { overBudget } from "./budget"
+import { chatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import type { ModelCatalog } from "./model-catalog"
@@ -179,29 +179,20 @@ export const handleSlackMention = async (
     return quiet("asker not linked")
   }
 
-  // PER-PERSON RATE LIMIT, before anything expensive. Told out loud rather than dropped: the
-  // person is watching the thread, and silence reads as the bot being broken.
-  if (deps.askLimiter) {
-    const verdict = await deps
-      .askLimiter(`slack:${p.teamId}:${p.userId}`)
-      .catch(() => ({ ok: true }))
-    if (!verdict.ok) {
-      await say("You are asking faster than I can answer — give me a moment and mention me again.")
-      return quiet("rate limited")
-    }
+  // EVERY RUNG, ONCE (lib/chat-gate.ts). Keyed on the Slack PERSON: the request actor here is
+  // Slack itself, so the usual actor keying would put a whole workspace in one bucket.
+  const gate = await chatArrival(
+    { meta, models: deps.models, chatAllowlist: deps.chatAllowlist, askLimiter: deps.askLimiter },
+    { org: install.org_id, userId: asker.id, rateKey: `slack:${p.teamId}:${p.userId}` },
+  )
+  if (!gate.ok) {
+    // A person is watching the thread, so a refusal is SAID. The two that leak nothing about a
+    // workspace they may not belong to are the only ones worth staying quiet about.
+    if (gate.reason !== "not_enabled" && gate.reason !== "not_allowlisted")
+      await say(refusalMessage(gate.reason))
+    return quiet(gate.reason)
   }
-
-  // The same gates every other chat arrival walks.
-  const settings = await meta.getOrgSettings(install.org_id).catch(() => null)
-  if (!settings?.chatBeta) return quiet("chat not enabled")
-  if (deps.chatAllowlist?.length && !deps.chatAllowlist.includes(install.org_id))
-    return quiet("workspace not allowlisted")
-  if (await overBudget(meta, install.org_id, asker.id).catch(() => false)) {
-    await say("This workspace has reached its monthly model budget, so I cannot answer right now.")
-    return quiet("over budget")
-  }
-  const model = deps.models.resolve(null)
-  if (!model) return quiet("no model configured")
+  const { settings, model } = gate
 
   const question = questionFrom(p.text, bot.install.bot_user_id)
   if (!question) {
@@ -270,7 +261,7 @@ export const handleSlackMention = async (
     const tools = buildChatTools(deps.ctx, {
       org: install.org_id,
       user: { id: asker.id, name: asker.name },
-      seatRole: asker.role,
+      seatRole: gate.seatRole,
       flags: { agentKillswitch: settings.agentKillswitch },
     })
     const res = await runChatTurn(

@@ -29,6 +29,7 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
+import { chatArrival } from "../lib/chat-gate"
 import { buildChatTools, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
@@ -129,20 +130,33 @@ export const contextRoutes = (ctx: AppContext) => {
    * Returns a Response to bail with, or null to proceed. Ordered cheapest-first, and membership
    * before the two ceilings so a stranger can never learn a workspace's rate-limit state.
    */
+  /**
+   * The HTTP lane's rendering of the shared arrival (lib/chat-gate.ts): the same five rungs
+   * every surface walks, mapped to status codes.
+   *
+   * The rate limit stays HERE rather than inside the shared gate because this lane has a Hono
+   * context, so `limited` keys on the resolved actor and answers with the standard 429 + Retry
+   * headers — machinery a webhook lane has no equivalent of. Everything a lane cannot do
+   * differently is shared; this is the part that genuinely differs.
+   *
+   * 404 rather than 403 on membership: whether a workspace exists is not something a
+   * non-member gets to learn from a status code.
+   */
   const chatGates = async (c: Context, orgId: string, userId: string): Promise<Response | null> => {
-    const settings = await meta.getOrgSettings(orgId).catch(() => null)
-    // A flag that only hides a button is not a gate: the route is reachable directly.
-    if (!settings?.chatBeta) return fail(c, 404, "chat is not enabled for this workspace")
-    if (!chatAllowed(orgId)) return fail(c, 404, "chat is not enabled for this workspace")
-    if (!(await meta.getMembership(orgId, userId).catch(() => null)))
-      return fail(c, 404, "not found")
     const rl = await limited(c, askLimiter)
     if (rl) return rl
-    // Retrospective by nature (a turn's cost is known when it settles), so this stops the NEXT
-    // turn, never the current one — which is why the limiter above is also required.
-    if (await overBudget(meta, orgId, userId).catch(() => false))
-      return fail(c, 429, "monthly model budget reached")
-    return null
+    const gate = await chatArrival(
+      { meta, models: ctx.models, chatAllowlist: ctx.callModel ? ctx.chatAllowlist : [] },
+      { org: orgId, userId },
+    )
+    if (gate.ok) return null
+    return gate.reason === "not_member"
+      ? fail(c, 404, "not found")
+      : gate.reason === "over_budget"
+        ? fail(c, 429, "monthly model budget reached")
+        : gate.reason === "no_model"
+          ? fail(c, 503, "no model is configured on this deploy")
+          : fail(c, 404, "chat is not enabled for this workspace")
   }
 
   /**
