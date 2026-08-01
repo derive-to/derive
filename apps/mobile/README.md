@@ -89,8 +89,26 @@ not add a raw-artifact-bytes origin to that list.**
 refuses anything that does not resolve to an allowed origin, so
 `derive://open?url=https://evil.example` and a `javascript:` payload are both ignored, as
 is a suffix lookalike like `derive.to.evil.example`. That logic is deliberately pure and
-Expo-free so it can be exercised directly. There is no test runner in this package yet;
-add one with the first substantial screen and port those cases into it.
+Expo-free so it can be exercised directly.
+
+## What is tested, and what a phone still has to find
+
+```bash
+npm test        # vitest, jsdom
+```
+
+32 tests over the parts that can be checked without a device: deep-link resolution and
+its refusals, the auth nonce binding and the injected claim script's escaping, and the
+background probe (run in a real document, because it is a script that runs in one). CI
+runs these — apps/mobile is outside the pnpm workspace, so `pnpm -r` never reaches it and
+the workflow installs and tests it separately, or these would pass locally and run nowhere.
+
+**The ceiling is real and worth stating.** None of this exercises a web view. Scroll feel,
+pull-to-refresh, cookie jars, the auth browser hand-off, the keyboard, safe areas and
+gestures are all invisible here. Every bug this shell has actually shipped was in that
+set: an unpainted safe-area strip, then a strip painted from the wrong source, then
+comments failing on a non-secure origin. A green suite means the logic holds, not that the
+app works. Run it on a phone.
 
 ## Deliberately not built yet
 
