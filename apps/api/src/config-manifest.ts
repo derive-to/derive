@@ -328,6 +328,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "ws_...",
   },
   {
+    name: "DERIVE_BACKGROUND_WORKERS",
+    group: "advanced",
+    doc: "Set to 0 to stop this process running the shared background work: the webhook delivery\nworker, the daily prune, the expired-draft sweep, and GitHub sync resume. They are ON by\ndefault and a deployment should leave them on. This exists for one case — pointing a local\nprocess at a REMOTE database to reproduce something. Those workers WRITE (the prune and the\nsweep delete rows, and both the prune and sync-resume fire on boot, not just on a timer), so\nwithout this a laptop joins that database's worker pool the moment it starts.",
+    example: "0",
+  },
+  {
     name: "DERIVE_PREVIEWS",
     group: "advanced",
     doc: "Render artifact preview screenshots on this Node deploy (needs a Playwright Chromium —\nbundled in the Docker image; on a bare Node host run\n`pnpm --filter @derive/api exec playwright install chromium`). Unset = previews off.",
