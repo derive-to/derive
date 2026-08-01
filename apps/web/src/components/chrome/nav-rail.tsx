@@ -414,6 +414,11 @@ export function NavRail() {
   const brandprintIds = useBrandprintCollectionIds()
   const visibleCollections = collections.filter((col) => !brandprintIds.has(col.id))
 
+  // Starred collections lead the rail as their own group. This is the list that
+  // replaces enumerating every collection: the app's guess about what matters becomes
+  // a list you built. Unstarred ones still appear below, for now — dropping them waits
+  // on the Collections view having somewhere to put them.
+  //
   // Nest PR-preview collections under their repo. A "pr" collection with a known
   // parentId becomes a child; everything else (repos, manual, orphaned PRs) stays
   // top-level. Children sort newest-PR-first.
@@ -446,6 +451,10 @@ export function NavRail() {
 
   // One collection row. A repo with nested PRs keeps its bespoke collapsible row;
   // everything else is a flat CollectionRow.
+  // A starred collection appears ONCE — in the starred group, not twice.
+  const starredCollections = topCollections.filter((col) => col.starred)
+  const unstarredCollections = topCollections.filter((col) => !col.starred)
+
   const renderCollection = (col: Collection) => {
     const childPrs = childPrsByRepo.get(col.id)
     const colActive = onLibrary && search.collection === col.id
@@ -644,6 +653,18 @@ export function NavRail() {
           </SidebarGroupContent>
         </SidebarGroup>
 
+        {/* Starred — the one list you curated, above the ones the app is keeping for
+            you. Absent entirely until you star something, so a new workspace opens on
+            two nav rows rather than an empty heading. */}
+        {starredCollections.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel data-testid="sidebar-starred">Starred</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>{starredCollections.map((col) => renderCollection(col))}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
         {/* TIER 2 — your library: the things you've organized. Each list carries a
             mono eyebrow, so the section labels do the tier-separating work (no
             divider needed between the eyebrowed groups). Collections stay in the
@@ -703,7 +724,7 @@ export function NavRail() {
                     RAIL_SKELETON_COLLECTIONS.map((r) => (
                       <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
                     ))}
-                  {topCollections.map((col) => renderCollection(col))}
+                  {unstarredCollections.map((col) => renderCollection(col))}
                 </>
               )}
             </SidebarMenu>

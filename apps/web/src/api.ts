@@ -1148,6 +1148,10 @@ export const api = {
     f("/v1/collections", opts({ title })).then(j),
   renameCollection: (id: string, title: string): Promise<Collection> =>
     f(`/v1/collections/${id}`, { ...opts({ title }), method: "PATCH" }).then(j),
+  /** Star/unstar a collection — it pins to your sidebar. Personal: it grants nothing
+   *  and changes nothing for anyone else. */
+  starCollection: (id: string, on: boolean): Promise<{ starred: boolean }> =>
+    f(`/v1/collections/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
   deleteCollection: (id: string): Promise<void> =>
     f(`/v1/collections/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
   // Change a collection's share experience — the Share dialog's Invited/Workspace

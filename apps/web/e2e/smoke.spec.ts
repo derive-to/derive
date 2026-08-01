@@ -132,3 +132,31 @@ test("Brandprint and People live in Settings, and their old paths still resolve"
   await owner.goto("/people")
   await expect(owner).toHaveURL(/\/settings\/people$/)
 })
+
+test("starring a collection pins it to the sidebar's Starred group", async ({ owner }) => {
+  await owner.goto("/")
+  const name = `Shelf ${Date.now()}`
+  await owner.getByTestId("sidebar-new-collection").click()
+  await owner.getByTestId("sidebar-new-collection-input").fill(name)
+  await owner.getByTestId("sidebar-new-collection-input").press("Enter")
+
+  // It lands in Collections, not Starred — the app's list, until you say otherwise.
+  const row = owner.getByRole("link", { name }).first()
+  await expect(row).toBeVisible()
+  await row.click()
+
+  await owner.getByTestId("collection-star").click()
+  await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "true")
+
+  // The rail now carries a Starred group holding it, and it appears ONCE — the
+  // Collections group below must not list it a second time. (Matched by testid, not
+  // text: the star button itself reads "Starred" when active.)
+  await expect(owner.getByTestId("sidebar-starred")).toBeVisible()
+  await expect(owner.getByRole("link", { name })).toHaveCount(1)
+
+  // Unstarring puts it back rather than losing it.
+  await owner.getByTestId("collection-star").click()
+  await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "false")
+  await expect(owner.getByTestId("sidebar-starred")).toHaveCount(0)
+  await expect(owner.getByRole("link", { name })).toHaveCount(1)
+})

@@ -251,6 +251,19 @@ function LibraryBody({ view }: { view: LibraryView }) {
   })
   const deleteCollection = (id: string) => deleteCol.mutate(id)
 
+  // Starring is optimistic: it is personal, reversible, and the sidebar should move the
+  // instant you click. The primitive rolls back and toasts if the write fails.
+  const starCol = useApiMutation({
+    mutationFn: ({ id, on }: { id: string; on: boolean }) => api.starCollection(id, on),
+    optimistic: ({ id, on }) => {
+      const key = collectionsQuery().queryKey
+      const prev = qc.getQueryData(key)
+      qc.setQueryData(key, (old) => old?.map((c) => (c.id === id ? { ...c, starred: on } : c)))
+      return () => qc.setQueryData(key, prev)
+    },
+    invalidate: [collectionsQuery().queryKey],
+  })
+
   // Destructive intent is confirmed in the shared ConfirmDialog — rows only stage here.
   const [pendingDelete, setPendingDelete] = useState<Artifact | null>(null)
 
@@ -533,6 +546,12 @@ function LibraryBody({ view }: { view: LibraryView }) {
             title={heading}
             count={headingCount ?? items.length}
             onShare={() => activeCollection && setShareCol(activeCollection)}
+            starred={activeCollection?.starred}
+            onStar={
+              activeCollection
+                ? (next) => starCol.mutate({ id: activeCollection.id, on: next })
+                : undefined
+            }
             onRename={(t) => renameCollection(filter.id, t)}
             onDelete={() => deleteCollection(filter.id)}
           />

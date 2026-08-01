@@ -12,12 +12,18 @@ export function CollectionBar({
   title,
   count,
   onShare,
+  starred,
+  onStar,
   onRename,
   onDelete,
 }: {
   title: string
   count: number
   onShare: () => void
+  /** Null when the collection isn't loaded yet — the control hides rather than
+   *  guessing a state it would then have to correct. */
+  starred?: boolean
+  onStar?: (next: boolean) => void
   onRename: (title: string) => void
   onDelete: () => void
 }) {
@@ -55,6 +61,27 @@ export function CollectionBar({
         </h2>
       )}
       <span className="flex-1" />
+      {/* The star is the whole pinning mechanism — same verb as a document's, so there
+          is one idea to learn rather than a separate "add to sidebar". Ghost, never
+          filled: Share is this view's single ink moment. */}
+      {onStar && (
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="collection-star"
+          aria-pressed={!!starred}
+          title={starred ? "Unstar — remove from your sidebar" : "Star — pin to your sidebar"}
+          onClick={() => onStar(!starred)}
+        >
+          <Icon
+            name="star"
+            size={16}
+            weight={starred ? "fill" : "regular"}
+            className={starred ? "text-primary" : undefined}
+          />
+          {starred ? "Starred" : "Star"}
+        </Button>
+      )}
       {/* Share is the collection view's one filled primary (the publish launcher
           doesn't render on this view). */}
       <Button
