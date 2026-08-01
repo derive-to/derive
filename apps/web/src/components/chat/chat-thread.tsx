@@ -1,7 +1,8 @@
 import { useNavigate } from "@tanstack/react-router"
 import type { ReactNode } from "react"
-import { useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Icon } from "@/components/icons"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
 import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
@@ -54,6 +55,13 @@ export function ChatThread(props: {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const navigate = useNavigate()
   const wrap = row ?? ((c: ReactNode) => c)
+  // "Near enough" rather than exact: a couple of pixels of sub-pixel scroll drift should not
+  // flip a control in and out of existence while somebody is reading.
+  const [atBottom, setAtBottom] = useState(true)
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 48)
+  }, [])
 
   // CITATIONS OPEN IN-APP. An answer's citations are ROOT-RELATIVE anchors inside markdown we
   // rendered (see mdToHtml), so a plain click would reload the whole SPA to reach a document
@@ -103,7 +111,26 @@ export function ChatThread(props: {
   }, [working, streamAlive, onPoll])
 
   return (
-    <div ref={scrollRef} className={cn("min-h-0 flex-1 overflow-y-auto", className)}>
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className={cn("relative min-h-0 flex-1 overflow-y-auto", className)}
+    >
+      {/* READING BACK is a normal thing to do mid-answer, and the auto-scroll above fights it:
+          every new row yanks the view to the bottom. This is the escape hatch — it appears only
+          once you have actually scrolled away, so it costs nothing when you are already following
+          along, and it is the one control that makes scrolling up safe. */}
+      {!atBottom && messages.length > 0 && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })}
+          className="sticky top-2 left-1/2 z-10 h-7 -translate-x-1/2 shadow-md"
+          data-testid="chat-jump-latest"
+        >
+          ↓ Latest
+        </Button>
+      )}
       {messages.length === 0 ? (
         empty
       ) : (
@@ -126,8 +153,18 @@ export function ChatThread(props: {
 
 function Bubble({ msg }: { msg: ChatMessage }) {
   const mine = msg.author_kind === "asker"
+  const [copied, setCopied] = useState(false)
+  // The MARKDOWN, not the rendered text. What people paste an answer into is usually another
+  // markdown surface (a document, a comment, an issue), so handing over the rendered form would
+  // strip exactly the links and structure that made the answer worth keeping.
+  const copy = () => {
+    void navigator.clipboard?.writeText(msg.body_md).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    })
+  }
   return (
-    <div className={cn("flex", mine ? "justify-end" : "justify-start")}>
+    <div className={cn("group flex items-start gap-1", mine ? "justify-end" : "justify-start")}>
       {/* TWO RENDERERS, because the two authors write differently — the same split the ask
           console makes, and for the same reason.
 
@@ -155,6 +192,22 @@ function Bubble({ msg }: { msg: ChatMessage }) {
           __html: mine ? mdToHtml(msg.body_md) : answerMdToHtml(msg.body_md),
         }}
       />
+      {/* ON THE ANSWER ONLY, and only on hover. A person's own message is already in their head;
+          an answer is the thing they came to take away. Kept out of the flow until pointed at, so
+          the transcript stays a transcript rather than a wall of controls. */}
+      {!mine && (
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={copy}
+          title={copied ? "Copied" : "Copy answer"}
+          aria-label={copied ? "Copied" : "Copy answer"}
+          className="mt-1 size-6 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+          data-testid="chat-copy"
+        >
+          <Icon name={copied ? "check" : "copy"} className="size-3.5" />
+        </Button>
+      )}
     </div>
   )
 }

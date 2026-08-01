@@ -12,11 +12,16 @@ export function ChatComposer(props: {
   disabled?: boolean
   /** Why chat cannot be used, when it cannot (no model configured, no permission). */
   disabledReason?: string
-  /** Rendered on the row beside Send — the model picker, on surfaces that offer one. */
+  /** Rendered on the row beside Send. */
   accessory?: ReactNode
+  /** True while the agent owes a reply. With `onStop`, Send becomes Stop for the duration. */
+  busy?: boolean
+  /** Abandon the turn in flight. Absent, the surface simply offers no way out of a long answer. */
+  onStop?: () => void
   className?: string
 }) {
-  const { onSend, placeholder, disabled, disabledReason, accessory, className } = props
+  const { onSend, placeholder, disabled, disabledReason, accessory, busy, onStop, className } =
+    props
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
 
@@ -58,14 +63,23 @@ export function ChatComposer(props: {
         />
         <div className="flex items-center gap-2">
           {accessory}
-          <Button
-            size="sm"
-            onClick={() => void send()}
-            disabled={disabled || sending || !draft.trim()}
-            data-testid="chat-send"
-          >
-            Send
-          </Button>
+          {/* STOP REPLACES SEND while a turn is in flight. Two buttons would ask a question
+              nobody has — you cannot send while the agent still owes you an answer — and a long
+              turn with no way out is the state that makes a slow answer feel like a broken app. */}
+          {busy && onStop ? (
+            <Button size="sm" variant="secondary" onClick={onStop} data-testid="chat-stop">
+              Stop
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={() => void send()}
+              disabled={disabled || sending || !draft.trim()}
+              data-testid="chat-send"
+            >
+              Send
+            </Button>
+          )}
         </div>
       </div>
     </div>

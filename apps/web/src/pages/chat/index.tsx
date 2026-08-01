@@ -101,6 +101,18 @@ export function ChatPage() {
 
   const chat = useChatSession({ open, followUp, resetKey: org })
 
+  // STOP means CLOSE the session, which is the only honest thing it can mean here: the turn runs
+  // detached on the server, so nothing local can call it back. Closing settles it, the poll sees
+  // a session that is no longer working, and the spinner stops. The answer may still land — this
+  // ends the WAIT, not the work — and re-reading afterwards is what shows whether it did.
+  const stop = useCallback(() => {
+    const id = chat.sessionId
+    if (!id) return
+    void json(`/v1/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ state: "closed" }) })
+      .catch(() => {})
+      .finally(() => chat.poll())
+  }, [chat.sessionId, chat.poll])
+
   // A session named in the URL is the deep link every other surface points at ("continue in
   // chat"), and it is also how the history picker navigates — one path, so a reload of a
   // picked conversation lands on the same screen the click did.
@@ -240,6 +252,8 @@ export function ChatPage() {
         {measure(
           <ChatComposer
             onSend={chat.send}
+            busy={chat.working}
+            onStop={stop}
             disabled={chatOff || !org}
             disabledReason={chat.error ?? undefined}
             placeholder="Ask about your workspace…"
