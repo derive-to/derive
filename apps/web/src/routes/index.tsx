@@ -56,6 +56,7 @@ export const Route = createFileRoute("/")({
   // shareable. The named feeds (Favorites, Following) are their OWN routes, not params
   // here — path = the feed you're viewing, query = how it's filtered (docs/decisions/0002).
   validateSearch: (s: Record<string, unknown>): LibrarySearch => ({
+    view: s.view === "collections" ? ("collections" as const) : undefined,
     collection: typeof s.collection === "string" ? s.collection : undefined,
     folder: typeof s.folder === "string" ? s.folder : undefined,
     query: typeof s.query === "string" ? s.query : undefined,

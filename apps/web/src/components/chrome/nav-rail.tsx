@@ -434,26 +434,9 @@ export function NavRail() {
   })
   for (const arr of childPrsByRepo.values())
     arr.sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
-  const submitCollection = async () => {
-    const t = newName.trim()
-    setNewName("")
-    setCreating(false)
-    if (!t) return
-    try {
-      const col = await api.createCollection(t)
-      qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
-      setOpenMobile(false)
-      nav({ to: "/", search: { collection: col.id } })
-    } catch {
-      /* surfaced on the library on next action */
-    }
-  }
-
   // One collection row. A repo with nested PRs keeps its bespoke collapsible row;
   // everything else is a flat CollectionRow.
-  // A starred collection appears ONCE — in the starred group, not twice.
   const starredCollections = topCollections.filter((col) => col.starred)
-  const unstarredCollections = topCollections.filter((col) => !col.starred)
 
   const renderCollection = (col: Collection) => {
     const childPrs = childPrsByRepo.get(col.id)
@@ -560,45 +543,6 @@ export function NavRail() {
   // Collapsed icon rail: collections don't shrink to single letters (a letter alone is a
   // cheap object glyph). Instead one "Collections" icon opens a flyout listing them by
   // real name — full access without the letter tiles.
-  const renderCollapsedCollections = () => (
-    <SidebarMenuItem>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <SidebarMenuButton
-            tooltip="Collections"
-            data-testid="sidebar-collections-flyout"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <Icon name="collections" />
-            <span>Collections</span>
-          </SidebarMenuButton>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="start" className="max-h-96 w-56 overflow-auto">
-          {topCollections.length === 0 && (
-            <DropdownMenuItem disabled>No collections yet</DropdownMenuItem>
-          )}
-          {topCollections.map((col) => (
-            <DropdownMenuItem
-              key={col.id}
-              data-testid={`flyout-collection-${col.id}`}
-              onSelect={() => {
-                closeMobile()
-                nav({ to: "/", search: { collection: col.id } })
-              }}
-              className="gap-2"
-            >
-              <CollectionGlyph col={col} />
-              <span className="min-w-0 flex-1 truncate">{col.title}</span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </SidebarMenuItem>
-  )
-
-  // Session still resolving → the neutral rail silhouette, so we never flash the
-  // anon rail before an authed user's data lands (in-app navs have `me` cached).
-  if (loading) return <RailSkeleton />
 
   return (
     <Sidebar collapsible="icon" variant="inset">
@@ -653,9 +597,11 @@ export function NavRail() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Starred — the one list you curated, above the ones the app is keeping for
-            you. Absent entirely until you star something, so a new workspace opens on
-            two nav rows rather than an empty heading. */}
+        {/* Starred — the shelves you pinned, and the rail's ONLY collection list. Every
+            collection used to be enumerated here, which grew until the navigation was a
+            file browser; they live in the library's Collections view now, and this is
+            the handful you chose. Absent entirely until you star something, so a new
+            workspace opens on two nav rows rather than an empty heading. */}
         {starredCollections.length > 0 && (
           <SidebarGroup>
             <SidebarGroupLabel data-testid="sidebar-starred">Starred</SidebarGroupLabel>
@@ -664,72 +610,6 @@ export function NavRail() {
             </SidebarGroupContent>
           </SidebarGroup>
         )}
-
-        {/* TIER 2 — your library: the things you've organized. Each list carries a
-            mono eyebrow, so the section labels do the tier-separating work (no
-            divider needed between the eyebrowed groups). Collections stay in the
-            collapsed icon rail (each row keeps its kind glyph + a tooltip), so you can
-            still reach a collection with the rail collapsed — the primitive auto-hides
-            the label, the + action, the counts, and any nested PR list in icon mode. */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Collections</SidebarGroupLabel>
-          {/* The + stays neutral, not the accent: create-in-rail isn't a sanctioned
-              ink moment. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SidebarGroupAction
-                aria-label="New collection"
-                data-testid="sidebar-new-collection"
-                onClick={() => setCreating((v) => !v)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Icon name="plus" />
-              </SidebarGroupAction>
-            </TooltipTrigger>
-            <TooltipContent side="right">New collection</TooltipContent>
-          </Tooltip>
-          <SidebarGroupContent>
-            {creating && (
-              <Input
-                autoFocus
-                value={newName}
-                placeholder="Collection name…"
-                aria-label="Collection name"
-                data-testid="sidebar-new-collection-input"
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitCollection()
-                  if (e.key === "Escape") {
-                    setCreating(false)
-                    setNewName("")
-                  }
-                }}
-                onBlur={submitCollection}
-                // No text-size override: Input's base keeps 16px on touch (iOS
-                // no-zoom) and steps to 14px from sm up. Hidden in the collapsed icon
-                // rail (the + that opens it is hidden there too — no way to reach it).
-                className="mb-1 group-data-[collapsible=icon]:hidden"
-              />
-            )}
-            <SidebarMenu>
-              {/* Collapsed icon rail: a single Collections flyout (no letter tiles).
-                    Expanded: the flat collection list. */}
-              {state === "collapsed" ? (
-                renderCollapsedCollections()
-              ) : (
-                <>
-                  {/* First load only — a refetch keeps the current list (no data → no
-                      isPending), so switching views never flashes the collections. */}
-                  {collectionsPending &&
-                    RAIL_SKELETON_COLLECTIONS.map((r) => (
-                      <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
-                    ))}
-                  {unstarredCollections.map((col) => renderCollection(col))}
-                </>
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
 
         {/* Tools — a running sync, notifications, Settings. Pinned to the foot of
             the scroll (mt-auto); the whitespace above sets them apart, no divider. */}

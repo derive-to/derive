@@ -160,3 +160,32 @@ test("starring a collection pins it to the sidebar's Starred group", async ({ ow
   await expect(owner.getByTestId("sidebar-starred")).toHaveCount(0)
   await expect(owner.getByRole("link", { name })).toHaveCount(1)
 })
+
+test("Collections is a view of the library, with starred shelves leading", async ({ owner }) => {
+  await owner.goto("/")
+  const name = `Shelf ${Date.now()}`
+  await owner.getByTestId("sidebar-new-collection").click()
+  await owner.getByTestId("sidebar-new-collection-input").fill(name)
+  await owner.getByTestId("sidebar-new-collection-input").press("Enter")
+  await expect(owner.getByRole("link", { name }).first()).toBeVisible()
+
+  // Switch views — same page, same toolbar, no navigation to a separate place.
+  await owner.goto("/")
+  await owner.getByTestId("library-view-collections").click()
+  await expect(owner.getByTestId("collections-all")).toBeVisible()
+  // Nothing is starred yet, so there is no "working in" group to head the page.
+  await expect(owner.getByTestId("collections-starred")).toHaveCount(0)
+
+  // Star from the shelf card; it moves into the leading group.
+  const card = owner.locator('[data-testid^="collection-card-star-"]').first()
+  await card.click()
+  await expect(owner.getByTestId("collections-starred")).toBeVisible()
+
+  // The view rides the URL, so it survives a reload and can be linked.
+  await owner.reload()
+  await expect(owner.getByTestId("collections-starred")).toBeVisible()
+
+  // Opening a shelf leaves the view — you are in the collection, not picking one.
+  await owner.getByTestId("library-view-documents").click()
+  await expect(owner.getByTestId("collections-all")).toHaveCount(0)
+})

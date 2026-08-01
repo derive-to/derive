@@ -28,6 +28,7 @@ import {
 } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useFollows } from "@/lib/use-follows"
@@ -39,6 +40,7 @@ import { ArtifactRow, byRecency } from "./artifact-row"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
+import { CollectionsView } from "./collections-view"
 import { ConnectNudge, useConnectNudge } from "./connect-nudge"
 import { DisplayMenu } from "./display-menu"
 import { FilterMenu } from "./filter-menu"
@@ -57,6 +59,7 @@ import { TriageBar } from "./triage-bar"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
 import { useLibraryFeed } from "./use-library-feed"
 import { type LibrarySelection, useLibrarySelection } from "./use-library-selection"
+import { ViewSwitch } from "./view-switch"
 
 // The library surface, shared by five routes: "/" (your work), "/favorites",
 // "/following", "/shared", and "/feedback". The base feed comes from the route (the
@@ -104,6 +107,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const bootGate = useBootGate()
   const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
   const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me && bootGate })
+  // The Collections view is home-only and never shows while a shelf is open — opening
+  // one IS the `collection` filter, so the switch would be offering you the place you
+  // are already standing.
+  const showCollections = view === "all" && search.view === "collections" && !search.collection
+  // Brandprint-pointed collections take documents through Settings, not the shelves.
+  const brandprintIds = useBrandprintCollectionIds()
+  const visibleCollections = collections.filter((c) => !brandprintIds.has(c.id))
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
@@ -244,6 +254,14 @@ function LibraryBody({ view }: { view: LibraryView }) {
     onSuccess: (_data, { id }) => nav({ to: "/", search: { collection: id } }),
   })
   const renameCollection = (id: string, title: string) => renameCol.mutate({ id, title })
+
+  // Creating a shelf belongs where you can see the ones you already have — the rail's
+  // permanent inline form is the thing this replaces.
+  const createCol = useApiMutation({
+    mutationFn: (title: string) => api.createCollection(title),
+    invalidate: [collectionsQuery().queryKey],
+    onSuccess: (col) => nav({ to: "/", search: { collection: col.id } }),
+  })
   const deleteCol = useApiMutation({
     mutationFn: (id: string) => api.deleteCollection(id),
     invalidate: [collectionsQuery().queryKey],
@@ -412,8 +430,19 @@ function LibraryBody({ view }: { view: LibraryView }) {
       <div className="mb-4.5 flex flex-wrap items-center gap-2.5">
         {/* Home only: the named feeds ARE a filter, so offering another would let you ask
             for "Shared with me" inside "Needs your feedback" and get something nobody
-            meant. */}
-        {view === "all" && (
+            meant. Same for the view switch — a feed has no shelves. */}
+        {view === "all" && !search.collection && (
+          <ViewSwitch
+            value={showCollections ? "collections" : "documents"}
+            onChange={(next) =>
+              nav({
+                to: "/",
+                search: { ...search, view: next === "collections" ? "collections" : undefined },
+              })
+            }
+          />
+        )}
+        {view === "all" && !showCollections && (
           <FilterMenu
             value={search.filter ?? "all"}
             onChange={(next) =>
@@ -540,7 +569,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
           "first on the team" setup nudge here (spec: Onboarding / Timing). */}
       {homeView && connectNudge.stage === null && <BrandprintNudge />}
 
-      {filter.kind === "collection" ? (
+      {showCollections ? (
+        <CollectionsView
+          collections={visibleCollections}
+          onStar={(id, next) => starCol.mutate({ id, on: next })}
+          onCreate={(title) => createCol.mutate(title)}
+        />
+      ) : filter.kind === "collection" ? (
         <>
           <CollectionBar
             title={heading}

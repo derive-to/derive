@@ -71,6 +71,7 @@ describe("LIBRARY_SEARCH_PARAMS", () => {
     // app renders another — a wasted request AND a slower page, with nothing visibly
     // wrong. This assignment fails to compile if the two drift.
     const everyKey: Record<keyof Required<LibrarySearch>, true> = {
+      view: true,
       collection: true,
       folder: true,
       query: true,

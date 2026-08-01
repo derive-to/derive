@@ -50,6 +50,7 @@ export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedba
  *  param — does not change which artifacts the home renders, so it must not disable the
  *  head-start. */
 export const LIBRARY_SEARCH_PARAMS = [
+  "view",
   "collection",
   "folder",
   "query",
@@ -59,6 +60,10 @@ export const LIBRARY_SEARCH_PARAMS = [
 ] as const
 
 export type LibrarySearch = {
+  /** Which of the library's two views is showing. Absent = Documents. Collections is
+   *  a view of the same page rather than its own route: it shares the toolbar, and
+   *  opening a shelf from it is just the `collection` filter below. */
+  view?: "collections"
   collection?: string
   // Anchor a collection view to one of its folders — scroll that section into view on
   // open. Set by the artifact breadcrumb's folder segment; ignored outside a collection.
