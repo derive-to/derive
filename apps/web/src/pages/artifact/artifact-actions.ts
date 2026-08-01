@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react"
 import { type Artifact, api, type Comment, type Mention } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { commentsQuery } from "@/lib/queries"
+import { randomId } from "@/lib/random-id"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
@@ -163,7 +164,11 @@ export function useArtifactActions(p: {
     opts?: { threadId?: string; anchor?: Sel | null; mentions?: Mention[] },
   ) => {
     if (!text.trim() || !p.art) return
-    const tempId = `temp-${crypto.randomUUID()}`
+    // randomId, not crypto.randomUUID: the latter is secure-context only, so on a
+    // plain-http origin (a self-host on an internal network, a phone pointed at a dev
+    // server) it is undefined and this line THREW — after the composer had already
+    // closed, so the comment vanished with no request and no error. See lib/random-id.
+    const tempId = `temp-${randomId()}`
     const optimistic: Comment = {
       id: tempId,
       thread_id: opts?.threadId ?? tempId,
