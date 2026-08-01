@@ -8,7 +8,20 @@ app release, which is the entire reason for this shape.
 ## Running it
 
 You do **not** need Xcode or Android Studio to try this. Expo Go on your own phone is
-enough:
+enough.
+
+**The SDK is pinned to 54 on purpose.** Expo Go on the App Store lags npm's `latest` by
+several SDKs — at the time of writing npm said 57 while the store shipped Expo Go 54.0.2,
+and a 57 project fails on the phone with "Project is incompatible with this version of
+Expo Go." Before bumping the SDK, check what the store actually ships:
+
+```bash
+curl -s "https://itunes.apple.com/lookup?id=982107779" | grep -o '"version":"[^"]*"' | head -1
+```
+
+npm's `latest` tag is the wrong source of truth while Expo Go is the delivery mechanism.
+Once the app moves to dev builds this constraint goes away.
+
 
 ```bash
 cd apps/mobile
