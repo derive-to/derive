@@ -338,11 +338,31 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
           /* a listener that throws must not cost us the rest of the reply */
         }
       }
+      // EVERY ONE OF THESE IS MARKED HANDLED, even though only the first rejection is read.
+      //
+      // `Promise.all` rejects as soon as one does and abandons the rest — and a stream fault
+      // rejects ALL of them, so three rejected promises would be left with no handler. Node
+      // prints a warning and carries on, which is why no test here would ever notice (vitest
+      // swallows the process event outright). workerd is stricter: an unhandled rejection can
+      // tear down the request context, and an attended turn runs DETACHED inside one
+      // (ctx.background → waitUntil), so the turn would die before the loop could classify the
+      // failure and settle the session — leaving a transcript stuck in "working" with no error
+      // and no retry.
+      //
+      // Written after a preview turn hung in exactly that state. That turn was never reproduced,
+      // so this is the mechanism that FITS rather than one proven to have caused it; it is kept
+      // because it is free and the hazard is real either way. `Promise.all` still rejects with
+      // the first fault, and the catch below still decides what to do about it.
+      const handled = <T>(p: PromiseLike<T>): Promise<T> => {
+        const q = Promise.resolve(p)
+        q.catch(() => {})
+        return q
+      }
       const [text, toolCalls, finishReason, finalStep] = await Promise.all([
-        stream.text,
-        stream.toolCalls,
-        stream.finishReason,
-        stream.finalStep,
+        handled(stream.text),
+        handled(stream.toolCalls),
+        handled(stream.finishReason),
+        handled(stream.finalStep),
       ])
       // NOTHING AT ALL is not an empty answer, it is a gateway that did not stream: it honoured
       // `stream: true` with ordinary JSON, which read as SSE yields no frames and no finish.

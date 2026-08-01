@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react"
 import { Icon } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
+import { answerMdToHtml } from "@/pages/context/lib/answer-md"
 
 // THE TRANSCRIPT, shared by every chat surface: the rail on a document and the workspace chat
 // page render the same rows, the same thinking state and the same streaming bubble, because
@@ -127,17 +128,27 @@ function Bubble({ msg }: { msg: ChatMessage }) {
   const mine = msg.author_kind === "asker"
   return (
     <div className={cn("flex", mine ? "justify-end" : "justify-start")}>
-      {/* The SAME renderer the comments rail uses. Rendering body_md raw showed the model's
-          `**bold**` as literal asterisks in the one panel whose whole job is reading its prose,
-          while the ask view beside it rendered the identical text correctly. mdToHtml escapes
-          before it transforms, and it turns newlines into <br/>, so no pre-wrap here. */}
+      {/* TWO RENDERERS, because the two authors write differently — the same split the ask
+          console makes, and for the same reason.
+
+          An ANSWER is full GFM. Models write headings, bullet lists, fenced code and tables, and
+          the comment renderer is deliberately inline-only: it knows bold, italic, code spans and
+          links, and everything else it passes through as literal text with <br/> between the
+          lines. So a three-bullet answer arrived as "- one" on its own line, and a fenced block
+          as stray backticks — in the one panel whose entire job is reading the model's prose.
+          answerMdToHtml is marked → xss whitelist, which is what the ask view has always used.
+
+          A PERSON's message is not GFM and should not be reflowed as if it were, so it keeps the
+          inline renderer: their line breaks stay theirs, and a stray "#" is a "#". */}
       <div
         className={cn(
           "cmt-body max-w-[85%] rounded-lg px-3 py-2 text-sm [word-break:break-word]",
           mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground",
         )}
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: input is escaped first in mdToHtml.
-        dangerouslySetInnerHTML={{ __html: mdToHtml(msg.body_md) }}
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes; answerMdToHtml is xss-whitelisted.
+        dangerouslySetInnerHTML={{
+          __html: mine ? mdToHtml(msg.body_md) : answerMdToHtml(msg.body_md),
+        }}
       />
     </div>
   )
@@ -161,12 +172,19 @@ function Streaming({ text }: { text: string }) {
   return (
     <div className="flex justify-start" data-testid="chat-streaming">
       <div className="cmt-body max-w-[85%] rounded-lg bg-muted px-3 py-2 text-sm text-foreground [word-break:break-word]">
-        {/* Markdown is rendered on the SETTLED message, not here: a half-arrived reply is
-            half-arrived markup too (an unclosed fence, a dangling `**`), and running it through
-            the renderer makes the text visibly thrash as it completes. Plain text with preserved
-            whitespace streams calmly and lands on the identical bubble when the real one
-            arrives. */}
-        <span className="whitespace-pre-wrap">{text}</span>
+        {/* RENDERED AS IT ARRIVES, through the same renderer the settled message uses.
+            This used to stream as plain text, on the reasoning that half-arrived markup thrashes
+            as it completes. It does, slightly — but the thing a reader is actually shown while
+            waiting is a citation written out as `[Q3 Roadmap](/artifacts/k9ffftpm)`, and bullets
+            as literal hyphens, for the entire several seconds an answer takes. Trading a brief
+            reflow for prose that reads like prose is the better side of that deal, and it also
+            means the bubble no longer changes shape at the moment the turn settles.
+            marked tolerates incomplete input, so a dangling `**` is simply literal until it
+            closes. */}
+        <span
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized by answerMdToHtml.
+          dangerouslySetInnerHTML={{ __html: answerMdToHtml(text) }}
+        />
         <span className="ml-0.5 inline-block h-3.5 w-px translate-y-0.5 animate-pulse bg-foreground/70" />
       </div>
     </div>
