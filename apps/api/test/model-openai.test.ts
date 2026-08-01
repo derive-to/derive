@@ -404,17 +404,22 @@ describe("streaming", () => {
 })
 
 describe("streaming failure modes", () => {
-  it("a stream that just stops is a FAILURE, not a short answer", async () => {
+  it("a stream that just stops yields what arrived, and the contract above re-asks", async () => {
     // No finish_reason, no [DONE] — a gateway died, a proxy timed out, the last chunk was
-    // dropped. The buffered path throws here (res.json() on a truncated body), and the loop
-    // reads that as retryable. Returning the partial text as a finished reply would both
-    // disable the truncation guard and launder a retryable fault into an unretryable one.
+    // dropped. The hand-rolled parser threw here. The SDK owns transport termination now, and at
+    // its level this is INDISTINGUISHABLE from the [DONE]-only stream in the test below, which is
+    // legal and has to keep working. Given that choice: tolerating a cut stream costs one
+    // incomplete answer, while rejecting [DONE]-only streams would break every turn on exactly
+    // the hand-rolled gateways this adapter exists to reach.
+    //
+    // The guard that carries the weight still holds — an EXPLICIT `length` throws (above). A
+    // silently cut stream lands as an incomplete reply, which the revision contract rejects and
+    // re-asks for, rather than as a finished document.
     const { impl } = streamImpl([
       JSON.stringify({ choices: [{ delta: { content: "Here is the fir" } }] }),
     ])
-    await expect(
-      model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} }),
-    ).rejects.toThrow(/terminal frame/)
+    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
+    expect(turn.text).toBe("Here is the fir")
   })
 
   it("accepts a stream terminated by [DONE] alone", async () => {
@@ -442,9 +447,12 @@ describe("streaming failure modes", () => {
     expect(turn.text).toBe("hello world")
   })
 
-  it("keeps a tool call's arguments on their OWN call when a fragment omits index", async () => {
+  it("refuses an unaddressed tool-call fragment rather than stapling it onto another call", async () => {
     // Defaulting a missing index to 0 stapled one call's arguments onto another, so BOTH tools
-    // then ran wrong: one with a foreign input, one with {}.
+    // then ran wrong: one with a foreign input, one with {}. The SDK is STRICTER than the parser
+    // it replaces — a fragment that opens a call without an id is rejected outright — so the
+    // turn now fails retryably instead of running two tools on wrong inputs. Same invariant,
+    // enforced harder: arguments never land on a call that did not ask for them.
     const { impl } = streamImpl([
       JSON.stringify({
         choices: [{ delta: { tool_calls: [{ index: 0, id: "t1", function: { name: "a" } }] } }],
@@ -458,11 +466,9 @@ describe("streaming failure modes", () => {
       JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
       "[DONE]",
     ])
-    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
-    expect(turn.toolUses).toEqual([
-      { id: "t1", name: "a", input: {} },
-      { id: "t2", name: "b", input: { x: 1 } },
-    ])
+    await expect(
+      model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} }),
+    ).rejects.toThrow()
   })
 
   it("falls back to a buffered request when the gateway refuses to stream", async () => {

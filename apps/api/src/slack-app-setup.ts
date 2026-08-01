@@ -94,6 +94,11 @@ export const buildSlackManifest = (baseUrl: string) => {
           "message.channels",
           "message.groups",
           "link_shared",
+          // @Derive, anywhere the bot is invited — the mention lane that does not need a
+          // mirrored thread underneath it. Paired with the `app_mentions:read` scope in
+          // SLACK_BOT_SCOPES: Slack refuses a manifest that declares one without the other,
+          // which is how the two previous scope/event mismatches shipped broken.
+          "app_mention",
           // Work Objects: fired when someone CLICKS an unfurled card, opening the flexpane. It
           // carries the clicking user, which is what makes that surface per-viewer — the thing
           // link_shared and chat.unfurl cannot be. Needs no new scope, so an existing install

@@ -2792,6 +2792,24 @@ export function makeRepos(db: SqliteDb) {
       .limit(opts?.limit ?? 50)
       .all()
   }
+  const listChatSessions = async (
+    orgId: string,
+    askerId: string,
+    limit?: number,
+  ): Promise<SessionRecord[]> =>
+    db
+      .select()
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.org_id, orgId),
+          eq(contextSession.asker_id, askerId),
+          isNull(contextSession.context_id),
+        ),
+      )
+      .orderBy(desc(contextSession.created_at))
+      .limit(limit ?? 50)
+      .all()
   const pendingSessions = async (contextId: string, limit: number): Promise<SessionRecord[]> =>
     db
       .select()
@@ -4302,6 +4320,7 @@ export function makeRepos(db: SqliteDb) {
     createSessionWithMessage,
     getSession,
     listSessions,
+    listChatSessions,
     pendingSessions,
     claimPendingSessions,
     countWorkingSessions,

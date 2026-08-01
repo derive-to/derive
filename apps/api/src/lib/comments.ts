@@ -34,6 +34,22 @@ export const isCollaboratorAuthor = async (
 /** The fixed reaction set; arbitrary emoji are rejected to keep data clean. */
 export const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"]
 
+/** The author id every Derive-written comment carries, and the mention id the composer offers
+ *  for it — deliberately ONE string, so "who was mentioned" and "who replied" are the same
+ *  identity in both directions. Not an agent record: no seat, no owner, nothing to provision,
+ *  which is what makes the built-in agent the zero-setup path. */
+export const DERIVE_AUTHOR_ID = "derive"
+export const DERIVE_MENTION_ID = DERIVE_AUTHOR_ID
+
+/** Does this comment ask Derive to answer? A mention of the reserved id, and not from Derive
+ *  itself — the recursion guard, stated here beside the identity it guards rather than inside
+ *  the turn, because the branch that needs it runs long before the turn does. */
+export const mentionsDerive = (
+  comment: { author_id?: string | null },
+  mentions: { id: string }[],
+): boolean =>
+  comment.author_id !== DERIVE_AUTHOR_ID && mentions.some((m) => m.id === DERIVE_MENTION_ID)
+
 /** A resolved @mention captured by the composer: the picked user's id + display name. */
 export type Mention = { id: string; name: string }
 

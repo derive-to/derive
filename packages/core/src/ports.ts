@@ -1356,6 +1356,12 @@ export interface ContextStore {
     contextId: string,
     opts?: { askerId?: string; limit?: number },
   ): Promise<SessionRecord[]>
+  /** One person's CONTEXTLESS sessions in a workspace, newest first — the chat history
+   *  picker. Contextless IS the filter: a session with no context is one nobody packaged,
+   *  which is exactly what the chat surfaces open. `listSessions` cannot answer this (it
+   *  keys on a context id, which these do not have). Scoped to the asker: a chat session
+   *  is private to the person who opened it, including from the workspace's owners. */
+  listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]>
   /** The runner's queue: `open` sessions on a context, oldest first. A plain
    *  polling read that does NOT claim — `claimPendingSessions` is the
    *  concurrency-safe path (it leases rows so overlapping runners can't

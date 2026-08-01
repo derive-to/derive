@@ -2792,6 +2792,40 @@ export function runStoreContract(
       expect(await store.pendingSessions(ctx.id, 1)).toHaveLength(1)
     })
 
+    it("lists a person's contextless chat sessions, newest first, and nobody else's", async () => {
+      const ctx = await newContext()
+      // A session WITH a context must never appear here: the chat history is the sessions
+      // nobody packaged, and a context's sessions have their own console.
+      await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      const chat = (asker: string, org = ORG) =>
+        store.createSession({
+          id: uuid(),
+          context_id: null,
+          org_id: org,
+          asker_id: asker,
+          context_version: null,
+        })
+      const older = await chat("daniel")
+      // created_at is millisecond-precision, so two adjacent inserts can tie and make the
+      // ordering assertion below a coin flip. A 2ms gap is the whole fix.
+      await new Promise((r) => setTimeout(r, 2))
+      const newer = await chat("daniel")
+      await chat("sarah")
+      await chat("daniel", "org_other")
+
+      const mine = await store.listChatSessions(ORG, "daniel")
+      expect(mine.map((s) => s.id)).toEqual([newer.id, older.id])
+      expect(await store.listChatSessions(ORG, "daniel", 1)).toHaveLength(1)
+      expect(await store.listChatSessions(ORG, "sarah")).toHaveLength(1)
+      expect(await store.listChatSessions("org_none", "daniel")).toEqual([])
+    })
+
     it("deleteArtifact on a manifest cascades its context, sessions, and messages", async () => {
       const ctx = await newContext()
       const s = await store.createSession({

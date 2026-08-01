@@ -63,6 +63,24 @@ import { BillingBlockedError } from "./billing"
 // Which output a lane asks for, and how it reads the reply. Every one of them is @derive/core's,
 // so the container executor and the loop ask for the same thing in the same words.
 
+/**
+ * The PROSE contract: the reply IS the answer, and there is nothing to parse.
+ *
+ * Every other contract here exists because a turn has to produce a WRITE, and the block carrying
+ * it can be malformed — which is what a nudge is for. A turn whose writes all happen through
+ * TOOLS has no block: by the time the model is writing prose it has already done whatever it was
+ * going to do, so there is no failure mode to re-ask about. Reading is therefore total, this
+ * contract can never miss, and the nudge path is dead for this lane rather than something it
+ * opted out of.
+ *
+ * The contract TEXT is empty on purpose: the lane composes its own system prompt, and a
+ * "reply with a block" instruction here would ask for exactly the thing that must not appear.
+ */
+export const proseContract: ReplyContract = {
+  text: "",
+  read: (text) => ({ product: { revision: null, prose: text, ask: null } }),
+}
+
 /** The AUTOMATION contract: a <revision> block, or nothing happened. No prose channel, because
  *  nobody is reading — a run that "explained itself" instead of writing produced nothing. */
 export const revisionContract: ReplyContract = {
@@ -354,3 +372,31 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
     }
   }
 }
+
+/**
+ * A TRANSCRIPT, as the model reads it.
+ *
+ * Every lane keeps its history in its own row type — session messages for chat, comments for a
+ * mention thread — and every lane has to answer the same two questions about each row: was this
+ * US, and what was said. The mapping is trivial and was written per lane, which is exactly the
+ * kind of duplication that rots quietly: a row wrongly labelled `assistant` makes the model
+ * believe it said something it never said, and it will then defend it. There is no error, no
+ * failed test, just a confidently wrong conversation.
+ *
+ * So the SHAPE lives here once and the PREDICATES stay per-lane, because they genuinely differ:
+ * chat decides by `author_kind`, a comment thread by whether the author is Derive.
+ *
+ * The speaker's name is prefixed only where one is given. A chat session has two participants
+ * and needs no labels; a comment thread can have five, and an unattributed transcript there
+ * turns a conversation into one voice arguing with itself.
+ */
+export const asTurns = <T>(
+  rows: T[],
+  read: (row: T) => { fromAgent: boolean; body: string; speaker?: string | null },
+): { role: "user" | "assistant"; content: string }[] =>
+  rows.map((row) => {
+    const { fromAgent, body, speaker } = read(row)
+    return fromAgent
+      ? { role: "assistant" as const, content: body }
+      : { role: "user" as const, content: speaker ? `${speaker}: ${body}` : body }
+  })

@@ -32,6 +32,8 @@
     "gen:openapi": "vitest run test/openapi.test.ts -u"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "3.0.20",
+    "@ai-sdk/openai-compatible": "3.0.18",
     "@better-auth/oauth-provider": "1.6.19",
     "@better-auth/passkey": "1.6.19",
     "@cloudflare/containers": "^0.3.7",
@@ -46,6 +48,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "@scalar/hono-api-reference": "^0.11.9",
+    "ai": "7.0.44",
     "better-auth": "^1.6.22",
     "better-sqlite3": "^12.11.1",
     "croner": "^10.0.1",

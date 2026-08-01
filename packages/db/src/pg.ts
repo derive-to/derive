@@ -3438,6 +3438,20 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(contextSession.created_at))
       .limit(opts?.limit ?? 50)
   }
+  listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]> {
+    return this.db
+      .select()
+      .from(contextSession)
+      .where(
+        and(
+          eq(contextSession.org_id, orgId),
+          eq(contextSession.asker_id, askerId),
+          isNull(contextSession.context_id),
+        ),
+      )
+      .orderBy(desc(contextSession.created_at))
+      .limit(limit ?? 50)
+  }
   pendingSessions(contextId: string, limit: number): Promise<SessionRecord[]> {
     return this.db
       .select()
