@@ -1,18 +1,20 @@
-import type { AgentLoopInput, ModelTurn } from "./agent-loop"
+import { createAnthropic } from "@ai-sdk/anthropic"
+import type { AgentLoopInput } from "./agent-loop"
+import { type PriceTurn, turnFor } from "./model-turn"
 
 /**
- * The model call, as plain fetch against the Messages API.
+ * The one turn, against the Messages API, on a WORKSPACE's own Claude plan.
  *
- * No SDK on purpose. This has to run on Node AND inside a Cloudflare Worker, and `fetch` is the
- * only thing both have — pulling in a provider SDK is exactly what would make the Worker path a
- * separate implementation (and a bundle problem). One file, both runtimes.
+ * Sibling of model-openai.ts and, since both moved onto the AI SDK, genuinely the same turn: how
+ * a turn is conducted lives once in model-turn.ts. What is specific to this path is the credential
+ * (a connected plan, not an operator key), the default model, and the fact that this is the lane
+ * where cost is REAL money on somebody's account, so it is priced rather than left unknown.
  *
- * The loop owns the conversation; this owns one turn: send the messages, read back the text, the
- * tool calls, and what it cost.
+ * It used to be plain fetch on the argument that a provider SDK would make the Worker path a
+ * separate implementation. That argument was right about the risk and wrong about the SDK: the
+ * same bundle runs in both runtimes, which test/worker/model-openai-workerd.test.ts proves rather
+ * than assumes.
  */
-
-const API = "https://api.anthropic.com/v1/messages"
-const VERSION = "2023-06-01"
 
 /** OAuth (a `claude setup-token` plan token) is a BEARER credential, and the Messages API only
  *  accepts one with this beta opt-in. Without it a perfectly valid plan token 401s. */
@@ -52,21 +54,6 @@ export interface AnthropicOptions {
   fetchImpl?: typeof fetch
 }
 
-interface ContentBlock {
-  type: string
-  text?: string
-  id?: string
-  name?: string
-  input?: unknown
-}
-
-interface Usage {
-  input_tokens?: number
-  output_tokens?: number
-  cache_creation_input_tokens?: number
-  cache_read_input_tokens?: number
-}
-
 /**
  * USD per MILLION tokens, by EXACT model id.
  *
@@ -93,85 +80,60 @@ const RATES: Record<string, { in: number; out: number }> = {
 const CACHE_READ = 0.1
 const CACHE_WRITE = 1.25
 
-const costOf = (model: string, usage: Usage | undefined): number | null => {
-  const rate = RATES[model]
-  if (!rate || !usage) return null
-  const usd =
-    ((usage.input_tokens ?? 0) * rate.in +
-      (usage.cache_creation_input_tokens ?? 0) * rate.in * CACHE_WRITE +
-      (usage.cache_read_input_tokens ?? 0) * rate.in * CACHE_READ +
-      (usage.output_tokens ?? 0) * rate.out) /
-    1_000_000
-  return Number.isFinite(usd) ? usd : null
-}
+const asCount = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0)
 
-/** Kind → wire auth. An API key rides `x-api-key`; a plan/OAuth token rides
- *  `authorization: Bearer` PLUS the oauth beta opt-in. */
-const authHeaders = (c: AnthropicCredential): Record<string, string> =>
+const priceFor =
+  (model: string): PriceTurn =>
+  ({ usage, providerMetadata }) => {
+    const rate = RATES[model]
+    if (!rate || !usage) return null
+    // Cache WRITES are Anthropic-specific and arrive as provider metadata rather than as one of
+    // the SDK's unified counts; cache READS are unified (`cachedInputTokens`). Both bill, so both
+    // are read — from wherever each actually is.
+    const writes = asCount(providerMetadata?.anthropic?.cacheCreationInputTokens)
+    const reads = asCount(usage.cachedInputTokens)
+    const usd =
+      (asCount(usage.inputTokens) * rate.in +
+        writes * rate.in * CACHE_WRITE +
+        reads * rate.in * CACHE_READ +
+        asCount(usage.outputTokens) * rate.out) /
+      1_000_000
+    return Number.isFinite(usd) ? usd : null
+  }
+
+/**
+ * Kind → wire auth. An API key rides `x-api-key`; a plan/OAuth token rides `authorization: Bearer`
+ * PLUS the oauth beta opt-in — and, critically, WITHOUT the `x-api-key` the provider sets by
+ * default, because sending a plan token in that header is the exact 401 this mapping exists to
+ * prevent. An explicit undefined removes it.
+ */
+const authHeaders = (c: AnthropicCredential): Record<string, string | undefined> =>
   c.kind === "oauth"
-    ? { authorization: `Bearer ${c.value}`, "anthropic-beta": OAUTH_BETA }
-    : { "x-api-key": c.value }
+    ? {
+        authorization: `Bearer ${c.value}`,
+        "anthropic-beta": OAUTH_BETA,
+        "x-api-key": undefined,
+      }
+    : {}
 
 export const anthropicModel = (opts: AnthropicOptions): AgentLoopInput["callModel"] => {
-  const doFetch = opts.fetchImpl ?? fetch
   const model = opts.model ?? DEFAULT_ANTHROPIC_MODEL
-  // NO STREAMING HERE, deliberately. `onDelta` is part of the callModel contract and this adapter
-  // simply never calls it, which the contract explicitly allows — the caller then sees a reply
-  // that arrives whole, exactly as before streaming existed. Wiring it up is a separate job (the
-  // Messages API's SSE shape is a different reassembly from chat-completions'), and it buys
-  // nothing today: the lanes this adapter serves — the payer chain and unattended runs — have no
-  // watcher to stream to. Attended chat runs on the gateway adapter (see node.ts / worker.ts).
-  return async ({ system, messages, tools }): Promise<ModelTurn> => {
-    const res = await doFetch(API, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "anthropic-version": VERSION,
-        ...authHeaders(opts.credential),
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: opts.maxTokens ?? 8_000,
-        system,
-        messages,
-        ...(tools.length
-          ? {
-              tools: tools.map((t) => ({
-                name: t.name,
-                description: t.description,
-                input_schema:
-                  t.params && typeof t.params === "object" && "type" in t.params
-                    ? t.params
-                    : { type: "object", properties: t.params ?? {} },
-              })),
-            }
-          : {}),
-      }),
-      signal: AbortSignal.timeout(120_000),
-    })
-    if (!res.ok) {
-      // Thrown, not returned: the loop treats a failed model CALL as retryable (the expensive
-      // part has not happened yet), which is the right judgement for a 429 or a 5xx.
-      throw new Error(`model call failed (${res.status}): ${(await res.text()).slice(0, 300)}`)
-    }
-    const body = (await res.json()) as {
-      content?: ContentBlock[]
-      stop_reason?: string
-      usage?: Usage
-    }
-    const blocks = body.content ?? []
-    return {
-      // Concatenated: a turn can interleave several text blocks, and the revision block may be
-      // split across them.
-      text: blocks
-        .filter((b) => b.type === "text" && typeof b.text === "string")
-        .map((b) => b.text as string)
-        .join(""),
-      toolUses: blocks
-        .filter((b) => b.type === "tool_use" && b.id && b.name)
-        .map((b) => ({ id: b.id as string, name: b.name as string, input: b.input })),
-      costUsd: costOf(model, body.usage),
-      done: body.stop_reason !== "tool_use",
-    }
-  }
+  const provider = createAnthropic({
+    // The provider requires a key to construct even when the credential rides another header, and
+    // reads ANTHROPIC_API_KEY from the environment when given none — which on a self-host box is
+    // how one workspace's run quietly bills the operator's key. Always pass the connected value.
+    apiKey: opts.credential.value,
+    headers: authHeaders(opts.credential) as Record<string, string>,
+    ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
+  })
+  return turnFor({
+    model: provider.languageModel(model),
+    maxTokens: opts.maxTokens,
+    price: priceFor(model),
+    // NO STREAMING HERE, deliberately. `onDelta` is part of the callModel contract and this
+    // adapter simply never calls it, which the contract explicitly allows — the caller sees a
+    // reply that arrives whole, exactly as before streaming existed. It buys nothing today: the
+    // lanes this serves, the payer chain and unattended runs, have no watcher to stream to.
+    stream: false,
+  })
 }
