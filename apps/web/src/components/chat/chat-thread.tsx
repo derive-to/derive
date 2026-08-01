@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react"
 import { Icon } from "@/components/icons"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
-import { answerMdToHtml } from "@/pages/context/lib/answer-md"
+import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
 
 // THE TRANSCRIPT, shared by every chat surface: the rail on a document and the workspace chat
 // page render the same rows, the same thinking state and the same streaming bubble, because
@@ -142,8 +142,13 @@ function Bubble({ msg }: { msg: ChatMessage }) {
           inline renderer: their line breaks stay theirs, and a stray "#" is a "#". */}
       <div
         className={cn(
-          "cmt-body max-w-[85%] rounded-lg px-3 py-2 text-sm [word-break:break-word]",
-          mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground",
+          "max-w-[85%] rounded-lg px-3 py-2 text-sm [word-break:break-word]",
+          // The chrome has to match the MARKUP: an answer renders real <ul>/<h2>/<pre>, and the
+          // comment bubble styles none of them, so a correct list came out unmarked under a
+          // heading the same size as the body.
+          mine
+            ? "cmt-body bg-primary text-primary-foreground"
+            : cn(ANSWER_PROSE, "bg-muted text-foreground"),
         )}
         // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes; answerMdToHtml is xss-whitelisted.
         dangerouslySetInnerHTML={{
@@ -171,7 +176,12 @@ function Thinking() {
 function Streaming({ text }: { text: string }) {
   return (
     <div className="flex justify-start" data-testid="chat-streaming">
-      <div className="cmt-body max-w-[85%] rounded-lg bg-muted px-3 py-2 text-sm text-foreground [word-break:break-word]">
+      <div
+        className={cn(
+          ANSWER_PROSE,
+          "max-w-[85%] rounded-lg bg-muted px-3 py-2 text-sm text-foreground [word-break:break-word]",
+        )}
+      >
         {/* RENDERED AS IT ARRIVES, through the same renderer the settled message uses.
             This used to stream as plain text, on the reasoning that half-arrived markup thrashes
             as it completes. It does, slightly — but the thing a reader is actually shown while
