@@ -91,10 +91,23 @@ export function WebStage({ uri, onNavigate }: { uri: string; onNavigate?: (url: 
         ref={ref}
         source={{ uri }}
         style={[styles.fill, { backgroundColor: t.background }]}
-        // The web app owns its own pull-to-refresh and scroll model; a bounce here
-        // fights the artifact viewer's locked scroll regions.
-        bounces={false}
-        overScrollMode="never"
+        // Pull to refresh, and the rubber-band it rides on. These were off because I
+        // guessed a bounce would fight the artifact viewer's locked scroll regions; on a
+        // real phone the absence just reads as a page that ignores you. WebKit only fires
+        // the refresh when the document is already at its top, so a scrolled list is
+        // unaffected.
+        bounces
+        pullToRefreshEnabled
+        // Android's equivalent: let the nested scrollers inside the page (the comments
+        // list, the artifact frame) take the gesture instead of the outer view eating it.
+        overScrollMode="always"
+        nestedScrollEnabled
+        // The composer must be able to take focus and raise the keyboard on its own,
+        // rather than only after a separate tap.
+        keyboardDisplayRequiresUserAction={false}
+        // Safari's inspector can attach to this frame in dev, which is the only way to
+        // debug the hosted app from a device. Never in a release build.
+        webviewDebuggingEnabled={__DEV__}
         // One frame, one origin. Popups would open a chromeless window with no address
         // bar, which is exactly the shape a phishing page wants.
         setSupportMultipleWindows={false}

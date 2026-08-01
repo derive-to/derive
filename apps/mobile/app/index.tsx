@@ -1,8 +1,9 @@
 import * as Linking from "expo-linking"
 import { useEffect, useState } from "react"
-import { StyleSheet, View } from "react-native"
+import { StyleSheet, useColorScheme, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { WEB_ORIGIN, webUrlFromDeepLink } from "../src/config"
+import { tokens } from "../src/theme"
 import { WebStage } from "../src/web-stage"
 
 /** The app: the hosted web app, plus deep-link entry.
@@ -14,6 +15,7 @@ import { WebStage } from "../src/web-stage"
  *  listener covers the app already being open. */
 export default function Home() {
   const insets = useSafeAreaInsets()
+  const t = tokens[useColorScheme() === "dark" ? "dark" : "light"]
   const [uri, setUri] = useState(WEB_ORIGIN)
 
   useEffect(() => {
@@ -38,11 +40,17 @@ export default function Home() {
     }
   }, [])
 
-  // Only the TOP inset is applied. The bottom is left to the web app so its own docked
-  // surfaces (the artifact page's comments sheet) sit flush against the home indicator
-  // instead of floating above a native gap.
+  // Only the TOP inset is applied. The bottom is left to the web app, which already pads
+  // its docked surfaces with env(safe-area-inset-bottom) (the comments sheet, the
+  // selection bar) — adding a native gap under them would double it.
+  //
+  // The strip MUST carry the theme background. Left unpainted it renders as the default
+  // platform grey, which reads as a broken app before a single pixel of content loads: a
+  // dead band above chrome that is trying to look continuous with it. The web app has no
+  // safe-area-inset-TOP handling, so this really is the shell's to paint, and it has to
+  // track the colour scheme or it is wrong in one theme or the other.
   return (
-    <View style={[styles.fill, { paddingTop: insets.top }]}>
+    <View style={[styles.fill, { paddingTop: insets.top, backgroundColor: t.background }]}>
       <WebStage uri={uri} />
     </View>
   )
