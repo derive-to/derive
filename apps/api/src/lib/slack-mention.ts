@@ -26,7 +26,7 @@ const THREAD_CONTEXT = 12
 
 /** The Slack message ts recorded on an asker message, or null. Tolerates unparseable meta:
  *  a missing marker means "not seen", which costs a duplicate at worst and never a lost turn. */
-const parseSlackTs = (raw: string | null | undefined): string | null => {
+export const parseSlackTs = (raw: string | null | undefined): string | null => {
   if (!raw) return null
   try {
     return (JSON.parse(raw) as { slack?: { ts?: string } }).slack?.ts ?? null
@@ -39,7 +39,37 @@ const parseSlackTs = (raw: string | null | undefined): string | null => {
  *  nobody gets a wall of identical prompts, short enough that somebody who joins Derive
  *  tomorrow starts working without intervention. Linking short-circuits it entirely: a link
  *  row replaces the miss and is checked first. */
-const MISS_TTL_MS = 24 * 60 * 60 * 1000
+export const MISS_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * What a stored identity row tells us to do next.
+ *
+ * Pure, and exported, because these three branches are the whole behaviour and the lane around
+ * them needs Slack, a model and a store to exercise. The decision is the part that can be wrong
+ * in a way nobody notices: too eager and we re-ask Slack about somebody on every message, too
+ * sticky and a person who joined Derive yesterday is silently written off for ever.
+ *
+ *   "use"       a real link — resolve the seat from it.
+ *   "silent"    a miss we recorded recently. Say nothing; they have already been told.
+ *   "look"      no row, an aged-out miss, or a stamp we cannot read. Ask Slack again.
+ *
+ * A null or unparseable `checked_at` deliberately reads as "look": erring toward one extra
+ * lookup beats erring toward somebody the bot has quietly stopped answering.
+ */
+export const identityVerdict = (
+  known: { origin: string; checked_at: string | null } | null,
+  now: number,
+): "use" | "silent" | "look" => {
+  if (!known) return "look"
+  if (known.origin !== "miss") return "use"
+  const at = known.checked_at ? Date.parse(known.checked_at) : Number.NaN
+  const elapsed = now - at
+  // Bounded at BOTH ends. Only checking the upper bound means a stamp written ahead of us —
+  // clock skew between writer and reader, or a corrupt far-future date — reads as permanently
+  // fresh and silences this person for ever. A negative elapsed is not evidence of anything,
+  // so it costs one extra lookup instead.
+  return elapsed >= 0 && elapsed < MISS_TTL_MS ? "silent" : "look"
+}
 
 export interface SlackMentionPayload {
   teamId: string
@@ -175,19 +205,15 @@ export const handleSlackMention = async (
     { seat: Awaited<ReturnType<typeof seatFor>> } | { seat: null; why: "unknown" | "recent-miss" }
   > => {
     const known = await meta.getSlackIdentityState(p.teamId, p.userId).catch(() => null)
-    if (known && known.origin !== "miss") {
+    const verdict = identityVerdict(known, Date.now())
+    if (verdict === "use" && known) {
       const seat = await seatFor(orgId, known.user_id)
       if (seat) return { seat }
       // A link to somebody with no seat HERE is not a miss about their identity — they may well
       // be a member of another workspace on this team — so it is not remembered.
       return { seat: null, why: "unknown" }
     }
-    // A null or unparseable checked_at reads as "never checked", so we look again rather than
-    // stay silent for ever. Erring toward one extra lookup beats erring toward a person the
-    // bot has silently written off.
-    const checkedAt = known?.checked_at ? Date.parse(known.checked_at) : Number.NaN
-    if (known?.origin === "miss" && Date.now() - checkedAt < MISS_TTL_MS)
-      return { seat: null, why: "recent-miss" }
+    if (verdict === "silent") return { seat: null, why: "recent-miss" }
 
     const email = await slackUserEmail(botToken, p.userId)
     const user = email ? await meta.findUserByEmail(email).catch(() => null) : null

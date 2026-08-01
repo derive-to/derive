@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest"
 import { SLACK_BOT_SCOPES } from "../src/lib/slack"
 import { mrkdwnBody } from "../src/lib/slack-cards"
-import { artifactRefIn, questionFrom } from "../src/lib/slack-mention"
+import {
+  artifactRefIn,
+  identityVerdict,
+  MISS_TTL_MS,
+  parseSlackTs,
+  questionFrom,
+} from "../src/lib/slack-mention"
 import { buildSlackManifest } from "../src/slack-app-setup"
 
 // @Derive IN SLACK. The pure halves — what the model is actually asked, and which document the
@@ -117,5 +123,64 @@ describe("an answer rendered for Slack", () => {
   it("still neutralises a channel-wide mention hidden in an answer", () => {
     // The escaping this replaced existed for a reason; rendering must not lose it.
     expect(mrkdwnBody(absolutise("hello <!channel> there"))).not.toContain("<!channel>")
+  })
+})
+
+// WHAT A STORED IDENTITY ROW MAKES US DO NEXT. Extracted and tested pure because the lane
+// around it needs Slack, a model and a store — and because these branches fail QUIETLY: too
+// eager re-asks Slack on every message, too sticky writes somebody off for ever.
+
+describe("deciding whether to look up an identity again", () => {
+  const NOW = Date.UTC(2026, 7, 1, 12, 0, 0)
+  const ago = (ms: number) => new Date(NOW - ms).toISOString()
+  const miss = (checked_at: string | null) => ({ origin: "miss", checked_at })
+
+  it("uses a real link, whatever its age", () => {
+    // A link does not go stale. Only a miss has a shelf life.
+    expect(identityVerdict({ origin: "oauth", checked_at: ago(400 * 24 * 3600_000) }, NOW)).toBe(
+      "use",
+    )
+    expect(identityVerdict({ origin: "email", checked_at: null }, NOW)).toBe("use")
+  })
+
+  it("stays silent on a miss inside the window", () => {
+    expect(identityVerdict(miss(ago(60_000)), NOW)).toBe("silent")
+    expect(identityVerdict(miss(ago(MISS_TTL_MS - 1000)), NOW)).toBe("silent")
+  })
+
+  it("looks again once the miss has aged out", () => {
+    // The point of expiry: somebody who joined Derive since should start working without
+    // anyone intervening.
+    expect(identityVerdict(miss(ago(MISS_TTL_MS + 1000)), NOW)).toBe("look")
+  })
+
+  it("looks when there is no row at all", () => {
+    expect(identityVerdict(null, NOW)).toBe("look")
+  })
+
+  it("looks when the stamp is missing or unreadable, rather than going silent", () => {
+    // The dangerous direction is silence. A row that predates checked_at, or one with a
+    // corrupt stamp, must not read as "recently checked, say nothing".
+    expect(identityVerdict(miss(null), NOW)).toBe("look")
+    expect(identityVerdict(miss("not a date"), NOW)).toBe("look")
+  })
+
+  it("looks when the stamp is in the FUTURE, so clock skew cannot silence us", () => {
+    expect(identityVerdict(miss(new Date(NOW + 60_000).toISOString()), NOW)).toBe("look")
+  })
+})
+
+describe("recognising a redelivered Slack message", () => {
+  it("reads the ts marker written alongside the message", () => {
+    expect(parseSlackTs(JSON.stringify({ slack: { ts: "1720000000.1" } }))).toBe("1720000000.1")
+  })
+
+  it("treats absent or unreadable meta as NOT SEEN", () => {
+    // Erring here costs one duplicate answer; the opposite error drops a real question on the
+    // floor, so every ambiguous case has to mean "not seen".
+    expect(parseSlackTs(null)).toBeNull()
+    expect(parseSlackTs(undefined)).toBeNull()
+    expect(parseSlackTs("{oops")).toBeNull()
+    expect(parseSlackTs(JSON.stringify({ outcome: "answered" }))).toBeNull()
   })
 })
