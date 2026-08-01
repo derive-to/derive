@@ -117,16 +117,6 @@ jobs:
           # Optional: more model ids the SAME gateway serves. Set it and a preview can exercise
           # the chat model picker, which does not render when there is only one model to pick.
           MODEL_NAMES: ${{ vars.DERIVE_MODEL_NAMES }}
-          # Optional: a SECOND Slack app, pointed at this preview, for exercising the Slack
-          # surfaces (@Derive mentions, unfurls, the comment mirror) without touching the one
-          # production uses. Deliberately its OWN app: Slack posts events to a single request
-          # URL, so an app aimed at derive.to can never reach a preview, and repointing the
-          # production app would take Slack down for everyone until it was repointed back.
-          # Create it from the preview's own manifest (/settings/slack/app/new on the preview,
-          # already filled with this URL), then set these three as repo secrets.
-          SLACK_PREVIEW_CLIENT_ID: ${{ secrets.DERIVE_PREVIEW_SLACK_CLIENT_ID }}
-          SLACK_PREVIEW_CLIENT_SECRET: ${{ secrets.DERIVE_PREVIEW_SLACK_CLIENT_SECRET }}
-          SLACK_PREVIEW_SIGNING_SECRET: ${{ secrets.DERIVE_PREVIEW_SLACK_SIGNING_SECRET }}
         run: |
           : "${AUTH_SECRET:?DERIVE_AUTH_SECRET is unset. Add it as a repo secret with the SAME
              value the production Worker uses, or every signed-in page of the preview 500s.}"
@@ -139,14 +129,6 @@ jobs:
           if [ -n "$MODEL_BASE_URL" ]; then put DERIVE_MODEL_BASE_URL "$MODEL_BASE_URL"; fi
           if [ -n "$MODEL_NAME" ]; then put DERIVE_MODEL_NAME "$MODEL_NAME"; fi
           if [ -n "$MODEL_NAMES" ]; then put DERIVE_MODEL_NAMES "$MODEL_NAMES"; fi
-          # All three or none: the routes check for the whole set, so a partial push would leave
-          # Slack answering "not configured" while looking configured in the secret list.
-          if [ -n "$SLACK_PREVIEW_CLIENT_ID" ] && [ -n "$SLACK_PREVIEW_CLIENT_SECRET" ] \
-             && [ -n "$SLACK_PREVIEW_SIGNING_SECRET" ]; then
-            put SLACK_CLIENT_ID "$SLACK_PREVIEW_CLIENT_ID"
-            put SLACK_CLIENT_SECRET "$SLACK_PREVIEW_CLIENT_SECRET"
-            put SLACK_SIGNING_SECRET "$SLACK_PREVIEW_SIGNING_SECRET"
-          fi
           # A preview with no model answers "no model is configured" in chat, which looks like a
           # regression rather than missing config. Say so once, here.
           if [ -z "$MODEL_BASE_URL" ] || [ -z "$MODEL_NAME" ] || [ -z "$MODEL_KEY" ]; then
