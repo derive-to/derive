@@ -73,7 +73,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
  *  the web client's type; the OAuth redirects and the Slack Events webhook stay plain
  *  routes (not typed JSON). */
 export const slackRoutes = (ctx: AppContext) => {
-  const { meta, deps, bus, notify, requireUser, authorizeUserStanding } = ctx
+  const { meta, deps, bus, notify, background, requireUser, authorizeUserStanding } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
   const { blobs, sourceText, search, notifyRender, billingBlocked } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -102,22 +102,34 @@ export const slackRoutes = (ctx: AppContext) => {
   }
 
   // Run best-effort work AFTER we've acked Slack (which demands a reply within 3s). On Workers,
-  // executionCtx.waitUntil keeps the isolate alive until it settles; Node has no executionCtx, so
-  // the promise just runs in-process. Either way a terminal .catch() is attached FIRST: an
+  // waitUntil keeps the isolate alive until it settles; on Node the promise just runs in-process.
+  // Either way a terminal .catch() is attached FIRST: an
   // unawaited reject (e.g. a lookup throwing inside a deferred proposal action, which runs its
   // early lookups outside its own try/catch) would otherwise escape as an unhandledRejection.
   // Not fatal here — node.ts installs a log-only last-resort handler — but that logs a bare,
   // contextless line and only exists on the Node path; catching at the call site attributes the
   // failure to the Slack deferral on both runtimes instead of leaning on the global net.
-  const runAfterAck = (c: Context, work: Promise<unknown>): void => {
+  const runAfterAck = (work: Promise<unknown>): void => {
     const guarded = work.catch((err) =>
       log.warn("slack deferred work failed", { err: String(err) }),
     )
-    try {
-      c.executionCtx.waitUntil(guarded)
-    } catch {
-      void guarded // Node has no executionCtx; the promise runs in-process
-    }
+    // Via ctx.background, NOT c.executionCtx.
+    //
+    // The worker calls Hono as `ready.fetch(req)` — one argument — and stashes the real
+    // ExecutionContext in an AsyncLocalStorage instead (worker.ts, edgeCtx.run). Hono therefore
+    // never receives a ctx, and `c.executionCtx` THROWS on Workers, not only on Node as the old
+    // comment assumed. The catch swallowed that into fire-and-forget, so the response returned
+    // and the isolate was torn down at the promise's FIRST await — with no log and no exception,
+    // because everything worth logging happens after it.
+    //
+    // Link previews were dead in production for a day on exactly this: link_shared arrived, the
+    // synchronous prefix ran, and nothing downstream ever executed. Proposal decisions, the
+    // interactivity repaint and the deferred /derive search shared the fault; the response_url
+    // ones only appeared to work because their fetch is dispatched before the first await.
+    //
+    // ctx.background reads the SAME AsyncLocalStorage the worker populates, which is why the
+    // comment mirror — its only other user — never had this problem.
+    void background(guarded)
   }
 
   // Render previews for the Derive links in one `link_shared` event.
@@ -433,7 +445,7 @@ export const slackRoutes = (ctx: AppContext) => {
     // ack like every other slow path here: resolving each link reads the artifact, its versions
     // and its comments, and Slack still wants a reply inside 3s.
     if (body.type === "event_callback" && ev?.type === "link_shared" && body.team_id && ev.user) {
-      runAfterAck(c, unfurlSharedLinks(body.team_id, ev))
+      runAfterAck(unfurlSharedLinks(body.team_id, ev))
       return c.json({ ok: true })
     }
     // Only human thread replies: a message with a thread_ts, no bot_id, not an edit/delete.
@@ -640,7 +652,6 @@ export const slackRoutes = (ctx: AppContext) => {
       const pt = decodeProposalAction(action.value)
       if (pt && payload.team?.id && payload.user?.id) {
         runAfterAck(
-          c,
           runSlackProposalAction(
             { meta, blobs, bus, notify, notifyRender, search, billingBlocked },
             {
@@ -707,7 +718,6 @@ export const slackRoutes = (ctx: AppContext) => {
           const blocks = [section0, ...threadStateBlocks(op, action.value, who)].filter(Boolean)
           if (payload.response_url) {
             runAfterAck(
-              c,
               postSlackResponseUrl(payload.response_url, {
                 text: op === "resolved" ? "Thread resolved" : "Thread reopened",
                 blocks,
@@ -902,7 +912,7 @@ export const slackRoutes = (ctx: AppContext) => {
           replace_original: true,
         }),
       )
-    runAfterAck(c, deliver)
+    runAfterAck(deliver)
     return c.json({ response_type: "ephemeral", text: "Searching…" })
   })
 
