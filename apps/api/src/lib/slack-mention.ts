@@ -24,6 +24,10 @@ import { postWithRecovery, resolveBotToken } from "./slack-delivery"
  *  context above it and the answer belongs to that, not to the channel's whole day. */
 const THREAD_CONTEXT = 12
 
+/** Slack users we have already told how to identify themselves, so the prompt is not repeated at
+ *  somebody on every message. Deliberately in-memory and deliberately forgetful — see the use. */
+const promptedToLink = new Set<string>()
+
 export interface SlackMentionPayload {
   teamId: string
   channel: string
@@ -194,9 +198,23 @@ export const handleSlackMention = async (
 
   const asker = await linkedFor(install.org_id, bot.token)
   if (!asker) {
-    await say(
-      `Link your Derive account to ask me here — I answer with *your* permissions, so I need to know who you are. ${deps.baseUrl}/settings/integrations`,
-    )
+    // SAY IT ONCE. Somebody we cannot resolve will keep asking — that is the normal thing to do
+    // when a bot ignores you — and answering every message with the same paragraph turns a
+    // one-time setup step into a wall of identical text. They are told, clearly, with a link
+    // that works; after that, silence is kinder than repetition.
+    //
+    // Best-effort by construction: this lives in the isolate, so a deploy or a cold start says
+    // it again. That is the right failure direction. Forgetting means one extra prompt;
+    // remembering too well would mean somebody who linked and came back gets nothing.
+    if (!promptedToLink.has(`${p.teamId}:${p.userId}`)) {
+      promptedToLink.add(`${p.teamId}:${p.userId}`)
+      await say(
+        `I answer with *your* permissions, so I need to know who you are. ` +
+          `<${deps.baseUrl}/settings/integrations|Link your Derive account> and ask me again.\n\n` +
+          `If your Slack email already matches your Derive account, linking is not needed — ` +
+          `check that the two match.`,
+      )
+    }
     return quiet("asker not linked")
   }
 
