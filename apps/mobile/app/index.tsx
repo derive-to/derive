@@ -17,6 +17,11 @@ export default function Home() {
   const insets = useSafeAreaInsets()
   const t = tokens[useColorScheme() === "dark" ? "dark" : "light"]
   const [uri, setUri] = useState(WEB_ORIGIN)
+  // What the PAGE is painting, which is not the same question as what the OS appearance
+  // is: the web app resolves its own theme (a stored choice first, the OS only as a
+  // fallback), so a phone in light mode can be showing a dark-themed app. Until the page
+  // reports in, the device tokens are the best guess available.
+  const [pageBg, setPageBg] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -44,14 +49,17 @@ export default function Home() {
   // its docked surfaces with env(safe-area-inset-bottom) (the comments sheet, the
   // selection bar) — adding a native gap under them would double it.
   //
-  // The strip MUST carry the theme background. Left unpainted it renders as the default
-  // platform grey, which reads as a broken app before a single pixel of content loads: a
-  // dead band above chrome that is trying to look continuous with it. The web app has no
-  // safe-area-inset-TOP handling, so this really is the shell's to paint, and it has to
-  // track the colour scheme or it is wrong in one theme or the other.
+  // The strip MUST carry the page's background, and the PAGE is the only honest source
+  // for it. Unpainted it renders platform grey; painted from the device colour scheme it
+  // is still wrong whenever the two disagree, which they do — the web app resolves its
+  // own theme, so a phone in light mode showing a dark-themed app produced a white band
+  // above black chrome. The page reports its computed background (BACKGROUND_PROBE) and
+  // this follows it, including through an in-app theme toggle.
   return (
-    <View style={[styles.fill, { paddingTop: insets.top, backgroundColor: t.background }]}>
-      <WebStage uri={uri} />
+    <View
+      style={[styles.fill, { paddingTop: insets.top, backgroundColor: pageBg ?? t.background }]}
+    >
+      <WebStage uri={uri} onBackground={setPageBg} />
     </View>
   )
 }

@@ -11,7 +11,7 @@ import {
   tokenFromCallback,
 } from "./auth"
 import { isInternal, WEB_ORIGIN } from "./config"
-import { tokens } from "./theme"
+import { BACKGROUND_MESSAGE, BACKGROUND_PROBE, tokens } from "./theme"
 
 // How long to wait for first paint before calling the load failed. Mirrors the web
 // viewer's own BOOT_TIMEOUT_MS: a stuck frame must be legible as stuck, never
@@ -24,7 +24,17 @@ const BOOT_TIMEOUT_MS = 15_000
  *  phones with no app release. The shell's job is the things a browser tab cannot do:
  *  keep external links out of the frame, and make failure and offline legible rather
  *  than a white screen. */
-export function WebStage({ uri, onNavigate }: { uri: string; onNavigate?: (url: string) => void }) {
+export function WebStage({
+  uri,
+  onNavigate,
+  onBackground,
+}: {
+  uri: string
+  onNavigate?: (url: string) => void
+  /** The page's REAL background colour, so the shell's safe-area strip can match what is
+   *  actually on screen rather than what the OS appearance implies. */
+  onBackground?: (color: string) => void
+}) {
   const scheme = useColorScheme() === "dark" ? "dark" : "light"
   const t = tokens[scheme]
   const ref = useRef<WebView>(null)
@@ -112,6 +122,18 @@ export function WebStage({ uri, onNavigate }: { uri: string; onNavigate?: (url: 
         // bar, which is exactly the shape a phishing page wants.
         setSupportMultipleWindows={false}
         onShouldStartLoadWithRequest={onShouldStart}
+        // Ask the page what colour it is painting, on every load. The strip above this
+        // view has to match the CONTENT, and the OS appearance is not that (see
+        // BACKGROUND_PROBE).
+        injectedJavaScript={BACKGROUND_PROBE}
+        onMessage={(e) => {
+          try {
+            const msg = JSON.parse(e.nativeEvent.data) as { type?: string; color?: string }
+            if (msg.type === BACKGROUND_MESSAGE && msg.color) onBackground?.(msg.color)
+          } catch {
+            // Not ours. The hosted app is free to postMessage for its own reasons.
+          }
+        }}
         onLoadEnd={() => setPhase("ready")}
         onError={() => setPhase("failed")}
         onHttpError={(e) => {
