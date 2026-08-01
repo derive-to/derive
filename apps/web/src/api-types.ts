@@ -6759,6 +6759,8 @@ export interface components {
                 short_id: string;
                 title: string;
             }[];
+            /** @description Which tools the turn actually ran, in order of first use. Names only: arguments can carry the contents of a private document, and this is persisted on the message. This is what lets a surface show HOW an answer was reached rather than only asserting that it searched. */
+            tools?: string[];
             /** @description Which model produced this answer. Recorded per message rather than per session because the choice is per turn — a conversation can be continued on a different model, and the answers it already gave must keep saying which model wrote them. */
             model?: {
                 id: string;

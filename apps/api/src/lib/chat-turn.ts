@@ -32,6 +32,14 @@ export interface ChatTurnResult {
   /** Which model answered, recorded on the message so a transcript can say so and a picker can
    *  default to it. */
   model: { id: string; label: string }
+  /** WHICH TOOLS THIS TURN ACTUALLY RAN, in order, first use only.
+   *
+   * The surface promises "Derive searches and reads with your own permissions, and links what it
+   * used" and had no way to show it: the turn reported a reply, a cost and a model, so the one
+   * claim the product makes about HOW an answer was reached was the one thing the transcript did
+   * not record. Names only — arguments can carry the content of a private document, and this is
+   * persisted on the message. */
+  tools: string[]
 }
 
 export interface ChatTurnInput {
@@ -117,13 +125,17 @@ export const runChatTurn = async (
   input: ChatTurnInput,
 ): Promise<ChatTurnResult> => {
   const model = { id: deps.model.id, label: deps.model.label }
+  const used: string[] = []
   const out = await runTurn({
     system: systemPrompt(input),
     messages: asTurns(input.transcript),
     contract: proseContract,
     callModel: deps.model.callModel as AgentLoopInput["callModel"],
     tools: input.tools.tools,
-    executeTool: input.tools.execute,
+    executeTool: async (name, args) => {
+      if (!used.includes(name)) used.push(name)
+      return input.tools.execute(name, args)
+    },
     // The gate cannot fire: proseContract never yields a revision, so decideWrite is never
     // consulted and `land` is unreachable. Stated with the safest values rather than omitted,
     // so a future contract change fails closed (a proposal) instead of publishing.
@@ -150,6 +162,7 @@ export const runChatTurn = async (
       outcome: "failed",
       costMicroUsd: toMicroUsd(out.costUsd),
       model,
+      tools: used,
     }
   }
   return {
@@ -157,5 +170,6 @@ export const runChatTurn = async (
     outcome: "answered",
     costMicroUsd: toMicroUsd(out.costUsd),
     model,
+    tools: used,
   }
 }

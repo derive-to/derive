@@ -18,7 +18,7 @@ export interface ChatMessage {
   created_at: string
   /** The turn's structured payload on an agent message. Carries which MODEL answered, which is
    *  how a surface can show what a conversation is running on without a second request. */
-  meta?: { model?: { id: string; label: string } } | null
+  meta?: { model?: { id: string; label: string }; tools?: string[] } | null
 }
 
 /** Poll while a turn is in flight, stop when it settles. Cheap, and it survives a reload —
@@ -151,9 +151,37 @@ export function ChatThread(props: {
   )
 }
 
+/**
+ * WHAT THE ANSWER ACTUALLY DID, in the words a reader thinks in.
+ *
+ * The empty state promises "Derive searches and reads with your own permissions, and links what
+ * it used", and until the turn recorded its tools that was an assertion with nothing behind it:
+ * an answer and a claim about how it was reached, indistinguishable from an answer made up.
+ * Shown only when tools ran, so a turn that simply answered from the conversation does not
+ * pretend otherwise.
+ *
+ * Tool NAMES translated rather than printed. "find" and "use" are our vocabulary, not anyone
+ * else's, and an interface that leaks them asks the reader to learn the implementation.
+ */
+const TOOL_WORDS: Record<string, string> = {
+  find: "searched the workspace",
+  read: "read documents",
+  publish: "wrote a document",
+  use: "ran a packaged context",
+}
+
+const traceOf = (tools: string[] | undefined): string | null => {
+  const words = (tools ?? []).map((t) => TOOL_WORDS[t]).filter(Boolean)
+  if (words.length === 0) return null
+  return words.length === 1
+    ? `Derive ${words[0]}`
+    : `Derive ${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`
+}
+
 function Bubble({ msg }: { msg: ChatMessage }) {
   const mine = msg.author_kind === "asker"
   const [copied, setCopied] = useState(false)
+  const trace = mine ? null : traceOf(msg.meta?.tools)
   // The MARKDOWN, not the rendered text. What people paste an answer into is usually another
   // markdown surface (a document, a comment, an issue), so handing over the rendered form would
   // strip exactly the links and structure that made the answer worth keeping.
@@ -165,7 +193,15 @@ function Bubble({ msg }: { msg: ChatMessage }) {
   }
   return (
     <div className={cn("group flex items-start gap-1", mine ? "justify-end" : "justify-start")}>
-      {/* TWO RENDERERS, because the two authors write differently — the same split the ask
+      <div className={cn("flex max-w-[85%] flex-col gap-1", mine ? "items-end" : "items-start")}>
+        {/* Above the answer, not inside it: it is provenance, not prose, and a reader scanning
+            for the answer itself should be able to skip it in one glance. */}
+        {trace && (
+          <span className="px-1 text-muted-foreground text-xs" data-testid="chat-trace">
+            {trace}
+          </span>
+        )}
+        {/* TWO RENDERERS, because the two authors write differently — the same split the ask
           console makes, and for the same reason.
 
           An ANSWER is full GFM. Models write headings, bullet lists, fenced code and tables, and
@@ -177,21 +213,22 @@ function Bubble({ msg }: { msg: ChatMessage }) {
 
           A PERSON's message is not GFM and should not be reflowed as if it were, so it keeps the
           inline renderer: their line breaks stay theirs, and a stray "#" is a "#". */}
-      <div
-        className={cn(
-          "max-w-[85%] rounded-lg px-3 py-2 text-sm [word-break:break-word]",
-          // The chrome has to match the MARKUP: an answer renders real <ul>/<h2>/<pre>, and the
-          // comment bubble styles none of them, so a correct list came out unmarked under a
-          // heading the same size as the body.
-          mine
-            ? "cmt-body bg-primary text-primary-foreground"
-            : cn(ANSWER_PROSE, "bg-muted text-foreground"),
-        )}
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes; answerMdToHtml is xss-whitelisted.
-        dangerouslySetInnerHTML={{
-          __html: mine ? mdToHtml(msg.body_md) : answerMdToHtml(msg.body_md),
-        }}
-      />
+        <div
+          className={cn(
+            "rounded-lg px-3 py-2 text-sm [word-break:break-word]",
+            // The chrome has to match the MARKUP: an answer renders real <ul>/<h2>/<pre>, and the
+            // comment bubble styles none of them, so a correct list came out unmarked under a
+            // heading the same size as the body.
+            mine
+              ? "cmt-body bg-primary text-primary-foreground"
+              : cn(ANSWER_PROSE, "bg-muted text-foreground"),
+          )}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: mdToHtml escapes; answerMdToHtml is xss-whitelisted.
+          dangerouslySetInnerHTML={{
+            __html: mine ? mdToHtml(msg.body_md) : answerMdToHtml(msg.body_md),
+          }}
+        />
+      </div>
       {/* ON THE ANSWER ONLY, and only on hover. A person's own message is already in their head;
           an answer is the thing they came to take away. Kept out of the flow until pointed at, so
           the transcript stays a transcript rather than a wall of controls. */}

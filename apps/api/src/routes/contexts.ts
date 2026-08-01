@@ -226,6 +226,7 @@ export const contextRoutes = (ctx: AppContext) => {
       outcome: res.outcome,
       cost_micro_usd: res.costMicroUsd,
       model: res.model,
+      tools: res.tools,
     })
   }
 
@@ -547,6 +548,12 @@ export const contextRoutes = (ctx: AppContext) => {
         .array(z.object({ short_id: z.string(), title: z.string() }))
         .optional()
         .describe("Artifacts the agent cited, each linkable by short_id."),
+      tools: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Which tools the turn actually ran, in order of first use. Names only: arguments can carry the contents of a private document, and this is persisted on the message. This is what lets a surface show HOW an answer was reached rather than only asserting that it searched.",
+        ),
       model: z
         .object({ id: z.string(), label: z.string() })
         .optional()
