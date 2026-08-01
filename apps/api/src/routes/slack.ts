@@ -514,6 +514,11 @@ export const slackRoutes = (ctx: AppContext) => {
         user_id: state.uid,
         team_id: identity.teamId,
         slack_user_id: identity.slackUserId,
+        // DELIBERATE, so it outranks anything inferred — and this write replaces a `miss`
+        // row on the same (team_id, slack_user_id), which is exactly how linking fixes a
+        // person the email path could not place.
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
       return c.redirect("/settings/integrations")

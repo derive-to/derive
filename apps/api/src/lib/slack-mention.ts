@@ -24,9 +24,22 @@ import { postWithRecovery, resolveBotToken } from "./slack-delivery"
  *  context above it and the answer belongs to that, not to the channel's whole day. */
 const THREAD_CONTEXT = 12
 
-/** Slack users we have already told how to identify themselves, so the prompt is not repeated at
- *  somebody on every message. Deliberately in-memory and deliberately forgetful — see the use. */
-const promptedToLink = new Set<string>()
+/** The Slack message ts recorded on an asker message, or null. Tolerates unparseable meta:
+ *  a missing marker means "not seen", which costs a duplicate at worst and never a lost turn. */
+const parseSlackTs = (raw: string | null | undefined): string | null => {
+  if (!raw) return null
+  try {
+    return (JSON.parse(raw) as { slack?: { ts?: string } }).slack?.ts ?? null
+  } catch {
+    return null
+  }
+}
+
+/** How long a failed identity lookup is trusted before we ask Slack again. Long enough that
+ *  nobody gets a wall of identical prompts, short enough that somebody who joins Derive
+ *  tomorrow starts working without intervention. Linking short-circuits it entirely: a link
+ *  row replaces the miss and is checked first. */
+const MISS_TTL_MS = 24 * 60 * 60 * 1000
 
 export interface SlackMentionPayload {
   teamId: string
@@ -137,13 +150,59 @@ export const handleSlackMention = async (
    * still checked either way, so resolving an identity never grants access on its own — a
    * matched email with no seat in this workspace is still nobody here.
    */
-  const linkedFor = async (orgId: string, botToken: string) => {
-    const link = await meta.getSlackUserLinkBySlackId(p.teamId, p.userId).catch(() => null)
-    if (link) return await seatFor(orgId, link.user_id)
+  /**
+   * WHO IS ASKING — optimistically, and quietly once we know we cannot tell.
+   *
+   * An explicit link always wins: it is a deliberate statement about identity and survives an
+   * email change. Absent one, the Slack profile email resolves the seat, because the point of
+   * answering in Slack is that somebody is already there and "go to a settings page and come
+   * back" is exactly where they stop. Email is the identifier both systems already hold and the
+   * workspace's own directory verified. Never a display name — those are neither unique nor
+   * stable nor hard to set to somebody else's.
+   *
+   * A MISS IS REMEMBERED, on the same row, so a person we cannot place is asked once rather than
+   * on every message, and we stop calling Slack about them. It ages out (MISS_TTL_MS) so a Derive
+   * account created tomorrow starts working on its own, and any success replaces it outright —
+   * self-healing, no cleanup job.
+   *
+   * Returns the seat, or a reason: "unknown" (tell them how to fix it) vs "recent-miss" (already
+   * told them; say nothing).
+   */
+  const linkedFor = async (
+    orgId: string,
+    botToken: string,
+  ): Promise<
+    { seat: Awaited<ReturnType<typeof seatFor>> } | { seat: null; why: "unknown" | "recent-miss" }
+  > => {
+    const known = await meta.getSlackIdentityState(p.teamId, p.userId).catch(() => null)
+    if (known && known.origin !== "miss") {
+      const seat = await seatFor(orgId, known.user_id)
+      if (seat) return { seat }
+      // A link to somebody with no seat HERE is not a miss about their identity — they may well
+      // be a member of another workspace on this team — so it is not remembered.
+      return { seat: null, why: "unknown" }
+    }
+    if (known?.origin === "miss" && Date.now() - Date.parse(known.checked_at) < MISS_TTL_MS)
+      return { seat: null, why: "recent-miss" }
+
     const email = await slackUserEmail(botToken, p.userId)
-    if (!email) return null
-    const user = await meta.findUserByEmail(email).catch(() => null)
-    return user ? await seatFor(orgId, user.id) : null
+    const user = email ? await meta.findUserByEmail(email).catch(() => null) : null
+    const seat = user ? await seatFor(orgId, user.id) : null
+    await meta
+      .setSlackUserLink({
+        id: known?.id ?? newId("sul"),
+        org_id: orgId,
+        // Empty on a miss: there is nobody to point at, which is why the filtered accessors
+        // never hand this row to code that would try to use it.
+        user_id: seat?.id ?? "",
+        team_id: p.teamId,
+        slack_user_id: p.userId,
+        origin: seat ? "email" : "miss",
+        created_at: known?.created_at ?? new Date().toISOString(),
+        checked_at: new Date().toISOString(),
+      })
+      .catch(() => {})
+    return seat ? { seat } : { seat: null, why: "unknown" }
   }
 
   // WHICH WORKSPACE. One Slack team can back several Derive workspaces, so the channel's own
@@ -196,25 +255,20 @@ export const handleSlackMention = async (
     return quiet("ambiguous workspace")
   }
 
-  const asker = await linkedFor(install.org_id, bot.token)
+  const resolved = await linkedFor(install.org_id, bot.token)
+  const asker = resolved.seat
   if (!asker) {
-    // SAY IT ONCE. Somebody we cannot resolve will keep asking — that is the normal thing to do
-    // when a bot ignores you — and answering every message with the same paragraph turns a
-    // one-time setup step into a wall of identical text. They are told, clearly, with a link
-    // that works; after that, silence is kinder than repetition.
-    //
-    // Best-effort by construction: this lives in the isolate, so a deploy or a cold start says
-    // it again. That is the right failure direction. Forgetting means one extra prompt;
-    // remembering too well would mean somebody who linked and came back gets nothing.
-    if (!promptedToLink.has(`${p.teamId}:${p.userId}`)) {
-      promptedToLink.add(`${p.teamId}:${p.userId}`)
-      await say(
-        `I answer with *your* permissions, so I need to know who you are. ` +
-          `<${deps.baseUrl}/settings/integrations|Link your Derive account> and ask me again.\n\n` +
-          `If your Slack email already matches your Derive account, linking is not needed — ` +
-          `check that the two match.`,
-      )
-    }
+    if ("why" in resolved && resolved.why === "recent-miss") return quiet("asker not linked (told)")
+    // SAY IT ONCE. Somebody a bot ignores will keep asking — that is the normal thing to do —
+    // and answering every message with the same paragraph turns a one-time setup step into a
+    // wall of identical text. They are told, clearly, with a link that works; after that the
+    // miss row above keeps us quiet until it ages out or they fix it.
+    await say(
+      `I answer with *your* permissions, so I need to know who you are. ` +
+        `<${deps.baseUrl}/settings/integrations|Link your Derive account> and ask me again.\n\n` +
+        `If your Slack email already matches your Derive account, linking is not needed — ` +
+        `check that the two match.`,
+    )
     return quiet("asker not linked")
   }
 
@@ -252,12 +306,27 @@ export const handleSlackMention = async (
 
   let sessionId: string
   if (existing) {
+    // SLACK DELIVERS AT LEAST ONCE. A redelivery (30s/1min/5min later, routinely on another
+    // isolate) lands here, finds the live session, and would append the same question again —
+    // a second paid turn and a second answer posted into the thread. dedupe_key does not stop
+    // it: that key is per-THREAD, deliberately, so follow-ups continue one conversation.
+    //
+    // So the guard is the Slack message ts, scanned off the transcript — the same shape the
+    // ingest path uses (slack-comments.ts). It is DB state, which is what makes it survive the
+    // retry landing somewhere else. The marker is written IN THE SAME insert as the message,
+    // for the reason spelled out there: written afterwards, a retry racing the first attempt
+    // would not see it.
+    const already = (await meta.listSessionMessages(existing.id).catch(() => [])).some(
+      (m) => parseSlackTs(m.meta) === p.ts,
+    )
+    if (already) return quiet("duplicate slack delivery")
     await meta.appendFollowupReopen({
       id: newId("sm"),
       session_id: existing.id,
       author_kind: "asker",
       author_id: asker.id,
       body_md: question,
+      meta: JSON.stringify({ slack: { ts: p.ts } }),
     })
     sessionId = existing.id
   } else {
@@ -272,7 +341,13 @@ export const handleSlackMention = async (
         // A Derive link in the message pins the document; otherwise the workspace is the ground.
         subject_ref: null,
       },
-      { id: newId("sm"), author_kind: "asker", author_id: asker.id, body_md: question },
+      {
+        id: newId("sm"),
+        author_kind: "asker",
+        author_id: asker.id,
+        body_md: question,
+        meta: JSON.stringify({ slack: { ts: p.ts } }),
+      },
       "open",
     )
     sessionId = created.session.id

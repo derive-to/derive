@@ -329,6 +329,8 @@ describe("slack account linking (OIDC)", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U777",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const r = await app.request("/v1/slack/link", { method: "DELETE", headers: as(owner.email) })
@@ -577,6 +579,8 @@ describe("slack events endpoint", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U777",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     vi.stubGlobal(
@@ -934,6 +938,8 @@ describe("/derive subscription subcommands", () => {
       user_id: role === "owner" ? owner.id : editor.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
   }
@@ -1114,6 +1120,8 @@ describe("slack link unfurls", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const artifact = await meta.createArtifact({
@@ -1194,6 +1202,8 @@ describe("slack link unfurls", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const artifact = await meta.createArtifact({
@@ -1552,6 +1562,8 @@ describe("slack slash command (/derive)", () => {
       user_id: userId,
       team_id: "T1",
       slack_user_id: slackUserId,
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
   }
@@ -1811,6 +1823,8 @@ describe("Save to Derive", () => {
         user_id: owner.id,
         team_id: "T1",
         slack_user_id: "U1",
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
     const artifact = await meta.createArtifact({
@@ -2034,6 +2048,8 @@ describe("entity_details_requested (the flexpane)", () => {
         user_id: owner.id,
         team_id: "T1",
         slack_user_id: "U1",
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
     const artifact = await meta.createArtifact({

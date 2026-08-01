@@ -52,6 +52,8 @@ const setup = async () => {
     user_id: "u-ed",
     team_id: "T1",
     slack_user_id: "U1",
+    origin: "oauth" as const,
+    checked_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
   })
   await meta.setSlackUserLink({
@@ -60,6 +62,8 @@ const setup = async () => {
     user_id: "u-nobody",
     team_id: "T1",
     slack_user_id: "U2",
+    origin: "oauth" as const,
+    checked_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
   })
   const deps = {

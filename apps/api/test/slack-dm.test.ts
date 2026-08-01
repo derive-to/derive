@@ -282,6 +282,8 @@ describe("makeSlackDmSender (delivery)", () => {
       user_id: linked.id,
       team_id: "T1",
       slack_user_id: "U-LINKED",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const { artifact, comment } = await artifactAndComment(meta)

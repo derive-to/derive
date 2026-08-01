@@ -1220,13 +1220,23 @@ export interface IntegrationStore {
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
   /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
   setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
-  /** Resolve a Slack user (team + user id) to the Derive user who linked it, or null. */
+  /**
+   * Resolve a Slack user (team + user id) to the Derive user who linked it, or null.
+   *
+   * NEVER returns a `miss` row. Every caller of this treats a non-null result as a real
+   * Derive user — one of them DMs `user_id` directly — so a miss leaking through here would
+   * be a message sent to an id that does not exist. Ask `getSlackIdentityState` when you
+   * actually want to know whether we have looked before.
+   */
   getSlackUserLinkBySlackId(
     teamId: string,
     slackUserId: string,
   ): Promise<SlackUserLinkRecord | null>
-  /** The Slack identity a Derive user linked for a team, or null. */
+  /** The Slack identity a Derive user linked for a team, or null. Also never a `miss`. */
   getSlackUserLinkByUser(teamId: string, userId: string): Promise<SlackUserLinkRecord | null>
+  /** The raw row INCLUDING a `miss`, for the one lane that needs to know whether resolving
+   *  this Slack user has already been tried and failed. */
+  getSlackIdentityState(teamId: string, slackUserId: string): Promise<SlackUserLinkRecord | null>
   /** Link a Derive user to a Slack identity (idempotent on (team_id, slack_user_id)). */
   setSlackUserLink(l: SlackUserLinkRecord): Promise<void>
   /** Remove a Derive user's Slack link for a team. */
@@ -3118,13 +3128,32 @@ export interface SlackThreadLinkRecord {
  *  account instead of guessing by email. Keyed on (team_id, slack_user_id): a Slack user id
  *  is unique per workspace, and one Derive user can link across several workspaces. `org_id`
  *  is the workspace the link was made from (context, not part of the identity key). */
+export type SlackLinkOrigin = "oauth" | "email" | "miss"
+
 export interface SlackUserLinkRecord {
   id: string
   org_id: string
   user_id: string
   team_id: string
   slack_user_id: string
+  /**
+   * HOW this identity was established — and why a MISS lives in the same table.
+   *
+   * "oauth" the person deliberately linked through Slack sign-in.
+   * "email" inferred from their Slack profile email, which resolved to a seat.
+   * "miss"  we looked and found nobody. NOT a link: it is the memo that stops us asking
+   *         Slack and re-prompting the person on every message, and it ages out.
+   *
+   * A miss and a link occupy the SAME (team_id, slack_user_id) row, so a later success
+   * replaces the miss through the ordinary upsert. Self-healing, with no cleanup job.
+   */
+  origin: SlackLinkOrigin
+  /** `user_id` is empty on a miss — there is nobody to point at. Never read it without
+   *  checking `origin`, which is exactly what the filtered accessors below do for you. */
   created_at: string
+  /** When we last CHECKED. Distinct from created_at, which the upsert preserves: a miss
+   *  has to be able to age out and be retried. */
+  checked_at: string
 }
 
 /** Where a subscription's events come from: the whole workspace, or one collection. */

@@ -37,6 +37,8 @@ const setup = async (name: string, opts: { role?: string; link?: boolean } = {})
       user_id: "u-1",
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
   if (opts.role)

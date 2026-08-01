@@ -3028,6 +3028,10 @@ export class PgMetaStore implements MetaStore {
       .delete(slackSubscription)
       .where(and(eq(slackSubscription.org_id, orgId), eq(slackSubscription.channel_id, channelId)))
   }
+  // A `miss` shares this table with real links, so both getters filter it out HERE rather
+  // than at their call sites: every caller treats a non-null result as a real Derive user,
+  // and one of them DMs `user_id` directly. Filtering once, in the store, is what lets that
+  // stay true. `getSlackIdentityState` is the deliberate way to see a miss.
   async getSlackUserLinkBySlackId(
     teamId: string,
     slackUserId: string,
@@ -3035,7 +3039,13 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .select()
       .from(slackUserLink)
-      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.slack_user_id, slackUserId)))
+      .where(
+        and(
+          eq(slackUserLink.team_id, teamId),
+          eq(slackUserLink.slack_user_id, slackUserId),
+          ne(slackUserLink.origin, "miss"),
+        ),
+      )
     return rows[0] ?? null
   }
   async getSlackUserLinkByUser(
@@ -3045,10 +3055,27 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .select()
       .from(slackUserLink)
-      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.user_id, userId)))
+      .where(
+        and(
+          eq(slackUserLink.team_id, teamId),
+          eq(slackUserLink.user_id, userId),
+          ne(slackUserLink.origin, "miss"),
+        ),
+      )
+    return rows[0] ?? null
+  }
+  async getSlackIdentityState(
+    teamId: string,
+    slackUserId: string,
+  ): Promise<SlackUserLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(slackUserLink)
+      .where(and(eq(slackUserLink.team_id, teamId), eq(slackUserLink.slack_user_id, slackUserId)))
     return rows[0] ?? null
   }
   async setSlackUserLink(l: SlackUserLinkRecord): Promise<void> {
+    // created_at is preserved (first seen); checked_at rides in `set` so a miss can age.
     const { id: _i, created_at: _c, ...set } = l
     await this.db
       .insert(slackUserLink)

@@ -4696,5 +4696,95 @@ export function runStoreContract(
         await store.updateConnectionCredential(cn.id, ORG, { secret_enc: "v1.second" }, null),
       ).toBeNull()
     })
+
+    // A MISS SHARES THE LINK TABLE, and must never escape as a link.
+    //
+    // Eleven call sites treat a non-null result from getSlackUserLinkBySlackId as a real Derive
+    // user — one of them DMs `user_id` directly, which on a miss is the empty string. The filter
+    // therefore belongs in the STORE, and it belongs in this contract suite so all three dialects
+    // prove it rather than one.
+    describe("slack identity: links vs misses", () => {
+      const linkRow = (over: Record<string, unknown> = {}) => ({
+        id: `sul-${Math.abs(Date.now() % 100000)}-${String(over.slack_user_id ?? "U1")}`,
+        org_id: ORG,
+        user_id: "u-1",
+        team_id: "T1",
+        slack_user_id: "U1",
+        origin: "oauth" as const,
+        created_at: new Date().toISOString(),
+        checked_at: new Date().toISOString(),
+        ...over,
+      })
+
+      it("hands back a real link", async () => {
+        await store.setSlackUserLink(linkRow({ slack_user_id: "U-real" }))
+        expect((await store.getSlackUserLinkBySlackId("T1", "U-real"))?.user_id).toBe("u-1")
+        expect((await store.getSlackUserLinkByUser("T1", "u-1"))?.slack_user_id).toBe("U-real")
+      })
+
+      it("HIDES a miss from both link accessors", async () => {
+        await store.setSlackUserLink(
+          linkRow({ slack_user_id: "U-miss", user_id: "", origin: "miss" as const }),
+        )
+        expect(await store.getSlackUserLinkBySlackId("T1", "U-miss")).toBeNull()
+        expect(await store.getSlackUserLinkByUser("T1", "")).toBeNull()
+      })
+
+      it("shows the miss to the accessor that asks for it, with checked_at", async () => {
+        const at = new Date(Date.now() - 60_000).toISOString()
+        await store.setSlackUserLink(
+          linkRow({
+            slack_user_id: "U-seen",
+            user_id: "",
+            origin: "miss" as const,
+            checked_at: at,
+          }),
+        )
+        const state = await store.getSlackIdentityState("T1", "U-seen")
+        expect(state?.origin).toBe("miss")
+        expect(state?.checked_at).toBe(at)
+      })
+
+      it("a later success REPLACES the miss on the same row — self-healing", async () => {
+        await store.setSlackUserLink(
+          linkRow({ slack_user_id: "U-fix", user_id: "", origin: "miss" as const }),
+        )
+        expect(await store.getSlackUserLinkBySlackId("T1", "U-fix")).toBeNull()
+        await store.setSlackUserLink(
+          linkRow({ slack_user_id: "U-fix", user_id: "u-9", origin: "email" as const }),
+        )
+        // No cleanup job: the upsert on (team_id, slack_user_id) did it.
+        expect((await store.getSlackUserLinkBySlackId("T1", "U-fix"))?.user_id).toBe("u-9")
+        expect((await store.getSlackIdentityState("T1", "U-fix"))?.origin).toBe("email")
+      })
+
+      it("refreshes checked_at on re-miss while PRESERVING created_at", async () => {
+        // created_at is first-seen and the upsert strips it; checked_at is what ages a miss out,
+        // so it has to move or a miss could never be retried a second time.
+        const old = new Date(Date.now() - 5 * 60_000).toISOString()
+        await store.setSlackUserLink(
+          linkRow({
+            slack_user_id: "U-age",
+            user_id: "",
+            origin: "miss" as const,
+            created_at: old,
+            checked_at: old,
+          }),
+        )
+        const now = new Date().toISOString()
+        await store.setSlackUserLink(
+          linkRow({
+            slack_user_id: "U-age",
+            user_id: "",
+            origin: "miss" as const,
+            created_at: now,
+            checked_at: now,
+          }),
+        )
+        const state = await store.getSlackIdentityState("T1", "U-age")
+        expect(state?.created_at).toBe(old)
+        expect(state?.checked_at).toBe(now)
+      })
+    })
   })
 }
