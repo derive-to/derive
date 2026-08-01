@@ -62,9 +62,11 @@ const cfg = loadConfig()
 // A dev server must never point at a remote database silently. The .env load
 // above makes that a one-line accident: a production DATABASE_URL left in the
 // repo root (say, from debugging an outage) turns every `pnpm dev` — and the
-// e2e harness — into a writer against prod. It happened. `pnpm dev` runs under
-// npm_lifecycle_event="dev"; deployments launch the entry directly, so they are
-// unaffected by this gate.
+// e2e harness — into a writer against prod. It happened. Matched on the whole `dev*`
+// family, not `dev` alone: a sibling script (`dev:prod-db`, and whatever comes next)
+// arrives with its own lifecycle event, and keying on one exact string would let any
+// of them walk straight past this. Deployments launch the entry directly with no
+// lifecycle event, so they are unaffected.
 const LOCAL_DB_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0"])
 const dbHost = (() => {
   try {
@@ -77,7 +79,7 @@ const dbHost = (() => {
 })()
 const localDb = !!dbHost && (LOCAL_DB_HOSTS.has(dbHost) || dbHost.endsWith(".localhost"))
 const remoteDb = !!cfg.databaseUrl && !localDb
-if (remoteDb && process.env.npm_lifecycle_event === "dev") {
+if (remoteDb && (process.env.npm_lifecycle_event ?? "").startsWith("dev")) {
   if (!allowRemoteDbFromShell) {
     log.error(
       "refusing to start: dev mode with a remote DATABASE_URL (set DERIVE_ALLOW_REMOTE_DB=1 to override)",
@@ -332,7 +334,11 @@ const channelSenders: ChannelSenders = {
   // write the Derive comment here, off the ack path, publishing to the shared bus.
   slack_ingest: makeSlackIngestSender(meta, authSecret, backplane),
 }
-const webhookWorker = startWebhookWorker(meta, nodeDnsGuard, channelSenders)
+// Off only when DERIVE_BACKGROUND_WORKERS=0 — a local process sharing a remote database
+// must not drain that database's delivery outbox out from under the real deployment.
+const webhookWorker = cfg.backgroundWorkers
+  ? startWebhookWorker(meta, nodeDnsGuard, channelSenders)
+  : undefined
 
 // Preview render worker: an in-process interval + poke that renders screenshot jobs via
 // Playwright Chromium. Only started when DERIVE_PREVIEWS=true; when off the render queue
@@ -476,7 +482,9 @@ const app = createApp({
   publishRate: cfg.publishRate,
   commentRate: cfg.commentRate,
   // Deliver freshly enqueued events immediately instead of on the next interval.
-  pokeWebhooks: webhookWorker.poke,
+  // No worker (DERIVE_BACKGROUND_WORKERS=0) ⇒ nothing to poke; events still enqueue,
+  // and the real deployment's worker delivers them.
+  pokeWebhooks: webhookWorker?.poke,
   // Enqueue a render job on publish and drain on demand when previews are enabled.
   renderPreviews: cfg.previews,
   pokePreviews: previewWorker?.poke,
@@ -516,26 +524,32 @@ const maintain = async () => {
     .pruneStaleOAuthClients(new Date(Date.now() - OAUTH_ANON_CLIENT_TTL_MS).toISOString())
     .catch(() => 0)
 }
-void maintain()
-pruneTimer = setInterval(maintain, 24 * 3600_000)
-pruneTimer.unref?.()
+if (cfg.backgroundWorkers) {
+  // Note this fires on BOOT as well as on the interval, and it DELETES — which is why
+  // it is gated rather than merely slowed for a process pointed at a remote database.
+  void maintain()
+  pruneTimer = setInterval(maintain, 24 * 3600_000)
+  pruneTimer.unref?.()
+}
 
 // Expired anonymous drafts (the claim flow): swept hourly — the 24h maintenance
 // cadence is too coarse for a 72h TTL. The serve path already 410s an expired
 // draft, so this only reclaims rows; the mint route also sweeps opportunistically.
-const draftSweepTimer = setInterval(
-  () => void sweepExpiredDrafts(meta, search).catch(() => 0),
-  3600_000,
-)
-draftSweepTimer.unref?.()
+const draftSweepTimer = cfg.backgroundWorkers
+  ? setInterval(() => void sweepExpiredDrafts(meta, search).catch(() => 0), 3600_000)
+  : undefined
+draftSweepTimer?.unref?.()
 
 // Resume any GitHub sync left mid-flight: once on boot (a restart mid-sync) and on a
 // short interval (a self-heal backstop, mirroring the edge cron). The persisted
 // file-map makes resume idempotent, and the runner dedupes already-running loops, so
 // this is safe to call repeatedly. unref'd so it never holds the process open.
-void syncRunner.resumeStalled()
-const syncResumeTimer = setInterval(() => void syncRunner.resumeStalled(), 60_000)
-syncResumeTimer.unref?.()
+let syncResumeTimer: ReturnType<typeof setInterval> | undefined
+if (cfg.backgroundWorkers) {
+  void syncRunner.resumeStalled()
+  syncResumeTimer = setInterval(() => void syncRunner.resumeStalled(), 60_000)
+  syncResumeTimer.unref?.()
+}
 
 // EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS=true, default off): this API process becomes
 // the executor host. A minutely tick materializes due schedules, reclaims runs whose executor
@@ -598,10 +612,13 @@ const server = serve({ fetch: app.fetch, port: cfg.port }, () => {
   log.info("derive api listening", {
     port: cfg.port,
     base_url: cfg.baseUrl,
-    meta: cfg.databaseUrl ? "postgres" : `sqlite (${cfg.dataDir})`,
+    // Name the HOST, not just the driver: "postgres" alone once read the same for a
+    // local database and a production one, and nobody could tell for a day.
+    meta: cfg.databaseUrl ? `postgres (${dbHost ?? "unparseable"})` : `sqlite (${cfg.dataDir})`,
     blobs: cfg.objectStoreUrl ? "S3/R2" : `local disk (${cfg.dataDir})`,
     web: cfg.serveWeb ? "bundled SPA" : "API only",
     spaces: `multi-workspace (bootstrap org ${defaultOrg})`,
+    workers: cfg.backgroundWorkers ? "on" : "OFF (DERIVE_BACKGROUND_WORKERS=0)",
   })
 })
 
@@ -616,13 +633,13 @@ const shutdown = makeShutdown({
       "closeIdleConnections" in server ? () => server.closeIdleConnections() : undefined,
   },
   stopWorker: () => {
-    webhookWorker.stop()
+    webhookWorker?.stop()
     previewWorker?.stop()
   },
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
-    clearInterval(syncResumeTimer)
-    clearInterval(draftSweepTimer)
+    if (syncResumeTimer) clearInterval(syncResumeTimer)
+    if (draftSweepTimer) clearInterval(draftSweepTimer)
   },
   closeStores,
   log,
