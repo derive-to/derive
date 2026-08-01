@@ -5,13 +5,19 @@ import type { SortMode } from "@derive/core"
 // the `SortMode` type keeps them honest at compile time.
 export const DEFAULT_SORT: SortMode = "updated"
 
+// Three, each naming what it orders by. The menu used to offer six, and two of them —
+// "Newest" (`updated`) and "Recently updated" (`revised`) — were indistinguishable from
+// their labels: both order on last-activity time, and `revised` only differs by floating
+// docs with a second version above the rest. Nobody could predict which they were picking,
+// so `revised` is out of the menu. It stays a valid `?sort=` value on the API, which is a
+// wire contract, not a UI affordance.
+//
+// `created` was always a valid core mode and simply was not offered; it is the honest
+// "Recently created", distinct from last activity in the way people expect.
 export const LIBRARY_SORTS: { value: SortMode; label: string }[] = [
-  { value: "updated", label: "Newest" },
-  { value: "updated-asc", label: "Oldest" },
-  { value: "revised", label: "Recently updated" },
-  { value: "revised-asc", label: "Least recently updated" },
+  { value: "updated", label: "Recently active" },
+  { value: "created", label: "Recently created" },
   { value: "az", label: "Title A–Z" },
-  { value: "za", label: "Title Z–A" },
 ]
 
 const VALUES = new Set<string>(LIBRARY_SORTS.map((s) => s.value))
@@ -21,7 +27,7 @@ const VALUES = new Set<string>(LIBRARY_SORTS.map((s) => s.value))
 export const parseLibrarySort = (raw: unknown): SortMode | undefined =>
   typeof raw === "string" && VALUES.has(raw) && raw !== DEFAULT_SORT ? (raw as SortMode) : undefined
 
-/** The menu label for a mode (falls back to the default's label for an unknown value — e.g.
- *  the `created` store default, which the menu doesn't list). */
+/** The menu label for a mode (falls back to the default's label for a value the menu no
+ *  longer lists — e.g. `revised`, or a stale `?sort=` from an old bookmark). */
 export const sortLabel = (mode: SortMode): string =>
-  LIBRARY_SORTS.find((s) => s.value === mode)?.label ?? "Newest"
+  LIBRARY_SORTS.find((s) => s.value === mode)?.label ?? "Recently active"
