@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { visibleArtifacts } from "../src/lib/visibility"
 import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The sharing & visibility model end-to-end: the workspace-only default, the
@@ -356,5 +357,55 @@ describe("the last owner is immovable", () => {
       await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
     ).json()
     expect(detail.my_role).toBe("owner")
+  })
+})
+
+// The gate chunks its candidate list to stay inside a dialect's parameter cap. It used to
+// hard-code the SMALLEST cap any driver has (D1's), which made Postgres split a
+// 200-candidate search into three sequential round trips to respect a limit it does not
+// have. A store now declares its own bound — and the gate must return the SAME rows
+// whichever bound it uses, because a chunking change that silently dropped a candidate
+// would look exactly like a relevance change.
+describe("the visibility gate honours the store's own id bound", () => {
+  const scope = { orgId: "org_chunk", viewerId: "u_chunk", publicOnly: false }
+
+  it("asks for one query when the store can take the whole list, several when it cannot", async () => {
+    const ids = Array.from({ length: 200 }, (_, i) => `a_${i}`)
+    const calls: number[] = []
+    const fake = (bound?: number) => ({
+      idsPerQuery: bound === undefined ? undefined : () => bound,
+      listArtifacts: async (opts?: { ids?: string[] }) => {
+        calls.push(opts?.ids?.length ?? 0)
+        return (opts?.ids ?? []).map((id) => ({ id, password_hash: null })) as never
+      },
+    })
+
+    calls.length = 0
+    const wide = await visibleArtifacts(fake(1000) as never, ids, scope)
+    expect(calls).toEqual([200])
+
+    calls.length = 0
+    const narrow = await visibleArtifacts(fake(undefined) as never, ids, scope)
+    expect(calls).toEqual([90, 90, 20])
+
+    // THE REGRESSION THIS EXISTS FOR. Wrappers around the store assume every member is a
+    // method, so a store can hand back something that is not a number at all. Unvalidated,
+    // that made the chunk size NaN — which slices an EMPTY id list, so the gate reported
+    // "no matches" rather than failing. It must fall back to the safe default instead.
+    calls.length = 0
+    const bogus = {
+      idsPerQuery: () => "nonsense" as unknown as number,
+      listArtifacts: async (opts?: { ids?: string[] }) => {
+        calls.push(opts?.ids?.length ?? 0)
+        return (opts?.ids ?? []).map((id) => ({ id, password_hash: null })) as never
+      },
+    }
+    const safe = await visibleArtifacts(bogus as never, ids, scope)
+    expect(calls).toEqual([90, 90, 20])
+    expect(safe).toHaveLength(200)
+
+    // Same rows either way — the bound is a transport detail, never a filter.
+    expect(wide.map((a) => a.id)).toEqual(narrow.map((a) => a.id))
+    expect(wide).toHaveLength(200)
   })
 })

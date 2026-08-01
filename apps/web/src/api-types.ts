@@ -3276,7 +3276,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             subscriptions: components["schemas"]["SlackSubscription"][];
-                            event_options: ("comment.created" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested")[];
+                            event_options: ("comment.created" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested" | "review.requested" | "review.sent_back" | "review.approved")[];
                         };
                     };
                 };
@@ -3482,6 +3482,11 @@ export interface paths {
                             settings: components["schemas"]["OrgSettings"];
                             notifications: components["schemas"]["Notification"][];
                             unread: number;
+                            /** @description The publishing-blocked verdict, or null when the workspace is free to publish. Same value GET /v1/billing reports as `blocked`. */
+                            blocked: {
+                                code: string;
+                                message: string;
+                            } | null;
                         };
                     };
                 };

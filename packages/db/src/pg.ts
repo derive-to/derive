@@ -38,6 +38,7 @@ import type {
   ListEnrichment,
   ListEnrichmentOpts,
   Listed,
+  ListPageOpts,
   MembershipRecord,
   MetaStore,
   ModelCredentialRecord,
@@ -120,6 +121,7 @@ import type {
   WorkspaceSummary,
 } from "@derive/core"
 import {
+  BILLABLE_ROLES,
   GLOBAL_FOLLOW_ORG,
   LINKS_FACT,
   maxRole,
@@ -425,6 +427,13 @@ const mapOverviewRows = (
 }
 
 export class PgMetaStore implements MetaStore {
+  /** Postgres binds an id array as ONE parameter and caps a statement at 65535, so the
+   *  shared visibility gate does not need to split a candidate list the way D1 does. Well
+   *  under the cap, and comfortably above the deepest candidate cap the search uses (200). */
+  idsPerQuery() {
+    return 1000
+  }
+
   private constructor(
     private pool: Pool,
     private db: NodePgDatabase<typeof schema>,
@@ -652,8 +661,12 @@ export class PgMetaStore implements MetaStore {
     // open threads, favorite, settings, managed) collapsed into one UNION ALL. Whole
     // rows ride as JSON in `doc` so branches with different column sets can share the
     // union; the scalar branches carry a count or a marker row.
-    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
-      `SELECT 'version' kind, row_to_json(v) doc FROM version v WHERE v.artifact_id = $1
+    // The byline arm reads Better Auth's `user` table, which this package's schema does
+    // not own — a D1-only or db-package-only deployment may not have it at all. Same
+    // shape as listEnrichment's directory branches: try the whole statement, and on
+    // failure retry without that one arm rather than losing the other seven. The caller
+    // then simply gets no bylines, which is exactly what it got before this arm existed.
+    const CORE_BRANCHES = `SELECT 'version' kind, row_to_json(v) doc FROM version v WHERE v.artifact_id = $1
        UNION ALL
        SELECT 'tag', to_json(t.tag) FROM artifact_tag t WHERE t.artifact_id = $1
        UNION ALL
@@ -669,10 +682,27 @@ export class PgMetaStore implements MetaStore {
        UNION ALL
        SELECT 'settings', to_json(s.settings) FROM org_settings s WHERE s.org_id = $3
        UNION ALL
-       SELECT 'source', to_json(r.files) FROM repo_source r WHERE r.org_id = $3`,
-      [artifactId, viewerId, orgId],
-    )
+       SELECT 'source', to_json(r.files) FROM repo_source r WHERE r.org_id = $3`
+    // The live rows behind every author_id on this artifact and its versions. This was
+    // its own resolveUserBylines round trip at the end of the record route, sequential
+    // with everything above it; as an arm it costs nothing extra.
+    const BYLINE_BRANCH = `
+       UNION ALL
+       SELECT 'byline', row_to_json(u) FROM "user" u WHERE u.id IN (
+         SELECT v.author_id FROM version v WHERE v.artifact_id = $1 AND v.author_id IS NOT NULL
+         UNION
+         SELECT a.author_id FROM artifact a WHERE a.id = $1 AND a.author_id IS NOT NULL)`
+    const params = [artifactId, viewerId, orgId]
+    let rows: { kind: string; doc: unknown }[]
+    try {
+      rows = (
+        await this.pool.query<{ kind: string; doc: unknown }>(CORE_BRANCHES + BYLINE_BRANCH, params)
+      ).rows
+    } catch {
+      rows = (await this.pool.query<{ kind: string; doc: unknown }>(CORE_BRANCHES, params)).rows
+    }
     const versions: VersionRecord[] = []
+    const bylines: { id: string; name: string | null; username: string | null }[] = []
     const tags: string[] = []
     const collectionIds: string[] = []
     const proposals: ProposalRecord[] = []
@@ -684,6 +714,9 @@ export class PgMetaStore implements MetaStore {
       switch (r.kind) {
         case "version":
           versions.push(r.doc as VersionRecord)
+          break
+        case "byline":
+          bylines.push(r.doc as { id: string; name: string | null; username: string | null })
           break
         case "tag":
           tags.push(r.doc as string)
@@ -718,6 +751,7 @@ export class PgMetaStore implements MetaStore {
     tags.sort()
     return {
       versions,
+      bylines,
       tags,
       collectionIds,
       proposals,
@@ -1145,6 +1179,7 @@ export class PgMetaStore implements MetaStore {
       signals: {},
       proposals: {},
       shareRoles: {},
+      favorites: [],
     }
     if (ids.length === 0 && ghIds.length === 0 && authorIds.length === 0) return out
     const params: unknown[] = []
@@ -1168,11 +1203,18 @@ export class PgMetaStore implements MetaStore {
           `SELECT 'view', artifact_id, count(*)::text, NULL, NULL FROM view
             WHERE artifact_id = ANY(${page}) GROUP BY artifact_id`,
         )
-      if (viewerId)
+      if (viewerId) {
+        const viewer = bind(viewerId)
         branches.push(
           `SELECT 'comment', artifact_id, thread_id, author_id, meta FROM comment
             WHERE state = 'open' AND artifact_id = ANY(${page})`,
+          // Page-scoped, so the arm reads at most `ids.length` rows off the unique
+          // (artifact_id, user_id) index — where the route's old standalone call read the
+          // viewer's whole favorite list, and paid a round trip to do it.
+          `SELECT 'favorite', artifact_id, NULL, NULL, NULL FROM artifact_favorite
+            WHERE user_id = ${viewer} AND artifact_id = ANY(${page})`,
         )
+      }
       if (memberId)
         branches.push(
           `SELECT 'share', artifact_id, role, NULL, NULL FROM artifact_member
@@ -1252,6 +1294,9 @@ export class PgMetaStore implements MetaStore {
         case "share":
           out.shareRoles[r.k] = r.c1 as Role
           break
+        case "favorite":
+          out.favorites.push(r.k)
+          break
         case "handle":
           out.handles.push({ gh_id: r.k, username: r.c1 })
           break
@@ -1282,8 +1327,12 @@ export class PgMetaStore implements MetaStore {
     return [...ids]
   }
 
-  listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
-    if (opts?.ids && opts.ids.length === 0) return Promise.resolve([])
+  /** The list query as a BUILDER, so `listArtifacts` and `listPage` cannot diverge.
+   *  `listPage` inlines this into a CTE verbatim — which is the entire safety argument
+   *  for that fold: the visibility predicate is REUSED, never re-expressed in raw SQL.
+   *  Getting it subtly wrong is not a slow page, it is one workspace's documents
+   *  appearing in another's library. */
+  private artifactListQuery(opts?: ListArtifactsOpts) {
     const conds = artifactListConditions(artifact, opts)
     // Collection scope is a JOIN, not an `id IN (…members)` — mirrors the SQLite/D1
     // path in repos.ts so behavior matches across dialects (and never trips a param cap).
@@ -1303,6 +1352,177 @@ export class PgMetaStore implements MetaStore {
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(...artifactListOrder(artifact, opts?.sort ?? "created"))
     return opts?.limit ? q.limit(opts.limit) : q
+  }
+
+  listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]> {
+    if (opts?.ids && opts.ids.length === 0) return Promise.resolve([])
+    return this.artifactListQuery(opts)
+  }
+
+  /**
+   * The library page AND its decoration in ONE statement — see the port doc.
+   *
+   * `listArtifacts` then `listEnrichment` are strictly serial: the decoration keys on the
+   * ids the list returns, so it cannot start until the list lands. That is ~80ms of pure
+   * wire time on the edge tier, on the request that IS the cold boot's critical path
+   * (measured 389ms, with the first card at 566ms right behind it).
+   *
+   * The list query goes in as a CTE **verbatim** — the same builder `listArtifacts` runs,
+   * inlined with its parameters — so no visibility predicate is restated here and none can
+   * drift. Every decoration arm then joins to that CTE instead of to an id list, which
+   * also means `ghIds`/`authorIds` no longer have to make the round trip out to the caller
+   * and back: the page's own author columns drive those joins.
+   */
+  async listPage(
+    opts: ListPageOpts,
+  ): Promise<{ artifacts: ArtifactRecord[]; enrichment: ListEnrichment }> {
+    const empty: ListEnrichment = {
+      views: {},
+      tags: {},
+      previews: {},
+      handles: [],
+      bylines: [],
+      signals: {},
+      proposals: {},
+      shareRoles: {},
+      favorites: [],
+    }
+    if (opts.list.ids && opts.list.ids.length === 0) return { artifacts: [], enrichment: empty }
+    const page = this.artifactListQuery(opts.list)
+    const { viewerId, memberId, views } = opts
+
+    // Same arms as `listEnrichment`, in the same order, joined to the page instead of to
+    // an id array. The store contract runs this against listArtifacts + listEnrichment
+    // over the same fixtures and requires them to agree.
+    const core = [
+      // `- '__rn'` strips the ordinal back off, so the row arm yields exactly the
+      // artifact record shape the read-by-read path returns.
+      sql`select 'row' as kind, jsonb_build_array(to_jsonb(p) - '__rn', p.__rn::text) as doc from page p`,
+      sql`select 'tag', jsonb_build_array(t.artifact_id, t.tag) from artifact_tag t join page p on p.id = t.artifact_id`,
+      sql`select 'preview', jsonb_build_array(p.id) from page p
+            join version v on v.artifact_id = p.id and v.n = p.current_version
+           where v.preview_status = 'ready'`,
+      sql`select 'proposal', jsonb_build_array(pr.artifact_id, count(*)::text) from proposal pr
+            join page p on p.id = pr.artifact_id
+           where pr.state = 'open' group by pr.artifact_id`,
+    ]
+    if (views)
+      core.push(
+        sql`select 'view', jsonb_build_array(vw.artifact_id, count(*)::text) from view vw
+              join page p on p.id = vw.artifact_id group by vw.artifact_id`,
+      )
+    if (viewerId) {
+      core.push(
+        sql`select 'comment', jsonb_build_array(cm.artifact_id, cm.thread_id, cm.author_id, cm.meta) from comment cm
+              join page p on p.id = cm.artifact_id where cm.state = 'open'`,
+        sql`select 'favorite', jsonb_build_array(f.artifact_id) from artifact_favorite f
+              join page p on p.id = f.artifact_id where f.user_id = ${viewerId}`,
+      )
+    }
+    if (memberId)
+      core.push(
+        sql`select 'share', jsonb_build_array(am.artifact_id, am.role) from artifact_member am
+              join page p on p.id = am.artifact_id where am.user_id = ${memberId}`,
+      )
+    // The Better Auth directory tables can be absent (fresh self-host, operator-token
+    // deployments) — the same best-effort contract listEnrichment keeps. A failed union
+    // retries once without them rather than failing the listing.
+    const directory = [
+      sql`select 'handle', jsonb_build_array(ac."accountId", u.username) from page p
+            join "account" ac on ac."accountId" = p.author_gh_id and ac."providerId" = 'github'
+            join "user" u on u.id = ac."userId"`,
+      sql`select 'byline', jsonb_build_array(u.id, u.name, u.username) from page p
+            join "user" u on u.id = p.author_id`,
+    ]
+
+    type Row = { kind: string; doc: unknown[] }
+    const run = async (arms: ReturnType<typeof sql>[]) => {
+      const unioned = sql.join(arms, sql` union all `)
+      // MATERIALIZED + row_number is what carries the caller's ORDER BY through: a UNION
+      // ALL does not preserve the order of its arms, and the LAST row of the page is what
+      // the keyset cursor is built from — so losing the order is a pagination bug, not a
+      // cosmetic one. Materializing pins the CTE to one evaluation whose output order the
+      // window function then numbers.
+      const res = await this.db.execute(
+        sql`with page_raw as materialized (${page}),
+                 page as (select pr.*, row_number() over () as __rn from page_raw pr)
+            ${unioned}`,
+      )
+      return ((res as unknown as { rows?: Row[] }).rows ?? []) as Row[]
+    }
+    let rows: Row[]
+    try {
+      rows = await run([...core, ...directory])
+    } catch (e) {
+      rows = await run(core).catch(() => {
+        throw e
+      })
+    }
+
+    const out: ListEnrichment = {
+      ...empty,
+      tags: {},
+      views: {},
+      previews: {},
+      proposals: {},
+      shareRoles: {},
+    }
+    const ranked: { n: number; a: ArtifactRecord }[] = []
+    const commentRows: {
+      artifact_id: string
+      thread_id: string
+      state: string
+      author_id: string | null
+      meta: string | null
+    }[] = []
+    for (const r of rows) {
+      const d = r.doc as (string | null)[]
+      switch (r.kind) {
+        case "row":
+          ranked.push({ n: Number(d[1]), a: d[0] as unknown as ArtifactRecord })
+          break
+        case "tag": {
+          const list = out.tags[d[0] as string] ?? []
+          list.push(d[1] as string)
+          out.tags[d[0] as string] = list
+          break
+        }
+        case "preview":
+          out.previews[d[0] as string] = true
+          break
+        case "proposal":
+          out.proposals[d[0] as string] = Number(d[1])
+          break
+        case "view":
+          out.views[d[0] as string] = Number(d[1])
+          break
+        case "comment":
+          commentRows.push({
+            artifact_id: d[0] as string,
+            thread_id: d[1] as string,
+            state: "open",
+            author_id: d[2] ?? null,
+            meta: d[3] ?? null,
+          })
+          break
+        case "favorite":
+          out.favorites.push(d[0] as string)
+          break
+        case "share":
+          out.shareRoles[d[0] as string] = d[1] as Role
+          break
+        case "handle":
+          out.handles.push({ gh_id: d[0] as string, username: d[1] ?? null })
+          break
+        case "byline":
+          out.bylines.push({ id: d[0] as string, name: d[1] ?? null, username: d[2] ?? null })
+          break
+      }
+    }
+    for (const k in out.tags) out.tags[k]?.sort()
+    out.signals = this.assembleCommentSignals(commentRows, viewerId)
+    ranked.sort((x, y) => x.n - y.n)
+    return { artifacts: ranked.map((r) => r.a), enrichment: out }
   }
   // ---- full-text search index (workspace search substrate) — the tsvector twin of the
   // SQLite fts5 path. `ts_rank_cd` ranks (higher = more relevant). `text` is title + body
@@ -1451,8 +1671,13 @@ export class PgMetaStore implements MetaStore {
        SELECT 'notifications', (SELECT COALESCE(jsonb_agg(row_to_json(t) ORDER BY t.created_at DESC, t.id DESC), '[]'::jsonb) FROM (
          SELECT *, count(*) FILTER (WHERE read = 0) OVER ()::int AS unread_total
            FROM notification WHERE user_id = $2
-          ORDER BY created_at DESC LIMIT $3) t)`,
-      [orgId, userId, notifLimit],
+          ORDER BY created_at DESC LIMIT $3) t)
+       UNION ALL
+       SELECT 'subscription', (SELECT to_jsonb(s) FROM subscription s WHERE s.org_id = $1)
+       UNION ALL
+       SELECT 'seats', to_jsonb((SELECT count(*)::int FROM membership m
+                                  WHERE m.org_id = $1 AND m.role = ANY($4)))`,
+      [orgId, userId, notifLimit, [...BILLABLE_ROLES]],
     )
     const arm: Record<string, unknown> = {}
     for (const r of rows) arm[r.arm] = r.doc
@@ -1467,6 +1692,10 @@ export class PgMetaStore implements MetaStore {
       collections,
       sources,
       collectionRoles,
+      billing: {
+        subscription: (arm.subscription as SubscriptionRecord | null) ?? null,
+        billableSeats: (arm.seats as number | null) ?? 0,
+      },
       // to_jsonb of the text column yields a JSON string (or null when no row) — exactly
       // the raw value getOrgSettings hands to the same parser.
       settings: parseOrgSettings(typeof arm.settings === "string" ? arm.settings : null),
@@ -1878,6 +2107,49 @@ export class PgMetaStore implements MetaStore {
       else artifactRoles.push(r.role)
     }
     return { orgRole, artifactRoles }
+  }
+  // `getByShortId` + `artifactGrants` as ONE statement — see the port doc. The artifact
+  // resolves in a CTE and every grant arm joins to it, so the caller's standing comes back
+  // with the record instead of after it. Same four grant sources as artifactGrants above,
+  // in the same order, deliberately: the store contract runs both against the read-by-read
+  // path and requires all three to agree.
+  async artifactWithGrants(
+    shortId: string,
+    userId: string,
+  ): Promise<{ artifact: ArtifactRecord; orgRole: Role | null; artifactRoles: Role[] } | null> {
+    const res = await this.db.execute(sql`
+      with a as (select * from artifact where short_id = ${shortId})
+      select 'artifact' as kind, to_jsonb(a) as doc from a
+      union all
+      select 'org', to_jsonb(m.role)
+        from a join membership m on m.org_id = a.org_id and m.user_id = ${userId}
+      union all
+      select 'grant', to_jsonb(am.role)
+        from a join artifact_member am on am.artifact_id = a.id and am.user_id = ${userId}
+      union all
+      select 'grant', to_jsonb(cm.role)
+        from a
+        join collection_item ci on ci.artifact_id = a.id
+        join collection_member cm on cm.collection_id = ci.collection_id and cm.user_id = ${userId}
+      union all
+      select 'grant', to_jsonb(m2.role)
+        from a
+        join collection_item ci2 on ci2.artifact_id = a.id
+        join collection c on c.id = ci2.collection_id and c.workspace_access = 'member'
+        join membership m2 on m2.org_id = c.org_id and m2.user_id = ${userId}
+    `)
+    const rows = (res as unknown as { rows?: { kind: string; doc: unknown }[] }).rows ?? []
+    let record: ArtifactRecord | null = null
+    let orgRole: Role | null = null
+    const artifactRoles: Role[] = []
+    for (const r of rows) {
+      if (r.kind === "artifact") record = r.doc as ArtifactRecord
+      else if (r.kind === "org") orgRole = r.doc as Role
+      else artifactRoles.push(r.doc as Role)
+    }
+    // No artifact row means no such short id — and then no grant arm could have matched
+    // either, since every one of them joins through it.
+    return record ? { artifact: record, orgRole, artifactRoles } : null
   }
   async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
     if (artifactIds.length === 0) return {}
@@ -3416,6 +3688,46 @@ export class PgMetaStore implements MetaStore {
       return null
     }
   }
+  // The workspace, its roster, and the directory rows for that roster in ONE statement —
+  // see the port doc. The user arm joins THROUGH membership rather than taking an id list,
+  // so it no longer has to wait for the roster to come back before it can start.
+  async workspaceWithMembers(orgId: string): Promise<{
+    workspace: WorkspaceRecord | null
+    members: MembershipRecord[]
+    users: UserDir[]
+  }> {
+    const core = [
+      sql`select 'ws' as kind, to_jsonb(w) as doc from workspace w where w.id = ${orgId}`,
+      sql`select 'member', to_jsonb(m) from membership m where m.org_id = ${orgId}`,
+    ]
+    // Best-effort, exactly like getUsers: the Better Auth tables can be absent on a fresh
+    // self-host, and there the roster must still come back rather than fail the page.
+    const directory = sql`select 'user', jsonb_build_object(
+        'id', u.id, 'email', u.email, 'name', u.name, 'image', u.image,
+        'username', u.username, 'profession', u.profession, 'about', u.about)
+      from "user" u join membership m2 on m2.user_id = u.id and m2.org_id = ${orgId}`
+    type Row = { kind: string; doc: unknown }
+    const run = async (arms: ReturnType<typeof sql>[]) => {
+      const res = await this.db.execute(sql.join(arms, sql` union all `))
+      return ((res as unknown as { rows?: Row[] }).rows ?? []) as Row[]
+    }
+    let rows: Row[]
+    try {
+      rows = await run([...core, directory])
+    } catch {
+      rows = await run(core)
+    }
+    let workspace: WorkspaceRecord | null = null
+    const members: MembershipRecord[] = []
+    const users: UserDir[] = []
+    for (const r of rows) {
+      if (r.kind === "ws") workspace = r.doc as WorkspaceRecord
+      else if (r.kind === "member") members.push(r.doc as MembershipRecord)
+      else users.push(r.doc as UserDir)
+    }
+    return { workspace, members, users }
+  }
+
   async getUsers(ids: string[]): Promise<UserDir[]> {
     if (ids.length === 0) return []
     try {

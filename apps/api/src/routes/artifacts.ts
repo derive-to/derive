@@ -53,7 +53,14 @@ import {
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { signClaimToken, verifyClaimToken } from "../lib/claim-token"
-import { hashPassword, signState, unlockCookie, unlockToken, verifyPassword } from "../lib/crypto"
+import {
+  bucketedNow,
+  hashPassword,
+  signState,
+  unlockCookie,
+  unlockToken,
+  verifyPassword,
+} from "../lib/crypto"
 import { DRAFT_TTL_MS, DRAFTS_ORG_ID, sweepExpiredDrafts } from "../lib/drafts"
 import {
   EditConflictError,
@@ -70,6 +77,7 @@ import {
   linkRoleOf,
   listedOf,
   MAX_UPLOAD_BYTES,
+  RAW_TOKEN_WINDOW_MS,
   readJson,
   str,
   TOMBSTONE,
@@ -217,8 +225,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // ?author=<github login> narrows to artifacts whose current author is that login.
       const author = c.req.query("author")?.trim().slice(0, 100) || undefined
 
-      const favIds = me ? await meta.listUserFavoriteIds(me.id) : []
-      const favorites = new Set(favIds)
+      // The FAVORITES FEED needs the star list before the list query, because it narrows
+      // by it. Every other listing only needs to know which rows on the page it got back
+      // are starred — and that now rides `listEnrichment` as one more arm keyed on the
+      // same page of ids, so the common case no longer opens with a round trip of its
+      // own. On the edge tier that is ~80ms off the request the library boot waits on.
+      const favIds = me && favOnly ? await meta.listUserFavoriteIds(me.id) : []
       // tag / collection / favorite each narrow to an id set; intersect when combined.
       let ids: string[] | undefined
       const narrow = (next: string[]) => {
@@ -306,7 +318,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // a caller with no standing here (or no member rows to match) has none by definition.
       if (mineScope && (publicOnly || !memberKey))
         return c.json({ artifacts: [], next_cursor: null })
-      const rows = await meta.listArtifacts({
+      const listOpts = {
         limit: limit + 1,
         cursor,
         sort,
@@ -330,7 +342,22 @@ export const artifactRoutes = (ctx: AppContext) => {
         // (all items) would outrun the list (only your explicitly-shared items).
         viewerId:
           isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
-      })
+      }
+      // THE COLD BOOT'S CRITICAL PATH. After the rest of this PR, nothing is queued in
+      // front of this request any more — the first card paints 43ms after it lands — so
+      // its own round trips are the whole remaining cost. The list and its decoration are
+      // strictly serial (the decoration keys on the ids the list returns), and `listPage`
+      // answers both in one statement on a store that can. Optional: the embedded drivers
+      // do not implement it and take the two calls below unchanged.
+      const combined = meta.listPage
+        ? await meta.listPage({
+            list: listOpts,
+            viewerId: me?.id ?? null,
+            memberId: memberKey,
+            views: analyticsOn,
+          })
+        : null
+      const rows = combined?.artifacts ?? (await meta.listArtifacts(listOpts))
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
       const last = page[page.length - 1]
@@ -344,15 +371,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       // the same page of ids; issued separately, each one was a full ~80ms edge→
       // Postgres round trip (see edge-pg.ts), which made the decoration cost more
       // than the list query itself.
-      const pageIds = page.map((a) => a.id)
-      const enrichment = await meta.listEnrichment({
-        ids: pageIds,
-        ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
-        authorIds: [...new Set(page.map((a) => a.author_id).filter((x): x is string => !!x))],
-        viewerId: me?.id ?? null,
-        memberId: memberKey,
-        views: analyticsOn,
-      })
+      const enrichment =
+        combined?.enrichment ??
+        (await meta.listEnrichment({
+          ids: page.map((a) => a.id),
+          ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
+          authorIds: [...new Set(page.map((a) => a.author_id).filter((x): x is string => !!x))],
+          viewerId: me?.id ?? null,
+          memberId: memberKey,
+          views: analyticsOn,
+        }))
       const counts = enrichment.views
       const tags = enrichment.tags
       const previews = enrichment.previews
@@ -361,6 +389,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       const feedback = enrichment.signals
       const proposalCounts = enrichment.proposals
       const shareRoles = enrichment.shareRoles
+      // Page-scoped and taken from the batch, for BOTH paths — including the favorites
+      // feed, whose `favIds` above is a narrowing input, not the row decoration. One
+      // source of truth means the star a row renders can't disagree with the star the
+      // enrichment saw.
+      const favorites = new Set(enrichment.favorites)
       return c.json({
         artifacts: page.map((a) => ({
           ...toJson(deps.baseUrl, a, []),
@@ -826,6 +859,11 @@ export const artifactRoutes = (ctx: AppContext) => {
           await notify(artifact, "review.requested", {
             version: version.n,
             requested_by: actor?.name ?? "An agent",
+            // `author` is what the channel card renders, and `actor_id` is what its human/agent
+            // filter keys on — enqueueSlackChannelEvent reads both. Without them a review
+            // request reaching a channel would be attributed to "someone" and counted as human.
+            author: actor?.name ?? "An agent",
+            actor_id: agentPrincipal?.id ?? actor?.id ?? null,
           })
           // The review request is the one event that earns an email: the loop is
           // blocked on the reviewer, who may have no tab open. Never for your own
@@ -1290,14 +1328,37 @@ export const artifactRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      const shortId = c.req.param("shortId")
+      // THE DOCUMENT OPEN'S CRITICAL PATH. Measured on the preview, this request is 457ms
+      // of a 481ms open — the journey basically IS this handler. It used to open with two
+      // strictly serial reads: the artifact, and then the caller's grants on it, which
+      // could not start until the first landed because it needs the artifact's id and org.
+      // `artifactWithGrants` resolves the artifact inside the grants query, so the pair
+      // costs one round trip instead of two. Optional, like `artifactGrants` beneath it:
+      // a store without it takes the read-by-read path unchanged.
+      const viewer = await currentUser(c)
+      const combined =
+        viewer && meta.artifactWithGrants
+          ? await meta.artifactWithGrants(shortId, viewer.id)
+          : undefined
+      // `combined` is undefined when the fast path did not run at all (anonymous caller,
+      // or a store without it) and null when it ran and found nothing — only the first
+      // needs the read-by-read fallback.
+      const artifact =
+        combined !== undefined ? combined?.artifact : await meta.getByShortId(shortId)
       // 404 BEFORE resolving an actor. This used to run actorFor against a placeholder
       // artifact first, which for a signed-in caller meant a full artifactGrants round
       // trip (~80ms) against an empty id on every miss — paid, then thrown away one line
       // later. Nothing about the response differs: a miss is a bare 404 either way, so
       // an anonymous probe still learns nothing.
       if (!artifact) return bail(fail(c, 404, "not found"))
-      const actor = await actorFor(c, artifact)
+      const actor = await actorFor(
+        c,
+        artifact,
+        combined && viewer
+          ? { userId: viewer.id, orgRole: combined.orgRole, artifactRoles: combined.artifactRoles }
+          : undefined,
+      )
       if (!can(actor, "read", artifact.workspace_access, artifact.link_role))
         // A locked artifact isn't hidden, it's lockable: tell the client to prompt for
         // the password (401) rather than claim it doesn't exist (404). A lock only ever
@@ -1451,10 +1512,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Resolve the Derive user(s) behind a publish-by-hand (author_id on the artifact + each
       // version) to their live name/handle, so a byline frozen with an agent-client name self-
       // heals on read. One batched query alongside the gh_id resolve above — no N+1.
-      const authorIds = new Set<string>()
-      if (artifact.author_id) authorIds.add(artifact.author_id)
-      for (const v of versions) if (v.author_id) authorIds.add(v.author_id)
-      const bylineByUserId = await resolveUserBylines(meta, [...authorIds])
+      // No round trip: artifactDetail's `byline` arm already returned the live rows for
+      // every author_id on this artifact and its versions, in the same statement. This
+      // used to be its own resolveUserBylines call, sequential after resolveHandles —
+      // ~80ms on the edge, on the request that gates the document's rendered bytes.
+      const bylineByUserId = bylinesFrom(detail.bylines)
       const base = toJson(deps.baseUrl, artifact, versions)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -1528,7 +1590,17 @@ export const artifactRoutes = (ctx: AppContext) => {
         // was just proven above, so mint a short-lived capability the SPA embeds in the raw
         // URL's path (raw.ts's `t/:token` route + RAW_TOKEN_MAX_AGE_MS) — path, not query,
         // so relative asset references inherit it with zero HTML rewriting.
-        raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? ""),
+        // Bucketed `iat` (not Date.now()): the token is byte-identical for every mint
+        // inside a RAW_TOKEN_WINDOW_MS window, so the viewer's iframe URL is stable and
+        // its cached bytes are actually reachable on a re-open. Freshly stamping it made
+        // a different URL every fetch, which silently defeated the cache — measured, an
+        // open whose URL matched served in 13ms from cache; the next one re-downloaded
+        // 15KB. Validity is unchanged (verifyState still enforces the same max age).
+        raw_token: signState(
+          { rid: artifact.id },
+          deps.encryptionKey ?? "",
+          bucketedNow(RAW_TOKEN_WINDOW_MS),
+        ),
       })
     },
   )

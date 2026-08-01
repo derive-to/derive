@@ -403,6 +403,79 @@ export const unfurlSlackLinks = async (
   if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
 }
 
+/** Unfurl one or more links as WORK OBJECTS — typed entities rather than rendered blocks.
+ *
+ *  Throws on a warning as well as on `ok: false`, which is not paranoia: this API's documented
+ *  failure mode is answering **200 OK with a buried `warning`** when the payload is subtly wrong
+ *  (a missing `alt_text` on an icon is the canonical example) or when Work Objects are not
+ *  enabled on the app, in which case the metadata is ignored in silence. A caller that only
+ *  checked `ok` would see success and an empty channel — the exact shape of failure that cost
+ *  this integration a day. Treating a warning as an error is what lets the caller fall back to
+ *  the block unfurl instead of shipping nothing. */
+export const unfurlSlackEntities = async (
+  token: string,
+  target: SlackUnfurlTarget,
+  entities: unknown[],
+): Promise<void> => {
+  const res = await fetch(`${API}/chat.unfurl`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      ...(target.channel && target.ts
+        ? { channel: target.channel, ts: target.ts }
+        : { unfurl_id: target.unfurlId, source: target.source }),
+      metadata: { entities },
+    }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string; warning?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+  if (data.warning) throw new SlackApiError(`warning: ${data.warning}`)
+}
+
+/** Fill the flexpane for one viewer, in response to `entity_details_requested`.
+ *
+ *  The three shapes are the whole reason Work Objects are worth adopting. `details` renders the
+ *  entity for someone entitled to it; `auth` asks an unlinked viewer to connect; `restricted`
+ *  tells someone without access, in a panel only THEY see — where the broadcast card, seen by
+ *  the channel, must keep saying nothing at all. */
+export const presentSlackEntityDetails = async (
+  token: string,
+  triggerId: string,
+  body:
+    | { kind: "details"; metadata: Record<string, unknown> }
+    | { kind: "auth"; url: string }
+    | { kind: "restricted"; title: string; message: string },
+): Promise<void> => {
+  const payload: Record<string, unknown> =
+    body.kind === "details"
+      ? { trigger_id: triggerId, metadata: body.metadata }
+      : body.kind === "auth"
+        ? { trigger_id: triggerId, user_auth_required: true, user_auth_url: body.url }
+        : {
+            trigger_id: triggerId,
+            error: {
+              status: "custom_partial_view",
+              custom_title: body.title,
+              custom_message: body.message,
+              message_format: "plain_text",
+            },
+          }
+  const res = await fetch(`${API}/entity.presentDetails`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify(payload),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string; warning?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+  if (data.warning) throw new SlackApiError(`warning: ${data.warning}`)
+}
+
 /** The public channels the bot can see, for the subscription picker — so nobody has to paste a
  *  raw channel id. Paginated; capped rather than exhaustive, because a picker only needs enough
  *  to choose from and a huge workspace would otherwise page for a long time. This is what

@@ -42,6 +42,7 @@
     "dev": "pnpm --filter @derive/api dev",
     "dev:web": "pnpm --filter @derive/web dev",
     "dev:all": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:remote": "bash scripts/dev-remote-db.sh",
     "start": "pnpm --filter @derive/api start",
     "typecheck": "pnpm -r typecheck",
     "typecheck:tsc": "pnpm -r typecheck:tsc",

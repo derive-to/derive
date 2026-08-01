@@ -108,3 +108,27 @@ test("settings save and theme switch persist", async ({ owner }) => {
   await owner.reload()
   await expect(owner.locator("html")).toHaveClass(/dark/)
 })
+
+test("Brandprint and People live in Settings, and their old paths still resolve", async ({
+  owner,
+}) => {
+  // The rail is down to the two destinations that are places. Everything else is a
+  // filter, a setting, or reachable from the surface it belongs to.
+  await owner.goto("/")
+  await expect(owner.getByTestId("sidebar-all")).toBeVisible()
+  await expect(owner.getByTestId("nav-people")).toHaveCount(0)
+  await expect(owner.getByTestId("nav-brandprint")).toHaveCount(0)
+
+  // Both are settings sections now, reachable by their own path.
+  await owner.goto("/settings/brandprint")
+  await expect(owner.getByTestId("settings-tab-brandprint")).toHaveAttribute("aria-current", "page")
+  await owner.goto("/settings/people")
+  await expect(owner.getByTestId("settings-tab-people")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByTestId("people-search")).toBeVisible()
+
+  // The old paths keep working — bookmarks, and links agents have already emitted.
+  await owner.goto("/brandprint")
+  await expect(owner).toHaveURL(/\/settings\/brandprint$/)
+  await owner.goto("/people")
+  await expect(owner).toHaveURL(/\/settings\/people$/)
+})

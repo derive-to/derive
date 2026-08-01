@@ -217,6 +217,9 @@ const CHANNEL_EVENTS = new Set<WebhookEvent>([
   "proposal.created",
   "proposal.approved",
   "proposal.changes_requested",
+  "review.requested",
+  "review.sent_back",
+  "review.approved",
 ])
 
 /** Enqueue a top-level channel card for an artifact-lifecycle event, when the org has a
@@ -281,6 +284,17 @@ const eventBlocks = (p: SlackEventPayload): unknown[] => {
       break
     case "proposal.changes_requested":
       head = `:leftwards_arrow_with_hook: Changes were requested on a proposal for ${link}`
+      break
+    // The review round. `who` is the actor — the agent that asked, or the human who answered —
+    // so the line names whoever moved it, the same way the proposal cases do.
+    case "review.requested":
+      head = `:mag: *${who}* asked for a review of ${link}`
+      break
+    case "review.sent_back":
+      head = `:leftwards_arrow_with_hook: *${who}* sent back answers on ${link}`
+      break
+    case "review.approved":
+      head = `:white_check_mark: *${who}* approved ${link}`
       break
     default:
       head = `${link} — ${escapeMrkdwn(p.event)}`

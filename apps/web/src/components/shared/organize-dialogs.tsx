@@ -42,7 +42,7 @@ export function CollectionsDialog({
         .then((r) => setAll(r.collections))
         .catch(() => {})
   }, [open])
-  // Brandprint-pointed collections take docs through /brandprint only, not from
+  // Brandprint-pointed collections take docs through Settings → Brandprint only, not from
   // an artifact's organize menu.
   const brandprintIds = useBrandprintCollectionIds()
   const pickable = all.filter((col) => !brandprintIds.has(col.id))

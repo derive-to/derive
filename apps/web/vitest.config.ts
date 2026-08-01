@@ -22,6 +22,7 @@ export default defineConfig({
         "src/lib/utils.ts",
         "src/lib/pr.ts",
         "src/pages/artifact/lib/layout.ts",
+        "src/lib/boot-fetch.ts",
       ],
       reporter: ["text-summary"],
       // Ratchet floors. Only statements + lines gate — this is 7 small pure-logic

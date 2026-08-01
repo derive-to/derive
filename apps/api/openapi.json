@@ -6117,7 +6117,10 @@
                           "version.published",
                           "proposal.created",
                           "proposal.approved",
-                          "proposal.changes_requested"
+                          "proposal.changes_requested",
+                          "review.requested",
+                          "review.sent_back",
+                          "review.approved"
                         ]
                       }
                     }
@@ -6336,6 +6339,23 @@
                     },
                     "unread": {
                       "type": "number"
+                    },
+                    "blocked": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "description": "The publishing-blocked verdict, or null when the workspace is free to publish. Same value GET /v1/billing reports as `blocked`."
                     }
                   },
                   "required": [
@@ -6343,7 +6363,8 @@
                     "collections",
                     "settings",
                     "notifications",
-                    "unread"
+                    "unread",
+                    "blocked"
                   ]
                 }
               }

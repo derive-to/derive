@@ -99,6 +99,11 @@ export const buildSlackManifest = (baseUrl: string) => {
           // SLACK_BOT_SCOPES: Slack refuses a manifest that declares one without the other,
           // which is how the two previous scope/event mismatches shipped broken.
           "app_mention",
+          // Work Objects: fired when someone CLICKS an unfurled card, opening the flexpane. It
+          // carries the clicking user, which is what makes that surface per-viewer — the thing
+          // link_shared and chat.unfurl cannot be. Needs no new scope, so an existing install
+          // picks it up on a manifest re-apply without a reconnect.
+          "entity_details_requested",
           "app_uninstalled",
           "tokens_revoked",
         ],

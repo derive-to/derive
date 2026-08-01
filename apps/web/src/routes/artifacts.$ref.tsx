@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { artifactQuery, commentsQuery, meQuery, prefetchArtifactRaw } from "../lib/queries"
+import { artifactQuery, commentsQuery, meQuery } from "../lib/queries"
 import { Artifact } from "../pages/artifact"
-import { candidateShortIds, parseRef } from "../pages/artifact/parse-ref"
+import { candidateShortIds } from "../pages/artifact/parse-ref"
 import { WorkbenchSkeleton } from "../pages/artifact/workbench-skeleton"
 
 export const Route = createFileRoute("/artifacts/$ref")({
@@ -20,8 +20,11 @@ export const Route = createFileRoute("/artifacts/$ref")({
     ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
     ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
   }),
-  // Warm the artifact + its comments (and the rendered HTML the iframe loads) so
-  // an intent-preloaded link opens instantly. Fire-and-forget: awaiting held the
+  // Warm the artifact + its comments so an intent-preloaded link opens instantly.
+  // NOT the rendered HTML: a rel=prefetch of the viewer URL is never reused by the
+  // iframe's navigation (measured, identical transferSize on both requests), so it
+  // only ever doubled the bytes. Re-opens ride the ordinary HTTP cache instead.
+  // Fire-and-forget: awaiting held the
   // whole route on a skeleton for the record round trip, when the page can
   // already paint its header from the clicked card's list row (artifactQuery's
   // placeholderData) and owns every fallback itself — auth redirect, not-found,
@@ -30,7 +33,6 @@ export const Route = createFileRoute("/artifacts/$ref")({
   // exactly what it always did, and the catch keeps a failed fetch out of the
   // route error boundary as before.
   loader: ({ context: { queryClient }, params }) => {
-    const { version } = parseRef(params.ref)
     void (async () => {
       for (const id of candidateShortIds(params.ref)) {
         const art = await queryClient.ensureQueryData(artifactQuery(id)).catch(() => null)
@@ -39,7 +41,6 @@ export const Route = createFileRoute("/artifacts/$ref")({
           // only for a session the page will actually read them with.
           if (queryClient.getQueryData(meQuery().queryKey))
             queryClient.prefetchQuery(commentsQuery(id))
-          if (!art.removed) prefetchArtifactRaw(id, version ?? art.current_version)
           return
         }
       }
