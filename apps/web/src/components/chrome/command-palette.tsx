@@ -188,7 +188,7 @@ export function CommandPalette() {
   // content hit; the content group is for docs found only by what's inside them.
   const titleIds = new Set(results.map((r) => r.short_id))
   const contentOnly = content.hits.filter((h) => !titleIds.has(h.short_id))
-  // Brandprint-pointed collections are managed on /brandprint, not jumped to here.
+  // Brandprint-pointed collections are managed in Settings → Brandprint, not jumped to here.
   const brandprintIds = useBrandprintCollectionIds()
   const matchedCollections = collections.filter(
     (c) => !brandprintIds.has(c.id) && c.title.toLowerCase().includes(q),

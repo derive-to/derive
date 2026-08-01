@@ -138,7 +138,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/people" | "/contexts" | "/brandprint"
+  to: "/favorites" | "/following" | "/shared" | "/contexts"
   active: boolean
   testId?: string
 }) {
@@ -377,10 +377,7 @@ export function NavRail() {
   const isAll = onLibrary && !search.collection
   const isFav = loc.pathname === "/favorites"
   const onShared = loc.pathname === "/shared"
-  // People + its Activity sub-view (the /following feed) are one tab; the row lights for both.
-  const onPeople = loc.pathname === "/people" || loc.pathname === "/following"
   const onContexts = loc.pathname.startsWith("/contexts")
-  const onBrandprint = loc.pathname === "/brandprint"
   const onSettings = loc.pathname.startsWith("/settings")
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
@@ -398,7 +395,7 @@ export function NavRail() {
       return next
     })
 
-  // Brandprint-pointed collections are managed on /brandprint, not here — hiding
+  // Brandprint-pointed collections are managed in Settings → Brandprint, not here — hiding
   // them keeps the docs and their options in one place (see use-brandprint-ids).
   const brandprintIds = useBrandprintCollectionIds()
   const visibleCollections = collections.filter((col) => !brandprintIds.has(col.id))
@@ -615,29 +612,12 @@ export function NavRail() {
                 active={onShared}
                 testId="nav-shared"
               />
-              {/* People — who you follow, plus a way to find the people you work with.
-                  Folds the old /following feed in as this tab's default (people you
-                  follow); the artifact activity feed lives on at /following, unlinked. */}
-              <NavItem
-                icon="user"
-                label="People"
-                to="/people"
-                active={onPeople}
-                testId="nav-people"
-              />
               <NavItem
                 icon="context"
                 label="Contexts"
                 to="/contexts"
                 active={onContexts}
                 testId="nav-contexts"
-              />
-              <NavItem
-                icon="brandprint"
-                label="Brandprint"
-                to="/brandprint"
-                active={onBrandprint}
-                testId="nav-brandprint"
               />
             </SidebarMenu>
           </SidebarGroupContent>
