@@ -103,7 +103,14 @@ export const bootstrapRoutes = (ctx: AppContext) => {
         summary: summaryJson(b.summary),
         // Browser sessions only reach here (agents boot no app shell), so the
         // operator-token owner-everywhere branch is a plain `false`.
-        collections: collectionsJson(b.collections, b.sources, b.collectionRoles, me.id, false),
+        collections: collectionsJson(
+          b.collections,
+          b.sources,
+          b.collectionRoles,
+          me.id,
+          false,
+          new Set(await meta.listUserFavoriteCollectionIds(me.id, org)),
+        ),
         settings: b.settings,
         notifications: b.notifications.notifications,
         unread: b.notifications.unread,

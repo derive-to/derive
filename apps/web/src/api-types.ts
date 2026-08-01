@@ -2357,6 +2357,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/collections/{id}/favorite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Star a collection. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new starred state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            starred: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Unstar a collection. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new starred state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            starred: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/collections/{id}": {
         parameters: {
             query?: never;
@@ -6337,6 +6401,8 @@ export interface components {
              * @enum {string|null}
              */
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
+            /** @description Whether the caller starred this collection — it pins to their sidebar. */
+            starred?: boolean;
             /**
              * @description Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).
              * @enum {string}

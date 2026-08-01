@@ -118,6 +118,10 @@ export const Collection = z
       .nullable()
       .optional()
       .describe("Caller's own role on the collection; drives the Share dialog. Null if none."),
+    starred: z
+      .boolean()
+      .optional()
+      .describe("Whether the caller starred this collection — it pins to their sidebar."),
     kind: z
       .enum(["manual", "repo", "pr"])
       .optional()
@@ -147,7 +151,7 @@ export const sourceMaps = (
   return { srcByCollection, branchByRepo }
 }
 export const enrich = (
-  col: CollectionRecord & { count: number; my_role: Role | null },
+  col: CollectionRecord & { count: number; my_role: Role | null; starred?: boolean },
   srcByCollection: Map<string, Src>,
   branchByRepo: Map<string, string>,
 ) => {
@@ -186,6 +190,9 @@ export const collectionsJson = (
   roleMap: Record<string, Role>,
   meId: string | null,
   operator: boolean,
+  /** Ids this caller starred. Rides the same read as the list so the sidebar's
+   *  starred group costs no extra request. */
+  starredIds: ReadonlySet<string> = new Set(),
 ) => {
   const { srcByCollection, branchByRepo } = sourceMaps(sources)
   const roleFor = (col: CollectionRecord): Role | null =>
@@ -193,5 +200,11 @@ export const collectionsJson = (
   return cols
     .map((col) => ({ col, role: roleFor(col) }))
     .filter(({ role }) => role !== null)
-    .map(({ col, role }) => enrich({ ...col, my_role: role }, srcByCollection, branchByRepo))
+    .map(({ col, role }) =>
+      enrich(
+        { ...col, my_role: role, starred: starredIds.has(col.id) },
+        srcByCollection,
+        branchByRepo,
+      ),
+    )
 }

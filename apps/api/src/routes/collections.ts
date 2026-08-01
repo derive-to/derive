@@ -27,6 +27,7 @@ export const collectionRoutes = (ctx: AppContext) => {
     isMember,
     isToken,
     currentUser,
+    requireUser,
     activeWorkspace,
     workspaceCan,
     authorize,
@@ -91,7 +92,18 @@ export const collectionRoutes = (ctx: AppContext) => {
               me.id,
             )
           : {}
-      const collections = collectionsJson(cols, sources, roleMap, me?.id ?? null, isToken(c))
+      // Same read as the list, so the sidebar's starred group costs no extra request.
+      const starred = me
+        ? new Set(await meta.listUserFavoriteCollectionIds(me.id, org))
+        : new Set<string>()
+      const collections = collectionsJson(
+        cols,
+        sources,
+        roleMap,
+        me?.id ?? null,
+        isToken(c),
+        starred,
+      )
       return c.json({ collections })
     },
   )
@@ -142,6 +154,41 @@ export const collectionRoutes = (ctx: AppContext) => {
       return c.json({ ...col, count: 0, my_role: "owner" as const, kind: "manual" as const }, 201)
     },
   )
+
+  // Star a collection: it pins to the caller's sidebar. Deliberately gated on `read`,
+  // not `share` — starring changes nothing about the collection or who reaches it, it is
+  // a note-to-self about where you work. Anyone who can open it can star it.
+  for (const [method, on] of [
+    ["put", true],
+    ["delete", false],
+  ] as const) {
+    app.openapi(
+      createRoute({
+        method,
+        path: "/v1/collections/{id}/favorite",
+        tags: ["Collections"],
+        summary: on ? "Star a collection." : "Unstar a collection.",
+        request: { params: z.object({ id: z.string() }) },
+        responses: {
+          200: {
+            description: "The new starred state.",
+            content: { "application/json": { schema: z.object({ starred: z.boolean() }) } },
+          },
+        },
+      }),
+      async (c) => {
+        // The same guard the artifact star uses — a star belongs to a real account, and
+        // the shared helper is what makes an anonymous caller a 403 rather than a crash.
+        const me = await requireUser(c)
+        if (me instanceof Response) return bail(me)
+        const col = await requireCollection(c, "read")
+        if (col instanceof Response) return bail(col)
+        if (on) await meta.setCollectionFavorite(col.id, me.id)
+        else await meta.removeCollectionFavorite(col.id, me.id)
+        return c.json({ starred: on })
+      },
+    )
+  }
 
   app.openapi(
     createRoute({

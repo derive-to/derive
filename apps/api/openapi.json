@@ -1432,6 +1432,10 @@
             ],
             "description": "Caller's own role on the collection; drives the Share dialog. Null if none."
           },
+          "starred": {
+            "type": "boolean",
+            "description": "Whether the caller starred this collection — it pins to their sidebar."
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -5306,6 +5310,80 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/favorite": {
+      "put": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Star a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new starred state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "starred": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "starred"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Unstar a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new starred state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "starred": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "starred"
+                  ]
                 }
               }
             }

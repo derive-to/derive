@@ -179,3 +179,71 @@ describe("collections", () => {
     expect(pr.parentId).toBe(repoCol.id)
   })
 })
+
+describe("collections: starring", () => {
+  const amy: TestUser = { id: "u_amy", email: "amy@derive.test", name: "Amy" }
+  const bob: TestUser = { id: "u_bob", email: "bob@derive.test", name: "Bob" }
+  const { app: authed } = makeAuthedApp("collection-stars", [amy, bob])
+
+  const mk = async (title: string) => {
+    const r = await authed.request("/v1/collections", {
+      method: "POST",
+      headers: { ...as(amy.email), "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    })
+    return (await r.json()) as { id: string }
+  }
+  const rowFor = async (email: string, id: string) => {
+    const j = await (await authed.request("/v1/collections", { headers: as(email) })).json()
+    return j.collections.find((c: { id: string }) => c.id === id)
+  }
+
+  it("stars, reports it on the list, and unstars", async () => {
+    const col = await mk("Q3 planning")
+    // Unstarred is stated, not absent — the sidebar decides what to pin off this field.
+    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
+
+    const on = await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+    expect(await on.json()).toEqual({ starred: true })
+    expect((await rowFor(amy.email, col.id)).starred).toBe(true)
+
+    // Twice stays true rather than erroring or double-inserting.
+    await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+    expect((await rowFor(amy.email, col.id)).starred).toBe(true)
+
+    const off = await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "DELETE",
+      headers: as(amy.email),
+    })
+    expect(await off.json()).toEqual({ starred: false })
+    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
+  })
+
+  it("is per person, and gated on read rather than share", async () => {
+    // Starring is a note to yourself about where you work — it grants nothing — so any
+    // member who can open the collection can star it, and it stays theirs alone.
+    const col = await mk("Team shelf")
+    const res = await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "PUT",
+      headers: as(bob.email),
+    })
+    expect(res.status).toBe(200)
+    expect((await rowFor(bob.email, col.id)).starred).toBe(true)
+    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
+  })
+
+  it("refuses an anonymous star", async () => {
+    // 403, matching the artifact star (anonymous.test pins the same): the workspace
+    // gate answers before the user guard does, and a caller with no session is not a
+    // member. Either way nothing is written.
+    const col = await mk("Anon check")
+    const res = await authed.request(`/v1/collections/${col.id}/favorite`, { method: "PUT" })
+    expect(res.status).toBe(403)
+  })
+})
