@@ -859,6 +859,11 @@ export const artifactRoutes = (ctx: AppContext) => {
           await notify(artifact, "review.requested", {
             version: version.n,
             requested_by: actor?.name ?? "An agent",
+            // `author` is what the channel card renders, and `actor_id` is what its human/agent
+            // filter keys on — enqueueSlackChannelEvent reads both. Without them a review
+            // request reaching a channel would be attributed to "someone" and counted as human.
+            author: actor?.name ?? "An agent",
+            actor_id: agentPrincipal?.id ?? actor?.id ?? null,
           })
           // The review request is the one event that earns an email: the loop is
           // blocked on the reviewer, who may have no tab open. Never for your own
