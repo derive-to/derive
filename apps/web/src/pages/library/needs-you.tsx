@@ -14,12 +14,15 @@ type Signals = Pick<
  *  tells you that, and it has room to. */
 export const needsYouCount = (a: Signals): number => (a.open_proposals ?? 0) + (a.open_threads ?? 0)
 
-/** Whether it needs you PERSONALLY: a review you can act on, or a thread you are tagged
- *  in or already part of. Drives the ink; everything else stays muted. */
-export const needsYouIsMine = (a: Signals): boolean =>
-  !!a.mentions_me ||
-  !!a.i_participated ||
-  ((a.open_proposals ?? 0) > 0 && (a.my_role === "owner" || a.my_role === "editor"))
+/** Whether it needs YOU, rather than merely being busy. Each side has to match on both
+ *  counts: `mentions_me`/`i_participated` are facts about threads, so they only mean
+ *  something while a thread is actually open — an old thread you commented in must not
+ *  ink a badge whose only open item is a proposal you cannot act on. */
+const needsYouIsMine = (a: Signals): boolean => {
+  const threadWantsMe = (a.open_threads ?? 0) > 0 && (!!a.mentions_me || !!a.i_participated)
+  const canReview = (a.open_proposals ?? 0) > 0 && (a.my_role === "owner" || a.my_role === "editor")
+  return threadWantsMe || canReview
+}
 
 export function NeedsYou({ artifact: a, className }: { artifact: Signals; className?: string }) {
   const n = needsYouCount(a)
@@ -44,7 +47,7 @@ export function NeedsYou({ artifact: a, className }: { artifact: Signals; classN
         className,
       )}
     >
-      {n} {mine ? "needs you" : "open"}
+      {n} {mine ? (n === 1 ? "needs you" : "need you") : "open"}
     </span>
   )
 }

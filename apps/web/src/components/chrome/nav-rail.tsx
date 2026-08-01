@@ -406,10 +406,8 @@ export function NavRail() {
   const brandprintIds = useBrandprintCollectionIds()
   const visibleCollections = collections.filter((col) => !brandprintIds.has(col.id))
 
-  // Starred collections lead the rail as their own group. This is the list that
-  // replaces enumerating every collection: the app's guess about what matters becomes
-  // a list you built. Unstarred ones still appear below, for now — dropping them waits
-  // on the Collections view having somewhere to put them.
+  // Only starred collections reach the rail; the rest live in the library's Collections
+  // view. Every collection used to be listed here, which grew unbounded.
   //
   // Nest PR-preview collections under their repo. A "pr" collection with a known
   // parentId becomes a child; everything else (repos, manual, orphaned PRs) stays

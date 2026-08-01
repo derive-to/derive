@@ -215,17 +215,22 @@ test("capture the dashboard across themes and viewports", async ({ page: p }) =>
       .click({ timeout: 5000 })
       .catch(() => {})
   }
-  // A collection, for a populated sidebar.
+  // A collection, so the sidebar's Starred group has something to hold. Created from
+  // the Collections view — the rail's inline form is gone.
   await p
-    .getByTestId("sidebar-new-collection")
+    .getByTestId("library-view-collections")
     .click()
     .catch(() => {})
   await p
-    .getByTestId("sidebar-new-collection-input")
+    .getByTestId("collections-new")
+    .click()
+    .catch(() => {})
+  await p
+    .getByTestId("collections-new-input")
     .fill("Specs")
     .catch(() => {})
   await p
-    .getByTestId("sidebar-new-collection-input")
+    .getByTestId("collections-new-input")
     .press("Enter")
     .catch(() => {})
 

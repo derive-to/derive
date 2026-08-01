@@ -66,8 +66,8 @@ export function ArtifactCard({
   const showMenu = !!onAddToCollection || showDelete
   const author = a.author ?? null
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
-  // The same face on every card is not information. Show it only when someone ELSE made
-  // it — which is exactly when it changes what you do next.
+  // Only when someone else made it: in a small workspace your own avatar repeats on
+  // every card, which tells you nothing.
   const { me } = useAuth()
   const mineByLogin =
     !!me?.username &&
@@ -86,9 +86,8 @@ export function ArtifactCard({
   // Machine-register state line under the title (house " · " join, matching the
   // workbench header): a synced file's folder, else its version when there's history,
   // then how fresh it is. The TYPE rides the placard, so it isn't repeated here.
-  // Relative time alone. The version number never chose a document for anyone, and the
-  // render tells you what it is better than a type prefix could. A synced document keeps
-  // its folder, which is genuinely where it lives.
+  // Relative time, plus the folder for a synced doc (that is where it lives). The
+  // version number and type prefix are dropped — the render already shows the type.
   const stateLine = [sourceDir ? `${sourceDir}/` : "", updated ? ago(updated) : ""]
     .filter(Boolean)
     .join(" · ")
@@ -118,9 +117,8 @@ export function ArtifactCard({
           v={a.current_version}
           typeLabel={artifactTypeLabel(a)}
           hasPreview={a.has_preview}
-          // Derive's claim is that a document is a fully-styled page; every competitor
-          // can show a title and a timestamp, none can show the thing itself. A taller
-          // frame is that claim made visible.
+          // 4:3 rather than 16:10: most published pages are portrait-ish documents, and
+          // the wider frame was cropping them to a band of header.
           className="aspect-[4/3]"
         />
         {/* The select box, opposite the actions cluster. Hidden at rest on a mouse (the

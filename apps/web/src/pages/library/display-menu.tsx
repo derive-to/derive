@@ -19,6 +19,8 @@ import { LIBRARY_SORTS } from "./sort"
 // the toolbar and a stray grouping toggle floating over the grid. Built on the dropdown
 // system (non-modal, composes inside dialogs) like SortMenu was.
 export function DisplayMenu({
+  layout,
+  onLayout,
   sort,
   onSort,
   group,
@@ -27,6 +29,8 @@ export function DisplayMenu({
   onSort: (mode: SortMode) => void
   // Present only where grouping is possible (a manual collection with folders).
   group?: { on: boolean; onChange: (on: boolean) => void }
+  layout: "grid" | "list"
+  onLayout: (next: "grid" | "list") => void
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -42,6 +46,19 @@ export function DisplayMenu({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuLabel>Layout</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={layout}
+          onValueChange={(v) => onLayout(v as "grid" | "list")}
+        >
+          <DropdownMenuRadioItem value="grid" className="py-1.5 pr-8 pl-2">
+            Grid
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="list" className="py-1.5 pr-8 pl-2">
+            List
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>Sort by</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as SortMode)}>
           {LIBRARY_SORTS.map((s) => (

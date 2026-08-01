@@ -5,13 +5,11 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
-// A shelf, as a card. The rail used to enumerate every collection; this is where they
-// live instead — a view you switch to, not a permanent list you scroll past.
+// A collection as a card, for the Collections view.
 //
-// What a shelf card states is chosen, not everything known: the name, how much is in it,
-// whether it mirrors a repo, and whether you starred it. Member faces are deliberately
-// absent — the collection header carries them, and a grid of avatars reads as social
-// rather than as a place to work.
+// Name, count, and only the states worth flagging: Synced and Private. A workspace-open
+// manual collection is the common case and gets no chip. Member avatars are left to the
+// collection header — a grid of faces competes with the names.
 export function CollectionCard({
   col,
   onStar,

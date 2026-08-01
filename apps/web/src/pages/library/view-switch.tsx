@@ -1,44 +1,48 @@
-import { cn } from "@/lib/utils"
+import { Icon } from "@/components/icons"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
-// Documents ⇄ Collections. Two states, one control — the shelves used to be an
-// unbounded list in the navigation, which grew until the rail was a file browser.
-// They are a view of the library instead, because a collection is a place you go, not
-// a permanent thing to scroll past.
+export type LibraryViewMode = "documents" | "collections"
+
+// Documents ⇄ Collections. Shelves were an unbounded list in the rail; they are a view
+// of the library instead.
+//
+// Built on ToggleGroup like the other segmented controls (access, billing cycle) rather
+// than a hand-rolled tablist — Radix owns the roving focus and pressed state, and a
+// tablist without tabpanels is a half-implemented ARIA pattern.
 export function ViewSwitch({
   value,
   onChange,
 }: {
-  value: "documents" | "collections"
-  onChange: (next: "documents" | "collections") => void
+  value: LibraryViewMode
+  onChange: (next: LibraryViewMode) => void
 }) {
   return (
-    <div
-      role="tablist"
+    <ToggleGroup
+      type="single"
+      value={value}
+      // Radix emits "" when you press the active segment; ignore it so the library
+      // always has a view rather than flickering to neither.
+      onValueChange={(v) => v && onChange(v as LibraryViewMode)}
       aria-label="Library view"
-      className="inline-flex h-8 shrink-0 items-center rounded-lg border p-0.5"
+      data-testid="library-view"
+      className="h-8 shrink-0 gap-[3px] rounded-lg bg-secondary p-[3px]"
     >
-      {(["documents", "collections"] as const).map((v) => (
-        <button
-          key={v}
-          type="button"
-          role="tab"
-          aria-selected={value === v}
-          data-testid={`library-view-${v}`}
-          onClick={() => onChange(v)}
-          className={cn(
-            "rounded-md px-2.5 py-1 text-sm font-medium capitalize outline-none",
-            "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-            // Selected is a neutral wash with re-inked text — never a tint, and the
-            // weight does not change between states (the nav rule, so the control
-            // doesn't reflow as you switch).
-            value === v
-              ? "bg-accent text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {v}
-        </button>
-      ))}
-    </div>
+      <ToggleGroupItem
+        value="documents"
+        data-testid="library-view-documents"
+        className="h-full gap-1.5 rounded-md px-2.5 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
+      >
+        <Icon name="all" size={16} />
+        Documents
+      </ToggleGroupItem>
+      <ToggleGroupItem
+        value="collections"
+        data-testid="library-view-collections"
+        className="h-full gap-1.5 rounded-md px-2.5 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
+      >
+        <Icon name="collections" size={16} />
+        Collections
+      </ToggleGroupItem>
+    </ToggleGroup>
   )
 }

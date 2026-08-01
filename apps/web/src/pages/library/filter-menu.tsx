@@ -25,7 +25,7 @@ const OPTIONS: { value: LibraryFilter; label: string; hint: string }[] = [
   { value: "starred", label: "Starred", hint: "Documents you starred" },
 ]
 
-export const filterLabel = (f: LibraryFilter): string =>
+const filterLabel = (f: LibraryFilter): string =>
   OPTIONS.find((o) => o.value === f)?.label ?? "All documents"
 
 export function FilterMenu({

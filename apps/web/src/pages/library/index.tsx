@@ -202,6 +202,24 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // Opening an artifact from a collection carries that collection as list context, so
   // the artifact header can page between its siblings (the sibling switcher). Other
   // feeds pass nothing — a direct/feed open has no single collection to page within.
+  // Grid or list, remembered per browser and applied everywhere. Previously the route
+  // decided: cards at home, rows in a synced repo, a third arrangement under the folder
+  // toggle.
+  const [layout, setLayoutState] = useState<"grid" | "list">(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.libraryLayout) === "list" ? "list" : "grid"
+    } catch {
+      return "grid"
+    }
+  })
+  const setLayout = (next: "grid" | "list") => {
+    setLayoutState(next)
+    try {
+      localStorage.setItem(STORAGE_KEYS.libraryLayout, next)
+    } catch {
+      /* private mode: the choice just doesn't persist */
+    }
+  }
   const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
   const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
   // A manual collection that HAS folders defaults to the grouped folder view; the
@@ -378,8 +396,16 @@ function LibraryBody({ view }: { view: LibraryView }) {
             ? activeCollection?.count
             : undefined
 
+  const connectNudge = useConnectNudge()
+  // One prompt at a time. The connect card's "publish" stage already says "publish your
+  // first document"; the drop-zone directly beneath it saying "Publish an artifact" is
+  // the same instruction twice, and the one asking for less always loses. The nudges
+  // themselves are already exclusive of each other (connect wins over Brandprint), so
+  // this is the last overlap.
   const showPublish =
-    !isSearching && (filter.kind === "all" || filter.kind === "mine" || filter.kind === "favorites")
+    !isSearching &&
+    connectNudge.stage === null &&
+    (filter.kind === "all" || filter.kind === "mine" || filter.kind === "favorites")
 
   const emptyProps = emptyStateFor(filter, isSearching, debouncedQ, nav)
   // The first-run guide is for a genuinely blank home (your work is empty and you're not
@@ -389,7 +415,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   // The activation card's state — read here so the Brandprint nudge can yield to it
   // (one onboarding surface per screen; connecting an agent comes first).
-  const connectNudge = useConnectNudge()
 
   return (
     <PageShell scrollRef={scrollRef} width="wide">
@@ -519,6 +544,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
           </>
         )}
         <DisplayMenu
+          layout={layout}
+          onLayout={setLayout}
           sort={search.sort ?? DEFAULT_SORT}
           onSort={(mode) =>
             nav({
@@ -670,6 +697,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
         ) : (
           <>
             <ArtifactGrid
+              layout={layout}
+              onPickAuthor={pickAuthor}
               items={items}
               scrollRef={scrollRef}
               hasNextPage={!!hasNextPage}
@@ -699,6 +728,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
             <NewFolderControl collectionId={filter.id} className="mb-3" />
           )}
           <ArtifactGrid
+            layout={layout}
+            onPickAuthor={pickAuthor}
             items={items}
             scrollRef={scrollRef}
             hasNextPage={!!hasNextPage}

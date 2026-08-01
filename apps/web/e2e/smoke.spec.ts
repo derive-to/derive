@@ -136,38 +136,41 @@ test("Brandprint and People live in Settings, and their old paths still resolve"
 test("starring a collection pins it to the sidebar's Starred group", async ({ owner }) => {
   await owner.goto("/")
   const name = `Shelf ${Date.now()}`
-  await owner.getByTestId("sidebar-new-collection").click()
-  await owner.getByTestId("sidebar-new-collection-input").fill(name)
-  await owner.getByTestId("sidebar-new-collection-input").press("Enter")
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(name)
+  await owner.getByTestId("collections-new-input").press("Enter")
 
-  // It lands in Collections, not Starred — the app's list, until you say otherwise.
-  const row = owner.getByRole("link", { name }).first()
-  await expect(row).toBeVisible()
-  await row.click()
+  // Creating drops you into the new collection, so its header is right here. It is
+  // unstarred, so the rail has no Starred group yet.
+  await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "false")
+  await expect(owner.getByTestId("sidebar-starred")).toHaveCount(0)
 
   await owner.getByTestId("collection-star").click()
   await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "true")
 
-  // The rail now carries a Starred group holding it, and it appears ONCE — the
-  // Collections group below must not list it a second time. (Matched by testid, not
-  // text: the star button itself reads "Starred" when active.)
+  // The rail now carries a Starred group holding exactly this one. (Matched by testid,
+  // not text: the star button itself reads "Starred" when active.)
   await expect(owner.getByTestId("sidebar-starred")).toBeVisible()
   await expect(owner.getByRole("link", { name })).toHaveCount(1)
 
-  // Unstarring puts it back rather than losing it.
+  // Unstarring empties the group entirely rather than leaving a bare heading — a
+  // workspace with nothing starred opens on two nav rows.
   await owner.getByTestId("collection-star").click()
   await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "false")
   await expect(owner.getByTestId("sidebar-starred")).toHaveCount(0)
-  await expect(owner.getByRole("link", { name })).toHaveCount(1)
+  await expect(owner.getByRole("link", { name })).toHaveCount(0)
 })
 
 test("Collections is a view of the library, with starred shelves leading", async ({ owner }) => {
   await owner.goto("/")
   const name = `Shelf ${Date.now()}`
-  await owner.getByTestId("sidebar-new-collection").click()
-  await owner.getByTestId("sidebar-new-collection-input").fill(name)
-  await owner.getByTestId("sidebar-new-collection-input").press("Enter")
-  await expect(owner.getByRole("link", { name }).first()).toBeVisible()
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(name)
+  await owner.getByTestId("collections-new-input").press("Enter")
+  // Creating opens the collection; its header names it.
+  await expect(owner.getByTestId("collection-star")).toBeVisible()
 
   // Switch views — same page, same toolbar, no navigation to a separate place.
   await owner.goto("/")
@@ -208,4 +211,25 @@ test("a card states three facts, not nine", async ({ owner }) => {
   // No view count, and no separate proposal/comment counts — a quiet document says
   // nothing at all in the meta row.
   await expect(owner.getByTestId("needs-you")).toHaveCount(0)
+})
+
+test("Grid or List is a preference the app remembers, not the route's choice", async ({
+  owner,
+}) => {
+  await publishArtifact(owner, "layout.md", "# Layout\n\nbody")
+  await owner.goto("/")
+  await expect(owner.getByTestId("library-display")).toBeVisible()
+
+  // Grid is the default: the render is the point.
+  await owner.getByTestId("library-display").click()
+  await owner.getByRole("menuitemradio", { name: "List" }).click()
+
+  // Reload — the choice survives, which is what makes it a preference rather than a
+  // per-visit toggle the route can override.
+  await owner.reload()
+  await owner.getByTestId("library-display").click()
+  await expect(owner.getByRole("menuitemradio", { name: "List" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  )
 })

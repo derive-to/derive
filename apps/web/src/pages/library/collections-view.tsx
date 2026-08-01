@@ -6,16 +6,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CollectionCard } from "./collection-card"
 
-// The library's second view: your shelves, as cards.
+// The library's second view: shelves as cards, starred first.
 //
-// Two groups, each stating its own rule on the page in words that don't assume you know
-// how the app is built. That is the whole difference between this and a ranking — a rule
-// you can read is a rule you can disagree with, and "you have access to these" is a fact
-// about you, not a score.
-//
-// Starred leads. Everything else is listed below rather than hidden: the collections you
-// don't work in stop being your problem by default, without anyone deciding you shouldn't
-// have them.
+// Each group states its rule in the UI ("Starred — pinned to your sidebar", "You have
+// access to these"), so grouping stays something a reader can predict. Nothing is
+// hidden — the unstarred group lists everything else.
 export function CollectionsView({
   collections,
   onStar,
@@ -32,26 +27,6 @@ export function CollectionsView({
     const t = (draft ?? "").trim()
     setDraft(null)
     if (t) onCreate(t)
-  }
-
-  if (collections.length === 0) {
-    return (
-      <EmptyState
-        icon={<Icon name="collections" strokeWidth={1.75} />}
-        title="No collections yet."
-        description="A collection groups related documents, and sharing one shares everything in it."
-        action={
-          <button
-            type="button"
-            data-testid="collections-empty-create"
-            onClick={() => setDraft("")}
-            className="rounded-lg border px-3 py-1.5 text-sm font-medium hover:bg-accent"
-          >
-            New collection
-          </button>
-        }
-      />
-    )
   }
 
   return (
@@ -88,6 +63,9 @@ export function CollectionsView({
               variant="outline"
               size="sm"
               data-testid="collections-new-create"
+              // Blur fires before click, which would commit and clear the draft before
+              // this button ever saw it — keeping focus is what makes it reachable.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={submit}
               disabled={!draft.trim()}
             >
@@ -96,6 +74,14 @@ export function CollectionsView({
           </>
         )}
       </div>
+
+      {collections.length === 0 && (
+        <EmptyState
+          icon={<Icon name="collections" strokeWidth={1.75} />}
+          title="No collections yet."
+          description="A collection groups related documents, and sharing one shares everything in it."
+        />
+      )}
 
       {starred.length > 0 && (
         <Group
