@@ -632,7 +632,6 @@ export const slackRoutes = (ctx: AppContext) => {
       // no answerer, which is the honest "nothing answers" state rather than a silent failure.
       if (deps.models)
         runAfterAck(
-          c,
           handleSlackMention(
             {
               meta,
