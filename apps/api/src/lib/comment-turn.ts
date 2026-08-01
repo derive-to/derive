@@ -28,7 +28,7 @@ import { chatArrival } from "./chat-gate"
 import { type CommentActionDeps, commentCreatedAction } from "./comment-actions"
 import { DERIVE_AUTHOR_ID, quoteOf } from "./comments"
 import type { ModelCatalog, ResolvedChatModel } from "./model-catalog"
-import { documentBlock, documentContract, documentName, runTurn } from "./turn-core"
+import { asTurns, documentBlock, documentContract, documentName, runTurn } from "./turn-core"
 
 /** Exactly what this lane needs: the comment fan-out's deps (its settle IS a comment) plus a
  *  model. Deliberately NOT AfterPublishDeps — this turn only ever files a proposal, so it never
@@ -51,19 +51,6 @@ export interface CommentTurnInput {
 }
 
 /** Who wrote each line, so a multi-party thread reads as a conversation rather than one voice. */
-const asTurns = (
-  thread: CommentRecord[],
-  names: Map<string, string>,
-): { role: "user" | "assistant"; content: string }[] =>
-  thread.map((c) =>
-    c.author_id === DERIVE_AUTHOR_ID
-      ? { role: "assistant" as const, content: c.body_md }
-      : {
-          role: "user" as const,
-          content: `${names.get(c.author_id ?? "") ?? c.author}: ${c.body_md}`,
-        },
-  )
-
 /**
  * Serve one comment mention. Never throws: this runs detached from the request that created the
  * comment, and a failure has to land where the person is looking (the thread) rather than
@@ -132,7 +119,13 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
 
   const out = await runTurn({
     system,
-    messages: asTurns(thread, names),
+    messages: asTurns(thread, (c) => ({
+      fromAgent: c.author_id === DERIVE_AUTHOR_ID,
+      body: c.body_md,
+      // A thread can have several people in it, so every human turn is attributed. Without this
+      // the model reads five voices as one and answers the wrong person.
+      speaker: names.get(c.author_id ?? "") ?? c.author,
+    })),
     contract,
     callModel: deps.model.callModel as AgentLoopInput["callModel"],
     // No tools on this lane yet: the document IS the ground, and the thread is about it.

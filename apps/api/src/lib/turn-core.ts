@@ -372,3 +372,31 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
     }
   }
 }
+
+/**
+ * A TRANSCRIPT, as the model reads it.
+ *
+ * Every lane keeps its history in its own row type — session messages for chat, comments for a
+ * mention thread — and every lane has to answer the same two questions about each row: was this
+ * US, and what was said. The mapping is trivial and was written per lane, which is exactly the
+ * kind of duplication that rots quietly: a row wrongly labelled `assistant` makes the model
+ * believe it said something it never said, and it will then defend it. There is no error, no
+ * failed test, just a confidently wrong conversation.
+ *
+ * So the SHAPE lives here once and the PREDICATES stay per-lane, because they genuinely differ:
+ * chat decides by `author_kind`, a comment thread by whether the author is Derive.
+ *
+ * The speaker's name is prefixed only where one is given. A chat session has two participants
+ * and needs no labels; a comment thread can have five, and an unattributed transcript there
+ * turns a conversation into one voice arguing with itself.
+ */
+export const asTurns = <T>(
+  rows: T[],
+  read: (row: T) => { fromAgent: boolean; body: string; speaker?: string | null },
+): { role: "user" | "assistant"; content: string }[] =>
+  rows.map((row) => {
+    const { fromAgent, body, speaker } = read(row)
+    return fromAgent
+      ? { role: "assistant" as const, content: body }
+      : { role: "user" as const, content: speaker ? `${speaker}: ${body}` : body }
+  })

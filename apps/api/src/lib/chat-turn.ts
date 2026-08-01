@@ -15,7 +15,7 @@ import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
 import type { ChatToolSurface } from "./chat-tools"
 import type { ResolvedChatModel } from "./model-catalog"
-import { proseContract, runTurn } from "./turn-core"
+import { asTurns, proseContract, runTurn } from "./turn-core"
 
 export interface ChatTurnDeps {
   /** The model this turn runs on — resolved from the catalog by the route, so the person's
@@ -56,12 +56,6 @@ export interface ChatTurnInput {
 }
 
 /** The transcript as plain chat turns, oldest first. */
-const asTurns = (msgs: SessionMessageRecord[]): { role: "user" | "assistant"; content: string }[] =>
-  msgs.map((m) => ({
-    role: m.author_kind === "asker" ? ("user" as const) : ("assistant" as const),
-    content: m.body_md,
-  }))
-
 /** What to tell the person when the turn produced nothing. Classification is turn-core's and
  *  shared; the WORDING is this lane's, because somebody is reading it. */
 const apologyFor = (failure: { reason: string; error: string }): string => {
@@ -128,7 +122,10 @@ export const runChatTurn = async (
   const used: string[] = []
   const out = await runTurn({
     system: systemPrompt(input),
-    messages: asTurns(input.transcript),
+    messages: asTurns(input.transcript, (m) => ({
+      fromAgent: m.author_kind !== "asker",
+      body: m.body_md,
+    })),
     contract: proseContract,
     callModel: deps.model.callModel as AgentLoopInput["callModel"],
     tools: input.tools.tools,
