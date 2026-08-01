@@ -31,12 +31,6 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 //
 // Deliberately NOT in the sidebar yet. It is reached by direct link while it earns its place.
 
-interface ChatModel {
-  id: string
-  label: string
-  is_default: boolean
-}
-
 interface ChatSessionRow {
   id: string
   created_at: string
@@ -72,15 +66,6 @@ export function ChatPage() {
   const settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
   const org = ws?.id ?? ""
 
-  // The deploy's models. One entry (or none) means there is nothing to choose, and the picker
-  // does not render — a control with a single option is furniture, not a choice.
-  const models =
-    useQuery({
-      queryKey: ["chat-models"],
-      queryFn: () => json<{ models: ChatModel[] }>("/v1/chat/models"),
-      staleTime: Number.POSITIVE_INFINITY,
-    }).data?.models ?? []
-
   // Past conversations, this person's own. Refetched when a new one opens so the picker does
   // not go stale behind a running turn.
   const history = useQuery({
@@ -115,17 +100,6 @@ export function ChatPage() {
   )
 
   const chat = useChatSession({ open, followUp, resetKey: org })
-
-  // WHICH MODEL THE PICKER SHOWS, and it has to be the one that would actually answer. The URL
-  // wins (the person just picked it); otherwise the model this conversation was LAST answered
-  // with, read off the transcript exactly as the server reads it. Without this a reloaded
-  // conversation showed the deploy's default while the next turn would have run on the model it
-  // was already using — the label lying about what happens next.
-  const lastUsed = [...chat.messages].reverse().find((m) => m.meta?.model?.id)?.meta?.model?.id
-  const chosen =
-    models.find((m) => m.id === modelParam) ??
-    models.find((m) => m.id === lastUsed) ??
-    models.find((m) => m.is_default)
 
   // A session named in the URL is the deep link every other surface points at ("continue in
   // chat"), and it is also how the history picker navigates — one path, so a reload of a
@@ -259,6 +233,10 @@ export function ChatPage() {
       />
 
       <div className="shrink-0 border-t border-border">
+        {/* NO MODEL NAME ON THIS SURFACE. Which model answers is an operator's decision and an
+            implementation detail; naming it in the product invites people to read it as a promise,
+            and it changes. The catalog, the `model` parameter and the per-turn record all stay, so
+            switching remains possible. It is simply not advertised. */}
         {measure(
           <ChatComposer
             onSend={chat.send}
@@ -266,21 +244,6 @@ export function ChatPage() {
             disabledReason={chat.error ?? undefined}
             placeholder="Ask about your workspace…"
             className="border-t-0 px-0"
-            accessory={
-              models.length > 1 ? (
-                <ModelPicker
-                  models={models}
-                  chosen={chosen}
-                  onPick={(id) =>
-                    void navigate({
-                      to: "/chat",
-                      search: { session: sessionParam, model: id },
-                      replace: true,
-                    })
-                  }
-                />
-              ) : null
-            }
           />,
         )}
       </div>
@@ -295,38 +258,6 @@ const SUGGESTIONS = [
   "Summarize what changed this week",
   "Find the pricing docs",
 ]
-
-function ModelPicker(props: {
-  models: ChatModel[]
-  chosen: ChatModel | undefined
-  onPick: (id: string) => void
-}) {
-  const { models, chosen, onPick } = props
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" data-testid="chat-model">
-          {chosen?.label ?? "Model"}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Answer with</DropdownMenuLabel>
-        {models.map((m) => (
-          <DropdownMenuItem
-            key={m.id}
-            onSelect={() => onPick(m.id)}
-            data-testid={`chat-model-${m.id}`}
-          >
-            {m.label}
-            {m.is_default ? (
-              <span className="ml-2 text-xs text-muted-foreground">default</span>
-            ) : null}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
 
 function HistoryPicker(props: {
   sessions: ChatSessionRow[]
