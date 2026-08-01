@@ -10,7 +10,7 @@ import { bail, fail, readJson, str } from "../lib/http"
  *  routes; a terminal "go" records the same call. Humans never resolve threads.
  *  The ReviewRound response schema is the single source for the web client's type. */
 export const reviewRoutes = (ctx: AppContext) => {
-  const { meta, bus, currentUser, requireArtifact, billingGate } = ctx
+  const { meta, bus, notify, currentUser, requireArtifact, billingGate } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const ReviewRound = z
@@ -73,6 +73,13 @@ export const reviewRoutes = (ctx: AppContext) => {
       })
       if (!updated) return bail(fail(c, 409, "no review pending on this artifact"))
       bus.publish(artifact.id, { type: "review.sent_back", round_id: round.id })
+      // Fan out like every other lifecycle event. These two settled the round only on the bus
+      // before, so a webhook subscriber — and, now that channels can subscribe, a team — never
+      // learned the doc had stopped waiting.
+      await notify(artifact, "review.sent_back", {
+        author: me?.name ?? "Someone",
+        actor_id: me?.id ?? null,
+      })
       return c.json({ round: updated })
     },
   )
@@ -108,6 +115,10 @@ export const reviewRoutes = (ctx: AppContext) => {
       })
       if (!updated) return bail(fail(c, 409, "no review pending on this artifact"))
       bus.publish(artifact.id, { type: "review.approved", round_id: round.id })
+      await notify(artifact, "review.approved", {
+        author: me?.name ?? "Someone",
+        actor_id: me?.id ?? null,
+      })
       return c.json({ round: updated })
     },
   )

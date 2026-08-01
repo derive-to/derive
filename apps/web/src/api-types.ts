@@ -3276,7 +3276,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             subscriptions: components["schemas"]["SlackSubscription"][];
-                            event_options: ("comment.created" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested")[];
+                            event_options: ("comment.created" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested" | "review.requested" | "review.sent_back" | "review.approved")[];
                         };
                     };
                 };

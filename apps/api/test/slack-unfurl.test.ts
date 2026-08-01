@@ -76,8 +76,11 @@ describe("decideUnfurl — the broadcast gate", () => {
   it("renders a locked card that leaks the title in no form, including the slug", async () => {
     const { deps, url, artifact } = await setup("unfurl-private", "none")
     const d = await decideUnfurl(deps, url, "u-1")
-    expect(d.kind).toBe("card")
-    if (d.kind !== "card") return
+    // `locked` is its own kind now: the BROADCAST half must still say nothing, but the artifact
+    // rides along so the caller can build a clickable entity whose flexpane answers per-viewer.
+    expect(d.kind).toBe("locked")
+    if (d.kind !== "locked") return
+    expect(d.artifact.short_id).toBe(artifact.short_id)
     const json = JSON.stringify(d.blocks)
     expect(json).toContain("private Derive artifact")
     // It links to the bare short id, which the canonical redirect resolves.
@@ -98,8 +101,8 @@ describe("decideUnfurl — the broadcast gate", () => {
   it("does not add a title the pasted URL never carried", async () => {
     const { deps, artifact } = await setup("unfurl-private-bare", "none")
     const d = await decideUnfurl(deps, `${BASE}/artifacts/${artifact.short_id}`, "u-1")
-    expect(d.kind).toBe("card")
-    if (d.kind === "card") expect(JSON.stringify(d.blocks)).not.toMatch(/q4/i)
+    expect(d.kind).toBe("locked")
+    if (d.kind === "locked") expect(JSON.stringify(d.blocks)).not.toMatch(/q4/i)
   })
 
   it("skips an artifact the sharer cannot read", async () => {

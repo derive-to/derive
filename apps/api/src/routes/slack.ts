@@ -1,8 +1,15 @@
-import { newId, roleAllows, type SlackInstallRecord } from "@derive/core"
+import {
+  type ArtifactRecord,
+  candidateShortIds,
+  newId,
+  roleAllows,
+  type SlackInstallRecord,
+} from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { artifactStatus } from "../lib/artifact-status"
 import { commentCreatedAction } from "../lib/comment-actions"
 import { commentDeepLink } from "../lib/comments"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
@@ -14,12 +21,14 @@ import {
   listSlackChannels,
   openSlackView,
   postSlackResponseUrl,
+  presentSlackEntityDetails,
   slackAuthorizeUrl,
   slackChannelReach,
   slackOidcAuthorizeUrl,
   slackOidcUserinfo,
   slackPermalink,
   slackUserName,
+  unfurlSlackEntities,
   unfurlSlackLinks,
   verifySlackSignature,
 } from "../lib/slack"
@@ -55,13 +64,21 @@ import {
 import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { runSlackProposalAction } from "../lib/slack-proposal"
+import { runSlackReviewAction } from "../lib/slack-review"
 import {
   channelIsSubscribed,
   SLACK_SUBSCRIBABLE_EVENTS,
   subscribableEvents,
 } from "../lib/slack-subscriptions"
-import { artifactRefFromUrl, decideUnfurl } from "../lib/slack-unfurl"
+import { artifactRefFromUrl, decideUnfurl, type UnfurlDecision } from "../lib/slack-unfurl"
+import {
+  artifactDetails,
+  artifactEntity,
+  DERIVE_ENTITY_TYPE,
+  SLACK_REVIEW_ACTION,
+} from "../lib/slack-work-object"
 import { resolveThreadAction } from "../lib/thread-actions"
+import { unfurlInfoFor } from "../lib/unfurl-info"
 import { log } from "../log"
 import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
 
@@ -190,6 +207,7 @@ export const slackRoutes = (ctx: AppContext) => {
     }
 
     const unfurls: Record<string, unknown> = {}
+    const entities: unknown[] = []
     for (const l of links) {
       const d = await decideUnfurl(
         {
@@ -201,19 +219,151 @@ export const slackRoutes = (ctx: AppContext) => {
         l.url,
         userLink.user_id,
       )
-      if (d.kind === "card") unfurls[d.url] = { blocks: d.blocks }
       // `skip` is the ladder's catch-all — not ours, gone, another workspace, or not readable by
       // this viewer — and it is the rung that most often surprises someone. Naming the URL is
       // what makes it actionable.
-      else why(`decision: ${d.kind}`, { url: l.url, viewer: userLink.user_id })
+      if (d.kind === "skip" || d.kind === "auth") {
+        why(`decision: ${d.kind}`, { url: l.url, viewer: userLink.user_id })
+        continue
+      }
+      unfurls[d.url] = { blocks: d.blocks }
+      entities.push(await entityFor(d, l.url))
     }
     if (!Object.keys(unfurls).length) return why("no link produced a card", { links: links.length })
-    await unfurlSlackLinks(bot.token, target, unfurls)
-    log.info("unfurl sent", {
-      team: teamId,
-      channel: ev.channel,
-      count: Object.keys(unfurls).length,
+
+    // Work Object first; the block card is the fallback. unfurlSlackEntities throws on a WARNING
+    // as well as an error, because this API answers 200-with-a-warning when the payload is subtly
+    // wrong or Work Objects are not enabled on the app — a silent nothing in the channel. Falling
+    // back means a workspace without the feature still gets the card it got yesterday.
+    try {
+      await unfurlSlackEntities(bot.token, target, entities)
+      log.info("unfurl sent", {
+        team: teamId,
+        channel: ev.channel,
+        count: entities.length,
+        kind: "entity",
+      })
+    } catch (err) {
+      log.warn("work object unfurl refused; falling back to blocks", {
+        team: teamId,
+        channel: ev.channel,
+        err: String(err),
+      })
+      await unfurlSlackLinks(bot.token, target, unfurls)
+      log.info("unfurl sent", {
+        team: teamId,
+        channel: ev.channel,
+        count: Object.keys(unfurls).length,
+        kind: "blocks",
+      })
+    }
+  }
+
+  /** The Work Object for one decided link. A locked artifact still gets an entity — a title-less
+   *  one, exactly as broadcast-safe as the block card it replaces — because the entity is what
+   *  makes the card CLICKABLE, and the flexpane behind it is per-viewer. That is how someone
+   *  entitled to a private doc finally sees it while the channel still sees nothing. */
+  const entityFor = async (
+    d: Extract<UnfurlDecision, { kind: "card" | "locked" }>,
+    pastedUrl: string,
+  ): Promise<unknown> => {
+    const iconUrl = new URL("/icon.png", deps.baseUrl).toString()
+    if (d.kind === "locked")
+      return {
+        app_unfurl_url: pastedUrl,
+        url: `${deps.baseUrl}/artifacts/${encodeURIComponent(d.artifact.short_id)}`,
+        external_ref: { id: d.artifact.short_id, type: DERIVE_ENTITY_TYPE },
+        entity_type: "slack#/entities/content_item",
+        entity_payload: {
+          attributes: {
+            title: { text: "A private Derive artifact" },
+            display_type: "Private",
+            product_name: "Derive",
+            product_icon: { url: iconUrl, alt_text: "Derive" },
+          },
+          fields: {},
+        },
+      }
+    const status = await artifactStatus(meta, d.artifact)
+    return artifactEntity({
+      pastedUrl,
+      artifact: d.artifact,
+      info: d.info,
+      status,
+      // Slack fetches preview images ANONYMOUSLY, so only a world-readable artifact can carry
+      // one; anything else would render /v1/og's title-less padlock as the card's picture.
+      previewUrl: d.artifact.listed === "public" ? d.info.imageUrl : null,
+      withActions: status.review?.state === "pending",
+      iconUrl,
     })
+  }
+
+  /** Fill the flexpane for one viewer.
+   *
+   *  Three answers, and the middle one is the reason Work Objects are worth adopting. An
+   *  unlinked viewer is asked to connect — privately, where the old broadcast prompt shouted at
+   *  the whole channel. A linked viewer without access is told so plainly, in a panel only they
+   *  see, while the card in the channel keeps revealing nothing. And a viewer who may read it
+   *  gets the real thing, INCLUDING for an artifact whose broadcast card is deliberately
+   *  title-less. Authorization is the same standing-only rule decideUnfurl applies: a link role
+   *  is personal to whoever holds the URL and must never be what unlocks a preview.
+   */
+  const presentEntityDetails = async (teamId: string, ev: SlackEventPayload): Promise<void> => {
+    const ref = ev.external_ref?.id
+    const trigger = ev.trigger_id
+    if (!ref || !trigger || !ev.user) return
+    const installs = await meta.listSlackInstallsByTeam(teamId)
+    const userLink = await meta.getSlackUserLinkBySlackId(teamId, ev.user)
+    const install = installs.find((i) => i.org_id === userLink?.org_id) ?? installs[0]
+    if (!install) return
+    const bot = await resolveBotToken(meta, install.org_id, deps.encryptionKey)
+    if (!bot) return
+    const iconUrl = new URL("/icon.png", deps.baseUrl).toString()
+
+    const say = async (
+      b: Parameters<typeof presentSlackEntityDetails>[2],
+      reason: string,
+    ): Promise<void> => {
+      try {
+        await presentSlackEntityDetails(bot.token, trigger, b)
+        log.info("flexpane presented", { team: teamId, ref, outcome: reason })
+      } catch (err) {
+        log.warn("flexpane failed", { team: teamId, ref, reason, err: String(err) })
+      }
+    }
+
+    if (!userLink)
+      return say(
+        { kind: "auth", url: new URL("/v1/slack/link", deps.baseUrl).toString() },
+        "not linked",
+      )
+
+    let artifact: ArtifactRecord | null = null
+    for (const id of candidateShortIds(ref)) {
+      artifact = await meta.getByShortId(id)
+      if (artifact) break
+    }
+    if (!artifact || artifact.removed_at || artifact.org_id !== install.org_id)
+      return say(
+        { kind: "restricted", title: "Not available", message: "This doc no longer exists." },
+        "gone",
+      )
+    if (!(await authorizeUserStanding(userLink.user_id, "read", artifact)))
+      return say(
+        {
+          kind: "restricted",
+          title: "No access",
+          message: "You don't have access to this doc in Derive. Ask its owner to share it.",
+        },
+        "no access",
+      )
+
+    const info = await unfurlInfoFor(meta, deps.baseUrl, artifact)
+    const status = await artifactStatus(meta, artifact)
+    return say(
+      { kind: "details", metadata: artifactDetails(info, status, userLink.user_id, iconUrl) },
+      "details",
+    )
   }
 
   interface ConnectState {
@@ -441,6 +591,19 @@ export const slackRoutes = (ctx: AppContext) => {
         }
       return c.json({ ok: true })
     }
+    // Someone clicked a Work Object card, opening the flexpane. THIS is the per-viewer surface
+    // chat.unfurl never had: the event names the clicking `user`, so the answer can finally
+    // depend on who is asking rather than on the most cautious reader in the channel.
+    if (
+      body.type === "event_callback" &&
+      ev?.type === "entity_details_requested" &&
+      body.team_id &&
+      ev.user &&
+      ev.trigger_id
+    ) {
+      runAfterAck(presentEntityDetails(body.team_id, ev))
+      return c.json({ ok: true })
+    }
     // A Derive link was pasted (or is being typed). Render a preview for it. Deferred behind the
     // ack like every other slow path here: resolving each link reads the artifact, its versions
     // and its comments, and Slack still wants a reply inside 3s.
@@ -666,6 +829,39 @@ export const slackRoutes = (ctx: AppContext) => {
             },
           ),
         )
+      }
+      return c.json({ ok: true })
+    }
+
+    // A Work Object review button. The artifact comes from the card's external_ref rather than a
+    // button value — Slack round-trips the entity, so there is no attacker-supplied id to bind.
+    if (
+      action.action_id === SLACK_REVIEW_ACTION.approve ||
+      action.action_id === SLACK_REVIEW_ACTION.sendBack
+    ) {
+      const ref = payload.entity?.external_ref?.id
+      if (ref && payload.team?.id && payload.user?.id) {
+        let artifact: ArtifactRecord | null = null
+        for (const id of candidateShortIds(ref)) {
+          artifact = await meta.getByShortId(id)
+          if (artifact) break
+        }
+        // Bind the acting Slack team to the artifact's workspace, exactly as the thread and
+        // proposal branches do: one signed workspace must not act on another org's review.
+        const install = artifact ? await meta.getSlackInstall(artifact.org_id) : null
+        if (artifact && install && install.team_id === payload.team.id)
+          runAfterAck(
+            runSlackReviewAction(
+              { meta, bus, billingBlocked },
+              {
+                teamId: payload.team.id,
+                slackUserId: payload.user.id,
+                artifact,
+                op: action.action_id === SLACK_REVIEW_ACTION.approve ? "approve" : "send_back",
+                responseUrl: payload.response_url,
+              },
+            ),
+          )
       }
       return c.json({ ok: true })
     }
@@ -1267,6 +1463,11 @@ interface SlackEventPayload {
    *  `oauth` = per-user tokens (a member's "Sign in with Slack" grant); `bot` = the bot's own,
    *  the only class that invalidates the install. Either key may be absent. */
   tokens?: { oauth?: string[]; bot?: string[] }
+  /** On `entity_details_requested` only: which Work Object was clicked, and the one-shot token
+   *  that authorizes filling its flexpane. `external_ref` is the pair we set on the entity, so
+   *  `id` is the artifact's stable short id. */
+  external_ref?: { id?: string; type?: string }
+  trigger_id?: string
   /** On `link_shared` only. `message_ts` + `channel` locate a posted message; `unfurl_id` +
    *  `source` are the alternative handle Slack gives for a link still in the composer.
    *  `is_bot_user_member` says whether the bot is actually in that channel — the event fires
@@ -1298,6 +1499,9 @@ interface SlackInteractionPayload {
   /** block_suggestion only: what has been typed into the select so far. */
   value?: string
   action_id?: string
+  /** Present on a Work Object action: the entity whose button was pressed. Slack round-trips
+   *  what we set, so `external_ref.id` is our own short id coming home. */
+  entity?: { external_ref?: { id?: string; type?: string } }
   /** view_submission / block_suggestion: the modal the interaction came from. */
   view?: {
     callback_id?: string
