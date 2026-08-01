@@ -107,18 +107,23 @@ the workflow installs and tests it separately, or these would pass locally and r
 
 ### App Review status
 
-Checked live at phone size, against a real stack:
+Every row below was **exercised end to end** at phone size against a real stack, not
+confirmed by finding a button. The distinction earned its keep: the delete-account control
+is present for any signed-in user, but completing the flow needs a password AND typing
+"delete", and a brand-new account is held on /welcome until onboarding is skipped. A
+presence check would have reported all of that as fine.
 
-| Requirement | State |
+| Requirement | Verified how |
 | --- | --- |
-| 5.1.1(v) in-app account deletion | Present, Settings → Security |
-| 1.2 report user content | Present, artifact ⋯ menu |
-| 2.1 no dead ends | Missing artifact and unknown route both show real states, not blanks |
-| 2.1 sign out | Present, nav drawer → user menu |
-| 4.2 native tab bar | Built |
-| 4.2 push notifications | **Blocked on an Apple Developer account** |
-| 4.8 Sign in with Apple | **Blocked** — required because Google sign-in is offered |
-| Export compliance | Declared (`usesNonExemptEncryption: false`), so submission stops asking |
+| 5.1.1(v) account deletion | Created an account, deleted it through the UI. User row gone, re-sign-in refused, and **zero orphaned sessions, accounts, passkeys or memberships**. |
+| 1.2 report user content | Submitted a real report. Dialog confirms "flagged for review" and the row lands in the database with its reason. |
+| 2.1 comments | Post, react, and the resolve/edit/delete menu, on the mobile sheet. |
+| 2.1 sign out | Clicked it; lands on /login. |
+| 2.1 no dead ends | Missing artifact and unknown route both render real states, not blanks. |
+| 4.2 native tab bar | All four tabs drive the SPA router with zero full page loads. |
+| Export compliance | Declared, so submission stops asking. |
+| 4.2 push notifications | **Blocked on an Apple Developer account.** |
+| 4.8 Sign in with Apple | **Blocked** — required because Google sign-in is offered. |
 
 The two blocked rows are the whole remaining gap, and both need credentials rather than
 code.
