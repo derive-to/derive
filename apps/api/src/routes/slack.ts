@@ -467,6 +467,7 @@ export const slackRoutes = (ctx: AppContext) => {
               encryptionKey: deps.encryptionKey,
               ctx,
               chatAllowlist: deps.chatAllowlist,
+              askLimiter: ctx.askLimiter,
             },
             {
               teamId: body.team_id,

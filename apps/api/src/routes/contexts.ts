@@ -188,10 +188,14 @@ export const contextRoutes = (ctx: AppContext) => {
       return
     }
     const ws = await meta.getWorkspace(s.org_id).catch(() => null)
+    const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
     const tools = buildChatTools(ctx, {
       org: s.org_id,
       user: { id: me.id, name: me.name ?? me.username ?? null },
       seatRole: seat.role,
+      // Read fresh for THIS turn: an operator who flips the killswitch mid-conversation stops
+      // the next write, not merely the next session.
+      flags: { agentKillswitch: settings?.agentKillswitch ?? false },
     })
     const res = await runChatTurn(
       { model: { ...model, callModel: stream.wrap(model.callModel) } },

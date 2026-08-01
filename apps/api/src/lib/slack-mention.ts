@@ -16,6 +16,7 @@ import { overBudget } from "./budget"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import type { ModelCatalog } from "./model-catalog"
+import { escapeMrkdwn } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 
 /** How much of a Slack thread the turn is given. A mention usually arrives with a little
@@ -40,6 +41,19 @@ export interface SlackMentionDeps {
   encryptionKey: string | undefined
   ctx: Parameters<typeof buildChatTools>[0]
   chatAllowlist?: string[]
+  /**
+   * The ask limiter, keyed HERE by the Slack person rather than by the request's actor.
+   *
+   * Every other chat arrival is an HTTP request from a signed-in human, so `limited(c, …)`
+   * keys on them naturally. A Slack event is a webhook from Slack's own infrastructure: the
+   * request actor is Slack, so the usual keying would put every channel in one bucket and let
+   * one noisy person throttle the whole workspace.
+   *
+   * It matters more here than anywhere else, because the other ceiling does not bite: a
+   * gateway deploy has no per-workspace model plan, so `overBudget` reads no limit and returns
+   * false. Without this, a mention loop spends the operator's key with nothing in the way.
+   */
+  askLimiter?: ((key: string) => Promise<{ ok: boolean; retryAfter?: number }>) | null
 }
 
 /** Strip the `<@BOT>` token(s) so the model reads the question, not Slack's wire format. */
@@ -55,8 +69,20 @@ export const questionFrom = (text: string, botUserId: string | null): string =>
  */
 export const artifactRefIn = (text: string, baseUrl: string): string | null => {
   const host = baseUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "")
+  // Escaped properly: the previous character class was malformed and escaped NOTHING, so every
+  // `.` in the host stayed a wildcard and a lookalike host (`derive-prXderive-toXworkersXdev`)
+  // matched. Bounded by the org check below either way, but a host match that is not a host
+  // match is the kind of wrong that grows a second bug later.
+  // Escaped properly. The previous character class was malformed and escaped NOTHING, so every
+  // `.` in the host stayed a wildcard and a lookalike host (`derive-prXderive-toXworkersXdev`)
+  // matched — bounded by the org check below, but a host match that is not a host match is the
+  // kind of wrong that grows a second bug later.
+  //
+  // The slug class is spelled out rather than `\w`: this is a TEMPLATE literal, where `\w` is
+  // not a recognised escape and collapses to a bare `w` — which silently narrows the pattern to
+  // two characters and stops matching any real short id. (Caught by running it, not reading it.)
   const re = new RegExp(
-    `https?://${host.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}/artifacts/([\\w-]+)`,
+    `https?://${host.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/artifacts/([A-Za-z0-9_-]+)`,
     "i",
   )
   const m = re.exec(text)
@@ -112,8 +138,18 @@ export const handleSlackMention = async (
   const bot = await resolveBotToken(meta, install.org_id, deps.encryptionKey)
   if (!bot) return quiet("slack not connected")
 
-  /** Reply in the thread the mention is in. Never throws: a failed post must not fail the
-   *  event handler, which Slack would then retry. */
+  /**
+   * Reply in the thread the mention is in.
+   *
+   * ESCAPED, because this text is MODEL OUTPUT and Slack's mrkdwn is not inert: `<!channel>`
+   * notifies everyone in the channel, and `<url|label>` renders a link whose visible text need
+   * not match where it points. A model's reply is shaped by the documents it just read, so a
+   * document anybody in the workspace can edit would otherwise be able to ping a channel or
+   * plant a disguised link. escapeMrkdwn neutralises the three characters that make those
+   * possible; our own continue-link is appended AFTER escaping, so it still renders.
+   *
+   * Never throws: a failed post must not fail the event handler, which Slack would retry.
+   */
   const say = async (text: string) => {
     await postWithRecovery(meta, install.org_id, bot.token, {
       channel: p.channel,
@@ -141,6 +177,18 @@ export const handleSlackMention = async (
       `Link your Derive account to ask me here — I answer with *your* permissions, so I need to know who you are. ${deps.baseUrl}/settings/integrations`,
     )
     return quiet("asker not linked")
+  }
+
+  // PER-PERSON RATE LIMIT, before anything expensive. Told out loud rather than dropped: the
+  // person is watching the thread, and silence reads as the bot being broken.
+  if (deps.askLimiter) {
+    const verdict = await deps
+      .askLimiter(`slack:${p.teamId}:${p.userId}`)
+      .catch(() => ({ ok: true }))
+    if (!verdict.ok) {
+      await say("You are asking faster than I can answer — give me a moment and mention me again.")
+      return quiet("rate limited")
+    }
   }
 
   // The same gates every other chat arrival walks.
@@ -214,49 +262,67 @@ export const handleSlackMention = async (
       ? `${question}\n\n(The person linked this document: ${named.title ?? named.short_id} — short_id ${named.short_id}.)`
       : question
 
-  const tools = buildChatTools(deps.ctx, {
-    org: install.org_id,
-    user: { id: asker.id, name: asker.name },
-    seatRole: asker.role,
-  })
-  const res = await runChatTurn(
-    { model },
-    {
-      session,
-      transcript: [
-        ...(await meta.listSessionMessages(sessionId)).slice(0, -1).slice(-THREAD_CONTEXT),
-        {
-          id: "pending",
-          session_id: sessionId,
-          author_kind: "asker",
-          author_id: asker.id,
-          body_md: grounded,
-          meta: null,
-          created_at: new Date().toISOString(),
-        },
-      ],
-      tools,
-      workspaceName:
-        (await meta.getWorkspace(install.org_id).catch(() => null))?.name ?? "this workspace",
-      asker: { name: asker.name },
-      skills: tools.skills,
-    },
-  )
+  // FROM HERE ON, SOMEONE IS WAITING IN A THREAD. runChatTurn does not throw, but the writes
+  // around it can (a dropped connection mid-settle, a store error), and the failure mode that
+  // costs the most trust is silence: the bot was mentioned in front of the channel and simply
+  // never spoke. So the tail answers even when it fails.
+  try {
+    const tools = buildChatTools(deps.ctx, {
+      org: install.org_id,
+      user: { id: asker.id, name: asker.name },
+      seatRole: asker.role,
+      flags: { agentKillswitch: settings.agentKillswitch },
+    })
+    const res = await runChatTurn(
+      { model },
+      {
+        session,
+        transcript: [
+          ...(await meta.listSessionMessages(sessionId)).slice(0, -1).slice(-THREAD_CONTEXT),
+          {
+            id: "pending",
+            session_id: sessionId,
+            author_kind: "asker",
+            author_id: asker.id,
+            body_md: grounded,
+            meta: null,
+            created_at: new Date().toISOString(),
+          },
+        ],
+        tools,
+        workspaceName:
+          (await meta.getWorkspace(install.org_id).catch(() => null))?.name ?? "this workspace",
+        asker: { name: asker.name },
+        skills: tools.skills,
+      },
+    )
 
-  // The transcript is the record on every other lane, so it is here too: the Slack message is a
-  // rendering of the answer, not the answer itself. That is what makes the /chat link work.
-  await meta.addSessionMessage(
-    {
-      id: newId("sm"),
-      session_id: sessionId,
-      author_kind: "agent",
-      author_id: "derive",
-      body_md: res.reply,
-      meta: JSON.stringify({ outcome: res.outcome, model: res.model, via: "slack" }),
-    },
-    res.outcome === "failed" ? "failed" : "answered",
-  )
+    // The transcript is the record on every other lane, so it is here too: the Slack message is a
+    // rendering of the answer, not the answer itself. That is what makes the /chat link work.
+    await meta.addSessionMessage(
+      {
+        id: newId("sm"),
+        session_id: sessionId,
+        author_kind: "agent",
+        author_id: "derive",
+        body_md: res.reply,
+        meta: JSON.stringify({ outcome: res.outcome, model: res.model, via: "slack" }),
+      },
+      res.outcome === "failed" ? "failed" : "answered",
+    )
 
-  await say(`${res.reply}\n\n<${deps.baseUrl}/chat?session=${sessionId}|Continue in Derive>`)
+    // The reply is escaped; the continue-link is ours and is appended after, so it renders.
+    await say(
+      `${escapeMrkdwn(res.reply)}\n\n<${deps.baseUrl}/chat?session=${sessionId}|Continue in Derive>`,
+    )
+  } catch (e) {
+    log.error("slack mention turn failed", {
+      team: p.teamId,
+      channel: p.channel,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    await say("Something went wrong on my side, so I have not answered that. Try me again.")
+    return quiet("turn failed")
+  }
   return { status: "answered" }
 }

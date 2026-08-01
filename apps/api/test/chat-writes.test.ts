@@ -35,6 +35,19 @@ describe("the chat write posture", () => {
     })
   })
 
+  it("honours the KILLSWITCH on creates, not only on edits", () => {
+    // The switch is documented as "demotes EVERY write to a proposal, instantly", and it is an
+    // input to the autonomy GATE — which a chat write never reaches, because it goes through
+    // the publish tool. Without this it stopped every gated lane and left chat creating live.
+    expect(chatPolicy("publish", { title: "New" }, { agentKillswitch: true })).toMatchObject({
+      for_review: true,
+    })
+    // ...and with it off, creating stays live.
+    expect(chatPolicy("publish", { title: "New" }, { agentKillswitch: false })).not.toHaveProperty(
+      "for_review",
+    )
+  })
+
   it("caps how long a chat turn waits on a packaged agent", () => {
     // A Maker context can work for minutes and the person is sitting there, so the turn relays
     // a pointer rather than holding the conversation open.
@@ -45,6 +58,8 @@ describe("the chat write posture", () => {
     expect(chatPolicy("use", { context: "c", wait: 2 })).toMatchObject({ wait: 2 })
     // Absent ⇒ the cap, so a turn never blocks indefinitely by omission.
     expect(chatPolicy("use", { context: "c" })).toMatchObject({ wait: CHAT_USE_WAIT_S })
+    // A negative is the model's mistake; clamping beats spending a turn on a tool error.
+    expect(chatPolicy("use", { context: "c", wait: -5 })).toMatchObject({ wait: 0 })
   })
 
   it("leaves the reading tools alone", () => {

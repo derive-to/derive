@@ -178,6 +178,14 @@ export interface ChatPrincipal {
   user: { id: string; name: string | null }
   /** Their REAL seat role in `org` — the ceiling on everything the turn can do. */
   seatRole: Role
+  /** The workspace's write switches, read fresh for THIS turn. Absent = treated as off.
+   *
+   *  `agentKillswitch` has to reach here, and that is not obvious: it is an input to the
+   *  autonomy GATE, and a chat turn's writes do not go through the gate — they go through the
+   *  publish tool. So a workspace that flipped the switch would have kept getting live
+   *  creates from chat while every gated lane correctly stopped, which makes a switch
+   *  documented as "demotes EVERY write to a proposal" into a partial one. */
+  flags?: { agentKillswitch?: boolean }
 }
 
 /**
@@ -235,7 +243,9 @@ export const buildChatTools = (
         return {
           error: `unknown tool: ${name}. Available: ${[...surface.names].sort().join(", ")}`,
         }
-      return unwrap(await handler(chatPolicy(name, (input ?? {}) as Record<string, unknown>)))
+      return unwrap(
+        await handler(chatPolicy(name, (input ?? {}) as Record<string, unknown>, who.flags)),
+      )
     },
   }
 }
@@ -260,11 +270,15 @@ export const buildChatTools = (
 export const chatPolicy = (
   name: string,
   args: Record<string, unknown>,
+  flags?: { agentKillswitch?: boolean },
 ): Record<string, unknown> => {
   if (name === "publish") {
     // A publish carrying a short_id is an EDIT of something that exists. Creating omits it.
     const editing = typeof args.short_id === "string" && args.short_id.length > 0
-    return editing ? { ...args, for_review: true } : args
+    // THE KILLSWITCH REACHES CREATES TOO. Editing already proposes; with the switch on, so
+    // does creating — an operator who flipped it after a bad run is asking for nothing to
+    // land without them, and "except new documents" is not a distinction they made.
+    return editing || flags?.agentKillswitch ? { ...args, for_review: true } : args
   }
   if (name === "use") {
     // A packaged agent's run has its OWN budget, and a chat turn does not get to inherit it: a
@@ -273,9 +287,13 @@ export const chatPolicy = (
     // conversation open. `use` already returns progress + result_url early, so this loses
     // nothing except the stall.
     const asked = typeof args.wait === "number" ? args.wait : Number(args.wait)
+    // Clamped at BOTH ends: the tool's own schema rejects a negative, and turning the model's
+    // bad argument into a tool error it has to recover from wastes a turn for nothing.
     return {
       ...args,
-      wait: Number.isFinite(asked) ? Math.min(asked, CHAT_USE_WAIT_S) : CHAT_USE_WAIT_S,
+      wait: Number.isFinite(asked)
+        ? Math.min(Math.max(asked, 0), CHAT_USE_WAIT_S)
+        : CHAT_USE_WAIT_S,
     }
   }
   return args

@@ -48,6 +48,16 @@ describe("the document a Slack mention points at", () => {
     expect(artifactRefIn("https://evil.example/artifacts/pricing-faq-8myxva5b", base)).toBeNull()
   })
 
+  it("refuses a LOOKALIKE host — the escape has to actually escape", () => {
+    // The host goes into a RegExp, so its dots must be escaped or they are wildcards. This
+    // shipped broken once: the character class was malformed and escaped nothing, so
+    // `derive-prXderive-toXworkersXdev` matched. Bounded by the org check downstream, but a
+    // host match that is not a host match is worth pinning.
+    expect(
+      artifactRefIn("https://derive-pr-609Xderive-toXworkersXdev/artifacts/faq-8myxva5b", base),
+    ).toBeNull()
+  })
+
   it("returns null when no artifact is named", () => {
     expect(artifactRefIn("what does the pricing doc say?", base)).toBeNull()
     expect(artifactRefIn("https://derive.test/settings", base)).toBeNull()
