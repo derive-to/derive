@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { SLACK_BOT_SCOPES } from "../src/lib/slack"
+import { mrkdwnBody } from "../src/lib/slack-cards"
 import { artifactRefIn, questionFrom } from "../src/lib/slack-mention"
 import { buildSlackManifest } from "../src/slack-app-setup"
 
@@ -81,5 +82,40 @@ describe("the Slack app manifest", () => {
 
   it("still declares chat:write — the mention lane answers by posting", () => {
     expect(manifest.oauth_config.scopes.bot).toContain("chat:write")
+  })
+})
+
+// HOW AN ANSWER LOOKS IN SLACK. The model writes markdown; Slack speaks mrkdwn. Escaping alone
+// left every citation as literal `[Title](/artifacts/x)` — the most useful part of an answer
+// rendered as punctuation — which no test caught because the STRING was correct.
+
+describe("an answer rendered for Slack", () => {
+  const BASE = "https://derive.example"
+  // The transform the lane applies before mrkdwnBody: citations are root-relative by design
+  // (the agent cites by path, knowing no hostname) and mean nothing to Slack until absolutised.
+  const absolutise = (md: string) =>
+    md.replace(/\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g, (_m, p: string) => `](${BASE}${p})`)
+
+  it("turns a root-relative citation into a clickable Slack link", () => {
+    const out = mrkdwnBody(absolutise("See the [Q3 Roadmap](/artifacts/k9ffftpm) for dates."))
+    expect(out).toContain(`<${BASE}/artifacts/k9ffftpm|Q3 Roadmap>`)
+    expect(out).not.toContain("](")
+  })
+
+  it("leaves an absolute link alone", () => {
+    const out = mrkdwnBody(absolutise("See [the docs](https://example.com/x)."))
+    expect(out).toContain("<https://example.com/x|the docs>")
+  })
+
+  it("does NOT absolutise a protocol-relative or javascript target", () => {
+    // The pattern is the guard: a leading slash then an ALPHANUMERIC admits /artifacts/x and
+    // excludes both `//evil.com` and `javascript:`.
+    expect(absolutise("[x](//evil.com)")).toBe("[x](//evil.com)")
+    expect(absolutise("[x](javascript:alert(1))")).toBe("[x](javascript:alert(1))")
+  })
+
+  it("still neutralises a channel-wide mention hidden in an answer", () => {
+    // The escaping this replaced existed for a reason; rendering must not lose it.
+    expect(mrkdwnBody(absolutise("hello <!channel> there"))).not.toContain("<!channel>")
   })
 })

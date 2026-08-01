@@ -29,6 +29,20 @@ export const buildSlackManifest = (baseUrl: string) => {
       background_color: "#1a1a2e",
     },
     features: {
+      // THE MESSAGES TAB, which is what makes the app DM-able at all.
+      //
+      // Omitting app_home does not leave Slack's default alone — applying a manifest without it
+      // turns the Messages tab OFF, so the app stops accepting direct messages and the person
+      // sees no way to write to it. Subscribing message.im and holding im:history buys nothing
+      // if nobody can open the conversation, which is exactly how this shipped broken: the event
+      // and the scope were right and the tab was gone.
+      //
+      // read_only must be false too — true renders a tab you can look at and cannot type into.
+      app_home: {
+        home_tab_enabled: false,
+        messages_tab_enabled: true,
+        messages_tab_read_only_enabled: false,
+      },
       bot_user: { display_name: "Derive", always_online: true },
       // The domains whose links this app unfurls. A registered domain matches all of its
       // SUBDOMAINS and paths, so one entry covers the instance host and every vanity

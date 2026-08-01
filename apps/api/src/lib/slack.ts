@@ -527,6 +527,39 @@ export const joinSlackChannel = async (token: string, channel: string): Promise<
   }
 }
 
+/**
+ * A Slack user's EMAIL, which is what lets a mention resolve to a Derive account without the
+ * person having linked anything first.
+ *
+ * Email is the only identifier the two systems already share. Resolving by display NAME would
+ * be indefensible — names are not unique, not stable, and trivially set to somebody else's —
+ * whereas an email on a Slack profile was verified by the workspace admin's directory.
+ *
+ * Undefined on any failure, including the common one: a workspace whose admins hide profile
+ * email, where `users.info` returns a profile with no email at all. That is a legitimate
+ * configuration, not an error, and the caller falls back to asking the person to link.
+ */
+export const slackUserEmail = async (
+  token: string,
+  userId: string,
+): Promise<string | undefined> => {
+  try {
+    const res = await fetch(`${API}/users.info?user=${encodeURIComponent(userId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const data = (await res.json()) as {
+      ok: boolean
+      user?: { profile?: { email?: string }; is_bot?: boolean }
+    }
+    // A bot's "email" is not a person's, so never resolve one to a seat.
+    if (!data.ok || data.user?.is_bot) return undefined
+    const email = data.user?.profile?.email?.trim().toLowerCase()
+    return email || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** A Slack user's display name (best-effort; falls back to the raw id on any error). */
 export const slackUserName = async (token: string, userId: string): Promise<string> => {
   try {

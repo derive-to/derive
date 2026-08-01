@@ -16,7 +16,8 @@ import { chatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import type { ModelCatalog } from "./model-catalog"
-import { escapeMrkdwn } from "./slack-cards"
+import { slackUserEmail } from "./slack"
+import { escapeMrkdwn, mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 
 /** How much of a Slack thread the turn is given. A mention usually arrives with a little
@@ -112,13 +113,33 @@ export const handleSlackMention = async (
   // WHO. A Slack user id is not a Derive principal: the turn acts as the asker, reads with
   // their permissions and spends against their workspace, so an unlinked account has nobody to
   // act as. They are told how to fix it rather than ignored.
-  const linkedFor = async (orgId: string) => {
-    const link = await meta.getSlackUserLinkBySlackId(p.teamId, p.userId).catch(() => null)
-    if (!link) return null
-    const seat = await meta.getMembership(orgId, link.user_id).catch(() => null)
+  const seatFor = async (orgId: string, userId: string) => {
+    const seat = await meta.getMembership(orgId, userId).catch(() => null)
     if (!seat) return null
-    const user = (await meta.getUsers([link.user_id]).catch(() => []))[0]
-    return { id: link.user_id, name: user?.name ?? "someone", role: seat.role }
+    const user = (await meta.getUsers([userId]).catch(() => []))[0]
+    return { id: userId, name: user?.name ?? "someone", role: seat.role }
+  }
+
+  /**
+   * An EXPLICIT link wins, then the Slack profile's email.
+   *
+   * Requiring a link first was correct about the principal and wrong about the friction: the
+   * whole point of answering in Slack is that somebody is already there, and "go to a settings
+   * page and come back" is exactly the moment they stop. Email is the identifier both systems
+   * already hold, and a Slack profile email was verified by the workspace's own directory.
+   *
+   * It is a FALLBACK, not a replacement. An explicit link is a deliberate statement about who
+   * somebody is and survives an email change; this only runs when there is none. Membership is
+   * still checked either way, so resolving an identity never grants access on its own — a
+   * matched email with no seat in this workspace is still nobody here.
+   */
+  const linkedFor = async (orgId: string, botToken: string) => {
+    const link = await meta.getSlackUserLinkBySlackId(p.teamId, p.userId).catch(() => null)
+    if (link) return await seatFor(orgId, link.user_id)
+    const email = await slackUserEmail(botToken, p.userId)
+    if (!email) return null
+    const user = await meta.findUserByEmail(email).catch(() => null)
+    return user ? await seatFor(orgId, user.id) : null
   }
 
   // WHICH WORKSPACE. One Slack team can back several Derive workspaces, so the channel's own
@@ -171,7 +192,7 @@ export const handleSlackMention = async (
     return quiet("ambiguous workspace")
   }
 
-  const asker = await linkedFor(install.org_id)
+  const asker = await linkedFor(install.org_id, bot.token)
   if (!asker) {
     await say(
       `Link your Derive account to ask me here — I answer with *your* permissions, so I need to know who you are. ${deps.baseUrl}/settings/integrations`,
@@ -302,9 +323,23 @@ export const handleSlackMention = async (
       res.outcome === "failed" ? "failed" : "answered",
     )
 
-    // The reply is escaped; the continue-link is ours and is appended after, so it renders.
+    // AN ANSWER IS PROSE, not a label, so it goes through mrkdwnBody rather than escapeMrkdwn:
+    // the model writes markdown, and escaping alone left `**bold**` as asterisks and every
+    // citation as literal `[Title](/artifacts/x)` — the most useful part of an answer rendered
+    // as punctuation.
+    //
+    // Citations are ROOT-RELATIVE by design (the agent cites by path, knowing no hostname), and
+    // mrkdwnBody only linkifies absolute http(s) targets — correctly, since a relative href
+    // means nothing in Slack. So they are absolutised against this instance FIRST. The pattern
+    // stays strict for the same reason it is strict in the web renderer: a leading slash then an
+    // alphanumeric admits /artifacts/x and excludes both `javascript:` and the protocol-relative
+    // `//evil.com`.
+    const withLinks = res.reply.replace(
+      /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
+      (_m, path: string) => `](${deps.baseUrl}${path})`,
+    )
     await say(
-      `${escapeMrkdwn(res.reply)}\n\n<${deps.baseUrl}/chat?session=${sessionId}|Continue in Derive>`,
+      `${mrkdwnBody(withLinks)}\n\n<${deps.baseUrl}/chat?session=${sessionId}|Continue in Derive>`,
     )
   } catch (e) {
     log.error("slack mention turn failed", {
