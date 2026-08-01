@@ -107,6 +107,7 @@ export interface TypedTables {
  */
 export type JunctionTable =
   | "artifactFavorite"
+  | "collectionFavorite"
   | "artifactTag"
   | "collectionItem"
   | "oauthClientWorkspace"

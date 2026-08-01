@@ -370,6 +370,15 @@ CREATE TABLE IF NOT EXISTS collection_member (
   FOREIGN KEY (collection_id) REFERENCES collection(id)
 );
 
+CREATE TABLE IF NOT EXISTS collection_favorite (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (collection_id, user_id),
+  FOREIGN KEY (collection_id) REFERENCES collection(id)
+);
+
 CREATE TABLE IF NOT EXISTS folder (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL DEFAULT 'local',
@@ -686,6 +695,7 @@ CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, crea
 CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at);
 
 CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id);
+CREATE INDEX IF NOT EXISTS collection_favorite_user_idx ON collection_favorite (user_id);
 
 CREATE INDEX IF NOT EXISTS artifact_member_by_user ON artifact_member (user_id);
 
