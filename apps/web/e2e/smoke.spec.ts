@@ -189,3 +189,23 @@ test("Collections is a view of the library, with starred shelves leading", async
   await owner.getByTestId("library-view-documents").click()
   await expect(owner.getByTestId("collections-all")).toHaveCount(0)
 })
+
+test("a card states three facts, not nine", async ({ owner }) => {
+  const id = await publishArtifact(owner, "diet.md", "# Diet\n\nbody")
+  await owner.goto("/")
+  const card = owner.getByTestId(`artifact-card-open-${id}`)
+  await expect(card).toBeVisible()
+
+  // The version number and the type prefix are gone: the state line is the relative
+  // time alone. `v1`/`HTML ·` would both match this.
+  await expect(card).not.toContainText("v1")
+  await expect(card).not.toContainText("·")
+
+  // Your own work carries no author chip — the same face on every card is not
+  // information, so it shows only when someone else made it.
+  await expect(owner.getByTestId(`artifact-card-author-${id}`)).toHaveCount(0)
+
+  // No view count, and no separate proposal/comment counts — a quiet document says
+  // nothing at all in the meta row.
+  await expect(owner.getByTestId("needs-you")).toHaveCount(0)
+})

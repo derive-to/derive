@@ -1,23 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { api, type Collection } from "@/api"
+import type { Collection } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -363,7 +355,7 @@ export function NavRail() {
   // keeps its own timing.
   const bootGate = useBootGate()
   const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
-  const { data: collections = [], isPending: collectionsPending } = useQuery({
+  const { data: collections = [] } = useQuery({
     ...collectionsQuery(),
     enabled: !!me && bootGate,
   })
@@ -378,7 +370,7 @@ export function NavRail() {
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
   const workspaceLabel = activeWs?.personal ? "Personal" : (summary?.workspace ?? "")
   const { state, setOpenMobile } = useSidebar()
-  const nav = useNavigate()
+  const _nav = useNavigate()
   const loc = useLocation()
   const search = loc.search as LibrarySearch
   const onLibrary = loc.pathname === "/"
@@ -397,8 +389,8 @@ export function NavRail() {
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
 
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState("")
+  const [_creating, _setCreating] = useState(false)
+  const [_newName, _setNewName] = useState("")
   // Repo collections whose nested PR previews are collapsed. Default-expanded, so the
   // set holds only the ones the user has folded shut.
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())

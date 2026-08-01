@@ -12,11 +12,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useAuth } from "@/ctx"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { CommentSignal } from "./comment-signal"
-import { ProposalSignal } from "./proposal-signal"
+import { NeedsYou } from "./needs-you"
 
 /**
  * A compact list row for the library (the default for collections / synced repos,
@@ -62,10 +62,17 @@ export function ArtifactRow({
   // "Who last changed this": prefer the resolved author (carries the Derive handle),
   // fall back to the denormalized fields. Present only for synced artifacts.
   const author = a.author ?? null
+  const { me } = useAuth()
   const authorLogin = author?.login ?? a.author_login ?? null
   const hasAuthor = !!(author?.name || authorLogin || a.author_name)
+  // Only when it isn't you — the same rule the card follows.
+  const mine =
+    !!me?.username &&
+    ((authorLogin ?? "").toLowerCase() === me.username.toLowerCase() ||
+      author?.handle?.toLowerCase() === me.username.toLowerCase())
+  const showAuthor = hasAuthor && !mine
   // Proposals you can act on (owner/editor) soft-ink the row edge — the same
-  // "needs you" accent as a thread you're in (see ProposalSignal + ArtifactCard).
+  // "needs you" accent as a thread you're in (see NeedsYou + ArtifactCard).
   const awaitingReview =
     (a.my_role === "owner" || a.my_role === "editor") && (a.open_proposals ?? 0) > 0
 
@@ -139,20 +146,16 @@ export function ArtifactRow({
               {dir}/
             </span>
           )}
-          <ProposalSignal artifact={a} size={12} className="relative z-20" />
-          <CommentSignal artifact={a} size={12} className="relative z-20" />
-          {a.views !== undefined && a.views > 0 && (
-            <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
-              <Icon name="views" size={12} />
-              {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-            </span>
-          )}
+          {/* Same budget as the card, in one line — two activity counts merged into
+              one, and the view count gone: it changes no decision you make in a
+              library, and it quietly turns a workspace into a leaderboard. */}
+          <NeedsYou artifact={a} className="relative z-20" />
         </span>
       </button>
 
       {/* "Who last changed this" — above the stretched link so the click-to-filter
           button (and the profile link) stay independently clickable. */}
-      {hasAuthor && (
+      {showAuthor && (
         <div className="relative z-20 hidden shrink-0 items-center gap-2 sm:flex">
           <AuthorChip
             name={author?.name ?? a.author_name ?? null}

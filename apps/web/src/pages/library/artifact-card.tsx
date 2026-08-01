@@ -3,7 +3,6 @@ import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
 import { Thumb } from "@/components/shared/thumb"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -14,11 +13,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useAuth } from "@/ctx"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { CommentSignal } from "./comment-signal"
-import { ProposalSignal } from "./proposal-signal"
+import { NeedsYou, needsYouCount } from "./needs-you"
 
 // One card in the library grid, preview-first. The live render is the hero (bleeds to
 // the top edge, carrying a single machine-register TYPE placard); a hairline-divided
@@ -67,8 +66,16 @@ export function ArtifactCard({
   const showMenu = !!onAddToCollection || showDelete
   const author = a.author ?? null
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
+  // The same face on every card is not information. Show it only when someone ELSE made
+  // it — which is exactly when it changes what you do next.
+  const { me } = useAuth()
+  const mineByLogin =
+    !!me?.username &&
+    (author?.login ?? a.author_login ?? "").toLowerCase() === me.username.toLowerCase()
+  const mineByHandle = !!me?.username && author?.handle?.toLowerCase() === me.username.toLowerCase()
+  const showAuthor = hasAuthor && !mineByLogin && !mineByHandle
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
-  const versionDepth = Math.max(a.current_version, a.versions.length)
+  const _versionDepth = Math.max(a.current_version, a.versions.length)
   const sourceDir = a.source_path ? dirOf(a.source_path) : ""
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
   // Proposals you can act on (owner/editor) are a "needs you" signal — they soft-ink
@@ -79,10 +86,10 @@ export function ArtifactCard({
   // Machine-register state line under the title (house " · " join, matching the
   // workbench header): a synced file's folder, else its version when there's history,
   // then how fresh it is. The TYPE rides the placard, so it isn't repeated here.
-  const stateLine = [
-    sourceDir ? `${sourceDir}/` : versionDepth > 1 ? `v${a.current_version}` : "",
-    updated ? `updated ${ago(updated)}` : "",
-  ]
+  // Relative time alone. The version number never chose a document for anyone, and the
+  // render tells you what it is better than a type prefix could. A synced document keeps
+  // its folder, which is genuinely where it lives.
+  const stateLine = [sourceDir ? `${sourceDir}/` : "", updated ? ago(updated) : ""]
     .filter(Boolean)
     .join(" · ")
 
@@ -111,6 +118,10 @@ export function ArtifactCard({
           v={a.current_version}
           typeLabel={artifactTypeLabel(a)}
           hasPreview={a.has_preview}
+          // Derive's claim is that a document is a fully-styled page; every competitor
+          // can show a title and a timestamp, none can show the thing itself. A taller
+          // frame is that claim made visible.
+          className="aspect-[4/3]"
         />
         {/* The select box, opposite the actions cluster. Hidden at rest on a mouse (the
             grid stays a gallery), pinned visible once ANY card is selected, and always
@@ -265,48 +276,43 @@ export function ArtifactCard({
           )}
         </button>
 
-        {/* People + activity: who made it on the left (avatar + name), the activity
-            cluster on the right. The author is the one interactive island here (z-20);
-            the rest clicks through to open. */}
-        <div className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
-          {hasAuthor && (
-            <AuthorChip
-              name={author?.name ?? a.author_name ?? null}
-              login={author?.login ?? a.author_login ?? null}
-              avatar={author?.avatar ?? a.author_avatar ?? null}
-              handle={author?.handle ?? null}
-              size="xs"
-              className="relative z-20 min-w-0"
-              data-testid={`artifact-card-author-${a.short_id}`}
-            />
-          )}
-          <span className={cn("inline-flex shrink-0 items-center gap-2.5", hasAuthor && "ml-auto")}>
-            {/* Invite-only work is invisible to everyone but its members — the chip
-                says so wherever the doc DOES surface (your library, Created by me). */}
-            {isPrivate && (
-              <Badge shape="pill" variant="outline" title="Only you and people you add">
-                <Icon name="lock" size={12} /> Private
-              </Badge>
+        {/* One line, three facts at most: who (only when it is not you), whether it is
+            private, and whether it wants you. The card used to carry nine — a version
+            number, a type prefix, a Skill pill, a view count, and two separate activity
+            counts — which is a lot of ink for a surface whose job is to let you pick
+            something and open it. */}
+        {(showAuthor || isPrivate || needsYouCount(a) > 0) && (
+          <div className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
+            {showAuthor && (
+              <AuthorChip
+                name={author?.name ?? a.author_name ?? null}
+                login={author?.login ?? a.author_login ?? null}
+                avatar={author?.avatar ?? a.author_avatar ?? null}
+                handle={author?.handle ?? null}
+                size="xs"
+                className="relative z-20 min-w-0"
+                data-testid={`artifact-card-author-${a.short_id}`}
+              />
             )}
-            {/* A skill is reusable agent procedure (a bundle with a SKILL.md) — call it
-                out wherever it surfaces so the shelf is spottable in the grid. */}
-            {a.current_content_type === "derive/skill" && (
-              <Badge shape="pill" variant="secondary" title="A skill: reusable agent procedure">
-                Skill
-              </Badge>
-            )}
-            {/* Review queue, then discussion, then passive views — most-actionable first. */}
-            <ProposalSignal artifact={a} size={12} />
-            <CommentSignal artifact={a} size={12} compact />
-            {a.views !== undefined && a.views > 0 && (
-              <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
-                <Icon name="views" size={12} />
-                {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-                <span className="sr-only"> views</span>
-              </span>
-            )}
-          </span>
-        </div>
+            <span
+              className={cn("inline-flex shrink-0 items-center gap-2", showAuthor && "ml-auto")}
+            >
+              {/* A glyph, not a worded pill: private is a state a lot of documents are
+                  in, and the lock is already understood. */}
+              {isPrivate && (
+                <span
+                  role="img"
+                  aria-label="Private"
+                  title="Private — only you and people you add"
+                  className="inline-flex opacity-70"
+                >
+                  <Icon name="lock" size={12} />
+                </span>
+              )}
+              <NeedsYou artifact={a} />
+            </span>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
