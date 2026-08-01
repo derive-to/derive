@@ -2235,6 +2235,42 @@ export class PgMetaStore implements MetaStore {
       )
   }
 
+  // Starred collections. Org-scoped like the artifact twin, so a star does not leak
+  // across a workspace switch.
+  async listUserFavoriteCollectionIds(userId: string, orgId?: string): Promise<string[]> {
+    if (orgId !== undefined) {
+      const rows = await this.db
+        .select({ id: collectionFavorite.collection_id })
+        .from(collectionFavorite)
+        .innerJoin(collection, eq(collection.id, collectionFavorite.collection_id))
+        .where(and(eq(collectionFavorite.user_id, userId), eq(collection.org_id, orgId)))
+      return rows.map((r) => r.id)
+    }
+    const rows = await this.db
+      .select({ id: collectionFavorite.collection_id })
+      .from(collectionFavorite)
+      .where(eq(collectionFavorite.user_id, userId))
+    return rows.map((r) => r.id)
+  }
+  async setCollectionFavorite(collectionId: string, userId: string): Promise<void> {
+    await this.db
+      .insert(collectionFavorite)
+      .values({ id: crypto.randomUUID(), collection_id: collectionId, user_id: userId })
+      .onConflictDoNothing({
+        target: [collectionFavorite.collection_id, collectionFavorite.user_id],
+      })
+  }
+  async removeCollectionFavorite(collectionId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(collectionFavorite)
+      .where(
+        and(
+          eq(collectionFavorite.collection_id, collectionId),
+          eq(collectionFavorite.user_id, userId),
+        ),
+      )
+  }
+
   // ---- Follows (track GitHub authors + repo path prefixes) ---------------
   // Mirrors the sqlite path: insert-or-ignore on the unique key, then read back.
   async addFollow(f: NewFollow): Promise<FollowRecord> {

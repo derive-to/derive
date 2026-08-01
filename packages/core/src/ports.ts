@@ -898,6 +898,11 @@ export interface SocialStore {
   listUserFavoriteIds(userId: string, orgId?: string): Promise<string[]>
   setFavorite(artifactId: string, userId: string): Promise<void>
   removeFavorite(artifactId: string, userId: string): Promise<void>
+  /** Collections this user starred — org-scoped so a star does not survive a workspace
+   *  switch. The rail renders these beside starred artifacts as ONE list. */
+  listUserFavoriteCollectionIds(userId: string, orgId?: string): Promise<string[]>
+  setCollectionFavorite(collectionId: string, userId: string): Promise<void>
+  removeCollectionFavorite(collectionId: string, userId: string): Promise<void>
 
   // ---- Follows (per-user: track GitHub authors, repo paths, and people) --
   /** Record a follow (idempotent on (user, org, kind, target)); returns the row. */

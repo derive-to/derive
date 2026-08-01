@@ -695,6 +695,7 @@ CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, crea
 CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at);
 
 CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id);
+
 CREATE INDEX IF NOT EXISTS collection_favorite_user_idx ON collection_favorite (user_id);
 
 CREATE INDEX IF NOT EXISTS artifact_member_by_user ON artifact_member (user_id);

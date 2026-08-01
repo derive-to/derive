@@ -1648,6 +1648,50 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  // Starred collections. Scoped by org like the artifact twin, so the rail never shows a
+  // star from a workspace you have switched away from.
+  const listUserFavoriteCollectionIds = async (
+    userId: string,
+    orgId?: string,
+  ): Promise<string[]> => {
+    if (orgId !== undefined) {
+      const rows = await db
+        .select({ id: collectionFavorite.collection_id })
+        .from(collectionFavorite)
+        .innerJoin(collection, eq(collection.id, collectionFavorite.collection_id))
+        .where(and(eq(collectionFavorite.user_id, userId), eq(collection.org_id, orgId)))
+        .all()
+      return rows.map((r) => r.id)
+    }
+    return (
+      await db
+        .select({ id: collectionFavorite.collection_id })
+        .from(collectionFavorite)
+        .where(eq(collectionFavorite.user_id, userId))
+        .all()
+    ).map((r) => r.id)
+  }
+  const setCollectionFavorite = async (collectionId: string, userId: string): Promise<void> => {
+    await db
+      .insert(collectionFavorite)
+      .values({ id: crypto.randomUUID(), collection_id: collectionId, user_id: userId })
+      .onConflictDoNothing({
+        target: [collectionFavorite.collection_id, collectionFavorite.user_id],
+      })
+      .run()
+  }
+  const removeCollectionFavorite = async (collectionId: string, userId: string): Promise<void> => {
+    await db
+      .delete(collectionFavorite)
+      .where(
+        and(
+          eq(collectionFavorite.collection_id, collectionId),
+          eq(collectionFavorite.user_id, userId),
+        ),
+      )
+      .run()
+  }
+
   // ---- Follows (track GitHub authors + repo path prefixes) ---------------
   // Insert-or-ignore on the (user, org, kind, target) unique key (idempotent, like
   // setFavorite), then read the row back so the caller always gets the persisted follow.
@@ -4233,6 +4277,9 @@ export function makeRepos(db: SqliteDb) {
     setArtifactMember,
     removeArtifactMember,
     listUserFavoriteIds,
+    listUserFavoriteCollectionIds,
+    setCollectionFavorite,
+    removeCollectionFavorite,
     setFavorite,
     removeFavorite,
     addFollow,

@@ -902,6 +902,55 @@ export function runStoreContract(
       expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)
     })
 
+    it("stars + unstars a collection, per user and idempotently", async () => {
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Q3 planning",
+        created_by: "amy",
+      })
+      await store.setCollectionFavorite(col.id, "amy")
+      // Starring twice must not throw or double-insert — the rail reads this list
+      // directly, so a duplicate would render the same row twice.
+      await store.setCollectionFavorite(col.id, "amy")
+      expect(await store.listUserFavoriteCollectionIds("amy")).toEqual([col.id])
+
+      // A star is per user: amy's must not appear for bob.
+      expect(await store.listUserFavoriteCollectionIds("bob")).not.toContain(col.id)
+
+      await store.removeCollectionFavorite(col.id, "amy")
+      expect(await store.listUserFavoriteCollectionIds("amy")).not.toContain(col.id)
+      // Removing again is a no-op rather than an error.
+      await store.removeCollectionFavorite(col.id, "amy")
+    })
+
+    it("scopes starred collections to a workspace when one is given", async () => {
+      const here = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "This workspace",
+        created_by: "amy",
+      })
+      const elsewhere = await store.createCollection({
+        id: uuid(),
+        org_id: `org_${uuid()}`,
+        title: "Another workspace",
+        created_by: "amy",
+      })
+      await store.setCollectionFavorite(here.id, "amy")
+      await store.setCollectionFavorite(elsewhere.id, "amy")
+
+      // Unscoped: both, because the caller asked for every star this user holds.
+      const all = await store.listUserFavoriteCollectionIds("amy")
+      expect(all).toEqual(expect.arrayContaining([here.id, elsewhere.id]))
+
+      // Scoped: only this workspace's — the rail must not show a star from a
+      // workspace you have switched away from.
+      const scoped = await store.listUserFavoriteCollectionIds("amy", ORG)
+      expect(scoped).toContain(here.id)
+      expect(scoped).not.toContain(elsewhere.id)
+    })
+
     it("replaces a tag set and resolves ids/counts by tag", async () => {
       const a = await store.createArtifact(newArtifact())
       await store.setArtifactTags(a.id, ["alpha", "beta"])
