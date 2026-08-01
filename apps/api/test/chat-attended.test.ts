@@ -1,4 +1,4 @@
-import { newId } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
@@ -155,9 +155,10 @@ describe("the subject is authorized separately from the context", () => {
 })
 
 describe("the beta gate", () => {
-  it("REFUSES a workspace that has not opted in", async () => {
-    // A flag that only hides a button is not a gate: the route is reachable directly, and
-    // this is the lane that spends the operator's model key.
+  it("REFUSES a workspace that has explicitly turned chat OFF", async () => {
+    // Chat is ON by default now, so the case worth gating is the workspace that opted OUT.
+    // A flag that only hides a button is not a gate: the route is reachable directly, and this
+    // is the lane that spends the operator's model key.
     const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
     const { app } = makeAuthedApp("chat-beta-off", users, undefined, {
       deps: { callModel: async () => ({ text: "hi", toolUses: [], costUsd: null, done: true }) },
@@ -173,12 +174,27 @@ describe("the beta gate", () => {
       })(),
     })
     const { short_id } = (await made.json()) as { short_id: string }
+    // Opt OUT, which is now the deliberate act.
+    await app.request("/v1/workspace/settings", {
+      method: "PATCH",
+      headers: { ...as("ed@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ chatBeta: false }),
+    })
     const res = await app.request("/v1/artifacts/chat-session", {
       method: "POST",
       headers: { ...as("ed@x.com"), "content-type": "application/json" },
       body: JSON.stringify({ short_id, body_md: "hello" }),
     })
     expect(res.status).toBe(404)
+  })
+
+  it("ANSWERS a workspace that has done nothing, because chat is on by default", () => {
+    // The default itself is the product decision: an opt-in everybody has to find is a feature
+    // nobody has. Asserted on the defaults rather than through a route so it cannot drift
+    // silently when the settings shape moves.
+    expect(DEFAULT_ORG_SETTINGS.chatBeta).toBe(true)
+    // Automations stay opt-in: they run unattended and can write while nobody is watching.
+    expect(DEFAULT_ORG_SETTINGS.automateBeta).toBe(false)
   })
 })
 

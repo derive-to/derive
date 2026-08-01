@@ -2981,10 +2981,11 @@ export interface OrgSettings {
    *  unaffected. */
   hostedAgentsEnabled: boolean
   /** BETA: chat with a document (the right-rail Chat tab). OFF by default — unlike every
-   *  other setting here, this one gates a surface we are still testing, and the Derive
-   *  workspace turns it on for itself first. Off means the tab does not render at all and
-   *  the chat route refuses, so a half-enabled state cannot leave someone typing into a
-   *  panel that will never answer. */
+   *  other setting here, it is now ON by default: the surface shipped, and an opt-in nobody
+   *  finds is a feature nobody has. Setting it FALSE still turns chat off completely — the tab
+   *  does not render and the chat routes refuse — so a half-enabled state cannot leave someone
+   *  typing into a panel that will never answer. On a shared host DERIVE_CHAT_ALLOWLIST still
+   *  bounds WHICH workspaces may spend the operator's model key. */
   chatBeta: boolean
   /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
    *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
@@ -3045,8 +3046,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // the run-time safety lives in the autonomy gate (killswitch defaults off but
   // every write still lands as a proposal until a workspace opts into auto).
   hostedAgentsEnabled: true,
-  // Beta, so the default is the conservative one — opt IN per workspace.
-  chatBeta: false,
+  // Chat is ON by default now: it left beta, and an opt-in that everybody has to find is a
+  // feature nobody uses. Explicitly setting it FALSE still turns it off, so a workspace that
+  // does not want it keeps that. Automations stay opt-in — they run unattended and can write
+  // while nobody is watching, which is a different bet from an attended answer.
+  chatBeta: true,
   automateBeta: false,
   agentKillswitch: false,
   agentAutoEnabled: false,
