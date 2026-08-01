@@ -3151,9 +3151,10 @@ export interface SlackUserLinkRecord {
   /** `user_id` is empty on a miss — there is nobody to point at. Never read it without
    *  checking `origin`, which is exactly what the filtered accessors below do for you. */
   created_at: string
-  /** When we last CHECKED. Distinct from created_at, which the upsert preserves: a miss
-   *  has to be able to age out and be retried. */
-  checked_at: string
+  /** When we last CHECKED, or null for a row that predates this mechanism. Distinct from
+   *  created_at, which the upsert preserves: a miss has to be able to age out and be retried.
+   *  Nullable so it can be ALTER-added to a populated table — see ddl.ts isMigratable. */
+  checked_at: string | null
 }
 
 /** Where a subscription's events come from: the whole workspace, or one collection. */

@@ -182,7 +182,11 @@ export const handleSlackMention = async (
       // be a member of another workspace on this team — so it is not remembered.
       return { seat: null, why: "unknown" }
     }
-    if (known?.origin === "miss" && Date.now() - Date.parse(known.checked_at) < MISS_TTL_MS)
+    // A null or unparseable checked_at reads as "never checked", so we look again rather than
+    // stay silent for ever. Erring toward one extra lookup beats erring toward a person the
+    // bot has silently written off.
+    const checkedAt = known?.checked_at ? Date.parse(known.checked_at) : Number.NaN
+    if (known?.origin === "miss" && Date.now() - checkedAt < MISS_TTL_MS)
       return { seat: null, why: "recent-miss" }
 
     const email = await slackUserEmail(botToken, p.userId)

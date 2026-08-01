@@ -460,7 +460,7 @@ CREATE TABLE IF NOT EXISTS slack_user_link (
   slack_user_id TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   origin TEXT NOT NULL DEFAULT 'oauth',
-  checked_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  checked_at TEXT,
   UNIQUE (team_id, slack_user_id)
 );
 

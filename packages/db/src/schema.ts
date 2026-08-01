@@ -766,9 +766,14 @@ export const slackUserLink = sqliteTable(
      * its contract that a returned row is a real Derive user.
      */
     origin: text("origin").notNull().default("oauth").$type<"oauth" | "email" | "miss">(),
-    /** When we last CHECKED. Distinct from created_at, which the upsert deliberately
-     *  preserves — a miss has to be able to age out and be retried. */
-    checked_at: text("checked_at").notNull().default(now),
+    /** When we last CHECKED. Distinct from created_at, which the upsert preserves: a miss
+     *  has to be able to age out and be retried.
+     *
+     *  NULLABLE so it can be ALTER-added to a populated table. A NOT NULL column whose only
+     *  default is a $defaultFn is initial-only (see isMigratable in ddl.ts) — it would have
+     *  reached a fresh database and silently never reached an existing one. Null means "never
+     *  checked by this mechanism", which is exactly what every pre-existing link row is. */
+    checked_at: text("checked_at"),
   },
   (t) => [
     uniqueIndex("slack_user_link_slack").on(t.team_id, t.slack_user_id),
