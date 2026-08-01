@@ -62,7 +62,14 @@ export const Route = createFileRoute("/")({
     author: typeof s.author === "string" ? s.author : undefined,
     // "drafts" is the tab's retired name — old bookmarks and agent-emitted
     // links keep landing on the same view.
-    tab: s.tab === "mine" || s.tab === "drafts" ? "mine" : undefined,
+    // `tab` is the retired spelling of the mine filter — old bookmarks and
+    // agent-emitted links still carry it (and "drafts", the spelling before that).
+    filter:
+      s.filter === "mine" || s.filter === "shared" || s.filter === "starred"
+        ? s.filter
+        : s.tab === "mine" || s.tab === "drafts"
+          ? "mine"
+          : undefined,
     sort: parseLibrarySort(s.sort),
   }),
   component: () => <Library view="all" />,

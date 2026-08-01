@@ -54,7 +54,7 @@ export const LIBRARY_SEARCH_PARAMS = [
   "folder",
   "query",
   "author",
-  "tab",
+  "filter",
   "sort",
 ] as const
 
@@ -67,10 +67,12 @@ export type LibrarySearch = {
   query?: string
   // Narrow to artifacts last changed by this GitHub login (synced collections).
   author?: string
-  // The home library's second tab: everything YOU created, any visibility. A
-  // query param, not a route — a view of your own work is a filter on the home
-  // library, not a separate feed (docs/decisions/0002).
-  tab?: "mine"
+  // How the home library is narrowed. Absent = everything you can see. These were
+  // three separate places — /favorites and /shared were routes, "Created by me" was
+  // a `tab` param — for one list under three names. They are facets of the home
+  // library, so they compose with a collection, a search and a sort, which three
+  // routes never could. The old paths redirect here.
+  filter?: "mine" | "shared" | "starred"
   // How the grid is ordered; absent = the default ("Newest"). See ./sort.
   sort?: SortMode
 }

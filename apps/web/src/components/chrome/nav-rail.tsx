@@ -143,7 +143,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/contexts"
+  to: "/following" | "/contexts"
   active: boolean
   testId?: string
 }) {
@@ -385,8 +385,6 @@ export function NavRail() {
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const isFav = loc.pathname === "/favorites"
-  const onShared = loc.pathname === "/shared"
   const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
   const onChat = loc.pathname.startsWith("/chat")
@@ -605,28 +603,11 @@ export function NavRail() {
             <SidebarMenu>
               <FilterItem
                 icon="all"
-                label="All artifacts"
+                label="Library"
                 count={summary?.total}
                 search={{}}
                 active={isAll}
                 testId="sidebar-all"
-              />
-              <NavItem
-                icon="favorites"
-                label="Favorites"
-                count={summary?.favorites}
-                to="/favorites"
-                active={isFav}
-                testId="sidebar-favorites"
-              />
-              {/* Shared with you — a durable named feed (things others gave you access to),
-                  a peer of the feeds above; not a home strip (that's the whole IA move). */}
-              <NavItem
-                icon="share"
-                label="Shared with you"
-                to="/shared"
-                active={onShared}
-                testId="nav-shared"
               />
               <NavItem
                 icon="context"

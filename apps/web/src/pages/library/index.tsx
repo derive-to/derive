@@ -41,6 +41,7 @@ import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
 import { ConnectNudge, useConnectNudge } from "./connect-nudge"
 import { DisplayMenu } from "./display-menu"
+import { FilterMenu } from "./filter-menu"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
@@ -70,8 +71,8 @@ export function Library({ view }: { view: LibraryView }) {
 }
 
 // The active filter = the base feed (from the route: `view`) unless it's the home
-// library, where a collection query param narrows it. The named feeds are their own
-// routes, so their collection filter can't apply.
+// library, where the `filter` menu and a collection query param narrow it. The named
+// feeds are their own routes, so neither applies there.
 function deriveFilter(
   view: LibraryView,
   search: LibrarySearch,
@@ -81,7 +82,9 @@ function deriveFilter(
   if (view === "following") return { kind: "following" }
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
-  if (search.tab === "mine") return { kind: "mine" }
+  if (search.filter === "mine") return { kind: "mine" }
+  if (search.filter === "shared") return { kind: "shared" }
+  if (search.filter === "starred") return { kind: "favorites" }
   if (search.collection)
     return {
       kind: "collection",
@@ -394,6 +397,22 @@ function LibraryBody({ view }: { view: LibraryView }) {
       )}
 
       <div className="mb-4.5 flex flex-wrap items-center gap-2.5">
+        {/* Home only: the named feeds ARE a filter, so offering another would let you ask
+            for "Shared with me" inside "Needs your feedback" and get something nobody
+            meant. */}
+        {view === "all" && (
+          <FilterMenu
+            value={search.filter ?? "all"}
+            onChange={(next) =>
+              nav({
+                to: "/",
+                // Keep where you are (collection, search, sort) and change only the facet
+                // — the whole point of a filter over three separate routes.
+                search: { ...search, filter: next === "all" ? undefined : next },
+              })
+            }
+          />
+        )}
         <SearchField
           value={query}
           onValueChange={setQuery}
@@ -519,14 +538,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
           />
           <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
         </>
-      ) : view === "all" && !isSearching ? (
-        // Always both tabs, even over the first-run guide — an empty "Created
-        // by me" tab is a fine place to land before you've published anything.
-        <LibraryTabs
-          active={filter.kind === "mine" ? "mine" : "all"}
-          total={summary?.total}
-          mine={summary?.mine}
-        />
       ) : (
         // Hide the heading on a brand-new empty home — the visual guide carries it.
         !emptyHome && (
@@ -701,6 +712,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
 // A mirrored repo/PR collection: a flat, most-recently-updated list by default, with the
 // folder tree available behind a toggle (off by default). Split out of the render switch
+// A mirrored repo/PR collection: a flat, most-recently-updated list by default, with the
+// folder tree available behind a toggle (off by default). Split out of the render switch
 // so the body reads top-to-bottom.
 function SyncedCollection({
   items,
@@ -789,49 +802,6 @@ function SyncedCollection({
           )}
         </div>
       )}
-    </div>
-  )
-}
-
-// The home library's two tabs: everything, and just what you created. Route
-// stays "/", the tab rides ?tab=mine. `pending` counts your still-link-only
-// docs — the "waiting on you to surface it" signal the old Drafts badge
-// carried — shown as an accent pill beside the neutral total.
-function LibraryTabs({
-  active,
-  total,
-  mine,
-}: {
-  active: "all" | "mine"
-  total?: number
-  mine?: number
-}) {
-  const nav = useNavigate()
-  const tab = (id: "all" | "mine", label: string, count?: number) => (
-    <button
-      type="button"
-      data-testid={`library-tab-${id}`}
-      aria-current={active === id ? "page" : undefined}
-      onClick={() =>
-        nav({ to: "/", search: (s) => ({ ...s, tab: id === "mine" ? "mine" : undefined }) })
-      }
-      className={cn(
-        "flex items-center gap-1.5 border-b-2 pb-2 text-sm font-medium transition-colors",
-        active === id
-          ? "border-foreground text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {label}
-      {count != null && (
-        <span className="font-mono text-2xs tabular-nums text-muted-foreground">{count}</span>
-      )}
-    </button>
-  )
-  return (
-    <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
-      {tab("all", "All artifacts", total)}
-      {tab("mine", "Created by me", mine)}
     </div>
   )
 }

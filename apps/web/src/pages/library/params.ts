@@ -37,12 +37,15 @@ export const libraryFeedParams = (
   // The named feeds' validateSearch keeps only query + sort, so these are undefined
   // there; passing them unconditionally keeps this the same object the body built.
   collection: search.collection,
-  favorite: view === "favorites" || undefined,
+  favorite: view === "favorites" || search.filter === "starred" || undefined,
   author: search.author,
-  // The "Created by me" tab belongs to the HOME library only, exactly as deriveFilter
-  // orders it: the named feeds are matched first, so /favorites?tab=mine is still the
-  // favorites feed. (Their validateSearch drops `tab` anyway — but correctness here must
-  // not rest on that.)
-  scope: view === "all" && search.tab === "mine" ? "mine" : scopeFor(view),
+  // The filter narrows the HOME library only, exactly as deriveFilter orders it: a
+  // named feed is matched first, so /following?filter=mine is still the following feed.
+  // (Their validateSearch drops `filter` anyway — but correctness here must not rest
+  // on that.) `starred` rides the `favorite` flag above, not a scope.
+  scope:
+    view === "all" && (search.filter === "mine" || search.filter === "shared")
+      ? search.filter
+      : scopeFor(view),
   sort: search.sort ?? DEFAULT_SORT,
 })
