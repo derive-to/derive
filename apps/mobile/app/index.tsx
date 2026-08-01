@@ -1,8 +1,10 @@
 import * as Linking from "expo-linking"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { StyleSheet, useColorScheme, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { WEB_ORIGIN, webUrlFromDeepLink } from "../src/config"
+import { TabBar } from "../src/tab-bar"
+import { activeTabFor, navScript } from "../src/tabs"
 import { tokens } from "../src/theme"
 import { WebStage } from "../src/web-stage"
 
@@ -22,6 +24,12 @@ export default function Home() {
   // fallback), so a phone in light mode can be showing a dark-themed app. Until the page
   // reports in, the device tokens are the best guess available.
   const [pageBg, setPageBg] = useState<string | null>(null)
+  // Where the hosted app currently is, so the tab bar can show it. Fed by the web view's
+  // own navigation events, which means the bar follows in-app links too, not just taps.
+  const [url, setUrl] = useState(WEB_ORIGIN)
+  // A handle rather than a prop: re-rendering the web view to pass a command would reload
+  // the page, which is the exact thing a tab switch must not do.
+  const run = useRef<((js: string) => void) | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -56,10 +64,17 @@ export default function Home() {
   // above black chrome. The page reports its computed background (BACKGROUND_PROBE) and
   // this follows it, including through an in-app theme toggle.
   return (
-    <View
-      style={[styles.fill, { paddingTop: insets.top, backgroundColor: pageBg ?? t.background }]}
-    >
-      <WebStage uri={uri} onBackground={setPageBg} />
+    <View style={[styles.fill, { backgroundColor: pageBg ?? t.background }]}>
+      <View style={[styles.fill, { paddingTop: insets.top }]}>
+        <WebStage uri={uri} runRef={run} onNavigate={setUrl} onBackground={setPageBg} />
+      </View>
+      {/* Below the web view, not over it: the hosted app docks its own surfaces at the
+          bottom (the comments sheet) and an overlaid bar would cover them. */}
+      <TabBar
+        active={activeTabFor(url)}
+        onSelect={(path) => run.current?.(navScript(path))}
+        t={pageBg ? { ...t, background: pageBg } : t}
+      />
     </View>
   )
 }

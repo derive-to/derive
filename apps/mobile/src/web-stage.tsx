@@ -28,18 +28,33 @@ export function WebStage({
   uri,
   onNavigate,
   onBackground,
+  runRef,
 }: {
   uri: string
   onNavigate?: (url: string) => void
   /** The page's REAL background colour, so the shell's safe-area strip can match what is
    *  actually on screen rather than what the OS appearance implies. */
   onBackground?: (color: string) => void
+  /** Receives a function that injects script into the page. The tab bar uses it to drive
+   *  the SPA's router; passing a handle rather than a prop keeps a tab press from
+   *  re-rendering the web view, which would reload it. */
+  runRef?: { current: ((js: string) => void) | null }
 }) {
   const scheme = useColorScheme() === "dark" ? "dark" : "light"
   const t = tokens[scheme]
   const ref = useRef<WebView>(null)
   const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
   const [attempt, setAttempt] = useState(0)
+
+  // Hand the caller a way to inject, and take it back on unmount so a late tab press
+  // cannot reach a dead frame.
+  useEffect(() => {
+    if (!runRef) return
+    runRef.current = (js: string) => ref.current?.injectJavaScript(js)
+    return () => {
+      runRef.current = null
+    }
+  }, [runRef])
 
   // Per-source: a new uri or an explicit retry starts the clock again.
   useEffect(() => {

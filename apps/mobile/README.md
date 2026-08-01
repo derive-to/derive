@@ -70,12 +70,14 @@ untouched. Run `npm`, not `pnpm`, in this directory.
 
 | File | What |
 | --- | --- |
-| `app/_layout.tsx` | Root layout. One screen today. |
+| `app/_layout.tsx` | Root layout. |
 | `app/index.tsx` | The screen: the hosted web app, plus deep-link entry (cold start included). |
 | `src/web-stage.tsx` | The web view host: external-link interception, boot timeout, failure and retry. |
 | `src/links.ts` | Deep-link resolution. **Pure and security-relevant** — see below. |
 | `src/config.ts` | Binds `links.ts` to the running app's config. |
-| `src/theme.ts` | The colour tokens, mirrored from `apps/web/src/styles/globals.css`. |
+| `src/theme.ts` | Colour tokens (mirrored from `globals.css`) + the injected background probe. |
+| `src/tabs.ts` | The tab model: which tab owns a path, and the script that moves the app. |
+| `src/tab-bar.tsx` | The native tab bar. |
 
 ## The two things to be careful about
 
@@ -97,11 +99,29 @@ Expo-free so it can be exercised directly.
 npm test        # vitest, jsdom
 ```
 
-32 tests over the parts that can be checked without a device: deep-link resolution and
-its refusals, the auth nonce binding and the injected claim script's escaping, and the
-background probe (run in a real document, because it is a script that runs in one). CI
-runs these — apps/mobile is outside the pnpm workspace, so `pnpm -r` never reaches it and
+44 tests over the parts that can be checked without a device: deep-link resolution and its
+refusals, the auth nonce binding and the injected claim script's escaping, the background
+probe (run in a real document, because it is a script that runs in one), and the tab
+bar's path mapping. CI runs these — apps/mobile is outside the pnpm workspace, so `pnpm -r` never reaches it and
 the workflow installs and tests it separately, or these would pass locally and run nowhere.
+
+### App Review status
+
+Checked live at phone size, against a real stack:
+
+| Requirement | State |
+| --- | --- |
+| 5.1.1(v) in-app account deletion | Present, Settings → Security |
+| 1.2 report user content | Present, artifact ⋯ menu |
+| 2.1 no dead ends | Missing artifact and unknown route both show real states, not blanks |
+| 2.1 sign out | Present, nav drawer → user menu |
+| 4.2 native tab bar | Built |
+| 4.2 push notifications | **Blocked on an Apple Developer account** |
+| 4.8 Sign in with Apple | **Blocked** — required because Google sign-in is offered |
+| Export compliance | Declared (`usesNonExemptEncryption: false`), so submission stops asking |
+
+The two blocked rows are the whole remaining gap, and both need credentials rather than
+code.
 
 **The ceiling is real and worth stating.** None of this exercises a web view. Scroll feel,
 pull-to-refresh, cookie jars, the auth browser hand-off, the keyboard, safe areas and
@@ -110,13 +130,30 @@ set: an unpainted safe-area strip, then a strip painted from the wrong source, t
 comments failing on a non-secure origin. A green suite means the logic holds, not that the
 app works. Run it on a phone.
 
+## The tab bar
+
+Four native tabs (Library, Favorites, Following, Settings) that drive the hosted app's
+**client-side router** rather than reloading the web view — `history.pushState` plus a
+`popstate` event, injected through a handle so a tab press never re-renders the frame.
+Verified against the running app: every tab lands on the right screen with **zero full
+page loads**.
+
+It is also the shell's main answer to Guideline 4.2, which names a native tab bar and push
+as what separates an app from a repackaged website.
+
+Two things the mapping gets right, both pinned by tests because both fail silently:
+`/settings` redirects to `/settings/profile`, so tabs own their sub-routes or Settings goes
+dark the moment you tap it; and an artifact or profile selects **nothing**, because
+falling back to Library would say you are somewhere you are not.
+
+Labels, no icons. An icon set is a dependency, a bundle cost and a design decision, and
+four short words read unambiguously at that size.
+
 ## Deliberately not built yet
 
-- **The native tab bar.** It needs a device to get right, and the mechanism that keeps a
-  tab switch from reading as a page load (driving the SPA's client-side router rather
-  than reloading the web view) is something to try rather than reason about.
 - **Push and the share extension.** Both need an Apple Developer account and EAS
-  credentials.
+  credentials. Push is the other half of the 4.2 answer, so it should be first once
+  enrolment clears.
 
 ## Turning on universal links
 

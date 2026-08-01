@@ -25,7 +25,17 @@ export const tokens = {
 } as const
 
 export type Scheme = keyof typeof tokens
-export type Tokens = (typeof tokens)[Scheme]
+
+/** A resolved palette. Values are plain strings, not the literals `tokens` happens to
+ *  hold: the background is overridden at runtime with whatever colour the PAGE reports,
+ *  so a literal type here would reject the very value that makes the strip correct. */
+export interface Tokens {
+  background: string
+  foreground: string
+  muted: string
+  border: string
+  card: string
+}
 
 /** Envelope for the page telling the shell what colour it is actually painting. */
 export const BACKGROUND_MESSAGE = "background"
