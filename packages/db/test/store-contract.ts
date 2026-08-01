@@ -924,6 +924,48 @@ export function runStoreContract(
       await store.removeCollectionFavorite(col.id, "amy")
     })
 
+    it("reports the collections a user has worked in, and only those", async () => {
+      const worked = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Worked in",
+        created_by: "amy",
+      })
+      const untouched = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Never touched",
+        created_by: "amy",
+      })
+      const a1 = await store.createArtifact(newArtifact())
+      const a2 = await store.createArtifact(newArtifact())
+      await store.addCollectionItem(worked.id, a1.id)
+      await store.addCollectionItem(untouched.id, a2.id)
+
+      const since = new Date(Date.now() - 30 * 86400_000).toISOString()
+      // Nothing done yet: being able to see a shelf is not working in it.
+      expect(await store.collectionsWorkedIn("amy", ORG, since)).toEqual([])
+
+      // A comment is a deliberate act, and it carries a stable author id.
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a1.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "looks right",
+        author: "Amy",
+        author_id: "amy",
+      })
+      expect(await store.collectionsWorkedIn("amy", ORG, since)).toEqual([worked.id])
+
+      // Someone else's comment is not your activity.
+      expect(await store.collectionsWorkedIn("bob", ORG, since)).toEqual([])
+
+      // The window is real: an act older than `since` does not count.
+      const future = new Date(Date.now() + 60_000).toISOString()
+      expect(await store.collectionsWorkedIn("amy", ORG, future)).toEqual([])
+    })
+
     it("scopes starred collections to a workspace when one is given", async () => {
       const here = await store.createCollection({
         id: uuid(),

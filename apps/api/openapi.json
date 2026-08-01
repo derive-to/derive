@@ -1436,6 +1436,10 @@
             "type": "boolean",
             "description": "Whether the caller starred this collection — it pins to their sidebar."
           },
+          "active": {
+            "type": "boolean",
+            "description": "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded."
+          },
           "kind": {
             "type": "string",
             "enum": [

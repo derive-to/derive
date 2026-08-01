@@ -1691,6 +1691,55 @@ export function makeRepos(db: SqliteDb) {
       )
       .run()
   }
+  // Four small indexed reads rather than one join across versions, comments, items and
+  // members: each is cheap on its own index, and the set is small enough that unioning
+  // in JS beats asking either dialect for a four-way outer join.
+  const collectionsWorkedIn = async (
+    userId: string,
+    orgId: string,
+    sinceIso: string,
+  ): Promise<string[]> => {
+    const touched = new Set<string>()
+    for (const r of await db
+      .select({ id: version.artifact_id })
+      .from(version)
+      .where(and(eq(version.author_id, userId), gte(version.created_at, sinceIso)))
+      .all())
+      touched.add(r.id)
+    for (const r of await db
+      .select({ id: comment.artifact_id })
+      .from(comment)
+      .where(and(eq(comment.author_id, userId), gte(comment.created_at, sinceIso)))
+      .all())
+      touched.add(r.id)
+
+    const ids = new Set<string>()
+    if (touched.size > 0) {
+      for (const r of await db
+        .select({ id: collectionItem.collection_id })
+        .from(collectionItem)
+        .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
+        .where(and(inArray(collectionItem.artifact_id, [...touched]), eq(collection.org_id, orgId)))
+        .all())
+        ids.add(r.id)
+    }
+    // Being added to a collection is itself a signal you work there — it is how you
+    // land in a shelf you have not written in yet.
+    for (const r of await db
+      .select({ id: collectionMember.collection_id })
+      .from(collectionMember)
+      .innerJoin(collection, eq(collection.id, collectionMember.collection_id))
+      .where(
+        and(
+          eq(collectionMember.user_id, userId),
+          gte(collectionMember.created_at, sinceIso),
+          eq(collection.org_id, orgId),
+        ),
+      )
+      .all())
+      ids.add(r.id)
+    return [...ids]
+  }
 
   // ---- Follows (track GitHub authors + repo path prefixes) ---------------
   // Insert-or-ignore on the (user, org, kind, target) unique key (idempotent, like
@@ -4280,6 +4329,7 @@ export function makeRepos(db: SqliteDb) {
     listUserFavoriteCollectionIds,
     setCollectionFavorite,
     removeCollectionFavorite,
+    collectionsWorkedIn,
     setFavorite,
     removeFavorite,
     addFollow,

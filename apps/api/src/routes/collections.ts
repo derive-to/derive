@@ -10,7 +10,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { Collection, collectionsJson, enrich, sourceMaps } from "../lib/boot-shapes"
+import { activeSince, Collection, collectionsJson, enrich, sourceMaps } from "../lib/boot-shapes"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
@@ -96,6 +96,9 @@ export const collectionRoutes = (ctx: AppContext) => {
       const starred = me
         ? new Set(await meta.listUserFavoriteCollectionIds(me.id, org))
         : new Set<string>()
+      const active = me
+        ? new Set(await meta.collectionsWorkedIn(me.id, org, activeSince()))
+        : new Set<string>()
       const collections = collectionsJson(
         cols,
         sources,
@@ -103,6 +106,7 @@ export const collectionRoutes = (ctx: AppContext) => {
         me?.id ?? null,
         isToken(c),
         starred,
+        active,
       )
       return c.json({ collections })
     },

@@ -2270,6 +2270,45 @@ export class PgMetaStore implements MetaStore {
         ),
       )
   }
+  // Same four indexed reads as the D1 twin — see repos.ts for why this is not one join.
+  async collectionsWorkedIn(userId: string, orgId: string, sinceIso: string): Promise<string[]> {
+    const touched = new Set<string>()
+    for (const r of await this.db
+      .select({ id: version.artifact_id })
+      .from(version)
+      .where(and(eq(version.author_id, userId), gte(version.created_at, sinceIso))))
+      touched.add(r.id)
+    for (const r of await this.db
+      .select({ id: comment.artifact_id })
+      .from(comment)
+      .where(and(eq(comment.author_id, userId), gte(comment.created_at, sinceIso))))
+      touched.add(r.id)
+
+    const ids = new Set<string>()
+    if (touched.size > 0) {
+      for (const r of await this.db
+        .select({ id: collectionItem.collection_id })
+        .from(collectionItem)
+        .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
+        .where(
+          and(inArray(collectionItem.artifact_id, [...touched]), eq(collection.org_id, orgId)),
+        ))
+        ids.add(r.id)
+    }
+    for (const r of await this.db
+      .select({ id: collectionMember.collection_id })
+      .from(collectionMember)
+      .innerJoin(collection, eq(collection.id, collectionMember.collection_id))
+      .where(
+        and(
+          eq(collectionMember.user_id, userId),
+          gte(collectionMember.created_at, sinceIso),
+          eq(collection.org_id, orgId),
+        ),
+      ))
+      ids.add(r.id)
+    return [...ids]
+  }
 
   // ---- Follows (track GitHub authors + repo path prefixes) ---------------
   // Mirrors the sqlite path: insert-or-ignore on the unique key, then read back.

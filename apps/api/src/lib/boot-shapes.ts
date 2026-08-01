@@ -102,6 +102,13 @@ export const Notification = z
 // A collection as it goes out: the stored row + its item `count` + where it came from
 // (`kind` = manual/repo/pr, with the repo/PR details). Origin is DERIVED here, not
 // stored. Every collection-returning endpoint emits this one shape.
+/** How far back "worked in" looks. Long enough that a fortnight away doesn't empty your
+ *  sidebar, short enough that a shelf you finished with drops off on its own. One
+ *  definition, so the list read and the boot batch can't disagree about what active means. */
+export const ACTIVE_WINDOW_DAYS = 30
+export const activeSince = (): string =>
+  new Date(Date.now() - ACTIVE_WINDOW_DAYS * 86400_000).toISOString()
+
 export const Collection = z
   .object({
     id: z.string(),
@@ -122,6 +129,12 @@ export const Collection = z
       .boolean()
       .optional()
       .describe("Whether the caller starred this collection — it pins to their sidebar."),
+    active: z
+      .boolean()
+      .optional()
+      .describe(
+        "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded.",
+      ),
     kind: z
       .enum(["manual", "repo", "pr"])
       .optional()
@@ -151,7 +164,12 @@ export const sourceMaps = (
   return { srcByCollection, branchByRepo }
 }
 export const enrich = (
-  col: CollectionRecord & { count: number; my_role: Role | null; starred?: boolean },
+  col: CollectionRecord & {
+    count: number
+    my_role: Role | null
+    starred?: boolean
+    active?: boolean
+  },
   srcByCollection: Map<string, Src>,
   branchByRepo: Map<string, string>,
 ) => {
@@ -193,6 +211,9 @@ export const collectionsJson = (
   /** Ids this caller starred. Rides the same read as the list so the sidebar's
    *  starred group costs no extra request. */
   starredIds: ReadonlySet<string> = new Set(),
+  /** Ids the caller has worked in lately. Same read as the list — the Collections
+   *  view groups on this and must not pay a second round trip for it. */
+  activeIds: ReadonlySet<string> = new Set(),
 ) => {
   const { srcByCollection, branchByRepo } = sourceMaps(sources)
   const roleFor = (col: CollectionRecord): Role | null =>
@@ -202,7 +223,7 @@ export const collectionsJson = (
     .filter(({ role }) => role !== null)
     .map(({ col, role }) =>
       enrich(
-        { ...col, my_role: role, starred: starredIds.has(col.id) },
+        { ...col, my_role: role, starred: starredIds.has(col.id), active: activeIds.has(col.id) },
         srcByCollection,
         branchByRepo,
       ),

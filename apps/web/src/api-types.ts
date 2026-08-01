@@ -6403,6 +6403,8 @@ export interface components {
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
             /** @description Whether the caller starred this collection — it pins to their sidebar. */
             starred?: boolean;
+            /** @description Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded. */
+            active?: boolean;
             /**
              * @description Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).
              * @enum {string}

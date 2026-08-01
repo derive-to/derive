@@ -2,6 +2,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import {
+  activeSince,
   Collection,
   collectionsJson,
   Notification,
@@ -110,6 +111,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
           me.id,
           false,
           new Set(await meta.listUserFavoriteCollectionIds(me.id, org)),
+          new Set(await meta.collectionsWorkedIn(me.id, org, activeSince())),
         ),
         settings: b.settings,
         notifications: b.notifications.notifications,

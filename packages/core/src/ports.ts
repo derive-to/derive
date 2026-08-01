@@ -903,6 +903,11 @@ export interface SocialStore {
   listUserFavoriteCollectionIds(userId: string, orgId?: string): Promise<string[]>
   setCollectionFavorite(collectionId: string, userId: string): Promise<void>
   removeCollectionFavorite(collectionId: string, userId: string): Promise<void>
+  /** Collections this user has WORKED IN since `sinceIso` — derived from acts that
+   *  already leave a row: a version they authored, a comment they wrote, or a membership
+   *  they were granted. Reading is deliberately not among them; nothing records it, and
+   *  a per-user read log is a different decision from this one. Org-scoped. */
+  collectionsWorkedIn(userId: string, orgId: string, sinceIso: string): Promise<string[]>
 
   // ---- Follows (per-user: track GitHub authors, repo paths, and people) --
   /** Record a follow (idempotent on (user, org, kind, target)); returns the row. */

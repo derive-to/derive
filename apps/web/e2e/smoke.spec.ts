@@ -175,22 +175,24 @@ test("Collections is a view of the library, with starred shelves leading", async
   // Switch views — same page, same toolbar, no navigation to a separate place.
   await owner.goto("/")
   await owner.getByTestId("library-view-collections").click()
-  await expect(owner.getByTestId("collections-all")).toBeVisible()
-  // Nothing is starred yet, so there is no "working in" group to head the page.
-  await expect(owner.getByTestId("collections-starred")).toHaveCount(0)
 
-  // Star from the shelf card; it moves into the leading group.
+  // A shelf you just made is already "working in": being a member is one of the signals,
+  // which is how you land somewhere before you have written in it. Access alone would
+  // NOT do this — that distinction is pinned in the API tests.
+  await expect(owner.getByTestId("collections-working")).toBeVisible()
+
+  // Starring is the explicit half of the same group.
   const card = owner.locator('[data-testid^="collection-card-star-"]').first()
   await card.click()
-  await expect(owner.getByTestId("collections-starred")).toBeVisible()
+  await expect(owner.getByTestId("collections-working")).toBeVisible()
 
   // The view rides the URL, so it survives a reload and can be linked.
   await owner.reload()
-  await expect(owner.getByTestId("collections-starred")).toBeVisible()
+  await expect(owner.getByTestId("collections-working")).toBeVisible()
 
-  // Opening a shelf leaves the view — you are in the collection, not picking one.
+  // Switching back to Documents leaves the Collections view entirely.
   await owner.getByTestId("library-view-documents").click()
-  await expect(owner.getByTestId("collections-all")).toHaveCount(0)
+  await expect(owner.getByTestId("collections-working")).toHaveCount(0)
 })
 
 test("a card states three facts, not nine", async ({ owner }) => {

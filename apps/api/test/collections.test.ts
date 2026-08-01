@@ -225,6 +225,40 @@ describe("collections: starring", () => {
     expect((await rowFor(amy.email, col.id)).starred).toBe(false)
   })
 
+  it("reports a collection as active once you comment in it, not merely by access", async () => {
+    const col = await mk("Worked in")
+    const up = await authed.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(amy.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new File(["# doc"], "d.md", { type: "text/markdown" }))
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await up.json()) as { short_id: string }
+    await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+
+    // amy made it, so she is already a member of it — being added to a collection is
+    // itself one of the signals, and it is how you land in a shelf before writing in it.
+    expect((await rowFor(amy.email, col.id)).active).toBe(true)
+    // bob can open it and has done nothing: access is not activity. This is the whole
+    // distinction the grouping rests on.
+    expect((await rowFor(bob.email, col.id)).active).toBe(false)
+
+    await authed.request(`/v1/artifacts/${short_id}/comments`, {
+      method: "POST",
+      headers: { ...as(bob.email), "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "looks right" }),
+    })
+    // One deliberate act moves him.
+    expect((await rowFor(bob.email, col.id)).active).toBe(true)
+  })
+
   it("is per person, and gated on read rather than share", async () => {
     // Starring is a note to yourself about where you work — it grants nothing — so any
     // member who can open the collection can star it, and it stays theirs alone.

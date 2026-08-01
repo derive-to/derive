@@ -21,8 +21,11 @@ export function CollectionsView({
   onCreate: (title: string) => void
 }) {
   const [draft, setDraft] = useState<string | null>(null)
-  const starred = collections.filter((c) => c.starred)
-  const rest = collections.filter((c) => !c.starred)
+  // Starred is a choice; active is derived from what you actually did. Both belong in
+  // the same group — the question the heading answers is "is this mine to work in",
+  // and how it got there is not the reader's problem.
+  const working = collections.filter((c) => c.starred || c.active)
+  const rest = collections.filter((c) => !c.starred && !c.active)
   const submit = () => {
     const t = (draft ?? "").trim()
     setDraft(null)
@@ -83,21 +86,21 @@ export function CollectionsView({
         />
       )}
 
-      {starred.length > 0 && (
+      {working.length > 0 && (
         <Group
-          testId="collections-starred"
+          testId="collections-working"
           title="Collections you're working in"
-          rule="Starred — they're pinned to your sidebar."
-          cols={starred}
+          rule="Starred, plus any you've published or commented in this month."
+          cols={working}
           onStar={onStar}
         />
       )}
       {rest.length > 0 && (
         <Group
           testId="collections-all"
-          title={starred.length > 0 ? "All collections" : "Collections"}
+          title={working.length > 0 ? "All collections" : "Collections"}
           rule={
-            starred.length > 0
+            working.length > 0
               ? "You have access to these. Star one to pin it to your sidebar."
               : "Star one to pin it to your sidebar."
           }
