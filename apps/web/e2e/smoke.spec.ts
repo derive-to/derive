@@ -181,6 +181,10 @@ test("Collections is a view of the library, with starred shelves leading", async
   // NOT do this — that distinction is pinned in the API tests.
   await expect(owner.getByTestId("collections-working")).toBeVisible()
 
+  // The Collections view IS the page: the artifact grid must not render underneath it.
+  // (It did — the view switch replaced only the heading, leaving the body below it.)
+  await expect(owner.locator('[data-testid^="artifact-card-open-"]')).toHaveCount(0)
+
   // Starring is the explicit half of the same group.
   const card = owner.locator('[data-testid^="collection-card-star-"]').first()
   await card.click()
@@ -191,7 +195,7 @@ test("Collections is a view of the library, with starred shelves leading", async
   await expect(owner.getByTestId("collections-working")).toBeVisible()
 
   // Switching back to Documents leaves the Collections view entirely.
-  await owner.getByTestId("library-view-documents").click()
+  await owner.getByTestId("library-view-artifacts").click()
   await expect(owner.getByTestId("collections-working")).toHaveCount(0)
 })
 

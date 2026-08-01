@@ -11,13 +11,13 @@ export function stampMode(refs: AutomationRef[], mode: "publish" | "propose"): A
 }
 
 /** A compact human summary of an automation's targets for the row subtitle, e.g.
- *  "1 document, 1 tag" or "2 collections". Empty string when there are no targets. */
+ *  "1 artifact, 1 tag" or "2 collections". Empty string when there are no targets. */
 export function targetSummary(refs: AutomationRef[]): string {
   const counts = { artifact: 0, collection: 0, tag: 0 }
   for (const r of refs) counts[r.kind] += 1
   const parts: string[] = []
   const add = (n: number, one: string) => n > 0 && parts.push(`${n} ${one}${n === 1 ? "" : "s"}`)
-  add(counts.artifact, "document")
+  add(counts.artifact, "artifact")
   add(counts.collection, "collection")
   add(counts.tag, "tag")
   return parts.join(", ")

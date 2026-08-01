@@ -82,7 +82,7 @@ export function CollectionsView({
         <EmptyState
           icon={<Icon name="collections" strokeWidth={1.75} />}
           title="No collections yet."
-          description="A collection groups related documents, and sharing one shares everything in it."
+          description="A collection groups related artifacts, and sharing one shares everything in it."
         />
       )}
 

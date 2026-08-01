@@ -10,7 +10,7 @@ type Signals = Pick<
  *
  *  A card used to carry an open-proposal count and an open-thread count side by side.
  *  Two numbers answering one question: while scanning a grid you are deciding whether to
- *  open something, not triaging what kind of attention it needs — the document itself
+ *  open something, not triaging what kind of attention it needs — the artifact itself
  *  tells you that, and it has room to. */
 export const needsYouCount = (a: Signals): number => (a.open_proposals ?? 0) + (a.open_threads ?? 0)
 

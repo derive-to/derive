@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 
 // CHAT WITH THIS DOCUMENT — the right-rail sibling of the comments panel.
 //
-// Comments and chat are both "conversation about this document" and compete for the same
+// Comments and chat are both "conversation about this artifact" and compete for the same
 // rail, so they tab rather than stack. The difference that matters: a comment is anchored
 // to a text range and a chat turn is not, so this panel never draws anchor highlights.
 //
@@ -45,7 +45,7 @@ export function ArtifactChat(props: {
         empty={
           <EmptyState
             icon={<Icon name="sparkles" />}
-            title="Chat with this document"
+            title="Chat with this artifact"
             description="Ask a question about it, or ask for a change. Edits land as a new version you can undo."
           />
         }

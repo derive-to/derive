@@ -117,7 +117,7 @@ export function ArtifactCard({
           v={a.current_version}
           typeLabel={artifactTypeLabel(a)}
           hasPreview={a.has_preview}
-          // 4:3 rather than 16:10: most published pages are portrait-ish documents, and
+          // 4:3 rather than 16:10: most published pages are portrait-ish, and
           // the wider frame was cropping them to a band of header.
           className="aspect-[4/3]"
         />
@@ -295,7 +295,7 @@ export function ArtifactCard({
             <span
               className={cn("inline-flex shrink-0 items-center gap-2", showAuthor && "ml-auto")}
             >
-              {/* A glyph, not a worded pill: private is a state a lot of documents are
+              {/* A glyph, not a worded pill: private is a state a lot of artifacts are
                   in, and the lock is already understood. */}
               {isPrivate && (
                 <span

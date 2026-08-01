@@ -345,7 +345,7 @@ export function MobileComments({
                 description={
                   editing
                     ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
-                    : "Select text in the document, or add a general comment."
+                    : "Select text in the artifact, or add a general comment."
                 }
                 action={
                   canComment ? (
@@ -565,7 +565,7 @@ export function OpenPanel(props: {
               description={
                 editing
                   ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
-                  : "Select text in the document, or add a general comment."
+                  : "Select text in the artifact, or add a general comment."
               }
               action={
                 canComment ? (

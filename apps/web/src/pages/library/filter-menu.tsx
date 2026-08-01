@@ -19,21 +19,27 @@ export type LibraryFilter = NonNullable<LibrarySearch["filter"]> | "all"
 // Deliberately a menu and not a segmented control: the default is the answer almost every
 // time, so the other three should cost a click to reach and nothing to ignore.
 const OPTIONS: { value: LibraryFilter; label: string; hint: string }[] = [
-  { value: "all", label: "All documents", hint: "Everything you can see here" },
-  { value: "mine", label: "Mine", hint: "Documents you created" },
+  { value: "all", label: "All artifacts", hint: "Everything you can see here" },
+  { value: "needs-you", label: "Needs you", hint: "Open threads you're in" },
+  { value: "mine", label: "Mine", hint: "Artifacts you created" },
   { value: "shared", label: "Shared with me", hint: "Shared with you directly" },
-  { value: "starred", label: "Starred", hint: "Documents you starred" },
+  { value: "starred", label: "Starred", hint: "Artifacts you starred" },
 ]
 
 const filterLabel = (f: LibraryFilter): string =>
-  OPTIONS.find((o) => o.value === f)?.label ?? "All documents"
+  OPTIONS.find((o) => o.value === f)?.label ?? "All artifacts"
 
 export function FilterMenu({
   value,
   onChange,
+  needsYou = 0,
 }: {
   value: LibraryFilter
   onChange: (next: LibraryFilter) => void
+  /** How many artifacts are waiting on you. Shown on the trigger, because it is the one
+   *  thing here you might not already know — the rest are ways to slice a list you can
+   *  see. This replaced a full-width banner above the grid. */
+  needsYou?: number
 }) {
   return (
     <DropdownMenu>
@@ -51,6 +57,15 @@ export function FilterMenu({
           )}
         >
           {filterLabel(value)}
+          {needsYou > 0 && value !== "needs-you" && (
+            <span
+              data-testid="library-filter-needsyou-count"
+              title={`${needsYou} waiting on you`}
+              className="rounded-full bg-primary/10 px-1.5 font-mono text-2xs text-primary tabular-nums"
+            >
+              {needsYou}
+            </span>
+          )}
           <ChevronDown className="size-3.5 opacity-60" aria-hidden />
         </button>
       </DropdownMenuTrigger>
@@ -69,6 +84,11 @@ export function FilterMenu({
               <span className="truncate font-medium">{o.label}</span>
               <span className="truncate text-2xs text-muted-foreground">{o.hint}</span>
             </span>
+            {o.value === "needs-you" && needsYou > 0 && (
+              <span className="ml-auto font-mono text-2xs text-primary tabular-nums">
+                {needsYou}
+              </span>
+            )}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

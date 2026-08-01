@@ -44,8 +44,10 @@ export const libraryFeedParams = (
   // (Their validateSearch drops `filter` anyway — but correctness here must not rest
   // on that.) `starred` rides the `favorite` flag above, not a scope.
   scope:
-    view === "all" && (search.filter === "mine" || search.filter === "shared")
-      ? search.filter
-      : scopeFor(view),
+    view === "all" && search.filter === "needs-you"
+      ? "needs_feedback"
+      : view === "all" && (search.filter === "mine" || search.filter === "shared")
+        ? search.filter
+        : scopeFor(view),
   sort: search.sort ?? DEFAULT_SORT,
 })

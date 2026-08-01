@@ -1,7 +1,7 @@
 import { Icon } from "@/components/icons"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
-export type LibraryViewMode = "documents" | "collections"
+export type LibraryViewMode = "artifacts" | "collections"
 
 // Documents ⇄ Collections. Shelves were an unbounded list in the rail; they are a view
 // of the library instead.
@@ -28,12 +28,12 @@ export function ViewSwitch({
       className="h-8 shrink-0 gap-[3px] rounded-lg bg-secondary p-[3px]"
     >
       <ToggleGroupItem
-        value="documents"
-        data-testid="library-view-documents"
+        value="artifacts"
+        data-testid="library-view-artifacts"
         className="h-full gap-1.5 rounded-md px-2.5 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-(--shadow-sm)"
       >
         <Icon name="all" size={16} />
-        Documents
+        Artifacts
       </ToggleGroupItem>
       <ToggleGroupItem
         value="collections"

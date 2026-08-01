@@ -61,7 +61,7 @@ export function CollectionBar({
         </h2>
       )}
       <span className="flex-1" />
-      {/* The star is the whole pinning mechanism — same verb as a document's, so there
+      {/* The star is the whole pinning mechanism — same verb as an artifact's, so there
           is one idea to learn rather than a separate "add to sidebar". Ghost, never
           filled: Share is this view's single ink moment. */}
       {onStar && (

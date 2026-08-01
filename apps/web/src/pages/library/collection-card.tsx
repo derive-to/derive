@@ -74,7 +74,7 @@ export function CollectionCard({
 
         <div className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
           <span>
-            {count} {count === 1 ? "document" : "documents"}
+            {count} {count === 1 ? "artifact" : "artifacts"}
           </span>
           <span className="flex-1" />
           {/* Only the exceptional states get a chip: a mirror, and invite-only. A
