@@ -18,7 +18,6 @@ const noBilling = async () => null
 
 const setup = async (name: string, opts: { role?: string; link?: boolean } = {}) => {
   const meta = new SqliteMetaStore(join(dir, `${name}.db`))
-  await meta.ready
   const artifact = await meta.createArtifact({
     id: newId("a"),
     short_id: newId("s").slice(0, 8),

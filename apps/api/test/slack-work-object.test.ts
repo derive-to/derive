@@ -102,7 +102,7 @@ describe("artifactEntity", () => {
       status: status({ review: { state: "pending", reviewerId: "u", reviewerName: "M" } }),
       withActions: true,
     })
-    const actions = (withRound.entity_payload as Record<string, never>).actions as {
+    const actions = (withRound.entity_payload as { actions?: unknown }).actions as {
       primary_actions: { action_id: string }[]
     }
     expect(actions.primary_actions.map((a) => a.action_id)).toEqual([
