@@ -2,6 +2,7 @@ import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanst
 import { api, type BootstrapPayload } from "@/api"
 import { useAuth } from "@/ctx"
 import {
+  blockedQuery,
   collectionsQuery,
   notificationsQuery,
   summaryQuery,
@@ -38,6 +39,7 @@ export const seedFromBootstrap = (client: QueryClient, b: BootstrapPayload) => {
     notifications: b.notifications,
     unread: b.unread,
   })
+  client.setQueryData(blockedQuery().queryKey, b.blocked)
 }
 
 export const bootstrapQuery = (client: QueryClient) =>

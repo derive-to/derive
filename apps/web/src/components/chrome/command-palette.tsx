@@ -275,8 +275,8 @@ export function CommandPalette() {
                   onSelect={() =>
                     go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } }))
                   }
-                  onMouseEnter={() => prefetch(a.short_id, a.current_version)}
-                  onFocus={() => prefetch(a.short_id, a.current_version)}
+                  onMouseEnter={() => prefetch(a.short_id)}
+                  onFocus={() => prefetch(a.short_id)}
                 >
                   <Icon name="all" size={16} className="text-muted-foreground" />
                   <span className="flex-1 truncate">{a.title ?? a.short_id}</span>
@@ -300,8 +300,8 @@ export function CommandPalette() {
                   onSelect={() =>
                     go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(h) } }))
                   }
-                  onMouseEnter={() => prefetch(h.short_id, h.current_version)}
-                  onFocus={() => prefetch(h.short_id, h.current_version)}
+                  onMouseEnter={() => prefetch(h.short_id)}
+                  onFocus={() => prefetch(h.short_id)}
                   // Top-align: this is a two-line row (title over snippet), so the icon
                   // sits with the title, not centered against the whole block. Keeping the
                   // item flex-ROW (a flex-col child holds the two lines) leaves cmdk's

@@ -18,6 +18,7 @@ import type {
   WorkspaceRecord,
   WorkspaceSummary,
 } from "@derive/core"
+import { isBillableRole } from "@derive/core"
 
 /**
  * Batched MetaStore methods, composed from their individual queries, for the embedded
@@ -38,6 +39,7 @@ export const composeListEnrichment = async (
     | "commentSignals"
     | "openProposalCounts"
     | "artifactRolesFor"
+    | "listUserFavoriteIds"
   >,
   opts: ListEnrichmentOpts,
 ): Promise<ListEnrichment> => {
@@ -56,7 +58,13 @@ export const composeListEnrichment = async (
   const signals = opts.viewerId ? await store.commentSignals(opts.ids, opts.viewerId) : {}
   const proposals = await store.openProposalCounts(opts.ids)
   const shareRoles = opts.memberId ? await store.artifactRolesFor(opts.memberId, opts.ids) : {}
-  return { views, tags, previews, handles, bylines, signals, proposals, shareRoles }
+  // Narrowed to the page here, where the pg driver narrows in SQL — the contract is
+  // "which of `ids` are starred", so a driver that reads the whole list must still clip
+  // it, or the two shapes disagree the moment the viewer stars something off this page.
+  const starred = opts.viewerId ? await store.listUserFavoriteIds(opts.viewerId) : []
+  const onPage = new Set(opts.ids)
+  const favorites = starred.filter((id) => onPage.has(id))
+  return { views, tags, previews, handles, bylines, signals, proposals, shareRoles, favorites }
 }
 
 /** See `composeListEnrichment` — the artifact-detail twin. */
@@ -71,6 +79,7 @@ export const composeArtifactDetail = async (
     | "listUserFavoriteIds"
     | "getOrgSettings"
     | "managedArtifactIds"
+    | "getUsers"
   >,
   opts: ArtifactDetailOpts,
 ): Promise<ArtifactDetail> => {
@@ -86,8 +95,16 @@ export const composeArtifactDetail = async (
       store.getOrgSettings(orgId),
       store.managedArtifactIds(orgId),
     ])
+  // Same rows the pg driver's `byline` arm returns, resolved from the versions this
+  // call just read plus the artifact's own author. Embedded drivers pay no wire trips,
+  // so an extra read here costs nothing the pg fold was buying back.
+  const authorIds = [
+    ...new Set(versions.map((v) => v.author_id).filter((id): id is string => !!id)),
+  ]
+  const bylines = authorIds.length ? await store.getUsers(authorIds) : []
   return {
     versions,
+    bylines,
     tags: tagsById[artifactId] ?? [],
     collectionIds,
     proposals,
@@ -132,7 +149,10 @@ export const composeBootstrap = async (
   store: Parameters<typeof composeWorkspaceSummary>[0] &
     Parameters<typeof composeCollectionsOverview>[0] &
     Parameters<typeof composeNotificationsPage>[0] &
-    Pick<MetaStore, "collectionRolesForUser" | "getOrgSettings">,
+    Pick<
+      MetaStore,
+      "collectionRolesForUser" | "getOrgSettings" | "getSubscription" | "listMemberships"
+    >,
   orgId: string,
   userId: string,
   notifLimit: number,
@@ -145,7 +165,21 @@ export const composeBootstrap = async (
   )
   const settings = await store.getOrgSettings(orgId)
   const notifications = await composeNotificationsPage(store, userId, notifLimit)
-  return { summary, collections, sources, collectionRoles, settings, notifications }
+  // The publishing-blocked verdict's two inputs. The pg driver answers both as arms of
+  // the one bootstrap statement; here they are two more free local reads.
+  const subscription = await store.getSubscription(orgId)
+  const billableSeats = (await store.listMemberships(orgId)).filter((m) =>
+    isBillableRole(m.role),
+  ).length
+  return {
+    summary,
+    collections,
+    sources,
+    collectionRoles,
+    settings,
+    notifications,
+    billing: { subscription, billableSeats },
+  }
 }
 
 export const composeWorkspaceSummary = async (

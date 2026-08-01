@@ -75,13 +75,25 @@ describe("hot read paths stay within their round-trip budget", () => {
     // Budgeting for the higher of the two keeps one number honest on both backends.
     const ROUTES: { path: string; budget: number; needs: string }[] = [
       {
+        // THE cold boot's critical path. With the rest of this PR landed, nothing is
+        // queued in front of it any more: the first card paints 43ms after it lands, so
+        // its own round trips are the entire remaining cost.
+        //
+        // 4 here is the SQLite count. Postgres pays 2: `listPage` answers the page AND its
+        // whole decoration in one statement, leaving the workspace/membership preamble.
+        // Was 5/3 — the viewer's star list used to be fetched up front, before the list
+        // query had even run, purely to decorate rows; it rides `listEnrichment` now, so
+        // only the FAVORITES FEED (which narrows by it) still pays for it separately.
+        //
+        // The SQLite number does not move: embedded drivers implement no fast path (a
+        // local round trip costs nothing) and take the read-by-read pair.
         path: "/v1/artifacts?limit=30",
-        budget: 5,
-        needs: "favorites, workspace resolve, membership, the list query, one listEnrichment",
+        budget: 4,
+        needs: "workspace resolve, membership, the list query, one listEnrichment",
       },
       {
         path: `/v1/artifacts/${short_id}`,
-        budget: 6,
+        budget: 5,
         needs: "the artifact, its grants (3 on sqlite / 1 on pg), one artifactDetail, bylines",
       },
       {
@@ -96,6 +108,15 @@ describe("hot read paths stay within their round-trip budget", () => {
       },
       { path: "/v1/notifications", budget: 1, needs: "one notificationsPage" },
       {
+        // On the boot waterfall at 404ms. Was 3: the caller's workspace list was read
+        // TWICE — once by activeWorkspace's no-cookie branch (a first login, or any
+        // cookie-less client) and once for the response body. `workspacesOf` memoizes it
+        // per request, the same way `membershipOf` already memoized getMembership.
+        path: "/v1/workspaces",
+        budget: 2,
+        needs: "ONE memoized listWorkspaces, membership",
+      },
+      {
         path: "/v1/collections",
         budget: 4,
         needs: "workspace resolve, membership, one collectionsOverview, one roles batch",
@@ -108,6 +129,31 @@ describe("hot read paths stay within their round-trip budget", () => {
         path: "/v1/bootstrap",
         budget: 3,
         needs: "workspace resolve, membership, ONE bootstrap",
+      },
+      {
+        // The document open's first leg, and the one that GATES the rendered bytes: the
+        // viewer frame's URL carries a token that only exists on this record, so every
+        // trip here is paid before the document can even start loading. Measured at
+        // 515ms on production (floor 227ms).
+        //
+        // 5 here is the SQLite count. Postgres pays 2: `artifactWithGrants` answers the
+        // record AND the authorization triple in one statement, then one `artifactDetail`.
+        // Was 6/4, then 5/3 (the author byline joined the detail union), now 5/2.
+        //
+        // That last fold was the one this comment used to list as remaining, and it was
+        // worth taking: measured on the preview, this request is 457ms of a 481ms
+        // document open — the journey essentially IS this handler — and the artifact read
+        // and the grants read were strictly serial, because the second needs the id and
+        // org the first returns.
+        //
+        // The SQLite number does not move: embedded drivers implement neither fast path
+        // (a local round trip costs nothing), so they still make all five reads. Budget
+        // for the higher of the two, as the header explains.
+        path: `/v1/artifacts/${short_id}`,
+        budget: 6,
+        needs:
+          "getByShortId, the authorization triple (one artifactGrants on pg), " +
+          "ONE artifactDetail, author bylines",
       },
     ]
 

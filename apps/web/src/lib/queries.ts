@@ -56,7 +56,7 @@ export const workspacesQuery = () =>
     queryFn: () => api.listWorkspaces(),
   })
 
-const LIBRARY_PAGE = 30
+export const LIBRARY_PAGE = 30
 
 // The library list as an infinite query: each page is a keyset slice, and the
 // next cursor drives infinite scroll. Keyed by the active filter (search /
@@ -347,22 +347,14 @@ export const commentsQuery = (shortId: string) =>
     queryFn: () => api.listComments(shortId).then((r) => r.comments),
   })
 
-// Warm the artifact's rendered HTML so its sandboxed iframe paints from the HTTP
-// cache instead of a cold fetch on open. The raw route is version-explicit, so
-// callers pass the version they intend to show. Idempotent per (id, version).
-export function prefetchArtifactRaw(shortId: string, version: number) {
-  if (typeof document === "undefined") return
-  const key = `${shortId}@${version}`
-  if (document.querySelector(`link[data-raw="${key}"]`)) return
-  // A plain rel=prefetch (no `as`) warms the HTTP cache for the iframe's later
-  // navigation. `as="document"` isn't a reflected destination in Chrome and can
-  // stop the iframe from reusing the response, so we leave it off.
-  const link = document.createElement("link")
-  link.rel = "prefetch"
-  link.href = `${API_BASE}/raw/${shortId}/v/${version}/index.html`
-  link.dataset.raw = key
-  document.head.appendChild(link)
-}
+/** The URL the sandboxed viewer loads for an artifact's rendered bytes. ONE builder,
+ *  shared by the viewer and by the test that pins its shape, because there used to be
+ *  two that disagreed. The token is the frame's proof of access (an opaque origin cannot
+ *  send our cookie), so it is part of the URL and therefore part of the HTTP cache key —
+ *  which is why it is minted on a time BUCKET (RAW_TOKEN_WINDOW_MS) rather than on `now`:
+ *  a URL that changes every request can never hit the browser cache. */
+export const rawArtifactUrl = (shortId: string, version: number, rawToken?: string) =>
+  `${API_BASE}/raw/${shortId}/v/${version}${rawToken ? `/t/${rawToken}` : ""}/index.html`
 
 // ---- Settings ---------------------------------------------------------------
 
@@ -403,6 +395,20 @@ export const billingQuery = () =>
   queryOptions({
     queryKey: ["billing"] as const,
     queryFn: () => api.getBilling(),
+  })
+
+/** JUST the publishing-blocked verdict, for the app shell's banner.
+ *
+ *  Its own key because it is seeded by the boot batch (lib/bootstrap.ts) and therefore
+ *  normally costs no request at all. The banner used to read `billingQuery`, which meant
+ *  every authed page load called GET /v1/billing — 6 store calls and 676ms on the boot
+ *  waterfall, the most expensive request there — to be told it is not blocked. The
+ *  fallback queryFn is that same endpoint, so a failed boot batch degrades to exactly the
+ *  old behavior rather than to a missing banner. */
+export const blockedQuery = () =>
+  queryOptions({
+    queryKey: ["billing", "blocked"] as const,
+    queryFn: () => api.getBilling().then((b) => b.blocked),
   })
 
 // Slack connection status for the Integrations section (availability, connected

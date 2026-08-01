@@ -228,6 +228,16 @@ export const embedRoutes = (ctx: AppContext) => {
   const getShell = async (): Promise<string | null> =>
     ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
   if (ctx.deps.shell || ctx.deps.shellFetch)
+    // NOT edge-cached, and the reason is worth keeping: this response carries a
+    // Set-Cookie (`d_src`, the signup-source stamp that captureSignupSource() puts on
+    // every HTML entry point), and Cloudflare's Cache API refuses to store any response
+    // with Set-Cookie — cache.put simply rejects. Caching it would mean stripping that
+    // cookie from the stored copy, which silently drops signup attribution for exactly
+    // the arrivals attribution exists to measure: people following a shared link. That
+    // is a product trade, not a perf one, and the perf case is weak anyway — measured in
+    // isolation this page answers in ~140ms, near the network floor. (The 266-618ms
+    // figure that motivated the attempt was a browser measurement taken under full
+    // page-load contention, not the page's own cost.)
     app.get("/artifacts/:ref", async (c) => {
       const shell = await getShell()
       if (!shell) return c.notFound()
@@ -237,10 +247,10 @@ export const embedRoutes = (ctx: AppContext) => {
       // injects NO unfurl meta, so the removed title doesn't live on for crawlers.
       if (!artifact || artifact.removed_at) return c.html(shell)
       // Canonicalise any non-canonical ref (bare id, stale name, legacy order) to
-      // /artifacts/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not 301)
-      // so a later rename re-canonicalises instead of being cached. Only ever for an
-      // artifact the actor may read (readable() already authorised), so a gated title
-      // can't leak via the redirect. Preserves the @vN suffix and the query string.
+      // /artifacts/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not
+      // 301) so a later rename re-canonicalises instead of being cached. Only ever for an
+      // artifact the actor may read (readable() already authorised), so a gated title can't
+      // leak via the redirect. Preserves the @vN suffix and the query string.
       const { version } = parseRef(ref)
       const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
       if (ref !== canonical)

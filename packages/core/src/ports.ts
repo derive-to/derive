@@ -231,6 +231,11 @@ export interface ArtifactDetailOpts {
 /** One page's worth of artifact-detail context — see `ArtifactQueryStore.artifactDetail`. */
 export interface ArtifactDetail {
   versions: VersionRecord[]
+  /** The live rows behind every `author_id` on this artifact and its versions, so a
+   *  byline frozen with an agent-client name self-heals on read WITHOUT its own round
+   *  trip. Same shape and purpose as `ListEnrichment.bylines`; the route maps both
+   *  through `bylinesFrom`. */
+  bylines: { id: string; name: string | null; username: string | null }[]
   tags: string[]
   /** Ids of the collections containing this artifact. */
   collectionIds: string[]
@@ -258,6 +263,17 @@ export interface ListEnrichmentOpts {
   views: boolean
 }
 
+/** What `listPage` needs beyond the list query itself: the same three viewer-scoped
+ *  knobs `listEnrichment` takes. `ghIds`/`authorIds` are absent on purpose — the page's
+ *  own author columns drive those joins, so they no longer make a round trip out to the
+ *  caller and back. */
+export interface ListPageOpts {
+  list: ListArtifactsOpts
+  viewerId: string | null
+  memberId: string | null
+  views: boolean
+}
+
 /** One page's worth of list decoration — see `ArtifactQueryStore.listEnrichment`. */
 export interface ListEnrichment {
   views: Record<string, number>
@@ -271,6 +287,11 @@ export interface ListEnrichment {
   signals: Record<string, CommentSignals>
   proposals: Record<string, number>
   shareRoles: Record<string, Role>
+  /** Which of `ids` the viewer has starred. Page-scoped on purpose: a listing only ever
+   *  asks "is THIS row a favorite", and the route used to answer it by fetching the
+   *  viewer's ENTIRE favorite list in a round trip of its own, taken before the list
+   *  query had even run. Empty for an anonymous viewer. */
+  favorites: string[]
 }
 
 export type PreviewStatus = "pending" | "ready" | "failed"
@@ -979,6 +1000,83 @@ export interface CollectionStore {
     userId: string,
   ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }>
 
+  /**
+   * `getByShortId` + `artifactGrants`, keyed on the SHORT ID, in one statement.
+   *
+   * The same optional-fast-path contract as `artifactGrants`, one level up. The document
+   * open is gated on GET /v1/artifacts/:shortId — measured on the preview at 457ms of a
+   * 481ms open, essentially the whole journey — and it opened with two strictly serial
+   * reads: fetch the artifact to learn its id and org, then fetch the caller's grants on
+   * it. The second cannot start until the first lands, so on the edge tier that ordering
+   * costs a full ~80ms round trip, every open.
+   *
+   * Resolving the artifact INSIDE the grants query removes the dependency. Null when no
+   * artifact has that short id. It never changes the answer: `can()` is still the only
+   * place a decision is made, and the store contract runs this against the read-by-read
+   * path over the same fixtures and requires them to agree.
+   */
+  /**
+   * `listArtifacts` + `listEnrichment` in one statement, for a store that can.
+   *
+   * The two are strictly serial — the decoration keys on the ids the list returns — so on
+   * the edge tier they cost two round trips for one page. This request is the cold boot's
+   * critical path (measured 389ms, first card 566ms right behind it), which is what makes
+   * the second trip worth removing.
+   *
+   * Optional, like the other fast paths: a store without it takes the two calls unchanged,
+   * and the embedded drivers deliberately do (a local round trip costs nothing). The pg
+   * implementation inlines the SAME list-query builder `listArtifacts` runs, so the
+   * visibility predicate is reused rather than restated, and the store contract requires
+   * this to agree with the read-by-read pair over the same fixtures.
+   */
+  listPage?(
+    opts: ListPageOpts,
+  ): Promise<{ artifacts: ArtifactRecord[]; enrichment: ListEnrichment }>
+
+  /**
+   * The workspace row, its membership roster, and the user directory for that roster —
+   * one statement, for a store that can.
+   *
+   * GET /v1/workspace was four round trips (measured 447ms), three of them keyed on the
+   * same org, and the last strictly after the others because it needs the member ids the
+   * roster returns. It is the Settings > Members page's entire cost.
+   *
+   * The `users` arm is best-effort in the same way the list's byline arm is: the Better
+   * Auth tables can be absent on a fresh self-host, and there the roster must still come
+   * back rather than fail the page.
+   */
+  /**
+   * How many ids this store will take in one `ids:` filter.
+   *
+   * The shared visibility gate chunks its candidate list to stay inside a dialect's
+   * parameter cap, and it had no way to ask — so it used the SMALLEST cap any driver has
+   * (D1 binds each id separately and caps a statement at 100). Postgres binds an array as
+   * ONE parameter and tops out at 65535, so it was splitting a 200-candidate search into
+   * three sequential round trips to respect a limit it does not have.
+   *
+   * Absent means "assume the conservative default" — so a driver that says nothing keeps
+   * exactly the old behaviour.
+   *
+   * A METHOD, not a plain property, and that is load-bearing. Wrappers around this port
+   * assume every member is an async method — the pg test store is a Proxy whose get trap
+   * returns a function for ANY key — so a number-valued property comes back as a function
+   * instead. That is not a type error anywhere; it made the chunk size NaN, `slice(0, NaN)`
+   * empty, and workspace search return "no matches" on Postgres only. Callers must still
+   * validate what they get back rather than trust the shape.
+   */
+  idsPerQuery?(): Promise<number> | number
+
+  workspaceWithMembers?(orgId: string): Promise<{
+    workspace: WorkspaceRecord | null
+    members: MembershipRecord[]
+    users: UserDir[]
+  }>
+
+  artifactWithGrants?(
+    shortId: string,
+    userId: string,
+  ): Promise<{ artifact: ArtifactRecord; orgRole: Role | null; artifactRoles: Role[] } | null>
+
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>
   /** The folders belonging to a collection. Name order is a view concern. */
@@ -1425,6 +1523,12 @@ export interface BootstrapRead {
   collectionRoles: Record<string, Role>
   settings: OrgSettings
   notifications: NotificationsPage
+  /** The two inputs a publishing-blocked verdict needs, so the app shell's banner does
+   *  not have to call GET /v1/billing on every boot to learn it is not blocked. That
+   *  endpoint is six store calls (subscription, seats, stored bytes, asset bytes, plus
+   *  the workspace preamble) and it was the single most expensive request on the boot
+   *  waterfall — 676ms measured — to render a strip that is normally invisible. */
+  billing: { subscription: SubscriptionRecord | null; billableSeats: number }
 }
 
 export interface NotificationsPage {

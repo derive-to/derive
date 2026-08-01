@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 import type { BootstrapPayload } from "@/api"
 import { bootstrapQuery, seedFromBootstrap } from "./bootstrap"
 import {
+  blockedQuery,
   collectionsQuery,
   notificationsQuery,
   summaryQuery,
@@ -28,6 +29,7 @@ const payload = (): BootstrapPayload => ({
   settings: { emailNotifications: true } as BootstrapPayload["settings"],
   notifications: [{ id: "n1", preview: "hi" }] as BootstrapPayload["notifications"],
   unread: 1,
+  blocked: { code: "billing_lapsed", message: "Renew to keep Deriving." },
 })
 
 describe("seedFromBootstrap", () => {
@@ -42,6 +44,9 @@ describe("seedFromBootstrap", () => {
     expect(qc.getQueryData(collectionsQuery().queryKey)).toEqual(b.collections)
     // /v1/workspace/settings stores the settings object verbatim.
     expect(qc.getQueryData(workspaceSettingsQuery().queryKey)).toEqual(b.settings)
+    // The banner's verdict, seeded so the shell never calls the 6-round-trip
+    // /v1/billing just to be told it is not blocked.
+    expect(qc.getQueryData(blockedQuery().queryKey)).toEqual(b.blocked)
     // /v1/notifications stores the ENVELOPE — the bell reads .notifications and .unread.
     expect(qc.getQueryData(notificationsQuery().queryKey)).toEqual({
       notifications: b.notifications,

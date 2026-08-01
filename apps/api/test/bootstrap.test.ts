@@ -52,11 +52,12 @@ describe("GET /v1/bootstrap", () => {
       }),
     )
 
-    const [tags, collections, settings, notifications, boot] = [
+    const [tags, collections, settings, notifications, billing, boot] = [
       await getJson(app, "/v1/tags", h),
       await getJson(app, "/v1/collections", h),
       await getJson(app, "/v1/workspace/settings", h),
       await getJson(app, "/v1/notifications", h),
+      await getJson(app, "/v1/billing", h),
       await getJson(app, "/v1/bootstrap", h),
     ]
 
@@ -65,6 +66,11 @@ describe("GET /v1/bootstrap", () => {
     expect(boot.settings).toEqual(settings)
     expect(boot.notifications).toEqual(notifications.notifications)
     expect(boot.unread).toEqual(notifications.unread)
+    // The banner's verdict, and the reason the app shell no longer calls the
+    // six-round-trip /v1/billing on every boot just to render nothing. It has to be the
+    // SAME value that endpoint reports, or the shell would show a banner the Billing
+    // page contradicts.
+    expect(boot.blocked).toEqual(billing.blocked)
 
     // The seeds actually exercised the arms — an accidentally-empty workspace would
     // let a broken batch pass the equality above by matching empty-to-empty.

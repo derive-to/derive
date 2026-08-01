@@ -1,15 +1,13 @@
 import {
   ACTIVE_SUBSCRIPTION_STATUSES,
+  isBillableRole,
   type MetaStore,
-  type Role,
   type SubscriptionRecord,
 } from "@derive/core"
 import { log } from "../log"
 import type { BillingDriver } from "./billing"
 
-/** A workspace role Stripe bills a seat for: editor or owner. Viewers/commenters
- *  ride free — only write access is metered. */
-export const isBillableRole = (role: Role): boolean => role === "editor" || role === "owner"
+export { isBillableRole } from "@derive/core"
 
 /** The seats Stripe should bill for: every member who can write (editor or owner). */
 export const billableSeatCount = async (meta: MetaStore, orgId: string): Promise<number> =>
