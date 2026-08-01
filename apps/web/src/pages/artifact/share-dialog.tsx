@@ -39,6 +39,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
+import { copyText } from "@/lib/copy-text"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -201,7 +202,7 @@ export function ShareButton({
   const linkAccessible = (linkRole ?? "none") !== "none"
   const copyEmbed = async () => {
     try {
-      await navigator.clipboard.writeText(embedSnippet)
+      if (!(await copyText(embedSnippet))) throw new Error("copy failed")
       setCopied(true)
       toast.success("Embed code copied")
       window.setTimeout(() => setCopied(false), 1500)
@@ -332,7 +333,7 @@ export function ShareButton({
   const setPassword = (password: string) => void applyAccess(currentTripleWithPassword(password))
   const copyLink = async () => {
     try {
-      await navigator.clipboard.writeText(shareUrl)
+      if (!(await copyText(shareUrl))) throw new Error("copy failed")
       setCopiedLink(true)
       toast.success("Link copied")
       window.setTimeout(() => setCopiedLink(false), 1500)
@@ -440,7 +441,7 @@ export function ShareButton({
   const dropDomain = (host: string) => dropMut.mutate(host)
   const copyUrl = async (url: string) => {
     try {
-      await navigator.clipboard.writeText(url)
+      if (!(await copyText(url))) throw new Error("copy failed")
       toast.success("URL copied")
     } catch {
       toast.error("Couldn't copy to clipboard")
