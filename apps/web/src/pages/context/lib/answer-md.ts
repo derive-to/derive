@@ -52,4 +52,11 @@ export const ANSWER_PROSE = cn(
   "[&_td]:border-b [&_td]:border-border/50 [&_td]:px-2 [&_td]:py-1.5 [&_td]:tabular-nums",
   "[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-secondary [&_pre]:p-2.5 [&_pre]:font-mono [&_pre]:text-xs",
   "[&_code]:font-mono [&_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground",
+  // LINKS HAVE TO LOOK LIKE LINKS. An answer's citations were real anchors that rendered as
+  // plain prose, so the one part of an answer worth clicking was the part nothing invited you
+  // to click. Same treatment the comment renderer already uses (.cmt-body a in globals.css):
+  // the accent colour plus an offset underline, so it reads as a link on both the muted answer
+  // bubble and a light background, and matches what a reader has already learned elsewhere.
+  "[&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a]:decoration-primary/40",
+  "[&_a:hover]:decoration-primary [&_a]:transition-colors",
 )
