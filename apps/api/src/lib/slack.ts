@@ -590,9 +590,12 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *    groups:history    delivery of message.groups — private-channel reply-back
  *    users:read        users.info, to name the author of an inbound Slack reply
  *    users:read.email  users.lookupByEmail, the DM fallback for a member who hasn't linked
- *    im:write          conversations.open, to DM a member. Reading DMs would need
- *                      im:history, which we deliberately do NOT request (see the
- *                      bot_events note in slack-app-setup.ts).
+ *    im:write          conversations.open, to DM a member
+ *    im:history        delivery of message.im — a DM to the app is a question, answered by
+ *                      the same chat lane a channel @mention uses. Requested only once
+ *                      something could actually answer one; before that the event was
+ *                      unreachable and the scope would have bought nothing but a scarier
+ *                      consent screen.
  *
  *  channels:read / groups:read back `conversations.list`, which is how the Settings channel
  *  picker offers channels to subscribe instead of asking an admin to paste an id. They were
@@ -622,6 +625,10 @@ export const SLACK_BOT_SCOPES = [
   "channels:history",
   "groups:read", // ditto, for private channels the bot is in
   "groups:history",
+  // DIRECT MESSAGES to the app. Slack refuses a manifest that subscribes `message.im` without
+  // this, which is why the event was dropped once before — see slack-app-setup.ts. Posting the
+  // answer back needs nothing extra: chat:write covers a DM the bot is already in.
+  "im:history",
   "users:read",
   "users:read.email",
   "im:write",

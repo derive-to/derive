@@ -79,20 +79,24 @@ export const buildSlackManifest = (baseUrl: string) => {
     settings: {
       event_subscriptions: {
         request_url: u("/v1/slack/events"),
-        // Public + private channels only. `message.im` was subscribed here but is
-        // unreachable by design: /v1/slack/events gates every reply on a slack_thread_link
-        // lookup (channel + thread_ts), and links are written ONLY by the channel
-        // comment-mirror — slack-dm.ts never writes one. So a DM could never match, while
-        // Slack still refused the manifest over it ("message.im event is missing scope(s):
-        // im:history"). Dropping the event fixes that without asking to READ users' DMs for
-        // a path that ignores them. When the assistant increment lands, add the event and
-        // im:history together.
+        // Channels, private channels, and DIRECT MESSAGES to the app.
+        //
+        // `message.im` was subscribed here once and removed: every reply was gated on a
+        // slack_thread_link lookup (channel + thread_ts) written only by the channel
+        // comment-mirror, so a DM could never match, while Slack still refused the manifest
+        // over the missing scope ("message.im event is missing scope(s): im:history"). The
+        // note left behind said to add the event and the scope together once something could
+        // actually answer a DM. That is this: /v1/slack/events now routes a DM straight into
+        // the chat lane instead of through the thread-link gate, so the event has a reader and
+        // im:history is in SLACK_BOT_SCOPES beside it.
+        //
         // app_uninstalled / tokens_revoked need no scope, and they are the only way to learn
         // that the stored bot token died without waiting for a delivery to fail — which never
         // happens on a workspace with no Slack traffic, leaving Settings claiming "connected".
         bot_events: [
           "message.channels",
           "message.groups",
+          "message.im",
           "link_shared",
           // @Derive, anywhere the bot is invited — the mention lane that does not need a
           // mirrored thread underneath it. Paired with the `app_mentions:read` scope in

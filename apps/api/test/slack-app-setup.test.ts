@@ -26,13 +26,20 @@ describe("buildSlackManifest", () => {
     )
   })
 
-  // Regression: message.im was subscribed but is unreachable — /v1/slack/events keys every
-  // reply on a slack_thread_link (channel + thread_ts) and only the channel comment-mirror
-  // writes those, never slack-dm.ts. Slack rejected the manifest over the missing im:history
-  // scope, and granting it would mean asking to READ users' DMs for a path that ignores them.
-  it("does not subscribe to DM messages it cannot act on (and so needs no im:history)", () => {
-    expect(m.settings.event_subscriptions.bot_events).not.toContain("message.im")
-    expect(m.oauth_config.scopes.bot).not.toContain("im:history")
+  // message.im and im:history travel TOGETHER, in both directions.
+  //
+  // Slack refuses a manifest that subscribes the event without the scope, which is how this was
+  // broken once before. It was then fixed by dropping the event, because nothing could answer a
+  // DM: every reply was keyed on a slack_thread_link (channel + thread_ts) that only the channel
+  // comment-mirror ever wrote. Now /v1/slack/events routes a DM straight into the chat lane, so
+  // the event has a reader and the scope earns its place on the consent screen.
+  //
+  // Asserted as a PAIR rather than individually: either one alone is a bug — the event without
+  // the scope is an app that cannot be created, and the scope without the event is asking to
+  // read people's DMs for nothing.
+  it("subscribes message.im and asks for im:history together", () => {
+    expect(m.settings.event_subscriptions.bot_events).toContain("message.im")
+    expect(m.oauth_config.scopes.bot).toContain("im:history")
   })
 
   it("declares the scopes posting, reply-back, and mention-DM email resolution need", () => {
