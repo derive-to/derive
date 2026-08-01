@@ -15,6 +15,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
@@ -40,6 +41,17 @@ interface ChatSessionRow {
   id: string
   created_at: string
   preview: string
+  /**
+   * The DOCUMENT a conversation is about, when it is about one.
+   *
+   * This list is every session in the workspace, and the rail on a document opens sessions here
+   * too — so a conversation held against a file sits in the same history as one held against the
+   * workspace. The field was declared away, which left the picker unable to tell them apart or
+   * act on the difference: every row loaded into this page, and a document conversation arriving
+   * on a surface with no document has no subject to render, a narrower tool set behind it, and
+   * its own revision contract. It did not degrade, it came apart.
+   */
+  subject?: { kind: "artifact"; id: string } | null
 }
 
 export function ChatPage() {
@@ -323,6 +335,9 @@ function HistoryPicker(props: {
 }) {
   const { sessions, current, onPick } = props
   if (sessions.length === 0) return null
+  // Split once, here, so the two groups below cannot drift on what counts as which.
+  const here = sessions.filter((s) => !s.subject)
+  const onDocs = sessions.filter((s) => !!s.subject)
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -331,8 +346,22 @@ function HistoryPicker(props: {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="max-w-sm">
-        <DropdownMenuLabel>Your conversations</DropdownMenuLabel>
-        {sessions.map((s) => (
+        {/* TWO KINDS, SAID OUT LOUD. Both are the person's own conversations and both belong
+            here, so neither is hidden — but one of them cannot be opened on this page, and a
+            list that renders them identically is a list that invites the click that breaks.
+            Labelled groups rather than a badge, because the question a reader has at this
+            moment is exactly "which of these is about a document". */}
+        <DropdownMenuLabel>About this workspace</DropdownMenuLabel>
+        {here.length === 0 && (
+          <DropdownMenuItem
+            disabled
+            className="text-muted-foreground text-xs"
+            data-testid="chat-history-empty"
+          >
+            No workspace conversations yet
+          </DropdownMenuItem>
+        )}
+        {here.map((s) => (
           <DropdownMenuItem
             key={s.id}
             onSelect={() => onPick(s.id)}
@@ -343,6 +372,29 @@ function HistoryPicker(props: {
             <span className="ml-2 shrink-0 text-xs text-muted-foreground">{ago(s.created_at)}</span>
           </DropdownMenuItem>
         ))}
+        {onDocs.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>On a document</DropdownMenuLabel>
+            {/* DISABLED, not absent. Opening one belongs on the document it is about, which is
+                where its rail already is — and until this page can route there, offering the
+                click would only reproduce the breakage. Showing them keeps the person's own
+                history honest: a conversation they remember having is still listed. */}
+            {onDocs.map((s) => (
+              <DropdownMenuItem
+                key={s.id}
+                disabled
+                className="opacity-100"
+                data-testid="chat-history-item-doc"
+              >
+                <span className="truncate text-muted-foreground">{s.preview || "(empty)"}</span>
+                <span className="ml-2 shrink-0 text-muted-foreground text-xs">
+                  open from the doc
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
