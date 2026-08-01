@@ -18,6 +18,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { isAbandoned } from "../lib/abandoned-turn"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -699,6 +700,46 @@ export const contextRoutes = (ctx: AppContext) => {
   // Any terminal turn — the runner's answer, a crash-fail, a close — pings the
   // asker's channel so an MCP ask({wait}) long-poll re-reads now instead of at
   // its timeout. A wake signal only; waiters always re-read the session.
+  /**
+   * A TURN THAT NEVER CAME BACK.
+   *
+   * An attended turn runs DETACHED (ctx.background → waitUntil on a Worker), so if the isolate
+   * dies mid-turn there is nobody left to settle the session. It stays "working" for ever: no
+   * answer, no error, no retry, and a surface that shows a spinner until the person gives up.
+   * That happened on a preview and the cause was never reproduced — which is the point. A lane
+   * where the failure mode is SILENCE cannot rely on having diagnosed every cause, because the
+   * one it has not diagnosed looks exactly like a slow answer.
+   *
+   * Reaped on READ rather than by a scheduler, because the surface already polls this endpoint
+   * while it waits: the check runs precisely when somebody is waiting, costs nothing when nobody
+   * is, and needs no cron on a runtime that has no always-on process.
+   *
+   * The deadline is generous on purpose. The model call alone is capped at 120s and a turn may
+   * make several plus tool time, so this is not a latency budget — it is the line past which a
+   * turn is not slow, it is gone.
+   */
+  const reapIfAbandoned = async (s: SessionRecord): Promise<SessionRecord> => {
+    if (!isAbandoned(s.state, s.updated_at ?? s.created_at, Date.now())) return s
+    // Says so IN THE TRANSCRIPT, not just in the state. Somebody who comes back to this
+    // conversation needs to know their question was dropped rather than answered badly.
+    await meta
+      .addSessionMessage(
+        {
+          id: newId("sm"),
+          session_id: s.id,
+          author_kind: "agent",
+          author_id: "derive",
+          body_md:
+            "This turn stopped before it finished, so I never got you an answer. Nothing was changed. Please ask again.",
+          meta: JSON.stringify({ outcome: "failed" }),
+        },
+        "failed",
+      )
+      .catch(() => {})
+    const updated = await meta.getSession(s.id).catch(() => null)
+    return updated ?? s
+  }
+
   const settleWake = (s: SessionRecord, state: SessionState) =>
     bus.publish(`u:${s.asker_id}`, { type: "session.settled", session_id: s.id, state })
 
@@ -1745,9 +1786,12 @@ export const contextRoutes = (ctx: AppContext) => {
           (await canAskContext(c, linked.context)) &&
           (linked.context.created_by === me.id || s.asker_id === me.id))
       if (!s || !allowed) return bail(fail(c, 404, "not found"))
-      const messages = await meta.listSessionMessages(s.id)
+      // Before the transcript is read, not after: a poll that returns "working" for a turn that
+      // died ten minutes ago is the bug this exists to close.
+      const live = await reapIfAbandoned(s)
+      const messages = await meta.listSessionMessages(live.id)
       return c.json({
-        session: sessionJson(s),
+        session: sessionJson(live),
         context: linked ? { id: linked.context.id, name: linked.context.name } : null,
         messages: messages.map(messageJson),
       })
