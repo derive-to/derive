@@ -10,17 +10,31 @@ app release, which is the entire reason for this shape.
 You do **not** need Xcode or Android Studio to try this. Expo Go on your own phone is
 enough.
 
-**The SDK is pinned to 54 on purpose.** Expo Go on the App Store lags npm's `latest` by
-several SDKs — at the time of writing npm said 57 while the store shipped Expo Go 54.0.2,
-and a 57 project fails on the phone with "Project is incompatible with this version of
-Expo Go." Before bumping the SDK, check what the store actually ships:
+**The SDK is pinned to 54, and this is not a lag you can wait out.**
+
+Expo stopped shipping new Expo Go versions to the App Store: SDK 55 went into Apple review
+limbo with no timeline, and Expo pivoted to other delivery. **SDK 54 is the last Expo Go on
+the App Store** (54.0.2, September 2025, identical across storefronts), so on a physical
+phone with no Apple Developer account, 54 is the only thing that can run. A newer SDK fails
+with "Project is incompatible with this version of Expo Go", and no amount of updating
+fixes it because there is nothing newer to update to.
+
+SDK 55+ on a real device needs one of:
+
+- **`eas go`** — builds your own Expo Go, delivered over TestFlight. Requires the Apple
+  Developer Program.
+- **iOS Simulator** — Expo CLI can install any SDK's Expo Go there. Requires Xcode.
+- **A development build** — Expo's actual recommendation, and where this app is headed
+  anyway: push notifications and the share extension cannot run in Expo Go at all.
+
+So the SDK bump and the Apple Developer enrolment are the same unlock, not two. Until then,
+stay on 54. Check what the store actually ships before touching the SDK version:
 
 ```bash
 curl -s "https://itunes.apple.com/lookup?id=982107779" | grep -o '"version":"[^"]*"' | head -1
 ```
 
 npm's `latest` tag is the wrong source of truth while Expo Go is the delivery mechanism.
-Once the app moves to dev builds this constraint goes away.
 
 
 ```bash
