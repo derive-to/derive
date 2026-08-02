@@ -114,6 +114,9 @@ jobs:
           MODEL_KEY: ${{ secrets.DERIVE_MODEL_API_KEY }}
           MODEL_BASE_URL: ${{ vars.DERIVE_MODEL_BASE_URL }}
           MODEL_NAME: ${{ vars.DERIVE_MODEL_NAME }}
+          # Optional: more model ids the SAME gateway serves. Set it and a preview can exercise
+          # the chat model picker, which does not render when there is only one model to pick.
+          MODEL_NAMES: ${{ vars.DERIVE_MODEL_NAMES }}
         run: |
           : "${AUTH_SECRET:?DERIVE_AUTH_SECRET is unset. Add it as a repo secret with the SAME
              value the production Worker uses, or every signed-in page of the preview 500s.}"
@@ -125,6 +128,7 @@ jobs:
           if [ -n "$MODEL_KEY" ]; then put DERIVE_MODEL_API_KEY "$MODEL_KEY"; fi
           if [ -n "$MODEL_BASE_URL" ]; then put DERIVE_MODEL_BASE_URL "$MODEL_BASE_URL"; fi
           if [ -n "$MODEL_NAME" ]; then put DERIVE_MODEL_NAME "$MODEL_NAME"; fi
+          if [ -n "$MODEL_NAMES" ]; then put DERIVE_MODEL_NAMES "$MODEL_NAMES"; fi
           # A preview with no model answers "no model is configured" in chat, which looks like a
           # regression rather than missing config. Say so once, here.
           if [ -z "$MODEL_BASE_URL" ] || [ -z "$MODEL_NAME" ] || [ -z "$MODEL_KEY" ]; then

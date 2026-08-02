@@ -10,12 +10,14 @@ import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
 import { AutomationsSection } from "./automations-section"
 import { BillingSection } from "./billing-section"
+import { BrandprintSettings } from "./brandprint-settings"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
 import { GithubSection } from "./github-section"
 import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
 import { ModelPlansSection } from "./model-plans-section"
+import { PeopleSection } from "./people-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
 import { SecuritySection } from "./security-section"
@@ -36,9 +38,11 @@ const SECTION_TITLES: Record<string, string> = {
   appearance: "Appearance",
   general: "General",
   members: "Members",
+  people: "People",
   billing: "Billing",
   integrations: "Integrations",
   sources: "Sources",
+  brandprint: "Brandprint",
   github: "GitHub",
   webhooks: "Webhooks",
   agents: "Agents",
@@ -86,9 +90,11 @@ export function Settings() {
       items: [
         { id: "general", label: "General", testId: "settings-tab-general" },
         { id: "members", label: "Members", testId: "settings-tab-members" },
+        { id: "people", label: "People", testId: "settings-tab-people" },
         { id: "billing", label: "Billing", testId: "settings-tab-billing" },
         { id: "integrations", label: "Integrations", testId: "settings-tab-integrations" },
         { id: "sources", label: "Sources", testId: "settings-tab-sources" },
+        { id: "brandprint", label: "Brandprint", testId: "settings-tab-brandprint" },
       ],
     },
     {
@@ -148,9 +154,11 @@ export function Settings() {
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
             {active === "members" && <MembersSection meId={me.id} />}
+            {active === "people" && <PeopleSection />}
             {active === "billing" && <BillingSection />}
             {active === "integrations" && <IntegrationsSection />}
             {active === "sources" && <SourcesSection />}
+            {active === "brandprint" && <BrandprintSettings />}
             {active === "github" && <GithubSection />}
             {active === "webhooks" && <WebhooksSection />}
             {active === "agents" && <AgentsSection meId={me.id} />}

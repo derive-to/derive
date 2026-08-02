@@ -29,6 +29,20 @@ export const buildSlackManifest = (baseUrl: string) => {
       background_color: "#1a1a2e",
     },
     features: {
+      // THE MESSAGES TAB, which is what makes the app DM-able at all.
+      //
+      // Omitting app_home does not leave Slack's default alone — applying a manifest without it
+      // turns the Messages tab OFF, so the app stops accepting direct messages and the person
+      // sees no way to write to it. Subscribing message.im and holding im:history buys nothing
+      // if nobody can open the conversation, which is exactly how this shipped broken: the event
+      // and the scope were right and the tab was gone.
+      //
+      // read_only must be false too — true renders a tab you can look at and cannot type into.
+      app_home: {
+        home_tab_enabled: false,
+        messages_tab_enabled: true,
+        messages_tab_read_only_enabled: false,
+      },
       bot_user: { display_name: "Derive", always_online: true },
       // The domains whose links this app unfurls. A registered domain matches all of its
       // SUBDOMAINS and paths, so one entry covers the instance host and every vanity
@@ -79,21 +93,35 @@ export const buildSlackManifest = (baseUrl: string) => {
     settings: {
       event_subscriptions: {
         request_url: u("/v1/slack/events"),
-        // Public + private channels only. `message.im` was subscribed here but is
-        // unreachable by design: /v1/slack/events gates every reply on a slack_thread_link
-        // lookup (channel + thread_ts), and links are written ONLY by the channel
-        // comment-mirror — slack-dm.ts never writes one. So a DM could never match, while
-        // Slack still refused the manifest over it ("message.im event is missing scope(s):
-        // im:history"). Dropping the event fixes that without asking to READ users' DMs for
-        // a path that ignores them. When the assistant increment lands, add the event and
-        // im:history together.
+        // Channels, private channels, and DIRECT MESSAGES to the app.
+        //
+        // `message.im` was subscribed here once and removed: every reply was gated on a
+        // slack_thread_link lookup (channel + thread_ts) written only by the channel
+        // comment-mirror, so a DM could never match, while Slack still refused the manifest
+        // over the missing scope ("message.im event is missing scope(s): im:history"). The
+        // note left behind said to add the event and the scope together once something could
+        // actually answer a DM. That is this: /v1/slack/events now routes a DM straight into
+        // the chat lane instead of through the thread-link gate, so the event has a reader and
+        // im:history is in SLACK_BOT_SCOPES beside it.
+        //
         // app_uninstalled / tokens_revoked need no scope, and they are the only way to learn
         // that the stored bot token died without waiting for a delivery to fail — which never
         // happens on a workspace with no Slack traffic, leaving Settings claiming "connected".
         bot_events: [
           "message.channels",
           "message.groups",
+          "message.im",
           "link_shared",
+          // @Derive, anywhere the bot is invited — the mention lane that does not need a
+          // mirrored thread underneath it. Paired with the `app_mentions:read` scope in
+          // SLACK_BOT_SCOPES: Slack refuses a manifest that declares one without the other,
+          // which is how the two previous scope/event mismatches shipped broken.
+          "app_mention",
+          // Work Objects: fired when someone CLICKS an unfurled card, opening the flexpane. It
+          // carries the clicking user, which is what makes that surface per-viewer — the thing
+          // link_shared and chat.unfurl cannot be. Needs no new scope, so an existing install
+          // picks it up on a manifest re-apply without a reconnect.
+          "entity_details_requested",
           "app_uninstalled",
           "tokens_revoked",
         ],

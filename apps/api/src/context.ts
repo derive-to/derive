@@ -27,6 +27,7 @@ import {
   roleAllows,
   type SearchIndex,
   type SubscriptionRecord,
+  type WorkspaceRecord,
 } from "@derive/core"
 import type { Context } from "hono"
 import { getCookie, setCookie } from "hono/cookie"
@@ -37,8 +38,10 @@ import { isApiToken, verifyApiToken } from "./lib/api-token"
 import type { BillingDriver } from "./lib/billing"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
+import { answerDeriveMention } from "./lib/comment-turn"
 import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
+import type { ModelCatalog } from "./lib/model-catalog"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
   clientIp,
@@ -148,6 +151,15 @@ export interface AppDeps {
    *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
    *  rather than imported so a test can script it and so no provider choice is baked into the app. */
   callModel?: AgentLoopInput["callModel"]
+  /** EVERY model this deploy can answer an attended turn with, and how to reach each one.
+   *
+   *  `callModel` above is this catalog's DEFAULT entry — one is built from the other, so the two
+   *  can never disagree about what "the model" means. The catalog exists because which model
+   *  answers is a choice a person makes mid-conversation, not a property of the process: the
+   *  workspace chat resolves the asker's pick through it, and records what answered.
+   *
+   *  Unset ⇒ no model configured (the same state as `callModel` unset). See lib/model-catalog. */
+  models?: ModelCatalog
   /** Workspace ids allowed to enable chat when `callModel` is set (an operator-paid gateway).
    *  Empty/undefined = no restriction, which is correct for a single-tenant box where the
    *  operator IS the user. On a shared host this is what stops any workspace owner from
@@ -910,6 +922,32 @@ export function buildContext(deps: AppDeps) {
     return pending
   }
 
+  // MEMOIZED PER REQUEST + user, for the same reason as `cachedMembership` above: the
+  // GET /v1/workspaces boot request read the caller's workspace list TWICE — once inside
+  // `activeWorkspace` (the branch taken when there is no derive_ws cookie yet, i.e. a
+  // first login or any cookie-less client) and once for the response body. On the edge
+  // tier that duplicate is a full ~80ms round trip for rows the request already had.
+  // Caches the PROMISE, so two callers racing before the first resolves still de-dupe.
+  const workspacesCache = new WeakMap<
+    Context,
+    Map<string, Promise<(WorkspaceRecord & { role: Role })[]>>
+  >()
+  const cachedWorkspaces = (
+    c: Context,
+    userId: string,
+  ): Promise<(WorkspaceRecord & { role: Role })[]> => {
+    let perRequest = workspacesCache.get(c)
+    if (!perRequest) {
+      perRequest = new Map()
+      workspacesCache.set(c, perRequest)
+    }
+    const hit = perRequest.get(userId)
+    if (hit) return hit
+    const pending = meta.listWorkspaces(userId)
+    perRequest.set(userId, pending)
+    return pending
+  }
+
   // Lazy provisioning: the first member of a workspace is its owner; everyone
   // else joins at the default role. Returns the caller's role in that workspace.
   const ensureMembership = async (c: Context, orgId: string, userId: string): Promise<Role> => {
@@ -975,8 +1013,16 @@ export function buildContext(deps: AppDeps) {
       const ck = getCookie(c, WS_COOKIE)
       if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
       else {
-        const mine = await meta.listWorkspaces(me.id)
-        ws = mine[0]?.id ?? (await provisionPersonal(me))
+        const mine = await cachedWorkspaces(c, me.id)
+        if (mine[0]) ws = mine[0].id
+        else {
+          ws = await provisionPersonal(me)
+          // Drop the memoized EMPTY list: it predates the workspace we just created, and
+          // GET /v1/workspaces reads the list again for its body in this same request —
+          // it would have answered "you have no workspaces" moments after making one.
+          // Exactly the invalidation `ensureMembership` does after provisioning a row.
+          workspacesCache.get(c)?.delete(me.id)
+        }
       }
     }
     wsCache.set(c, ws)
@@ -1046,7 +1092,16 @@ export function buildContext(deps: AppDeps) {
   // changed by someone else is picked up by the next request. Keyed by Context, so it dies with
   // the request rather than outliving a revoked share.
   const actorCache = new WeakMap<Context, Map<string, Promise<Actor>>>()
-  const actorFor = (c: Context, a: ArtifactRecord): Promise<Actor> => {
+  /** `pre` is grants a caller ALREADY has in hand, from a read that fetched the artifact
+   *  and the caller's standing on it together (`artifactWithGrants`). It is a shortcut
+   *  around the query, never around the decision — and it is honoured ONLY when the
+   *  request's principal turns out to be exactly the user it was resolved for. Anything
+   *  else (an agent bearer alongside a session cookie, a token, an anonymous visitor)
+   *  ignores it and takes the normal path, so a mis-supplied `pre` can cost a wasted
+   *  query but cannot produce the wrong actor. */
+  type PreGrants = { userId: string; orgRole: Role | null; artifactRoles: Role[] }
+
+  const actorFor = (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
     let perArtifact = actorCache.get(c)
     if (!perArtifact) {
       perArtifact = new Map()
@@ -1056,12 +1111,12 @@ export function buildContext(deps: AppDeps) {
     // the first resolves would otherwise both miss and both issue the three queries.
     const hit = perArtifact.get(a.id)
     if (hit) return hit
-    const pending = resolveActor(c, a)
+    const pending = resolveActor(c, a, pre)
     perArtifact.set(a.id, pending)
     return pending
   }
 
-  const resolveActor = async (c: Context, a: ArtifactRecord): Promise<Actor> => {
+  const resolveActor = async (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
     // A password on the artifact is a lock on its public link. Has this visitor
     // entered it? The unlock cookie's value is derived from the server-only
     // hash, so it can't be forged.
@@ -1112,6 +1167,17 @@ export function buildContext(deps: AppDeps) {
     //
     // Both paths feed the SAME maxRole/can(): the fast path changes how the inputs arrive, never
     // what they are. artifact-grants-parity.test.ts asserts the two agree.
+    // Already resolved alongside the artifact itself — same inputs, one round trip earlier.
+    // The identity check is the guard described on PreGrants.
+    if (pre && pre.userId === me.id)
+      return {
+        kind: "user",
+        userId: me.id,
+        artifactRole: maxRole(null, ...pre.artifactRoles),
+        orgRole: pre.orgRole,
+        locked,
+        unlocked,
+      }
     if (meta.artifactGrants) {
       const g = await meta.artifactGrants(a.id, a.org_id, me.id)
       return {
@@ -1317,6 +1383,7 @@ export function buildContext(deps: AppDeps) {
     meta,
     blobs,
     callModel: deps.callModel,
+    models: deps.models,
     chatAllowlist: deps.chatAllowlist,
     search: deps.search,
     bus,
@@ -1334,6 +1401,25 @@ export function buildContext(deps: AppDeps) {
     notify,
     notifyRender,
     background,
+    /**
+     * Answer an @derive mention in a comment thread — the comment lane's arrival, built once
+     * here because it needs the model catalog, the store and the publish path in one hand.
+     *
+     * Passed INTO commentCreatedAction by every caller that creates a comment, so a mention
+     * typed in the web app, over MCP, or in a synced Slack thread all reach the same turn.
+     * Undefined when this deploy has no model, which is the honest "nothing answers" state.
+     */
+    answerDeriveMention: deps.models
+      ? answerDeriveMention({
+          meta,
+          blobs,
+          bus,
+          baseUrl: deps.baseUrl,
+          models: deps.models,
+          notify,
+          chatAllowlist: deps.chatAllowlist,
+        })
+      : undefined,
     currentUser,
     agentFor,
     // The run id a dkrun_ capability bearer is pinned to (null for every other principal).
@@ -1367,6 +1453,8 @@ export function buildContext(deps: AppDeps) {
      *  already resolved by `activeWorkspace`/`workspaceRole`, and a direct call re-pays a
      *  full ~80ms round trip for it. */
     membershipOf: cachedMembership,
+    /** `meta.listWorkspaces`, memoized for this request — see cachedWorkspaces. */
+    workspacesOf: cachedWorkspaces,
     activeWorkspace,
     setWsCookie,
     anonViewerId,

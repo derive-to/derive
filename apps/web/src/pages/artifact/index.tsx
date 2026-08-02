@@ -15,6 +15,7 @@ import {
   artifactAgentsQuery,
   artifactQuery,
   commentsQuery,
+  rawArtifactUrl,
   workspaceSettingsQuery,
 } from "@/lib/queries"
 import { ago } from "@/lib/time"
@@ -607,14 +608,14 @@ export function Artifact() {
     pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
       ? pinnedRawToken.current.token
       : undefined
-  const rawBase = rawToken
-    ? `${API_BASE}/raw/${shortId}/v/${shown}/t/${rawToken}`
-    : `${API_BASE}/raw/${shortId}/v/${shown}`
   // While the record is a list-row seed (placeholder), hold the frame: the seed has no
   // raw_token, and a tokenless load now would just be torn down and reloaded when the
   // real record lands ~a beat later. RenderStage shows its boot state meanwhile, so the
   // person sees real header + calm loading, never a double content flash.
-  const rawSrc = seeded ? null : `${rawBase}/index.html`
+  // rawArtifactUrl is SHARED with the prefetch (lib/queries) so the two can never build
+  // different URLs again — when they did, hover prefetching warmed a response the frame
+  // never requested.
+  const rawSrc = seeded ? null : rawArtifactUrl(shortId, shown, rawToken)
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.

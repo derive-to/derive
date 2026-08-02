@@ -29,7 +29,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
-import { openAiCompatModel } from "./lib/model-openai"
+import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
@@ -138,6 +138,9 @@ export interface Env {
   DERIVE_MODEL_BASE_URL?: string
   DERIVE_MODEL_API_KEY?: string
   DERIVE_MODEL_NAME?: string
+  /** Comma-separated ADDITIONAL model ids the same gateway serves, offered to chat as a
+   *  choice. Unset ⇒ one model, and no picker. See lib/model-catalog.ts. */
+  DERIVE_MODEL_NAMES?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
@@ -276,6 +279,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
         recordSignupAttribution: signupAttributionHook(meta),
       })
+      const models = catalogFromGateway(workerGateway(env))
       app = createApp({
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via
@@ -288,10 +292,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // message, and answers "no model is configured" — the surface works and the product
         // does not. Same three vars as self-host, delivered as Worker secrets. Unattended runs
         // are unaffected: they still resolve their own credential through the payer chain.
-        callModel: (() => {
-          const gw = workerGateway(env)
-          return gw ? openAiCompatModel(gw) : undefined
-        })(),
+        // Both from ONE construction: `callModel` is the catalog's default entry, so a lane that
+        // picks a model and a lane that does not can never disagree about what "the model" is.
+        callModel: models?.resolve(null)?.callModel,
+        models: models ?? undefined,
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
         chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
@@ -488,13 +492,15 @@ export default {
  *  base URL with no key 401s every call and a key with no model id sends an empty model, so an
  *  incomplete set is treated as unset. The Node twin is node.ts's `modelGateway`; read once here
  *  so attended chat and the loop substrate can never disagree about whether one is configured. */
-function workerGateway(env: Env): { baseUrl: string; apiKey: string; model: string } | undefined {
+function workerGateway(env: Env): GatewayConfig | undefined {
   const {
     DERIVE_MODEL_BASE_URL: baseUrl,
     DERIVE_MODEL_API_KEY: apiKey,
     DERIVE_MODEL_NAME: model,
+    // Optional and additive: more model ids the SAME gateway serves. Unset ⇒ one model, as before.
+    DERIVE_MODEL_NAMES: alsoModels,
   } = env
-  return baseUrl && apiKey && model ? { baseUrl, apiKey, model } : undefined
+  return baseUrl && apiKey && model ? { baseUrl, apiKey, model, alsoModels } : undefined
 }
 
 /** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding

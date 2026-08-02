@@ -22,6 +22,29 @@ describe("unfurl + embed", () => {
     expect(svg).toContain("My Report")
   })
 
+  it("the card never leads with the host's own derived facts", async () => {
+    // Every version now also carries $outline/$links/$stats. A page with NO authored
+    // fact must show NO dataSummary — a card leading with word-counts would spend the
+    // incentive on congratulating the host — and a page with one must lead with the
+    // AUTHOR's numbers, $rows invisible.
+    const bare = await idOf(
+      await upload(
+        "bare.html",
+        "<!doctype html><html><body><h1>T</h1><h2>U</h2><p>words here</p></body></html>",
+        { visibility: "public", title: "Bare" },
+      ),
+    )
+    const svg = await (await app.request(`/v1/og/${bare}`)).text()
+    expect(svg).not.toContain("$stats")
+    expect(svg).not.toContain("words")
+    const oembed = await (
+      await app.request(
+        `/v1/oembed?url=${encodeURIComponent(`http://derive.test/artifacts/${bare}`)}`,
+      )
+    ).json()
+    expect(JSON.stringify(oembed)).not.toContain("$")
+  })
+
   it("a fact-bearing artifact leads its unfurl with its own numbers", async () => {
     // The single highest-leverage incentive in the whole facts bet: a link pasted in Slack
     // shows "pass 48 · fail 0" before anyone clicks, which is the mechanic that made

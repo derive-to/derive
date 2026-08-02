@@ -62,7 +62,8 @@ export function ReworkMenuItem({
     onError: (err) => {
       const code = err instanceof ApiError ? err.code : undefined
       if (code === "needsAgent") onConnect()
-      else if (code === "needsBrandprint") nav({ to: "/brandprint" })
+      else if (code === "needsBrandprint")
+        nav({ to: "/settings/$section", params: { section: "brand" } })
       else if (code === "brandprintDisabled")
         toast.error("Brandprint is turned off in your settings. Turn it on to rework.")
       else if (code === "alreadyQueued") toast(ALREADY_QUEUED)
@@ -94,7 +95,10 @@ export function ReworkMenuItem({
   let item: React.ReactNode
   if (rework.state === "setup")
     item = (
-      <DropdownMenuItem data-testid="rework-setup" onSelect={() => nav({ to: "/brandprint" })}>
+      <DropdownMenuItem
+        data-testid="rework-setup"
+        onSelect={() => nav({ to: "/settings/$section", params: { section: "brand" } })}
+      >
         <Icon name="sparkles" size={16} /> Set up your Brandprint
       </DropdownMenuItem>
     )

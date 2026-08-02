@@ -25,7 +25,9 @@ import {
 import { log } from "../log"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
 import type { AgentLoopInput } from "./agent-loop"
+import { DEFAULT_MAX_TURNS } from "./agent-loop"
 import { BillingBlockedError } from "./billing"
+import type { ChatToolSurface } from "./chat-tools"
 import {
   documentBlock,
   documentContract,
@@ -59,9 +61,21 @@ type TurnInput = {
   artifact: ArtifactRecord
   transcript: SessionMessageRecord[]
   flags: { agentKillswitch: boolean; agentAutoEnabled: boolean }
-  /** Attended chat resolves NO tools (see maxTurns below), so it can never spend a
-   *  connection — the gate's credentialed rung is always off for this lane. Stated here
-   *  rather than threaded through, so wiring tools into chat later trips this comment. */
+  /**
+   * READ-ONLY tools, so a conversation about this document can reach the rest of the workspace
+   * ("what did the roadmap say about this?") without leaving the rail.
+   *
+   * Deliberately read-only, and that is the whole design of this lane: the DOCUMENT's write goes
+   * through the revision contract and the landing port below, which is what handles publish-vs-
+   * propose, the mid-turn race demotion and the post-publish fan-out. Handing this turn a
+   * `publish` tool as well would give one document two write paths that decide differently —
+   * the exact drift turn-core exists to prevent. Reach is additive; writing is not.
+   *
+   * Absent (undefined) ⇒ no tools, exactly as this lane ran before.
+   */
+  tools?: ChatToolSurface
+  /** The skill index for those tools — one line each in the prompt, bodies read on demand. */
+  skills?: { name: string; summary: string }[]
   /** The human this turn acts for — follower fan-out and version authorship. */
   onBehalf: { id: string; name: string } | null
 }
@@ -142,7 +156,19 @@ If they are asking a QUESTION, or thinking out loud, just answer them in prose �
 revision block, and do not change the document. Most messages are one or the other; decide which.
 
 ${contract.text}
-
+${
+  input.tools?.tools.length
+    ? `\nYou can also look things up elsewhere in this workspace with: ${input.tools.tools
+        .map((t) => t.name)
+        .join(", ")}. Cite anything you use as a markdown link, [Title](/artifacts/<short_id>).${
+        input.skills?.length
+          ? `\nSkills carry the procedure — read one when you need it:\n${input.skills
+              .map((sk) => `- ${sk.name} — ${sk.summary} — read derive://skills/${sk.name}`)
+              .join("\n")}`
+          : ""
+      }\n`
+    : ""
+}
 ${documentBlock(src.text, documentName(input.artifact.short_id, input.artifact.current_content_type))}`
 
   const out = await runTurn({
@@ -150,8 +176,13 @@ ${documentBlock(src.text, documentName(input.artifact.short_id, input.artifact.c
     messages: asTurns(input.transcript),
     contract,
     callModel: deps.callModel,
-    // No tools, so nothing can extend the turn: one attempt plus the single shared nudge.
-    maxTurns: NUDGE_LIMIT + 1,
+    tools: input.tools?.tools ?? [],
+    executeTool: input.tools?.execute,
+    // WITHOUT TOOLS nothing can extend the turn, so one attempt plus the single shared nudge is
+    // the whole budget. WITH them the model needs room to look something up before it answers,
+    // and the ceiling becomes the shared one every other tool-using lane runs on (which also
+    // brings the announced last turn and the tool-output budget with it).
+    maxTurns: input.tools?.tools.length ? DEFAULT_MAX_TURNS : NUDGE_LIMIT + 1,
     gate: {
       // `mode` rides on the subject selector, so the person's edit-vs-suggest preference is the
       // same field that says what the session is about — one field, and the two can never

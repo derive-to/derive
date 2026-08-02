@@ -1,19 +1,26 @@
-import { ANCHOR_CLIENT_JS, type ArtifactRecord } from "@derive/core"
+import { ANCHOR_CLIENT_JS, type ArtifactRecord, isDerivedFactName } from "@derive/core"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { crossDocTransform } from "../lib/cross-doc"
 import { verifyState } from "../lib/crypto"
-import { cacheControlFor, fail, TOMBSTONE } from "../lib/http"
+import {
+  cacheControlFor,
+  fail,
+  IMMUTABLE_CACHE,
+  RAW_TOKEN_MAX_AGE_MS,
+  RAW_TOKEN_WINDOW_MS,
+  TOMBSTONE,
+} from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
+import { log } from "../log"
 import { safeJson } from "../mcp-util"
 
 // How long a minted raw_token (artifacts.ts's GET detail response) stays good for. It
 // doesn't re-check role/visibility live the way the cookie path's authorize() does, so
 // it's kept short — long enough to browse one sitting of a multi-page/image bundle,
 // short enough to bound exposure if the URL leaks (browser history, a proxy log, ...).
-const RAW_TOKEN_MAX_AGE_MS = 5 * 60 * 1000
 
 /** The sandbox: raw artifact + proposal bytes under /raw/*. Served with an
  *  opaque-origin CSP; a proposal renders exactly like the live version will. */
@@ -113,6 +120,9 @@ export const rawRoutes = (ctx: AppContext) => {
       const body = series
         .map((r) => JSON.stringify({ n: r.n, at: r.created_at, data: safeJson(r.json) }))
         .join("\n")
+      // The raw surface is where self-reading pages consume their own data — the
+      // consumption most worth observing (fact_read: the layer's instrument).
+      log.info("fact_read", { name: slot, derived: isDerivedFactName(slot), surface: "raw" })
       return c.body(`${body}\n`, 200, {
         "Content-Type": "application/x-ndjson; charset=utf-8",
         // Grows with every publish, so never immutable — but cheap and worth a short cache.
@@ -126,6 +136,7 @@ export const rawRoutes = (ctx: AppContext) => {
     if (!row) return fail(c, 404, `no facts "${slot}" in v${v}`)
     // The stored bytes verbatim, not a re-serialization: what was published is what a
     // caller gets, and it's already valid JSON (validated at publish).
+    log.info("fact_read", { name: slot, derived: isDerivedFactName(slot), surface: "raw" })
     return c.body(row.json, 200, {
       "Content-Type": "application/json; charset=utf-8",
       // A version is immutable, so its slot is too — cache it hard. The current-version
@@ -146,7 +157,33 @@ export const rawRoutes = (ctx: AppContext) => {
   // whatever the entry point needs relative asset references to inherit — for the
   // token route that's the `/t/:token` segment, so a bundle's own `<img src="x.png">`
   // requests automatically replay the same proof of access with no HTML rewriting.
-  const serveVersion = async (c: Context, artifact: ArtifactRecord, n: number, prefix: string) => {
+  // A gated artifact's bytes are `private, no-store` everywhere by default, which means
+  // the viewer re-downloads them on every open — and it is why the raw prefetch could
+  // never work (a no-store response is not reusable, so the iframe fetched the identical
+  // bytes the prefetch had just pulled).
+  //
+  // On the TOKEN route only, that can be relaxed on a principle rather than a guess: the
+  // URL carries a capability that expires, so a private cache
+  // entry keyed on that URL cannot outlive the access it was granted under. Cache for
+  // exactly the token's lifetime and no longer. `private` still forbids any shared cache
+  // from holding a gated artifact — the property the default was protecting.
+  //
+  // Password-locked artifacts keep no-store: the lock is a per-view challenge, and
+  // "cached until the token expires" is not the semantic anyone expects from it.
+  const tokenRouteCache = (a: ArtifactRecord): string =>
+    a.password_hash
+      ? "private, no-store"
+      : a.link_role !== "none"
+        ? IMMUTABLE_CACHE
+        : `private, max-age=${Math.floor(RAW_TOKEN_WINDOW_MS / 1000)}`
+
+  const serveVersion = async (
+    c: Context,
+    artifact: ArtifactRecord,
+    n: number,
+    prefix: string,
+    cacheControl?: string,
+  ) => {
     if (artifact.removed_at) return c.text(TOMBSTONE, 410)
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
@@ -158,7 +195,7 @@ export const rawRoutes = (ctx: AppContext) => {
       artifact.title,
       prefix,
       path,
-      cacheControlFor(artifact.link_role, !!artifact.password_hash),
+      cacheControl ?? cacheControlFor(artifact.link_role, !!artifact.password_hash),
       // Self-heal: this view just proved the bytes are HTML under a markdown label.
       // Fix the stored type off the hot path (waitUntil on edge, inline in tests) so
       // every view repairs it — the publish-time sniff stops new ones, this drains
@@ -201,6 +238,7 @@ export const rawRoutes = (ctx: AppContext) => {
       artifact,
       n,
       `/raw/${shortId}/v/${c.req.param("n")}/t/${c.req.param("token")}/`,
+      tokenRouteCache(artifact),
     )
   })
 

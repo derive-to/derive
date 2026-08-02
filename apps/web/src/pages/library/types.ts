@@ -39,6 +39,25 @@ export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedba
 // library is shareable and survives reload. These compose ON TOP of the base view
 // (a collection within all, a search within favorites). The named feeds themselves
 // are routes, not params — see LibraryView.
+/** Every query param that narrows or reorders the home library — the keys of
+ *  LibrarySearch, as a runtime list.
+ *
+ *  It exists for __root's head-start script, which starts the DEFAULT home listing
+ *  before the router exists and so must know whether this URL is the default one. The
+ *  test in this folder asserts the list matches the type, because a key added to
+ *  LibrarySearch and forgotten here would have the boot start (and the app ignore) the
+ *  wrong list. Anything NOT in this list — a utm_ tag, a cache buster, any tracking
+ *  param — does not change which artifacts the home renders, so it must not disable the
+ *  head-start. */
+export const LIBRARY_SEARCH_PARAMS = [
+  "collection",
+  "folder",
+  "query",
+  "author",
+  "tab",
+  "sort",
+] as const
+
 export type LibrarySearch = {
   collection?: string
   // Anchor a collection view to one of its folders — scroll that section into view on

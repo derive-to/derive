@@ -231,6 +231,11 @@ export interface ArtifactDetailOpts {
 /** One page's worth of artifact-detail context — see `ArtifactQueryStore.artifactDetail`. */
 export interface ArtifactDetail {
   versions: VersionRecord[]
+  /** The live rows behind every `author_id` on this artifact and its versions, so a
+   *  byline frozen with an agent-client name self-heals on read WITHOUT its own round
+   *  trip. Same shape and purpose as `ListEnrichment.bylines`; the route maps both
+   *  through `bylinesFrom`. */
+  bylines: { id: string; name: string | null; username: string | null }[]
   tags: string[]
   /** Ids of the collections containing this artifact. */
   collectionIds: string[]
@@ -258,6 +263,17 @@ export interface ListEnrichmentOpts {
   views: boolean
 }
 
+/** What `listPage` needs beyond the list query itself: the same three viewer-scoped
+ *  knobs `listEnrichment` takes. `ghIds`/`authorIds` are absent on purpose — the page's
+ *  own author columns drive those joins, so they no longer make a round trip out to the
+ *  caller and back. */
+export interface ListPageOpts {
+  list: ListArtifactsOpts
+  viewerId: string | null
+  memberId: string | null
+  views: boolean
+}
+
 /** One page's worth of list decoration — see `ArtifactQueryStore.listEnrichment`. */
 export interface ListEnrichment {
   views: Record<string, number>
@@ -271,6 +287,11 @@ export interface ListEnrichment {
   signals: Record<string, CommentSignals>
   proposals: Record<string, number>
   shareRoles: Record<string, Role>
+  /** Which of `ids` the viewer has starred. Page-scoped on purpose: a listing only ever
+   *  asks "is THIS row a favorite", and the route used to answer it by fetching the
+   *  viewer's ENTIRE favorite list in a round trip of its own, taken before the list
+   *  query had even run. Empty for an anonymous viewer. */
+  favorites: string[]
 }
 
 export type PreviewStatus = "pending" | "ready" | "failed"
@@ -477,6 +498,24 @@ export interface ArtifactStore {
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */
   setVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
+  /**
+   * Replace only the DERIVED (`$`) rows of a version, leaving asserted rows untouched.
+   *
+   * The two lifecycles share one table, and they have two different writers: extraction
+   * and backfill write asserted rows, lazy derivation writes derived ones. Doing the
+   * derived write as read-then-{@link setVersionData} would make it a read-modify-write
+   * over rows another writer owns, and the interleaving is a silent data loss: the
+   * backfill adds an author's fact to an old version between a lazy fill's read and its
+   * write, and the lazy fill's stale union deletes it. Nothing would ever restore it,
+   * because the next publish sees that fact already tracked and never re-walks.
+   *
+   * Scoping the delete to the `$` prefix removes the hazard by construction rather than
+   * narrowing the window: the derived write cannot express "remove an asserted row", so
+   * no ordering exists in which it does. This is the same predicate the rollback story
+   * rests on (`DELETE FROM version_data WHERE slot LIKE '$%'`), which is not a
+   * coincidence — it is what "recomputable cache in the same table" means.
+   */
+  setDerivedVersionData(artifactId: string, n: number, rows: NewVersionData[]): Promise<void>
   /** A version's facts: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
@@ -519,6 +558,36 @@ export interface ArtifactStore {
     opts?: { tag?: string; limit?: number },
   ): Promise<
     { id: string; short_id: string; title: string | null; n: number; json: string; at: string }[]
+  >
+  /** The BACKLINK scan: artifacts whose current version's `$links` mentions `ref`. Every
+   *  index above is per artifact; this is the inversion of one, which is the shape a corpus
+   *  question actually takes ("what points here"). Same join, one more predicate.
+   *
+   *  CANDIDATES, not answers. The `LIKE` narrows to the few rows that could contain the ref
+   *  and the CALLER CONFIRMS by parsing `json` — a substring match is not proof (the same
+   *  reasoning, and the same shape, as isManagedArtifact). The caller must then gate the
+   *  rows through api lib/visibility.ts before counting or returning them: these are the
+   *  LINKING artifacts, reached by content rather than by id, so the org scope is not a read
+   *  permission here either.
+   *
+   *  Each row carries `id` to gate on, `json` to confirm with, `gen` so the caller can say
+   *  the index is older than the deriver, and `at` = the CURRENT VERSION's publish time.
+   *  Never version_data.created_at: a lazily derived row's timestamp is when the host got
+   *  round to indexing, not when the link was made. */
+  listArtifactsLinkingTo(
+    orgId: string,
+    ref: string,
+    opts?: { tag?: string; limit?: number },
+  ): Promise<
+    {
+      id: string
+      short_id: string
+      title: string | null
+      n: number
+      json: string
+      gen: number
+      at: string
+    }[]
   >
   /** Correct a version's stored content_type in place (no new version). Also
    *  updates the artifact's current_content_type when n is the current version.
@@ -931,6 +1000,83 @@ export interface CollectionStore {
     userId: string,
   ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }>
 
+  /**
+   * `getByShortId` + `artifactGrants`, keyed on the SHORT ID, in one statement.
+   *
+   * The same optional-fast-path contract as `artifactGrants`, one level up. The document
+   * open is gated on GET /v1/artifacts/:shortId — measured on the preview at 457ms of a
+   * 481ms open, essentially the whole journey — and it opened with two strictly serial
+   * reads: fetch the artifact to learn its id and org, then fetch the caller's grants on
+   * it. The second cannot start until the first lands, so on the edge tier that ordering
+   * costs a full ~80ms round trip, every open.
+   *
+   * Resolving the artifact INSIDE the grants query removes the dependency. Null when no
+   * artifact has that short id. It never changes the answer: `can()` is still the only
+   * place a decision is made, and the store contract runs this against the read-by-read
+   * path over the same fixtures and requires them to agree.
+   */
+  /**
+   * `listArtifacts` + `listEnrichment` in one statement, for a store that can.
+   *
+   * The two are strictly serial — the decoration keys on the ids the list returns — so on
+   * the edge tier they cost two round trips for one page. This request is the cold boot's
+   * critical path (measured 389ms, first card 566ms right behind it), which is what makes
+   * the second trip worth removing.
+   *
+   * Optional, like the other fast paths: a store without it takes the two calls unchanged,
+   * and the embedded drivers deliberately do (a local round trip costs nothing). The pg
+   * implementation inlines the SAME list-query builder `listArtifacts` runs, so the
+   * visibility predicate is reused rather than restated, and the store contract requires
+   * this to agree with the read-by-read pair over the same fixtures.
+   */
+  listPage?(
+    opts: ListPageOpts,
+  ): Promise<{ artifacts: ArtifactRecord[]; enrichment: ListEnrichment }>
+
+  /**
+   * The workspace row, its membership roster, and the user directory for that roster —
+   * one statement, for a store that can.
+   *
+   * GET /v1/workspace was four round trips (measured 447ms), three of them keyed on the
+   * same org, and the last strictly after the others because it needs the member ids the
+   * roster returns. It is the Settings > Members page's entire cost.
+   *
+   * The `users` arm is best-effort in the same way the list's byline arm is: the Better
+   * Auth tables can be absent on a fresh self-host, and there the roster must still come
+   * back rather than fail the page.
+   */
+  /**
+   * How many ids this store will take in one `ids:` filter.
+   *
+   * The shared visibility gate chunks its candidate list to stay inside a dialect's
+   * parameter cap, and it had no way to ask — so it used the SMALLEST cap any driver has
+   * (D1 binds each id separately and caps a statement at 100). Postgres binds an array as
+   * ONE parameter and tops out at 65535, so it was splitting a 200-candidate search into
+   * three sequential round trips to respect a limit it does not have.
+   *
+   * Absent means "assume the conservative default" — so a driver that says nothing keeps
+   * exactly the old behaviour.
+   *
+   * A METHOD, not a plain property, and that is load-bearing. Wrappers around this port
+   * assume every member is an async method — the pg test store is a Proxy whose get trap
+   * returns a function for ANY key — so a number-valued property comes back as a function
+   * instead. That is not a type error anywhere; it made the chunk size NaN, `slice(0, NaN)`
+   * empty, and workspace search return "no matches" on Postgres only. Callers must still
+   * validate what they get back rather than trust the shape.
+   */
+  idsPerQuery?(): Promise<number> | number
+
+  workspaceWithMembers?(orgId: string): Promise<{
+    workspace: WorkspaceRecord | null
+    members: MembershipRecord[]
+    users: UserDir[]
+  }>
+
+  artifactWithGrants?(
+    shortId: string,
+    userId: string,
+  ): Promise<{ artifact: ArtifactRecord; orgRole: Role | null; artifactRoles: Role[] } | null>
+
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>
   /** The folders belonging to a collection. Name order is a view concern. */
@@ -1074,13 +1220,23 @@ export interface IntegrationStore {
   getSlackThreadLinkByTs(channel: string, ts: string): Promise<SlackThreadLinkRecord | null>
   /** Record the Slack message ↔ Derive thread mapping (idempotent on thread_id). */
   setSlackThreadLink(l: SlackThreadLinkRecord): Promise<void>
-  /** Resolve a Slack user (team + user id) to the Derive user who linked it, or null. */
+  /**
+   * Resolve a Slack user (team + user id) to the Derive user who linked it, or null.
+   *
+   * NEVER returns a `miss` row. Every caller of this treats a non-null result as a real
+   * Derive user — one of them DMs `user_id` directly — so a miss leaking through here would
+   * be a message sent to an id that does not exist. Ask `getSlackIdentityState` when you
+   * actually want to know whether we have looked before.
+   */
   getSlackUserLinkBySlackId(
     teamId: string,
     slackUserId: string,
   ): Promise<SlackUserLinkRecord | null>
-  /** The Slack identity a Derive user linked for a team, or null. */
+  /** The Slack identity a Derive user linked for a team, or null. Also never a `miss`. */
   getSlackUserLinkByUser(teamId: string, userId: string): Promise<SlackUserLinkRecord | null>
+  /** The raw row INCLUDING a `miss`, for the one lane that needs to know whether resolving
+   *  this Slack user has already been tried and failed. */
+  getSlackIdentityState(teamId: string, slackUserId: string): Promise<SlackUserLinkRecord | null>
   /** Link a Derive user to a Slack identity (idempotent on (team_id, slack_user_id)). */
   setSlackUserLink(l: SlackUserLinkRecord): Promise<void>
   /** Remove a Derive user's Slack link for a team. */
@@ -1210,6 +1366,12 @@ export interface ContextStore {
     contextId: string,
     opts?: { askerId?: string; limit?: number },
   ): Promise<SessionRecord[]>
+  /** One person's CONTEXTLESS sessions in a workspace, newest first — the chat history
+   *  picker. Contextless IS the filter: a session with no context is one nobody packaged,
+   *  which is exactly what the chat surfaces open. `listSessions` cannot answer this (it
+   *  keys on a context id, which these do not have). Scoped to the asker: a chat session
+   *  is private to the person who opened it, including from the workspace's owners. */
+  listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]>
   /** The runner's queue: `open` sessions on a context, oldest first. A plain
    *  polling read that does NOT claim — `claimPendingSessions` is the
    *  concurrency-safe path (it leases rows so overlapping runners can't
@@ -1377,6 +1539,12 @@ export interface BootstrapRead {
   collectionRoles: Record<string, Role>
   settings: OrgSettings
   notifications: NotificationsPage
+  /** The two inputs a publishing-blocked verdict needs, so the app shell's banner does
+   *  not have to call GET /v1/billing on every boot to learn it is not blocked. That
+   *  endpoint is six store calls (subscription, seats, stored bytes, asset bytes, plus
+   *  the workspace preamble) and it was the single most expensive request on the boot
+   *  waterfall — 676ms measured — to render a strip that is normally invisible. */
+  billing: { subscription: SubscriptionRecord | null; billableSeats: number }
 }
 
 export interface NotificationsPage {
@@ -2823,10 +2991,11 @@ export interface OrgSettings {
    *  unaffected. */
   hostedAgentsEnabled: boolean
   /** BETA: chat with a document (the right-rail Chat tab). OFF by default — unlike every
-   *  other setting here, this one gates a surface we are still testing, and the Derive
-   *  workspace turns it on for itself first. Off means the tab does not render at all and
-   *  the chat route refuses, so a half-enabled state cannot leave someone typing into a
-   *  panel that will never answer. */
+   *  other setting here, it is now ON by default: the surface shipped, and an opt-in nobody
+   *  finds is a feature nobody has. Setting it FALSE still turns chat off completely — the tab
+   *  does not render and the chat routes refuse — so a half-enabled state cannot leave someone
+   *  typing into a panel that will never answer. On a shared host DERIVE_CHAT_ALLOWLIST still
+   *  bounds WHICH workspaces may spend the operator's model key. */
   chatBeta: boolean
   /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
    *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
@@ -2887,8 +3056,11 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // the run-time safety lives in the autonomy gate (killswitch defaults off but
   // every write still lands as a proposal until a workspace opts into auto).
   hostedAgentsEnabled: true,
-  // Beta, so the default is the conservative one — opt IN per workspace.
-  chatBeta: false,
+  // Chat is ON by default now: it left beta, and an opt-in that everybody has to find is a
+  // feature nobody uses. Explicitly setting it FALSE still turns it off, so a workspace that
+  // does not want it keeps that. Automations stay opt-in — they run unattended and can write
+  // while nobody is watching, which is a different bet from an attended answer.
+  chatBeta: true,
   automateBeta: false,
   agentKillswitch: false,
   agentAutoEnabled: false,
@@ -2956,13 +3128,33 @@ export interface SlackThreadLinkRecord {
  *  account instead of guessing by email. Keyed on (team_id, slack_user_id): a Slack user id
  *  is unique per workspace, and one Derive user can link across several workspaces. `org_id`
  *  is the workspace the link was made from (context, not part of the identity key). */
+export type SlackLinkOrigin = "oauth" | "email" | "miss"
+
 export interface SlackUserLinkRecord {
   id: string
   org_id: string
   user_id: string
   team_id: string
   slack_user_id: string
+  /**
+   * HOW this identity was established — and why a MISS lives in the same table.
+   *
+   * "oauth" the person deliberately linked through Slack sign-in.
+   * "email" inferred from their Slack profile email, which resolved to a seat.
+   * "miss"  we looked and found nobody. NOT a link: it is the memo that stops us asking
+   *         Slack and re-prompting the person on every message, and it ages out.
+   *
+   * A miss and a link occupy the SAME (team_id, slack_user_id) row, so a later success
+   * replaces the miss through the ordinary upsert. Self-healing, with no cleanup job.
+   */
+  origin: SlackLinkOrigin
+  /** `user_id` is empty on a miss — there is nobody to point at. Never read it without
+   *  checking `origin`, which is exactly what the filtered accessors below do for you. */
   created_at: string
+  /** When we last CHECKED, or null for a row that predates this mechanism. Distinct from
+   *  created_at, which the upsert preserves: a miss has to be able to age out and be retried.
+   *  Nullable so it can be ALTER-added to a populated table — see ddl.ts isMigratable. */
+  checked_at: string | null
 }
 
 /** Where a subscription's events come from: the whole workspace, or one collection. */

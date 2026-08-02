@@ -32,8 +32,9 @@ Three problems followed:
 searched (adjectives).**
 
 - **Fixed, singular, self-contained feeds are routes:** `/` (all artifacts),
-  `/favorites`, `/following`, `/people`. Each has its own heading, empty state, and
-  semantics — they are destinations, not filters.
+  `/favorites`, `/following`. Each has its own heading, empty state, and semantics —
+  they are destinations, not filters. (`/people` was one of these until the people
+  directory moved into Settings; the path survives as a redirect.)
 - **Parameterized filters that compose over the shared library grid stay query
   params on `/`:** `?tag=`, `?collection=`, `?author=`, `?q=`. They refine the same
   view and combine with search, which is exactly what query params are for.
@@ -41,8 +42,11 @@ searched (adjectives).**
   (`"all" | "favorites" | "following"`) and reads the filters from search
   (`useSearch({ strict: false })`, since one body renders under three routes).
 
-The rail's top tier is now structurally uniform (four route links). The library's
-search schema drops `f` and `scope`; `/favorites` and `/following` accept only `?q=`.
+The rail's top tier is structurally uniform — every entry is a route link. (It listed
+six when this was written; Brandprint and People have since moved into Settings, which
+the rule below already covered: both are places, so both are path segments.) The
+library's search schema drops `f` and `scope`; `/favorites` and `/following` accept
+only `?q=`.
 
 **Settings sections follow the same rule.** A settings section (Profile, Members,
 GitHub, …) is a place, not a filter — so it is a path segment, `/settings/$section`,

@@ -48,7 +48,14 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // read/opened"). `find` and `use` each name the read-or-use pair once. Trimmed first: the
 // additions went in at ~360 chars and were cut to ~259 before this raise. Measured 8612
 // across 11 tools, keeping the ~2% headroom the previous raises settled on.
-const TOOL_DESCRIPTIONS_BUDGET = 8800
+// RAISED to 8950 (2026-07-31). Two contributions, one of them not ours: #594 added the facts
+// and links_to modes to `find`, which alone took the surface to 8778 — 22 chars of headroom, so
+// the next addition of any size was going to force this whether or not it was a good one. Ours
+// is the literal-search steer on the same tool: agents were sending whole questions to a
+// character-matching search, getting nothing, and reporting an empty workspace. Trimmed 165 → 157
+// before raising, per the rule above; the depth lives in derive://skills/finding rather than here.
+// Measured 8936 across 11 tools, keeping the ~2% headroom the previous raises settled on.
+const TOOL_DESCRIPTIONS_BUDGET = 8950
 const INSTRUCTIONS_BUDGET = 2400
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))

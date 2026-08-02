@@ -217,6 +217,9 @@ const CHANNEL_EVENTS = new Set<WebhookEvent>([
   "proposal.created",
   "proposal.approved",
   "proposal.changes_requested",
+  "review.requested",
+  "review.sent_back",
+  "review.approved",
 ])
 
 /** Enqueue a top-level channel card for an artifact-lifecycle event, when the org has a
@@ -281,6 +284,17 @@ const eventBlocks = (p: SlackEventPayload): unknown[] => {
       break
     case "proposal.changes_requested":
       head = `:leftwards_arrow_with_hook: Changes were requested on a proposal for ${link}`
+      break
+    // The review round. `who` is the actor — the agent that asked, or the human who answered —
+    // so the line names whoever moved it, the same way the proposal cases do.
+    case "review.requested":
+      head = `:mag: *${who}* asked for a review of ${link}`
+      break
+    case "review.sent_back":
+      head = `:leftwards_arrow_with_hook: *${who}* sent back answers on ${link}`
+      break
+    case "review.approved":
+      head = `:white_check_mark: *${who}* approved ${link}`
       break
     default:
       head = `${link} — ${escapeMrkdwn(p.event)}`
@@ -496,7 +510,19 @@ export const enqueueSlackReplyIngest = async (
  *  No-ops (delivered) when the thread link/install is gone or the channel mirror is off, so
  *  a stale event never dead-letters. */
 export const makeSlackIngestSender =
-  (meta: MetaStore, encryptionKey: string | undefined, bus?: Pick<EventBus, "publish">) =>
+  (
+    meta: MetaStore,
+    encryptionKey: string | undefined,
+    bus?: Pick<EventBus, "publish">,
+    /** Answer an @Derive mention typed in the Slack thread — the SAME turn a mention in the web
+     *  app runs. Threaded in rather than imported so this module stays a Slack adapter, and so
+     *  a deploy with no model simply passes nothing. */
+    answerDeriveMention?: (
+      artifact: ArtifactRecord,
+      comment: CommentRecord,
+      asker: { id: string; name: string } | null,
+    ) => Promise<void>,
+  ) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
     const p = JSON.parse(d.payload) as SlackIngestPayload
     const link = await meta.getSlackThreadLinkByTs(p.channel, p.threadTs)
@@ -521,6 +547,22 @@ export const makeSlackIngestSender =
       deriveUserId: userLink?.user_id ?? null,
     })
     if (created) bus?.publish(created.artifact_id, { type: "comment.created" })
+    // @Derive, TYPED IN SLACK. Slack sends a mention as `<@BOT_USER_ID>`, so the bot's own id is
+    // what identifies it — there is no Derive mention payload on this path (the reply arrives as
+    // plain text, which is also why this lane does not run the full comment fan-out).
+    //
+    // Only for a LINKED account: the turn acts as the asker, and an unlinked Slack user is not a
+    // Derive principal, so there is nobody to act as. They get silence here rather than an
+    // answer computed against somebody else's permissions.
+    if (created && answerDeriveMention && bot.install.bot_user_id && userLink) {
+      const mentionsBot = p.text.includes(`<@${bot.install.bot_user_id}>`)
+      const artifact = mentionsBot ? await meta.getArtifactById(link.artifact_id) : null
+      if (artifact)
+        await answerDeriveMention(artifact, created, {
+          id: userLink.user_id,
+          name: deriveUser?.name ?? name,
+        }).catch(() => undefined)
+    }
     return { ok: true, status: created ? "ingested" : "skipped: own or duplicate" }
   }
 

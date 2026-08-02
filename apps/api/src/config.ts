@@ -89,6 +89,10 @@ export interface Config {
    *  locally-installed Playwright Chromium (bundled in the Docker image; bare Node
    *  hosts run `pnpm --filter @derive/api exec playwright install chromium`).
    *  Default false — no rendering on self-host unless explicitly enabled. */
+  /** Background timers + the webhook delivery worker. On by default; a deploy never
+   *  turns this off. Exists so a local process can share a REMOTE database read-mostly
+   *  (see scripts/dev-prod-db.sh) without joining that database's worker pool. */
+  backgroundWorkers: boolean
   previews: boolean
   /** EXPERIMENTAL: hosted automation runs on this Node deploy — the API process
    *  materializes due schedules and executes each run by spawning the derive CLI as a
@@ -193,6 +197,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // Comma-separated operator emails (case-insensitive). More than one person
     // can run + host a deployment, so this is a list, not a single owner.
     superAdmins: superAdminsFromEnv(env),
+    backgroundWorkers: env.DERIVE_BACKGROUND_WORKERS !== "0",
     previews: env.DERIVE_PREVIEWS === "true",
     hostedRuns: env.DERIVE_HOSTED_RUNS === "true",
     runnerBin: env.DERIVE_RUNNER_BIN || "derive",

@@ -89,11 +89,21 @@ export const lockedUnfurlBlocks = (baseUrl: string, shortId: string): unknown[] 
   context("Derive"),
 ]
 
-/** What the caller should do with one shared link. */
+/** What the caller should do with one shared link.
+ *
+ *  `card` and `locked` both carry the artifact so the caller can build a Work Object entity from
+ *  it; `blocks` remains on both as the fallback for a workspace where Work Objects are not
+ *  available (see lib/slack.ts unfurlSlackEntities, which throws on the warning that signals it).
+ *
+ *  `locked` is split out from `card` rather than folded into it because the two differ in what
+ *  the FLEXPANE may then show. The broadcast half of a locked artifact must stay title-less, as
+ *  before — but the flexpane is per-viewer, so a reader entitled to the artifact can be shown the
+ *  real thing there. Keeping the distinction in the type is what lets the caller honour both. */
 export type UnfurlDecision =
   | { kind: "skip" }
   | { kind: "auth" }
-  | { kind: "card"; url: string; blocks: unknown[] }
+  | { kind: "card"; url: string; blocks: unknown[]; artifact: ArtifactRecord; info: UnfurlInfo }
+  | { kind: "locked"; url: string; blocks: unknown[]; artifact: ArtifactRecord }
 
 export interface UnfurlDeps {
   meta: MetaStore
@@ -139,7 +149,12 @@ export const decideUnfurl = async (
   // Build the locked card BEFORE unfurlInfoFor: it needs none of that, and the whole point is
   // to touch as little of the artifact as possible.
   if (artifact.listed === "none")
-    return { kind: "card", url, blocks: lockedUnfurlBlocks(deps.baseUrl, artifact.short_id) }
+    return {
+      kind: "locked",
+      url,
+      blocks: lockedUnfurlBlocks(deps.baseUrl, artifact.short_id),
+      artifact,
+    }
 
   const info = await unfurlInfoFor(deps.meta, deps.baseUrl, artifact)
   const open = await deps.meta.listProposals(artifact.id, { state: "open" })
@@ -147,6 +162,8 @@ export const decideUnfurl = async (
     kind: "card",
     url,
     blocks: unfurlBlocks(info, open.length > 0, artifact.id, open[0]?.id ?? null),
+    artifact,
+    info,
   }
 }
 

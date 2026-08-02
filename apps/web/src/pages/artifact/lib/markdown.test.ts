@@ -75,3 +75,32 @@ describe("mdToHtml — @mentions", () => {
     expect(mdToHtml("hi @Alice")).toBe("hi @Alice")
   })
 })
+
+describe("mdToHtml — root-relative links (agent citations)", () => {
+  it("links a document cited by path", () => {
+    expect(mdToHtml("see [Q3 Roadmap](/artifacts/ab12cd34)")).toBe(
+      'see <a href="/artifacts/ab12cd34">Q3 Roadmap</a>',
+    )
+  })
+
+  it("keeps them in the app: no target=_blank, unlike an external link", () => {
+    expect(mdToHtml("[x](/artifacts/a1)")).not.toContain("target=")
+    expect(mdToHtml("[x](https://example.com)")).toContain('target="_blank"')
+  })
+
+  it("refuses a protocol-relative URL — the classic bypass of a leading-slash check", () => {
+    // `//evil.com` would be a link to ANOTHER ORIGIN that looks root-relative. The second
+    // character must be alphanumeric, so it stays inert text.
+    expect(mdToHtml("[x](//evil.com)")).toBe("[x](//evil.com)")
+  })
+
+  it("refuses a javascript: URL", () => {
+    expect(mdToHtml("[x](javascript:alert(1))")).not.toContain("<a")
+  })
+
+  it("carries a query and a fragment (a version pin, an anchor)", () => {
+    expect(mdToHtml("[v2](/artifacts/a1?v=2#risks)")).toBe(
+      '<a href="/artifacts/a1?v=2#risks">v2</a>',
+    )
+  })
+})

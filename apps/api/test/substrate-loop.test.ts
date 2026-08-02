@@ -817,13 +817,22 @@ const interceptAnthropic = (reply?: unknown) => {
     })
     calls.push({ headers, body: JSON.parse(String(init?.body ?? "{}")) })
     return new Response(
-      JSON.stringify(
-        reply ?? {
+      JSON.stringify({
+        // The Messages API envelope every real reply carries. Spread in here rather than repeated
+        // per fixture because the adapter now VALIDATES the response shape — the hand-rolled
+        // parser read the fields it wanted and ignored the rest — so a reply missing
+        // `id`/`type`/`role`/`model` fails the turn, which reads as a broken run rather than as a
+        // malformed stub.
+        id: "msg_test",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-5",
+        ...((reply as Record<string, unknown> | undefined) ?? {
           content: [{ type: "text", text: revision() }],
           stop_reason: "end_turn",
           usage: { input_tokens: 1_000, output_tokens: 500 },
-        },
-      ),
+        }),
+      }),
       { status: 200, headers: { "content-type": "application/json" } },
     )
   }) as typeof fetch

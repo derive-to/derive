@@ -403,6 +403,79 @@ export const unfurlSlackLinks = async (
   if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
 }
 
+/** Unfurl one or more links as WORK OBJECTS — typed entities rather than rendered blocks.
+ *
+ *  Throws on a warning as well as on `ok: false`, which is not paranoia: this API's documented
+ *  failure mode is answering **200 OK with a buried `warning`** when the payload is subtly wrong
+ *  (a missing `alt_text` on an icon is the canonical example) or when Work Objects are not
+ *  enabled on the app, in which case the metadata is ignored in silence. A caller that only
+ *  checked `ok` would see success and an empty channel — the exact shape of failure that cost
+ *  this integration a day. Treating a warning as an error is what lets the caller fall back to
+ *  the block unfurl instead of shipping nothing. */
+export const unfurlSlackEntities = async (
+  token: string,
+  target: SlackUnfurlTarget,
+  entities: unknown[],
+): Promise<void> => {
+  const res = await fetch(`${API}/chat.unfurl`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({
+      ...(target.channel && target.ts
+        ? { channel: target.channel, ts: target.ts }
+        : { unfurl_id: target.unfurlId, source: target.source }),
+      metadata: { entities },
+    }),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string; warning?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+  if (data.warning) throw new SlackApiError(`warning: ${data.warning}`)
+}
+
+/** Fill the flexpane for one viewer, in response to `entity_details_requested`.
+ *
+ *  The three shapes are the whole reason Work Objects are worth adopting. `details` renders the
+ *  entity for someone entitled to it; `auth` asks an unlinked viewer to connect; `restricted`
+ *  tells someone without access, in a panel only THEY see — where the broadcast card, seen by
+ *  the channel, must keep saying nothing at all. */
+export const presentSlackEntityDetails = async (
+  token: string,
+  triggerId: string,
+  body:
+    | { kind: "details"; metadata: Record<string, unknown> }
+    | { kind: "auth"; url: string }
+    | { kind: "restricted"; title: string; message: string },
+): Promise<void> => {
+  const payload: Record<string, unknown> =
+    body.kind === "details"
+      ? { trigger_id: triggerId, metadata: body.metadata }
+      : body.kind === "auth"
+        ? { trigger_id: triggerId, user_auth_required: true, user_auth_url: body.url }
+        : {
+            trigger_id: triggerId,
+            error: {
+              status: "custom_partial_view",
+              custom_title: body.title,
+              custom_message: body.message,
+              message_format: "plain_text",
+            },
+          }
+  const res = await fetch(`${API}/entity.presentDetails`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify(payload),
+  })
+  const data = (await res.json()) as { ok: boolean; error?: string; warning?: string }
+  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
+  if (data.warning) throw new SlackApiError(`warning: ${data.warning}`)
+}
+
 /** The public channels the bot can see, for the subscription picker — so nobody has to paste a
  *  raw channel id. Paginated; capped rather than exhaustive, because a picker only needs enough
  *  to choose from and a huge workspace would otherwise page for a long time. This is what
@@ -451,6 +524,39 @@ export const joinSlackChannel = async (token: string, channel: string): Promise<
     return ((await res.json()) as { ok: boolean }).ok
   } catch {
     return false
+  }
+}
+
+/**
+ * A Slack user's EMAIL, which is what lets a mention resolve to a Derive account without the
+ * person having linked anything first.
+ *
+ * Email is the only identifier the two systems already share. Resolving by display NAME would
+ * be indefensible — names are not unique, not stable, and trivially set to somebody else's —
+ * whereas an email on a Slack profile was verified by the workspace admin's directory.
+ *
+ * Undefined on any failure, including the common one: a workspace whose admins hide profile
+ * email, where `users.info` returns a profile with no email at all. That is a legitimate
+ * configuration, not an error, and the caller falls back to asking the person to link.
+ */
+export const slackUserEmail = async (
+  token: string,
+  userId: string,
+): Promise<string | undefined> => {
+  try {
+    const res = await fetch(`${API}/users.info?user=${encodeURIComponent(userId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const data = (await res.json()) as {
+      ok: boolean
+      user?: { profile?: { email?: string }; is_bot?: boolean }
+    }
+    // A bot's "email" is not a person's, so never resolve one to a seat.
+    if (!data.ok || data.user?.is_bot) return undefined
+    const email = data.user?.profile?.email?.trim().toLowerCase()
+    return email || undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -517,9 +623,12 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *    groups:history    delivery of message.groups — private-channel reply-back
  *    users:read        users.info, to name the author of an inbound Slack reply
  *    users:read.email  users.lookupByEmail, the DM fallback for a member who hasn't linked
- *    im:write          conversations.open, to DM a member. Reading DMs would need
- *                      im:history, which we deliberately do NOT request (see the
- *                      bot_events note in slack-app-setup.ts).
+ *    im:write          conversations.open, to DM a member
+ *    im:history        delivery of message.im — a DM to the app is a question, answered by
+ *                      the same chat lane a channel @mention uses. Requested only once
+ *                      something could actually answer one; before that the event was
+ *                      unreachable and the scope would have bought nothing but a scarier
+ *                      consent screen.
  *
  *  channels:read / groups:read back `conversations.list`, which is how the Settings channel
  *  picker offers channels to subscribe instead of asking an admin to paste an id. They were
@@ -549,9 +658,17 @@ export const SLACK_BOT_SCOPES = [
   "channels:history",
   "groups:read", // ditto, for private channels the bot is in
   "groups:history",
+  // DIRECT MESSAGES to the app. Slack refuses a manifest that subscribes `message.im` without
+  // this, which is why the event was dropped once before — see slack-app-setup.ts. Posting the
+  // answer back needs nothing extra: chat:write covers a DM the bot is already in.
+  "im:history",
   "users:read",
   "users:read.email",
   "im:write",
+  // @Derive in any channel the bot is in. Distinct from channels:history, which is what lets
+  // the reply-mirror read a THREAD: this one delivers the mention event itself, and an install
+  // predating it will not receive app_mention until the workspace reconnects.
+  "app_mentions:read",
 ]
 
 /** The OAuth authorize URL for the "Add to Slack" button. */

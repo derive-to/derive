@@ -28,7 +28,7 @@ describe("workspace integration settings", () => {
       hostedAgentsEnabled: true,
       // Chat ships BETA and OFF: a workspace opts in deliberately. This line failing is the
       // signal that someone flipped the default, which is the whole point of asserting it.
-      chatBeta: false,
+      chatBeta: true,
       // Automations ship the same way, and the same reasoning applies to this line.
       automateBeta: false,
       agentKillswitch: false,

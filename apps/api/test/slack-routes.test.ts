@@ -329,6 +329,8 @@ describe("slack account linking (OIDC)", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U777",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const r = await app.request("/v1/slack/link", { method: "DELETE", headers: as(owner.email) })
@@ -577,6 +579,8 @@ describe("slack events endpoint", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U777",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     vi.stubGlobal(
@@ -934,6 +938,8 @@ describe("/derive subscription subcommands", () => {
       user_id: role === "owner" ? owner.id : editor.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
   }
@@ -1114,6 +1120,8 @@ describe("slack link unfurls", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const artifact = await meta.createArtifact({
@@ -1161,7 +1169,91 @@ describe("slack link unfurls", () => {
     await called
     expect(seen[0]?.channel).toBe("C9")
     expect(seen[0]?.ts).toBe("1700000000.1")
-    expect(JSON.stringify(seen[0]?.unfurls)).toContain("Q4 roadmap")
+    // A Work Object, not blocks: a typed entity Slack renders itself, keyed on the artifact's
+    // stable short id (the key its search and related-conversation aggregation both use).
+    const ents = (seen[0]?.metadata as { entities?: Record<string, unknown>[] })?.entities
+    expect(ents).toHaveLength(1)
+    const ent = ents?.[0] as Record<string, unknown>
+    expect(ent.entity_type).toBe("slack#/entities/content_item")
+    expect((ent.external_ref as { id: string }).id).toBe(artifact.short_id)
+    expect(JSON.stringify(ent.entity_payload)).toContain("Q4 roadmap")
+    // Every image carries alt_text. Its absence is this API's documented SILENT failure: a 200
+    // with a buried warning, and an empty channel.
+    const payload = JSON.stringify(ent.entity_payload)
+    for (const m of payload.matchAll(/"url":"[^"]*"/g)) void m
+    expect(payload).toContain('"alt_text"')
+  })
+
+  // Work Objects answer 200-with-a-warning when the payload is subtly wrong or the feature is
+  // off on the app — a silent nothing in the channel. The block card must still go out.
+  it("falls back to the block card when Slack warns on the entity", async () => {
+    const { app, meta } = make("slack-unfurl-fallback")
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    await meta.setSlackUserLink({
+      id: newId("sul"),
+      org_id: "default",
+      user_id: owner.id,
+      team_id: "T1",
+      slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    })
+    const artifact = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s").slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "Fallback doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "workspace",
+      kind: "file",
+      spa: 0,
+    })
+    const seen: Record<string, unknown>[] = []
+    let resolveSecond: (v: unknown) => void = () => {}
+    const twice = new Promise((r) => {
+      resolveSecond = r
+    })
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (String(url).includes("chat.unfurl")) {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        seen.push(body)
+        if (seen.length === 2) resolveSecond(null)
+        // The entity attempt "succeeds" with a warning; the block retry is clean.
+        if (body.metadata)
+          return new Response(JSON.stringify({ ok: true, warning: "missing_alt_text" }), {
+            status: 200,
+          })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+    await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "link_shared",
+          user: "U1",
+          channel: "C9",
+          message_ts: "1700000000.1",
+          links: [{ url: `http://derive.test/artifacts/${artifact.short_id}` }],
+        },
+      }),
+    )
+    await twice
+    expect(seen).toHaveLength(2)
+    expect(seen[0]?.metadata).toBeTruthy()
+    expect(JSON.stringify(seen[1]?.unfurls)).toContain("Fallback doc")
   })
 
   // An unlinked sharer gets Slack's own sign-in prompt instead of a card — the only per-person
@@ -1470,6 +1562,8 @@ describe("slack slash command (/derive)", () => {
       user_id: userId,
       team_id: "T1",
       slack_user_id: slackUserId,
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
   }
@@ -1729,6 +1823,8 @@ describe("Save to Derive", () => {
         user_id: owner.id,
         team_id: "T1",
         slack_user_id: "U1",
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
     const artifact = await meta.createArtifact({
@@ -1928,5 +2024,162 @@ describe("Save to Derive", () => {
     const r = await postInteract(app, submission(artifact.id))
     expect(JSON.stringify(await r.json())).toContain("Connect your Derive account")
     expect(await meta.listComments(artifact.id)).toHaveLength(0)
+  })
+})
+
+// The flexpane — the per-viewer half. `chat.unfurl` never had a `user` parameter, so the
+// broadcast card has always had to assume the most cautious reader in the channel. This surface
+// carries the clicking user, so the answer can finally depend on who is asking.
+describe("entity_details_requested (the flexpane)", () => {
+  const withInstall = async (name: string, opts: { link?: boolean; listed?: string } = {}) => {
+    const { app, meta } = make(name)
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    if (opts.link !== false)
+      await meta.setSlackUserLink({
+        id: newId("sul"),
+        org_id: "default",
+        user_id: owner.id,
+        team_id: "T1",
+        slack_user_id: "U1",
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      })
+    const artifact = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s").slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "Secret plan",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: (opts.listed ?? "workspace") as "workspace",
+      kind: "file",
+      spa: 0,
+    })
+    return { app, meta, artifact }
+  }
+
+  const clickAndCapture = async (
+    app: ReturnType<typeof make>["app"],
+    shortId: string,
+    user = "U1",
+  ) => {
+    const seen: Record<string, unknown>[] = []
+    let fired: (v: unknown) => void = () => {}
+    const called = new Promise((r) => {
+      fired = r
+    })
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (String(url).includes("entity.presentDetails")) {
+        seen.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        fired(null)
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+    await postEvent(
+      app,
+      JSON.stringify({
+        type: "event_callback",
+        team_id: "T1",
+        event: {
+          type: "entity_details_requested",
+          user,
+          trigger_id: "trig-1",
+          external_ref: { id: shortId, type: "artifact" },
+        },
+      }),
+    )
+    await called
+    return seen[0] ?? {}
+  }
+
+  it("asks an unlinked viewer to connect — privately, not to the channel", async () => {
+    const { app, artifact } = await withInstall("flex-unlinked", { link: false })
+    const body = await clickAndCapture(app, artifact.short_id)
+    expect(body.user_auth_required).toBe(true)
+    expect(String(body.user_auth_url)).toContain("/v1/slack/link")
+  })
+
+  // The point of the whole change: a viewer entitled to a doc sees it, even when the broadcast
+  // card is deliberately saying nothing.
+  it("shows the real detail to a viewer who may read it", async () => {
+    const { app, artifact } = await withInstall("flex-allowed")
+    const body = await clickAndCapture(app, artifact.short_id)
+    expect(JSON.stringify(body.metadata)).toContain("Secret plan")
+    expect(body.error).toBeUndefined()
+  })
+
+  // …and someone without access is told so in a panel only THEY see, while the channel's card
+  // continues to reveal nothing.
+  it("returns a restricted view to a linked viewer without access", async () => {
+    const { app, meta } = await withInstall("flex-denied")
+    const theirs = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s").slice(0, 8),
+      org_id: "someone-else",
+      slug: null,
+      title: "Not yours",
+      workspace_access: "member",
+      link_role: "none",
+      listed: "workspace",
+      kind: "file",
+      spa: 0,
+    })
+    const body = await clickAndCapture(app, theirs.short_id)
+    expect((body.error as { status: string }).status).toBe("custom_partial_view")
+    expect(JSON.stringify(body)).not.toContain("Not yours")
+  })
+})
+
+// A DIRECT MESSAGE to the app. The Messages tab is where there is nobody to @mention, so the
+// event has to route on its own — and the guards below are the ones that stop a bot answering
+// its own answer for ever.
+
+describe("slack DMs reach the chat lane", () => {
+  const dm = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T-dm",
+      event: {
+        type: "message",
+        channel_type: "im",
+        channel: "D-1",
+        user: "U-asker",
+        text: "what changed this week?",
+        ts: "1.1",
+        ...over,
+      },
+    })
+
+  it("accepts a DM without a mention in it", async () => {
+    // A channel question carries "<@BOT>"; a DM carries nothing, and gating on a mention would
+    // make the Messages tab silently ignore every message sent to it.
+    const { app } = make("slack-dm-plain")
+    expect((await postEvent(app, dm())).status).toBe(200)
+  })
+
+  it("IGNORES the app's own messages, both shapes Slack uses", async () => {
+    // The loop this prevents: Derive posts an answer into the DM, Slack delivers that back as a
+    // new message.im, and it answers its own answer. Slack marks the bot's own posts with
+    // bot_id, and edits/deletes/joins with a subtype — neither is a question.
+    const { app } = make("slack-dm-self")
+    expect((await postEvent(app, dm({ bot_id: "B-self" }))).status).toBe(200)
+    expect((await postEvent(app, dm({ subtype: "message_changed" }))).status).toBe(200)
+  })
+
+  it("does not treat a threaded DM as a document comment", async () => {
+    // A DM can carry a thread_ts, and the comment-mirror branch keys on exactly that. Ordered
+    // after this one, it would try to mirror a private message onto a document it has nothing
+    // to do with.
+    const { app } = make("slack-dm-threaded")
+    expect((await postEvent(app, dm({ thread_ts: "1.0" }))).status).toBe(200)
   })
 })

@@ -160,6 +160,22 @@ export const VIEW_DEDUP_MS = 30 * 60_000
 /** Versioned, fully-public artifact paths are immutable by construction. */
 export const IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 
+/** The raw-content capability token: how long a token stays VALID, and how coarsely its
+ *  timestamp is bucketed when minted.
+ *
+ *  The window is deliberately SHORTER than the max age, and the gap is the point. Minting
+ *  with a bucketed timestamp makes the token — and therefore the viewer's iframe URL —
+ *  byte-identical for every mint inside the window, which is what makes its cached bytes
+ *  reachable on a re-open. But if the bucket were as long as the validity, a token minted
+ *  at the end of a window would expire seconds later. With a 2-minute window inside a
+ *  5-minute validity, every token has at least 3 minutes of life left when it is handed
+ *  out, and the maximum life is still 5 minutes — exactly what it was before bucketing.
+ *
+ *  The raw response is cached for the WINDOW, not the validity, so a cache entry can
+ *  never outlive the URL that reaches it. */
+export const RAW_TOKEN_MAX_AGE_MS = 5 * 60 * 1000
+export const RAW_TOKEN_WINDOW_MS = 2 * 60 * 1000
+
 /** Headers for everything inside the artifact sandbox. */
 export const RAW_HEADERS: Record<string, string> = {
   // Opaque origin: scripts run, but can touch no cookies, storage, or APIs.

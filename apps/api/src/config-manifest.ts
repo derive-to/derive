@@ -340,6 +340,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "ws_...",
   },
   {
+    name: "DERIVE_BACKGROUND_WORKERS",
+    group: "advanced",
+    doc: "Set to 0 to stop this process running the shared background work: the webhook delivery\nworker, the daily prune, the expired-draft sweep, and GitHub sync resume. They are ON by\ndefault and a deployment should leave them on. This exists for one case — pointing a local\nprocess at a REMOTE database to reproduce something. Those workers WRITE (the prune and the\nsweep delete rows, and both the prune and sync-resume fire on boot, not just on a timer), so\nwithout this a laptop joins that database's worker pool the moment it starts.",
+    example: "0",
+  },
+  {
     name: "DERIVE_PREVIEWS",
     group: "advanced",
     doc: "Render artifact preview screenshots on this Node deploy (needs a Playwright Chromium —\nbundled in the Docker image; on a bare Node host run\n`pnpm --filter @derive/api exec playwright install chromium`). Unset = previews off.",
@@ -386,6 +392,12 @@ const CONFIG_VARS: ConfigVar[] = [
     group: "advanced",
     doc: "Model id to send to DERIVE_MODEL_BASE_URL, exactly as that provider names it.",
     example: "accounts/fireworks/models/deepseek-v4-flash",
+  },
+  {
+    name: "DERIVE_MODEL_NAMES",
+    group: "advanced",
+    doc: "Comma-separated ADDITIONAL model ids the same DERIVE_MODEL_BASE_URL serves, offered to\nchat as a choice alongside DERIVE_MODEL_NAME (which stays the default and is always\navailable whether or not it is repeated here).\n\nOne gateway serving many models is how every host this reaches works (Fireworks,\nOpenRouter, Together, vLLM), so a second model needs no second key and no second secret\nto rotate. Unset = one model, exactly as before, and the chat picker does not render.\n\nIds are the provider's own, stored on each answer, so a person can see which model wrote\nwhat. Removing an id here does not rewrite history: a conversation that used it is told\nthe model is gone rather than silently answered by a different one.",
+    example: "accounts/fireworks/models/qwen3-235b,accounts/fireworks/models/kimi-k2",
   },
   {
     name: "DERIVE_LOCAL_BROKER",

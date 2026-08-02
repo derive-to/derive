@@ -260,6 +260,112 @@ export function runStoreContract(
       expect((await store.listFactAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
     })
 
+    it("inverts $links into backlinks — candidates the caller confirms, current version only", async () => {
+      // The corpus inversion. Every assertion here is a way the scan can be quietly wrong,
+      // and quietly wrong is the whole risk: an index that under-reports reads exactly like
+      // an artifact nothing links to.
+      const target = "tgt99999"
+      const linker = await store.createArtifact(newArtifact({ title: "Linker" }))
+      const lv = await store.addVersion(linker.id, newVersion())
+      await store.setDerivedVersionData(linker.id, lv.n, [
+        {
+          id: uuid(),
+          slot: "$links",
+          json: `{"refs":["${target}","zzzz0000"]}`,
+          size_bytes: 40,
+          gen: 2,
+        },
+      ])
+      // SUPERSEDED: v1 links to the target, v2 does not. The current-version join must drop it.
+      const moved = await store.createArtifact(newArtifact({ title: "Moved on" }))
+      const mv1 = await store.addVersion(moved.id, newVersion())
+      await store.setDerivedVersionData(moved.id, mv1.n, [
+        { id: uuid(), slot: "$links", json: `{"refs":["${target}"]}`, size_bytes: 26, gen: 2 },
+      ])
+      const mv2 = await store.addVersion(moved.id, newVersion())
+      await store.setDerivedVersionData(moved.id, mv2.n, [
+        { id: uuid(), slot: "$links", json: '{"refs":["zzzz0000"]}', size_bytes: 26, gen: 2 },
+      ])
+      // NEAR MISSES the quote anchoring must exclude, and the one only the caller's parse
+      // can: an unquoted occurrence inside another string is a candidate, not an edge.
+      const embedded = await store.createArtifact(newArtifact({ title: "Embedded" }))
+      const ev = await store.addVersion(embedded.id, newVersion())
+      await store.setDerivedVersionData(embedded.id, ev.n, [
+        { id: uuid(), slot: "$links", json: `{"refs":["x${target}y"]}`, size_bytes: 30, gen: 2 },
+      ])
+      const substring = await store.createArtifact(newArtifact({ title: "Substring" }))
+      const sv = await store.addVersion(substring.id, newVersion())
+      await store.setDerivedVersionData(substring.id, sv.n, [
+        {
+          id: uuid(),
+          slot: "$links",
+          json: `{"refs":["zzzz0000"],"titles":{"${target}":"Some doc"}}`,
+          size_bytes: 60,
+          gen: 2,
+        },
+      ])
+
+      const rows = await store.listArtifactsLinkingTo(ORG, target)
+      const ids = rows.map((r) => r.short_id)
+      expect(ids).toContain(linker.short_id)
+      expect(ids).not.toContain(moved.short_id) // superseded, via the current-version join
+      expect(ids).not.toContain(embedded.short_id) // "xtgt99999y" is not "tgt99999"
+      // The quote anchoring is exact only while $links holds nothing but `refs`. This row is
+      // what a FOURTH deriver output looks like — the ref quoted as an object KEY — and it
+      // survives the LIKE. It must die on the caller's parse, which is why the store returns
+      // `json` and calls these candidates rather than answers.
+      const confirmed = rows.filter((r) => (JSON.parse(r.json).refs ?? []).includes(target))
+      expect(ids).toContain(substring.short_id)
+      expect(confirmed.map((r) => r.short_id)).not.toContain(substring.short_id)
+
+      // CASE: SQLite's LIKE is ASCII case-insensitive and Postgres's is not. Whatever each
+      // dialect's candidate set, the confirmed answer must be identical on both.
+      const upper = await store.createArtifact(newArtifact({ title: "Upper" }))
+      const uv = await store.addVersion(upper.id, newVersion())
+      await store.setDerivedVersionData(upper.id, uv.n, [
+        { id: uuid(), slot: "$links", json: '{"refs":["TGT99999"]}', size_bytes: 26, gen: 2 },
+      ])
+      const afterUpper = await store.listArtifactsLinkingTo(ORG, target)
+      expect(
+        afterUpper
+          .filter((r) => (JSON.parse(r.json).refs ?? []).includes(target))
+          .map((r) => r.short_id),
+      ).not.toContain(upper.short_id)
+
+      // A tombstoned linker is out of the library, so out of the graph.
+      await store.setArtifactRemoved(linker.id, new Date().toISOString())
+      expect(
+        (await store.listArtifactsLinkingTo(ORG, target)).map((r) => r.short_id),
+      ).not.toContain(linker.short_id)
+
+      // A self-link is an edge like any other — the deriver records it, so the inversion does.
+      const selfy = await store.createArtifact(newArtifact({ title: "Selfy" }))
+      const yv = await store.addVersion(selfy.id, newVersion())
+      await store.setDerivedVersionData(selfy.id, yv.n, [
+        {
+          id: uuid(),
+          slot: "$links",
+          json: `{"refs":["${selfy.short_id}"]}`,
+          size_bytes: 30,
+          gen: 2,
+        },
+      ])
+      expect(
+        (await store.listArtifactsLinkingTo(ORG, selfy.short_id)).map((r) => r.short_id),
+      ).toContain(selfy.short_id)
+
+      // gen rides along so the caller can say the index is older than the deriver, and `at`
+      // is the artifact's activity time — NOT version_data.created_at, which for a lazily
+      // derived row is when the host got round to indexing.
+      const self = (await store.listArtifactsLinkingTo(ORG, selfy.short_id))[0]
+      expect(self?.gen).toBe(2)
+      expect(self?.at).toBeTruthy()
+      // Nothing links to an id nobody references; a malformed ref is empty, never a wildcard.
+      expect(await store.listArtifactsLinkingTo(ORG, "nosuch99")).toEqual([])
+      expect(await store.listArtifactsLinkingTo(ORG, "%")).toEqual([])
+      expect((await store.listArtifactsLinkingTo(ORG, target, { limit: 1 })).length).toBe(1)
+    })
+
     it("lists the workspace's slot vocabulary as RAW rows, uncounted, carrying artifact_id", async () => {
       const rows = await store.listWorkspaceFacts(ORG)
       // Deliberately (slot, artifact) pairs rather than counts: the count has to be taken
@@ -850,6 +956,7 @@ export function runStoreContract(
         base_version: 1,
       })
       await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "editor" })
+      await store.setFavorite(a.id, me)
 
       const ids = [a.id, b.id]
       const enr = await store.listEnrichment({
@@ -867,6 +974,11 @@ export function runStoreContract(
       expect(enr.signals).toEqual(await store.commentSignals(ids, me))
       expect(enr.proposals).toEqual(await store.openProposalCounts(ids))
       expect(enr.shareRoles).toEqual(await store.artifactRolesFor(me, ids))
+      // Page-scoped by contract: the whole-list call clipped to `ids`, which is what the
+      // pg driver's arm returns natively and what the compose path has to narrow to.
+      expect([...enr.favorites].sort()).toEqual(
+        (await store.listUserFavoriteIds(me)).filter((id) => ids.includes(id)).sort(),
+      )
       // Spot-check the shape is actually populated, not vacuously equal-empty.
       expect(enr.views[a.id]).toBe(2)
       expect(enr.tags[a.id]).toEqual(["alpha", "beta"])
@@ -874,6 +986,7 @@ export function runStoreContract(
       expect(enr.signals[a.id]?.open_threads).toBe(1)
       expect(enr.proposals[a.id]).toBe(1)
       expect(enr.shareRoles[a.id]).toBe("editor")
+      expect(enr.favorites).toEqual([a.id])
       expect(enr.views[b.id]).toBeUndefined()
     })
 
@@ -897,6 +1010,8 @@ export function runStoreContract(
       expect(enr.views).toEqual({})
       expect(enr.signals).toEqual({})
       expect(enr.shareRoles).toEqual({})
+      // No viewer ⇒ no star to report, on either driver.
+      expect(enr.favorites).toEqual([])
     })
 
     it("degrades the user-directory pieces to empty instead of failing the listing", async () => {
@@ -936,6 +1051,7 @@ export function runStoreContract(
         signals: {},
         proposals: {},
         shareRoles: {},
+        favorites: [],
       })
     })
   })
@@ -2676,6 +2792,40 @@ export function runStoreContract(
       expect(await store.pendingSessions(ctx.id, 1)).toHaveLength(1)
     })
 
+    it("lists a person's contextless chat sessions, newest first, and nobody else's", async () => {
+      const ctx = await newContext()
+      // A session WITH a context must never appear here: the chat history is the sessions
+      // nobody packaged, and a context's sessions have their own console.
+      await store.createSession({
+        id: uuid(),
+        context_id: ctx.id,
+        org_id: ORG,
+        asker_id: "daniel",
+        context_version: 1,
+      })
+      const chat = (asker: string, org = ORG) =>
+        store.createSession({
+          id: uuid(),
+          context_id: null,
+          org_id: org,
+          asker_id: asker,
+          context_version: null,
+        })
+      const older = await chat("daniel")
+      // created_at is millisecond-precision, so two adjacent inserts can tie and make the
+      // ordering assertion below a coin flip. A 2ms gap is the whole fix.
+      await new Promise((r) => setTimeout(r, 2))
+      const newer = await chat("daniel")
+      await chat("sarah")
+      await chat("daniel", "org_other")
+
+      const mine = await store.listChatSessions(ORG, "daniel")
+      expect(mine.map((s) => s.id)).toEqual([newer.id, older.id])
+      expect(await store.listChatSessions(ORG, "daniel", 1)).toHaveLength(1)
+      expect(await store.listChatSessions(ORG, "sarah")).toHaveLength(1)
+      expect(await store.listChatSessions("org_none", "daniel")).toEqual([])
+    })
+
     it("deleteArtifact on a manifest cascades its context, sessions, and messages", async () => {
       const ctx = await newContext()
       const s = await store.createSession({
@@ -4155,6 +4305,134 @@ export function runStoreContract(
       expect(await store.getPlan(theirs.id)).toBeNull()
     })
   })
+  // OPTIONAL FAST PATH. `workspaceWithMembers` collapses the workspace row, its roster and
+  // the directory rows for that roster into one statement. Held to the three reads it
+  // replaces, over the same fixtures.
+  describe(`${label}: workspaceWithMembers agrees with the three reads it replaces`, () => {
+    it("matches the workspace, the roster and the directory", async () => {
+      if (!store.workspaceWithMembers) return
+
+      const org = `org_wwm_${uuid()}`
+      await store.setWorkspace(org, "Roster")
+      const ids = [`u_a_${uuid()}`, `u_b_${uuid()}`, `u_c_${uuid()}`]
+      const roles = ["owner", "editor", "viewer"] as const
+      for (let i = 0; i < ids.length; i++)
+        await store.setMembership({
+          id: uuid(),
+          org_id: org,
+          user_id: ids[i] as string,
+          role: roles[i] as (typeof roles)[number],
+        })
+
+      const fast = await store.workspaceWithMembers(org)
+      const ws = await store.getWorkspace(org)
+      const members = await store.listMemberships(org)
+      const users = await store.getUsers(members.map((m) => m.user_id))
+
+      expect(fast.workspace).toEqual(ws)
+      const byId = (xs: { id: string }[]) => [...xs].sort((a, b) => a.id.localeCompare(b.id))
+      expect(byId(fast.members)).toEqual(byId(members))
+      expect(byId(fast.users)).toEqual(byId(users))
+      // Not vacuously empty: the roster has to have actually come back.
+      expect(fast.members.length).toBe(3)
+    })
+
+    it("returns a null workspace and an empty roster for an unknown org", async () => {
+      if (!store.workspaceWithMembers) return
+      const r = await store.workspaceWithMembers(`org_missing_${uuid()}`)
+      expect(r.workspace).toBeNull()
+      expect(r.members).toEqual([])
+      expect(r.users).toEqual([])
+    })
+  })
+
+  // OPTIONAL FAST PATH. `listPage` collapses the library list AND its decoration into one
+  // statement. Two things can go wrong that a "does it return rows" test would miss: the
+  // decoration could disagree with `listEnrichment`, and the ORDER could be lost — a UNION
+  // ALL does not preserve its arms' order, and the LAST row of the page is what the keyset
+  // cursor is built from, so losing it is a pagination bug, not a cosmetic one.
+  //
+  // So this asserts against the pair it replaces, over the same fixtures, including order.
+  describe(`${label}: listPage agrees with listArtifacts + listEnrichment`, () => {
+    it("matches rows, order and every decoration arm", async () => {
+      if (!store.listPage) return // dialect has no fast path — the pair is the only path
+
+      const org = `org_page_${uuid()}`
+      const me = `u_page_${uuid()}`
+      await store.setWorkspace(org, "Page")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: me, role: "owner" })
+
+      // Enough shape to light up every arm: several artifacts (so order is observable),
+      // tags, a favorite, a share, an open proposal and an open comment.
+      const made = []
+      for (let i = 0; i < 5; i++) {
+        const a = newArtifact({ org_id: org, title: `Page ${i}` })
+        await store.createArtifact(a)
+        made.push(a)
+      }
+      const [first, second] = made as [(typeof made)[0], (typeof made)[0]]
+      await store.setArtifactTags(first.id, ["zeta", "alpha"])
+      await store.setFavorite(second.id, me)
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: first.id,
+        user_id: me,
+        role: "editor",
+      })
+
+      const list = { orgId: org, limit: 10, sort: "created" as const }
+      const opts = { list, viewerId: me, memberId: me, views: true }
+
+      const fast = await store.listPage(opts)
+      const rows = await store.listArtifacts(list)
+      const slow = await store.listEnrichment({
+        ids: rows.map((r) => r.id),
+        ghIds: [...new Set(rows.map((r) => r.author_gh_id).filter((x): x is string => !!x))],
+        authorIds: [...new Set(rows.map((r) => r.author_id).filter((x): x is string => !!x))],
+        viewerId: me,
+        memberId: me,
+        views: true,
+      })
+
+      // ORDER, not just membership — this is the one the cursor depends on.
+      expect(fast.artifacts.map((a) => a.id)).toEqual(rows.map((r) => r.id))
+      expect(fast.artifacts).toEqual(rows)
+      expect(fast.enrichment.tags).toEqual(slow.tags)
+      expect(fast.enrichment.previews).toEqual(slow.previews)
+      expect(fast.enrichment.proposals).toEqual(slow.proposals)
+      expect(fast.enrichment.views).toEqual(slow.views)
+      expect(fast.enrichment.signals).toEqual(slow.signals)
+      expect(fast.enrichment.shareRoles).toEqual(slow.shareRoles)
+      expect([...fast.enrichment.favorites].sort()).toEqual([...slow.favorites].sort())
+      // Not vacuously equal-empty: the fixtures above must actually have lit these up.
+      expect(fast.artifacts.length).toBe(5)
+      expect(fast.enrichment.tags[first.id]).toEqual(["alpha", "zeta"])
+      expect(fast.enrichment.favorites).toEqual([second.id])
+      expect(fast.enrichment.shareRoles[first.id]).toBe("editor")
+    })
+
+    it("returns an empty page for an empty id narrowing, like the pair does", async () => {
+      if (!store.listPage) return
+      const opts = { list: { ids: [], limit: 10 }, viewerId: null, memberId: null, views: false }
+      const fast = await store.listPage(opts)
+      expect(fast.artifacts).toEqual([])
+      expect(fast.enrichment.tags).toEqual({})
+    })
+
+    it("honors the limit, and keeps the page the list query would have returned", async () => {
+      if (!store.listPage) return
+      const org = `org_lim_${uuid()}`
+      await store.setWorkspace(org, "Lim")
+      for (let i = 0; i < 4; i++) await store.createArtifact(newArtifact({ org_id: org }))
+      const list = { orgId: org, limit: 2, sort: "created" as const }
+      const fast = await store.listPage({ list, viewerId: null, memberId: null, views: false })
+      expect(fast.artifacts.map((a) => a.id)).toEqual(
+        (await store.listArtifacts(list)).map((r) => r.id),
+      )
+      expect(fast.artifacts.length).toBe(2)
+    })
+  })
+
   // OPTIONAL FAST PATH. `artifactGrants` collapses four reads — membership, artifact share, and
   // both halves of collectionRolesForArtifact — into one statement, and it is an authorization
   // INPUT: a disagreement is not a slow page, it is someone seeing a document they should not,
@@ -4234,11 +4512,30 @@ export function runStoreContract(
         return { orgRole: g.orgRole, artifactRole: maxRole(null, ...g.artifactRoles) }
       }
 
-      for (const u of [owner, member, sharee, collab, stranger])
+      // The THIRD path: the same grants, resolved by SHORT ID alongside the artifact row,
+      // so the document open pays one round trip instead of two. It answers the identical
+      // question, so it is held to the identical answer.
+      const combined = async (userId: string) => {
+        const r = await store.artifactWithGrants?.(art.short_id, userId)
+        if (!r) throw new Error("artifactWithGrants found no artifact")
+        return { orgRole: r.orgRole, artifactRole: maxRole(null, ...r.artifactRoles) }
+      }
+
+      for (const u of [owner, member, sharee, collab, stranger]) {
         expect(await fast(org, u), `grants disagree for ${u}`).toEqual(await slow(org, u))
+        if (store.artifactWithGrants)
+          expect(await combined(u), `artifactWithGrants disagrees for ${u}`).toEqual(
+            await slow(org, u),
+          )
+      }
 
       // The org arm must key on the org PASSED IN, not on the artifact's own workspace.
       for (const u of [owner, stranger]) expect(await fast(other, u)).toEqual(await slow(other, u))
+
+      // An unknown short id is null, not a throw and not an empty-grants object — the
+      // route distinguishes "no such document" (404) from "no standing on it".
+      if (store.artifactWithGrants)
+        expect(await store.artifactWithGrants(`sid_missing_${uuid()}`, owner)).toBeNull()
     })
   })
   // CHAOS: the same question, asked both ways, over randomly-shaped access graphs.
@@ -4398,6 +4695,96 @@ export function runStoreContract(
       expect(
         await store.updateConnectionCredential(cn.id, ORG, { secret_enc: "v1.second" }, null),
       ).toBeNull()
+    })
+
+    // A MISS SHARES THE LINK TABLE, and must never escape as a link.
+    //
+    // Eleven call sites treat a non-null result from getSlackUserLinkBySlackId as a real Derive
+    // user — one of them DMs `user_id` directly, which on a miss is the empty string. The filter
+    // therefore belongs in the STORE, and it belongs in this contract suite so all three dialects
+    // prove it rather than one.
+    describe("slack identity: links vs misses", () => {
+      const linkRow = (over: Record<string, unknown> = {}) => ({
+        id: `sul-${Math.abs(Date.now() % 100000)}-${String(over.slack_user_id ?? "U1")}`,
+        org_id: ORG,
+        user_id: "u-1",
+        team_id: "T1",
+        slack_user_id: "U1",
+        origin: "oauth" as const,
+        created_at: new Date().toISOString(),
+        checked_at: new Date().toISOString(),
+        ...over,
+      })
+
+      it("hands back a real link", async () => {
+        await store.setSlackUserLink(linkRow({ slack_user_id: "U-real" }))
+        expect((await store.getSlackUserLinkBySlackId("T1", "U-real"))?.user_id).toBe("u-1")
+        expect((await store.getSlackUserLinkByUser("T1", "u-1"))?.slack_user_id).toBe("U-real")
+      })
+
+      it("HIDES a miss from both link accessors", async () => {
+        await store.setSlackUserLink(
+          linkRow({ slack_user_id: "U-miss", user_id: "", origin: "miss" as const }),
+        )
+        expect(await store.getSlackUserLinkBySlackId("T1", "U-miss")).toBeNull()
+        expect(await store.getSlackUserLinkByUser("T1", "")).toBeNull()
+      })
+
+      it("shows the miss to the accessor that asks for it, with checked_at", async () => {
+        const at = new Date(Date.now() - 60_000).toISOString()
+        await store.setSlackUserLink(
+          linkRow({
+            slack_user_id: "U-seen",
+            user_id: "",
+            origin: "miss" as const,
+            checked_at: at,
+          }),
+        )
+        const state = await store.getSlackIdentityState("T1", "U-seen")
+        expect(state?.origin).toBe("miss")
+        expect(state?.checked_at).toBe(at)
+      })
+
+      it("a later success REPLACES the miss on the same row — self-healing", async () => {
+        await store.setSlackUserLink(
+          linkRow({ slack_user_id: "U-fix", user_id: "", origin: "miss" as const }),
+        )
+        expect(await store.getSlackUserLinkBySlackId("T1", "U-fix")).toBeNull()
+        await store.setSlackUserLink(
+          linkRow({ slack_user_id: "U-fix", user_id: "u-9", origin: "email" as const }),
+        )
+        // No cleanup job: the upsert on (team_id, slack_user_id) did it.
+        expect((await store.getSlackUserLinkBySlackId("T1", "U-fix"))?.user_id).toBe("u-9")
+        expect((await store.getSlackIdentityState("T1", "U-fix"))?.origin).toBe("email")
+      })
+
+      it("refreshes checked_at on re-miss while PRESERVING created_at", async () => {
+        // created_at is first-seen and the upsert strips it; checked_at is what ages a miss out,
+        // so it has to move or a miss could never be retried a second time.
+        const old = new Date(Date.now() - 5 * 60_000).toISOString()
+        await store.setSlackUserLink(
+          linkRow({
+            slack_user_id: "U-age",
+            user_id: "",
+            origin: "miss" as const,
+            created_at: old,
+            checked_at: old,
+          }),
+        )
+        const now = new Date().toISOString()
+        await store.setSlackUserLink(
+          linkRow({
+            slack_user_id: "U-age",
+            user_id: "",
+            origin: "miss" as const,
+            created_at: now,
+            checked_at: now,
+          }),
+        )
+        const state = await store.getSlackIdentityState("T1", "U-age")
+        expect(state?.created_at).toBe(old)
+        expect(state?.checked_at).toBe(now)
+      })
     })
   })
 }

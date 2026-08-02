@@ -35,6 +35,27 @@ export const WORKSPACE_FACT_ROW_CAP = 5000
 /** Fact names are url-safe and short: they appear in `read(data:"…")` and a raw route. */
 const SLOT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 
+/**
+ * The DERIVED-fact namespace: names the host computes, never the author.
+ *
+ * An asserted fact is testimony — the author's claim, extracted from a block they
+ * published, canonical forever. A derived fact is verification — the host's mechanical
+ * reading of the same bytes ($outline, $links, $stats), regenerable at will and deletable
+ * without loss because the source IS the document.
+ *
+ * The "$" prefix is not a convention to remember; it is OUTSIDE the authored grammar.
+ * SLOT_NAME_RE above rejects "$", so a block claiming data-fact="$outline" already fails
+ * validation with the invalid-name advisory. No author can collide with the host, no host
+ * output can impersonate an author, and nothing new needs enforcing.
+ *
+ * The namespace lives HERE, in the portable package, because it is part of the convention
+ * an independent host must honor (never counting derived names as adoption, never letting
+ * them into author-reward surfaces). The derivers themselves are deliberately NOT here:
+ * each host owns its derivers, and this package stays dependency-free.
+ */
+export const DERIVED_FACT_PREFIX = "$"
+export const isDerivedFactName = (name: string): boolean => name.startsWith(DERIVED_FACT_PREFIX)
+
 /** The script type that marks an HTML fact block. Inert in every browser. */
 export const FACT_SCRIPT_TYPE = "application/derive-facts"
 /** The markdown fence info word that marks a fact block. */

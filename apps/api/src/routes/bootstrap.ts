@@ -9,6 +9,7 @@ import {
   summaryJson,
 } from "../lib/boot-shapes"
 import { bail, fail } from "../lib/http"
+import { syncSeats } from "../lib/seats"
 
 /** The signed-in app shell's first breath as ONE request. On a cold boot the SPA used
  *  to fan out four authenticated GETs (tags summary, collections, workspace settings,
@@ -26,7 +27,7 @@ import { bail, fail } from "../lib/http"
  *  slowest sidebar arm). Member-only: the client falls back to the individual
  *  endpoints (which each have their own non-member shape) on any failure. */
 export const bootstrapRoutes = (ctx: AppContext) => {
-  const { meta, currentUser, activeWorkspace, isMember } = ctx
+  const { meta, deps, currentUser, activeWorkspace, isMember, billingState, blockCopy } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const NOTIFICATIONS_PAGE = 50 // same page size the notifications route serves
@@ -56,6 +57,12 @@ export const bootstrapRoutes = (ctx: AppContext) => {
                 settings: OrgSettings,
                 notifications: z.array(Notification),
                 unread: z.number(),
+                blocked: z
+                  .object({ code: z.string(), message: z.string() })
+                  .nullable()
+                  .describe(
+                    "The publishing-blocked verdict, or null when the workspace is free to publish. Same value GET /v1/billing reports as `blocked`.",
+                  ),
               }),
             },
           },
@@ -71,6 +78,27 @@ export const bootstrapRoutes = (ctx: AppContext) => {
       // 403 here sends it down that path rather than teaching this route four more.
       if (!(await isMember(c, org))) return bail(fail(c, 403, "forbidden"))
       const b = await meta.bootstrap(org, me.id, NOTIFICATIONS_PAGE)
+      // The publishing-blocked verdict, from the two inputs the batch just read.
+      // resolveBillingState is pure — no Stripe call, no extra round trip — so this
+      // whole field costs the request nothing. It exists because the app shell's
+      // banner was calling GET /v1/billing on EVERY authed page load to learn it is
+      // not blocked: 6 store calls and 676ms measured on the boot waterfall, the most
+      // expensive request there, for a strip almost nobody ever sees.
+      const state = await billingState(org, {
+        sub: b.billing.subscription,
+        seatCount: b.billing.billableSeats,
+      })
+      const blocked =
+        state.canPublishApprove || !state.blockedReason ? null : blockCopy[state.blockedReason]
+      // Keep the Stripe seat-drift heal that moving the banner off GET /v1/billing would
+      // otherwise have removed: that endpoint healed as a side effect of the banner
+      // calling it on every boot, and a small team may never open the Billing page. Same
+      // inputs, already in hand, so it adds no read — and fire-and-forget, because a
+      // Stripe hiccup must never fail the app shell's boot.
+      void syncSeats({ meta, billing: deps.billing }, org, {
+        sub: b.billing.subscription,
+        seats: b.billing.billableSeats,
+      })
       return c.json({
         summary: summaryJson(b.summary),
         // Browser sessions only reach here (agents boot no app shell), so the
@@ -79,6 +107,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
         settings: b.settings,
         notifications: b.notifications.notifications,
         unread: b.notifications.unread,
+        blocked,
       })
     },
   )

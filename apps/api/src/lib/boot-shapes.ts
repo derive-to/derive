@@ -43,7 +43,7 @@ export const OrgSettings = z
     chatBeta: z
       .boolean()
       .describe(
-        "BETA: the Chat tab on a document. Off by default — the tab is hidden and the chat route refuses, so a workspace opts in deliberately.",
+        "The Chat tab on a document, and the workspace chat. ON by default; set it false to turn chat off for a workspace entirely (the tab hides and the chat routes refuse).",
       ),
     automateBeta: z
       .boolean()

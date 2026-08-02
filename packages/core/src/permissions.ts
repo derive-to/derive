@@ -4,6 +4,9 @@ import type { LinkRole, Role, WorkspaceAccess } from "./roles"
 // both use it without forming an import cycle. Re-exported here so the long-standing
 // `@derive/core` surface stays unchanged (roles is not itself in the index barrel).
 export type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+// Values (not just types) from the roles leaf, so the db package can count billable
+// seats in SQL off the same list the API filters with.
+export { BILLABLE_ROLES, isBillableRole } from "./roles"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
 export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "share" | "manage"

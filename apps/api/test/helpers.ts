@@ -10,6 +10,7 @@ import Database from "better-sqlite3"
 import { Pool } from "pg"
 import { afterAll } from "vitest"
 import { type AppDeps, createApp } from "../src/app"
+import { buildContext } from "../src/context"
 import { DEFAULT_WORKSPACE_NAME } from "../src/lib/http"
 import { POOL_USER } from "../src/lib/payer"
 
@@ -345,7 +346,7 @@ export const makeAuthedApp = (
     if (current)
       await m.setOrgSettings("default", { ...current, automateBeta: true }).catch(() => undefined)
   })()
-  const app = createApp({
+  const deps: AppDeps = {
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),
     baseUrl: "http://derive.test",
@@ -355,7 +356,8 @@ export const makeAuthedApp = (
     defaultOrgId: "default",
     allowEchoStub: true,
     ...opts?.deps,
-  })
+  }
+  const app = createApp(deps)
   const gated = new Proxy(app, {
     get: (target, prop, recv) => {
       if (prop !== "request") return Reflect.get(target, prop, recv)
@@ -390,7 +392,11 @@ export const makeAuthedApp = (
       return (...args: unknown[]) => planReady.then(() => fn.apply(target, args))
     },
   })
-  return { app: gated, meta: gatedMeta }
+  // The SAME deps the app runs on, assembled into a context — for the code that takes an
+  // AppContext rather than an HTTP request (the chat tool surface, say). `buildContext` is a
+  // pure assembly of closures over `deps`, so this is the app's own context in every way that
+  // matters, and a test can seed over HTTP and then act through it against one store.
+  return { app: gated, meta: gatedMeta, ctx: buildContext(deps) }
 }
 
 export const as = (email: string) => ({ "x-test-user": email })

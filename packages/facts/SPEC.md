@@ -133,6 +133,35 @@ Three rules, same spirit as the rest:
   cache PR on what the probe says. A cache nobody needed is a generation-bump discipline
   paid forever for nothing.
 
+### 3.5 The inverse read
+
+Every read above is *per record*: this page's value, this page's history, this metric
+everywhere. The questions a corpus actually gets asked have the other shape — what points
+HERE, which documents carry this name — and each is an **inversion** of a per-record index.
+A host MAY expose one, under four conditions.
+
+- **One predicate, one bound parameter, never an expression.** An inversion is a named
+  question with a fixed shape, not a query language by another route (§"What is deliberately
+  NOT here"). The moment a caller can compose it, the host has inherited a cost curve.
+- **§4's gate applies to the LINKING records, not to the target.** A backlink row names the
+  document that made the reference, so an invisible linker MUST NOT appear — but the target
+  itself needs no permission, because the caller learns nothing the linker does not already
+  disclose. The target's EXISTENCE must not be confirmable either: "nothing links here",
+  "the linkers were never indexed", and "no such record" MUST be indistinguishable, or the
+  inversion is an existence oracle for every id on the host.
+- **It is exhaustive within its index, or it says so.** The only reason to build an
+  inversion is that ranked search under-reports; one that silently truncates has kept the
+  defect and added a cache. Report a scan bound, which is caller-independent and so
+  discloses nothing. Never report a visibility filter, which is neither.
+- **It SHOULD NOT be materialized until measurement says reads exceed rebuilds.** An
+  inversion computed from the rows it inverts cannot disagree with them. A second table can,
+  and nothing will ever compare the two.
+
+Build one only when the scan it replaces is a query people actually run. The client-side
+inversion is the evidence, and it is also the thing to beat: pulling every record's rows to
+fold them locally is bounded by the read cap, so it is not merely slower than a server-side
+inversion but less complete.
+
 ## 4. Visibility
 
 > **A derived read is never more readable than its source.**
@@ -286,14 +315,60 @@ visibly: the share card carrying the record's own numbers, the review diff showi
 move, the write acknowledging what it stored. That is a claim this project is currently
 testing, not a settled result.
 
+## 8. Derived facts (the `$` namespace)
+
+A host MAY compute facts of its own from a version's bytes — an outline, the outbound
+links, size counts — and serve them through the same read surfaces. These are **derived
+facts**, and the contract treats them as a second class of truth:
+
+> **An asserted fact is testimony: it means something because the author said it, pinned
+> to the version where they said it. A derived fact is verification: anyone can recompute
+> it from the bytes. An implementation MUST never let the two blur.**
+
+Rules, all normative:
+
+- **The namespace is structural.** Derived names carry the `$` prefix, which the authored
+  name grammar (§2) already rejects — so no author block can claim a derived name and no
+  derived output can impersonate an author. A host inventing a different marker MUST pick
+  one outside the authored grammar for the same reason.
+- **Derivation is transcription, never interpretation.** Counting words is derivation.
+  Extracting an outline is derivation. Deciding what a number *means*, which table cells
+  are metrics, or a document's status is testimony only its author can give — a host that
+  wants those SHOULD propose them to the author and store only what the author publishes.
+- **Derived facts are recomputable, and everything follows from that.** They MAY be
+  evicted, regenerated, or versioned by the generation of the deriving code; a stale or
+  missing derived row is a cache miss, not data loss. Asserted rows MUST never be treated
+  this way.
+- **A generation belongs to ONE deriver, not to the host.** Versioning derived output with
+  a single shared constant makes a change to any deriver invalidate every other deriver's
+  rows across the whole corpus. That is affordable for a reader that can recompute on the
+  fly and ruinous for one that cannot — a consumer reading across records is bounded away
+  from compute (§4's crawler rule), so its only remaining choices are serving stale output
+  or serving none. Each derived row therefore SHOULD carry the generation of the code that
+  produced THAT row.
+- **A `$name` the host no longer computes MUST stop being served.** A retired deriver's
+  rows are the one derived state that never self-corrects: they match nothing, nothing
+  rewrites them, and they read as current forever. A generation that no live deriver
+  claims MUST NOT compare equal to a stored row's.
+- **Derived facts MUST NOT count.** Not toward adoption metrics, not in publish
+  acknowledgments, not in author-facing advisories or reward surfaces (share cards,
+  review diffs). The reward channel exists to pay authors for asserting; a host that
+  congratulates itself through it destroys the signal.
+- **Same visibility, same absence rules.** A derived fact is derived from the source and
+  is never more readable than it (§4); a version with no derived row is absent, never a
+  fabricated zero (§3.2).
+
 ---
 
 ## What is deliberately NOT here
 
 - **A query language.** They do not travel. Expose surfaces people already hold.
-- **Server-side aggregation or joins.** At these sizes a client does the arithmetic for less
-  than the cost of designing, versioning and defending an aggregate API — and the moment a
-  host runs user queries it inherits a DoS surface and a cost curve.
+- **A query language, or server-side aggregation over caller-supplied expressions.** At
+  these sizes a client does the arithmetic for less than the cost of designing, versioning
+  and defending an aggregate API — and the moment a host runs user queries it inherits a
+  DoS surface and a cost curve. Fixed-shape joins the contract itself requires are not this
+  and never were: §3.3's current-version join is mandatory, and §3.5's inverse read is one
+  predicate with one bound parameter and no arithmetic.
 - **Mandatory schemas.** Ceremony killed CSVW. Optional, opt-in, or not at all.
 - **Auto-extraction of tables.** Guessing at the meaning of someone's numbers produces
   confidently wrong data, which is worse than none.
