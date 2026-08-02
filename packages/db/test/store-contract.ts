@@ -2670,6 +2670,71 @@ export function runStoreContract(
       })
     })
 
+    it("bootstrap reports the same collection roles as the batched method", async () => {
+      // The boot batch and /v1/collections both feed the same UI, and a collection
+      // with no role is dropped from the response entirely — so if these two disagree,
+      // a collection appears on boot and vanishes on the next fetch (or the reverse).
+      // Postgres shipped exactly that: its bootstrap arm counted explicit member rows
+      // and forgot the workspace seat, so every workspace-open collection the caller
+      // had not explicitly joined flickered. Assert the two agree rather than
+      // re-asserting either one's contents.
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Roles parity")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "amy", role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "zed", role: "owner" })
+
+      // The case that broke: workspace-open, created by someone else, amy is not an
+      // explicit member. Her seat is the ONLY thing that gives her a role here.
+      const open = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Workspace-open",
+        created_by: "zed",
+      })
+      // Invite-only, amy explicitly added — the half that never went missing.
+      const invited = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Invite only",
+        created_by: "zed",
+        workspace_access: "none",
+      })
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: invited.id,
+        user_id: "amy",
+        role: "commenter",
+      })
+      // Both sources at once: the higher of seat and member row must win, which is
+      // why the merge is maxRole and not last-one-in.
+      const both = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Seat and member row",
+        created_by: "zed",
+      })
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: both.id,
+        user_id: "amy",
+        role: "viewer",
+      })
+
+      const ids = [open.id, invited.id, both.id]
+      const batched = await store.collectionRolesForUser(ids, "amy")
+      const boot = await store.bootstrap(org, "amy", 20, {
+        activeSince: new Date(Date.now() - 30 * 86400_000).toISOString(),
+        previewPer: 4,
+      })
+
+      for (const id of ids) expect(boot.collectionRoles[id], `role for ${id}`).toBe(batched[id])
+      // Not vacuously equal: the seat really does grant a role on the open one.
+      expect(batched[open.id]).toBe("editor")
+      expect(batched[invited.id]).toBe("commenter")
+      // Seat (editor) outranks the explicit viewer row.
+      expect(batched[both.id]).toBe("editor")
+    })
+
     it("answers the viewer's stars, worked-in set, and preview strips in the same call", async () => {
       // The whole point of the viewer arms: three reads a route must NOT make separately
       // (see apps/api/test/round-trip-budget.test.ts). They must agree exactly with the

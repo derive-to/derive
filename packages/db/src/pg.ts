@@ -404,6 +404,28 @@ const mapSummaryRows = (rows: SummaryRow[]): WorkspaceSummary => {
   out.tags.sort((a, b) => a.tag.localeCompare(b.tag))
   return out
 }
+/**
+ * A user's role per collection, from BOTH sources: their explicit member rows, and
+ * their workspace SEAT on each workspace-open collection (higher wins, applied by the
+ * caller with maxRole).
+ *
+ * `scope` is a subquery selecting the collections in play — an id list for the batched
+ * method, the whole org for the boot read. Shared because it drifted: bootstrap carried
+ * only the member-row half, so on Postgres the boot batch dropped every workspace-open
+ * collection the caller had not explicitly joined (collectionsJson filters out a
+ * collection with no role), and the later /v1/collections fetch put them back. A
+ * collection visibly appeared and disappeared depending on which response you were
+ * looking at. Embedded drivers were never wrong here — composeBootstrap calls the real
+ * method — so it only showed against Postgres.
+ */
+const collectionRolesSql = (scope: string, user: string) =>
+  `SELECT collection_id id, role FROM collection_member
+     WHERE user_id = ${user} AND collection_id IN (${scope})
+   UNION ALL
+   SELECT c.id, m.role FROM collection c
+     JOIN membership m ON m.org_id = c.org_id
+    WHERE c.id IN (${scope}) AND c.workspace_access = 'member' AND m.user_id = ${user}`
+
 // $1 = org id. Two org-scoped tables the collections route always reads together, plus —
 // when the caller is a known viewer — the three per-user arms the Collections view
 // decorates them with. Those three were separate store calls for one release and cost
@@ -1758,9 +1780,10 @@ export class PgMetaStore implements MetaStore {
          { user: "$2", since: "$5", per: "$6" },
        )}) t)
        UNION ALL
-       SELECT 'roles', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (
-         SELECT cm.collection_id, cm.role FROM collection_member cm
-          WHERE cm.user_id = $2 AND cm.collection_id IN (SELECT id FROM collection WHERE org_id = $1)) t)
+       SELECT 'roles', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${collectionRolesSql(
+         "SELECT id FROM collection WHERE org_id = $1",
+         "$2",
+       )}) t)
        UNION ALL
        SELECT 'settings', (SELECT to_jsonb(os.settings) FROM org_settings os WHERE os.org_id = $1)
        UNION ALL
@@ -1780,9 +1803,11 @@ export class PgMetaStore implements MetaStore {
     const { collections, sources, starred, active, previews } = mapOverviewRows(
       (arm.overview as OverviewRow[] | null) ?? [],
     )
+    // maxRole, not last-wins: the two arms both answer for a collection you are an
+    // explicit member of AND hold a seat on, and the higher of the two is your role.
     const collectionRoles: Record<string, Role> = {}
-    for (const r of (arm.roles as { collection_id: string; role: Role }[] | null) ?? [])
-      collectionRoles[r.collection_id] = r.role
+    for (const r of (arm.roles as { id: string; role: Role }[] | null) ?? [])
+      collectionRoles[r.id] = maxRole(collectionRoles[r.id] ?? null, r.role) as Role
     const notifRows =
       (arm.notifications as (NotificationRecord & { unread_total: number })[] | null) ?? []
     return {
@@ -2946,12 +2971,7 @@ export class PgMetaStore implements MetaStore {
     // explicit member rows, and their SEAT on each workspace-open collection — a UNION ALL
     // instead of two sequential awaits, since both are scoped to the same collectionIds.
     const { rows } = await this.pool.query<{ id: string; role: Role }>(
-      `SELECT collection_id id, role FROM collection_member
-        WHERE collection_id = ANY($1) AND user_id = $2
-       UNION ALL
-       SELECT c.id, m.role FROM collection c
-       JOIN membership m ON m.org_id = c.org_id
-       WHERE c.id = ANY($1) AND c.workspace_access = 'member' AND m.user_id = $2`,
+      collectionRolesSql("SELECT unnest($1::text[])", "$2"),
       [collectionIds, userId],
     )
     const out: Record<string, Role> = {}
