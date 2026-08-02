@@ -16,7 +16,7 @@ import { chatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import type { ModelCatalog } from "./model-catalog"
-import { slackUserEmail } from "./slack"
+import { slackUserEmail, updateSlackMessage } from "./slack"
 import { escapeMrkdwn, mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 
@@ -397,6 +397,37 @@ export const handleSlackMention = async (
       ? `${question}\n\n(The person linked this document: ${named.title ?? named.short_id} — short_id ${named.short_id}.)`
       : question
 
+  // SAY SOMETHING IMMEDIATELY, because a turn takes seconds and Slack gives no other signal.
+  //
+  // There is no bot "typing" API on the Events API — the RTM typing event is not available to
+  // apps, and assistant.threads.setStatus only exists inside Assistant threads. So the honest
+  // equivalent is a placeholder that BECOMES the answer: posted now, rewritten in place by
+  // chat.update when the turn settles. One message, not two, so the thread does not collect
+  // "thinking…" litter next to every reply.
+  //
+  // Best-effort on purpose. If this post fails the turn still runs and answers with a fresh
+  // message — losing the progress hint costs nothing, whereas failing the question costs the
+  // answer. `pending` therefore stays null on any error and the tail falls back to posting.
+  const pending = await postWithRecovery(meta, install.org_id, bot.token, {
+    channel: p.channel,
+    threadTs: p.threadTs ?? p.ts,
+    text: "_Derive is thinking…_",
+  })
+    .then((r) => (r.ok && r.ts ? { channel: r.channel ?? p.channel, ts: r.ts } : null))
+    .catch(() => null)
+
+  /** Replace the placeholder with the real text, or post it if there is no placeholder to
+   *  replace. Every exit below goes through this, so no thread is left reading "thinking…". */
+  const settle = async (text: string) => {
+    if (!pending) return await say(text)
+    await updateSlackMessage(bot.token, { channel: pending.channel, ts: pending.ts, text }).catch(
+      async (e) => {
+        log.warn("slack placeholder update failed", { error: String(e) })
+        await say(text)
+      },
+    )
+  }
+
   // FROM HERE ON, SOMEONE IS WAITING IN A THREAD. runChatTurn does not throw, but the writes
   // around it can (a dropped connection mid-settle, a store error), and the failure mode that
   // costs the most trust is silence: the bot was mentioned in front of the channel and simply
@@ -461,7 +492,7 @@ export const handleSlackMention = async (
       /\]\((\/[A-Za-z0-9][\w\-./?=&#%]*)\)/g,
       (_m, path: string) => `](${deps.baseUrl}${path})`,
     )
-    await say(
+    await settle(
       `${mrkdwnBody(withLinks)}\n\n<${deps.baseUrl}/chat?session=${sessionId}|Continue in Derive>`,
     )
   } catch (e) {
@@ -470,7 +501,9 @@ export const handleSlackMention = async (
       channel: p.channel,
       error: e instanceof Error ? e.message : String(e),
     })
-    await say("Something went wrong on my side, so I have not answered that. Try me again.")
+    // Through settle, so a crash REPLACES "thinking…" rather than leaving it there for ever —
+    // a placeholder that never resolves reads as a hung bot, which is worse than an error.
+    await settle("Something went wrong on my side, so I have not answered that. Try me again.")
     return quiet("turn failed")
   }
   return { status: "answered" }
