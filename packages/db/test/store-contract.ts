@@ -967,6 +967,47 @@ export function runStoreContract(
       expect(await store.collectionsWorkedIn("amy", ORG, future)).toEqual([])
     })
 
+    it("reports each artifact's collections in one batched read", async () => {
+      // The grouped-by-collection list groups on this. It must agree with the per-artifact
+      // method the detail route uses — one is the batched face of the other, and a listing
+      // that disagreed with the document you opened would be worse than no grouping.
+      const one = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "One",
+        created_by: "amy",
+      })
+      const two = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Two",
+        created_by: "amy",
+      })
+      const filedTwice = await store.createArtifact(newArtifact())
+      const filedOnce = await store.createArtifact(newArtifact())
+      const unfiled = await store.createArtifact(newArtifact())
+      await store.addCollectionItem(one.id, filedTwice.id)
+      await store.addCollectionItem(two.id, filedTwice.id)
+      await store.addCollectionItem(one.id, filedOnce.id)
+
+      const map = await store.collectionsForArtifacts([filedTwice.id, filedOnce.id, unfiled.id])
+      // Membership is not exclusive, and the list view shows such an artifact under both.
+      expect([...(map[filedTwice.id] ?? [])].sort()).toEqual([one.id, two.id].sort())
+      expect(map[filedOnce.id]).toEqual([one.id])
+      // Absent, not an empty array — the caller distinguishes "no collections" by absence.
+      expect(map[unfiled.id]).toBeUndefined()
+      expect(await store.collectionsForArtifacts([])).toEqual({})
+      // Scoped to the page asked for. Without the id filter every assertion above still
+      // passes while the query returns the whole table — right answers, ruinous read.
+      expect(Object.keys(map).sort()).toEqual([filedOnce.id, filedTwice.id].sort())
+
+      // Agrees with the single-artifact method it batches.
+      for (const id of [filedTwice.id, filedOnce.id, unfiled.id])
+        expect([...(map[id] ?? [])].sort(), `collections for ${id}`).toEqual(
+          [...(await store.collectionIdsForArtifact(id))].sort(),
+        )
+    })
+
     it("previews a collection's newest artifacts, batched and capped", async () => {
       const shelf = await store.createCollection({
         id: uuid(),
@@ -1195,6 +1236,7 @@ export function runStoreContract(
       expect(enr).toEqual({
         views: {},
         tags: {},
+        collections: {},
         previews: {},
         handles: [],
         bylines: [],

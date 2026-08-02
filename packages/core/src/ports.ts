@@ -278,6 +278,11 @@ export interface ListPageOpts {
 export interface ListEnrichment {
   views: Record<string, number>
   tags: Record<string, string[]>
+  /** Collection ids each row belongs to — what the library's grouped-by-collection list
+   *  groups on. An arm of the same batched read, NOT a second call: the detail route has
+   *  always had this (`collectionIdsForArtifact`), but per-row on a listing it would be
+   *  one round trip per artifact. Empty for a row in no collection. */
+  collections: Record<string, string[]>
   previews: Record<string, boolean>
   /** gh_id → Derive username rows (the subset of `usersByGithubIds` the list needs). */
   handles: { gh_id: string; username: string | null }[]
@@ -946,6 +951,10 @@ export interface SocialStore {
   listFollowing(userId: string, limit: number): Promise<UserProfile[]>
   /** Tags per artifact, batched (no N+1). Missing ids map to no entry. */
   tagsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
+  /** Collection ids per artifact, in ONE query (artifact_id ∈ ids) — the batched face of
+   *  `collectionIdsForArtifact`, for a whole listing page. Ids in no collection are
+   *  absent. Empty ids ⇒ {}. */
+  collectionsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>>
   /** The user's per-artifact share roles across a page of artifacts, one query —
    *  lets a listing fold shares into `my_role` without a per-row member lookup. */
   artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>>

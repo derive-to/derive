@@ -1284,6 +1284,7 @@ export class PgMetaStore implements MetaStore {
     const out: ListEnrichment = {
       views: {},
       tags: {},
+      collections: {},
       previews: {},
       handles: [],
       bylines: [],
@@ -1303,6 +1304,8 @@ export class PgMetaStore implements MetaStore {
       const page = bind(ids)
       branches.push(
         `SELECT 'tag' kind, artifact_id k, tag c1, NULL c2, NULL c3 FROM artifact_tag WHERE artifact_id = ANY(${page})`,
+        `SELECT 'collection', artifact_id, collection_id, NULL, NULL FROM collection_item
+          WHERE artifact_id = ANY(${page})`,
         `SELECT 'preview', a.id, NULL, NULL, NULL FROM artifact a
            JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
           WHERE v.preview_status = 'ready' AND a.id = ANY(${page})`,
@@ -1382,6 +1385,12 @@ export class PgMetaStore implements MetaStore {
           const list = out.tags[r.k] ?? []
           list.push(r.c1 as string)
           out.tags[r.k] = list
+          break
+        }
+        case "collection": {
+          const list = out.collections[r.k] ?? []
+          list.push(r.c1 as string)
+          out.collections[r.k] = list
           break
         }
         case "preview":
@@ -1490,6 +1499,7 @@ export class PgMetaStore implements MetaStore {
     const empty: ListEnrichment = {
       views: {},
       tags: {},
+      collections: {},
       previews: {},
       handles: [],
       bylines: [],
@@ -2713,6 +2723,21 @@ export class PgMetaStore implements MetaStore {
       out[r.artifact_id]?.push(r.tag)
     }
     for (const k in out) out[k]?.sort()
+    return out
+  }
+
+  async collectionsForArtifacts(artifactIds: string[]): Promise<Record<string, string[]>> {
+    if (artifactIds.length === 0) return {}
+    const rows = await this.db
+      .select({ a: collectionItem.artifact_id, c: collectionItem.collection_id })
+      .from(collectionItem)
+      .where(inArray(collectionItem.artifact_id, artifactIds))
+    const out: Record<string, string[]> = {}
+    for (const r of rows) {
+      const list = out[r.a] ?? []
+      out[r.a] = list
+      list.push(r.c)
+    }
     return out
   }
   async previewReady(artifactIds: string[]): Promise<Record<string, boolean>> {

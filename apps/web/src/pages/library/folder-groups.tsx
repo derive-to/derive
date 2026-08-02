@@ -9,7 +9,7 @@ import { dirOf } from "@/lib/artifact"
 import { revealInFolder } from "@/lib/interaction"
 import { useFollows } from "@/lib/use-follows"
 import { cn } from "@/lib/utils"
-import { ArtifactRow } from "./artifact-row"
+import { ArtifactListRow } from "./artifact-list"
 import type { LibrarySelection } from "./use-library-selection"
 
 interface Handlers {
@@ -138,17 +138,17 @@ function FolderSection({
         )}
       </div>
       {open && (
-        <div className="mt-1.5 flex flex-col gap-2 pl-6">
+        <div className="mt-1.5 overflow-hidden rounded-xl border border-border bg-card">
           {items.map((a) => (
-            <ArtifactRow
+            <ArtifactListRow
               key={a.short_id}
               artifact={a}
               onOpen={() => handlers.onOpen(a)}
               onToggleFavorite={() => handlers.onToggleFavorite(a)}
-              onPickAuthor={handlers.onPickAuthor}
               onAddToCollection={() => handlers.onAddToCollection(a)}
               onDelete={() => handlers.onDelete(a)}
               onPrefetch={() => handlers.onPrefetch(a)}
+              indent
               selected={handlers.selection?.selected.has(a.short_id)}
               selectionActive={handlers.selection?.active}
               onSelect={

@@ -35,6 +35,7 @@ export const composeListEnrichment = async (
     MetaStore,
     | "viewCounts"
     | "tagsForArtifacts"
+    | "collectionsForArtifacts"
     | "previewReady"
     | "usersByGithubIds"
     | "getUsers"
@@ -47,6 +48,8 @@ export const composeListEnrichment = async (
 ): Promise<ListEnrichment> => {
   const views = opts.views ? await store.viewCounts(opts.ids) : {}
   const tags = await store.tagsForArtifacts(opts.ids)
+  // A free local read on embedded drivers; an arm of the one statement on Postgres.
+  const collections = await store.collectionsForArtifacts(opts.ids)
   const previews = await store.previewReady(opts.ids)
   const handles = (await store.usersByGithubIds(opts.ghIds)).map((u) => ({
     gh_id: u.gh_id,
@@ -66,7 +69,18 @@ export const composeListEnrichment = async (
   const starred = opts.viewerId ? await store.listUserFavoriteIds(opts.viewerId) : []
   const onPage = new Set(opts.ids)
   const favorites = starred.filter((id) => onPage.has(id))
-  return { views, tags, previews, handles, bylines, signals, proposals, shareRoles, favorites }
+  return {
+    views,
+    tags,
+    collections,
+    previews,
+    handles,
+    bylines,
+    signals,
+    proposals,
+    shareRoles,
+    favorites,
+  }
 }
 
 /** See `composeListEnrichment` — the artifact-detail twin. */

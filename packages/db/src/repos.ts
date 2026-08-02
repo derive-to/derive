@@ -2061,6 +2061,26 @@ export function makeRepos(db: SqliteDb) {
     return out
   }
 
+  // Batched twin of collectionIdsForArtifact: one read for a whole listing page, so a
+  // grouped list doesn't turn into a round trip per row.
+  const collectionsForArtifacts = async (
+    artifactIds: string[],
+  ): Promise<Record<string, string[]>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ a: collectionItem.artifact_id, c: collectionItem.collection_id })
+      .from(collectionItem)
+      .where(inArray(collectionItem.artifact_id, artifactIds))
+      .all()
+    const out: Record<string, string[]> = {}
+    for (const r of rows) {
+      const list = out[r.a] ?? []
+      out[r.a] = list
+      list.push(r.c)
+    }
+    return out
+  }
+
   const previewReady = async (artifactIds: string[]): Promise<Record<string, boolean>> => {
     if (artifactIds.length === 0) return {}
     const rows = await db
@@ -4400,6 +4420,7 @@ export function makeRepos(db: SqliteDb) {
     listUserWorks,
     countUserWorks,
     tagsForArtifacts,
+    collectionsForArtifacts,
     previewReady,
     setArtifactTags,
     createCollection,

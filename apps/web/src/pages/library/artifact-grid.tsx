@@ -1,10 +1,11 @@
+import type { SortMode } from "@derive/core"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { type RefObject, useEffect, useRef, useState } from "react"
 import type { Artifact } from "@/api"
 import { CARD_GRID_COLS, MIN_CARD_PX } from "@/components/shared/card-grid"
 import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
-import { ArtifactRow } from "./artifact-row"
+import { ArtifactListRow, ListHeader, ListShell } from "./artifact-list"
 import type { LibrarySelection } from "./use-library-selection"
 
 // Grid geometry comes from card-grid.tsx (one source with the live grid and the
@@ -18,7 +19,9 @@ const GAP = 16
 const EST_ROW = 260
 // A list row is title + one meta line; the virtualizer measures the real height on
 // first paint, so this only has to be close enough to avoid a scrollbar jump.
-const EST_LIST_ROW = 52
+// A list row is 36px flat — the virtualizer's estimate should match, or the scrollbar
+// lies until every row has been measured.
+const EST_LIST_ROW = 36
 
 // The library grid, windowed. Only the rows in (or near) the viewport are in the
 // DOM, so the grid stays at 60fps no matter how large the library grows. The
@@ -36,6 +39,8 @@ export function ArtifactGrid({
   onPrefetch,
   selection,
   layout = "grid",
+  sort,
+  onSort,
   onPickAuthor,
 }: {
   items: Artifact[]
@@ -57,6 +62,9 @@ export function ArtifactGrid({
    *  which is exactly where an unvirtualized path would hurt. */
   layout?: "grid" | "list"
   onPickAuthor?: (login: string) => void
+  /** List mode only: the header row is where sort lives. */
+  sort?: SortMode
+  onSort?: (mode: SortMode) => void
 }) {
   const list = layout === "list"
   const gridRef = useRef<HTMLDivElement>(null)
@@ -111,7 +119,7 @@ export function ArtifactGrid({
     if (lastIndex >= rowCount - 1 && hasNextPage && !isFetchingNextPage) onLoadMore()
   }, [lastIndex, rowCount, hasNextPage, isFetchingNextPage, onLoadMore])
 
-  return (
+  const body = (
     <div ref={gridRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
       {virtualRows.map((vrow) => {
         const start = vrow.index * columns
@@ -127,7 +135,7 @@ export function ArtifactGrid({
             className={cn(
               "absolute top-0 left-0 w-full",
               // List is a dense register: no gallery gutter, a hairline between rows.
-              list ? "border-b border-border-soft" : cn(CARD_GRID_COLS, "gap-x-4 pb-6"),
+              list ? "" : cn(CARD_GRID_COLS, "gap-x-4 pb-6"),
             )}
             style={{
               transform: `translateY(${vrow.start - virtualizer.options.scrollMargin}px)`,
@@ -135,12 +143,11 @@ export function ArtifactGrid({
           >
             {rowItems.map((a) =>
               list ? (
-                <ArtifactRow
+                <ArtifactListRow
                   key={a.short_id}
                   artifact={a}
                   onOpen={() => onOpen(a)}
                   onToggleFavorite={() => onToggleFavorite(a)}
-                  onPickAuthor={onPickAuthor}
                   onAddToCollection={() => onAddToCollection(a)}
                   onDelete={() => onDelete(a)}
                   onPrefetch={() => onPrefetch(a)}
@@ -167,5 +174,16 @@ export function ArtifactGrid({
         )
       })}
     </div>
+  )
+
+  // In list mode the rows are one object: a single card with a sortable header and
+  // hairlines between rows, rather than a stack of individually-bordered cards.
+  return list && sort && onSort ? (
+    <ListShell>
+      <ListHeader sort={sort} onSort={onSort} />
+      {body}
+    </ListShell>
+  ) : (
+    body
   )
 }

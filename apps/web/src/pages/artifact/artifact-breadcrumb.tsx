@@ -123,7 +123,7 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
         to="/"
         search={{ collection: contextId }}
         data-testid="breadcrumb-collection"
-        className={crumbClass()}
+        className={cn("text-sm", crumbClass())}
         title={`Open ${collectionTitle}`}
       >
         {collectionTitle}
@@ -139,7 +139,7 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
             data-testid="breadcrumb-folder"
             // The MIDDLE crumb yields first under width pressure so the document title —
             // the leaf, the <h1> — keeps priority.
-            className={crumbClass(true)}
+            className={cn("text-sm", crumbClass(true))}
             title={`Open folder ${folderName}`}
           >
             {folderName}

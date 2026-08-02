@@ -1,3 +1,4 @@
+import type { SortMode } from "@derive/core"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { FolderTree, List } from "lucide-react"
@@ -34,10 +35,11 @@ import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactGrid } from "./artifact-grid"
-import { ArtifactRow, byRecency } from "./artifact-row"
+import { ArtifactListRow, ListShell } from "./artifact-list"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
+import { CollectionsList } from "./collections-list"
 import { CollectionsView } from "./collections-view"
 import { ConnectNudge, useConnectNudge } from "./connect-nudge"
 import { DisplayMenu } from "./display-menu"
@@ -49,6 +51,7 @@ import { LibrarySkeleton } from "./library-skeleton"
 import { NewArtifactButton } from "./new-artifact-button"
 import { libraryFeedParams } from "./params"
 import { LibraryCollectionsDialog } from "./quick-organize"
+import { byRecency } from "./recency"
 import { RepoPullRequests } from "./repo-pull-requests"
 import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
@@ -221,6 +224,14 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // Opening an artifact from a collection carries that collection as list context, so
   // the artifact header can page between its siblings (the sibling switcher). Other
   // feeds pass nothing — a direct/feed open has no single collection to page within.
+  // Sort has two controls now — the Display menu and the list's column headers — so the
+  // write lives in one place rather than being spelled out at each.
+  const setSort = (mode: SortMode) =>
+    nav({
+      to: ".",
+      search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
+      replace: true,
+    })
   const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
   const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
   // A manual collection that HAS folders defaults to the grouped folder view; the
@@ -529,21 +540,18 @@ function LibraryBody({ view }: { view: LibraryView }) {
         ) : (
           showPublish && <NewArtifactButton />
         )}
-        {/* Absent in the Collections view: shelves have one presentation and one order
-            — the ones you're working in first — and that ordering is the view's whole
-            argument, not a preference. */}
-        {!showCollections && (
+        {showCollections ? (
+          // Layout only. Shelves answer "which collection" and the grouped list answers
+          // "what's in my workspace and how is it filed" — two questions, so the toggle
+          // earns its place (unlike the shelf-vs-worse-shelf pair cut earlier). Sort
+          // lives on the list's own column headers.
+          <DisplayMenu layout={layout} onLayout={setLayout} />
+        ) : (
           <DisplayMenu
             layout={layout}
             onLayout={setLayout}
             sort={search.sort ?? DEFAULT_SORT}
-            onSort={(mode) =>
-              nav({
-                to: ".",
-                search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
-                replace: true,
-              })
-            }
+            onSort={setSort}
             // The grouping knob lives here too, but only where grouping is possible.
             group={
               isManualCollection && folders.length > 0
@@ -569,13 +577,28 @@ function LibraryBody({ view }: { view: LibraryView }) {
       {homeView && connectNudge.stage === null && <BrandprintNudge />}
 
       {showCollections ? (
-        <CollectionsView
-          collections={visibleCollections}
-          onStar={(id, next) => starCol.mutate({ id, on: next })}
-          onCreate={(title) => createCol.mutate(title)}
-          draft={newCollection}
-          setDraft={setNewCollection}
-        />
+        layout === "list" ? (
+          <CollectionsList
+            collections={visibleCollections}
+            items={items}
+            sort={search.sort ?? DEFAULT_SORT}
+            onSort={setSort}
+            onStar={(id, next) => starCol.mutate({ id, on: next })}
+            onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
+            onToggleFavorite={toggleFavorite}
+            onAddToCollection={setPendingCollections}
+            onDelete={setPendingDelete}
+            onPrefetch={(a) => prefetch(a.short_id)}
+          />
+        ) : (
+          <CollectionsView
+            collections={visibleCollections}
+            onStar={(id, next) => starCol.mutate({ id, on: next })}
+            onCreate={(title) => createCol.mutate(title)}
+            draft={newCollection}
+            setDraft={setNewCollection}
+          />
+        )
       ) : filter.kind === "collection" ? (
         <>
           <CollectionBar
@@ -671,6 +694,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
               <>
                 <ArtifactGrid
                   layout={layout}
+                  sort={search.sort ?? DEFAULT_SORT}
+                  onSort={setSort}
                   onPickAuthor={pickAuthor}
                   items={items}
                   scrollRef={scrollRef}
@@ -702,6 +727,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
               )}
               <ArtifactGrid
                 layout={layout}
+                sort={search.sort ?? DEFAULT_SORT}
+                onSort={setSort}
                 onPickAuthor={pickAuthor}
                 items={items}
                 scrollRef={scrollRef}
@@ -838,28 +865,29 @@ function SyncedCollection({
           selection={selection}
         />
       ) : (
-        <div className="flex flex-col gap-2" data-testid="library-flat-list">
-          {items.map((a) => (
-            <ArtifactRow
-              key={a.short_id}
-              artifact={a}
-              onOpen={() => onOpen(a)}
-              onToggleFavorite={() => onToggleFavorite(a)}
-              onPickAuthor={onPickAuthor}
-              onAddToCollection={() => onAddToCollection(a)}
-              onDelete={() => onDelete(a)}
-              onPrefetch={() => onPrefetch(a)}
-              selected={selection?.selected.has(a.short_id)}
-              selectionActive={selection?.active}
-              onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
-            />
-          ))}
+        <ListShell>
+          <div data-testid="library-flat-list">
+            {items.map((a) => (
+              <ArtifactListRow
+                key={a.short_id}
+                artifact={a}
+                onOpen={() => onOpen(a)}
+                onToggleFavorite={() => onToggleFavorite(a)}
+                onAddToCollection={() => onAddToCollection(a)}
+                onDelete={() => onDelete(a)}
+                onPrefetch={() => onPrefetch(a)}
+                selected={selection?.selected.has(a.short_id)}
+                selectionActive={selection?.active}
+                onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
+              />
+            ))}
+          </div>
           {(hasNextPage || isFetchingNextPage) && (
             <div className="flex justify-center py-2">
               <Spinner />
             </div>
           )}
-        </div>
+        </ListShell>
       )}
     </div>
   )

@@ -3,9 +3,9 @@ import { useEffect, useState } from "react"
 import { Icon } from "@/components/icons"
 import { Breadcrumb, CrumbSep, crumbClass } from "@/components/shared/breadcrumb"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
 // The bar shown when viewing a collection: where you are, and the owner actions
 // (share / rename / delete). Share is the headline — it grants the role on every
@@ -59,7 +59,12 @@ export function CollectionBar({
                 search={a.collection ? { collection: a.collection } : {}}
                 data-testid={`crumb-${i}`}
                 title={`Back to ${a.label}`}
-                className={crumbClass(ancestors.length > 1 && i < ancestors.length - 1)}
+                // One step below the leaf, not three. 14px muted next to a 20px black
+                // serif read as two components colliding, not as a trail.
+                className={cn(
+                  "text-base",
+                  crumbClass(ancestors.length > 1 && i < ancestors.length - 1),
+                )}
               >
                 {a.label}
               </Link>
@@ -84,8 +89,16 @@ export function CollectionBar({
       ) : (
         // The collection's name is the user's content, not tool chrome — voice
         // register; the count rides along in the machine register.
-        <h2 className="font-serif text-xl font-medium tracking-tight text-foreground">
-          {title} <Count className="font-normal tracking-normal">{count}</Count>
+        // The leaf: one step up from the crumb, and the weight and face do the rest.
+        // The count sits in the same register as the crumb rather than dropping to 10px
+        // with a middot in front of it, which read as debris trailing the title.
+        <h2 className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate font-serif text-lg font-semibold tracking-tight text-foreground">
+            {title}
+          </span>
+          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+            {count}
+          </span>
         </h2>
       )}
       <span className="flex-1" />
