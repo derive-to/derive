@@ -603,30 +603,6 @@ export function NavRail() {
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {/* CHAT LEADS THE TIER, directly under the search field, because ask and find are
-                  the same gesture aimed at the same workspace — and it opens the palette's answer
-                  view rather than navigating, so the page you are on stays exactly as it is
-                  (openAssistant handles the phone, where a conversation does not fit in a modal,
-                  by going to /chat). Hidden only once settings have actually said chat is off;
-                  chat defaults on, so an unresolved read must not blink the row out and back. */}
-              {chatOn && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={onChat}
-                    tooltip="Chat"
-                    aria-label="Chat"
-                    data-testid="nav-chat"
-                    onClick={() => {
-                      closeMobile()
-                      openAssistant()
-                    }}
-                    className={ROW_ICON}
-                  >
-                    <Icon name="sparkles" />
-                    <span>Chat</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
               <FilterItem
                 icon="all"
                 label="All artifacts"
@@ -659,6 +635,30 @@ export function NavRail() {
                 active={onContexts}
                 testId="nav-contexts"
               />
+              {/* CHAT CLOSES THE TIER. It is the one row here that does not go anywhere — it
+                  opens the palette's answer view over the page you are on (openAssistant sends a
+                  phone to /chat instead, where a conversation does not fit in a modal) — so it
+                  sits after the feeds rather than above them, where it would push the library
+                  itself down a line. Hidden only once settings have actually said chat is off;
+                  chat defaults on, so an unresolved read must not blink the row out and back. */}
+              {chatOn && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={onChat}
+                    tooltip="Chat"
+                    aria-label="Chat"
+                    data-testid="nav-chat"
+                    onClick={() => {
+                      closeMobile()
+                      openAssistant()
+                    }}
+                    className={ROW_ICON}
+                  >
+                    <Icon name="sparkles" />
+                    <span>Chat</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
