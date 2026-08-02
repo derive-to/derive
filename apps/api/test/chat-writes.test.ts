@@ -71,7 +71,7 @@ describe("the chat write posture", () => {
 
 describe("which tools each chat surface holds", () => {
   it("the workspace chat can write; the document rail cannot", () => {
-    expect([...CHAT_TOOLS].sort()).toEqual(["find", "publish", "read", "use"])
+    expect([...CHAT_TOOLS].sort()).toEqual(["call", "find", "publish", "read", "use"])
     // The rail keeps ONE writer — its own revision contract + landing port. A publish tool
     // beside that would be a second write path for the same document, deciding differently.
     expect([...RAIL_CHAT_TOOLS].sort()).toEqual(["find", "read"])

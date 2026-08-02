@@ -625,6 +625,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
             whiteLabel: z.boolean(),
             hostedAgentsEnabled: z.boolean(),
             chatBeta: z.boolean(),
+            // Connection ids chat may reach. Admin-set, empty by default — see OrgSettings.
+            chatSources: z.array(z.string()),
             automateBeta: z.boolean(),
             agentKillswitch: z.boolean(),
             agentAutoEnabled: z.boolean(),

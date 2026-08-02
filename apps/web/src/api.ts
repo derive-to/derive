@@ -480,6 +480,10 @@ export interface Connection {
   user_id: string
   broker: string
   toolkit: string
+  /** WHOSE credential this is: `workspace` belongs to the team, `personal` to one member.
+   *  It decides who a source reaches once it is exposed to chat — a personal one answers for
+   *  its owner and nobody else, so exposing it never lends somebody's account to the team. */
+  scope?: "personal" | "workspace"
   /** How it authenticates. `mcp` is a Model Context Protocol server connected by URL — it needs
    *  no vendor account and no broker plan, which is why it is the one kind you can add here. */
   kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp"

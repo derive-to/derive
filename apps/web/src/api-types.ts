@@ -6150,6 +6150,8 @@ export interface components {
             hostedAgentsEnabled: boolean;
             /** @description The Chat tab on a document, and the workspace chat. ON by default; set it false to turn chat off for a workspace entirely (the tab hides and the chat routes refuse). */
             chatBeta: boolean;
+            /** @description Connection ids the workspace's CHAT may reach through the call tool. Empty means none — connecting a server does not by itself let a conversation use it. Unattended runs are unaffected: they declare their own connections per run. */
+            chatSources: string[];
             /** @description BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately. */
             automateBeta: boolean;
             /** @description When true, every hosted agent write demotes to a proposal, instantly. */

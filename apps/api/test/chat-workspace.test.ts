@@ -122,7 +122,7 @@ describe("the workspace chat", () => {
     // The REAL tool ran against the REAL store and the model saw the artifact.
     expect(msgs.at(-1)?.body_md).toBe("You have a Q3 Roadmap.")
     // The model was offered exactly the chat subset — not the whole MCP surface.
-    expect(seen[0]?.tools.sort()).toEqual(["find", "publish", "read", "use"])
+    expect(seen[0]?.tools.sort()).toEqual(["call", "find", "publish", "read", "use"])
   })
 
   it("records which model answered, and a follow-up can switch models mid-conversation", async () => {

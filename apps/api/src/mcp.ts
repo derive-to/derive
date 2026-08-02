@@ -74,6 +74,7 @@ import { resolveActorBrandprint } from "./lib/brandprint"
 import type { Sandbox } from "./lib/code-sandbox"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
 import { registerAutomateTool } from "./mcp-tools/automate"
+import { registerCallTool } from "./mcp-tools/call"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
 import { registerCodeTool } from "./mcp-tools/code"
@@ -457,6 +458,12 @@ export function registerToolSurface(
   if (wanted("checkpoint")) registerCheckpointTool(tc)
   if (wanted("use")) registerUseTool(tc)
   if (wanted("automate")) registerAutomateTool(tc)
+  // OPT-IN, not `wanted`. `wanted` is true whenever `only` is absent, which is exactly how an
+  // external MCP client is registered — so the ordinary form would hand `call` to every client
+  // holding a grant. What it reaches is the WORKSPACE's connected credentials, and an external
+  // client already has its own; that is a wider blast radius for no gain. Chat passes an
+  // explicit set, so it opts in by naming the tool, and any future surface must do so too.
+  if (only?.has("call")) registerCallTool(tc)
   // LAST, so the registry it reads is complete. Registers only when an isolate exists: the Node
   // entry injects a worker-thread sandbox, and the Cloudflare entry injects nothing until the
   // Worker Loader is out of beta — so the tool is absent there rather than present and broken.
