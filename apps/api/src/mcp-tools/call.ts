@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { brokerFor, callTool } from "../lib/broker"
-import { boundSources, sourceTools } from "../lib/chat-sources"
+import { sourceTools } from "../lib/chat-sources"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
 
@@ -59,9 +59,14 @@ export function registerCallTool(tc: ToolContext): void {
 
       // Authorization and the tool list are ONE lookup: an undeclared source yields no tools,
       // so there is no ordering in which a check could be skipped and a call still succeed.
-      const allowed = await sourceTools(ctx.meta, ws.org, owner, ctx.deps.encryptionKey, a.source)
+      const { tools: allowed, bound } = await sourceTools(
+        ctx.meta,
+        ws.org,
+        owner,
+        ctx.deps.encryptionKey,
+        a.source,
+      )
       if (allowed.length === 0) {
-        const bound = await boundSources(ctx.meta, ws.org, owner)
         return err(
           bound.length === 0
             ? "No connected sources are available to chat in this workspace. An admin declares them in settings; connecting a server does not by itself expose it here."

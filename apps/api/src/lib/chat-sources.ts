@@ -41,17 +41,26 @@ export const boundSources = async (
   )
 }
 
-/** The tools one declared connection offers. Empty for anything not declared — the refusal is
- *  here rather than at the call site, so a new caller cannot forget it. */
+/**
+ * The tools one declared connection offers, and what else was reachable.
+ *
+ * Returns BOTH because every caller needs both: the tools on the happy path, and the reachable
+ * set to say what they could have asked for instead. Resolving them separately meant reading
+ * settings and listing connections twice to build one error message.
+ *
+ * `tools` is empty for anything not declared — the refusal lives here rather than at the call
+ * site, so a new caller cannot forget it.
+ */
 export const sourceTools = async (
   meta: MetaStore,
   orgId: string,
   ownerUserId: string | null,
   encryptionKey: string | undefined,
   connectionId: string,
-): Promise<RunTool[]> => {
+): Promise<{ tools: RunTool[]; bound: Awaited<ReturnType<typeof boundSources>> }> => {
   const bound = await boundSources(meta, orgId, ownerUserId)
-  if (!bound.some((s) => s.id === connectionId)) return []
+  if (!bound.some((s) => s.id === connectionId)) return { tools: [], bound }
   const broker = await brokerFor(meta, orgId, ownerUserId, encryptionKey)
-  return await toolsForRun(meta, broker, orgId, [connectionId], undefined, encryptionKey)
+  const tools = await toolsForRun(meta, broker, orgId, [connectionId], undefined, encryptionKey)
+  return { tools, bound }
 }

@@ -257,7 +257,7 @@ export function registerReadTool(tc: ToolContext): void {
             note: "Read one to see its tools, then invoke with the call tool.",
           })
         }
-        const tools = await sourceTools(
+        const { tools } = await sourceTools(
           ctx.meta,
           ws.org,
           actingFor?.id ?? ownerId,
