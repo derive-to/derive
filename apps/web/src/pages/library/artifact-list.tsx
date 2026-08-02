@@ -43,13 +43,51 @@ const COL = {
   when: "w-[88px] shrink-0 text-right",
 }
 
-/** Which header cells sort. Clicking the active one reverses it, the way every file
- *  browser behaves; the pair is the mode and its opposite. */
-const SORTS: { key: "name" | "when"; label: string; desc: SortMode; asc: SortMode; col: string }[] =
-  [
-    { key: "name", label: "Name", desc: "az", asc: "za", col: COL.name },
-    { key: "when", label: "Updated", desc: "updated", asc: "updated-asc", col: COL.when },
-  ]
+/** A sortable header cell: click to sort, click again to reverse — the way every file
+ *  browser behaves. The pair is the mode and its opposite. */
+function SortHeader({
+  label,
+  desc,
+  asc,
+  sort,
+  onSort,
+  alignEnd = false,
+  testId,
+}: {
+  label: string
+  desc: SortMode
+  asc: SortMode
+  sort: SortMode
+  onSort: (m: SortMode) => void
+  alignEnd?: boolean
+  testId: string
+}) {
+  const active = sort === desc || sort === asc
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-pressed={active}
+      title={`Sort by ${label.toLowerCase()}`}
+      onClick={() => onSort(sort === desc ? asc : desc)}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-sm uppercase outline-none transition-colors duration-state hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        alignEnd && "flex-row-reverse",
+        active && "text-foreground",
+      )}
+    >
+      {label}
+      {active && (
+        <Icon
+          name="caret"
+          size={11}
+          aria-hidden
+          className={cn("transition-transform duration-state", sort === asc && "rotate-180")}
+        />
+      )}
+    </button>
+  )
+}
 
 /**
  * The list's one card. Rows live inside it separated by hairlines; nothing is bordered
@@ -68,47 +106,36 @@ export function ListShell({ children }: { children: ReactNode }) {
 
 // The header is not decoration: it is where sort lives. It used to be two clicks into a
 // Display menu that also held layout and grouping; clicking a column is the gesture every
-// file browser has already taught everyone.
+// file browser has already taught everyone. Cells render in VISUAL order — an `order-last`
+// hack here made copied text and screen-reader order disagree with what the eye saw.
 export function ListHeader({ sort, onSort }: { sort: SortMode; onSort: (m: SortMode) => void }) {
   return (
     <div className="flex h-7 items-center border-b border-border bg-secondary/40 pr-3 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
       <span className={COL.gutter} />
       <span className={COL.select} />
-      {SORTS.map(({ key, label, desc, asc, col }) => {
-        const active = sort === desc || sort === asc
-        const next = sort === desc ? asc : desc
-        return (
-          <span key={key} className={cn(col, key === "when" && "order-last")}>
-            <button
-              type="button"
-              data-testid={`list-sort-${key}`}
-              aria-pressed={active}
-              title={`Sort by ${label.toLowerCase()}`}
-              onClick={() => onSort(next)}
-              className={cn(
-                "inline-flex items-center gap-1 rounded-sm uppercase outline-none transition-colors duration-state hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                key === "when" && "flex-row-reverse",
-                active && "text-foreground",
-              )}
-            >
-              {label}
-              {active && (
-                <Icon
-                  name="caret"
-                  size={11}
-                  aria-hidden
-                  className={cn(
-                    "transition-transform duration-state",
-                    sort === asc && "rotate-180",
-                  )}
-                />
-              )}
-            </button>
-          </span>
-        )
-      })}
+      <span className={COL.name}>
+        <SortHeader
+          label="Name"
+          desc="az"
+          asc="za"
+          sort={sort}
+          onSort={onSort}
+          testId="list-sort-name"
+        />
+      </span>
       <span className={COL.author}>Author</span>
       <span className={COL.state} />
+      <span className={COL.when}>
+        <SortHeader
+          label="Updated"
+          desc="updated"
+          asc="updated-asc"
+          sort={sort}
+          onSort={onSort}
+          alignEnd
+          testId="list-sort-when"
+        />
+      </span>
     </div>
   )
 }

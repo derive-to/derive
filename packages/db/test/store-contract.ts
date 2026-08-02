@@ -4724,6 +4724,18 @@ export function runStoreContract(
         role: "editor",
       })
 
+      // A collection membership, so the collections arm is non-vacuous: the pg fast
+      // path shipped with this arm MISSING while every field-by-field assertion below
+      // passed — an empty map agrees with an empty map. The fixture is the assertion.
+      const shelf = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Page shelf",
+        created_by: me,
+      })
+      await store.addCollectionItem(shelf.id, first.id)
+      await store.addCollectionItem(shelf.id, second.id)
+
       const list = { orgId: org, limit: 10, sort: "created" as const }
       const opts = { list, viewerId: me, memberId: me, views: true }
 
@@ -4742,6 +4754,7 @@ export function runStoreContract(
       expect(fast.artifacts.map((a) => a.id)).toEqual(rows.map((r) => r.id))
       expect(fast.artifacts).toEqual(rows)
       expect(fast.enrichment.tags).toEqual(slow.tags)
+      expect(fast.enrichment.collections).toEqual(slow.collections)
       expect(fast.enrichment.previews).toEqual(slow.previews)
       expect(fast.enrichment.proposals).toEqual(slow.proposals)
       expect(fast.enrichment.views).toEqual(slow.views)
@@ -4753,6 +4766,8 @@ export function runStoreContract(
       expect(fast.enrichment.tags[first.id]).toEqual(["alpha", "zeta"])
       expect(fast.enrichment.favorites).toEqual([second.id])
       expect(fast.enrichment.shareRoles[first.id]).toBe("editor")
+      expect(fast.enrichment.collections[first.id]).toEqual([shelf.id])
+      expect(fast.enrichment.collections[second.id]).toEqual([shelf.id])
     })
 
     it("returns an empty page for an empty id narrowing, like the pair does", async () => {

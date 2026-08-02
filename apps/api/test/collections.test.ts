@@ -308,6 +308,53 @@ describe("collections: starring", () => {
     expect((await rowFor(amy.email, bare.id)).last_activity).toBeUndefined()
   })
 
+  it("list rows carry their collection ids, from the batched read", async () => {
+    // The library's grouped-by-collection view groups on this field, from the LIST
+    // response — not the detail. It shipped broken once: the field was populated by
+    // `listEnrichment` but the Postgres fast path (`listPage`) builds its decoration
+    // inside one statement, and the arm was missing there — so every artifact grouped
+    // as unfiled in production while every SQLite test passed. This test runs under
+    // test:pg too, which is the whole point of it.
+    const col = await mk("Filed")
+    const up = await authed.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(amy.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new File(["# filed"], "filed.md", { type: "text/markdown" }))
+        f.set("title", "Filed doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await up.json()) as { short_id: string }
+    await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+
+    // A second artifact, deliberately unfiled.
+    const up2 = await authed.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(amy.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new File(["# loose"], "loose.md", { type: "text/markdown" }))
+        f.set("title", "Unfiled doc")
+        return f
+      })(),
+    })
+    const { short_id: looseId } = (await up2.json()) as { short_id: string }
+
+    const list = await (
+      await authed.request("/v1/artifacts?limit=30", { headers: as(amy.email) })
+    ).json()
+    const byId = (id: string) => list.artifacts.find((a: { short_id: string }) => a.short_id === id)
+    expect(byId(short_id), "the filed artifact is on the list").toBeTruthy()
+    expect(byId(short_id).collections).toEqual([col.id])
+    // An unfiled row says so with an empty array, not an absent field.
+    expect(byId(looseId).collections).toEqual([])
+  })
+
   it("is per person, and gated on read rather than share", async () => {
     // Starring is a note to yourself about where you work — it grants nothing — so any
     // member who can open the collection can star it, and it stays theirs alone.

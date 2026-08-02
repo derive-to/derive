@@ -1522,6 +1522,8 @@ export class PgMetaStore implements MetaStore {
       // artifact record shape the read-by-read path returns.
       sql`select 'row' as kind, jsonb_build_array(to_jsonb(p) - '__rn', p.__rn::text) as doc from page p`,
       sql`select 'tag', jsonb_build_array(t.artifact_id, t.tag) from artifact_tag t join page p on p.id = t.artifact_id`,
+      sql`select 'collection', jsonb_build_array(ci.artifact_id, ci.collection_id) from collection_item ci
+            join page p on p.id = ci.artifact_id`,
       sql`select 'preview', jsonb_build_array(p.id) from page p
             join version v on v.artifact_id = p.id and v.n = p.current_version
            where v.preview_status = 'ready'`,
@@ -1585,6 +1587,7 @@ export class PgMetaStore implements MetaStore {
     const out: ListEnrichment = {
       ...empty,
       tags: {},
+      collections: {},
       views: {},
       previews: {},
       proposals: {},
@@ -1608,6 +1611,12 @@ export class PgMetaStore implements MetaStore {
           const list = out.tags[d[0] as string] ?? []
           list.push(d[1] as string)
           out.tags[d[0] as string] = list
+          break
+        }
+        case "collection": {
+          const list = out.collections[d[0] as string] ?? []
+          list.push(d[1] as string)
+          out.collections[d[0] as string] = list
           break
         }
         case "preview":
