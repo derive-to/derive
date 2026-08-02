@@ -23,12 +23,6 @@ const CommandPalette = lazy(() =>
   import("./command-palette").then((m) => ({ default: m.CommandPalette })),
 )
 
-// The assistant dock pulls in the chat components and their markdown renderer, which most
-// routes never need. Same treatment as the palette: fetched the first time it opens.
-const AssistantPanel = lazy(() =>
-  import("./assistant-panel").then((m) => ({ default: m.AssistantPanel })),
-)
-
 const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
 
 // The persistent app frame — sidebar-first, one spatial model: the rail is the
@@ -71,14 +65,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Immersive (the artifact's focus mode): the rail + mobile top bar unmount and
   // the inset mat drops (see ShellValue.immersive). Ephemeral — never persisted.
   const [immersive, setImmersive] = useState(false)
-  // The assistant dock. DELIBERATELY NOT PERSISTED, unlike the rail's collapse: the rail is a
-  // standing preference about your chrome, while the dock is the answer to something you just
-  // did. Persisting it meant opening the library and being met by a third of the screen given to
-  // a conversation you had yesterday — chrome you have to close before you can get to work. It
-  // opens when you ask, follows you across navigation while the conversation is live, and a fresh
-  // load starts clean. The way back in is always one gesture away (the rail row, ⌘K, Ask).
-  const [assistantOpen, setAssistantOpen] = useState(false)
-  const [assistantAsk, setAssistantAsk] = useState<string | null>(null)
+  // A question handed to the palette by another surface (the rail row, a page's Ask button).
+  // Transient by design: it is consumed on open, so reopening the palette later starts clean.
+  const [pendingAsk, setPendingAsk] = useState<string | null>(null)
   const navigate = useNavigate()
   const qc = useQueryClient()
   // Workspaces power the switcher's no-op check below; the rail + command palette
@@ -189,20 +178,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   // back gesture works and there is no bespoke sheet to dismiss. Keeping the branch here is what
   // lets every call site stay one line.
   const openAssistant = (text?: string) => {
-    const question = text?.trim() || undefined
+    const question = text?.trim() ?? ""
     if (isMobile) {
       void navigate({
         to: "/chat",
-        search: { ask: question, session: undefined, model: undefined },
+        search: { ask: question || undefined, session: undefined, model: undefined },
       })
       return
     }
-    setAssistantAsk(question ?? null)
-    setAssistantOpen(true)
-  }
-  const closeAssistant = () => {
-    setAssistantOpen(false)
-    setAssistantAsk(null)
+    setPendingAsk(question)
+    setPaletteOpen(true)
   }
 
   // A plain value object — the React Compiler keeps it reference-stable across
@@ -213,9 +198,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     setPaletteOpen,
     immersive,
     setImmersive,
-    assistantOpen,
     openAssistant,
-    closeAssistant,
+    pendingAsk,
+    clearPendingAsk: () => setPendingAsk(null),
     switchWorkspace,
     createWorkspace,
     deleteWorkspace,
@@ -292,14 +277,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
             {children}
           </SidebarInset>
-          {/* The assistant dock, peer to the content card rather than floating over it — one
-              shell holding two cards. Never below `sm` (openAssistant navigates there instead)
-              and never in immersive mode, where the page has claimed every pixel. */}
-          {assistantOpen && !isMobile && !immersive && (
-            <Suspense fallback={null}>
-              <AssistantPanel ask={assistantAsk} onAskConsumed={() => setAssistantAsk(null)} />
-            </Suspense>
-          )}
         </SidebarProvider>
       </TooltipProvider>
       {paletteOpen && (

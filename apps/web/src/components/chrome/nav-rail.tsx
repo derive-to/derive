@@ -351,7 +351,7 @@ export function RailSkeleton() {
 // calm tiers top to bottom: brand + search → primary nav → your library
 // (collections) → tools → account — separated by whitespace, not dividers.
 export function NavRail() {
-  const { switchWorkspace, assistantOpen, openAssistant } = useShell()
+  const { switchWorkspace, openAssistant } = useShell()
   const { me, loading } = useAuth()
   const qc = useQueryClient()
   // Nav data read straight from react-query (deduped with the loaders that warm
@@ -604,18 +604,17 @@ export function NavRail() {
           <SidebarGroupContent>
             <SidebarMenu>
               {/* CHAT LEADS THE TIER, directly under the search field, because ask and find are
-                  the same gesture aimed at the same workspace — and it is the one row that does
-                  not navigate: it opens the dock beside whatever you are already looking at
-                  (openAssistant handles the phone, where there is no dock, by going to /chat).
-                  Hidden only once settings have actually said chat is off; chat defaults on, so
-                  an unresolved read must not blink the row out and back. */}
+                  the same gesture aimed at the same workspace — and it opens the palette's answer
+                  view rather than navigating, so the page you are on stays exactly as it is
+                  (openAssistant handles the phone, where a conversation does not fit in a modal,
+                  by going to /chat). Hidden only once settings have actually said chat is off;
+                  chat defaults on, so an unresolved read must not blink the row out and back. */}
               {chatOn && (
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    isActive={assistantOpen || onChat}
+                    isActive={onChat}
                     tooltip="Chat"
                     aria-label="Chat"
-                    aria-expanded={assistantOpen}
                     data-testid="nav-chat"
                     onClick={() => {
                       closeMobile()

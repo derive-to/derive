@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { type Artifact, api, type PublicProfile, type SearchHit, workspaceDisplayName } from "@/api"
 import { Icon } from "@/components/icons"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -25,9 +25,11 @@ import {
   workspacesQuery,
 } from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
+import { useIsMobile } from "@/lib/use-is-mobile"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
 import { refFor } from "@/pages/artifact/parse-ref"
+import { PaletteAsk } from "./palette-ask"
 import { useShell } from "./shell-context"
 
 // The content group's data, carried together so the snippet is always highlighted
@@ -70,7 +72,18 @@ function highlight(text: string, query: string): React.ReactNode[] {
 // The one exception is the case where Enter is FREE: nothing matched, so there is no document to
 // open, and asking becomes the only sensible thing Enter could do. Then it IS the row.
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen, switchWorkspace, openAssistant } = useShell()
+  const {
+    paletteOpen,
+    setPaletteOpen,
+    switchWorkspace,
+    openAssistant,
+    pendingAsk,
+    clearPendingAsk,
+  } = useShell()
+  const isMobile = useIsMobile()
+  // The question this palette is answering, or null while it is searching. Not a boolean: the
+  // text IS the mode, so there is no way to be in the answer view with nothing to answer.
+  const [asking, setAsking] = useState<string | null>(null)
   // Read straight from cache (the rail already warmed these); the palette is
   // signed-in-only, so no `enabled` gate is needed.
   const { data: collections = [] } = useQuery(collectionsQuery())
@@ -90,16 +103,36 @@ export function CommandPalette() {
   const [peopleLoading, setPeopleLoading] = useState(false)
 
   const qc = useQueryClient()
-  // Fresh query each open — seeded from the cache, not empty: the library's cached
-  // rows ARE the recent list, so the palette opens showing real artifacts instead of
-  // a skeleton it replaces a round trip later.
+  // A question handed over by another surface, read through a ref so the effect below can key on
+  // the OPEN alone. Both are set in the same batch (openAssistant), so by the time that effect
+  // runs this already holds the question.
+  const handed = useRef(pendingAsk)
+  handed.current = pendingAsk
+  // The CLEAR goes through a ref for the same reason, and it is not a nicety: it is a fresh
+  // function on every render, so as a dependency it re-fired the effect below — which, by then,
+  // read a consumed (null) question and dropped the answer view straight back to a search box.
+  const clear = useRef(clearPendingAsk)
+  clear.current = clearPendingAsk
+
+  // ONE EFFECT OWNS WHAT AN OPEN PALETTE LOOKS LIKE, and that is not tidiness: it was two, and
+  // they raced. One consumed the handed-over question into the answer view; the other reset the
+  // palette to a fresh search. Same commit, so the reset won and the rail's Chat row opened a
+  // search box every time.
+  //
+  // The results are seeded from the CACHE rather than empty: the library's cached rows are the
+  // recent list, so the palette opens showing real artifacts instead of a skeleton it replaces a
+  // round trip later.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: opening is the trigger; the handed-over question is read through a ref precisely so it cannot re-fire this and wipe the answer view.
   useEffect(() => {
-    if (paletteOpen) {
-      setQuery("")
-      setResults(fuzzyTitles(cachedArtifactRows(qc), ""))
-      setContent(EMPTY_CONTENT)
-      setPeople([])
-    }
+    if (!paletteOpen) return
+    // null = nobody handed anything over, so this is a search. A string (even an empty one) means
+    // somebody asked for the agent, so open into it.
+    setAsking(handed.current)
+    clear.current()
+    setQuery("")
+    setResults(fuzzyTitles(cachedArtifactRows(qc), ""))
+    setContent(EMPTY_CONTENT)
+    setPeople([])
   }, [paletteOpen, qc])
 
   // Local-first title search: every keystroke ranks the artifacts already in the
@@ -202,14 +235,18 @@ export function CommandPalette() {
     fn()
   }
 
-  // Ask what you just typed. Closing first is deliberate: the answer lands in the dock (or, on a
-  // phone, on /chat), and leaving a modal open over the thing it opened is how two surfaces end
-  // up fighting for the same Escape key.
+  // Ask what you just typed — in place. On a desktop this palette becomes the answer, so nothing
+  // on the page behind it moves; openAssistant is still the one action, and on a phone it takes
+  // the same question to /chat instead (there is no room for a conversation in a modal there).
   const askIt = (text: string) => {
     const body = text.trim()
     if (!body) return
-    setPaletteOpen(false)
-    openAssistant(body)
+    if (isMobile) {
+      setPaletteOpen(false)
+      openAssistant(body)
+      return
+    }
+    setAsking(body)
   }
 
   const q = query.trim().toLowerCase()
@@ -263,263 +300,271 @@ export function CommandPalette() {
       title="Search"
       description="Search artifacts, people, and collections."
     >
-      <Command
-        shouldFilter={false}
-        onKeyDown={(e) => {
-          // ⌘↵ asks from ANYWHERE in the palette, including while a result row is highlighted:
-          // the person has already typed the question, and making them reach for a control to
-          // send it is the friction this shortcut exists to remove.
-          if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canAsk) {
-            e.preventDefault()
-            askIt(query)
-          }
-        }}
-      >
-        <CommandInput
-          value={query}
-          onValueChange={setQuery}
-          placeholder="Search or ask a question…"
-          action={
-            canAsk ? (
-              <button
-                type="button"
-                onClick={() => askIt(query)}
-                data-testid="palette-ask"
-                aria-label={`Ask Derive about ${query.trim()}`}
-                className="flex shrink-0 items-center gap-1.5 rounded-md bg-secondary px-2 py-1 text-xs text-foreground ring-1 ring-border ring-inset transition-colors hover:ring-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                <Icon name="sparkles" size={13} />
-                Ask
-                {/* The hint tracks what the key will ACTUALLY do: with results on screen Enter
+      {asking !== null ? (
+        <PaletteAsk
+          initial={asking}
+          onBack={() => setAsking(null)}
+          onClose={() => setPaletteOpen(false)}
+        />
+      ) : (
+        <Command
+          shouldFilter={false}
+          onKeyDown={(e) => {
+            // ⌘↵ asks from ANYWHERE in the palette, including while a result row is highlighted:
+            // the person has already typed the question, and making them reach for a control to
+            // send it is the friction this shortcut exists to remove.
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canAsk) {
+              e.preventDefault()
+              askIt(query)
+            }
+          }}
+        >
+          <CommandInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search or ask a question…"
+            action={
+              canAsk ? (
+                <button
+                  type="button"
+                  onClick={() => askIt(query)}
+                  data-testid="palette-ask"
+                  aria-label={`Ask Derive about ${query.trim()}`}
+                  className="flex shrink-0 items-center gap-1.5 rounded-md bg-secondary px-2 py-1 text-xs text-foreground ring-1 ring-border ring-inset transition-colors hover:ring-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <Icon name="sparkles" size={13} />
+                  Ask
+                  {/* The hint tracks what the key will ACTUALLY do: with results on screen Enter
                     belongs to the highlighted row, so asking is ⌘↵; with none it is Enter
                     itself. Two labels for one control would be worse than the truth. */}
-                <Kbd className="text-2xs">{nothingMatched ? "↵" : "⌘↵"}</Kbd>
-              </button>
-            ) : null
-          }
-        />
-        <CommandList>
-          <CommandEmpty>
-            {loading || contentLoading || peopleLoading ? "Searching…" : "No results."}
-          </CommandEmpty>
+                  <Kbd className="text-2xs">{nothingMatched ? "↵" : "⌘↵"}</Kbd>
+                </button>
+              ) : null
+            }
+          />
+          <CommandList>
+            <CommandEmpty>
+              {loading || contentLoading || peopleLoading ? "Searching…" : "No results."}
+            </CommandEmpty>
 
-          {/* NOTHING MATCHED, so Enter has nothing to open. A question rarely matches a title
+            {/* NOTHING MATCHED, so Enter has nothing to open. A question rarely matches a title
               literally, which makes this the moment asking is the better answer — and as the
               only row, it is the highlighted one, so Enter reaches it with no special rule. */}
-          {nothingMatched && (
-            <CommandGroup>
-              <CommandItem
-                value="ask-derive"
-                data-testid="palette-ask-row"
-                onSelect={() => askIt(query)}
-              >
-                <Icon name="sparkles" size={16} />
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate">Ask Derive about this</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    No artifact matches those words
-                  </span>
-                </div>
-              </CommandItem>
-            </CommandGroup>
-          )}
-
-          {(showAll || showFav || showFollowing || showConnect) && (
-            <CommandGroup heading="Jump to">
-              {showAll && (
+            {nothingMatched && (
+              <CommandGroup>
                 <CommandItem
-                  value="jump-all"
-                  onSelect={() => go(() => nav({ to: "/", search: {} }))}
+                  value="ask-derive"
+                  data-testid="palette-ask-row"
+                  onSelect={() => askIt(query)}
                 >
-                  <Icon name="all" size={16} /> All artifacts
-                </CommandItem>
-              )}
-              {showFav && (
-                <CommandItem
-                  value="jump-favorites"
-                  onSelect={() => go(() => nav({ to: "/favorites" }))}
-                >
-                  <Icon name="favorites" size={16} /> Favorites
-                </CommandItem>
-              )}
-              {showFollowing && (
-                <CommandItem
-                  value="jump-following"
-                  onSelect={() => go(() => nav({ to: "/following" }))}
-                >
-                  <Icon name="following" size={16} /> Following
-                </CommandItem>
-              )}
-              {showConnect && (
-                <CommandItem
-                  value="connect-an-agent"
-                  data-testid="palette-connect-agent"
-                  onSelect={() => go(() => nav({ to: "/welcome" }))}
-                >
-                  <Icon name="context" size={16} /> Connect an agent
-                </CommandItem>
-              )}
-            </CommandGroup>
-          )}
-
-          {results.length > 0 && (
-            // Dim while a new search is in flight — the prior matches are stale, not the answer.
-            // One flat list, no heading: "Artifacts" over documents and "In content" over more
-            // documents was a label telling the reader which INDEX matched, which is our
-            // plumbing, not their question. What tells them apart is the second line — a
-            // version, or the sentence the match sits in.
-            <CommandGroup className={cn(loading && "opacity-60 transition-opacity")}>
-              {results.map((a) => (
-                <CommandItem
-                  key={a.short_id}
-                  value={`artifact-${a.short_id}`}
-                  onSelect={() =>
-                    go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } }))
-                  }
-                  onMouseEnter={() => prefetch(a.short_id)}
-                  onFocus={() => prefetch(a.short_id)}
-                >
-                  <Icon name="all" size={16} className="text-muted-foreground" />
-                  <span className="flex-1 truncate">{a.title ?? a.short_id}</span>
-                  <span className="font-mono text-2xs text-muted-foreground tabular-nums">
-                    v{a.current_version}
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
-
-          {contentOnly.length > 0 && (
-            <CommandGroup className={cn(contentLoading && "opacity-60 transition-opacity")}>
-              {contentOnly.map((h) => (
-                <CommandItem
-                  key={`content-${h.short_id}`}
-                  value={`content-${h.short_id}`}
-                  onSelect={() =>
-                    go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(h) } }))
-                  }
-                  onMouseEnter={() => prefetch(h.short_id)}
-                  onFocus={() => prefetch(h.short_id)}
-                  // Top-align: this is a two-line row (title over snippet), so the icon
-                  // sits with the title, not centered against the whole block. Keeping the
-                  // item flex-ROW (a flex-col child holds the two lines) leaves cmdk's
-                  // trailing check glyph in the row instead of adding a phantom third line.
-                  className="items-start"
-                >
-                  <Icon name="all" size={16} className="mt-0.5 text-muted-foreground" />
+                  <Icon name="sparkles" size={16} />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="truncate">{h.title}</span>
-                    {h.snippet && (
-                      <span className="truncate text-xs text-muted-foreground">
-                        {highlight(h.snippet, content.q)}
-                      </span>
-                    )}
+                    <span className="truncate">Ask Derive about this</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      No artifact matches those words
+                    </span>
                   </div>
                 </CommandItem>
-              ))}
-              {/* Escape the 6-row peek: jump to the full, browsable results page. */}
-              <CommandItem
-                value="see-all-results"
-                data-testid="palette-see-all-results"
-                onSelect={() => go(() => nav({ to: "/search", search: { q: query.trim() } }))}
-                className="text-muted-foreground"
-              >
-                <Icon name="search" size={16} />
-                <span>
-                  {content.truncated ? "See all results (more match)" : "See all results"}
-                </span>
-              </CommandItem>
-            </CommandGroup>
-          )}
+              </CommandGroup>
+            )}
 
-          {people.length > 0 && (
-            <CommandGroup
-              heading="People"
-              className={cn(peopleLoading && "opacity-60 transition-opacity")}
-            >
-              {people.map((u) => (
-                <CommandItem
-                  key={u.username}
-                  value={`person-${u.username}`}
-                  onSelect={() =>
-                    go(() => nav({ to: "/users/$handle", params: { handle: u.username } }))
-                  }
-                >
-                  <Avatar className="size-5">
-                    {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
-                    {/* Identity tint — the house idiom for people (cf. author-chip,
-                        people.tsx); one glyph at this micro scale. */}
-                    <AvatarFallback
-                      className="text-2xs font-medium text-scrim-foreground"
-                      style={{ backgroundColor: colorForName(u.name ?? u.username) }}
-                    >
-                      {getInitials(u.name ?? u.username).charAt(0)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="flex-1 truncate">{u.name ?? u.username}</span>
-                  <span className="font-mono text-2xs text-muted-foreground">@{u.username}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
+            {(showAll || showFav || showFollowing || showConnect) && (
+              <CommandGroup heading="Jump to">
+                {showAll && (
+                  <CommandItem
+                    value="jump-all"
+                    onSelect={() => go(() => nav({ to: "/", search: {} }))}
+                  >
+                    <Icon name="all" size={16} /> All artifacts
+                  </CommandItem>
+                )}
+                {showFav && (
+                  <CommandItem
+                    value="jump-favorites"
+                    onSelect={() => go(() => nav({ to: "/favorites" }))}
+                  >
+                    <Icon name="favorites" size={16} /> Favorites
+                  </CommandItem>
+                )}
+                {showFollowing && (
+                  <CommandItem
+                    value="jump-following"
+                    onSelect={() => go(() => nav({ to: "/following" }))}
+                  >
+                    <Icon name="following" size={16} /> Following
+                  </CommandItem>
+                )}
+                {showConnect && (
+                  <CommandItem
+                    value="connect-an-agent"
+                    data-testid="palette-connect-agent"
+                    onSelect={() => go(() => nav({ to: "/welcome" }))}
+                  >
+                    <Icon name="context" size={16} /> Connect an agent
+                  </CommandItem>
+                )}
+              </CommandGroup>
+            )}
 
-          {matchedCollections.length > 0 && (
-            <CommandGroup heading="Collections">
-              {matchedCollections.map((c) => (
+            {results.length > 0 && (
+              // Dim while a new search is in flight — the prior matches are stale, not the answer.
+              // One flat list, no heading: "Artifacts" over documents and "In content" over more
+              // documents was a label telling the reader which INDEX matched, which is our
+              // plumbing, not their question. What tells them apart is the second line — a
+              // version, or the sentence the match sits in.
+              <CommandGroup className={cn(loading && "opacity-60 transition-opacity")}>
+                {results.map((a) => (
+                  <CommandItem
+                    key={a.short_id}
+                    value={`artifact-${a.short_id}`}
+                    onSelect={() =>
+                      go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } }))
+                    }
+                    onMouseEnter={() => prefetch(a.short_id)}
+                    onFocus={() => prefetch(a.short_id)}
+                  >
+                    <Icon name="all" size={16} className="text-muted-foreground" />
+                    <span className="flex-1 truncate">{a.title ?? a.short_id}</span>
+                    <span className="font-mono text-2xs text-muted-foreground tabular-nums">
+                      v{a.current_version}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {contentOnly.length > 0 && (
+              <CommandGroup className={cn(contentLoading && "opacity-60 transition-opacity")}>
+                {contentOnly.map((h) => (
+                  <CommandItem
+                    key={`content-${h.short_id}`}
+                    value={`content-${h.short_id}`}
+                    onSelect={() =>
+                      go(() => nav({ to: "/artifacts/$ref", params: { ref: refFor(h) } }))
+                    }
+                    onMouseEnter={() => prefetch(h.short_id)}
+                    onFocus={() => prefetch(h.short_id)}
+                    // Top-align: this is a two-line row (title over snippet), so the icon
+                    // sits with the title, not centered against the whole block. Keeping the
+                    // item flex-ROW (a flex-col child holds the two lines) leaves cmdk's
+                    // trailing check glyph in the row instead of adding a phantom third line.
+                    className="items-start"
+                  >
+                    <Icon name="all" size={16} className="mt-0.5 text-muted-foreground" />
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate">{h.title}</span>
+                      {h.snippet && (
+                        <span className="truncate text-xs text-muted-foreground">
+                          {highlight(h.snippet, content.q)}
+                        </span>
+                      )}
+                    </div>
+                  </CommandItem>
+                ))}
+                {/* Escape the 6-row peek: jump to the full, browsable results page. */}
                 <CommandItem
-                  key={c.id}
-                  value={`collection-${c.id}`}
-                  onSelect={() => go(() => nav({ to: "/", search: { collection: c.id } }))}
+                  value="see-all-results"
+                  data-testid="palette-see-all-results"
+                  onSelect={() => go(() => nav({ to: "/search", search: { q: query.trim() } }))}
+                  className="text-muted-foreground"
                 >
-                  <Icon name="collection" size={16} />
-                  <span className="flex-1 truncate">{c.title}</span>
-                  <span className="font-mono text-2xs text-muted-foreground tabular-nums">
-                    {c.count}
+                  <Icon name="search" size={16} />
+                  <span>
+                    {content.truncated ? "See all results (more match)" : "See all results"}
                   </span>
                 </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
+              </CommandGroup>
+            )}
 
-          {otherWorkspaces.length > 0 && (
-            <CommandGroup heading="Switch workspace">
-              {otherWorkspaces.map((w) => (
-                <CommandItem
-                  key={w.id}
-                  value={`workspace-${w.id}`}
-                  onSelect={() => go(() => switchWorkspace(w.id))}
-                >
-                  <Icon name="workspace" size={16} />
-                  <span className="flex-1 truncate">{w.display}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
-        </CommandList>
-        {/* What the two keys do, where a reader looks for it — and it changes with the state, so
+            {people.length > 0 && (
+              <CommandGroup
+                heading="People"
+                className={cn(peopleLoading && "opacity-60 transition-opacity")}
+              >
+                {people.map((u) => (
+                  <CommandItem
+                    key={u.username}
+                    value={`person-${u.username}`}
+                    onSelect={() =>
+                      go(() => nav({ to: "/users/$handle", params: { handle: u.username } }))
+                    }
+                  >
+                    <Avatar className="size-5">
+                      {u.image && <AvatarImage src={u.image} alt={u.name ?? u.username} />}
+                      {/* Identity tint — the house idiom for people (cf. author-chip,
+                        people.tsx); one glyph at this micro scale. */}
+                      <AvatarFallback
+                        className="text-2xs font-medium text-scrim-foreground"
+                        style={{ backgroundColor: colorForName(u.name ?? u.username) }}
+                      >
+                        {getInitials(u.name ?? u.username).charAt(0)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="flex-1 truncate">{u.name ?? u.username}</span>
+                    <span className="font-mono text-2xs text-muted-foreground">@{u.username}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {matchedCollections.length > 0 && (
+              <CommandGroup heading="Collections">
+                {matchedCollections.map((c) => (
+                  <CommandItem
+                    key={c.id}
+                    value={`collection-${c.id}`}
+                    onSelect={() => go(() => nav({ to: "/", search: { collection: c.id } }))}
+                  >
+                    <Icon name="collection" size={16} />
+                    <span className="flex-1 truncate">{c.title}</span>
+                    <span className="font-mono text-2xs text-muted-foreground tabular-nums">
+                      {c.count}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {otherWorkspaces.length > 0 && (
+              <CommandGroup heading="Switch workspace">
+                {otherWorkspaces.map((w) => (
+                  <CommandItem
+                    key={w.id}
+                    value={`workspace-${w.id}`}
+                    onSelect={() => go(() => switchWorkspace(w.id))}
+                  >
+                    <Icon name="workspace" size={16} />
+                    <span className="flex-1 truncate">{w.display}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+          </CommandList>
+          {/* What the two keys do, where a reader looks for it — and it changes with the state, so
             the footer and the Ask button always say the same thing. */}
-        <div className="flex shrink-0 items-center gap-4 border-t px-3 py-2 text-2xs text-muted-foreground">
-          {nothingMatched ? (
-            <span>
-              <Kbd className="mr-1.5 text-2xs">↵</Kbd>ask
-            </span>
-          ) : (
-            <>
+          <div className="flex shrink-0 items-center gap-4 border-t px-3 py-2 text-2xs text-muted-foreground">
+            {nothingMatched ? (
               <span>
-                <Kbd className="mr-1.5 text-2xs">↵</Kbd>open
+                <Kbd className="mr-1.5 text-2xs">↵</Kbd>ask
               </span>
-              {canAsk && (
+            ) : (
+              <>
                 <span>
-                  <Kbd className="mr-1.5 text-2xs">⌘↵</Kbd>ask
+                  <Kbd className="mr-1.5 text-2xs">↵</Kbd>open
                 </span>
-              )}
-            </>
-          )}
-          <span className="ml-auto">
-            <Kbd className="mr-1.5 text-2xs">esc</Kbd>close
-          </span>
-        </div>
-      </Command>
+                {canAsk && (
+                  <span>
+                    <Kbd className="mr-1.5 text-2xs">⌘↵</Kbd>ask
+                  </span>
+                )}
+              </>
+            )}
+            <span className="ml-auto">
+              <Kbd className="mr-1.5 text-2xs">esc</Kbd>close
+            </span>
+          </div>
+        </Command>
+      )}
     </CommandDialog>
   )
 }
