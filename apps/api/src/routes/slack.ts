@@ -514,6 +514,11 @@ export const slackRoutes = (ctx: AppContext) => {
         user_id: state.uid,
         team_id: identity.teamId,
         slack_user_id: identity.slackUserId,
+        // DELIBERATE, so it outranks anything inferred — and this write replaces a `miss`
+        // row on the same (team_id, slack_user_id), which is exactly how linking fixes a
+        // person the email path could not place.
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
       return c.redirect("/settings/integrations")
@@ -630,6 +635,54 @@ export const slackRoutes = (ctx: AppContext) => {
       // Built here rather than injected: this route already holds the whole AppContext, and the
       // turn needs it (the tool surface is constructed per asker). No model on the deploy means
       // no answerer, which is the honest "nothing answers" state rather than a silent failure.
+      if (deps.models)
+        runAfterAck(
+          handleSlackMention(
+            {
+              meta,
+              bus,
+              baseUrl: deps.baseUrl,
+              models: deps.models,
+              encryptionKey: deps.encryptionKey,
+              ctx,
+              chatAllowlist: deps.chatAllowlist,
+              askLimiter: ctx.askLimiter,
+            },
+            {
+              teamId: body.team_id,
+              channel: ev.channel,
+              ts: ev.ts ?? "",
+              threadTs: ev.thread_ts,
+              userId: ev.user,
+              text: ev.text,
+            },
+          ),
+        )
+      return c.json({ ok: true })
+    }
+    // A DIRECT MESSAGE to the app — the Messages tab, where there is nobody to @mention.
+    //
+    // Same lane as a mention, deliberately: a DM is the same question asked somewhere more
+    // private, so it gets the same gate, the same tools and the same turn. What differs is only
+    // that there is no mention to strip and no channel audience, both of which handleSlackMention
+    // already copes with (questionFrom leaves un-mentioned text alone, and a DM channel threads
+    // the same way).
+    //
+    // Ordered BEFORE the thread-reply branch because a DM can carry a thread_ts too, and that
+    // branch would otherwise try to mirror it as a comment on a document it has nothing to do
+    // with. The bot_id and subtype guards are what stop OUR OWN reply arriving back here as a new
+    // question, which is how a bot ends up talking to itself for ever.
+    if (
+      body.type === "event_callback" &&
+      ev?.type === "message" &&
+      ev.channel_type === "im" &&
+      !ev.bot_id &&
+      !ev.subtype &&
+      body.team_id &&
+      ev.channel &&
+      ev.user &&
+      ev.text
+    ) {
       if (deps.models)
         runAfterAck(
           handleSlackMention(
@@ -1498,6 +1551,8 @@ interface SlackEventPayload {
   type?: string
   subtype?: string
   bot_id?: string
+  /** "im" for a direct message to the app. Absent on channel messages. */
+  channel_type?: string
   user?: string
   text?: string
   channel?: string

@@ -201,6 +201,9 @@ export function ChatPage() {
             onPick={(id) =>
               void navigate({ to: "/chat", search: { session: id, model: modelParam } })
             }
+            onOpenDoc={(shortId) =>
+              void navigate({ to: "/artifacts/$ref", params: { ref: shortId } })
+            }
           />
         </div>
       </header>
@@ -277,8 +280,9 @@ function HistoryPicker(props: {
   sessions: ChatSessionRow[]
   current: string | null
   onPick: (id: string) => void
+  onOpenDoc: (shortId: string) => void
 }) {
-  const { sessions, current, onPick } = props
+  const { sessions, current, onPick, onOpenDoc } = props
   if (sessions.length === 0) return null
   // Split once, here, so the two groups below cannot drift on what counts as which.
   const here = sessions.filter((s) => !s.subject)
@@ -321,21 +325,19 @@ function HistoryPicker(props: {
           <>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>On a document</DropdownMenuLabel>
-            {/* DISABLED, not absent. Opening one belongs on the document it is about, which is
-                where its rail already is — and until this page can route there, offering the
-                click would only reproduce the breakage. Showing them keeps the person's own
-                history honest: a conversation they remember having is still listed. */}
+            {/* THESE OPEN THE DOCUMENT, rather than loading into a page that has none. The
+                subject carries the artifact's short_id, which is exactly what /artifacts/$ref
+                resolves, so the conversation is one click away on the surface that can actually
+                show it — its own rail, against the document it is about. Disabling them was a
+                stand-in for a route I had not checked; the route was already there. */}
             {onDocs.map((s) => (
               <DropdownMenuItem
                 key={s.id}
-                disabled
-                className="opacity-100"
+                onSelect={() => onOpenDoc(s.subject?.id ?? "")}
                 data-testid="chat-history-item-doc"
               >
-                <span className="truncate text-muted-foreground">{s.preview || "(empty)"}</span>
-                <span className="ml-2 shrink-0 text-muted-foreground text-xs">
-                  open from the doc
-                </span>
+                <span className="truncate">{s.preview || "(empty)"}</span>
+                <span className="ml-2 shrink-0 text-muted-foreground text-xs">open doc</span>
               </DropdownMenuItem>
             ))}
           </>

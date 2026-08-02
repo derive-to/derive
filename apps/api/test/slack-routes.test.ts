@@ -329,6 +329,8 @@ describe("slack account linking (OIDC)", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U777",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const r = await app.request("/v1/slack/link", { method: "DELETE", headers: as(owner.email) })
@@ -577,6 +579,8 @@ describe("slack events endpoint", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U777",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     vi.stubGlobal(
@@ -934,6 +938,8 @@ describe("/derive subscription subcommands", () => {
       user_id: role === "owner" ? owner.id : editor.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
   }
@@ -1114,6 +1120,8 @@ describe("slack link unfurls", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const artifact = await meta.createArtifact({
@@ -1194,6 +1202,8 @@ describe("slack link unfurls", () => {
       user_id: owner.id,
       team_id: "T1",
       slack_user_id: "U1",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
     const artifact = await meta.createArtifact({
@@ -1552,6 +1562,8 @@ describe("slack slash command (/derive)", () => {
       user_id: userId,
       team_id: "T1",
       slack_user_id: slackUserId,
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
   }
@@ -1811,6 +1823,8 @@ describe("Save to Derive", () => {
         user_id: owner.id,
         team_id: "T1",
         slack_user_id: "U1",
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
     const artifact = await meta.createArtifact({
@@ -2034,6 +2048,8 @@ describe("entity_details_requested (the flexpane)", () => {
         user_id: owner.id,
         team_id: "T1",
         slack_user_id: "U1",
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
     const artifact = await meta.createArtifact({
@@ -2120,5 +2136,50 @@ describe("entity_details_requested (the flexpane)", () => {
     const body = await clickAndCapture(app, theirs.short_id)
     expect((body.error as { status: string }).status).toBe("custom_partial_view")
     expect(JSON.stringify(body)).not.toContain("Not yours")
+  })
+})
+
+// A DIRECT MESSAGE to the app. The Messages tab is where there is nobody to @mention, so the
+// event has to route on its own — and the guards below are the ones that stop a bot answering
+// its own answer for ever.
+
+describe("slack DMs reach the chat lane", () => {
+  const dm = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "event_callback",
+      team_id: "T-dm",
+      event: {
+        type: "message",
+        channel_type: "im",
+        channel: "D-1",
+        user: "U-asker",
+        text: "what changed this week?",
+        ts: "1.1",
+        ...over,
+      },
+    })
+
+  it("accepts a DM without a mention in it", async () => {
+    // A channel question carries "<@BOT>"; a DM carries nothing, and gating on a mention would
+    // make the Messages tab silently ignore every message sent to it.
+    const { app } = make("slack-dm-plain")
+    expect((await postEvent(app, dm())).status).toBe(200)
+  })
+
+  it("IGNORES the app's own messages, both shapes Slack uses", async () => {
+    // The loop this prevents: Derive posts an answer into the DM, Slack delivers that back as a
+    // new message.im, and it answers its own answer. Slack marks the bot's own posts with
+    // bot_id, and edits/deletes/joins with a subtype — neither is a question.
+    const { app } = make("slack-dm-self")
+    expect((await postEvent(app, dm({ bot_id: "B-self" }))).status).toBe(200)
+    expect((await postEvent(app, dm({ subtype: "message_changed" }))).status).toBe(200)
+  })
+
+  it("does not treat a threaded DM as a document comment", async () => {
+    // A DM can carry a thread_ts, and the comment-mirror branch keys on exactly that. Ordered
+    // after this one, it would try to mirror a private message onto a document it has nothing
+    // to do with.
+    const { app } = make("slack-dm-threaded")
+    expect((await postEvent(app, dm({ thread_ts: "1.0" }))).status).toBe(200)
   })
 })

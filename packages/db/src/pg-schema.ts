@@ -613,6 +613,28 @@ export const slackUserLink = pgTable(
     team_id: text("team_id").notNull(),
     slack_user_id: text("slack_user_id").notNull(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
+    /**
+     * HOW this identity was established, and the reason a MISS can share the table.
+     *
+     * 'oauth' — the person deliberately linked through Slack sign-in.
+     * 'email' — inferred from their Slack profile email, which resolved to a seat.
+     * 'miss'  — we looked and found nobody. NOT a link: it is the memo that stops us
+     *           re-asking Slack and re-prompting the person on every message.
+     *
+     * A miss and a link occupy the SAME (team_id, slack_user_id) row, so a later success
+     * simply replaces the miss through the existing upsert — self-healing, no cleanup job.
+     * getSlackUserLinkBySlackId/ByUser filter miss rows out, so every existing caller keeps
+     * its contract that a returned row is a real Derive user.
+     */
+    origin: text("origin").notNull().default("oauth").$type<"oauth" | "email" | "miss">(),
+    /** When we last CHECKED. Distinct from created_at, which the upsert preserves: a miss
+     *  has to be able to age out and be retried.
+     *
+     *  NULLABLE so it can be ALTER-added to a populated table. A NOT NULL column whose only
+     *  default is a $defaultFn is initial-only (see isMigratable in ddl.ts) — it would have
+     *  reached a fresh database and silently never reached an existing one. Null means "never
+     *  checked by this mechanism", which is exactly what every pre-existing link row is. */
+    checked_at: text("checked_at"),
   },
   (t) => [
     uniqueIndex("slack_user_link_slack").on(t.team_id, t.slack_user_id),

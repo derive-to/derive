@@ -527,6 +527,39 @@ export const joinSlackChannel = async (token: string, channel: string): Promise<
   }
 }
 
+/**
+ * A Slack user's EMAIL, which is what lets a mention resolve to a Derive account without the
+ * person having linked anything first.
+ *
+ * Email is the only identifier the two systems already share. Resolving by display NAME would
+ * be indefensible — names are not unique, not stable, and trivially set to somebody else's —
+ * whereas an email on a Slack profile was verified by the workspace admin's directory.
+ *
+ * Undefined on any failure, including the common one: a workspace whose admins hide profile
+ * email, where `users.info` returns a profile with no email at all. That is a legitimate
+ * configuration, not an error, and the caller falls back to asking the person to link.
+ */
+export const slackUserEmail = async (
+  token: string,
+  userId: string,
+): Promise<string | undefined> => {
+  try {
+    const res = await fetch(`${API}/users.info?user=${encodeURIComponent(userId)}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const data = (await res.json()) as {
+      ok: boolean
+      user?: { profile?: { email?: string }; is_bot?: boolean }
+    }
+    // A bot's "email" is not a person's, so never resolve one to a seat.
+    if (!data.ok || data.user?.is_bot) return undefined
+    const email = data.user?.profile?.email?.trim().toLowerCase()
+    return email || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** A Slack user's display name (best-effort; falls back to the raw id on any error). */
 export const slackUserName = async (token: string, userId: string): Promise<string> => {
   try {
@@ -590,9 +623,12 @@ export const openSlackDm = async (token: string, userId: string): Promise<string
  *    groups:history    delivery of message.groups — private-channel reply-back
  *    users:read        users.info, to name the author of an inbound Slack reply
  *    users:read.email  users.lookupByEmail, the DM fallback for a member who hasn't linked
- *    im:write          conversations.open, to DM a member. Reading DMs would need
- *                      im:history, which we deliberately do NOT request (see the
- *                      bot_events note in slack-app-setup.ts).
+ *    im:write          conversations.open, to DM a member
+ *    im:history        delivery of message.im — a DM to the app is a question, answered by
+ *                      the same chat lane a channel @mention uses. Requested only once
+ *                      something could actually answer one; before that the event was
+ *                      unreachable and the scope would have bought nothing but a scarier
+ *                      consent screen.
  *
  *  channels:read / groups:read back `conversations.list`, which is how the Settings channel
  *  picker offers channels to subscribe instead of asking an admin to paste an id. They were
@@ -622,6 +658,10 @@ export const SLACK_BOT_SCOPES = [
   "channels:history",
   "groups:read", // ditto, for private channels the bot is in
   "groups:history",
+  // DIRECT MESSAGES to the app. Slack refuses a manifest that subscribes `message.im` without
+  // this, which is why the event was dropped once before — see slack-app-setup.ts. Posting the
+  // answer back needs nothing extra: chat:write covers a DM the bot is already in.
+  "im:history",
   "users:read",
   "users:read.email",
   "im:write",
