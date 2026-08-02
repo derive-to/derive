@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useAuth } from "@/ctx"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
+import { REVEAL_MENU, reveal } from "@/lib/interaction"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { NeedsYou } from "./needs-you"
@@ -103,12 +104,7 @@ export function ArtifactRow({
             e.stopPropagation()
             onSelect(e.shiftKey)
           }}
-          className={cn(
-            "relative z-20 shrink-0 transition-opacity",
-            !selected &&
-              !selectionActive &&
-              "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
-          )}
+          className={cn("relative z-20 shrink-0", reveal(selected || selectionActive))}
         />
       )}
       <button
@@ -205,7 +201,7 @@ export function ArtifactRow({
               data-testid={`artifact-row-more-${a.short_id}`}
               aria-label="More actions"
               onClick={(e) => e.stopPropagation()}
-              className="relative z-20 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
+              className={cn("relative z-20", REVEAL_MENU)}
             >
               <Icon name="more" size={16} />
               <span

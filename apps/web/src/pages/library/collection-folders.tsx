@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
+import { REVEAL_IN_FOLDER } from "@/lib/interaction"
 import { collectionFoldersQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
@@ -179,7 +180,7 @@ export function CollectionFolders({
                     size="icon-xs"
                     aria-label={`Manage folder ${f.name}`}
                     data-testid={`collection-folder-${f.id}-menu`}
-                    className="shrink-0 opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100"
+                    className={cn("shrink-0", REVEAL_IN_FOLDER, "aria-expanded:opacity-100")}
                   >
                     <Icon name="more" />
                   </Button>

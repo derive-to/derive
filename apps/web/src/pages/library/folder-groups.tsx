@@ -6,6 +6,7 @@ import { Count } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { dirOf } from "@/lib/artifact"
+import { revealInFolder } from "@/lib/interaction"
 import { useFollows } from "@/lib/use-follows"
 import { cn } from "@/lib/utils"
 import { ArtifactRow } from "./artifact-row"
@@ -129,10 +130,7 @@ function FolderSection({
               following ? `Unfollow ${dir}/` : `Follow ${dir}/ to see its changes in your feed`
             }
             onClick={onToggleFollow}
-            className={cn(
-              "shrink-0 transition-opacity",
-              !following && "opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100",
-            )}
+            className={cn("shrink-0", revealInFolder(!!following))}
           >
             <Icon name={following ? "check" : "following"} />
             {following ? "Following" : "Follow"}

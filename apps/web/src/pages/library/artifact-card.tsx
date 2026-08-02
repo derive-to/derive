@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
+import { OVER_CONTENT, REVEAL_MENU, reveal } from "@/lib/interaction"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { NeedsYou, needsYouCount } from "./needs-you"
@@ -130,12 +131,11 @@ export function ArtifactCard({
                 e.stopPropagation()
                 onSelect(e.shiftKey)
               }}
-              className={cn(
-                "size-5 shadow-(--shadow-sm) ring-1 ring-foreground/10 transition-opacity",
-                !selected &&
-                  !selectionActive &&
-                  "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
-              )}
+              // Same plate as the action buttons opposite it (OVER_CONTENT): the
+              // cluster that appears on hover was a bare ringed checkbox on one side
+              // and two outlined buttons on the other, which read as two different
+              // controls arriving at once.
+              className={cn("size-7 rounded-lg", OVER_CONTENT, reveal(selected || selectionActive))}
             />
           </div>
         )}
@@ -152,7 +152,7 @@ export function ArtifactCard({
                   data-testid={`artifact-card-more-${a.short_id}`}
                   aria-label="More actions"
                   onClick={(e) => e.stopPropagation()}
-                  className="relative border-border-soft bg-card opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100"
+                  className={cn("relative border-border-soft bg-card", REVEAL_MENU)}
                 >
                   <Icon name="more" size={16} />
                   <span
@@ -198,10 +198,7 @@ export function ArtifactCard({
               e.stopPropagation()
               onToggleFavorite()
             }}
-            className={cn(
-              "relative border-border-soft bg-card transition-opacity focus-visible:opacity-100 pointer-coarse:opacity-100",
-              !a.favorite && "opacity-0 group-hover:opacity-100",
-            )}
+            className={cn("relative border-border-soft bg-card", reveal(!!a.favorite))}
           >
             <Icon
               name="star"

@@ -45,8 +45,10 @@ export function RepoPullRequests({
                 aria-current={active ? "page" : undefined}
                 className={cn(
                   // Full-bleed row in an overflow-clipped card → inset focus outline.
-                  "flex min-w-0 flex-1 items-center gap-2.5 px-3.5 py-2.5 text-sm outline-none hover:bg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                  active && "bg-accent text-accent-foreground hover:bg-accent",
+                  "flex min-w-0 flex-1 items-center gap-2.5 px-3.5 py-2.5 text-sm outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                  // The selected row simply doesn't take a hover, rather than taking
+                  // one and then overriding it with itself (see lib/interaction.ts).
+                  active ? "bg-accent text-accent-foreground" : "hover:bg-secondary",
                 )}
               >
                 <Icon name="review" className="shrink-0 text-muted-foreground" />

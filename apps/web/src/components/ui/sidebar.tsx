@@ -17,6 +17,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { REVEAL_IN_MENU_ITEM, ROW_HOVER } from "@/lib/interaction"
 import { cn } from "@/lib/utils"
 
 const SIDEBAR_WIDTH = "16rem"
@@ -482,13 +483,33 @@ const sidebarMenuButtonVariants = cva(
   // re-ink. Active is a raised chip — the card surface + a hairline ring lifts off
   // the recessed rail (no shadow, no weight change); the surface step + re-ink
   // carry the selection, no colored tick.
-  "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-lg p-2 text-left text-sm font-medium text-sidebar-foreground/70 outline-none transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
+  //
+  // The hover is scoped `not-data-active` (ROW_HOVER) rather than written bare. A
+  // bare `hover:` outranks `data-active:` on specificity — Tailwind wraps data
+  // variants in a zero-specificity `:where()` — so pointing at the page you were
+  // already on used to repaint its raised chip with the idle-row grey. See
+  // lib/interaction.ts.
+  //
+  // The transition lists the properties that actually change: colour on hover, and
+  // the box metrics the icon-collapse animates. It used to name only
+  // width/height/padding, so every hover in the rail was an un-eased snap while the
+  // one thing that never moves was the thing being animated.
+  cn(
+    "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-lg p-2 text-left text-sm font-medium text-sidebar-foreground/70 outline-none transition-[background-color,color,width,height,padding] duration-100 ease-out group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 motion-reduce:transition-none data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
+    // Hover, the pressed state, and an open menu are the same transient wash, and
+    // all three yield to the active chip.
+    ROW_HOVER,
+    "not-data-active:active:bg-sidebar-accent not-data-active:active:text-sidebar-accent-foreground",
+    "not-data-active:data-open:hover:bg-sidebar-accent not-data-active:data-open:hover:text-sidebar-accent-foreground",
+  ),
   {
     variants: {
+      // `default` adds nothing: the base already carries the row grammar, and
+      // repeating the hover here was one of four copies of the same declaration.
       variant: {
-        default: "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        default: "",
         outline:
-          "bg-background ring-1 ring-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:ring-sidebar-accent",
+          "bg-background ring-1 ring-sidebar-border not-data-active:hover:ring-sidebar-accent",
       },
       size: {
         default: "h-8 text-sm",
@@ -570,8 +591,11 @@ function SidebarMenuAction({
       data-sidebar="menu-action"
       className={cn(
         "absolute top-1.5 right-1 flex aspect-square w-5 items-center justify-center rounded-md p-0 text-sidebar-foreground outline-none transition-transform group-data-[collapsible=icon]:hidden peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 peer-data-[size=sm]/menu-button:top-1 after:absolute after:-inset-2 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:after:hidden [&>svg]:size-4 [&>svg]:shrink-0",
+        // Was `sm:opacity-0` — hidden by VIEWPORT, so a large touch screen got a
+        // permanently visible action while a small mouse window got none. REVEAL
+        // keys off the pointer instead.
         showOnHover &&
-          "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 peer-data-active/menu-button:text-sidebar-accent-foreground aria-expanded:opacity-100 sm:opacity-0",
+          cn(REVEAL_IN_MENU_ITEM, "peer-data-active/menu-button:text-sidebar-accent-foreground"),
         className,
       )}
       {...props}
@@ -670,7 +694,11 @@ function SidebarMenuSubButton({
       data-size={size}
       data-active={isActive}
       className={cn(
-        "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground/70 outline-none group-data-[collapsible=icon]:hidden hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[size=md]:text-sm data-[size=sm]:text-xs data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+        // Same grammar as the top-level row, hover scoped the same way — a nested row
+        // (a collection under its group) lost its active chip on hover too.
+        "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground/70 outline-none transition-[background-color,color] duration-100 ease-out group-data-[collapsible=icon]:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 motion-reduce:transition-none data-[size=md]:text-sm data-[size=sm]:text-xs data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+        ROW_HOVER,
+        "not-data-active:active:bg-sidebar-accent not-data-active:active:text-sidebar-accent-foreground",
         className,
       )}
       {...props}

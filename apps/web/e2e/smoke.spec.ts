@@ -275,3 +275,32 @@ test("a shelf shows what's inside it", async ({ owner }) => {
     owner.locator(`[data-testid="collection-row-${colId}"] > div:first-child svg`),
   ).toHaveCount(0)
 })
+
+test("the current page keeps its selected state under the pointer", async ({ owner }) => {
+  await owner.goto("/")
+  const bgOf = (l: ReturnType<typeof owner.getByTestId>) =>
+    l.evaluate((el) => getComputedStyle(el.closest("a,button") ?? el).backgroundColor)
+
+  const current = owner.getByTestId("sidebar-all")
+  await expect(current).toBeVisible()
+  const currentRest = await bgOf(current)
+
+  // The bug this pins: `hover:bg-*` outranks `data-active:bg-*` on specificity — the
+  // `:where()` Tailwind wraps data variants in contributes none — so the rail used to
+  // repaint the current page's raised chip with the idle-row grey the moment you
+  // pointed at it. Reordering can't fix that; the hover has to be scoped
+  // (`not-data-active:`). See apps/web/src/lib/interaction.ts.
+  //
+  // Read the SETTLED colour, not a polled one: the row transitions over 100ms, and a
+  // retrying matcher passes on the first frame — before the (wrong) colour lands.
+  await current.hover()
+  await owner.waitForTimeout(400)
+  expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
+
+  // …and the scoping didn't just disable hover everywhere: an idle row still washes.
+  const idle = owner.getByTestId("nav-contexts")
+  const idleRest = await bgOf(idle)
+  await idle.hover()
+  await owner.waitForTimeout(400)
+  expect(await bgOf(idle), "an idle row stopped responding to hover").not.toBe(idleRest)
+})

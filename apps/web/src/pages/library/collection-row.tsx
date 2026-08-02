@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router"
 import type { Collection } from "@/api"
 import { Icon } from "@/components/icons"
 import { Thumb } from "@/components/shared/thumb"
+import { reveal } from "@/lib/interaction"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -87,9 +88,7 @@ export function CollectionRow({
             className={cn(
               "relative z-20 grid size-7 shrink-0 place-items-center rounded-lg outline-none",
               "hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-              col.starred
-                ? "opacity-100"
-                : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
+              reveal(!!col.starred),
             )}
           >
             <Icon
