@@ -11,11 +11,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { artifactTypeLabel, dirOf } from "@/lib/artifact"
-import { REVEAL_MENU, reveal } from "@/lib/interaction"
+import { dirOf } from "@/lib/artifact"
+import { reveal, SWAP_IN, SWAP_IN_MENU, SWAP_OUT } from "@/lib/interaction"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { needsYouCount } from "./needs-you"
+import { NeedsYou } from "./needs-you"
 
 // The library as a real list — aligned columns, one line per artifact.
 //
@@ -30,14 +30,16 @@ import { needsYouCount } from "./needs-you"
 // few per screen, built to show the artifact itself. This is the working view: you know
 // what these are and you are finding one. A thumbnail in a 36px row is a smudge.
 
-/** Columns, in one place, so the header and the rows cannot drift apart. */
+/** Columns, in one place, so the header and the rows cannot drift apart. As the window
+ *  narrows they drop right to left — author first, then state; name and updated never
+ *  drop. (The type column from the first cut is gone: nearly every artifact is an HTML
+ *  page, so it was the same glyph repeated down the screen.) */
 const COL = {
   gutter: "w-2.5 shrink-0",
   select: "w-[22px] shrink-0",
-  type: "w-5 shrink-0",
   name: "min-w-0 flex-1",
-  author: "w-[148px] shrink-0 max-lg:hidden",
-  state: "w-[86px] shrink-0 max-xl:hidden",
+  author: "w-[148px] shrink-0 max-md:hidden",
+  state: "w-[86px] shrink-0 max-lg:hidden",
   when: "w-[88px] shrink-0 text-right",
 }
 
@@ -72,7 +74,6 @@ export function ListHeader({ sort, onSort }: { sort: SortMode; onSort: (m: SortM
     <div className="flex h-7 items-center border-b border-border bg-secondary/40 pr-3 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
       <span className={COL.gutter} />
       <span className={COL.select} />
-      <span className={COL.type} />
       {SORTS.map(({ key, label, desc, asc, col }) => {
         const active = sort === desc || sort === asc
         const next = sort === desc ? asc : desc
@@ -139,7 +140,6 @@ export function ArtifactListRow({
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const dir = a.source_path ? dirOf(a.source_path) : ""
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
-  const needs = needsYouCount(a)
   const awaitingReview =
     (a.my_role === "owner" || a.my_role === "editor") && (a.open_proposals ?? 0) > 0
   // The 10px gutter is reserved, always. A row that wants you takes an ink bar in it, so
@@ -153,7 +153,10 @@ export function ArtifactListRow({
       data-selected={selected || undefined}
       data-testid={`artifact-list-row-${a.short_id}`}
       className={cn(
-        "group relative flex h-9 items-center border-b border-border-soft pr-3 transition-colors duration-state last:border-b-0",
+        // border-b unconditionally: in the virtualized library each row is alone in its
+        // absolute wrapper, so :last-child is true for EVERY row and a last:border-b-0
+        // erased every hairline in the list.
+        "group relative flex h-9 items-center border-b border-border-soft pr-3 transition-colors duration-state",
         selected ? "bg-primary/5" : "hover:bg-secondary/60",
       )}
     >
@@ -183,10 +186,6 @@ export function ArtifactListRow({
           />
         )}
       </span>
-      <span className={cn(COL.type, "text-muted-foreground")} title={artifactTypeLabel(a)}>
-        <Icon name={a.spa ? "collections" : "all"} size={13} aria-hidden />
-      </span>
-
       <button
         type="button"
         data-testid={`artifact-list-open-${a.short_id}`}
@@ -226,7 +225,22 @@ export function ArtifactListRow({
         />
       </span>
 
-      <span className={cn(COL.state, "flex items-center gap-1.5")}>
+      {/* State, always visible: starred, private, needs-you. The first cut showed
+          "starred" by pinning the star BUTTON visible in the actions slot — which parked
+          it on top of the timestamp on every favorited row. State is not an action. */}
+      <span
+        // The whole column speaks the machine register — NeedsYou inherits its size, and
+        // unsized it arrived at the row's 14px, a pill taller than the line it sits in.
+        className={cn(
+          COL.state,
+          "flex items-center gap-1.5 overflow-hidden font-mono text-2xs tabular-nums",
+        )}
+      >
+        {a.favorite && (
+          <span role="img" aria-label="Starred" title="Starred">
+            <Icon name="star" size={11} weight="fill" className="text-primary" />
+          </span>
+        )}
         {isPrivate && (
           <span
             role="img"
@@ -237,24 +251,19 @@ export function ArtifactListRow({
             <Icon name="lock" size={12} />
           </span>
         )}
-        {needs > 0 && (
-          <span className="font-mono text-2xs tabular-nums text-foreground">{needs}↩</span>
-        )}
+        <NeedsYou artifact={a} className="relative z-20" />
       </span>
 
       {/* Updated and the actions share one 88px slot: the date crossfades out and the
           controls take its place, so nothing appears, nothing shifts, and the row never
-          twitches as the cursor crosses it. */}
+          twitches as the cursor crosses it. Fine pointers only — on touch the controls
+          would either bury the date for good or be unreachable, so there the date stays
+          and actions live on the artifact page (the grid keeps touch actions). */}
       <span className={cn(COL.when, "relative")}>
-        <span
-          className={cn(
-            "font-mono text-2xs tabular-nums text-muted-foreground transition-opacity duration-state",
-            "group-hover:opacity-0 group-focus-within:opacity-0",
-          )}
-        >
+        <span className={cn("font-mono text-2xs tabular-nums text-muted-foreground", SWAP_OUT)}>
           {updated ? ago(updated) : ""}
         </span>
-        <span className="absolute inset-y-0 right-0 flex items-center justify-end gap-0.5">
+        <span className="absolute inset-y-0 right-0 hidden items-center justify-end gap-0.5 pointer-fine:flex">
           <button
             type="button"
             data-testid={`artifact-list-favorite-${a.short_id}`}
@@ -266,7 +275,7 @@ export function ArtifactListRow({
             }}
             className={cn(
               "relative z-20 grid size-6 place-items-center rounded-md outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-              reveal(!!a.favorite),
+              SWAP_IN,
             )}
           >
             <Icon
@@ -286,7 +295,7 @@ export function ArtifactListRow({
                   onClick={(e) => e.stopPropagation()}
                   className={cn(
                     "relative z-20 grid size-6 place-items-center rounded-md text-muted-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                    REVEAL_MENU,
+                    SWAP_IN_MENU,
                   )}
                 >
                   <Icon name="more" size={13} />
@@ -331,6 +340,7 @@ export function ListGroupHeader({
   starred,
   onStar,
   testId,
+  disclosable = true,
 }: {
   title: string
   count: number
@@ -339,32 +349,52 @@ export function ListGroupHeader({
   starred?: boolean
   onStar?: (next: boolean) => void
   testId: string
+  /** False for a group with nothing to disclose — the header renders inert, with no
+   *  caret promising contents that aren't there. */
+  disclosable?: boolean
 }) {
+  const label = (
+    <>
+      <Icon
+        name="caret"
+        size={12}
+        className={cn(
+          "shrink-0 text-muted-foreground transition-transform duration-state",
+          !open && "-rotate-90",
+          !disclosable && "invisible",
+        )}
+        aria-hidden
+      />
+      <span
+        className={cn(
+          "truncate text-xs font-semibold tracking-tight",
+          disclosable ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {title}
+      </span>
+      <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
+        {count}
+      </span>
+    </>
+  )
   return (
     <div className="group flex h-8 items-center gap-2 border-b border-border bg-secondary/40 pr-3 pl-2.5">
-      <button
-        type="button"
-        data-testid={testId}
-        aria-expanded={open}
-        onClick={onToggle}
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-      >
-        <Icon
-          name="caret"
-          size={12}
-          className={cn(
-            "shrink-0 text-muted-foreground transition-transform duration-state",
-            !open && "-rotate-90",
-          )}
-          aria-hidden
-        />
-        <span className="truncate text-xs font-semibold tracking-tight text-foreground">
-          {title}
+      {disclosable ? (
+        <button
+          type="button"
+          data-testid={testId}
+          aria-expanded={open}
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          {label}
+        </button>
+      ) : (
+        <span data-testid={testId} className="flex min-w-0 flex-1 items-center gap-2">
+          {label}
         </span>
-        <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
-          {count}
-        </span>
-      </button>
+      )}
       {onStar && (
         <button
           type="button"

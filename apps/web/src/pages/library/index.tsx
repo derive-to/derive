@@ -273,9 +273,25 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // repo/PR, and for a manual collection while its folder view is active (so buckets +
   // counts reflect every item, not just the first page). Collections are finite and
   // scoping keeps them small.
+  // The grouped Collections list joins the pull-everything club: it groups the feed
+  // client-side, and grouping one page showed every collection whose artifacts were
+  // older than it as empty — a lie with a count beside it.
+  const groupedCollections = showCollections && layout === "list"
   useEffect(() => {
-    if ((isSyncedCollection || foldersView) && hasNextPage && !isFetchingNextPage) fetchNextPage()
-  }, [isSyncedCollection, foldersView, hasNextPage, isFetchingNextPage, fetchNextPage])
+    if (
+      (isSyncedCollection || foldersView || groupedCollections) &&
+      hasNextPage &&
+      !isFetchingNextPage
+    )
+      fetchNextPage()
+  }, [
+    isSyncedCollection,
+    foldersView,
+    groupedCollections,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  ])
 
   const renameCol = useApiMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.renameCollection(id, title),
@@ -581,6 +597,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           <CollectionsList
             collections={visibleCollections}
             items={items}
+            loading={isPending || !!hasNextPage || isFetchingNextPage}
             sort={search.sort ?? DEFAULT_SORT}
             onSort={setSort}
             onStar={(id, next) => starCol.mutate({ id, on: next })}

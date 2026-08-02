@@ -262,9 +262,10 @@ test("a shelf shows what's inside it", async ({ owner }) => {
   await expect(owner.getByTestId(`collection-row-${colId}`)).toBeVisible()
   await expect(owner.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
 
-  // One presentation, so the page offers no Display menu — the toggle used to be
-  // rendered here and ignored, which is worse than not offering it.
-  await expect(owner.getByTestId("library-display")).toHaveCount(0)
+  // The Display menu is back on this page, but for layout only: shelves answer "which
+  // collection", the grouped list answers "how is my workspace filed". Sort lives on the
+  // grouped list's own column headers, not in the menu.
+  await expect(owner.getByTestId("library-display")).toBeVisible()
 
   // One star per shelf, and it is the control. There is no second star beside the title
   // doing nothing but reporting the same state.

@@ -134,9 +134,13 @@ function Group({
       </SectionEyebrow>
       <p className="mb-2 font-mono text-2xs text-muted-foreground/70">{rule}</p>
       <div className="flex flex-col gap-0.5">
-        {cols.map((col) => (
-          <CollectionRow key={col.id} col={col} onStar={(next) => onStar(col.id, next)} />
-        ))}
+        {/* Shelves with something on them first; empties sink, compressed to a title
+            line each. Stable within each half. */}
+        {[...cols]
+          .sort((a, b) => Number((b.count ?? 0) > 0) - Number((a.count ?? 0) > 0))
+          .map((col) => (
+            <CollectionRow key={col.id} col={col} onStar={(next) => onStar(col.id, next)} />
+          ))}
       </div>
     </section>
   )

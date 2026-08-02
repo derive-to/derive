@@ -15,9 +15,18 @@ describe("parseLibrarySort", () => {
     // `revised` is still a valid API sort — it just isn't a menu option any more, and an
     // old bookmark carrying it must land on the default list rather than a mode the UI
     // cannot show as selected.
-    for (const retired of ["revised", "revised-asc", "updated-asc", "za"]) {
+    for (const retired of ["revised", "revised-asc"]) {
       expect(parseLibrarySort(retired)).toBeUndefined()
     }
+  })
+
+  it("keeps the reversed directions the list header writes", () => {
+    // Click-again-to-flip on a column header writes these. The parser used to strip
+    // them, so reversing a sort silently snapped back to the default on the next parse.
+    expect(parseLibrarySort("za")).toBe("za")
+    expect(parseLibrarySort("updated-asc")).toBe("updated-asc")
+    expect(sortLabel("za")).toBe("Title Z–A")
+    expect(sortLabel("updated-asc")).toBe("Least recently active")
   })
 
   it("offers three modes, each naming what it orders by, default first", () => {

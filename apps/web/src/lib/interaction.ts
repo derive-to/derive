@@ -76,6 +76,28 @@ export const REVEAL_IN_MENU_ITEM = `opacity-0 ${STATE_MOTION} group-hover/menu-i
 export const revealInFolder = (pinned: boolean) => (pinned ? REVEAL_PINNED : REVEAL_IN_FOLDER)
 
 /**
+ * A slot where hover swaps resting content for controls — a list row's timestamp
+ * yielding to its star and ⋯. Two halves that must be used together, and three rules
+ * learned the hard way:
+ *
+ * - Fine pointers only. Touch has no hover, so the swap would either hide the resting
+ *   content permanently or never show the controls; the container should be
+ *   `hidden pointer-fine:flex` so the controls don't exist on touch at all (an
+ *   opacity-0 button is still a tap target sitting on top of the date).
+ * - The controls are ACTIONS, never state. Pinning a control visible to show state
+ *   (a filled star for "favorited") parks it on top of the resting content at rest —
+ *   state belongs in its own column.
+ * - Both halves ride the same duration so the swap reads as one crossfade.
+ */
+export const SWAP_OUT = `${STATE_MOTION} pointer-fine:group-hover:opacity-0 pointer-fine:group-focus-within:opacity-0`
+
+/** The arriving half of {@link SWAP_OUT}. */
+export const SWAP_IN = `opacity-0 ${STATE_MOTION} group-hover:opacity-100 group-focus-within:opacity-100`
+
+/** {@link SWAP_IN} for a menu trigger, which must hold while its menu is open. */
+export const SWAP_IN_MENU = `${SWAP_IN} aria-expanded:opacity-100`
+
+/**
  * The hover wash for a row that can also be the current one. Scoped to
  * `not-data-active` so the selection survives the pointer — see the note above.
  */

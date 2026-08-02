@@ -101,11 +101,10 @@ export function CollectionRow({
         )}
       </div>
 
-      {/* An empty shelf says so in words. A row of nothing is the same mistake the blank
-          card made, just wider. */}
-      {preview.length === 0 ? (
-        <p className="mt-2 font-mono text-2xs text-muted-foreground/70">Nothing filed here yet</p>
-      ) : (
+      {/* No strip, no strip AREA: an empty shelf compresses to its title line. The count
+          already says 0 — a workspace can hold a dozen empty shelves, and a page of
+          "Nothing filed here yet" lines was the same fact shouted twelve times. */}
+      {preview.length > 0 && (
         <div className="mt-2.5 flex items-end gap-2 overflow-hidden">
           {preview.map((p) => (
             <Thumb

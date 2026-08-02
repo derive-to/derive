@@ -3,6 +3,7 @@ import { useState } from "react"
 import type { Artifact, Collection } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { Skeleton } from "@/components/ui/skeleton"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { ArtifactListRow, ListGroupHeader, ListHeader, ListShell } from "./artifact-list"
 
@@ -30,6 +31,7 @@ const readOpen = (): Record<string, boolean> => {
 export function CollectionsList({
   collections,
   items,
+  loading,
   sort,
   onSort,
   onStar,
@@ -40,8 +42,14 @@ export function CollectionsList({
   onPrefetch,
 }: {
   collections: Collection[]
-  /** The whole library page — grouped here rather than fetched per collection. */
+  /** The whole library feed. The page auto-paginates to exhaustion while this view is
+   *  up (see the library body): grouping only the first page showed every collection
+   *  whose artifacts were older than it as empty, which is a lie with a count next to
+   *  it. */
   items: Artifact[]
+  /** More pages still arriving — groups without their rows yet show a shimmer, never an
+   *  empty claim. */
+  loading: boolean
   sort: SortMode
   onSort: (mode: SortMode) => void
   onStar: (id: string, next: boolean) => void
@@ -96,11 +104,17 @@ export function CollectionsList({
     />
   )
 
+  // Starred shelves lead; a stable sort keeps the rest in their existing order.
+  const ordered = [...collections].sort(
+    (a, b) => Number(b.starred ?? false) - Number(a.starred ?? false),
+  )
+
   return (
     <ListShell>
       <ListHeader sort={sort} onSort={onSort} />
-      {collections.map((c) => {
+      {ordered.map((c) => {
         const rows = byCollection.get(c.id) ?? []
+        const count = c.count ?? rows.length
         return (
           <div key={c.id} data-testid={`collection-group-${c.id}`}>
             <ListGroupHeader
@@ -108,18 +122,32 @@ export function CollectionsList({
               title={c.title}
               // The collection's OWN count, not how many of it are on this page — a
               // number that shrank as you scrolled would be worse than none.
-              count={c.count ?? rows.length}
+              count={count}
+              // An empty collection is a 32px header and nothing else — the 0 already
+              // says it, and a stack of "nothing filed here yet" lines was noise
+              // shouting the same fact down the page.
+              disclosable={count > 0}
               open={isOpen(c.id)}
               onToggle={() => toggle(c.id)}
               starred={c.starred}
               onStar={(next) => onStar(c.id, next)}
             />
             {isOpen(c.id) &&
+              count > 0 &&
               (rows.length > 0 ? (
                 rows.map(row)
+              ) : loading ? (
+                // Its artifacts haven't paged in yet. Never an empty claim while the
+                // feed is still arriving.
+                <div className="flex flex-col gap-2 border-b border-border-soft py-2.5 pl-12 pr-4">
+                  <Skeleton className="h-3 w-52" />
+                  <Skeleton className="h-3 w-40" />
+                </div>
               ) : (
-                <p className="border-b border-border-soft py-2 pl-9 font-mono text-2xs text-muted-foreground/70">
-                  Nothing filed here yet
+                // The count is live-artifact truth; the feed is what THIS viewer can
+                // see. The gap is invite-only work inside a shelf you can open.
+                <p className="border-b border-border-soft py-2 pl-12 font-mono text-2xs text-muted-foreground/70">
+                  Nothing here is visible to you
                 </p>
               ))}
           </div>

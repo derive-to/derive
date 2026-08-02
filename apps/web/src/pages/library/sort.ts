@@ -20,7 +20,11 @@ export const LIBRARY_SORTS: { value: SortMode; label: string }[] = [
   { value: "az", label: "Title A–Z" },
 ]
 
-const VALUES = new Set<string>(LIBRARY_SORTS.map((s) => s.value))
+// The URL accepts the menu's three modes PLUS each direction's reverse — the list
+// header's click-again-to-flip writes `za` / `updated-asc`, and a parser that only knew
+// the menu list silently reset the sort to default on the very next route parse.
+const REVERSED: SortMode[] = ["za", "updated-asc"]
+const VALUES = new Set<string>([...LIBRARY_SORTS.map((s) => s.value), ...REVERSED])
 
 /** Parse a URL sort value: a valid NON-default mode passes through; the default (and anything
  *  invalid) returns undefined so it's omitted from the URL — clean default links. */
@@ -30,4 +34,9 @@ export const parseLibrarySort = (raw: unknown): SortMode | undefined =>
 /** The menu label for a mode (falls back to the default's label for a value the menu no
  *  longer lists — e.g. `revised`, or a stale `?sort=` from an old bookmark). */
 export const sortLabel = (mode: SortMode): string =>
-  LIBRARY_SORTS.find((s) => s.value === mode)?.label ?? "Recently active"
+  LIBRARY_SORTS.find((s) => s.value === mode)?.label ??
+  (mode === "za"
+    ? "Title Z–A"
+    : mode === "updated-asc"
+      ? "Least recently active"
+      : "Recently active")
