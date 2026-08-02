@@ -1436,6 +1436,32 @@
             "type": "boolean",
             "description": "Whether the caller starred this collection — it pins to their sidebar."
           },
+          "last_activity": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "short_id": {
+                  "type": "string"
+                },
+                "current_version": {
+                  "type": "number"
+                },
+                "has_preview": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "short_id",
+                "current_version",
+                "has_preview"
+              ]
+            },
+            "description": "A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing."
+          },
           "active": {
             "type": "boolean",
             "description": "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded."

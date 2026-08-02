@@ -943,7 +943,8 @@ export function runStoreContract(
       await store.addCollectionItem(untouched.id, a2.id)
 
       const since = new Date(Date.now() - 30 * 86400_000).toISOString()
-      // Nothing done yet: being able to see a shelf is not working in it.
+      // Nothing done yet. Creating a collection auto-adds you as its owner, and that
+      // must NOT count — otherwise every shelf you ever made reads as active forever.
       expect(await store.collectionsWorkedIn("amy", ORG, since)).toEqual([])
 
       // A comment is a deliberate act, and it carries a stable author id.
@@ -964,6 +965,64 @@ export function runStoreContract(
       // The window is real: an act older than `since` does not count.
       const future = new Date(Date.now() + 60_000).toISOString()
       expect(await store.collectionsWorkedIn("amy", ORG, future)).toEqual([])
+    })
+
+    it("previews a collection's newest artifacts, batched and capped", async () => {
+      const shelf = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Shelf",
+        created_by: "amy",
+      })
+      const other = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Other shelf",
+        created_by: "amy",
+      })
+      // Five artifacts, oldest first, so the newest-first order is unambiguous.
+      const made = []
+      for (let i = 0; i < 5; i++) {
+        const a = await store.createArtifact(
+          newArtifact({ title: `Doc ${i}`, updated_at: `2026-01-0${i + 1}T00:00:00.000Z` }),
+        )
+        await store.addCollectionItem(shelf.id, a.id)
+        made.push(a)
+      }
+      const lone = await store.createArtifact(newArtifact({ title: "Lone" }))
+      await store.addCollectionItem(other.id, lone.id)
+
+      const previews = await store.collectionPreviews([shelf.id, other.id], 3)
+      // Capped per collection, newest first — the strip is a preview, not a listing.
+      expect(previews[shelf.id]?.map((p) => p.short_id)).toEqual([
+        made[4].short_id,
+        made[3].short_id,
+        made[2].short_id,
+      ])
+      // One call covers every collection on screen.
+      expect(previews[other.id]?.map((p) => p.short_id)).toEqual([lone.short_id])
+
+      // A deleted artifact leaves the strip — the shelf must not show a cover that
+      // 404s when you click it.
+      await store.setArtifactRemoved(made[4].id, new Date().toISOString())
+      expect(previews[shelf.id]?.[0]?.short_id).toBe(made[4].short_id)
+      const after = await store.collectionPreviews([shelf.id], 3)
+      expect(after[shelf.id]?.map((p) => p.short_id)).toEqual([
+        made[3].short_id,
+        made[2].short_id,
+        made[1].short_id,
+      ])
+
+      // An empty collection is absent rather than an empty array, and no ids means no
+      // query at all.
+      const empty = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Empty",
+        created_by: "amy",
+      })
+      expect((await store.collectionPreviews([empty.id], 3))[empty.id]).toBeUndefined()
+      expect(await store.collectionPreviews([], 3)).toEqual({})
     })
 
     it("scopes starred collections to a workspace when one is given", async () => {
@@ -2595,9 +2654,90 @@ export function runStoreContract(
       )
       expect(overview.sources).toEqual(await store.listRepoSources(org))
       expect(overview.sources).toHaveLength(1)
-      // An org with nothing yields both empty, not an error.
+      // No viewer ⇒ the per-user arms are empty rather than absent, so a caller can
+      // destructure them unconditionally.
+      expect(overview.starred).toEqual([])
+      expect(overview.active).toEqual([])
+      expect(overview.previews).toEqual({})
+      // An org with nothing yields empties, not an error.
       const empty = await store.collectionsOverview(`org_${uuid()}`)
-      expect(empty).toEqual({ collections: [], sources: [] })
+      expect(empty).toEqual({
+        collections: [],
+        sources: [],
+        starred: [],
+        active: [],
+        previews: {},
+      })
+    })
+
+    it("answers the viewer's stars, worked-in set, and preview strips in the same call", async () => {
+      // The whole point of the viewer arms: three reads a route must NOT make separately
+      // (see apps/api/test/round-trip-budget.test.ts). They must agree exactly with the
+      // standalone methods, or folding them in changed behaviour rather than cost.
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Viewer overview")
+      const starredCol = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Starred",
+        created_by: "amy",
+      })
+      const workedCol = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Worked in",
+        created_by: "amy",
+      })
+      await store.setCollectionFavorite(starredCol.id, "amy")
+
+      const older = await store.createArtifact(
+        newArtifact({ org_id: org, title: "Older", updated_at: "2026-01-01T00:00:00.000Z" }),
+      )
+      const newer = await store.createArtifact(
+        newArtifact({ org_id: org, title: "Newer", updated_at: "2026-02-01T00:00:00.000Z" }),
+      )
+      await store.addCollectionItem(workedCol.id, older.id)
+      await store.addCollectionItem(workedCol.id, newer.id)
+      await store.createComment({
+        id: uuid(),
+        artifact_id: newer.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "worked on this",
+        author: "Amy",
+        author_id: "amy",
+      })
+
+      const since = new Date(Date.now() - 30 * 86400_000).toISOString()
+      const viewer = { userId: "amy", activeSince: since, previewPer: 2 }
+      const read = await store.collectionsOverview(org, viewer)
+
+      expect(read.starred).toEqual(await store.listUserFavoriteCollectionIds("amy", org))
+      expect(read.starred).toEqual([starredCol.id])
+      expect([...read.active].sort()).toEqual(
+        [...(await store.collectionsWorkedIn("amy", org, since))].sort(),
+      )
+      expect(read.active).toEqual([workedCol.id])
+
+      // Newest first, capped, and each cover carries whether a static render exists.
+      expect(read.previews[workedCol.id]?.map((p) => p.short_id)).toEqual([
+        newer.short_id,
+        older.short_id,
+      ])
+      expect(read.previews[workedCol.id]?.[0]?.has_preview).toBe(false)
+      // A collection with nothing in it is absent, not mapped to an empty array.
+      expect(read.previews[starredCol.id]).toBeUndefined()
+
+      // Another member of the same workspace sees the org halves and none of amy's
+      // personal decoration — these arms are user-scoped, not org-scoped.
+      const bobs = await store.collectionsOverview(org, { ...viewer, userId: "bob" })
+      expect(bobs.collections.map((c) => c.id).sort()).toEqual(
+        read.collections.map((c) => c.id).sort(),
+      )
+      expect(bobs.starred).toEqual([])
+      expect(bobs.active).toEqual([])
+      // Previews are a property of the collection, not the reader, so they still come.
+      expect(bobs.previews[workedCol.id]).toHaveLength(2)
     })
   })
 

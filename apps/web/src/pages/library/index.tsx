@@ -198,9 +198,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
       return {}
     }
   })
-  // Opening an artifact from a collection carries that collection as list context, so
-  // the artifact header can page between its siblings (the sibling switcher). Other
-  // feeds pass nothing — a direct/feed open has no single collection to page within.
+  // Opened from the toolbar's one New button; the Collections view renders the field.
+  const [newCollection, setNewCollection] = useState<string | null>(null)
   // Grid or list, remembered per browser and applied everywhere. Previously the route
   // decided: cards at home, rows in a synced repo, a third arrangement under the folder
   // toggle.
@@ -219,6 +218,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
       /* private mode: the choice just doesn't persist */
     }
   }
+  // Opening an artifact from a collection carries that collection as list context, so
+  // the artifact header can page between its siblings (the sibling switcher). Other
+  // feeds pass nothing — a direct/feed open has no single collection to page within.
   const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
   const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
   // A manual collection that HAS folders defaults to the grouped folder view; the
@@ -520,25 +522,37 @@ function LibraryBody({ view }: { view: LibraryView }) {
             </Button>
           </>
         )}
-        {showPublish && <NewArtifactButton />}
-        <DisplayMenu
-          layout={layout}
-          onLayout={setLayout}
-          sort={search.sort ?? DEFAULT_SORT}
-          onSort={(mode) =>
-            nav({
-              to: ".",
-              search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
-              replace: true,
-            })
-          }
-          // The grouping knob lives here too, but only where grouping is possible.
-          group={
-            isManualCollection && folders.length > 0
-              ? { on: foldersView, onChange: setGrouped }
-              : undefined
-          }
-        />
+        {showCollections ? (
+          <Button size="sm" data-testid="collections-new" onClick={() => setNewCollection("")}>
+            <Icon name="plus" size={16} /> New collection
+          </Button>
+        ) : (
+          showPublish && <NewArtifactButton />
+        )}
+        {showCollections ? (
+          // Layout only. Shelves have one order — the ones you're working in first — and
+          // that ordering is the view's whole argument, not a preference.
+          <DisplayMenu layout={layout} onLayout={setLayout} />
+        ) : (
+          <DisplayMenu
+            layout={layout}
+            onLayout={setLayout}
+            sort={search.sort ?? DEFAULT_SORT}
+            onSort={(mode) =>
+              nav({
+                to: ".",
+                search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
+                replace: true,
+              })
+            }
+            // The grouping knob lives here too, but only where grouping is possible.
+            group={
+              isManualCollection && folders.length > 0
+                ? { on: foldersView, onChange: setGrouped }
+                : undefined
+            }
+          />
+        )}
       </div>
 
       {/* Following feed: the manage strip of current follows sits above the heading. */}
@@ -558,8 +572,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
       {showCollections ? (
         <CollectionsView
           collections={visibleCollections}
+          layout={layout}
           onStar={(id, next) => starCol.mutate({ id, on: next })}
           onCreate={(title) => createCol.mutate(title)}
+          draft={newCollection}
+          setDraft={setNewCollection}
         />
       ) : filter.kind === "collection" ? (
         <>

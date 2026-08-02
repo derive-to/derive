@@ -8,6 +8,7 @@ import type {
   AuditLogRecord,
   AutomationRecord,
   CollectionMemberRecord,
+  CollectionPreview,
   CollectionRecord,
   CommentListOpts,
   CommentRecord,
@@ -1723,8 +1724,10 @@ export function makeRepos(db: SqliteDb) {
         .all())
         ids.add(r.id)
     }
-    // Being added to a collection is itself a signal you work there — it is how you
-    // land in a shelf you have not written in yet.
+    // Being added by someone else is a signal you work there — it is how you land in a
+    // shelf you have not written in yet. Creating one is NOT: you are auto-added as
+    // owner, so counting it marked every collection you ever made as active and left
+    // "All collections" permanently empty.
     for (const r of await db
       .select({ id: collectionMember.collection_id })
       .from(collectionMember)
@@ -1734,11 +1737,61 @@ export function makeRepos(db: SqliteDb) {
           eq(collectionMember.user_id, userId),
           gte(collectionMember.created_at, sinceIso),
           eq(collection.org_id, orgId),
+          ne(collection.created_by, userId),
         ),
       )
       .all())
       ids.add(r.id)
     return [...ids]
+  }
+  // One read for every shelf on screen, sliced per collection in JS. A per-collection
+  // LIMIT means a lateral join or N queries; the rows are narrow and the page shows a
+  // dozen shelves, so ordering once and slicing is both simpler and fewer round trips.
+  const collectionPreviews = async (
+    collectionIds: string[],
+    perCollection: number,
+  ): Promise<Record<string, CollectionPreview[]>> => {
+    const out: Record<string, CollectionPreview[]> = {}
+    if (collectionIds.length === 0) return out
+    const rows = await db
+      .select({
+        collection_id: collectionItem.collection_id,
+        id: artifact.id,
+        short_id: artifact.short_id,
+        current_version: artifact.current_version,
+        updated_at: artifact.updated_at,
+        created_at: artifact.created_at,
+        preview_status: version.preview_status,
+      })
+      .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      // Left join: an artifact whose current version is still rendering has no ready row
+      // and must fall back to the live iframe rather than a broken <img>.
+      .leftJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(and(inArray(collectionItem.collection_id, collectionIds), isNull(artifact.removed_at)))
+      .all()
+    // Newest first, tie-broken on id: two artifacts published in the same millisecond
+    // would otherwise land in whatever order the driver returned them, and a strip that
+    // reshuffles between page loads reads as churn.
+    const at = (r: { updated_at: string | null; created_at: string }) =>
+      r.updated_at ?? r.created_at
+    rows.sort((a, b) => at(b).localeCompare(at(a)) || b.id.localeCompare(a.id))
+    for (const r of rows) {
+      const bucket = out[r.collection_id] ?? []
+      out[r.collection_id] = bucket
+      if (bucket.length < perCollection)
+        bucket.push({
+          id: r.id,
+          short_id: r.short_id,
+          current_version: r.current_version,
+          updated_at: r.updated_at ?? r.created_at,
+          has_preview: r.preview_status === "ready",
+        })
+    }
+    return out
   }
 
   // ---- Follows (track GitHub authors + repo path prefixes) ---------------
@@ -4330,6 +4383,7 @@ export function makeRepos(db: SqliteDb) {
     setCollectionFavorite,
     removeCollectionFavorite,
     collectionsWorkedIn,
+    collectionPreviews,
     setFavorite,
     removeFavorite,
     addFollow,

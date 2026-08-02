@@ -1,15 +1,19 @@
 import { Link } from "@tanstack/react-router"
 import type { Collection } from "@/api"
 import { Icon } from "@/components/icons"
+import { Thumb } from "@/components/shared/thumb"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
-// A collection as a card, for the Collections view.
+// A collection as a card, for the Collections view's Grid layout.
 //
-// Name, count, and only the states worth flagging: Synced and Private. A workspace-open
-// manual collection is the common case and gets no chip. Member avatars are left to the
-// collection header — a grid of faces competes with the names.
+// The cover mosaic leads, then name, count, and only the states worth flagging: Synced and
+// Private. A workspace-open manual collection is the common case and gets no chip. Member
+// avatars are left to the collection header — a grid of faces competes with the names.
+/** Filler cells for a mosaic with fewer than four covers, keyed by position. */
+const PAD_CELLS = ["a", "b", "c", "d"]
+
 export function CollectionCard({
   col,
   onStar,
@@ -19,6 +23,7 @@ export function CollectionCard({
 }) {
   const count = col.count ?? 0
   const synced = col.kind === "repo" || col.kind === "pr"
+  const preview = (col.preview ?? []).slice(0, 4)
   return (
     <Card className="group relative overflow-hidden transition-shadow hover:shadow-[var(--shadow)]">
       {/* The star sits above the stretched link so it stays independently clickable. */}
@@ -51,6 +56,32 @@ export function CollectionCard({
             className={col.starred ? "text-primary" : "text-muted-foreground"}
           />
         </button>
+      )}
+
+      {/* What's inside, above what it's called. A shelf is recognisable by its contents
+          long before you finish reading its name — and an empty one should look empty
+          rather than occupy the same weight as a full one. */}
+      {preview.length > 0 ? (
+        <div className="grid aspect-[16/9] grid-cols-2 grid-rows-2 gap-px bg-border-soft">
+          {preview.map((p) => (
+            <Thumb
+              key={p.short_id}
+              id={p.short_id}
+              v={p.current_version}
+              hasPreview={p.has_preview}
+              className="aspect-auto h-full w-full outline-none"
+            />
+          ))}
+          {/* Keep the mosaic square: a shelf holding one artifact shows one cover and
+              three quiet cells, not one cover stretched across the card. */}
+          {PAD_CELLS.slice(preview.length).map((cell) => (
+            <div key={cell} className="bg-muted/40" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid aspect-[16/9] place-items-center bg-muted/40 font-mono text-2xs text-muted-foreground/70">
+          Nothing filed here yet
+        </div>
       )}
 
       <CardContent className="flex flex-col gap-2 p-3.5">

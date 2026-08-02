@@ -4,6 +4,8 @@ import type {
   AutomationRecord,
   BootstrapRead,
   CollectionRecord,
+  CollectionsOverviewRead,
+  CollectionsViewer,
   CommentListOpts,
   CommentRecord,
   ContextRecord,
@@ -156,9 +158,14 @@ export const composeBootstrap = async (
   orgId: string,
   userId: string,
   notifLimit: number,
+  viewer: Omit<CollectionsViewer, "userId">,
 ): Promise<BootstrapRead> => {
   const summary = await composeWorkspaceSummary(store, orgId, userId)
-  const { collections, sources } = await composeCollectionsOverview(store, orgId)
+  const { collections, sources, starred, active, previews } = await composeCollectionsOverview(
+    store,
+    orgId,
+    { userId, ...viewer },
+  )
   const collectionRoles = await store.collectionRolesForUser(
     collections.map((c) => c.id),
     userId,
@@ -175,6 +182,9 @@ export const composeBootstrap = async (
     summary,
     collections,
     sources,
+    starred,
+    active,
+    previews,
     collectionRoles,
     settings,
     notifications,
@@ -265,15 +275,31 @@ export const composeAutomationsWithExecutors = async (
 
 /** See `composeListEnrichment` — the collections list's org-scoped pair. */
 export const composeCollectionsOverview = async (
-  store: Pick<MetaStore, "listCollections" | "listRepoSources">,
+  store: Pick<
+    MetaStore,
+    | "listCollections"
+    | "listRepoSources"
+    | "listUserFavoriteCollectionIds"
+    | "collectionsWorkedIn"
+    | "collectionPreviews"
+  >,
   orgId: string,
-): Promise<{
-  collections: (CollectionRecord & { count: number })[]
-  sources: RepoSourceRecord[]
-}> => {
+  viewer?: CollectionsViewer,
+): Promise<CollectionsOverviewRead> => {
   const [collections, sources] = await Promise.all([
     store.listCollections(orgId),
     store.listRepoSources(orgId),
   ])
-  return { collections, sources }
+  if (!viewer) return { collections, sources, starred: [], active: [], previews: {} }
+  // The pg driver answers these as arms of the one overview statement; here they are
+  // three more free local reads.
+  const [starred, active, previews] = await Promise.all([
+    store.listUserFavoriteCollectionIds(viewer.userId, orgId),
+    store.collectionsWorkedIn(viewer.userId, orgId, viewer.activeSince),
+    store.collectionPreviews(
+      collections.map((c) => c.id),
+      viewer.previewPer,
+    ),
+  ])
+  return { collections, sources, starred, active, previews }
 }

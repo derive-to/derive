@@ -10,7 +10,14 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { activeSince, Collection, collectionsJson, enrich, sourceMaps } from "../lib/boot-shapes"
+import {
+  activeSince,
+  Collection,
+  collectionsJson,
+  enrich,
+  PREVIEW_PER_COLLECTION,
+  sourceMaps,
+} from "../lib/boot-shapes"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
@@ -76,7 +83,22 @@ export const collectionRoutes = (ctx: AppContext) => {
       // token) see them. A non-member (incl. anon in open mode) gets an empty list, so
       // a workspace's collections can't be enumerated via a public artifact's workspace.
       if (!(await isMember(c, org))) return c.json({ collections: [] })
-      const { collections: cols, sources } = await meta.collectionsOverview(org)
+      // ONE store call answers the whole view: the org's collections + repo sources, and
+      // (for a signed-in reader) their stars, worked-in set, and per-shelf preview strip.
+      // Those last three were separate reads for one release — ~240ms of round trips on
+      // the edge tier, which round-trip-budget.test.ts now fails on.
+      const {
+        collections: cols,
+        sources,
+        starred,
+        active,
+        previews: rawPreviews,
+      } = await meta.collectionsOverview(
+        org,
+        me
+          ? { userId: me.id, activeSince: activeSince(), previewPer: PREVIEW_PER_COLLECTION }
+          : undefined,
+      )
       // Same share experience as an artifact: an invite-only collection
       // (workspace_access=none) only lists for its creator or an explicit
       // collectionMember — collectionRole (the single source of truth, shared with the
@@ -92,21 +114,15 @@ export const collectionRoutes = (ctx: AppContext) => {
               me.id,
             )
           : {}
-      // Same read as the list, so the sidebar's starred group costs no extra request.
-      const starred = me
-        ? new Set(await meta.listUserFavoriteCollectionIds(me.id, org))
-        : new Set<string>()
-      const active = me
-        ? new Set(await meta.collectionsWorkedIn(me.id, org, activeSince()))
-        : new Set<string>()
       const collections = collectionsJson(
         cols,
         sources,
         roleMap,
         me?.id ?? null,
         isToken(c),
-        starred,
-        active,
+        new Set(starred),
+        new Set(active),
+        rawPreviews,
       )
       return c.json({ collections })
     },

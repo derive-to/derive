@@ -11,7 +11,10 @@ import type {
   AutomationRecord,
   BootstrapRead,
   CollectionMemberRecord,
+  CollectionPreview,
   CollectionRecord,
+  CollectionsOverviewRead,
+  CollectionsViewer,
   CommentListOpts,
   CommentRecord,
   CommentSignals,
@@ -401,8 +404,19 @@ const mapSummaryRows = (rows: SummaryRow[]): WorkspaceSummary => {
   out.tags.sort((a, b) => a.tag.localeCompare(b.tag))
   return out
 }
-// $1 = org id. Two org-scoped tables the collections route always reads together.
-const COLLECTIONS_OVERVIEW_SQL = `SELECT 'collection' kind, row_to_json(t) doc FROM (
+// $1 = org id. Two org-scoped tables the collections route always reads together, plus —
+// when the caller is a known viewer — the three per-user arms the Collections view
+// decorates them with. Those three were separate store calls for one release and cost
+// ~240ms per request on the edge tier; as UNION arms they cost nothing extra, which is
+// what round-trip-budget.test.ts pins.
+//
+// `viewer` carries the PLACEHOLDER NAMES (not values) so the same arms can be spliced
+// into two statements with different parameter numbering — bootstrap already owns $1..$4.
+//
+// Every arm's second column must be `json`, not `jsonb`: UNION refuses to match the two,
+// and the first two arms are row_to_json. Hence to_json() on the scalar arms.
+const collectionsOverviewSql = (viewer?: { user: string; since: string; per: string }) =>
+  `SELECT 'collection' kind, row_to_json(t) doc FROM (
          SELECT c.*, COALESCE(ci.cnt, 0)::int AS count
          FROM collection c
          LEFT JOIN (
@@ -411,21 +425,94 @@ const COLLECTIONS_OVERVIEW_SQL = `SELECT 'collection' kind, row_to_json(t) doc F
          WHERE c.org_id = $1
        ) t
        UNION ALL
-       SELECT 'source', row_to_json(r) FROM repo_source r WHERE r.org_id = $1`
+       SELECT 'source', row_to_json(r) FROM repo_source r WHERE r.org_id = $1${
+         !viewer
+           ? ""
+           : `
+       UNION ALL
+       SELECT 'starred', to_json(cf.collection_id) FROM collection_favorite cf
+         JOIN collection c ON c.id = cf.collection_id
+        WHERE cf.user_id = ${viewer.user} AND c.org_id = $1
+       UNION ALL
+       SELECT 'active', to_json(w.id) FROM (
+         SELECT ci.collection_id id FROM collection_item ci
+           JOIN collection c ON c.id = ci.collection_id
+          WHERE c.org_id = $1 AND ci.artifact_id IN (
+            SELECT artifact_id FROM "version"
+             WHERE author_id = ${viewer.user} AND created_at >= ${viewer.since}
+            UNION
+            SELECT artifact_id FROM "comment"
+             WHERE author_id = ${viewer.user} AND created_at >= ${viewer.since})
+         UNION
+         SELECT cm.collection_id FROM collection_member cm
+           JOIN collection c ON c.id = cm.collection_id
+          WHERE cm.user_id = ${viewer.user} AND cm.created_at >= ${viewer.since}
+            AND c.org_id = $1 AND c.created_by <> ${viewer.user}
+       ) w
+       UNION ALL
+       SELECT 'preview', row_to_json(p) FROM (
+         SELECT collection_id, id, short_id, current_version, updated_at, has_preview FROM (
+           SELECT ci.collection_id, a.id, a.short_id, a.current_version,
+                  COALESCE(a.updated_at, a.created_at) updated_at,
+                  (v.preview_status = 'ready') has_preview,
+                  row_number() OVER (
+                    PARTITION BY ci.collection_id
+                    ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id DESC) rn
+             FROM collection_item ci
+             JOIN collection c ON c.id = ci.collection_id AND c.org_id = $1
+             JOIN artifact a ON a.id = ci.artifact_id AND a.removed_at IS NULL
+             LEFT JOIN "version" v ON v.artifact_id = a.id AND v.n = a.current_version
+         ) r WHERE r.rn <= ${viewer.per}
+       ) p`
+}`
+/** The viewer-free statement, for callers that only want the org-scoped halves. */
+const COLLECTIONS_OVERVIEW_SQL = collectionsOverviewSql()
 type OverviewRow = { kind: string; doc: unknown }
-const mapOverviewRows = (
-  rows: OverviewRow[],
-): { collections: (CollectionRecord & { count: number })[]; sources: RepoSourceRecord[] } => {
+const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   const collections: (CollectionRecord & { count: number })[] = []
   const sources: RepoSourceRecord[] = []
+  const starred: string[] = []
+  const active: string[] = []
+  const previews: Record<string, CollectionPreview[]> = {}
   for (const r of rows) {
-    if (r.kind === "collection") collections.push(r.doc as CollectionRecord & { count: number })
-    else sources.push(r.doc as RepoSourceRecord)
+    switch (r.kind) {
+      case "collection":
+        collections.push(r.doc as CollectionRecord & { count: number })
+        break
+      case "starred":
+        starred.push(r.doc as string)
+        break
+      case "active":
+        active.push(r.doc as string)
+        break
+      case "preview": {
+        const p = r.doc as CollectionPreview & { collection_id: string }
+        const bucket = previews[p.collection_id] ?? []
+        previews[p.collection_id] = bucket
+        bucket.push({
+          id: p.id,
+          short_id: p.short_id,
+          current_version: p.current_version,
+          updated_at: p.updated_at,
+          // A left-joined row with no ready version yields SQL NULL, not false.
+          has_preview: p.has_preview === true,
+        })
+        break
+      }
+      default:
+        // 'source'. Named explicitly rather than left as the catch-all: five arms in,
+        // a typo'd discriminator should drop the row, not land it in sources.
+        if (r.kind === "source") sources.push(r.doc as RepoSourceRecord)
+    }
   }
   collections.sort((a, b) =>
     a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
   )
-  return { collections, sources }
+  // The window function ordered each partition, but UNION ALL gives no cross-row order
+  // guarantee once the arms are merged — re-apply the strip's order here.
+  for (const bucket of Object.values(previews))
+    bucket.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id))
+  return { collections, sources, starred, active, previews }
 }
 
 export class PgMetaStore implements MetaStore {
@@ -1649,7 +1736,12 @@ export class PgMetaStore implements MetaStore {
     const { rows } = await this.pool.query<SummaryRow>(WORKSPACE_SUMMARY_SQL, [orgId, userId])
     return mapSummaryRows(rows)
   }
-  async bootstrap(orgId: string, userId: string, notifLimit: number): Promise<BootstrapRead> {
+  async bootstrap(
+    orgId: string,
+    userId: string,
+    notifLimit: number,
+    viewer: Omit<CollectionsViewer, "userId">,
+  ): Promise<BootstrapRead> {
     // The app shell's first breath as ONE statement: five independent org/user-scoped
     // arms UNION ALLed as (arm, doc) jsonb rows. The summary and overview arms embed the
     // EXACT statements their standalone methods run (shared constants above, so they
@@ -1662,7 +1754,9 @@ export class PgMetaStore implements MetaStore {
     const { rows } = await this.pool.query<{ arm: string; doc: unknown }>(
       `SELECT 'summary' arm, (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${WORKSPACE_SUMMARY_SQL}) t) doc
        UNION ALL
-       SELECT 'overview', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${COLLECTIONS_OVERVIEW_SQL}) t)
+       SELECT 'overview', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${collectionsOverviewSql(
+         { user: "$2", since: "$5", per: "$6" },
+       )}) t)
        UNION ALL
        SELECT 'roles', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (
          SELECT cm.collection_id, cm.role FROM collection_member cm
@@ -1679,11 +1773,13 @@ export class PgMetaStore implements MetaStore {
        UNION ALL
        SELECT 'seats', to_jsonb((SELECT count(*)::int FROM membership m
                                   WHERE m.org_id = $1 AND m.role = ANY($4)))`,
-      [orgId, userId, notifLimit, [...BILLABLE_ROLES]],
+      [orgId, userId, notifLimit, [...BILLABLE_ROLES], viewer.activeSince, viewer.previewPer],
     )
     const arm: Record<string, unknown> = {}
     for (const r of rows) arm[r.arm] = r.doc
-    const { collections, sources } = mapOverviewRows((arm.overview as OverviewRow[] | null) ?? [])
+    const { collections, sources, starred, active, previews } = mapOverviewRows(
+      (arm.overview as OverviewRow[] | null) ?? [],
+    )
     const collectionRoles: Record<string, Role> = {}
     for (const r of (arm.roles as { collection_id: string; role: Role }[] | null) ?? [])
       collectionRoles[r.collection_id] = r.role
@@ -1693,6 +1789,9 @@ export class PgMetaStore implements MetaStore {
       summary: mapSummaryRows((arm.summary as SummaryRow[] | null) ?? []),
       collections,
       sources,
+      starred,
+      active,
+      previews,
       collectionRoles,
       billing: {
         subscription: (arm.subscription as SubscriptionRecord | null) ?? null,
@@ -2304,10 +2403,58 @@ export class PgMetaStore implements MetaStore {
           eq(collectionMember.user_id, userId),
           gte(collectionMember.created_at, sinceIso),
           eq(collection.org_id, orgId),
+          ne(collection.created_by, userId),
         ),
       ))
       ids.add(r.id)
     return [...ids]
+  }
+  // See the repos.ts twin: one read, sliced per collection in JS rather than a
+  // per-collection LIMIT.
+  async collectionPreviews(
+    collectionIds: string[],
+    perCollection: number,
+  ): Promise<Record<string, CollectionPreview[]>> {
+    const out: Record<string, CollectionPreview[]> = {}
+    if (collectionIds.length === 0) return out
+    const rows = await this.db
+      .select({
+        collection_id: collectionItem.collection_id,
+        id: artifact.id,
+        short_id: artifact.short_id,
+        current_version: artifact.current_version,
+        updated_at: artifact.updated_at,
+        created_at: artifact.created_at,
+        preview_status: version.preview_status,
+      })
+      .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      // Left join: an artifact whose current version is still rendering has no ready row
+      // and must fall back to the live iframe rather than a broken <img>.
+      .leftJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(and(inArray(collectionItem.collection_id, collectionIds), isNull(artifact.removed_at)))
+    // Newest first, tie-broken on id: two artifacts published in the same millisecond
+    // would otherwise land in whatever order the driver returned them, and a strip that
+    // reshuffles between page loads reads as churn.
+    const at = (r: { updated_at: string | null; created_at: string }) =>
+      r.updated_at ?? r.created_at
+    rows.sort((a, b) => at(b).localeCompare(at(a)) || b.id.localeCompare(a.id))
+    for (const r of rows) {
+      const bucket = out[r.collection_id] ?? []
+      out[r.collection_id] = bucket
+      if (bucket.length < perCollection)
+        bucket.push({
+          id: r.id,
+          short_id: r.short_id,
+          current_version: r.current_version,
+          updated_at: r.updated_at ?? r.created_at,
+          has_preview: r.preview_status === "ready",
+        })
+    }
+    return out
   }
 
   // ---- Follows (track GitHub authors + repo path prefixes) ---------------
@@ -2614,16 +2761,22 @@ export class PgMetaStore implements MetaStore {
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
   }
-  async collectionsOverview(orgId: string): Promise<{
-    collections: (CollectionRecord & { count: number })[]
-    sources: RepoSourceRecord[]
-  }> {
+  async collectionsOverview(
+    orgId: string,
+    viewer?: CollectionsViewer,
+  ): Promise<CollectionsOverviewRead> {
     // The list route used to run listCollections + listRepoSources as two independent
     // org-scoped round trips; a UNION ALL discriminated by `kind` answers both in one,
     // each branch's full row carried as JSON so the shapes don't have to be reconciled
-    // into a single column set.
+    // into a single column set. The viewer arms join the same union rather than adding
+    // three more trips.
     // Statement text shared with bootstrap() — see WORKSPACE_SUMMARY_SQL's note.
-    const { rows } = await this.pool.query<OverviewRow>(COLLECTIONS_OVERVIEW_SQL, [orgId])
+    const { rows } = await this.pool.query<OverviewRow>(
+      viewer
+        ? collectionsOverviewSql({ user: "$2", since: "$3", per: "$4" })
+        : COLLECTIONS_OVERVIEW_SQL,
+      viewer ? [orgId, viewer.userId, viewer.activeSince, viewer.previewPer] : [orgId],
+    )
     return mapOverviewRows(rows)
   }
   // ---- Folders (organize a collection's artifacts) -----------------------

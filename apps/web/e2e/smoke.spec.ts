@@ -176,16 +176,17 @@ test("Collections is a view of the library, with starred shelves leading", async
   await owner.goto("/")
   await owner.getByTestId("library-view-collections").click()
 
-  // A shelf you just made is already "working in": being a member is one of the signals,
-  // which is how you land somewhere before you have written in it. Access alone would
-  // NOT do this — that distinction is pinned in the API tests.
-  await expect(owner.getByTestId("collections-working")).toBeVisible()
+  // A shelf you merely CREATED is not one you're working in — creating auto-adds you as
+  // its owner, and counting that marked every collection you ever made as active. It
+  // lands in the everything-else group until you do something.
+  await expect(owner.getByTestId("collections-all")).toBeVisible()
+  await expect(owner.getByTestId("collections-working")).toHaveCount(0)
 
   // The Collections view IS the page: the artifact grid must not render underneath it.
   // (It did — the view switch replaced only the heading, leaving the body below it.)
   await expect(owner.locator('[data-testid^="artifact-card-open-"]')).toHaveCount(0)
 
-  // Starring is the explicit half of the same group.
+  // Starring is the explicit half of the group, and it moves the shelf.
   const card = owner.locator('[data-testid^="collection-card-star-"]').first()
   await card.click()
   await expect(owner.getByTestId("collections-working")).toBeVisible()
@@ -238,4 +239,36 @@ test("Grid or List is a preference the app remembers, not the route's choice", a
     "aria-checked",
     "true",
   )
+})
+
+test("a shelf shows what's inside it, in both layouts", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "cover.md", "# Cover\n\nbody")
+  await owner.goto("/")
+  const name = `Shelf ${Date.now()}`
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(name)
+  await owner.getByTestId("collections-new-input").press("Enter")
+
+  // File the artifact into the new shelf from the collection page's own empty state.
+  await expect(owner.getByTestId("collection-star")).toBeVisible()
+  const colId = new URL(owner.url()).searchParams.get("collection")
+  const put = await owner.request.put(`/v1/collections/${colId}/items/${shortId}`)
+  expect(put.ok(), `add item: ${put.status()}`).toBeTruthy()
+
+  await owner.goto("/?view=collections")
+  // Grid: the cover mosaic leads the card, so the shelf is recognisable by its contents
+  // rather than by a count in an otherwise blank box.
+  const cardCover = owner.locator(`[data-testid="collection-card-${colId}"]`)
+  await expect(cardCover).toBeVisible()
+  await expect(owner.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
+
+  // List does something. It used to be inert on this page — the toggle was rendered and
+  // the view ignored it — which is worse than not offering it.
+  await owner.getByTestId("library-display").click()
+  await owner.getByRole("menuitemradio", { name: "List" }).click()
+  await expect(owner.getByTestId(`collection-row-${colId}`)).toBeVisible()
+  await expect(owner.locator(`[data-testid="collection-card-${colId}"]`)).toHaveCount(0)
+  // The strip survives the layout change: rows show covers too.
+  await expect(owner.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
 })

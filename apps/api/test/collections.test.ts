@@ -243,8 +243,12 @@ describe("collections: starring", () => {
       headers: as(amy.email),
     })
 
-    // amy made it, so she is already a member of it — being added to a collection is
-    // itself one of the signals, and it is how you land in a shelf before writing in it.
+    // A shelf amy merely CREATED is not active: creating auto-adds you as owner, and
+    // counting that marked every collection you ever made as active.
+    const bare = await mk("Made but untouched")
+    expect((await rowFor(amy.email, bare.id)).active).toBe(false)
+
+    // This one she published into, which is a real signal.
     expect((await rowFor(amy.email, col.id)).active).toBe(true)
     // bob can open it and has done nothing: access is not activity. This is the whole
     // distinction the grouping rests on.
@@ -257,6 +261,51 @@ describe("collections: starring", () => {
     })
     // One deliberate act moves him.
     expect((await rowFor(bob.email, col.id)).active).toBe(true)
+  })
+
+  it("carries a preview strip so the Collections view can show what's inside", async () => {
+    const col = await mk("Shelf with covers")
+    const shortIds: string[] = []
+    // One more than the strip holds, so both the cap and the "+N" the view derives from
+    // count-minus-strip are exercised.
+    for (let i = 0; i < 5; i++) {
+      const up = await authed.request("/v1/artifacts", {
+        method: "POST",
+        headers: as(amy.email),
+        body: (() => {
+          const f = new FormData()
+          f.set("file", new File([`# doc ${i}`], `d${i}.md`, { type: "text/markdown" }))
+          f.set("title", `Doc ${i}`)
+          return f
+        })(),
+      })
+      const { short_id } = (await up.json()) as { short_id: string }
+      shortIds.push(short_id)
+      await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
+        method: "PUT",
+        headers: as(amy.email),
+      })
+    }
+
+    const row = await rowFor(amy.email, col.id)
+    expect(row.count).toBe(5)
+    expect(row.preview).toHaveLength(4)
+    // Newest first, and each entry carries what a cover needs: the ref, the version to
+    // pin the render to, and whether a static PNG exists.
+    expect(row.preview[0].short_id).toBe(shortIds[4])
+    expect(row.preview[0].current_version).toBe(1)
+    expect(typeof row.preview[0].has_preview).toBe("boolean")
+    // Last activity is derived from the strip's head — a collection has no mtime of
+    // its own, so this is the only honest answer to "when was this touched". The
+    // timestamp itself stays server-side; only this one derived field goes on the wire.
+    expect(typeof row.last_activity).toBe("string")
+    expect(row.preview[0].updated_at).toBeUndefined()
+
+    // An empty shelf reports an empty strip rather than omitting the field: the view
+    // renders "Nothing filed here yet" off this, and undefined would read as loading.
+    const bare = await mk("Empty shelf")
+    expect((await rowFor(amy.email, bare.id)).preview).toEqual([])
+    expect((await rowFor(amy.email, bare.id)).last_activity).toBeUndefined()
   })
 
   it("is per person, and gated on read rather than share", async () => {

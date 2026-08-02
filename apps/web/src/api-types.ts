@@ -6403,6 +6403,13 @@ export interface components {
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
             /** @description Whether the caller starred this collection — it pins to their sidebar. */
             starred?: boolean;
+            last_activity?: string;
+            /** @description A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing. */
+            preview?: {
+                short_id: string;
+                current_version: number;
+                has_preview: boolean;
+            }[];
             /** @description Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded. */
             active?: boolean;
             /**

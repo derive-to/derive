@@ -7,6 +7,7 @@ import {
   collectionsJson,
   Notification,
   OrgSettings,
+  PREVIEW_PER_COLLECTION,
   summaryJson,
 } from "../lib/boot-shapes"
 import { bail, fail } from "../lib/http"
@@ -78,7 +79,10 @@ export const bootstrapRoutes = (ctx: AppContext) => {
       // (empty summary, empty collections, …) and the client already knows them — a
       // 403 here sends it down that path rather than teaching this route four more.
       if (!(await isMember(c, org))) return bail(fail(c, 403, "forbidden"))
-      const b = await meta.bootstrap(org, me.id, NOTIFICATIONS_PAGE)
+      const b = await meta.bootstrap(org, me.id, NOTIFICATIONS_PAGE, {
+        activeSince: activeSince(),
+        previewPer: PREVIEW_PER_COLLECTION,
+      })
       // The publishing-blocked verdict, from the two inputs the batch just read.
       // resolveBillingState is pure — no Stripe call, no extra round trip — so this
       // whole field costs the request nothing. It exists because the app shell's
@@ -110,8 +114,9 @@ export const bootstrapRoutes = (ctx: AppContext) => {
           b.collectionRoles,
           me.id,
           false,
-          new Set(await meta.listUserFavoriteCollectionIds(me.id, org)),
-          new Set(await meta.collectionsWorkedIn(me.id, org, activeSince())),
+          new Set(b.starred),
+          new Set(b.active),
+          b.previews,
         ),
         settings: b.settings,
         notifications: b.notifications.notifications,

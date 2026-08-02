@@ -785,7 +785,12 @@ export interface ArtifactQueryStore {
    *  methods (composeBootstrap): they pay no wire trips, so parity here is the
    *  SHAPE, not the statement count. Deliberately excludes /v1/me/onboarding
    *  (its grants read is try/catch-optional and must not poison the batch). */
-  bootstrap(orgId: string, userId: string, notifLimit: number): Promise<BootstrapRead>
+  bootstrap(
+    orgId: string,
+    userId: string,
+    notifLimit: number,
+    viewer: Omit<CollectionsViewer, "userId">,
+  ): Promise<BootstrapRead>
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>
@@ -908,6 +913,13 @@ export interface SocialStore {
    *  they were granted. Reading is deliberately not among them; nothing records it, and
    *  a per-user read log is a different decision from this one. Org-scoped. */
   collectionsWorkedIn(userId: string, orgId: string, sinceIso: string): Promise<string[]>
+  /** The most recently updated artifacts in each of these collections — the filmstrip
+   *  the Collections view renders. Capped per collection: this is a preview strip, not a
+   *  listing, so a 200-artifact shelf costs the same as a 3-artifact one. */
+  collectionPreviews(
+    collectionIds: string[],
+    perCollection: number,
+  ): Promise<Record<string, CollectionPreview[]>>
 
   // ---- Follows (per-user: track GitHub authors, repo paths, and people) --
   /** Record a follow (idempotent on (user, org, kind, target)); returns the row. */
@@ -956,11 +968,14 @@ export interface CollectionStore {
   /** Collections with their item counts, newest first; scoped to a workspace when orgId is given. */
   listCollections(orgId?: string): Promise<(CollectionRecord & { count: number })[]>
   /** `listCollections` + `listRepoSources` for the SAME org, in one call — the list route's
-   *  two independent org-scoped reads collapsed to one round trip on the edge tier. */
-  collectionsOverview(orgId: string): Promise<{
-    collections: (CollectionRecord & { count: number })[]
-    sources: RepoSourceRecord[]
-  }>
+   *  two independent org-scoped reads collapsed to one round trip on the edge tier.
+   *
+   *  Pass `viewer` and the per-user decoration the Collections view needs — stars, the
+   *  worked-in set, and each shelf's preview strip — rides the same statement. Those are
+   *  three more reads a route must NOT make separately: on the edge tier each is ~80ms
+   *  (see apps/api/test/round-trip-budget.test.ts). Omit it and the per-user fields come
+   *  back empty. */
+  collectionsOverview(orgId: string, viewer?: CollectionsViewer): Promise<CollectionsOverviewRead>
   /** Artifact ids in a collection (drives ?collection= browse). */
   collectionArtifactIds(collectionId: string): Promise<string[]>
   /** Collection ids containing an artifact (for the artifact's "add to" UI). */
@@ -1540,11 +1555,28 @@ export interface DirectoryStore {
 }
 
 /** See `DirectoryStore.notificationsPage`. */
+/** One collections read — see MetaStore.collectionsOverview. */
+export interface CollectionsOverviewRead {
+  collections: (CollectionRecord & { count: number })[]
+  sources: RepoSourceRecord[]
+  /** Collection ids the viewer starred. Empty when no `viewer` was passed. */
+  starred: string[]
+  /** Collection ids the viewer has worked in since `activeSince`. Empty without a viewer. */
+  active: string[]
+  /** Newest-first covers per collection id. Empty without a viewer; a collection with
+   *  nothing in it is absent rather than mapped to []. */
+  previews: Record<string, CollectionPreview[]>
+}
+
 /** One round trip's worth of app-shell boot data — see MetaStore.bootstrap. */
 export interface BootstrapRead {
   summary: WorkspaceSummary
   collections: (CollectionRecord & { count: number })[]
   sources: RepoSourceRecord[]
+  /** The viewer's stars / worked-in set / preview strips — see CollectionsOverviewRead. */
+  starred: string[]
+  active: string[]
+  previews: Record<string, CollectionPreview[]>
   /** The caller's explicit per-collection roles (creator-ownership is applied by the route). */
   collectionRoles: Record<string, Role>
   settings: OrgSettings
@@ -2065,6 +2097,29 @@ export interface NewAuditLog {
   artifact_id?: string | null
   actor: string
   detail?: string | null
+}
+
+/** One cover in a collection's preview strip: enough to render a thumbnail and order
+ *  the strip, and nothing more. */
+export interface CollectionPreview {
+  id: string
+  short_id: string
+  current_version: number
+  updated_at: string
+  /** Whether the current version has a ready static render, so the strip can serve a
+   *  PNG instead of mounting an iframe (the same choice artifact cards make). */
+  has_preview: boolean
+}
+
+/** Who is looking, for the per-user arms of the collections read: the star list, the
+ *  worked-in window, and the preview strip. Passing it is what folds three extra round
+ *  trips into the one statement the overview already runs. */
+export interface CollectionsViewer {
+  userId: string
+  /** ISO cutoff for "recently worked in" (see collectionsWorkedIn). */
+  activeSince: string
+  /** Covers per collection. */
+  previewPer: number
 }
 
 /** A whole takedown as one unit: the artifact + workspace it targets, the

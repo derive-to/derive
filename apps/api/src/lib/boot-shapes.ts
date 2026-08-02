@@ -1,4 +1,4 @@
-import type { CollectionRecord, Role, WorkspaceSummary } from "@derive/core"
+import type { CollectionPreview, CollectionRecord, Role, WorkspaceSummary } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { BrandprintSchema } from "../schemas"
 import { DEFAULT_WORKSPACE_NAME } from "./http"
@@ -106,6 +106,9 @@ export const Notification = z
  *  sidebar, short enough that a shelf you finished with drops off on its own. One
  *  definition, so the list read and the boot batch can't disagree about what active means. */
 export const ACTIVE_WINDOW_DAYS = 30
+/** How many covers a shelf shows before "+N". Four reads as a strip; more turns the row
+ *  into a listing and starts costing real preview bytes. */
+export const PREVIEW_PER_COLLECTION = 4
 export const activeSince = (): string =>
   new Date(Date.now() - ACTIVE_WINDOW_DAYS * 86400_000).toISOString()
 
@@ -129,6 +132,21 @@ export const Collection = z
       .boolean()
       .optional()
       .describe("Whether the caller starred this collection — it pins to their sidebar."),
+    /** Newest activity among the collection's artifacts. Derived from the preview strip
+     *  rather than stored — a collection has no mtime of its own. */
+    last_activity: z.string().optional(),
+    preview: z
+      .array(
+        z.object({
+          short_id: z.string(),
+          current_version: z.number(),
+          has_preview: z.boolean(),
+        }),
+      )
+      .optional()
+      .describe(
+        "A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing.",
+      ),
     active: z
       .boolean()
       .optional()
@@ -169,6 +187,8 @@ export const enrich = (
     my_role: Role | null
     starred?: boolean
     active?: boolean
+    last_activity?: string
+    preview?: { short_id: string; current_version: number; has_preview: boolean }[]
   },
   srcByCollection: Map<string, Src>,
   branchByRepo: Map<string, string>,
@@ -214,6 +234,7 @@ export const collectionsJson = (
   /** Ids the caller has worked in lately. Same read as the list — the Collections
    *  view groups on this and must not pay a second round trip for it. */
   activeIds: ReadonlySet<string> = new Set(),
+  previews: Record<string, CollectionPreview[]> = {},
 ) => {
   const { srcByCollection, branchByRepo } = sourceMaps(sources)
   const roleFor = (col: CollectionRecord): Role | null =>
@@ -223,7 +244,20 @@ export const collectionsJson = (
     .filter(({ role }) => role !== null)
     .map(({ col, role }) =>
       enrich(
-        { ...col, my_role: role, starred: starredIds.has(col.id), active: activeIds.has(col.id) },
+        {
+          ...col,
+          my_role: role,
+          starred: starredIds.has(col.id),
+          active: activeIds.has(col.id),
+          // Only what a cover needs goes on the wire — the artifact's internal id and
+          // its timestamp stay server-side; the strip's head becomes `last_activity`.
+          preview: (previews[col.id] ?? []).map((p) => ({
+            short_id: p.short_id,
+            current_version: p.current_version,
+            has_preview: p.has_preview,
+          })),
+          last_activity: previews[col.id]?.[0]?.updated_at,
+        },
         srcByCollection,
         branchByRepo,
       ),
