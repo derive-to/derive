@@ -10,8 +10,17 @@ export function ChatComposer(props: {
   onSend: (body: string) => Promise<void>
   placeholder: string
   disabled?: boolean
-  /** Why chat cannot be used, when it cannot (no model configured, no permission). */
-  disabledReason?: string
+  /**
+   * A sentence to show above the box: why chat cannot be used (no model configured, no
+   * permission), or why the last message did not send.
+   *
+   * It renders whenever there IS one. It used to render only while `disabled` was also true,
+   * which meant the failure case — the composer is fine, the SEND failed — was silently dropped
+   * on all three chat surfaces: the person's own message appeared, and then nothing, forever,
+   * with the server's actual sentence ("no model is configured on this deploy") sitting unused in
+   * state. A refusal you cannot see is indistinguishable from an agent ignoring you.
+   */
+  notice?: string
   /** Rendered on the row beside Send. */
   accessory?: ReactNode
   /** True while the agent owes a reply. With `onStop`, Send becomes Stop for the duration. */
@@ -20,8 +29,7 @@ export function ChatComposer(props: {
   onStop?: () => void
   className?: string
 }) {
-  const { onSend, placeholder, disabled, disabledReason, accessory, busy, onStop, className } =
-    props
+  const { onSend, placeholder, disabled, notice, accessory, busy, onStop, className } = props
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
 
@@ -39,8 +47,20 @@ export function ChatComposer(props: {
 
   return (
     <div className={cn("border-t border-border p-2.5", className)}>
-      {disabled && disabledReason ? (
-        <p className="px-1 pb-2 text-xs text-muted-foreground">{disabledReason}</p>
+      {/* Tone follows the state, with no second prop to keep in step: a DISABLED composer's
+          notice explains a standing condition (quiet), while an enabled one's is something that
+          just failed under the person's hand (loud enough to be read). */}
+      {notice ? (
+        <p
+          role={disabled ? undefined : "alert"}
+          data-testid="chat-composer-notice"
+          className={cn(
+            "px-1 pb-2 text-xs",
+            disabled ? "text-muted-foreground" : "text-destructive",
+          )}
+        >
+          {notice}
+        </p>
       ) : null}
       <div className="flex items-end gap-2">
         <Textarea

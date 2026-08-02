@@ -120,6 +120,32 @@ describe("the chat tool surface", () => {
     const out = JSON.stringify(await tools.execute("catch_up", {}))
     expect(out).toMatch(/no inbox/i)
   })
+
+  it("carries the app-help skill on EVERY lane, including one with no tools at all", async () => {
+    const { ctx } = makeAuthedApp("ct-helping", [{ id: "u1", email: "u1@x.com", name: "U" }])
+    const who = { org: "default", user: { id: "u1", name: "U" }, seatRole: "owner" } as const
+    // The full chat lane, the read-only document rail, and the degenerate empty subset. `helping`
+    // answers questions about DERIVE, which no tool implies, so it must reach a turn regardless of
+    // what that turn can do — the empty case is the one that proves it is attached to the surface
+    // rather than falling out of the tool→skill map.
+    for (const only of [undefined, new Set(["find", "read"]), new Set<string>()]) {
+      const tools = buildChatTools(ctx, who, only)
+      expect(tools.skills.map((s) => s.name)).toContain("helping")
+    }
+  })
+
+  it("still derives the rest of the index from the tools the turn actually holds", async () => {
+    const { ctx } = makeAuthedApp("ct-index", [{ id: "u1", email: "u1@x.com", name: "U" }])
+    const rail = buildChatTools(
+      ctx,
+      { org: "default", user: { id: "u1", name: "U" }, seatRole: "owner" },
+      new Set(["find", "read"]),
+    )
+    // No publish tool on the rail, so no publishing procedure in its index: pointing a turn at a
+    // skill for a tool it cannot call spends its one lazy read on nothing.
+    expect(rail.skills.map((s) => s.name)).toContain("finding")
+    expect(rail.skills.map((s) => s.name)).not.toContain("publishing")
+  })
 })
 
 describe("the model catalog", () => {

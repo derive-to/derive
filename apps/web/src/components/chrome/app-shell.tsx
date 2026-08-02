@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useRouterState } from "@tanstack/react-router"
+import { useNavigate, useRouterState } from "@tanstack/react-router"
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { api } from "@/api"
 import { BlockedBanner } from "@/components/billing/blocked-banner"
@@ -21,6 +21,12 @@ import { ShellCtx, type ShellValue } from "./shell-context"
 // it (and cmdk) out of the shared bundle every route pays for. Loads on first open.
 const CommandPalette = lazy(() =>
   import("./command-palette").then((m) => ({ default: m.CommandPalette })),
+)
+
+// The assistant dock pulls in the chat components and their markdown renderer, which most
+// routes never need. Same treatment as the palette: fetched the first time it opens.
+const AssistantPanel = lazy(() =>
+  import("./assistant-panel").then((m) => ({ default: m.AssistantPanel })),
 )
 
 const COLLAPSE_KEY = STORAGE_KEYS.navCollapsed
@@ -65,6 +71,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Immersive (the artifact's focus mode): the rail + mobile top bar unmount and
   // the inset mat drops (see ShellValue.immersive). Ephemeral — never persisted.
   const [immersive, setImmersive] = useState(false)
+  // The assistant dock. DELIBERATELY NOT PERSISTED, unlike the rail's collapse: the rail is a
+  // standing preference about your chrome, while the dock is the answer to something you just
+  // did. Persisting it meant opening the library and being met by a third of the screen given to
+  // a conversation you had yesterday — chrome you have to close before you can get to work. It
+  // opens when you ask, follows you across navigation while the conversation is live, and a fresh
+  // load starts clean. The way back in is always one gesture away (the rail row, ⌘K, Ask).
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const [assistantAsk, setAssistantAsk] = useState<string | null>(null)
+  const navigate = useNavigate()
   const qc = useQueryClient()
   // Workspaces power the switcher's no-op check below; the rail + command palette
   // read their own copies of the nav queries (deduped by key). enabled on a
@@ -167,6 +182,29 @@ export function AppShell({ children }: { children: ReactNode }) {
     reloadAfterWorkspaceChange()
   }
 
+  // THE ONE ASK ACTION, and the only place in the app that knows a phone has no dock.
+  //
+  // Callers pass a question or nothing. On a desktop that opens the dock beside the page; on a
+  // phone the same ask becomes a navigation to /chat, which is a real route, so the phone's own
+  // back gesture works and there is no bespoke sheet to dismiss. Keeping the branch here is what
+  // lets every call site stay one line.
+  const openAssistant = (text?: string) => {
+    const question = text?.trim() || undefined
+    if (isMobile) {
+      void navigate({
+        to: "/chat",
+        search: { ask: question, session: undefined, model: undefined },
+      })
+      return
+    }
+    setAssistantAsk(question ?? null)
+    setAssistantOpen(true)
+  }
+  const closeAssistant = () => {
+    setAssistantOpen(false)
+    setAssistantAsk(null)
+  }
+
   // A plain value object — the React Compiler keeps it reference-stable across
   // renders, so consumers re-render only when the palette state or a workspace
   // action changes (the nav data now lives in react-query, not here).
@@ -175,6 +213,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     setPaletteOpen,
     immersive,
     setImmersive,
+    assistantOpen,
+    openAssistant,
+    closeAssistant,
     switchWorkspace,
     createWorkspace,
     deleteWorkspace,
@@ -251,6 +292,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
             {children}
           </SidebarInset>
+          {/* The assistant dock, peer to the content card rather than floating over it — one
+              shell holding two cards. Never below `sm` (openAssistant navigates there instead)
+              and never in immersive mode, where the page has claimed every pixel. */}
+          {assistantOpen && !isMobile && !immersive && (
+            <Suspense fallback={null}>
+              <AssistantPanel ask={assistantAsk} onAskConsumed={() => setAssistantAsk(null)} />
+            </Suspense>
+          )}
         </SidebarProvider>
       </TooltipProvider>
       {paletteOpen && (
@@ -302,6 +351,7 @@ function PageLabel({ pathname }: { pathname: string }) {
   if (pathname === "/favorites") return "Favorites"
   if (pathname === "/following") return "Following"
   if (pathname === "/new") return "New artifact"
+  if (pathname === "/chat") return "Chat"
   if (pathname.startsWith("/settings")) return "Settings"
   if (pathname.startsWith("/artifacts/")) return "Artifact"
   if (pathname.startsWith("/users/")) return "Profile"

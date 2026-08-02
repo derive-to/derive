@@ -69,8 +69,15 @@ function CommandDialog({
 // the open palette IS the focus state.
 function CommandInput({
   className,
+  action,
   ...props
-}: React.ComponentProps<typeof CommandPrimitive.Input>) {
+}: React.ComponentProps<typeof CommandPrimitive.Input> & {
+  /** A control pinned INSIDE the input row, at its trailing edge. The ask affordance lives here
+   *  rather than in the result list: a row would compete with results for Enter and for the
+   *  reader's attention, while a control on the input is always in the same place, cannot be
+   *  scrolled past, and reads as a second thing to do with what you just typed. */
+  action?: React.ReactNode
+}) {
   return (
     <div
       data-slot="command-input-wrapper"
@@ -85,6 +92,7 @@ function CommandInput({
         )}
         {...props}
       />
+      {action}
     </div>
   )
 }

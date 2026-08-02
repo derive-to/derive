@@ -232,6 +232,15 @@
   #root {
     height: 100%;
   }
+  /* The app shell is a fixed frame with things pinned to its bottom edge (the chat composer, the
+     mobile selection bar), and on iOS `height:100%` resolves against the LARGE viewport — the one
+     that assumes the browser toolbar is hidden. The last row of the app then sits behind that
+     toolbar until you scroll, which for a composer means typing into something you cannot see.
+     `dvh` tracks the viewport as the toolbar collapses and expands, which is what a shell with a
+     pinned bottom edge wants. Identical to 100% on a desktop, where there is no such toolbar. */
+  #root {
+    height: 100dvh;
+  }
   html {
     @apply font-sans;
   }

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import type { ReactNode } from "react"
-import { useCallback, useEffect } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatThread } from "@/components/chat/chat-thread"
 import { json, useChatSession } from "@/components/chat/use-chat-session"
@@ -29,7 +29,8 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 // here is chat machinery — it is components/chat/* plus this page's own three decisions: which
 // workspace, which model, and which past conversation.
 //
-// Deliberately NOT in the sidebar yet. It is reached by direct link while it earns its place.
+// The full-width view of the conversation the assistant dock also holds (chrome/assistant-panel):
+// reached by the dock's Expand, by the rail row on a phone (where there is no dock), and by link.
 
 interface ChatSessionRow {
   id: string
@@ -51,7 +52,7 @@ interface ChatSessionRow {
 export function ChatPage() {
   useDocumentTitle("Chat")
   const navigate = useNavigate()
-  const { session: sessionParam, model: modelParam } = useSearch({ from: "/chat" })
+  const { session: sessionParam, model: modelParam, ask } = useSearch({ from: "/chat" })
 
   // The workspace is this page's one hard dependency: without its id there is nothing to
   // chat ABOUT, so a failure here is a page-level error rather than a degraded control.
@@ -125,7 +126,7 @@ export function ChatPage() {
     if (chat.sessionId && chat.sessionId !== sessionParam) {
       void navigate({
         to: "/chat",
-        search: { session: chat.sessionId ?? undefined, model: modelParam },
+        search: { session: chat.sessionId ?? undefined, model: modelParam, ask: undefined },
         replace: true,
       })
       // A new conversation exists, so the picker's list is stale by exactly one row.
@@ -134,6 +135,28 @@ export function ChatPage() {
   }, [chat.sessionId, sessionParam, modelParam, navigate, history.refetch])
 
   const chatOff = settings ? settings.chatBeta !== true : false
+
+  // A QUESTION HANDED OVER, sent once.
+  //
+  // `?ask=` is how a surface with nowhere to put an answer hands one here: the rail row and the
+  // search sheet on a phone (there is no dock there), a pasted link, Slack. Two things make
+  // "once" true — a `session` in the URL wins outright, so a named conversation is never
+  // interrupted by a stale param, and the ref flips synchronously, so React's double mount cannot
+  // send twice.
+  //
+  // IT DOES NOT STRIP THE PARAM ITSELF, and that is the whole subtlety. Navigating to clear `ask`
+  // right after sending REMOUNTS this page, which throws away the session id of the turn just
+  // started: the server has a live conversation and the surface has forgotten it, so the answer
+  // lands nowhere and the person watches an empty thread. The effect above already rewrites the
+  // URL the moment a session id exists — with `ask: undefined` — so the param clears on its own,
+  // one beat later, with no second navigation racing the send. Until then a reload re-sends the
+  // same question, which is what reloading a failed ask should do anyway.
+  const asked = useRef<string | null>(null)
+  useEffect(() => {
+    if (!ask || sessionParam || !org || chatOff || asked.current === ask) return
+    asked.current = ask
+    void chat.send(ask)
+  }, [ask, sessionParam, org, chatOff, chat.send])
 
   // The picker queries above degrade on their own (a picker with nothing to show simply does
   // not render), but this one cannot: with no workspace there is no conversation to have, and
@@ -170,8 +193,12 @@ export function ChatPage() {
       {/* The header is chrome, so it stays quiet: a small label, and the controls that change
           what the next turn does. */}
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 sm:px-6">
-        <Icon name="sparkles" className="size-4 text-muted-foreground" />
-        <h1 className="text-sm font-semibold tracking-tight text-foreground">Chat</h1>
+        {/* The app's mobile top bar already says "Chat", so the page does not repeat it there —
+            the heading stays in the a11y tree, and the controls keep the row. */}
+        <Icon name="sparkles" className="size-4 text-muted-foreground max-sm:hidden" />
+        <h1 className="text-sm font-semibold tracking-tight text-foreground max-sm:sr-only">
+          Chat
+        </h1>
         {chat.sessionId ? (
           <span className="hidden truncate text-xs text-muted-foreground sm:inline">
             {history.data?.sessions.find((x) => x.id === chat.sessionId)?.preview ?? ""}
@@ -186,7 +213,7 @@ export function ChatPage() {
                 chat.reset()
                 void navigate({
                   to: "/chat",
-                  search: { session: undefined, model: modelParam },
+                  search: { session: undefined, model: modelParam, ask: undefined },
                   replace: true,
                 })
               }}
@@ -199,7 +226,10 @@ export function ChatPage() {
             sessions={history.data?.sessions ?? []}
             current={chat.sessionId}
             onPick={(id) =>
-              void navigate({ to: "/chat", search: { session: id, model: modelParam } })
+              void navigate({
+                to: "/chat",
+                search: { session: id, model: modelParam, ask: undefined },
+              })
             }
             onOpenDoc={(shortId) =>
               void navigate({ to: "/artifacts/$ref", params: { ref: shortId } })
@@ -258,9 +288,11 @@ export function ChatPage() {
             busy={chat.working}
             onStop={stop}
             disabled={chatOff || !org}
-            disabledReason={chat.error ?? undefined}
+            notice={chat.error ?? undefined}
             placeholder="Ask about your workspace…"
-            className="border-t-0 px-0"
+            // The page's own bottom edge, so it owes the phone its safe area — the same floor
+            // the artifact comment composer uses.
+            className="border-t-0 px-0 pb-[max(10px,env(safe-area-inset-bottom))]"
           />,
         )}
       </div>

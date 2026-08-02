@@ -17,6 +17,18 @@ export interface ShellValue {
    *  own open/collapsed preference is never touched. */
   immersive: boolean
   setImmersive: (on: boolean) => void
+  /** The assistant dock (chrome/assistant-panel), open beside the page. Desktop only. */
+  assistantOpen: boolean
+  /**
+   * Ask the agent, from anywhere: the rail row, the ⌘K palette, a page's Ask button.
+   *
+   * ONE action with two renderings, and no caller chooses between them. On a desktop it opens the
+   * dock (sending `text` when there is one); on a phone there is no dock, so the same ask
+   * navigates to /chat carrying the question. That is why no call site holds a mobile branch —
+   * they all say "ask this", and the viewport decides where the answer appears.
+   */
+  openAssistant: (text?: string) => void
+  closeAssistant: () => void
   switchWorkspace: (id: string) => void
   /** Create + switch; optional invite emails go out before the reload (one flow —
    *  naming a workspace and bringing the team are the same gesture). */

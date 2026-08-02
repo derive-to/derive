@@ -29,11 +29,11 @@ export function ArtifactChat(props: {
   streaming?: string
   disabled?: boolean
   /** Why chat cannot be used, when it cannot (no model configured, no permission). */
-  disabledReason?: string
+  notice?: string
   onSend: (body: string) => Promise<void>
   onPoll: () => void
 }) {
-  const { messages, working, streaming, disabled, disabledReason, onSend, onPoll } = props
+  const { messages, working, streaming, disabled, notice, onSend, onPoll } = props
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="artifact-chat">
       <ChatThread
@@ -53,7 +53,7 @@ export function ArtifactChat(props: {
       <ChatComposer
         onSend={onSend}
         disabled={disabled}
-        disabledReason={disabledReason}
+        notice={notice}
         placeholder="Ask about this doc, or ask for a change…"
       />
     </div>

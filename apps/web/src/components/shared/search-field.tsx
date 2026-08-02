@@ -33,6 +33,7 @@ export function SearchField({
   className,
   testId,
   onEnter,
+  onAsk,
   "aria-label": ariaLabel,
 }: {
   value: string
@@ -47,6 +48,11 @@ export function SearchField({
   testId: string
   /** Fired on Enter with the current value trimmed non-empty — e.g. to submit to a results page. */
   onEnter?: (value: string) => void
+  /** Fired on ⌘↵ / Ctrl+↵, empty value included: ask the agent what is in the box instead of
+   *  searching for it. The keyboard half of the Ask button beside the field
+   *  (shared/ask-button), and the same gesture the ⌘K palette uses, so the shortcut means one
+   *  thing everywhere it exists. */
+  onAsk?: (value: string) => void
   "aria-label": string
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -62,6 +68,13 @@ export function SearchField({
         value={value}
         onChange={(e) => onValueChange(e.target.value)}
         onKeyDown={(e) => {
+          // ⌘↵ before ↵: the modifier is the whole difference between asking and searching, so
+          // it has to be read first or a held ⌘ still submits a search.
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && onAsk) {
+            e.preventDefault()
+            onAsk(value.trim())
+            return
+          }
           if (e.key === "Enter") {
             const v = value.trim()
             if (onEnter && v) onEnter(v)

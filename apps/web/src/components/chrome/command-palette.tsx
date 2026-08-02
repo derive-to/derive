@@ -13,11 +13,17 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import { Kbd } from "@/components/ui/kbd"
 import { colorForName } from "@/lib/avatar-tints"
 import { fuzzyTitles } from "@/lib/fuzzy"
 import { splitMatches } from "@/lib/highlight"
 import { getInitials } from "@/lib/initials"
-import { cachedArtifactRows, collectionsQuery, workspacesQuery } from "@/lib/queries"
+import {
+  cachedArtifactRows,
+  collectionsQuery,
+  workspaceSettingsQuery,
+  workspacesQuery,
+} from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { cn } from "@/lib/utils"
@@ -54,12 +60,25 @@ function highlight(text: string, query: string): React.ReactNode[] {
 // Following), a collection, or another workspace — from anywhere, incl. inside an artifact.
 // Artifact search is async, so cmdk's built-in filtering is off and we render
 // exactly the rows we want; the static rows are filtered against the query here.
+//
+// IT ALSO ASKS. One box, both jobs, said in the placeholder — and the ask is a control pinned
+// inside the INPUT (see ui/command's `action` slot), never a row in the list. A row would sit at
+// one end of a ranked list competing for Enter with whatever the person actually typed a title
+// for; the control cannot be scrolled past, cannot steal a keystroke, and stays in one place
+// while the list underneath changes on every letter.
+//
+// The one exception is the case where Enter is FREE: nothing matched, so there is no document to
+// open, and asking becomes the only sensible thing Enter could do. Then it IS the row.
 export function CommandPalette() {
-  const { paletteOpen, setPaletteOpen, switchWorkspace } = useShell()
+  const { paletteOpen, setPaletteOpen, switchWorkspace, openAssistant } = useShell()
   // Read straight from cache (the rail already warmed these); the palette is
   // signed-in-only, so no `enabled` gate is needed.
   const { data: collections = [] } = useQuery(collectionsQuery())
   const { data: workspaces } = useQuery(workspacesQuery())
+  // Chat defaults on, so an unresolved read keeps the ask offered rather than hiding a control
+  // that is about to appear — the same rule the rail row follows.
+  const { data: settings } = useQuery(workspaceSettingsQuery())
+  const chatOn = settings ? settings.chatBeta === true : true
   const nav = useNavigate()
   const prefetch = usePrefetchArtifact()
   const [query, setQuery] = useState("")
@@ -183,9 +202,19 @@ export function CommandPalette() {
     fn()
   }
 
+  // Ask what you just typed. Closing first is deliberate: the answer lands in the dock (or, on a
+  // phone, on /chat), and leaving a modal open over the thing it opened is how two surfaces end
+  // up fighting for the same Escape key.
+  const askIt = (text: string) => {
+    const body = text.trim()
+    if (!body) return
+    setPaletteOpen(false)
+    openAssistant(body)
+  }
+
   const q = query.trim().toLowerCase()
-  // An artifact whose TITLE matched already shows in "Artifacts" — don't repeat it as a
-  // content hit; the content group is for docs found only by what's inside them.
+  // An artifact whose TITLE matched already shows above — don't repeat it as a content hit;
+  // the content rows are for documents found only by what's inside them.
   const titleIds = new Set(results.map((r) => r.short_id))
   const contentOnly = content.hits.filter((h) => !titleIds.has(h.short_id))
   // Brandprint-pointed collections are managed in Settings → Brandprint, not jumped to here.
@@ -205,6 +234,27 @@ export function CommandPalette() {
   const showConnect =
     "connect an agent".includes(q) || "getting started".includes(q) || "mcp setup".includes(q)
 
+  // ASKING IS OFFERED ONLY WHEN IT WOULD WORK: chat on for the workspace, and something typed to
+  // ask about. Two characters is the same floor the content search uses, so the control appears
+  // exactly when the list below it starts having something to say.
+  const canAsk = chatOn && query.trim().length >= 2
+  // Nothing to open, so Enter is free. This is what turns the ask into the row (below) and flips
+  // the button's own hint from ⌘↵ to ↵ — one state, read in both places, so they cannot disagree.
+  const nothingMatched =
+    canAsk &&
+    !loading &&
+    !contentLoading &&
+    !peopleLoading &&
+    results.length === 0 &&
+    contentOnly.length === 0 &&
+    people.length === 0 &&
+    matchedCollections.length === 0 &&
+    otherWorkspaces.length === 0 &&
+    !showAll &&
+    !showFav &&
+    !showFollowing &&
+    !showConnect
+
   return (
     <CommandDialog
       open={paletteOpen}
@@ -213,16 +263,66 @@ export function CommandPalette() {
       title="Search"
       description="Search artifacts, people, and collections."
     >
-      <Command shouldFilter={false}>
+      <Command
+        shouldFilter={false}
+        onKeyDown={(e) => {
+          // ⌘↵ asks from ANYWHERE in the palette, including while a result row is highlighted:
+          // the person has already typed the question, and making them reach for a control to
+          // send it is the friction this shortcut exists to remove.
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canAsk) {
+            e.preventDefault()
+            askIt(query)
+          }
+        }}
+      >
         <CommandInput
           value={query}
           onValueChange={setQuery}
-          placeholder="Search artifacts, people, collections…"
+          placeholder="Search or ask a question…"
+          action={
+            canAsk ? (
+              <button
+                type="button"
+                onClick={() => askIt(query)}
+                data-testid="palette-ask"
+                aria-label={`Ask Derive about ${query.trim()}`}
+                className="flex shrink-0 items-center gap-1.5 rounded-md bg-secondary px-2 py-1 text-xs text-foreground ring-1 ring-border ring-inset transition-colors hover:ring-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >
+                <Icon name="sparkles" size={13} />
+                Ask
+                {/* The hint tracks what the key will ACTUALLY do: with results on screen Enter
+                    belongs to the highlighted row, so asking is ⌘↵; with none it is Enter
+                    itself. Two labels for one control would be worse than the truth. */}
+                <Kbd className="text-2xs">{nothingMatched ? "↵" : "⌘↵"}</Kbd>
+              </button>
+            ) : null
+          }
         />
         <CommandList>
           <CommandEmpty>
             {loading || contentLoading || peopleLoading ? "Searching…" : "No results."}
           </CommandEmpty>
+
+          {/* NOTHING MATCHED, so Enter has nothing to open. A question rarely matches a title
+              literally, which makes this the moment asking is the better answer — and as the
+              only row, it is the highlighted one, so Enter reaches it with no special rule. */}
+          {nothingMatched && (
+            <CommandGroup>
+              <CommandItem
+                value="ask-derive"
+                data-testid="palette-ask-row"
+                onSelect={() => askIt(query)}
+              >
+                <Icon name="sparkles" size={16} />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="truncate">Ask Derive about this</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    No artifact matches those words
+                  </span>
+                </div>
+              </CommandItem>
+            </CommandGroup>
+          )}
 
           {(showAll || showFav || showFollowing || showConnect) && (
             <CommandGroup heading="Jump to">
@@ -264,10 +364,11 @@ export function CommandPalette() {
 
           {results.length > 0 && (
             // Dim while a new search is in flight — the prior matches are stale, not the answer.
-            <CommandGroup
-              heading="Artifacts"
-              className={cn(loading && "opacity-60 transition-opacity")}
-            >
+            // One flat list, no heading: "Artifacts" over documents and "In content" over more
+            // documents was a label telling the reader which INDEX matched, which is our
+            // plumbing, not their question. What tells them apart is the second line — a
+            // version, or the sentence the match sits in.
+            <CommandGroup className={cn(loading && "opacity-60 transition-opacity")}>
               {results.map((a) => (
                 <CommandItem
                   key={a.short_id}
@@ -289,10 +390,7 @@ export function CommandPalette() {
           )}
 
           {contentOnly.length > 0 && (
-            <CommandGroup
-              heading="In content"
-              className={cn(contentLoading && "opacity-60 transition-opacity")}
-            >
+            <CommandGroup className={cn(contentLoading && "opacity-60 transition-opacity")}>
               {contentOnly.map((h) => (
                 <CommandItem
                   key={`content-${h.short_id}`}
@@ -398,6 +496,29 @@ export function CommandPalette() {
             </CommandGroup>
           )}
         </CommandList>
+        {/* What the two keys do, where a reader looks for it — and it changes with the state, so
+            the footer and the Ask button always say the same thing. */}
+        <div className="flex shrink-0 items-center gap-4 border-t px-3 py-2 text-2xs text-muted-foreground">
+          {nothingMatched ? (
+            <span>
+              <Kbd className="mr-1.5 text-2xs">↵</Kbd>ask
+            </span>
+          ) : (
+            <>
+              <span>
+                <Kbd className="mr-1.5 text-2xs">↵</Kbd>open
+              </span>
+              {canAsk && (
+                <span>
+                  <Kbd className="mr-1.5 text-2xs">⌘↵</Kbd>ask
+                </span>
+              )}
+            </>
+          )}
+          <span className="ml-auto">
+            <Kbd className="mr-1.5 text-2xs">esc</Kbd>close
+          </span>
+        </div>
       </Command>
     </CommandDialog>
   )
