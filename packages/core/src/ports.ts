@@ -2997,6 +2997,23 @@ export interface OrgSettings {
    *  typing into a panel that will never answer. On a shared host DERIVE_CHAT_ALLOWLIST still
    *  bounds WHICH workspaces may spend the operator's model key. */
   chatBeta: boolean
+  /**
+   * WHICH CONNECTIONS CHAT MAY REACH. Connection ids, declared by an admin.
+   *
+   * A packaged run DECLARES the connections it may touch, so a Stripe-bound run sees Stripe
+   * tools and nothing else. A conversation has no such declaration — somebody types a sentence
+   * and the agent decides what to do — so handing it every connection in the workspace would be
+   * a far larger blast radius than any run gets, granted by nobody in particular.
+   *
+   * This is that missing declaration, made once by the person who owns the credential rather
+   * than continuously by the person typing. EMPTY BY DEFAULT: chat reaches no source until
+   * somebody says which, so connecting a server never silently widens what chat can do.
+   *
+   * It is the ONLY binding control. Cross-source exfiltration — content read from one source
+   * telling the agent to call another with private data — is not a write-posture problem and no
+   * publish rule catches it; this list is what bounds it.
+   */
+  chatSources: string[]
   /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
    *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
    *  and answers in the request, an automation runs unattended on a trigger and can write while
@@ -3061,6 +3078,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // does not want it keeps that. Automations stay opt-in — they run unattended and can write
   // while nobody is watching, which is a different bet from an attended answer.
   chatBeta: true,
+  // Empty: chat reaches no connected source until an admin names one. Connecting a server
+  // must never silently widen what a conversation can do.
+  chatSources: [],
   automateBeta: false,
   agentKillswitch: false,
   agentAutoEnabled: false,
