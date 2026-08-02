@@ -1053,6 +1053,12 @@ export function runStoreContract(
         made[2].short_id,
         made[1].short_id,
       ])
+      // …and the COUNT agrees with the strip: item rows for tombstoned artifacts do not
+      // count. "3 artifacts" over an empty shelf was the count lying about what opening
+      // the collection actually shows (a PR-preview teardown tombstones the artifacts
+      // but keeps the collection_item rows).
+      const counted = (await store.listCollections(ORG)).find((c) => c.id === shelf.id)
+      expect(counted?.count).toBe(4)
 
       // An empty collection is absent rather than an empty array, and no ids means no
       // query at all.

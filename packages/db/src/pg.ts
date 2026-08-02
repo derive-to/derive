@@ -442,7 +442,9 @@ const collectionsOverviewSql = (viewer?: { user: string; since: string; per: str
          SELECT c.*, COALESCE(ci.cnt, 0)::int AS count
          FROM collection c
          LEFT JOIN (
-           SELECT collection_id, count(*)::int cnt FROM collection_item GROUP BY collection_id
+           SELECT ci2.collection_id, count(*)::int cnt FROM collection_item ci2
+             JOIN artifact a2 ON a2.id = ci2.artifact_id AND a2.removed_at IS NULL
+            GROUP BY ci2.collection_id
          ) ci ON ci.collection_id = c.id
          WHERE c.org_id = $1
        ) t

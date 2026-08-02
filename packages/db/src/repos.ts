@@ -2151,9 +2151,14 @@ export function makeRepos(db: SqliteDb) {
     const rows = await (orgId ? base.where(eq(collection.org_id, orgId)) : base)
       .orderBy(desc(collection.created_at))
       .all()
+    // Count LIVE artifacts, not item rows: a PR-preview teardown tombstones the
+    // artifacts but leaves the collection_item rows, and a shelf that says "3
+    // artifacts" over an empty strip is the count lying about what opening it shows.
     const counts = await db
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      .where(isNull(artifact.removed_at))
       .groupBy(collectionItem.collection_id)
       .all()
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
