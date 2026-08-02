@@ -1,16 +1,24 @@
+import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { Icon } from "@/components/icons"
+import { Breadcrumb, CrumbSep, crumbClass } from "@/components/shared/breadcrumb"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
-// The bar shown when viewing a collection: title, count, and the owner actions
-// (share / rename / delete). Share is the headline — it grants the role on
-// every artifact in the collection.
+// The bar shown when viewing a collection: where you are, and the owner actions
+// (share / rename / delete). Share is the headline — it grants the role on every
+// artifact in the collection.
+//
+// The name is the LEAF of a breadcrumb, so the bar answers "where am I" and "how do I
+// get back" in the line that was already showing the title. That replaces the `×
+// Collection` chip that used to sit in the toolbar as the only way out — a second
+// statement of the same fact, in a worse place for it.
 export function CollectionBar({
   title,
   count,
+  ancestors,
   onShare,
   starred,
   onStar,
@@ -19,6 +27,9 @@ export function CollectionBar({
 }: {
   title: string
   count: number
+  /** Links above this collection, outermost first: always the library, plus the parent
+   *  repo when this is a pull-request preview. `collection` omitted = the library root. */
+  ancestors: { label: string; collection?: string }[]
   onShare: () => void
   /** Null when the collection isn't loaded yet — the control hides rather than
    *  guessing a state it would then have to correct. */
@@ -39,7 +50,24 @@ export function CollectionBar({
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2.5 border-b border-border-soft pb-3.5">
-      <Icon name="collection" className="text-muted-foreground" />
+      {!renaming && (
+        <Breadcrumb>
+          {ancestors.map((a, i) => (
+            <span key={a.label} className="flex min-w-0 items-center gap-1.5">
+              <Link
+                to="/"
+                search={a.collection ? { collection: a.collection } : {}}
+                data-testid={`crumb-${i}`}
+                title={`Back to ${a.label}`}
+                className={crumbClass(ancestors.length > 1 && i < ancestors.length - 1)}
+              >
+                {a.label}
+              </Link>
+              <CrumbSep />
+            </span>
+          ))}
+        </Breadcrumb>
+      )}
       {renaming ? (
         <Input
           value={draft}

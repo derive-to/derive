@@ -304,3 +304,27 @@ test("the current page keeps its selected state under the pointer", async ({ own
   await owner.waitForTimeout(400)
   expect(await bgOf(idle), "an idle row stopped responding to hover").not.toBe(idleRest)
 })
+
+test("a collection says where you are, and the way back is the trail", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "in-col.md", "# In a collection\n\nbody")
+  await owner.goto("/")
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(`Shelf ${Date.now()}`)
+  await owner.getByTestId("collections-new-input").press("Enter")
+  await expect(owner.getByTestId("collection-share")).toBeVisible()
+  const colId = new URL(owner.url()).searchParams.get("collection")
+  const put = await owner.request.put(`/v1/collections/${colId}/items/${shortId}`)
+  expect(put.ok(), `add item: ${put.status()}`).toBeTruthy()
+
+  // The header answers "where am I" AND "how do I get out". It used to answer only the
+  // first, with the way out an `×` chip over in the toolbar.
+  await owner.goto(`/?collection=${colId}`)
+  const home = owner.getByTestId("crumb-0")
+  await expect(home).toHaveText("Library")
+  await home.click()
+  await expect(owner).toHaveURL(/\/$|\/\?/)
+  await expect(owner.getByTestId("collection-share")).toHaveCount(0)
+  // The chip it replaced is gone rather than living alongside it.
+  await expect(owner.getByTestId("library-clear-filter")).toHaveCount(0)
+})

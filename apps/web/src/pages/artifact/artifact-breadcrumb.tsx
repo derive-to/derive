@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { useCallback, useEffect } from "react"
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
+import { Breadcrumb, CrumbSep, crumbClass } from "@/components/shared/breadcrumb"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -117,19 +118,17 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
   const hasSwitcher = index >= 0 && total > 1 && !folderPending
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <Breadcrumb>
       <Link
         to="/"
         search={{ collection: contextId }}
         data-testid="breadcrumb-collection"
-        className="min-w-0 max-w-[11rem] shrink truncate text-sm text-muted-foreground hover:text-foreground"
+        className={crumbClass()}
         title={`Open ${collectionTitle}`}
       >
         {collectionTitle}
       </Link>
-      <span aria-hidden="true" className="shrink-0 text-muted-foreground/50">
-        /
-      </span>
+      <CrumbSep />
       {folderName && currentFolderId && (
         // The folder segment — present only when the artifact is filed. Links back to the
         // collection home scrolled to that folder (the `?folder=` anchor).
@@ -138,16 +137,14 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
             to="/"
             search={{ collection: contextId, folder: currentFolderId }}
             data-testid="breadcrumb-folder"
-            // The MIDDLE crumb yields first under width pressure (shrinks faster, smaller
-            // cap) so the document title — the leaf, the <h1> — keeps priority.
-            className="min-w-0 max-w-[8rem] shrink-[3] truncate text-sm text-muted-foreground hover:text-foreground"
+            // The MIDDLE crumb yields first under width pressure so the document title —
+            // the leaf, the <h1> — keeps priority.
+            className={crumbClass(true)}
             title={`Open folder ${folderName}`}
           >
             {folderName}
           </Link>
-          <span aria-hidden="true" className="shrink-0 text-muted-foreground/50">
-            /
-          </span>
+          <CrumbSep />
         </>
       )}
       {hasSwitcher ? (
@@ -249,6 +246,6 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
           </Tooltip>
         </div>
       )}
-    </div>
+    </Breadcrumb>
   )
 }

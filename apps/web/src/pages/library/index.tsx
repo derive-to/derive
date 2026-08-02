@@ -338,6 +338,17 @@ function LibraryBody({ view }: { view: LibraryView }) {
         .filter((c) => c.kind === "pr" && c.parentId === prParentId)
         .sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
     : []
+  // Where this collection sits. A PR preview genuinely nests under its repo mirror, so
+  // the trail says so; everything else is one level under the library.
+  const parentRepo =
+    activeCollection?.kind === "pr" && activeCollection.parentId
+      ? collections.find((c) => c.id === activeCollection.parentId)
+      : undefined
+  const collectionAncestors = [
+    { label: "Library" },
+    ...(parentRepo ? [{ label: parentRepo.title, collection: parentRepo.id }] : []),
+  ]
+
   const collectionTitle =
     activeCollection?.title ?? feed.data?.pages?.[0]?.collection?.title ?? "Collection"
 
@@ -475,17 +486,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
             control rather than only ⌘↵, because the whole point of putting it here is that
             somebody who has never opened the chat finds it while doing something else. */}
         <AskButton text={query} testId="library-ask" />
-        {filter.kind === "collection" && (
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="library-clear-filter"
-            onClick={() => nav({ to: "/", search: {} })}
-          >
-            <Icon name="collection" size={16} /> {collectionTitle}
-            <Icon name="close" size={16} />
-          </Button>
-        )}
         {search.author && (
           <>
             <Button
@@ -581,6 +581,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           <CollectionBar
             title={heading}
             count={headingCount ?? items.length}
+            ancestors={collectionAncestors}
             onShare={() => activeCollection && setShareCol(activeCollection)}
             starred={activeCollection?.starred}
             onStar={
