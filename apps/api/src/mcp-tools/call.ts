@@ -61,7 +61,7 @@ export function registerCallTool(tc: ToolContext): void {
       // so there is no ordering in which a check could be skipped and a call still succeed.
       const allowed = await sourceTools(ctx.meta, ws.org, owner, ctx.deps.encryptionKey, a.source)
       if (allowed.length === 0) {
-        const bound = await boundSources(ctx.meta, ws.org)
+        const bound = await boundSources(ctx.meta, ws.org, owner)
         return err(
           bound.length === 0
             ? "No connected sources are available to chat in this workspace. An admin declares them in settings; connecting a server does not by itself expose it here."

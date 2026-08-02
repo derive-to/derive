@@ -237,7 +237,7 @@ export function registerReadTool(tc: ToolContext): void {
       if (short_id === SRC || short_id.startsWith(`${SRC}/`)) {
         const ws = await resolveWs(workspace)
         if ("error" in ws) return err(ws.error)
-        const bound = await boundSources(ctx.meta, ws.org)
+        const bound = await boundSources(ctx.meta, ws.org, actingFor?.id ?? ownerId)
         const id = short_id === SRC ? "" : short_id.slice(SRC.length + 1)
         if (!id) {
           if (bound.length === 0)

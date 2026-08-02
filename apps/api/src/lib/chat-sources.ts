@@ -22,14 +22,23 @@ import { brokerFor, type RunTool, toolsForRun } from "./broker"
 export const boundSources = async (
   meta: MetaStore,
   orgId: string,
-): Promise<{ id: string; toolkit: string; kind: string }[]> => {
+  askerId: string | null,
+): Promise<{ id: string; toolkit: string; kind: string; scope: string }[]> => {
   const settings = await meta.getOrgSettings(orgId).catch(() => null)
   const declared = settings?.chatSources ?? []
   if (declared.length === 0) return []
   const live = await meta.listConnections(orgId).catch(() => [])
-  return live
-    .filter((c) => declared.includes(c.id))
-    .map((c) => ({ id: c.id, toolkit: c.toolkit, kind: String(c.kind) }))
+  return (
+    live
+      .filter((c) => declared.includes(c.id))
+      // SCOPE DECIDES WHO, the declaration decides WHETHER. A workspace connection is the team's
+      // and reaches everyone's chat; a PERSONAL one is one person's credential and reaches only
+      // theirs — declaring it must not lend somebody else's Stripe to the whole team. Without
+      // this filter the declaration alone would do exactly that, silently, and the borrower would
+      // never know whose account answered.
+      .filter((c) => c.scope === "workspace" || c.user_id === askerId)
+      .map((c) => ({ id: c.id, toolkit: c.toolkit, kind: String(c.kind), scope: c.scope }))
+  )
 }
 
 /** The tools one declared connection offers. Empty for anything not declared — the refusal is
@@ -41,7 +50,7 @@ export const sourceTools = async (
   encryptionKey: string | undefined,
   connectionId: string,
 ): Promise<RunTool[]> => {
-  const bound = await boundSources(meta, orgId)
+  const bound = await boundSources(meta, orgId, ownerUserId)
   if (!bound.some((s) => s.id === connectionId)) return []
   const broker = await brokerFor(meta, orgId, ownerUserId, encryptionKey)
   return await toolsForRun(meta, broker, orgId, [connectionId], undefined, encryptionKey)
