@@ -16,6 +16,12 @@
 //    revealed at all on a touch device). Use REVEAL / reveal() / REVEAL_MENU /
 //    revealInFolder from lib/interaction.ts.
 //
+// C. MOTION COMES FROM A TOKEN. `duration-state` (feedback: a hover, a control
+//    fading in, a menu opening) or `duration-move` (something that travels a
+//    distance you can see — the rail collapsing), both defined in globals.css. A
+//    hand-picked `duration-200` is how the app ended up with the rail responding at
+//    one speed and everything it sits next to at another.
+//
 // Escape hatch: an `interaction-ignore` comment on the line.
 import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join, relative } from "node:path"
@@ -23,6 +29,15 @@ import { join, relative } from "node:path"
 const WEB_SRC = join(process.cwd(), "apps/web/src")
 // Where the canonical spellings are allowed to live.
 const REGISTER = "lib/interaction.ts"
+
+// Rule C exemptions — timings that aren't UI state and shouldn't be pulled toward
+// it. Remote-cursor smoothing is paced by network sampling, and a progress bar eases
+// between percentages rather than between states.
+const RAW_DURATION_OK = new Set([
+  "pages/artifact/cursors/cursor-layer.tsx",
+  "pages/settings/github-repo-row.tsx",
+  "components/chrome/sync-chip.tsx",
+])
 
 const walk = (dir, out = []) => {
   for (const name of readdirSync(dir)) {
@@ -60,6 +75,14 @@ for (const file of walk(WEB_SRC)) {
             `scope it (not-data-active:hover:bg-*) so the selected state survives the pointer`,
         )
 
+      // C. a hand-picked duration.
+      if (!RAW_DURATION_OK.has(rel))
+        for (const [, d] of body.matchAll(/\bduration-(\d+)\b/g))
+          violations.push(
+            `${rel}:${i + 1}  duration-${d} — use duration-state (feedback) or ` +
+              `duration-move (travel); both are tokens in styles/globals.css`,
+          )
+
       // B. a hand-rolled reveal.
       if (
         /\bopacity-0\b/.test(body) &&
@@ -78,4 +101,4 @@ if (violations.length) {
   console.error(`\n${violations.length} issue(s). See apps/web/src/lib/interaction.ts.`)
   process.exit(1)
 }
-console.log("check-interaction: ok — selected states outrank hover, one spelling of reveal")
+console.log("check-interaction: ok — selected states outrank hover, one reveal, motion from tokens")

@@ -39,7 +39,7 @@
  * Motion for a state change: fast enough to read as a response rather than an
  * animation, and off entirely when the reader asked for that.
  */
-export const STATE_MOTION = "transition-opacity duration-100 motion-reduce:transition-none"
+export const STATE_MOTION = "transition-opacity duration-state motion-reduce:transition-none"
 
 /**
  * A control that rests hidden and appears when its row is hovered or focused — a

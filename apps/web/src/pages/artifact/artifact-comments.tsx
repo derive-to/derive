@@ -151,7 +151,7 @@ export function ArtifactComments(p: {
             className={cn(
               // overflow-clip: focus scrolling must never shift this box — the pin
               // layer's transform math assumes its ancestors stay put.
-              "flex min-h-0 shrink-0 grow-0 flex-col overflow-clip bg-card transition-[width,flex-basis] duration-200",
+              "flex min-h-0 shrink-0 grow-0 flex-col overflow-clip bg-card transition-[width,flex-basis] duration-state",
               panel !== "hidden" && "border-l border-border",
             )}
             style={{ width: p.asideWidth, flexBasis: p.asideWidth }}

@@ -216,7 +216,7 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-move ease-linear",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
@@ -228,7 +228,7 @@ function Sidebar({
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] sm:flex",
+          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-move ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] sm:flex",
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
@@ -410,7 +410,7 @@ function SidebarGroupLabel({
       className={cn(
         // Group labels are the house mono eyebrow (SectionEyebrow register), not
         // shadcn's default sans text-xs — one machine register for micro-labels.
-        "flex h-8 shrink-0 items-center rounded-lg px-2 font-mono text-2xs font-medium tracking-wide text-sidebar-foreground/70 uppercase outline-none transition-[margin,opacity] duration-200 ease-linear group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&>svg]:size-4 [&>svg]:shrink-0",
+        "flex h-8 shrink-0 items-center rounded-lg px-2 font-mono text-2xs font-medium tracking-wide text-sidebar-foreground/70 uppercase outline-none transition-[margin,opacity] duration-move ease-linear group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&>svg]:size-4 [&>svg]:shrink-0",
         className,
       )}
       {...props}
@@ -495,7 +495,7 @@ const sidebarMenuButtonVariants = cva(
   // width/height/padding, so every hover in the rail was an un-eased snap while the
   // one thing that never moves was the thing being animated.
   cn(
-    "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-lg p-2 text-left text-sm font-medium text-sidebar-foreground/70 outline-none transition-[background-color,color,width,height,padding] duration-100 ease-out group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 motion-reduce:transition-none data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
+    "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-lg p-2 text-left text-sm font-medium text-sidebar-foreground/70 outline-none transition-[background-color,color,width,height,padding] duration-state ease-out group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 motion-reduce:transition-none data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate",
     // Hover, the pressed state, and an open menu are the same transient wash, and
     // all three yield to the active chip.
     ROW_HOVER,
@@ -696,7 +696,7 @@ function SidebarMenuSubButton({
       className={cn(
         // Same grammar as the top-level row, hover scoped the same way — a nested row
         // (a collection under its group) lost its active chip on hover too.
-        "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground/70 outline-none transition-[background-color,color] duration-100 ease-out group-data-[collapsible=icon]:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 motion-reduce:transition-none data-[size=md]:text-sm data-[size=sm]:text-xs data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
+        "flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground/70 outline-none transition-[background-color,color] duration-state ease-out group-data-[collapsible=icon]:hidden focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 motion-reduce:transition-none data-[size=md]:text-sm data-[size=sm]:text-xs data-active:bg-card data-active:text-sidebar-accent-foreground data-active:ring-1 data-active:ring-sidebar-border [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
         ROW_HOVER,
         "not-data-active:active:bg-sidebar-accent not-data-active:active:text-sidebar-accent-foreground",
         className,

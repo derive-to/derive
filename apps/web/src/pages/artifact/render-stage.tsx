@@ -120,7 +120,7 @@ export function RenderStage({
             // gently over the neutral canvas instead of hard-flashing.
             sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
             className={cn(
-              "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-200",
+              "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-state",
               phase === "ready" && "opacity-100",
             )}
           />

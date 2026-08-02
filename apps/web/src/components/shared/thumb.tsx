@@ -35,7 +35,7 @@ export function Thumb({
   // The frame fades up once it paints, so a blank white iframe never pops over the
   // neutral placeholder. The placeholder itself stays STATIC (a plain bg-muted, no
   // breath) — a wall of thumbnails must read calm. The opacity rides the same
-  // duration-200 declaration as the hover filter-wake (one transition covering both).
+  // duration-state declaration as the hover filter-wake (one transition covering both).
   const [loaded, setLoaded] = useState(false)
   // If the static PNG fails to load (e.g. signed-out viewer, key mismatch), fall
   // back to the live iframe so the card never shows a broken image slot.
@@ -61,7 +61,7 @@ export function Thumb({
             setLoaded(false)
           }}
           className={cn(
-            "absolute inset-0 h-full w-full object-cover brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
+            "absolute inset-0 h-full w-full object-cover brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-state group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
             loaded ? "opacity-100" : "opacity-0",
           )}
         />
@@ -75,7 +75,7 @@ export function Thumb({
           src={`${API_BASE}/raw/${id}/v/${v}/index.html`}
           sandbox="allow-scripts"
           className={cn(
-            "pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-200 group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
+            "pointer-events-none absolute left-0 top-0 h-[250%] w-[250%] origin-top-left scale-[0.4] border-0 bg-white brightness-[0.96] saturate-[0.98] transition-[opacity,filter] duration-state group-hover:brightness-100 group-hover:saturate-100 group-focus-within:brightness-100 group-focus-within:saturate-100",
             loaded ? "opacity-100" : "opacity-0",
           )}
         />

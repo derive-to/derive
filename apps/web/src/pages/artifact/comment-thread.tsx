@@ -175,7 +175,7 @@ export function PinnedZone({
               key={id}
               ref={measure}
               data-pin={id}
-              className="absolute inset-x-0 top-0 transition-transform duration-200"
+              className="absolute inset-x-0 top-0 transition-transform duration-state"
               style={{
                 transform: `translateY(${Math.round(y)}px)`,
                 zIndex: active ? 6 : hoverThread === id ? 4 : 2,
@@ -190,7 +190,7 @@ export function PinnedZone({
           <div
             ref={measure}
             data-pin={COMPOSER_ID}
-            className="absolute inset-x-0 top-0 z-10 transition-transform duration-200"
+            className="absolute inset-x-0 top-0 z-10 transition-transform duration-state"
             style={{
               transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? activeComposer.docTop)}px)`,
             }}
