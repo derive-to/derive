@@ -2,30 +2,28 @@ import { useState } from "react"
 import type { Collection } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { CollectionCard } from "./collection-card"
 import { CollectionRow } from "./collection-row"
 
 // The library's second view: shelves, starred first, each showing what's inside it.
 //
-// Both layouts lead with the artifacts — filmstrip rows in List, a cover mosaic in Grid —
-// because a name and a count is the least interesting thing we know about a collection,
-// and the renders are the thing nothing else can show.
+// One presentation, not two. A name and a count is the least interesting thing we know
+// about a collection, so every shelf leads with its artifacts; offering a second layout
+// that showed less of them was a knob with a wrong setting on it.
 //
 // Each group states its rule in the UI ("Starred — pinned to your sidebar", "You have
 // access to these"), so grouping stays something a reader can predict. Nothing is
 // hidden — the unstarred group lists everything else.
 export function CollectionsView({
   collections,
-  layout,
   onStar,
   onCreate,
   draft,
   setDraft,
 }: {
   collections: Collection[]
-  layout: "grid" | "list"
   onStar: (id: string, next: boolean) => void
   onCreate: (title: string) => void
   /** Opened from the toolbar's one New button — the page owns the state so there is a
@@ -90,24 +88,22 @@ export function CollectionsView({
       {working.length > 0 && (
         <Group
           testId="collections-working"
-          title="Collections you're working in"
+          title="Working in"
           rule="Starred, plus any you've published or commented in this month."
           cols={working}
-          layout={layout}
           onStar={onStar}
         />
       )}
       {rest.length > 0 && (
         <Group
           testId="collections-all"
-          title={working.length > 0 ? "All collections" : "Collections"}
+          title={working.length > 0 ? "Everything else" : "Collections"}
           rule={
             working.length > 0
               ? "You have access to these. Star one to pin it to your sidebar."
               : "Star one to pin it to your sidebar."
           }
           cols={rest}
-          layout={layout}
           onStar={onStar}
         />
       )}
@@ -120,40 +116,28 @@ function Group({
   title,
   rule,
   cols,
-  layout,
   onStar,
 }: {
   testId: string
   title: string
   rule: string
   cols: Collection[]
-  layout: "grid" | "list"
   onStar: (id: string, next: boolean) => void
 }) {
   return (
     <section data-testid={testId}>
-      <div className="mb-2.5">
-        <h2 className="text-sm font-medium tracking-tight">
-          {title}{" "}
-          <span className="font-mono text-2xs font-normal tabular-nums text-muted-foreground">
-            {cols.length}
-          </span>
-        </h2>
-        <p className="text-xs text-muted-foreground">{rule}</p>
+      {/* The house section register (mono smallcaps + a rule to the edge), so the group
+          label recedes and the shelf names are the biggest thing in the group. A
+          same-size heading above a same-size title left the eye nothing to land on. */}
+      <SectionEyebrow count={cols.length} className="mb-1">
+        {title}
+      </SectionEyebrow>
+      <p className="mb-2 font-mono text-2xs text-muted-foreground/70">{rule}</p>
+      <div className="flex flex-col gap-0.5">
+        {cols.map((col) => (
+          <CollectionRow key={col.id} col={col} onStar={(next) => onStar(col.id, next)} />
+        ))}
       </div>
-      {layout === "list" ? (
-        <div className="rounded-xl border border-border-soft px-2.5">
-          {cols.map((col) => (
-            <CollectionRow key={col.id} col={col} onStar={(next) => onStar(col.id, next)} />
-          ))}
-        </div>
-      ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-2.5">
-          {cols.map((col) => (
-            <CollectionCard key={col.id} col={col} onStar={(next) => onStar(col.id, next)} />
-          ))}
-        </div>
-      )}
     </section>
   )
 }

@@ -529,11 +529,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
         ) : (
           showPublish && <NewArtifactButton />
         )}
-        {showCollections ? (
-          // Layout only. Shelves have one order — the ones you're working in first — and
-          // that ordering is the view's whole argument, not a preference.
-          <DisplayMenu layout={layout} onLayout={setLayout} />
-        ) : (
+        {/* Absent in the Collections view: shelves have one presentation and one order
+            — the ones you're working in first — and that ordering is the view's whole
+            argument, not a preference. */}
+        {!showCollections && (
           <DisplayMenu
             layout={layout}
             onLayout={setLayout}
@@ -572,7 +571,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
       {showCollections ? (
         <CollectionsView
           collections={visibleCollections}
-          layout={layout}
           onStar={(id, next) => starCol.mutate({ id, on: next })}
           onCreate={(title) => createCol.mutate(title)}
           draft={newCollection}

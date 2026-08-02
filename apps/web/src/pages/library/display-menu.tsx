@@ -25,10 +25,8 @@ export function DisplayMenu({
   onSort,
   group,
 }: {
-  /** Omitted in the Collections view, where Grid/List is the only knob — shelves have
-   *  one order (starred and active first) and it isn't the reader's to change. */
-  sort?: SortMode
-  onSort?: (mode: SortMode) => void
+  sort: SortMode
+  onSort: (mode: SortMode) => void
   // Present only where grouping is possible (a manual collection with folders).
   group?: { on: boolean; onChange: (on: boolean) => void }
   layout: "grid" | "list"
@@ -60,19 +58,15 @@ export function DisplayMenu({
             List
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
-        {sort && onSort && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>Sort by</DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as SortMode)}>
-              {LIBRARY_SORTS.map((s) => (
-                <DropdownMenuRadioItem key={s.value} value={s.value} className="py-1.5 pr-8 pl-2">
-                  {s.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </>
-        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as SortMode)}>
+          {LIBRARY_SORTS.map((s) => (
+            <DropdownMenuRadioItem key={s.value} value={s.value} className="py-1.5 pr-8 pl-2">
+              {s.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
         {group && (
           <>
             <DropdownMenuSeparator />

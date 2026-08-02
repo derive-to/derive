@@ -13,7 +13,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useAuth } from "@/ctx"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -21,9 +20,8 @@ import { NeedsYou, needsYouCount } from "./needs-you"
 
 // One card in the library grid, preview-first. The live render is the hero (bleeds to
 // the top edge, carrying a single machine-register TYPE placard); a hairline-divided
-// caption below holds the title in voice, a mono state line (version · freshness), and
-// one split meta row — who made it on the left, activity (review · comments · views)
-// on the right. Clean at rest; the actions (star, ⋯) reveal on hover, and the ink edge
+// caption below holds the title in voice, a mono state line (folder · freshness), and
+// one split meta row — who made it on the left, its state on the right. Clean at rest; the actions (star, ⋯) reveal on hover, and the ink edge
 // accent (a persistent "needs you" state) shows at rest.
 //
 // Stretched-link pattern: the open button's ::after covers the whole card (preview
@@ -65,15 +63,11 @@ export function ArtifactCard({
   const showDelete = isOwner && !!onDelete
   const showMenu = !!onAddToCollection || showDelete
   const author = a.author ?? null
+  // Every card names its author, including yours. Hiding it on your own work made the
+  // row's meaning depend on who was looking: a card with no chip could mean "you made
+  // it" or "we don't know who did", and scanning a mixed library for someone else's
+  // work meant reading the absences.
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
-  // Only when someone else made it: in a small workspace your own avatar repeats on
-  // every card, which tells you nothing.
-  const { me } = useAuth()
-  const mineByLogin =
-    !!me?.username &&
-    (author?.login ?? a.author_login ?? "").toLowerCase() === me.username.toLowerCase()
-  const mineByHandle = !!me?.username && author?.handle?.toLowerCase() === me.username.toLowerCase()
-  const showAuthor = hasAuthor && !mineByLogin && !mineByHandle
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const _versionDepth = Math.max(a.current_version, a.versions.length)
   const sourceDir = a.source_path ? dirOf(a.source_path) : ""
@@ -117,9 +111,6 @@ export function ArtifactCard({
           v={a.current_version}
           typeLabel={artifactTypeLabel(a)}
           hasPreview={a.has_preview}
-          // 4:3 rather than 16:10: most published pages are portrait-ish, and
-          // the wider frame was cropping them to a band of header.
-          className="aspect-[4/3]"
         />
         {/* The select box, opposite the actions cluster. Hidden at rest on a mouse (the
             grid stays a gallery), pinned visible once ANY card is selected, and always
@@ -274,14 +265,14 @@ export function ArtifactCard({
           )}
         </button>
 
-        {/* One line, three facts at most: who (only when it is not you), whether it is
-            private, and whether it wants you. The card used to carry nine — a version
+        {/* One line, three facts at most: who made it, whether it is private, and
+            whether it wants you. The card used to carry nine — a version
             number, a type prefix, a Skill pill, a view count, and two separate activity
             counts — which is a lot of ink for a surface whose job is to let you pick
             something and open it. */}
-        {(showAuthor || isPrivate || needsYouCount(a) > 0) && (
+        {(hasAuthor || isPrivate || needsYouCount(a) > 0) && (
           <div className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
-            {showAuthor && (
+            {hasAuthor && (
               <AuthorChip
                 name={author?.name ?? a.author_name ?? null}
                 login={author?.login ?? a.author_login ?? null}
@@ -292,9 +283,7 @@ export function ArtifactCard({
                 data-testid={`artifact-card-author-${a.short_id}`}
               />
             )}
-            <span
-              className={cn("inline-flex shrink-0 items-center gap-2", showAuthor && "ml-auto")}
-            >
+            <span className={cn("inline-flex shrink-0 items-center gap-2", hasAuthor && "ml-auto")}>
               {/* A glyph, not a worded pill: private is a state a lot of artifacts are
                   in, and the lock is already understood. */}
               {isPrivate && (

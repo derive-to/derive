@@ -187,7 +187,7 @@ test("Collections is a view of the library, with starred shelves leading", async
   await expect(owner.locator('[data-testid^="artifact-card-open-"]')).toHaveCount(0)
 
   // Starring is the explicit half of the group, and it moves the shelf.
-  const card = owner.locator('[data-testid^="collection-card-star-"]').first()
+  const card = owner.locator('[data-testid^="collection-star-"]').first()
   await card.click()
   await expect(owner.getByTestId("collections-working")).toBeVisible()
 
@@ -211,9 +211,9 @@ test("a card states three facts, not nine", async ({ owner }) => {
   await expect(card).not.toContainText("v1")
   await expect(card).not.toContainText("·")
 
-  // Your own work carries no author chip — the same face on every card is not
-  // information, so it shows only when someone else made it.
-  await expect(owner.getByTestId(`artifact-card-author-${id}`)).toHaveCount(0)
+  // Every card names its author, yours included. Hiding it on your own work made a
+  // missing chip ambiguous — "you made it" and "we don't know who did" looked alike.
+  await expect(owner.getByTestId(`artifact-card-author-${id}`)).toBeVisible()
 
   // No view count, and no separate proposal/comment counts — a quiet document says
   // nothing at all in the meta row.
@@ -241,7 +241,7 @@ test("Grid or List is a preference the app remembers, not the route's choice", a
   )
 })
 
-test("a shelf shows what's inside it, in both layouts", async ({ owner }) => {
+test("a shelf shows what's inside it", async ({ owner }) => {
   const shortId = await publishArtifact(owner, "cover.md", "# Cover\n\nbody")
   await owner.goto("/")
   const name = `Shelf ${Date.now()}`
@@ -250,25 +250,28 @@ test("a shelf shows what's inside it, in both layouts", async ({ owner }) => {
   await owner.getByTestId("collections-new-input").fill(name)
   await owner.getByTestId("collections-new-input").press("Enter")
 
-  // File the artifact into the new shelf from the collection page's own empty state.
+  // File the artifact into the new shelf.
   await expect(owner.getByTestId("collection-star")).toBeVisible()
   const colId = new URL(owner.url()).searchParams.get("collection")
   const put = await owner.request.put(`/v1/collections/${colId}/items/${shortId}`)
   expect(put.ok(), `add item: ${put.status()}`).toBeTruthy()
 
   await owner.goto("/?view=collections")
-  // Grid: the cover mosaic leads the card, so the shelf is recognisable by its contents
-  // rather than by a count in an otherwise blank box.
-  const cardCover = owner.locator(`[data-testid="collection-card-${colId}"]`)
-  await expect(cardCover).toBeVisible()
+  // The shelf renders its contents, so you recognise it by what is in it rather than by
+  // reading a name and a count in an otherwise blank box.
+  await expect(owner.getByTestId(`collection-row-${colId}`)).toBeVisible()
   await expect(owner.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
 
-  // List does something. It used to be inert on this page — the toggle was rendered and
-  // the view ignored it — which is worse than not offering it.
-  await owner.getByTestId("library-display").click()
-  await owner.getByRole("menuitemradio", { name: "List" }).click()
-  await expect(owner.getByTestId(`collection-row-${colId}`)).toBeVisible()
-  await expect(owner.locator(`[data-testid="collection-card-${colId}"]`)).toHaveCount(0)
-  // The strip survives the layout change: rows show covers too.
-  await expect(owner.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
+  // One presentation, so the page offers no Display menu — the toggle used to be
+  // rendered here and ignored, which is worse than not offering it.
+  await expect(owner.getByTestId("library-display")).toHaveCount(0)
+
+  // One star per shelf, and it is the control. There is no second star beside the title
+  // doing nothing but reporting the same state.
+  await expect(owner.getByTestId(`collection-star-${colId}`)).toHaveCount(1)
+  // Scoped to the title line specifically — the meta line below it may legitimately
+  // carry a glyph (the private lock).
+  await expect(
+    owner.locator(`[data-testid="collection-row-${colId}"] > div:first-child svg`),
+  ).toHaveCount(0)
 })
