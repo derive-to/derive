@@ -102,12 +102,13 @@ export function usePresentMode(p: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (presentingRef.current && e.key === "Escape" && !e.defaultPrevented) {
-        // In real fullscreen the browser has already taken this press to exit; the
-        // fullscreenchange handler ends the mode. This is the overlay's Escape.
-        if (!document.fullscreenElement) {
-          e.preventDefault()
-          exit()
-        }
+        // ALWAYS end the mode, fullscreen or not. In real fullscreen the browser
+        // usually eats this press itself and `fullscreenchange` does the work — but
+        // "usually" is not a contract (a synthesized key doesn't trigger the
+        // browser's own exit at all, which is how this was found), and a presenter
+        // pressing Escape with nothing happening is the worst possible moment for a
+        // maybe. exit() is idempotent and only calls exitFullscreen if we're in it.
+        exit()
         return
       }
       if (!bareHotkey(e)) return
