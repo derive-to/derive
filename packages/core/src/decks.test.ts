@@ -62,6 +62,25 @@ describe("deck detection", () => {
     expect(isDeckDocument(commented)).toBe(false)
   })
 
+  it("treats an UNTERMINATED comment as swallowing the rest of the document", () => {
+    // What a browser does, and what the obvious `replace(/<!--[\s\S]*?-->/g, "")` did NOT:
+    // with no closing marker the regex matched nothing, leaving markup a reader can never
+    // see to be counted as slides.
+    const cut = '<!-- todo <section class="slide">a</section><section class="slide">b</section>'
+    expect(countSlideElements(cut)).toBe(0)
+  })
+
+  it("stays linear on hostile comment input (ReDoS guard)", () => {
+    // A page of unclosed comment openers is the polynomial case for the lazy-body regex:
+    // every `<!--` restarts a scan to end of string. This runs on every publish, over
+    // content we don't control, so it has to be O(n).
+    const hostile = `${"<!--".repeat(60_000)}x`
+    const started = performance.now()
+    expect(countSlideElements(hostile)).toBe(0)
+    expect(speaksDeckProtocol(hostile)).toBe(false)
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it("needs more than one slide — the protocol name plus a single section is not a deck", () => {
     const one =
       '<div class="slide">only one</div><script>postMessage({source:"derive-deck"})</script>'

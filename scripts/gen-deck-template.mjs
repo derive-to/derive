@@ -45,13 +45,25 @@ for (const [needle, why] of CONTRACT)
   if (!html.includes(needle)) problems.push(`missing ${needle} — ${why}`)
 // The same count the runtime uses (packages/core/src/decks.ts): real slide tags only, and
 // HTML comments stripped first — this file's own annotated header describes a slide element
-// in prose, and prose about decks must never count as one.
+// in prose, and prose about decks must never count as one. Comment stripping mirrors the
+// runtime's linear scan rather than a regex, so the two can't disagree (and see decks.ts for
+// why the obvious regex is both slower on hostile input and wrong on an unclosed comment).
+const withoutComments = (text) => {
+  let out = ""
+  let i = 0
+  for (;;) {
+    const start = text.indexOf("<!--", i)
+    if (start === -1) return out + text.slice(i)
+    out += text.slice(i, start)
+    const end = text.indexOf("-->", start + 4)
+    if (end === -1) return out
+    i = end + 3
+  }
+}
 const slideCount = (
-  html
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .match(
-      /<(?:section|div|article|li)\b[^>]*(?:class\s*=\s*["'][^"']*\bslide\b|data-derive-slide\s*=)/gi,
-    ) ?? []
+  withoutComments(html).match(
+    /<(?:section|div|article|li)\b[^>]*(?:class\s*=\s*["'][^"']*\bslide\b|data-derive-slide\s*=)/gi,
+  ) ?? []
 ).length
 if (slideCount < 2) problems.push(`only ${slideCount} slide section(s) — a deck needs at least 2`)
 const titleCount = html.split(TITLE_SENTINEL).length - 1

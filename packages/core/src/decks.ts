@@ -9,8 +9,27 @@
 
 /** HTML comments hold prose ABOUT decks (including this repo's own annotated starter) and
  *  render nothing, so they must never make a page look like a deck. Stripped before any
- *  structural count. */
-const withoutComments = (html: string): string => html.replace(/<!--[\s\S]*?-->/g, "")
+ *  structural count.
+ *
+ *  A linear indexOf scan rather than `replace(/<!--[\s\S]*?-->/g, "")`, for two reasons.
+ *  (1) That regex is polynomial on hostile input: with the `g` flag and a lazy body, a
+ *  document of many unclosed `<!--` restarts a scan-to-end at every one of them, and this
+ *  runs on every publish over content we do not control. (2) It is also more correct — an
+ *  UNTERMINATED comment left the rest of the document visible to the regex, while a
+ *  browser treats everything after it as commented out, so markup a reader never sees
+ *  could still be counted as slides. */
+const withoutComments = (html: string): string => {
+  let out = ""
+  let i = 0
+  for (;;) {
+    const start = html.indexOf("<!--", i)
+    if (start === -1) return out + html.slice(i)
+    out += html.slice(i, start)
+    const end = html.indexOf("-->", start + 4)
+    if (end === -1) return out // unterminated: the rest of the document is inside it
+    i = end + 3
+  }
+}
 
 /** A real slide element opening — a container tag carrying `class="…slide…"` or the stable
  *  `data-derive-slide` index. Deliberately requires a live tag, so an escaped code sample
