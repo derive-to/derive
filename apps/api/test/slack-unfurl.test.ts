@@ -102,7 +102,11 @@ describe("decideUnfurl — the broadcast gate", () => {
     const { deps, artifact } = await setup("unfurl-private-bare", "none")
     const d = await decideUnfurl(deps, `${BASE}/artifacts/${artifact.short_id}`, "u-1")
     expect(d.kind).toBe("locked")
-    if (d.kind === "locked") expect(JSON.stringify(d.blocks)).not.toMatch(/q4/i)
+    // Same short-id excision as the card test above — its comment already recorded CI
+    // minting `s_4vq40i` and failing a card that leaked nothing, but the fix never
+    // reached this sibling, and CI duly minted `s_4qq487` here.
+    if (d.kind === "locked")
+      expect(JSON.stringify(d.blocks).split(artifact.short_id).join("")).not.toMatch(/q4/i)
   })
 
   it("skips an artifact the sharer cannot read", async () => {
