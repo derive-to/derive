@@ -47,6 +47,7 @@ export interface WebhookOutboxEnv {
   DERIVE_MODEL_API_KEY?: string
   DERIVE_MODEL_NAME?: string
   DERIVE_MODEL_NAMES?: string
+  DERIVE_MODEL_PROVIDERS?: string
   DERIVE_CHAT_ALLOWLIST?: string
 }
 
@@ -65,6 +66,7 @@ const mentionAnswerer = (env: WebhookOutboxEnv, store: MetaStore) => {
           apiKey: env.DERIVE_MODEL_API_KEY,
           model: env.DERIVE_MODEL_NAME,
           alsoModels: env.DERIVE_MODEL_NAMES,
+          providers: env.DERIVE_MODEL_PROVIDERS,
         }
       : undefined
   const models = catalogFromGateway(gw)

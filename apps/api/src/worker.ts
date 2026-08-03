@@ -141,6 +141,10 @@ export interface Env {
   /** Comma-separated ADDITIONAL model ids the same gateway serves, offered to chat as a
    *  choice. Unset ⇒ one model, and no picker. See lib/model-catalog.ts. */
   DERIVE_MODEL_NAMES?: string
+  /** Preferred upstream backends, best first, on a gateway that ROUTES (OpenRouter). One model
+   *  id is served by many backends at very different speeds, so the id alone does not decide
+   *  what you get. Unset ⇒ the gateway routes however it likes. */
+  DERIVE_MODEL_PROVIDERS?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
@@ -509,8 +513,11 @@ function workerGateway(env: Env): GatewayConfig | undefined {
     DERIVE_MODEL_NAME: model,
     // Optional and additive: more model ids the SAME gateway serves. Unset ⇒ one model, as before.
     DERIVE_MODEL_NAMES: alsoModels,
+    // Preferred upstream backends on a gateway that routes (OpenRouter). Unset on one that
+    // does not, where the field would be meaningless.
+    DERIVE_MODEL_PROVIDERS: providers,
   } = env
-  return baseUrl && apiKey && model ? { baseUrl, apiKey, model, alsoModels } : undefined
+  return baseUrl && apiKey && model ? { baseUrl, apiKey, model, alsoModels, providers } : undefined
 }
 
 /** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding

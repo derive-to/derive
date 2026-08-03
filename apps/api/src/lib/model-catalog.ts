@@ -74,6 +74,16 @@ export interface GatewayConfig {
    * accidentally configure a catalog whose default is unreachable.
    */
   alsoModels?: string
+  /**
+   * Preferred upstream providers, best first, comma-separated (`DERIVE_MODEL_PROVIDERS`).
+   *
+   * Only meaningful on a gateway that ROUTES. OpenRouter serves one model id from a dozen
+   * backends whose speed differs by an order of magnitude, so the id alone does not determine
+   * what you get — measured on the incumbent gateway, generation ran ~18 tokens/sec, which
+   * turns a three-call agent turn into half a minute. Unset ⇒ nothing is sent and the gateway
+   * routes however it likes, which is right for every gateway that does not route at all.
+   */
+  providers?: string
 }
 
 /**
@@ -106,12 +116,22 @@ const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
 export const catalogFromGateway = (gw: GatewayConfig | null | undefined): ModelCatalog | null => {
   if (!gw) return null
   const ids = [gw.model, ...parseAlso(gw.alsoModels, gw.model)]
+  // OpenRouter's routing preference, in its own shape. `allow_fallbacks` stays ON: pinning a
+  // list and then refusing everything else converts "slower than we hoped" into "no answer at
+  // all" the moment the preferred backend is busy, which is a worse failure than the one this
+  // exists to avoid. Absent entirely when unset, so a non-routing gateway sees no stray field.
+  const order = (gw.providers ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const extraBody = order.length ? { provider: { order, allow_fallbacks: true } } : undefined
   return catalogOf(
     ids.map((id, i) => ({
       id,
       label: labelFor(id),
       isDefault: i === 0,
-      build: () => openAiCompatModel({ baseUrl: gw.baseUrl, apiKey: gw.apiKey, model: id }),
+      build: () =>
+        openAiCompatModel({ baseUrl: gw.baseUrl, apiKey: gw.apiKey, model: id, extraBody }),
     })),
   )
 }

@@ -101,6 +101,56 @@ describe("the request it builds", () => {
   })
 })
 
+describe("routing preferences on a gateway that routes", () => {
+  // OpenRouter serves one model id from a dozen backends whose generation speed differs by an
+  // order of magnitude, so "which model" is only half the request. Measured on the incumbent
+  // gateway: ~18 tokens/sec, which is what turned a three-call agent turn into half a minute.
+  const send = async (extraBody?: Record<string, unknown>) => {
+    let body: Record<string, unknown> | undefined
+    const impl = (async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body))
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }) as unknown as typeof fetch
+    await openAiCompatModel({
+      apiKey: "k",
+      baseUrl: "https://gw.test/v1",
+      model: "deepseek/deepseek-v4-flash-0731",
+      fetchImpl: impl,
+      ...(extraBody ? { extraBody } : {}),
+    })({ system: "s", messages: [], tools: [] })
+    return body
+  }
+
+  it("sends the provider order when one is configured", async () => {
+    const body = await send({
+      provider: { order: ["DeepInfra", "GMICloud"], allow_fallbacks: true },
+    })
+    expect(body?.provider).toEqual({ order: ["DeepInfra", "GMICloud"], allow_fallbacks: true })
+    // and still the ordinary request
+    expect(body?.model).toBe("deepseek/deepseek-v4-flash-0731")
+  })
+
+  it("sends NOTHING extra when unset, so a non-routing gateway sees no stray field", async () => {
+    const body = await send()
+    expect(body).not.toHaveProperty("provider")
+  })
+
+  it("never lets a routing field overwrite the request the adapter built", async () => {
+    // A config typo must not be able to rewrite `messages` or `model` — routing is the caller's
+    // business, the request shape is the adapter's.
+    const body = await send({
+      model: "someone-elses-model",
+      messages: [],
+      provider: { order: ["X"] },
+    })
+    expect(body?.model).toBe("deepseek/deepseek-v4-flash-0731")
+    expect(body?.provider).toEqual({ order: ["X"] })
+  })
+})
+
 describe("the response it reads", () => {
   const reply = (payload: unknown, status = 200) =>
     (async () =>
