@@ -2732,9 +2732,13 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
     const { app, token } = appWithGrant(dir, "readdeck", "openid derive:read derive:publish")
-    // Must NOT start with <html>/<!doctype html> (that sniffs as plain text/html) —
-    // real deck content declares the protocol name, which is enough to type-sniff it.
-    const deck = "derive-deck\n<h1>Slide</h1><p>hello there</p>"
+    // A deck fragment: the protocol name AND real slide elements. Both are required to
+    // type as a deck — the protocol name on its own appears in any page that merely
+    // discusses decks, so it can't be the whole signal (see core/decks.ts).
+    const deck =
+      "derive-deck\n" +
+      '<section class="slide" data-derive-slide="0"><h1>Slide</h1><p>hello there</p></section>' +
+      '<section class="slide" data-derive-slide="1"><h2>Two</h2></section>'
     const form = new FormData()
     form.append("file", new Blob([new TextEncoder().encode(deck)]), "deck.html")
     form.append("title", "Deck")

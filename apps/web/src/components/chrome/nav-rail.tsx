@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link, useLocation, useNavigate } from "@tanstack/react-router"
+import { Link, useLocation } from "@tanstack/react-router"
 import { useState } from "react"
 import type { Collection } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
@@ -135,7 +135,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/contexts"
+  to: "/following" | "/contexts" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -343,7 +343,7 @@ export function RailSkeleton() {
 // calm tiers top to bottom: brand + search → primary nav → your library
 // (collections) → tools → account — separated by whitespace, not dividers.
 export function NavRail() {
-  const { switchWorkspace, openAssistant } = useShell()
+  const { switchWorkspace } = useShell()
   const { me, loading } = useAuth()
   const qc = useQueryClient()
   // Nav data read straight from react-query (deduped with the loaders that warm
@@ -370,7 +370,6 @@ export function NavRail() {
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
   const workspaceLabel = activeWs?.personal ? "Personal" : (summary?.workspace ?? "")
   const { state, setOpenMobile } = useSidebar()
-  const _nav = useNavigate()
   const loc = useLocation()
   const search = loc.search as LibrarySearch
   const onLibrary = loc.pathname === "/"
@@ -559,29 +558,21 @@ export function NavRail() {
                 active={onContexts}
                 testId="nav-contexts"
               />
-              {/* CHAT CLOSES THE TIER. It is the one row here that does not go anywhere — it
-                  opens the palette's answer view over the page you are on (openAssistant sends a
-                  phone to /chat instead, where a conversation does not fit in a modal) — so it
-                  sits after the feeds rather than above them, where it would push the library
-                  itself down a line. Hidden only once settings have actually said chat is off;
-                  chat defaults on, so an unresolved read must not blink the row out and back. */}
+              {/* CHAT CLOSES THE TIER. A real route, like every other row here — it goes straight
+                  to the full conversation (history, Stop, model choice) instead of the palette's
+                  lightweight answer view, which is the AskButton's surface (search boxes), not
+                  this row's. It sits after the feeds rather than above them, where it would push
+                  the library itself down a line. Hidden only once settings have actually said
+                  chat is off; chat defaults on, so an unresolved read must not blink the row out
+                  and back. */}
               {chatOn && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    isActive={onChat}
-                    tooltip="Chat"
-                    aria-label="Chat"
-                    data-testid="nav-chat"
-                    onClick={() => {
-                      closeMobile()
-                      openAssistant()
-                    }}
-                    className={ROW_ICON}
-                  >
-                    <Icon name="sparkles" />
-                    <span>Chat</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+                <NavItem
+                  icon="sparkles"
+                  label="Chat"
+                  to="/chat"
+                  active={onChat}
+                  testId="nav-chat"
+                />
               )}
             </SidebarMenu>
           </SidebarGroupContent>

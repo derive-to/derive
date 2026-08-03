@@ -123,18 +123,23 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, "index.html"), "utf8")).toContain("<title>Page</title>")
   })
 
-  it("slides template scaffolds a deck with controls + the derive-deck protocol", () => {
+  it("slides template scaffolds the canonical deck: fixed stage + the derive-deck protocol", () => {
     const d = tmp()
     const { created } = scaffold(d, "Talk", "slides")
     expect(created).toContain("slides.html")
     const html = readFileSync(join(d, "slides.html"), "utf8")
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("slides.html")
+    expect(html).toContain("<title>Talk</title>") // the title reaches the scaffold
     expect(html).toContain('class="slide')
-    expect(html).toMatch(/ArrowRight|ArrowLeft/) // keyboard navigation
-    expect(html).toMatch(/data-act="prev"|data-act="next"/) // on-screen prev/next
-    expect(html).toContain('data-act="full"') // fullscreen control
-    expect(html).toContain("source:'derive-deck'") // announces state to the host
+    expect(html).toContain('data-derive-slide="0"') // stable identity; comments pin to it
+    expect(html).toMatch(/width: 1280px[\s\S]*height: 720px/) // the fixed stage
+    expect(html).toMatch(/ArrowRight|ArrowLeft/) // standalone keyboard navigation
+    expect(html).toContain('source: "derive-deck"') // announces state to the host
     expect(html).toMatch(/derive-host[\s\S]*deck/) // accepts host drive commands
+    // No on-screen prev/next/fullscreen BAR, deliberately: inside Derive the host renders
+    // its own at bottom-centre, and the old starter's bar sat in exactly that spot. Edge
+    // click zones and the F key cover standalone use without colliding with it.
+    expect(html).not.toContain('data-act="prev"')
   })
 
   it("never clobbers existing files", () => {
