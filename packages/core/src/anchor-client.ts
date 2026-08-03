@@ -1879,6 +1879,11 @@ interface ElReg {
       if (maskedHere) unmaskSlides()
     }
   }
+  /** An image under the pointer — the one editable thing here that isn't text. */
+  const imageAt = (e: MouseEvent): HTMLImageElement | null => {
+    const el = asEl(e.target)?.closest("img")
+    return el instanceof HTMLImageElement ? el : null
+  }
   const editClick = (e: MouseEvent) => {
     if (!editBase) return
     // A keyboard-synthesized click (Enter/Space on a focused link) reports
@@ -1888,6 +1893,19 @@ interface ElReg {
     const el0 = asEl(e.target)
     // Never navigate while editing — a click on a link edits its text instead.
     if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+    // A picture. Nothing in the caret path can reach one (images hold no text), so
+    // clicking a picture in edit mode used to do nothing at all and the only way to
+    // change one was the source editor. Hand it to the host: pick a file, upload,
+    // swap the URL. A data: URI is refused — the picture IS the source there, and
+    // there is no URL to swap for a person to recognise.
+    const img = imageAt(e)
+    if (img) {
+      const src = img.getAttribute("src") || ""
+      if (!src || src.slice(0, 5).toLowerCase() === "data:")
+        post({ type: "edit-blocked", reason: "embedded-image" })
+      else post({ type: "edit-image", src, alt: img.getAttribute("alt") || "" })
+      return
+    }
     if (el0?.closest(BLOCKED_EDIT)) {
       post({ type: "edit-blocked", reason: "control" })
       return
@@ -1984,6 +2002,10 @@ interface ElReg {
       editHoverTick = 0
       if (!editOn) return setEditHover(null)
       if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
+      // An image lights up too: a click on one starts a replacement, and the
+      // invitation is the only thing that says so.
+      const overImg = asEl(target)?.closest("img")
+      if (overImg instanceof HTMLElement) return setEditHover(overImg)
       // Through overlays, like the click that follows it — otherwise a deck's click
       // zone means the hover invitation never lights the block a click would open.
       const hit = editNodeVisibleAt(x, y)

@@ -49,8 +49,8 @@ export function EditBar({
       <span className="truncate text-2xs text-muted-foreground">
         {dirty === 0
           ? touch
-            ? "tap any text to change it"
-            : "click any text to change it"
+            ? "tap any text to change it, or an image to replace it"
+            : "click any text to change it, or an image to replace it"
           : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
       </span>
       <div className="ml-auto flex shrink-0 items-center gap-1">

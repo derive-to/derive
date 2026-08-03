@@ -482,3 +482,75 @@ describe("list rows carry my_role", () => {
     expect(r.artifacts[0]?.my_role).toBe("owner")
   })
 })
+
+// Renaming is metadata: it must not mint a version. Before this route the only way
+// to rename was to republish the whole document, which left an empty-diff version in
+// the history and told every reader the document had changed.
+describe("PATCH /v1/artifacts/{shortId} — rename", () => {
+  const patchTitle = (shortId: string, body: unknown, headers: Record<string, string> = {}) =>
+    app.request(`/v1/artifacts/${shortId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    })
+
+  it("renames without adding a version, and re-derives the url name", async () => {
+    const { short_id } = await (await upload("r.md", "hello", { title: "Old name" })).json()
+    const before = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    const r = await patchTitle(short_id, { title: "  A better name  " })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ title: "A better name", slug: "a-better-name" })
+    const after = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(after.title).toBe("A better name")
+    expect(after.current_version).toBe(before.current_version)
+    expect(after.versions).toHaveLength(before.versions.length)
+  })
+
+  it("moves the url name with the title; the id still resolves", async () => {
+    const { short_id } = await (await upload("r2.md", "hello", { title: "First" })).json()
+    await patchTitle(short_id, { title: "Second" })
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.url).toContain(`second-${short_id}`)
+  })
+
+  it("refuses an empty title", async () => {
+    const { short_id } = await (await upload("r3.md", "hello", { title: "Keep" })).json()
+    expect((await patchTitle(short_id, { title: "   " })).status).toBe(400)
+    expect((await patchTitle(short_id, { title: "" })).status).toBe(400)
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.title).toBe("Keep")
+  })
+
+  it("404s an unknown artifact", async () => {
+    expect((await patchTitle("nope1234", { title: "x" })).status).toBe(404)
+  })
+
+  it("needs publish rights — a commenter can't rename", async () => {
+    const { app: a } = makeAuthedApp(
+      "rename-perm",
+      [
+        { id: "rn1", email: "rename-owner@x.test", name: "Owner" },
+        { id: "rn2", email: "rename-commenter@x.test", name: "Commenter" },
+      ],
+      "commenter",
+    )
+    const pub = await publishAs(a, "<h1>hi</h1>", { title: "Owned" }, as("rename-owner@x.test"))
+    const { short_id } = await pub.json()
+    const r = await a.request(`/v1/artifacts/${short_id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as("rename-commenter@x.test") },
+      body: JSON.stringify({ title: "Nope" }),
+    })
+    expect(r.status).toBe(403)
+  })
+
+  it("a lock does not block a rename — a lock is about content", async () => {
+    const { short_id } = await (await upload("r4.md", "hello", { title: "Locked doc" })).json()
+    await app.request(`/v1/artifacts/${short_id}/locked`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ locked: true }),
+    })
+    expect((await patchTitle(short_id, { title: "Renamed while locked" })).status).toBe(200)
+  })
+})

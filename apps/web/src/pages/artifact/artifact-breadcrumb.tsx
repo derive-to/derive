@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
-import { useCallback, useEffect } from "react"
-import type { Artifact } from "@/api"
+import { useCallback, useEffect, useState } from "react"
+import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { Breadcrumb, CrumbSep, crumbClass } from "@/components/shared/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -13,7 +13,14 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { collectionFoldersQuery, collectionSiblingsQuery, collectionsQuery } from "@/lib/queries"
+import { canRenameArtifact } from "@/lib/artifact"
+import {
+  artifactQuery,
+  collectionFoldersQuery,
+  collectionSiblingsQuery,
+  collectionsQuery,
+} from "@/lib/queries"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { folderScopedSiblingIds, resolveContextCollection, siblingNav } from "./lib/siblings"
 import { refFor } from "./parse-ref"
@@ -25,6 +32,87 @@ import { refFor } from "./parse-ref"
 // opening a document MOVES its title into this header instead of cutting.
 const TITLE_CLASS =
   "vt-doc-title truncate font-serif text-base font-medium leading-tight tracking-tight"
+
+/**
+ * The title, and the way to change it: double-click and type.
+ *
+ * Renaming used to mean opening the raw source editor and republishing the whole
+ * document — a version whose diff is empty, and a "new version" cue for everyone
+ * reading it, because someone fixed a typo in the name. The rename endpoint is
+ * metadata-only, so this is a text field and a PATCH.
+ *
+ * Enter commits, Escape reverts, blur commits (the same grammar as every other
+ * rename in the app — collections, folders, workspaces). The field is the same
+ * pixels as the heading so the line doesn't jump when it becomes editable.
+ */
+function EditableTitle({ art, className }: { art: Artifact; className?: string }) {
+  const qc = useQueryClient()
+  const shown = art.title ?? art.short_id
+  const [draft, setDraft] = useState<string | null>(null)
+  const rename = useApiMutation({
+    mutationFn: (title: string) => api.renameArtifact(art.short_id, title),
+    onSuccess: (r) => {
+      // Write through rather than refetch: the header is the thing that just
+      // changed, and a round trip would blink the old name back first.
+      qc.setQueryData(artifactQuery(art.short_id).queryKey, (a) =>
+        a ? { ...a, title: r.title } : a,
+      )
+    },
+    // The library rows, the sibling switcher and search all carry the old name.
+    invalidate: [["artifacts"], ["collections"]],
+  })
+  const commit = () => {
+    const next = (draft ?? "").trim()
+    setDraft(null)
+    if (next && next !== shown) rename.mutate(next)
+  }
+  if (!canRenameArtifact(art))
+    return (
+      <span className={cn("truncate", className)} title={shown}>
+        {shown}
+      </span>
+    )
+  if (draft === null)
+    return (
+      // biome-ignore lint/a11y/noStaticElementInteractions: the rename is an enhancement on the heading text; the source editor and the ⋯ menu remain keyboard-reachable paths to the same change.
+      <span
+        className={cn("truncate", className)}
+        data-testid="artifact-title"
+        title={`${shown} — double-click to rename`}
+        onDoubleClick={() => setDraft(shown)}
+      >
+        {shown}
+      </span>
+    )
+  return (
+    <input
+      // biome-ignore lint/a11y/noAutofocus: it replaced the text the user just double-clicked; anywhere else to put the caret would be wrong.
+      autoFocus
+      aria-label="Artifact title"
+      data-testid="artifact-title-rename"
+      className={cn(
+        "min-w-0 flex-1 truncate rounded-sm bg-transparent outline-none ring-1 ring-border focus:ring-ring",
+        className,
+      )}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault()
+          commit()
+        } else if (e.key === "Escape") {
+          e.preventDefault()
+          setDraft(null)
+        }
+        // The page's own shortcuts (`e`, `p`, `c`, `[`/`]`) read the event target, but
+        // a stray keystroke reaching a window listener from inside a rename would be
+        // a surprise; keep the field's keys to the field.
+        e.stopPropagation()
+      }}
+    />
+  )
+}
 
 // The document-title line in the artifact header. When the artifact was opened from a
 // collection (the `?collection=` context) — or belongs to exactly one — the title
@@ -103,8 +191,8 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
   // isn't in reach) → the title alone, unchanged.
   if (!contextId || !collectionTitle) {
     return (
-      <h1 className={TITLE_CLASS} title={art.title ?? art.short_id}>
-        {art.title ?? art.short_id}
+      <h1 className={cn(TITLE_CLASS, "flex min-w-0")}>
+        <EditableTitle art={art} />
       </h1>
     )
   }
@@ -150,19 +238,22 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
       {hasSwitcher ? (
         // The title stays the page's <h1>; the switcher control lives inside it. `flex-1`
         // gives the title the remaining space (crumbs shrink around it).
-        <h1 className="flex min-w-0 flex-1">
+        // The title is the TITLE here too — double-click renames it, same as every
+        // other view of this document. The switcher keeps its own trigger (the
+        // caret), which is what it always looked like anyway; making the whole
+        // heading a menu button meant the one place you'd reach to rename a
+        // document was the one place you couldn't.
+        <h1 className={cn(TITLE_CLASS, "flex min-w-0 flex-1 items-center gap-1")}>
+          <EditableTitle art={art} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 data-testid="artifact-sibling-switcher"
-                title={art.title ?? art.short_id}
-                className={cn(
-                  TITLE_CLASS,
-                  "flex min-w-0 items-center gap-1 rounded-md text-left outline-none hover:text-foreground/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-                )}
+                aria-label="Switch to another artifact in this collection"
+                title="Switch artifact"
+                className="flex shrink-0 items-center rounded-md outline-none hover:text-foreground/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               >
-                <span className="truncate">{art.title ?? art.short_id}</span>
                 <Icon name="caret" size={16} className="shrink-0 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
@@ -191,8 +282,8 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
           </DropdownMenu>
         </h1>
       ) : (
-        <h1 className={cn(TITLE_CLASS, "min-w-0 flex-1")} title={art.title ?? art.short_id}>
-          {art.title ?? art.short_id}
+        <h1 className={cn(TITLE_CLASS, "flex min-w-0 flex-1")}>
+          <EditableTitle art={art} />
         </h1>
       )}
       {hasSwitcher && (

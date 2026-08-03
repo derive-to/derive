@@ -33,6 +33,12 @@ export const canEditArtifactDoc = (
   !sourceEditorOpen &&
   !a.managed
 
+/** May this viewer rename the artifact? Publish rights, like editing the words —
+ *  but a LOCK doesn't stop it: a lock routes CONTENT through review, and a title
+ *  carries none. GitHub-synced artifacts are named by their repo path. */
+export const canRenameArtifact = (a: Artifact): boolean =>
+  (a.my_role === "editor" || a.my_role === "owner") && !a.managed
+
 // The short type badge for an artifact (Skill / Site / Deck / MD / HTML / Doc),
 // derived from its kind + denormalized content type without opening the bundle.
 export function artifactTypeLabel(a: Artifact): string {
