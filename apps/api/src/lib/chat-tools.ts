@@ -62,6 +62,27 @@ export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish
  */
 export const RAIL_CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read"])
 
+/**
+ * THE ASK SURFACE's subset: everything except the writer.
+ *
+ * The ⌘K palette answers in a dialog over whatever page you were on. Two reasons that surface
+ * should not hold `publish`, and the second is the load-bearing one:
+ *
+ *  - It says so. Its empty state promises "Derive searches and reads with your own permissions",
+ *    the control that opens it is labelled Ask, and a document appearing in the library because
+ *    of a sentence typed into a transient modal is not what either of those advertises.
+ *  - It removes a SECOND WRITE PATH for a document you are looking at. On /artifacts/… the rail
+ *    already writes, through the revision contract and the landing port that decide
+ *    publish-vs-propose and demote on a mid-turn race. The palette reaching the same document
+ *    through the `publish` tool instead means two answers to "how does this land", which is the
+ *    drift turn-core exists to prevent.
+ *
+ * Writing still has two homes, both of them surfaces you chose deliberately: /chat (full page,
+ * history, a stop control) and the document rail (its own contract). The palette's footer links
+ * to the first, so an ask that wants to become a write is one click from where it can.
+ */
+export const ASK_CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "use", "call"])
+
 export interface ChatToolSurface {
   /** The tools as the model is told about them. Empty when the subset is empty. */
   tools: LoopTool[]

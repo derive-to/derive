@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildChatTools, CHAT_TOOLS } from "../src/lib/chat-tools"
+import { ASK_CHAT_TOOLS, buildChatTools, CHAT_TOOLS } from "../src/lib/chat-tools"
 import { catalogFromGateway, catalogOf } from "../src/lib/model-catalog"
 import { as, makeAuthedApp, publishAs } from "./helpers"
 
@@ -119,6 +119,27 @@ describe("the chat tool surface", () => {
     // returning an empty list that reads as "no work waiting".
     const out = JSON.stringify(await tools.execute("catch_up", {}))
     expect(out).toMatch(/no inbox/i)
+  })
+
+  it("the ASK surface holds every reading tool and no writer", async () => {
+    const { ctx } = makeAuthedApp("ct-ask", [{ id: "u1", email: "u1@x.com", name: "U" }])
+    const who = { org: "default", user: { id: "u1", name: "U" }, seatRole: "owner" } as const
+    const ask = buildChatTools(ctx, who, ASK_CHAT_TOOLS)
+    // The palette answers over the page you were on, and the document rail already writes to the
+    // document you are looking at. One writer per document is the point.
+    expect(ask.tools.map((t) => t.name)).not.toContain("publish")
+    // Everything that READS survives, so an ask is not a lesser answer — only a non-writing one.
+    for (const t of ["find", "read"]) expect(ask.tools.map((x) => x.name)).toContain(t)
+    // Not registered rather than refused: there is no handler to reach.
+    const out = JSON.stringify(await ask.execute("publish", { title: "x", content: "y" }))
+    expect(out).toMatch(/unknown tool/i)
+  })
+
+  it("the surface can only ever NARROW: it is a subset of the full set", () => {
+    // The narrowing rides the request, so a client picks it. That is safe only while it cannot
+    // ADD anything — this is the assertion that keeps it safe.
+    for (const t of ASK_CHAT_TOOLS) expect(CHAT_TOOLS.has(t)).toBe(true)
+    expect(ASK_CHAT_TOOLS.size).toBeLessThan(CHAT_TOOLS.size)
   })
 
   it("carries the app-help skill on EVERY lane, including one with no tools at all", async () => {

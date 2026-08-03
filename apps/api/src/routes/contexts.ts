@@ -31,7 +31,7 @@ import {
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { chatArrival } from "../lib/chat-gate"
-import { buildChatTools, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
+import { ASK_CHAT_TOOLS, buildChatTools, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
 import { sha256 } from "../lib/crypto"
@@ -173,6 +173,9 @@ export const contextRoutes = (ctx: AppContext) => {
     reply: (body: string, state: SessionState, payload?: unknown) => Promise<void>,
     stream: DeltaStream,
     askedModelId: string | null,
+    /** Where the question was typed. "ask" (the palette) drops the writer for this turn; it can
+     *  only ever narrow, so a caller that says nothing gets what it always got. */
+    surface?: "ask",
   ) => {
     // The seat is re-read PER TURN, never trusted from session creation: someone removed from
     // the workspace still holds the session id, and their tools would otherwise keep working.
@@ -204,14 +207,18 @@ export const contextRoutes = (ctx: AppContext) => {
     }
     const ws = await meta.getWorkspace(s.org_id).catch(() => null)
     const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
-    const tools = buildChatTools(ctx, {
-      org: s.org_id,
-      user: { id: me.id, name: me.name ?? me.username ?? null },
-      seatRole: seat.role,
-      // Read fresh for THIS turn: an operator who flips the killswitch mid-conversation stops
-      // the next write, not merely the next session.
-      flags: { agentKillswitch: settings?.agentKillswitch ?? false },
-    })
+    const tools = buildChatTools(
+      ctx,
+      {
+        org: s.org_id,
+        user: { id: me.id, name: me.name ?? me.username ?? null },
+        seatRole: seat.role,
+        // Read fresh for THIS turn: an operator who flips the killswitch mid-conversation stops
+        // the next write, not merely the next session.
+        flags: { agentKillswitch: settings?.agentKillswitch ?? false },
+      },
+      surface === "ask" ? ASK_CHAT_TOOLS : undefined,
+    )
     const res = await runChatTurn(
       { model: { ...model, callModel: stream.wrap(model.callModel) } },
       {
@@ -245,8 +252,14 @@ export const contextRoutes = (ctx: AppContext) => {
     /** The context's agent, or NULL for a contextless (default-agent) chat session. */
     agentId: string | null,
     /** What the caller asked for on THIS turn. `modelId` is the person's model pick; absent
-     *  means "whatever this conversation was already using", then the deploy's default. */
-    opts?: { modelId?: string | null },
+     *  means "whatever this conversation was already using", then the deploy's default.
+     *
+     *  `surface` narrows the tools, and ONLY ever narrows them: the palette says "ask" and loses
+     *  the writer (ASK_CHAT_TOOLS). It rides the request rather than the session because it is a
+     *  property of where the question was typed, not of the conversation — the same transcript
+     *  opened on /chat writes, which is what its Open-in-chat link is for. A caller that omits it
+     *  gets exactly what it got before, so this can add capability to nobody. */
+    opts?: { modelId?: string | null; surface?: "ask" },
   ) => {
     const subject = parseSubject(s.subject_ref)
     // WHAT THIS LANE WILL SERVE, and what it must leave alone.
@@ -324,7 +337,7 @@ export const contextRoutes = (ctx: AppContext) => {
       // writer, the settle wake — is shared with the document lane and deliberately not
       // duplicated; what differs is only what the turn is given and what it may do.
       if (!subject) {
-        await serveWorkspaceChat(s, me, reply, stream, opts?.modelId ?? null)
+        await serveWorkspaceChat(s, me, reply, stream, opts?.modelId ?? null, opts?.surface)
         return
       }
       const artifact = await meta.getByShortId(subject.id)
@@ -1628,6 +1641,12 @@ export const contextRoutes = (ctx: AppContext) => {
             .max(200)
             .optional()
             .describe("A model id from /v1/chat/models; omitted = this deploy's default."),
+          surface: z
+            .enum(["ask"])
+            .optional()
+            .describe(
+              'Where the question was typed. "ask" is the \u2318K palette, which loses the writer for this turn; omitted is the full chat surface. It can only ever narrow.',
+            ),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -1653,7 +1672,9 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       // Detached, exactly like the document lane: the transcript is what the surface follows,
       // so closing the tab mid-turn loses nothing.
-      await ctx.background(serveAttended(created.session, me, null, { modelId: b.model ?? null }))
+      await ctx.background(
+        serveAttended(created.session, me, null, { modelId: b.model ?? null, surface: b.surface }),
+      )
       return c.json(
         { session: sessionJson(created.session), messages: [messageJson(created.message)] },
         201,
@@ -1837,6 +1858,12 @@ export const contextRoutes = (ctx: AppContext) => {
           z.object({
             body_md: z.string().trim().min(1).max(100_000),
             meta: z.unknown().optional(),
+            surface: z
+              .enum(["ask"])
+              .optional()
+              .describe(
+                'Where the question was typed. "ask" is the \u2318K palette, which loses the writer for this turn; omitted is the full chat surface. It can only ever narrow.',
+              ),
             state: z.enum(["answered", "escalated", "failed"]).optional(),
             // The asker message this answer addresses (from the runner's queue
             // snapshot) — the guard against the lost-turn race below.
@@ -1927,6 +1954,9 @@ export const contextRoutes = (ctx: AppContext) => {
           // the bigger one" is the whole use case, and it must not rewrite what already answered.
           // Absent = whatever this conversation was last answered with (see lastModelId).
           model: z.string().max(200).optional(),
+          // Per-turn for the same reason: the palette narrows ITS turns to the reading tools, and
+          // the same conversation reopened on /chat is not narrowed. Only ever narrows.
+          surface: z.enum(["ask"]).optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -1974,7 +2004,10 @@ export const contextRoutes = (ctx: AppContext) => {
         if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
       }
       await ctx.background(
-        serveAttended(s, me, linked?.context.agent_id ?? null, { modelId: b.model ?? null }),
+        serveAttended(s, me, linked?.context.agent_id ?? null, {
+          modelId: b.model ?? null,
+          surface: b.surface,
+        }),
       )
       return c.json({ message: messageJson(m) }, 201)
     },

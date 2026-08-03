@@ -63,15 +63,28 @@ export function PaletteAsk(props: {
   const { data: ws, isError: wsFailed } = useQuery({ ...workspaceQuery(), staleTime: 60_000 })
   const org = ws?.id ?? ""
 
+  // `surface: "ask"` on BOTH the open and every follow-up: it narrows this turn's tools to
+  // everything except the writer (ASK_CHAT_TOOLS). It travels with the request rather than
+  // living on the session, because it describes where the question was typed, not what the
+  // conversation is — the same transcript opened on /chat can write, which is what the
+  // Open-in-chat link below is for.
   const open = useCallback(
     (body: string) =>
       json<{ session: { id: string } }>("/v1/chat-session", {
         method: "POST",
-        body: JSON.stringify({ workspace: org, body_md: body }),
+        body: JSON.stringify({ workspace: org, body_md: body, surface: "ask" }),
       }),
     [org],
   )
-  const chat = useChatSession({ open, resetKey: org })
+  const followUp = useCallback(
+    (id: string, body: string) =>
+      json(`/v1/sessions/${id}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ body_md: body, surface: "ask" }),
+      }),
+    [],
+  )
+  const chat = useChatSession({ open, followUp, resetKey: org })
 
   // ONE SHOT. A ref rather than state, because React's double mount would otherwise ask the same
   // question twice — two turns, two costs, two answers to read.
