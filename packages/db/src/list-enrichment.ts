@@ -175,7 +175,7 @@ export const composeBootstrap = async (
   viewer: Omit<CollectionsViewer, "userId">,
 ): Promise<BootstrapRead> => {
   const summary = await composeWorkspaceSummary(store, orgId, userId)
-  const { collections, sources, starred, active, previews, previewBylines } =
+  const { collections, sources, starred, workedIn, previews, previewBylines } =
     await composeCollectionsOverview(store, orgId, { userId, ...viewer })
   const collectionRoles = await store.collectionRolesForUser(
     collections.map((c) => c.id),
@@ -194,7 +194,7 @@ export const composeBootstrap = async (
     collections,
     sources,
     starred,
-    active,
+    workedIn,
     previews,
     previewBylines,
     collectionRoles,
@@ -304,10 +304,10 @@ export const composeCollectionsOverview = async (
     store.listRepoSources(orgId),
   ])
   if (!viewer)
-    return { collections, sources, starred: [], active: [], previews: {}, previewBylines: [] }
+    return { collections, sources, starred: [], workedIn: [], previews: {}, previewBylines: [] }
   // The pg driver answers these as arms of the one overview statement; here they are
   // more free local reads.
-  const [starred, active, previews] = await Promise.all([
+  const [starred, workedIn, previews] = await Promise.all([
     store.listUserFavoriteCollectionIds(viewer.userId, orgId),
     store.collectionsWorkedIn(viewer.userId, orgId, viewer.activeSince),
     store.collectionPreviews(
@@ -330,5 +330,5 @@ export const composeCollectionsOverview = async (
     name: u.name,
     username: u.username,
   }))
-  return { collections, sources, starred, active, previews, previewBylines }
+  return { collections, sources, starred, workedIn, previews, previewBylines }
 }

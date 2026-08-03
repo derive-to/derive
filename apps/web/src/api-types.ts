@@ -6404,6 +6404,7 @@ export interface components {
             /** @description Whether the caller starred this collection — it pins to their sidebar. */
             starred?: boolean;
             last_activity?: string;
+            my_last_activity?: string;
             /** @description A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing. */
             preview?: {
                 short_id: string;

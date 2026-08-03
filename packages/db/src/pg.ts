@@ -479,20 +479,23 @@ const collectionsOverviewSql = (
          JOIN collection c ON c.id = cf.collection_id
         WHERE cf.user_id = ${viewer.user} AND c.org_id = $1
        UNION ALL
-       SELECT 'active', to_json(w.id) FROM (
-         SELECT ci.collection_id id FROM collection_item ci
-           JOIN collection c ON c.id = ci.collection_id
-          WHERE c.org_id = $1 AND ci.artifact_id IN (
-            SELECT artifact_id FROM "version"
-             WHERE author_id = ${viewer.user} AND created_at >= ${viewer.since}
-            UNION
-            SELECT artifact_id FROM "comment"
-             WHERE author_id = ${viewer.user} AND created_at >= ${viewer.since})
-         UNION
-         SELECT cm.collection_id FROM collection_member cm
-           JOIN collection c ON c.id = cm.collection_id
-          WHERE cm.user_id = ${viewer.user} AND cm.created_at >= ${viewer.since}
-            AND c.org_id = $1 AND c.created_by <> ${viewer.user}
+       SELECT 'active', row_to_json(w) FROM (
+         SELECT id, max(at) at FROM (
+           SELECT ci.collection_id id, t.at FROM (
+             SELECT artifact_id, created_at at FROM "version"
+              WHERE author_id = ${viewer.user} AND created_at >= ${viewer.since}
+             UNION ALL
+             SELECT artifact_id, created_at FROM "comment"
+              WHERE author_id = ${viewer.user} AND created_at >= ${viewer.since}
+           ) t
+           JOIN collection_item ci ON ci.artifact_id = t.artifact_id
+           JOIN collection c ON c.id = ci.collection_id AND c.org_id = $1
+           UNION ALL
+           SELECT cm.collection_id, cm.created_at FROM collection_member cm
+             JOIN collection c ON c.id = cm.collection_id
+            WHERE cm.user_id = ${viewer.user} AND cm.created_at >= ${viewer.since}
+              AND c.org_id = $1 AND c.created_by <> ${viewer.user}
+         ) u GROUP BY id
        ) w
        UNION ALL
        SELECT 'preview', row_to_json(p) FROM (
@@ -518,7 +521,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   const collections: (CollectionRecord & { count: number })[] = []
   const sources: RepoSourceRecord[] = []
   const starred: string[] = []
-  const active: string[] = []
+  const workedIn: { id: string; at: string }[] = []
   const previews: Record<string, CollectionPreview[]> = {}
   const previewBylines: { id: string; name: string | null; username: string | null }[] = []
   for (const r of rows) {
@@ -530,7 +533,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
         starred.push(r.doc as string)
         break
       case "active":
-        active.push(r.doc as string)
+        workedIn.push(r.doc as { id: string; at: string })
         break
       case "byline":
         previewBylines.push(r.doc as { id: string; name: string | null; username: string | null })
@@ -567,7 +570,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   // guarantee once the arms are merged — re-apply the strip's order here.
   for (const bucket of Object.values(previews))
     bucket.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id))
-  return { collections, sources, starred, active, previews, previewBylines }
+  return { collections, sources, starred, workedIn, previews, previewBylines }
 }
 
 export class PgMetaStore implements MetaStore {
@@ -1864,7 +1867,7 @@ export class PgMetaStore implements MetaStore {
     }
     const arm: Record<string, unknown> = {}
     for (const r of rows) arm[r.arm] = r.doc
-    const { collections, sources, starred, active, previews, previewBylines } = mapOverviewRows(
+    const { collections, sources, starred, workedIn, previews, previewBylines } = mapOverviewRows(
       (arm.overview as OverviewRow[] | null) ?? [],
     )
     // maxRole, not last-wins: the two arms both answer for a collection you are an
@@ -1879,7 +1882,7 @@ export class PgMetaStore implements MetaStore {
       collections,
       sources,
       starred,
-      active,
+      workedIn,
       previews,
       previewBylines,
       collectionRoles,
@@ -2460,44 +2463,34 @@ export class PgMetaStore implements MetaStore {
       )
   }
   // Same four indexed reads as the D1 twin — see repos.ts for why this is not one join.
-  async collectionsWorkedIn(userId: string, orgId: string, sinceIso: string): Promise<string[]> {
-    const touched = new Set<string>()
-    for (const r of await this.db
-      .select({ id: version.artifact_id })
-      .from(version)
-      .where(and(eq(version.author_id, userId), gte(version.created_at, sinceIso))))
-      touched.add(r.id)
-    for (const r of await this.db
-      .select({ id: comment.artifact_id })
-      .from(comment)
-      .where(and(eq(comment.author_id, userId), gte(comment.created_at, sinceIso))))
-      touched.add(r.id)
-
-    const ids = new Set<string>()
-    if (touched.size > 0) {
-      for (const r of await this.db
-        .select({ id: collectionItem.collection_id })
-        .from(collectionItem)
-        .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
-        .where(
-          and(inArray(collectionItem.artifact_id, [...touched]), eq(collection.org_id, orgId)),
-        ))
-        ids.add(r.id)
-    }
-    for (const r of await this.db
-      .select({ id: collectionMember.collection_id })
-      .from(collectionMember)
-      .innerJoin(collection, eq(collection.id, collectionMember.collection_id))
-      .where(
-        and(
-          eq(collectionMember.user_id, userId),
-          gte(collectionMember.created_at, sinceIso),
-          eq(collection.org_id, orgId),
-          ne(collection.created_by, userId),
-        ),
-      ))
-      ids.add(r.id)
-    return [...ids]
+  async collectionsWorkedIn(
+    userId: string,
+    orgId: string,
+    sinceIso: string,
+  ): Promise<{ id: string; at: string }[]> {
+    // One statement: the viewer's touches (versions, comments) folded through the
+    // collections that hold those artifacts, plus being-added-by-someone-else, each
+    // carrying its timestamp — max per collection. Same signals as the repos twin.
+    const { rows } = await this.pool.query<{ id: string; at: string }>(
+      `SELECT id, max(at) at FROM (
+         SELECT ci.collection_id id, t.at FROM (
+           SELECT artifact_id, created_at at FROM "version"
+            WHERE author_id = $2 AND created_at >= $3
+           UNION ALL
+           SELECT artifact_id, created_at FROM "comment"
+            WHERE author_id = $2 AND created_at >= $3
+         ) t
+         JOIN collection_item ci ON ci.artifact_id = t.artifact_id
+         JOIN collection c ON c.id = ci.collection_id AND c.org_id = $1
+         UNION ALL
+         SELECT cm.collection_id, cm.created_at FROM collection_member cm
+           JOIN collection c ON c.id = cm.collection_id
+          WHERE cm.user_id = $2 AND cm.created_at >= $3
+            AND c.org_id = $1 AND c.created_by <> $2
+       ) w GROUP BY id`,
+      [orgId, userId, sinceIso],
+    )
+    return rows
   }
   // See the repos.ts twin: one read, sliced per collection in JS rather than a
   // per-collection LIMIT.

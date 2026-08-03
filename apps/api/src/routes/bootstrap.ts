@@ -115,7 +115,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
           me.id,
           false,
           new Set(b.starred),
-          new Set(b.active),
+          new Map(b.workedIn.map((w) => [w.id, w.at])),
           b.previews,
           b.previewBylines,
         ),

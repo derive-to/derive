@@ -91,7 +91,7 @@ export const collectionRoutes = (ctx: AppContext) => {
         collections: cols,
         sources,
         starred,
-        active,
+        workedIn,
         previews: rawPreviews,
         previewBylines,
       } = await meta.collectionsOverview(
@@ -122,7 +122,7 @@ export const collectionRoutes = (ctx: AppContext) => {
         me?.id ?? null,
         isToken(c),
         new Set(starred),
-        new Set(active),
+        new Map(workedIn.map((w) => [w.id, w.at])),
         rawPreviews,
         previewBylines,
       )

@@ -917,7 +917,11 @@ export interface SocialStore {
    *  already leave a row: a version they authored, a comment they wrote, or a membership
    *  they were granted. Reading is deliberately not among them; nothing records it, and
    *  a per-user read log is a different decision from this one. Org-scoped. */
-  collectionsWorkedIn(userId: string, orgId: string, sinceIso: string): Promise<string[]>
+  collectionsWorkedIn(
+    userId: string,
+    orgId: string,
+    sinceIso: string,
+  ): Promise<{ id: string; at: string }[]>
   /** The most recently updated artifacts in each of these collections — the filmstrip
    *  the Collections view renders. Capped per collection: this is a preview strip, not a
    *  listing, so a 200-artifact shelf costs the same as a 3-artifact one. */
@@ -1570,8 +1574,10 @@ export interface CollectionsOverviewRead {
   sources: RepoSourceRecord[]
   /** Collection ids the viewer starred. Empty when no `viewer` was passed. */
   starred: string[]
-  /** Collection ids the viewer has worked in since `activeSince`. Empty without a viewer. */
-  active: string[]
+  /** The collections the viewer worked in since `activeSince`, each with THEIR latest
+   *  touch (publish or comment; being added by someone else counts, creating doesn't) —
+   *  the Collections digest orders "your shelves" by this. Empty without a viewer. */
+  workedIn: { id: string; at: string }[]
   /** Newest-first covers per collection id. Empty without a viewer; a collection with
    *  nothing in it is absent rather than mapped to []. */
   previews: Record<string, CollectionPreview[]>
@@ -1588,7 +1594,7 @@ export interface BootstrapRead {
   sources: RepoSourceRecord[]
   /** The viewer's stars / worked-in set / preview strips — see CollectionsOverviewRead. */
   starred: string[]
-  active: string[]
+  workedIn: { id: string; at: string }[]
   previews: Record<string, CollectionPreview[]>
   previewBylines: { id: string; name: string | null; username: string | null }[]
   /** The caller's explicit per-collection roles (creator-ownership is applied by the route). */

@@ -135,6 +135,9 @@ export const Collection = z
     /** Newest activity among the collection's artifacts. Derived from the preview strip
      *  rather than stored — a collection has no mtime of its own. */
     last_activity: z.string().optional(),
+    /** The CALLER's latest touch here (publish or comment, being added counts) within
+     *  the active window — what the Collections digest orders "your shelves" by. */
+    my_last_activity: z.string().optional(),
     preview: z
       .array(
         z.object({
@@ -193,6 +196,7 @@ export const enrich = (
     starred?: boolean
     active?: boolean
     last_activity?: string
+    my_last_activity?: string
     preview?: {
       short_id: string
       title: string | null
@@ -245,9 +249,9 @@ export const collectionsJson = (
   /** Ids this caller starred. Rides the same read as the list so the sidebar's
    *  starred group costs no extra request. */
   starredIds: ReadonlySet<string> = new Set(),
-  /** Ids the caller has worked in lately. Same read as the list — the Collections
-   *  view groups on this and must not pay a second round trip for it. */
-  activeIds: ReadonlySet<string> = new Set(),
+  /** The caller's latest touch per collection, lately. Same read as the list — the
+   *  Collections view orders on this and must not pay a second round trip for it. */
+  workedIn: ReadonlyMap<string, string> = new Map(),
   previews: Record<string, CollectionPreview[]> = {},
   /** Live rows for the previews' authors — heals the denormalized name to the person's
    *  CURRENT one, same precedence as authorProfile: for an agent publish the stored
@@ -271,7 +275,8 @@ export const collectionsJson = (
           ...col,
           my_role: role,
           starred: starredIds.has(col.id),
-          active: activeIds.has(col.id),
+          active: workedIn.has(col.id),
+          my_last_activity: workedIn.get(col.id),
           // Everything the Collections digest renders per cover: the caption (title),
           // the window check (updated_at), and the recent-editor avatars (byline).
           // Only the internal id stays server-side.

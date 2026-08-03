@@ -947,7 +947,8 @@ export function runStoreContract(
       // must NOT count — otherwise every shelf you ever made reads as active forever.
       expect(await store.collectionsWorkedIn("amy", ORG, since)).toEqual([])
 
-      // A comment is a deliberate act, and it carries a stable author id.
+      // A comment is a deliberate act, and it carries a stable author id — and the read
+      // reports WHEN, because the digest orders your shelves by your own latest touch.
       await store.createComment({
         id: uuid(),
         artifact_id: a1.id,
@@ -957,7 +958,9 @@ export function runStoreContract(
         author: "Amy",
         author_id: "amy",
       })
-      expect(await store.collectionsWorkedIn("amy", ORG, since)).toEqual([worked.id])
+      const worked1 = await store.collectionsWorkedIn("amy", ORG, since)
+      expect(worked1.map((w) => w.id)).toEqual([worked.id])
+      expect(typeof worked1[0]?.at).toBe("string")
 
       // Someone else's comment is not your activity.
       expect(await store.collectionsWorkedIn("bob", ORG, since)).toEqual([])
@@ -2705,7 +2708,7 @@ export function runStoreContract(
       // No viewer ⇒ the per-user arms are empty rather than absent, so a caller can
       // destructure them unconditionally.
       expect(overview.starred).toEqual([])
-      expect(overview.active).toEqual([])
+      expect(overview.workedIn).toEqual([])
       expect(overview.previews).toEqual({})
       // An org with nothing yields empties, not an error.
       const empty = await store.collectionsOverview(`org_${uuid()}`)
@@ -2713,7 +2716,7 @@ export function runStoreContract(
         collections: [],
         sources: [],
         starred: [],
-        active: [],
+        workedIn: [],
         previews: {},
         previewBylines: [],
       })
@@ -2828,10 +2831,13 @@ export function runStoreContract(
 
       expect(read.starred).toEqual(await store.listUserFavoriteCollectionIds("amy", org))
       expect(read.starred).toEqual([starredCol.id])
-      expect([...read.active].sort()).toEqual(
-        [...(await store.collectionsWorkedIn("amy", org, since))].sort(),
+      const workedDirect = await store.collectionsWorkedIn("amy", org, since)
+      expect([...read.workedIn].sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+        [...workedDirect].sort((a, b) => a.id.localeCompare(b.id)),
       )
-      expect(read.active).toEqual([workedCol.id])
+      expect(read.workedIn.map((w) => w.id)).toEqual([workedCol.id])
+      // The touch is the viewer's own comment time — the digest orders on it.
+      expect(typeof read.workedIn[0]?.at).toBe("string")
 
       // Newest first, capped, and each cover carries whether a static render exists.
       expect(read.previews[workedCol.id]?.map((p) => p.short_id)).toEqual([
@@ -2853,7 +2859,7 @@ export function runStoreContract(
         read.collections.map((c) => c.id).sort(),
       )
       expect(bobs.starred).toEqual([])
-      expect(bobs.active).toEqual([])
+      expect(bobs.workedIn).toEqual([])
       // Previews are a property of the collection, not the reader, so they still come.
       expect(bobs.previews[workedCol.id]).toHaveLength(2)
 

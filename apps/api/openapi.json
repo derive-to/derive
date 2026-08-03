@@ -1439,6 +1439,9 @@
           "last_activity": {
             "type": "string"
           },
+          "my_last_activity": {
+            "type": "string"
+          },
           "preview": {
             "type": "array",
             "items": {

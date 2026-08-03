@@ -1699,37 +1699,54 @@ export function makeRepos(db: SqliteDb) {
     userId: string,
     orgId: string,
     sinceIso: string,
-  ): Promise<string[]> => {
-    const touched = new Set<string>()
+  ): Promise<{ id: string; at: string }[]> => {
+    // Per artifact the viewer touched, WHEN they touched it — the digest orders "your
+    // shelves" by your own latest act, so the timestamp is the point, not a rider.
+    const touchedAt = new Map<string, string>()
+    const touch = (key: string, at: string) => {
+      const prev = touchedAt.get(key)
+      if (!prev || at > prev) touchedAt.set(key, at)
+    }
     for (const r of await db
-      .select({ id: version.artifact_id })
+      .select({ id: version.artifact_id, at: version.created_at })
       .from(version)
       .where(and(eq(version.author_id, userId), gte(version.created_at, sinceIso)))
       .all())
-      touched.add(r.id)
+      touch(r.id, r.at)
     for (const r of await db
-      .select({ id: comment.artifact_id })
+      .select({ id: comment.artifact_id, at: comment.created_at })
       .from(comment)
       .where(and(eq(comment.author_id, userId), gte(comment.created_at, sinceIso)))
       .all())
-      touched.add(r.id)
+      touch(r.id, r.at)
 
-    const ids = new Set<string>()
-    if (touched.size > 0) {
+    const byCollection = new Map<string, string>()
+    const fold = (id: string, at: string) => {
+      const prev = byCollection.get(id)
+      if (!prev || at > prev) byCollection.set(id, at)
+    }
+    if (touchedAt.size > 0) {
       for (const r of await db
-        .select({ id: collectionItem.collection_id })
+        .select({ id: collectionItem.collection_id, artifact: collectionItem.artifact_id })
         .from(collectionItem)
         .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
-        .where(and(inArray(collectionItem.artifact_id, [...touched]), eq(collection.org_id, orgId)))
-        .all())
-        ids.add(r.id)
+        .where(
+          and(
+            inArray(collectionItem.artifact_id, [...touchedAt.keys()]),
+            eq(collection.org_id, orgId),
+          ),
+        )
+        .all()) {
+        const at = touchedAt.get(r.artifact)
+        if (at) fold(r.id, at)
+      }
     }
     // Being added by someone else is a signal you work there — it is how you land in a
     // shelf you have not written in yet. Creating one is NOT: you are auto-added as
     // owner, so counting it marked every collection you ever made as active and left
     // "All collections" permanently empty.
     for (const r of await db
-      .select({ id: collectionMember.collection_id })
+      .select({ id: collectionMember.collection_id, at: collectionMember.created_at })
       .from(collectionMember)
       .innerJoin(collection, eq(collection.id, collectionMember.collection_id))
       .where(
@@ -1741,8 +1758,8 @@ export function makeRepos(db: SqliteDb) {
         ),
       )
       .all())
-      ids.add(r.id)
-    return [...ids]
+      fold(r.id, r.at)
+    return [...byCollection.entries()].map(([id, at]) => ({ id, at }))
   }
   // One read for every shelf on screen, sliced per collection in JS. A per-collection
   // LIMIT means a lateral join or N queries; the rows are narrow and the page shows a

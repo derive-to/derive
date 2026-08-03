@@ -33,29 +33,41 @@ type Entry = NonNullable<Collection["preview"]>[number]
 const byActivity = (a: Collection, b: Collection) =>
   (b.last_activity ?? "").localeCompare(a.last_activity ?? "")
 
-/** Starred it, or published/commented in it lately — the two signals the server already
- *  sends for "this shelf is yours to work in". */
-const involved = (c: Collection) => !!c.starred || !!c.active
-
 /**
  * Which shelves lead the digest, and in what order. Pure, so the ordering — the thing a
  * reader feels first — is pinned by tests rather than re-derived by reading JSX.
  *
- * The digest is WORKSPACE activity (seeing what teammates moved is its point), but your
- * shelves outrank theirs: a teammate's Wednesday revision must not put a collection
- * you've never touched above the ones you work in. Involvement first, recency within.
+ * YOUR shelves first: the ones you personally touched (published or commented) in the
+ * last 30 days, ordered by YOUR latest touch — not by whoever in the workspace got
+ * there most recently. A starred shelf rides in the same tier (starring is the
+ * reader's opt-in: heavy readers of a shelf they never write in star it), ordered by
+ * its workspace activity since you left no timestamp of your own. Then the rest of the
+ * workspace's week, by its activity — seeing what teammates moved is still the point
+ * of a digest; it just doesn't outrank your desk.
  */
 export function digestFor(
   collections: Collection[],
   nowMs: number,
 ): { week: boolean; cols: Collection[] } {
   const cutoff = new Date(nowMs - WEEK_MS).toISOString()
-  const active = collections.filter((c) => (c.last_activity ?? "") >= cutoff)
-  const week = active.length > 0
-  const cols = (week ? active : collections.filter((c) => c.last_activity))
-    .sort((a, b) => Number(involved(b)) - Number(involved(a)) || byActivity(a, b))
-    .slice(0, week ? DIGEST_SHELVES : 3)
-  return { week, cols }
+  const mine = (c: Collection) => !!c.my_last_activity || !!c.starred
+  const myKey = (c: Collection) => c.my_last_activity ?? c.last_activity ?? ""
+  const yours = collections.filter(mine).sort((a, b) => myKey(b).localeCompare(myKey(a)))
+  const theirs = collections
+    .filter((c) => !mine(c) && (c.last_activity ?? "") >= cutoff)
+    .sort(byActivity)
+  const cols = [...yours, ...theirs].slice(0, DIGEST_SHELVES)
+  if (cols.length > 0) return { week: true, cols }
+  // A quiet month still gets a digest — the three most recently touched shelves, under
+  // a label that says exactly that, rather than an empty section implying nothing
+  // exists.
+  return {
+    week: false,
+    cols: collections
+      .filter((c) => c.last_activity)
+      .sort(byActivity)
+      .slice(0, 3),
+  }
 }
 
 export function CollectionsView({
@@ -130,7 +142,7 @@ export function CollectionsView({
         <>
           {digest.length > 0 && (
             <section data-testid="collections-digest">
-              <SectionRule label={week ? "This week" : "Recently"} />
+              <SectionRule label={week ? "Recent work" : "Latest activity"} />
               <div>
                 {digest.map((c) => (
                   <DigestEntry key={c.id} col={c} />

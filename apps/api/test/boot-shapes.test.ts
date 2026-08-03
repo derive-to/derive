@@ -36,7 +36,7 @@ describe("collectionsJson: the preview byline heal", () => {
     previews: Record<string, CollectionPreview[]>,
     bylines: { id: string; name: string | null; username: string | null }[],
   ) =>
-    collectionsJson([col], [], {}, "u_rob", false, new Set(), new Set(), previews, bylines)[0]
+    collectionsJson([col], [], {}, "u_rob", false, new Set(), new Map(), previews, bylines)[0]
       ?.preview?.[0]
 
   it("shows the person the agent acted for, not the publishing client", () => {
