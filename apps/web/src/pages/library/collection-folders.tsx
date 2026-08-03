@@ -1,10 +1,8 @@
-import { ChevronRight } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api, type Folder } from "@/api"
 import { Icon } from "@/components/icons"
 import { CardGrid } from "@/components/shared/card-grid"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { Count } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import {
@@ -19,6 +17,7 @@ import { collectionFoldersQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
+import { FolderHeader } from "./folder-header"
 import type { LibrarySelection } from "./use-library-selection"
 
 interface CardHandlers {
@@ -42,14 +41,14 @@ export function NewFolderControl({
 }: {
   collectionId: string
   className?: string
-  /** Controlled mode — the collection header's ⋯ menu opens this; the input closes
-   *  itself through onOpenChange. Uncontrolled, it renders its own trigger button. */
-  open?: boolean
-  onOpenChange?: (open: boolean) => void
+  /** The collection header's ⋯ menu opens this; the input closes itself through
+   *  onOpenChange. There is deliberately no resting trigger — a second "New folder"
+   *  door on the page was the old floating-button row. */
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }) {
-  const [internalCreating, setInternalCreating] = useState(false)
-  const creating = open ?? internalCreating
-  const setCreating = onOpenChange ?? setInternalCreating
+  const creating = open
+  const setCreating = onOpenChange
   const [name, setName] = useState("")
   const create = useApiMutation({
     mutationFn: (n: string) => api.createFolder(collectionId, n),
@@ -80,19 +79,7 @@ export function NewFolderControl({
         className={cn("max-w-xs", className)}
       />
     )
-  if (open !== undefined) return null
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      data-testid="collection-new-folder-button"
-      onClick={() => setCreating(true)}
-      className={cn("self-start", className)}
-    >
-      <Icon name="plus" size={16} />
-      New folder
-    </Button>
-  )
+  return null
 }
 
 /**
@@ -166,8 +153,6 @@ export function CollectionFolders({
     // than the 24px row gap inside a folder's card grid — so the eye reads "new group"
     // from the whitespace, not the reverse.
     <div className="flex flex-col gap-8">
-      {canManage && <NewFolderControl collectionId={collectionId} />}
-
       {sortedFolders.map((f) => (
         <Section
           key={f.id}
@@ -316,39 +301,15 @@ function Section({
   if (renameInput) return <div>{renameInput}</div>
   return (
     <div ref={ref} className="group/folder scroll-mt-4">
-      {/* A hairline under the header makes the group boundary read at a glance without
-          shouting — the sanctioned section register, not file-manager chrome. */}
-      <div className="flex items-center gap-2 border-b border-border-soft pb-1.5">
-        <button
-          type="button"
-          data-testid={`${testId}-toggle`}
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <ChevronRight
-            className={cn(
-              "size-4 shrink-0 text-muted-foreground transition-transform",
-              open && "rotate-90",
-            )}
-            aria-hidden
-          />
-          {/* A named folder gets the folder glyph; the "Unfiled" leftover bucket gets NO
-              icon and a lighter, non-medium label so it never reads as a folder someone
-              literally named "Unfiled". */}
-          {!muted && <Icon name="collection" className="text-muted-foreground" />}
-          <span
-            className={cn(
-              "truncate text-sm",
-              muted ? "font-normal text-muted-foreground" : "font-medium text-foreground",
-            )}
-          >
-            {title}
-          </span>
-          <Count>{items.length}</Count>
-        </button>
-        {menu}
-      </div>
+      <FolderHeader
+        label={title}
+        count={items.length}
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        muted={muted}
+        trailing={menu}
+        testId={testId}
+      />
       {open && items.length === 0 && (
         <p className="mt-3 text-sm text-muted-foreground">
           No artifacts yet{canManage ? " — use “Move to folder” to file some here." : "."}
