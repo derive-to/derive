@@ -139,8 +139,13 @@ export const Collection = z
       .array(
         z.object({
           short_id: z.string(),
+          title: z.string().nullable(),
           current_version: z.number(),
           has_preview: z.boolean(),
+          updated_at: z.string(),
+          author_name: z.string().nullable(),
+          author_login: z.string().nullable(),
+          author_avatar: z.string().nullable(),
         }),
       )
       .optional()
@@ -188,7 +193,16 @@ export const enrich = (
     starred?: boolean
     active?: boolean
     last_activity?: string
-    preview?: { short_id: string; current_version: number; has_preview: boolean }[]
+    preview?: {
+      short_id: string
+      title: string | null
+      current_version: number
+      has_preview: boolean
+      updated_at: string
+      author_name: string | null
+      author_login: string | null
+      author_avatar: string | null
+    }[]
   },
   srcByCollection: Map<string, Src>,
   branchByRepo: Map<string, string>,
@@ -249,12 +263,18 @@ export const collectionsJson = (
           my_role: role,
           starred: starredIds.has(col.id),
           active: activeIds.has(col.id),
-          // Only what a cover needs goes on the wire — the artifact's internal id and
-          // its timestamp stay server-side; the strip's head becomes `last_activity`.
+          // Everything the Collections digest renders per cover: the caption (title),
+          // the window check (updated_at), and the recent-editor avatars (byline).
+          // Only the internal id stays server-side.
           preview: (previews[col.id] ?? []).map((p) => ({
             short_id: p.short_id,
+            title: p.title,
             current_version: p.current_version,
             has_preview: p.has_preview,
+            updated_at: p.updated_at,
+            author_name: p.author_name,
+            author_login: p.author_login,
+            author_avatar: p.author_avatar,
           })),
           last_activity: previews[col.id]?.[0]?.updated_at,
         },

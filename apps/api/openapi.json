@@ -1447,17 +1447,41 @@
                 "short_id": {
                   "type": "string"
                 },
+                "title": {
+                  "type": "string",
+                  "nullable": true
+                },
                 "current_version": {
                   "type": "number"
                 },
                 "has_preview": {
                   "type": "boolean"
+                },
+                "updated_at": {
+                  "type": "string"
+                },
+                "author_name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_login": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_avatar": {
+                  "type": "string",
+                  "nullable": true
                 }
               },
               "required": [
                 "short_id",
+                "title",
                 "current_version",
-                "has_preview"
+                "has_preview",
+                "updated_at",
+                "author_name",
+                "author_login",
+                "author_avatar"
               ]
             },
             "description": "A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing."

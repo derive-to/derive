@@ -475,10 +475,12 @@ const collectionsOverviewSql = (viewer?: { user: string; since: string; per: str
        ) w
        UNION ALL
        SELECT 'preview', row_to_json(p) FROM (
-         SELECT collection_id, id, short_id, current_version, updated_at, has_preview FROM (
-           SELECT ci.collection_id, a.id, a.short_id, a.current_version,
+         SELECT collection_id, id, short_id, title, current_version, updated_at, has_preview,
+                author_name, author_login, author_avatar FROM (
+           SELECT ci.collection_id, a.id, a.short_id, a.title, a.current_version,
                   COALESCE(a.updated_at, a.created_at) updated_at,
                   (v.preview_status = 'ready') has_preview,
+                  a.author_name, a.author_login, a.author_avatar,
                   row_number() OVER (
                     PARTITION BY ci.collection_id
                     ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id DESC) rn
@@ -516,10 +518,14 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
         bucket.push({
           id: p.id,
           short_id: p.short_id,
+          title: p.title,
           current_version: p.current_version,
           updated_at: p.updated_at,
           // A left-joined row with no ready version yields SQL NULL, not false.
           has_preview: p.has_preview === true,
+          author_name: p.author_name,
+          author_login: p.author_login,
+          author_avatar: p.author_avatar,
         })
         break
       }
@@ -2468,10 +2474,14 @@ export class PgMetaStore implements MetaStore {
         collection_id: collectionItem.collection_id,
         id: artifact.id,
         short_id: artifact.short_id,
+        title: artifact.title,
         current_version: artifact.current_version,
         updated_at: artifact.updated_at,
         created_at: artifact.created_at,
         preview_status: version.preview_status,
+        author_name: artifact.author_name,
+        author_login: artifact.author_login,
+        author_avatar: artifact.author_avatar,
       })
       .from(collectionItem)
       .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
@@ -2495,9 +2505,13 @@ export class PgMetaStore implements MetaStore {
         bucket.push({
           id: r.id,
           short_id: r.short_id,
+          title: r.title,
           current_version: r.current_version,
           updated_at: r.updated_at ?? r.created_at,
           has_preview: r.preview_status === "ready",
+          author_name: r.author_name,
+          author_login: r.author_login,
+          author_avatar: r.author_avatar,
         })
     }
     return out

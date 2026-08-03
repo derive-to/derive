@@ -162,7 +162,7 @@ test("starring a collection pins it to the sidebar's Starred group", async ({ ow
   await expect(owner.getByRole("link", { name })).toHaveCount(0)
 })
 
-test("Collections is a view of the library, with starred shelves leading", async ({ owner }) => {
+test("Collections is a digest of the week, then an alphabetical index", async ({ owner }) => {
   await owner.goto("/")
   const name = `Shelf ${Date.now()}`
   await owner.getByTestId("library-view-collections").click()
@@ -171,33 +171,33 @@ test("Collections is a view of the library, with starred shelves leading", async
   await owner.getByTestId("collections-new-input").press("Enter")
   // Creating opens the collection; its header names it.
   await expect(owner.getByTestId("collection-star")).toBeVisible()
+  const colId = new URL(owner.url()).searchParams.get("collection")
 
-  // Switch views — same page, same toolbar, no navigation to a separate place.
-  await owner.goto("/")
-  await owner.getByTestId("library-view-collections").click()
-
-  // A shelf you merely CREATED is not one you're working in — creating auto-adds you as
-  // its owner, and counting that marked every collection you ever made as active. It
-  // lands in the everything-else group until you do something.
-  await expect(owner.getByTestId("collections-all")).toBeVisible()
-  await expect(owner.getByTestId("collections-working")).toHaveCount(0)
+  await owner.goto("/?view=collections")
+  // A brand-new empty collection is one index line — never a digest entry (no activity),
+  // and never an apology about its contents.
+  await expect(owner.getByTestId("collections-index")).toBeVisible()
+  await expect(owner.getByTestId(`index-open-${colId}`)).toBeVisible()
+  await expect(owner.getByTestId(`digest-entry-${colId}`)).toHaveCount(0)
+  await expect(owner.getByText("Nothing here is visible to you")).toHaveCount(0)
 
   // The Collections view IS the page: the artifact grid must not render underneath it.
-  // (It did — the view switch replaced only the heading, leaving the body below it.)
   await expect(owner.locator('[data-testid^="artifact-card-open-"]')).toHaveCount(0)
 
-  // Starring is the explicit half of the group, and it moves the shelf.
-  const card = owner.locator('[data-testid^="collection-star-"]').first()
-  await card.click()
-  await expect(owner.getByTestId("collections-working")).toBeVisible()
+  // Starring works from the index row, optimistically.
+  await owner.getByTestId(`collection-star-${colId}`).click()
+  await expect(owner.getByTestId(`collection-star-${colId}`)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  )
 
   // The view rides the URL, so it survives a reload and can be linked.
   await owner.reload()
-  await expect(owner.getByTestId("collections-working")).toBeVisible()
+  await expect(owner.getByTestId("collections-index")).toBeVisible()
 
-  // Switching back to Documents leaves the Collections view entirely.
+  // Switching back to Artifacts leaves the Collections view entirely.
   await owner.getByTestId("library-view-artifacts").click()
-  await expect(owner.getByTestId("collections-working")).toHaveCount(0)
+  await expect(owner.getByTestId("collections-index")).toHaveCount(0)
 })
 
 test("a card states three facts, not nine", async ({ owner }) => {
@@ -241,7 +241,7 @@ test("Grid or List is a preference the app remembers, not the route's choice", a
   )
 })
 
-test("a shelf shows what's inside it", async ({ owner }) => {
+test("a shelf with fresh work leads the digest, covers and all", async ({ owner }) => {
   const shortId = await publishArtifact(owner, "cover.md", "# Cover\n\nbody")
   await owner.goto("/")
   const name = `Shelf ${Date.now()}`
@@ -249,32 +249,22 @@ test("a shelf shows what's inside it", async ({ owner }) => {
   await owner.getByTestId("collections-new").click()
   await owner.getByTestId("collections-new-input").fill(name)
   await owner.getByTestId("collections-new-input").press("Enter")
-
-  // File the artifact into the new shelf.
   await expect(owner.getByTestId("collection-star")).toBeVisible()
   const colId = new URL(owner.url()).searchParams.get("collection")
   const put = await owner.request.put(`/v1/collections/${colId}/items/${shortId}`)
   expect(put.ok(), `add item: ${put.status()}`).toBeTruthy()
 
   await owner.goto("/?view=collections")
-  // The shelf renders its contents, so you recognise it by what is in it rather than by
-  // reading a name and a count in an otherwise blank box.
-  await expect(owner.getByTestId(`collection-row-${colId}`)).toBeVisible()
-  await expect(owner.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
+  // Fresh work this week ⇒ a digest entry with the artifact's actual cover on it.
+  const entry = owner.getByTestId(`digest-entry-${colId}`)
+  await expect(entry).toBeVisible()
+  await expect(entry.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
 
-  // The Display menu is back on this page, but for layout only: shelves answer "which
-  // collection", the grouped list answers "how is my workspace filed". Sort lives on the
-  // grouped list's own column headers, not in the menu.
-  await expect(owner.getByTestId("library-display")).toBeVisible()
+  // The index carries the ledger line for the same shelf: a count, not a claim.
+  await expect(owner.getByTestId(`index-open-${colId}`)).toBeVisible()
 
-  // One star per shelf, and it is the control. There is no second star beside the title
-  // doing nothing but reporting the same state.
-  await expect(owner.getByTestId(`collection-star-${colId}`)).toHaveCount(1)
-  // Scoped to the title line specifically — the meta line below it may legitimately
-  // carry a glyph (the private lock).
-  await expect(
-    owner.locator(`[data-testid="collection-row-${colId}"] > div:first-child svg`),
-  ).toHaveCount(0)
+  // One shape, no knobs: the Display menu does not render on this view.
+  await expect(owner.getByTestId("library-display")).toHaveCount(0)
 })
 
 test("the current page keeps its selected state under the pointer", async ({ owner }) => {

@@ -296,10 +296,13 @@ describe("collections: starring", () => {
     expect(row.preview[0].current_version).toBe(1)
     expect(typeof row.preview[0].has_preview).toBe("boolean")
     // Last activity is derived from the strip's head — a collection has no mtime of
-    // its own, so this is the only honest answer to "when was this touched". The
-    // timestamp itself stays server-side; only this one derived field goes on the wire.
+    // its own, so this is the only honest answer to "when was this touched". Each entry
+    // also carries its own timestamp, caption, and byline: the Collections digest
+    // filters covers to the week's window and attributes the work.
     expect(typeof row.last_activity).toBe("string")
-    expect(row.preview[0].updated_at).toBeUndefined()
+    expect(typeof row.preview[0].updated_at).toBe("string")
+    expect(row.preview[0].title).toBe("Doc 4")
+    expect(row.preview[0]).toHaveProperty("author_name")
 
     // An empty shelf reports an empty strip rather than omitting the field: the view
     // renders "Nothing filed here yet" off this, and undefined would read as loading.

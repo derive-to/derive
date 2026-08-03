@@ -39,7 +39,6 @@ import { ArtifactListRow, ListShell } from "./artifact-list"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
-import { CollectionsList } from "./collections-list"
 import { CollectionsView } from "./collections-view"
 import { ConnectNudge, useConnectNudge } from "./connect-nudge"
 import { DisplayMenu } from "./display-menu"
@@ -273,25 +272,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // repo/PR, and for a manual collection while its folder view is active (so buckets +
   // counts reflect every item, not just the first page). Collections are finite and
   // scoping keeps them small.
-  // The grouped Collections list joins the pull-everything club: it groups the feed
-  // client-side, and grouping one page showed every collection whose artifacts were
-  // older than it as empty — a lie with a count beside it.
-  const groupedCollections = showCollections && layout === "list"
   useEffect(() => {
-    if (
-      (isSyncedCollection || foldersView || groupedCollections) &&
-      hasNextPage &&
-      !isFetchingNextPage
-    )
-      fetchNextPage()
-  }, [
-    isSyncedCollection,
-    foldersView,
-    groupedCollections,
-    hasNextPage,
-    isFetchingNextPage,
-    fetchNextPage,
-  ])
+    if ((isSyncedCollection || foldersView) && hasNextPage && !isFetchingNextPage) fetchNextPage()
+  }, [isSyncedCollection, foldersView, hasNextPage, isFetchingNextPage, fetchNextPage])
 
   const renameCol = useApiMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.renameCollection(id, title),
@@ -556,13 +539,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
         ) : (
           showPublish && <NewArtifactButton />
         )}
-        {showCollections ? (
-          // Layout only. Shelves answer "which collection" and the grouped list answers
-          // "what's in my workspace and how is it filed" — two questions, so the toggle
-          // earns its place (unlike the shelf-vs-worse-shelf pair cut earlier). Sort
-          // lives on the list's own column headers.
-          <DisplayMenu layout={layout} onLayout={setLayout} />
-        ) : (
+        {/* No Display menu on Collections: the view has one shape (digest, then the
+            alphabetical index) and each section's order is its meaning, not a knob. */}
+        {!showCollections && (
           <DisplayMenu
             layout={layout}
             onLayout={setLayout}
@@ -593,29 +572,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
       {homeView && connectNudge.stage === null && <BrandprintNudge />}
 
       {showCollections ? (
-        layout === "list" ? (
-          <CollectionsList
-            collections={visibleCollections}
-            items={items}
-            loading={isPending || !!hasNextPage || isFetchingNextPage}
-            sort={search.sort ?? DEFAULT_SORT}
-            onSort={setSort}
-            onStar={(id, next) => starCol.mutate({ id, on: next })}
-            onOpen={(a) => nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })}
-            onToggleFavorite={toggleFavorite}
-            onAddToCollection={setPendingCollections}
-            onDelete={setPendingDelete}
-            onPrefetch={(a) => prefetch(a.short_id)}
-          />
-        ) : (
-          <CollectionsView
-            collections={visibleCollections}
-            onStar={(id, next) => starCol.mutate({ id, on: next })}
-            onCreate={(title) => createCol.mutate(title)}
-            draft={newCollection}
-            setDraft={setNewCollection}
-          />
-        )
+        <CollectionsView
+          collections={visibleCollections}
+          onStar={(id, next) => starCol.mutate({ id, on: next })}
+          onCreate={(title) => createCol.mutate(title)}
+          draft={newCollection}
+          setDraft={setNewCollection}
+        />
       ) : filter.kind === "collection" ? (
         <>
           <CollectionBar

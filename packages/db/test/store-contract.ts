@@ -2838,6 +2838,10 @@ export function runStoreContract(
         older.short_id,
       ])
       expect(read.previews[workedCol.id]?.[0]?.has_preview).toBe(false)
+      // The strip attributes the work: caption + byline ride the same read on every
+      // driver (the pg overview arm selects them; SQLite reads the artifact row).
+      expect(read.previews[workedCol.id]?.[0]?.title).toBe("Newer")
+      expect(read.previews[workedCol.id]?.[0]).toHaveProperty("author_name")
       // A collection with nothing in it is absent, not mapped to an empty array.
       expect(read.previews[starredCol.id]).toBeUndefined()
 

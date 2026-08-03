@@ -6407,8 +6407,13 @@ export interface components {
             /** @description A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing. */
             preview?: {
                 short_id: string;
+                title: string | null;
                 current_version: number;
                 has_preview: boolean;
+                updated_at: string;
+                author_name: string | null;
+                author_login: string | null;
+                author_avatar: string | null;
             }[];
             /** @description Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded. */
             active?: boolean;

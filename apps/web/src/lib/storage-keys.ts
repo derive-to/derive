@@ -32,9 +32,6 @@ export const STORAGE_KEYS = {
   // same document used to look like three different things depending on which door you
   // came through, and none of it was a choice anyone made.
   libraryLayout: "derive.library.layout",
-  // Which collection groups are collapsed in the Collections list view. Per collection,
-  // so opening a different workspace's shelves doesn't inherit this one's state.
-  collectionGroups: "derive.collection.groups",
   // Dismissal of the home's one-time "set up your team's Brandprint" nudge (owners
   // of a Brandprint-less workspace; see pages/library/brandprint-nudge).
   brandprintNudge: "derive:brandprint-nudge",

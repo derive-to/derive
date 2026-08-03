@@ -2108,16 +2108,22 @@ export interface NewAuditLog {
   detail?: string | null
 }
 
-/** One cover in a collection's preview strip: enough to render a thumbnail and order
- *  the strip, and nothing more. */
+/** One cover in a collection's preview strip: enough to render a captioned thumbnail,
+ *  order the strip, and attribute the work — and nothing more. */
 export interface CollectionPreview {
   id: string
   short_id: string
+  title: string | null
   current_version: number
   updated_at: string
   /** Whether the current version has a ready static render, so the strip can serve a
    *  PNG instead of mounting an iframe (the same choice artifact cards make). */
   has_preview: boolean
+  /** Who last touched it — the denormalized byline the artifact row already carries.
+   *  The Collections digest derives its "recent editors" avatars from these. */
+  author_name: string | null
+  author_login: string | null
+  author_avatar: string | null
 }
 
 /** Who is looking, for the per-user arms of the collections read: the star list, the

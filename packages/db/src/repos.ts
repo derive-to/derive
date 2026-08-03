@@ -1758,10 +1758,14 @@ export function makeRepos(db: SqliteDb) {
         collection_id: collectionItem.collection_id,
         id: artifact.id,
         short_id: artifact.short_id,
+        title: artifact.title,
         current_version: artifact.current_version,
         updated_at: artifact.updated_at,
         created_at: artifact.created_at,
         preview_status: version.preview_status,
+        author_name: artifact.author_name,
+        author_login: artifact.author_login,
+        author_avatar: artifact.author_avatar,
       })
       .from(collectionItem)
       .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
@@ -1786,9 +1790,13 @@ export function makeRepos(db: SqliteDb) {
         bucket.push({
           id: r.id,
           short_id: r.short_id,
+          title: r.title,
           current_version: r.current_version,
           updated_at: r.updated_at ?? r.created_at,
           has_preview: r.preview_status === "ready",
+          author_name: r.author_name,
+          author_login: r.author_login,
+          author_avatar: r.author_avatar,
         })
     }
     return out
