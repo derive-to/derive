@@ -2183,3 +2183,95 @@ describe("slack DMs reach the chat lane", () => {
     expect((await postEvent(app, dm({ thread_ts: "1.0" }))).status).toBe(200)
   })
 })
+
+// The loop's blocking moment, settled from Slack. The same two actions ride the Work Object
+// card, the review-request DM and the channel card — and a Work Object click carries no `value`,
+// which the interactivity guard used to require, making those buttons a no-op.
+describe("review buttons reach the handler from every surface", () => {
+  const ready = async (name: string) => {
+    const { app, meta } = make(name)
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    await meta.setSlackUserLink({
+      id: newId("sul"),
+      org_id: "default",
+      user_id: owner.id,
+      team_id: "T1",
+      slack_user_id: "U1",
+      // A deliberate sign-in, not an email inference — the strongest identity, so the test
+      // exercises the button rather than the identity policy.
+      origin: "oauth",
+      created_at: new Date().toISOString(),
+      checked_at: new Date().toISOString(),
+    })
+    const artifact = await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s").slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "Spec",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "workspace",
+      kind: "file",
+      spa: 0,
+    })
+    const round = await meta.createReviewRound({
+      id: newId("rr"),
+      artifact_id: artifact.id,
+      version: 1,
+      requested_by: "ag-1",
+      requested_for: owner.id,
+      note: null,
+    })
+    return { app, meta, artifact, round }
+  }
+  const click = (app: ReturnType<typeof make>["app"], extra: Record<string, unknown>) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })),
+    )
+    return postInteract(app, {
+      type: "block_actions",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      channel: { id: "C1" },
+      response_url: "https://hooks.slack.test/x",
+      actions: [{ action_id: "derive_review_approve", ...extra }],
+    })
+  }
+
+  // A DM or channel-card button: the target travels in `value`.
+  it("settles the round from a value-carrying button", async () => {
+    const { app, meta, artifact } = await ready("review-btn-value")
+    const r = await click(app, { value: JSON.stringify({ a: artifact.id }) })
+    expect(r.status).toBe(200)
+    await vi.waitFor(async () => expect(await meta.getPendingRound(artifact.id)).toBeNull())
+  })
+
+  // A Work Object button: no value at all, the entity is echoed back instead. The old guard
+  // required `value` and returned ok before this branch, so the card's buttons did nothing.
+  it("settles the round from a valueless Work Object click", async () => {
+    const { app, meta, artifact } = await ready("review-btn-entity")
+    const r = await click(app, { entity: undefined })
+    expect(r.status).toBe(200)
+    void r
+    const withEntity = await postInteract(app, {
+      type: "block_actions",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      channel: { id: "C1" },
+      response_url: "https://hooks.slack.test/x",
+      entity: { external_ref: { id: artifact.short_id, type: "artifact" } },
+      actions: [{ action_id: "derive_review_approve" }],
+    })
+    expect(withEntity.status).toBe(200)
+    await vi.waitFor(async () => expect(await meta.getPendingRound(artifact.id)).toBeNull())
+  })
+})

@@ -16,7 +16,10 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 const bus = { publish: () => {}, subscribe: () => () => {} } as never
 const noBilling = async () => null
 
-const setup = async (name: string, opts: { role?: string; link?: boolean } = {}) => {
+const setup = async (
+  name: string,
+  opts: { role?: string; link?: boolean; origin?: "oauth" | "email" } = {},
+) => {
   const meta = new SqliteMetaStore(join(dir, `${name}.db`))
   const artifact = await meta.createArtifact({
     id: newId("a"),
@@ -37,7 +40,7 @@ const setup = async (name: string, opts: { role?: string; link?: boolean } = {})
       user_id: "u-1",
       team_id: "T1",
       slack_user_id: "U1",
-      origin: "oauth" as const,
+      origin: opts.origin ?? "oauth",
       checked_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     })
@@ -106,12 +109,23 @@ describe("runSlackReviewAction", () => {
     expect(await second.meta.getPendingRound(second.artifact.id)).not.toBeNull()
   })
 
+  // An email match says who somebody probably is. Settling a round is recorded as their
+  // decision and unblocks a build, so it needs the deliberate link — see lib/slack-identity.ts.
+  it("refuses an email-matched identity, and says how to fix it", async () => {
+    const { meta, artifact } = await setup("email-origin", { role: "owner", origin: "email" })
+    const sent: string[] = []
+    await run(meta, artifact, "approve", sent)
+    expect(sent.join(" ")).toContain("Settings → Integrations")
+    expect(await meta.getPendingRound(artifact.id)).not.toBeNull()
+  })
+
   // No Derive principal ⇒ nothing to authorize against. Same prompt the proposal buttons give.
   it("refuses an unlinked clicker", async () => {
     const { meta, artifact } = await setup("no-link", { role: "owner", link: false })
     const sent: string[] = []
     await run(meta, artifact, "approve", sent)
-    expect(sent.join(" ")).toContain("Link your Slack account")
+    expect(sent.join(" ")).toContain("Settings → Integrations")
+    expect(sent.join(" ")).not.toContain("from your email")
     expect(await meta.getPendingRound(artifact.id)).not.toBeNull()
   })
 

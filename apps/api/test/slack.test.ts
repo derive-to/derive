@@ -99,6 +99,40 @@ describe("slack reply ingestion (inbound)", () => {
     expect(r).toBe(null)
   })
 
+  // IDENTITY STRENGTH AT THE ATTRIBUTION SEAM. The handler passes `deriveUserId` only for an
+  // oauth link (lib/slack-identity.ts); an email match arrives here as null. What matters is
+  // that null DEGRADES rather than refuses — the reply is still a comment, just one that claims
+  // only what we can prove. Losing the reply instead would be a worse trade than the claim.
+  it("attributes to the Derive account when the link is strong enough to carry it", async () => {
+    const { link } = await setup()
+    const created = await ingestSlackReply(meta, link, {
+      ts: "1700.5",
+      userId: "U999",
+      userName: "Dana",
+      text: "ship it",
+      botUserId: "UBOT",
+      deriveUserId: "u-dana",
+    })
+    expect(created?.author_id).toBe("u-dana")
+  })
+
+  it("still records the reply when it cannot, under the Slack identity alone", async () => {
+    const { link } = await setup()
+    const created = await ingestSlackReply(meta, link, {
+      ts: "1700.6",
+      userId: "U999",
+      userName: "Dana",
+      text: "ship it",
+      botUserId: "UBOT",
+      deriveUserId: null,
+    })
+    expect(created).toBeTruthy()
+    expect(created?.author_id).toBe("slack:U999")
+    // The display name still comes from Slack, so the thread reads normally to a human — it is
+    // the machine-readable attribution that stays honest.
+    expect(created?.author).toBe("Dana")
+  })
+
   it("dedupes a re-delivered Slack message ts", async () => {
     const { link } = await setup()
     const args = { ts: "1700.4", userId: "U1", userName: "X", text: "hi", botUserId: "UBOT" }

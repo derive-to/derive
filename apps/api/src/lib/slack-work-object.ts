@@ -30,6 +30,24 @@ export const SLACK_REVIEW_ACTION = {
   sendBack: "derive_review_send_back",
 } as const
 
+/** The artifact a review button targets, for the Block Kit surfaces.
+ *
+ *  A Work Object button needs none of this — Slack round-trips the entity and the handler reads
+ *  `external_ref`. A button on a DM or a channel card has no entity behind it, so the target
+ *  travels in `value`, exactly as the thread and proposal buttons already do. It only NAMES the
+ *  artifact: runSlackReviewAction re-reads it and re-authorizes the clicker, so a forged value
+ *  can at worst point at a doc they still cannot act on. */
+export const encodeReviewAction = (artifactId: string): string => JSON.stringify({ a: artifactId })
+
+export const decodeReviewAction = (value: string): string | null => {
+  try {
+    const { a } = JSON.parse(value) as { a?: string }
+    return typeof a === "string" && a ? a : null
+  } catch {
+    return null
+  }
+}
+
 /** `external_ref.type` — the namespace half of the key Slack stores. Stable forever: changing it
  *  orphans every previously-unfurled card from its related conversations and search entries. */
 export const DERIVE_ENTITY_TYPE = "artifact"
@@ -62,10 +80,22 @@ const reviewLabel = (s: ArtifactStatus): string | null => {
  *  entity metadata that has changed" — so a details payload that omitted these would silently
  *  STRIP Approve and Send back from a card that had them. The two surfaces have to agree on the
  *  actions for the same reason a PATCH has to send the fields it does not mean to clear. */
-const reviewActions = () => ({
+const reviewActions = (artifactId: string) => ({
   primary_actions: [
-    { text: "Approve", action_id: SLACK_REVIEW_ACTION.approve, style: "primary" },
-    { text: "Send back", action_id: SLACK_REVIEW_ACTION.sendBack },
+    {
+      text: "Approve",
+      action_id: SLACK_REVIEW_ACTION.approve,
+      style: "primary",
+      // Carried even though a Work Object click also echoes `external_ref`: one target
+      // mechanism for all three surfaces is one thing to get right, and it means the handler
+      // never depends on Slack round-tripping the entity to know what was clicked.
+      value: encodeReviewAction(artifactId),
+    },
+    {
+      text: "Send back",
+      action_id: SLACK_REVIEW_ACTION.sendBack,
+      value: encodeReviewAction(artifactId),
+    },
   ],
 })
 
@@ -154,7 +184,7 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
     }
 
   const payload: Record<string, unknown> = { attributes, fields, custom_fields: custom }
-  if (a.withActions) payload.actions = reviewActions()
+  if (a.withActions) payload.actions = reviewActions(artifact.id)
 
   return {
     app_unfurl_url: a.pastedUrl,
@@ -172,7 +202,7 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
  *  open-thread count and the review state are safe here for a reader who could open the doc
  *  anyway. */
 export const artifactDetails = (
-  artifact: Pick<ArtifactRecord, "short_id">,
+  artifact: Pick<ArtifactRecord, "id" | "short_id">,
   info: UnfurlInfo,
   status: ArtifactStatus,
   viewerId: string | null,
@@ -200,7 +230,7 @@ export const artifactDetails = (
     entity_type: "slack#/entities/content_item",
     entity_payload: {
       // Mirrors the card's actions whenever a round is pending — see reviewActions.
-      ...(status.review?.state === "pending" ? { actions: reviewActions() } : {}),
+      ...(status.review?.state === "pending" ? { actions: reviewActions(artifact.id) } : {}),
       attributes: {
         title: { text: info.title },
         display_type: info.kindLabel,

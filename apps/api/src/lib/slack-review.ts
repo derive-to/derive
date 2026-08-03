@@ -13,6 +13,7 @@
 import { type Actor, type ArtifactRecord, can, type MetaStore, maxRole } from "@derive/core"
 import type { Backplane } from "../bus"
 import { postSlackResponseUrl } from "./slack"
+import { isVerifiedLink, linkToActMessage } from "./slack-identity"
 
 export interface SlackReviewDeps {
   meta: MetaStore
@@ -43,9 +44,10 @@ export const runSlackReviewAction = async (
       : Promise.resolve(false)
 
   // No link → no Derive principal to authorize against. Same prompt the proposal buttons give.
+  // Verified only: settling a round is the build go-signal, recorded as this person's decision.
   const link = await meta.getSlackUserLinkBySlackId(args.teamId, args.slackUserId)
-  if (!link) {
-    await eph("Link your Slack account (Settings → Integrations) to review from Slack.")
+  if (!link || !isVerifiedLink(link)) {
+    await eph(linkToActMessage("approve or send back a review", link))
     return
   }
 
