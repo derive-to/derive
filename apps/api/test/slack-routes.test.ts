@@ -132,6 +132,21 @@ const threadAction = (
 
 afterEach(() => vi.unstubAllGlobals())
 
+/** Publish a version onto a bare `createArtifact` fixture and return its number. Artifacts made
+ *  by hand start at current_version 0 with no version row; anything that reads a version — a
+ *  preview status, most obviously — needs a real one. */
+const addV = async (m: MetaStore, artifactId: string): Promise<number> => {
+  const v = await m.addVersion(artifactId, {
+    id: newId("v"),
+    blob_key: "blob-content",
+    content_type: "text/markdown",
+    size_bytes: 1,
+    author: "tester",
+    message: null,
+  })
+  return v.n
+}
+
 describe("slack status + admin routes", () => {
   it("reports available + not connected before an install, connected after", async () => {
     const { app, meta } = make("slack-status")
@@ -1192,7 +1207,11 @@ describe("slack link unfurls", () => {
   // endpoint for anyone else. The line is drawn at `listed`: `workspace` means the org may see
   // it and a channel in that org's own Slack is substantially that audience; `none` is what
   // somebody chose when they meant private, and it must stay a padlock.
-  const unfurlEntity = async (name: string, listed: "workspace" | "none" | "public") => {
+  const unfurlEntity = async (
+    name: string,
+    listed: "workspace" | "none" | "public",
+    rendered = true,
+  ) => {
     const { app, meta } = make(name)
     await meta.setSlackInstall({
       org_id: "default",
@@ -1224,6 +1243,16 @@ describe("slack link unfurls", () => {
       kind: "file",
       spa: 0,
     })
+    // `createArtifact` alone leaves current_version = 0 and no version row — a shape production
+    // never has, because publishing makes v1. Give it one, then decide whether it has rendered:
+    // renders are enqueued in the BACKGROUND after a publish, so the unrendered window is real
+    // and gets its own test below.
+    const v = await addV(meta, artifact.id)
+    if (rendered)
+      await meta.setVersionPreview(artifact.id, v, {
+        preview_key: "blob-og",
+        preview_status: "ready",
+      })
     let fired: (v: unknown) => void = () => {}
     const called = new Promise((r) => {
       fired = r
@@ -1274,6 +1303,24 @@ describe("slack link unfurls", () => {
     const { entity } = await unfurlEntity("slack-unfurl-preview-none", "none")
     expect(JSON.stringify(entity)).not.toContain("full_size_preview")
     expect(JSON.stringify(entity)).not.toContain("Q4 roadmap")
+  })
+
+  it("waits for the render on a PUBLIC doc too — one rule, no mime lie", async () => {
+    // `chat.unfurl` accepts a preview_url without fetching it (verified against the API: ok:true,
+    // no warning), so a card that promises image/png and serves the SVG fallback fails silently.
+    // The same check therefore covers both visibilities rather than only the new one.
+    const { entity } = await unfurlEntity("slack-unfurl-preview-pub-pending", "public", false)
+    expect(JSON.stringify(entity)).not.toContain("full_size_preview")
+  })
+
+  it("waits for the render rather than showing a padlock as the picture", async () => {
+    // The window this closes: a link pasted moments after publishing. `/v1/og` answers an
+    // anonymous fetch for an unrendered workspace doc with the TITLE-LESS padlock, so offering
+    // the URL would put a padlock graphic on the card beside the title we are already showing —
+    // the exact outcome the block card avoided by carrying no image at all.
+    const { entity } = await unfurlEntity("slack-unfurl-preview-pending", "workspace", false)
+    expect(JSON.stringify(entity)).toContain("Q4 roadmap")
+    expect(JSON.stringify(entity)).not.toContain("full_size_preview")
   })
 
   it("needs no token for a world-readable doc — /v1/og already serves it", async () => {
@@ -2166,6 +2213,10 @@ describe("entity_details_requested (the flexpane)", () => {
       listed: (opts.listed ?? "workspace") as "workspace",
       kind: "file",
       spa: 0,
+    })
+    await meta.setVersionPreview(artifact.id, await addV(meta, artifact.id), {
+      preview_key: "blob-og",
+      preview_status: "ready",
     })
     return { app, meta, artifact }
   }

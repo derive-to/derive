@@ -279,16 +279,30 @@ export const slackRoutes = (ctx: AppContext) => {
    * substantially that audience, and anything genuinely sensitive is marked `none`, which never
    * reaches this function.
    *
-   * Null when there is no signing secret (nothing could have been minted) or no render yet —
-   * `/v1/og` then serves the locked card it always has, so a missing preview is a plain card
-   * rather than a broken one.
+   * ONE RULE, both visibilities: offer a URL only when a rendered PNG is actually behind it.
+   *
+   * Renders are enqueued in the BACKGROUND after a publish, so a link pasted moments later finds
+   * one pending, and `/v1/og` answers meanwhile with an SVG — the doc's own card for a public
+   * artifact, the TITLE-LESS PADLOCK for a workspace one. Offering either is a card that
+   * declares `mime_type: "image/png"` and serves something else, and for the workspace case it
+   * puts a padlock graphic beside the title we are already showing: exactly what the block card
+   * avoided by carrying no image at all.
+   *
+   * Verified against the API, and the reason this is a check rather than a hope: `chat.unfurl`
+   * accepts a `preview_url` WITHOUT fetching it, answering `ok: true` with no warning. Nothing
+   * downstream will tell us the picture was wrong. So the card promises an image only when we
+   * know there is one, and otherwise says nothing — the fields and title stand on their own.
    */
   const previewUrlFor = async (
     artifact: ArtifactRecord,
     info: UnfurlInfo,
   ): Promise<string | null> => {
+    if (artifact.listed !== "public" && artifact.listed !== "workspace") return null
+    const v = await meta.getVersion(artifact.id, artifact.current_version)
+    if (v?.preview_status !== "ready" || !v.preview_key) return null
+    // A world-readable doc needs no capability: /v1/og already serves its PNG to anyone.
     if (artifact.listed === "public") return info.imageUrl
-    if (artifact.listed !== "workspace" || !deps.encryptionKey) return null
+    if (!deps.encryptionKey) return null
     const token = await signOgToken(
       deps.encryptionKey,
       artifact.id,
