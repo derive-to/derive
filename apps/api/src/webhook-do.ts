@@ -1,9 +1,17 @@
-import type { D1Database, DurableObjectState, Hyperdrive } from "@cloudflare/workers-types"
+import type {
+  D1Database,
+  DurableObjectState,
+  Hyperdrive,
+  R2Bucket,
+} from "@cloudflare/workers-types"
 import type { MetaStore } from "@derive/core"
+import { R2BlobStore } from "@derive/storage"
 import { tickStore } from "./edge-pg"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
+import { answerDeriveMention } from "./lib/comment-turn"
 import { emailDeliverySender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
+import { catalogFromGateway } from "./lib/model-catalog"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
@@ -29,6 +37,50 @@ export interface WebhookOutboxEnv {
   // The auth secret doubles as the at-rest encryption key for stored GitHub App
   // credentials — the GitHub comment sender needs it to mint installation tokens.
   DERIVE_AUTH_SECRET?: string
+  // Everything below is for answering an @Derive mention typed in a mirrored Slack thread. A
+  // Durable Object receives the SAME script-wide bindings the Worker does; they were simply
+  // never declared here, which is why that answer worked on self-host and silently did nothing
+  // on the hosted tier. See the slack_ingest sender below.
+  BUCKET?: R2Bucket
+  BASE_URL?: string
+  DERIVE_MODEL_BASE_URL?: string
+  DERIVE_MODEL_API_KEY?: string
+  DERIVE_MODEL_NAME?: string
+  DERIVE_MODEL_NAMES?: string
+  DERIVE_CHAT_ALLOWLIST?: string
+}
+
+/** The @Derive-in-a-thread answerer for this tier, or undefined when the deploy has no model.
+ *
+ *  Built here rather than injected because the DO is constructed by the runtime, not by the
+ *  Worker's request path — there is nowhere to hand it in from. `notify` is a no-op and there is
+ *  no bus: the DO is a separate isolate from the SSE handlers (see the sender's own note), so the
+ *  answer lands in the database and shows on the reader's next fetch rather than as a live push.
+ *  That is the same trade the surrounding ingest already makes. */
+const mentionAnswerer = (env: WebhookOutboxEnv, store: MetaStore) => {
+  const gw =
+    env.DERIVE_MODEL_BASE_URL && env.DERIVE_MODEL_API_KEY && env.DERIVE_MODEL_NAME
+      ? {
+          baseUrl: env.DERIVE_MODEL_BASE_URL,
+          apiKey: env.DERIVE_MODEL_API_KEY,
+          model: env.DERIVE_MODEL_NAME,
+          alsoModels: env.DERIVE_MODEL_NAMES,
+        }
+      : undefined
+  const models = catalogFromGateway(gw)
+  if (!models || !env.BUCKET || !env.BASE_URL) return undefined
+  return answerDeriveMention({
+    meta: store,
+    blobs: new R2BlobStore(env.BUCKET),
+    bus: { publish: () => {}, subscribe: () => () => {} } as never,
+    baseUrl: env.BASE_URL,
+    models,
+    notify: async () => {},
+    chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean),
+  })
 }
 
 /**
@@ -67,7 +119,17 @@ export class WebhookOutbox {
       // Inbound Slack thread reply deferred by the events endpoint. No bus here: the DO
       // is a separate isolate from the SSE request handlers, so the comment lands and
       // shows on the viewer's next read rather than a live push.
-      slack_ingest: makeSlackIngestSender(store, env.DERIVE_AUTH_SECRET),
+      // The answerer is threaded in so an @Derive mention typed INSIDE a mirrored thread is
+      // answered as a Derive comment — the same turn the web app runs. node.ts has always
+      // passed it; this tier never did, so the hosted product quietly ignored those mentions
+      // while self-host answered them. A deploy with no model gateway still passes nothing,
+      // which stays the honest "nothing answers" state rather than a failure.
+      slack_ingest: makeSlackIngestSender(
+        store,
+        env.DERIVE_AUTH_SECRET,
+        undefined,
+        mentionAnswerer(env, store),
+      ),
     }
   }
 
