@@ -553,7 +553,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
             )}
             {filterField}
             <AskButton text={query} testId="library-ask" />
-            {!showCollections && (
+            {/* Feeds have no view row, so Display stays up here for them; home's moves
+                down beside Filter — the two are one kind of control and sit together. */}
+            {view !== "all" && (
               <DisplayMenu
                 layout={layout}
                 onLayout={setLayout}
@@ -589,16 +591,25 @@ function LibraryBody({ view }: { view: LibraryView }) {
               />
               <span className="flex-1" />
               {!showCollections && (
-                <FilterMenu
-                  needsYou={feedbackCount}
-                  value={search.filter ?? "all"}
-                  onChange={(next) =>
-                    nav({
-                      to: "/",
-                      search: { ...search, filter: next === "all" ? undefined : next },
-                    })
-                  }
-                />
+                <span className="flex items-center gap-1">
+                  <FilterMenu
+                    needsYou={feedbackCount}
+                    value={search.filter ?? "all"}
+                    onChange={(next) =>
+                      nav({
+                        to: "/",
+                        search: { ...search, filter: next === "all" ? undefined : next },
+                      })
+                    }
+                  />
+                  <DisplayMenu
+                    labeled
+                    layout={layout}
+                    onLayout={setLayout}
+                    sort={search.sort ?? DEFAULT_SORT}
+                    onSort={setSort}
+                  />
+                </span>
               )}
             </div>
           ) : (

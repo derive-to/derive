@@ -1,5 +1,4 @@
-import { Check, ChevronDown } from "lucide-react"
-import { Icon } from "@/components/icons"
+import { Check, ListFilter } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,22 +49,19 @@ export function FilterMenu({
           data-testid="library-filter"
           aria-label={`Filter: ${filterLabel(value)}`}
           className={cn(
-            "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs outline-none transition-colors duration-state",
+            // Display's sibling, exactly: same height, same register, same quiet hover —
+            // they are one kind of control ("how am I looking at this list") and sit
+            // side by side on the view row. The dashed mini-chip this replaces put a
+            // second visual idiom, at a second size, on a second level.
+            "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs outline-none transition-colors duration-state",
             "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-            // At rest it reads as optional, because it is: a dashed chip that says
-            // "+ Filter". A chosen facet fills quietly — the label carries which one.
             value === "all"
-              ? "border border-dashed border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground"
-              : "border border-border bg-accent font-medium text-foreground",
+              ? "text-muted-foreground hover:bg-accent hover:text-foreground"
+              : "bg-accent font-medium text-foreground",
           )}
         >
-          {value === "all" ? (
-            <>
-              <Icon name="plus" size={12} aria-hidden /> Filter
-            </>
-          ) : (
-            filterLabel(value)
-          )}
+          <ListFilter className="size-3.5" aria-hidden />
+          {value === "all" ? "Filter" : filterLabel(value)}
           {needsYou > 0 && value !== "needs-you" && (
             <span
               data-testid="library-filter-needsyou-count"
@@ -75,7 +71,6 @@ export function FilterMenu({
               {needsYou}
             </span>
           )}
-          <ChevronDown className="size-3.5 opacity-60" aria-hidden />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-60">

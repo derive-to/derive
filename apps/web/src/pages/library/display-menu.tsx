@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { cn } from "@/lib/utils"
 import { LIBRARY_SORTS } from "./sort"
 
 // The library's one "how is this list shown" control — order, and (in an organized
@@ -24,7 +25,11 @@ export function DisplayMenu({
   sort,
   onSort,
   group,
+  labeled = false,
 }: {
+  /** On the view row it wears its name, matching the Filter control beside it; in a
+   *  tight header (a collection page's tools cluster) it stays an icon. */
+  labeled?: boolean
   sort: SortMode
   onSort: (mode: SortMode) => void
   // Present only where grouping is possible (a manual collection with folders).
@@ -40,9 +45,15 @@ export function DisplayMenu({
           data-testid="library-display"
           aria-label="Display options"
           title="Display"
-          className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors duration-state hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&_svg]:size-4"
+          className={cn(
+            "shrink-0 rounded-md text-muted-foreground outline-none transition-colors duration-state hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+            labeled
+              ? "inline-flex h-7 items-center gap-1.5 px-2 text-xs [&_svg]:size-3.5"
+              : "grid size-7 place-items-center [&_svg]:size-4",
+          )}
         >
-          <SlidersHorizontal />
+          <SlidersHorizontal aria-hidden />
+          {labeled && "Display"}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
