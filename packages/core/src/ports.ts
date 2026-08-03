@@ -3128,6 +3128,18 @@ export interface OrgSettings {
    * publish rule catches it; this list is what bounds it.
    */
   chatSources: string[]
+  /**
+   * WHICH MODEL chat answers with, set live by an admin — the outage lever.
+   *
+   * The deploy's default lives in configuration and therefore needs a redeploy to change, which
+   * is the wrong shape for the case it is most needed in: a provider that has gone slow or dark
+   * while people are typing. This is the same choice held where it can be changed in seconds.
+   *
+   * A catalog id (namespaced for a named gateway, e.g. `openrouter:deepseek/...`). Unset ⇒ the
+   * deploy default, exactly as before. An id naming nothing is IGNORED rather than fatal — a
+   * typo here must cost the override, never every turn in the workspace.
+   */
+  chatModel?: string
   /** BETA: automations (the artifact's "Automate…" surface). Same shape and same reasoning as
    *  {@link chatBeta}, and separate from it because they are different bets: chat is attended
    *  and answers in the request, an automation runs unattended on a trigger and can write while
@@ -3195,6 +3207,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // Empty: chat reaches no connected source until an admin names one. Connecting a server
   // must never silently widen what a conversation can do.
   chatSources: [],
+  // Unset: the deploy's configured default answers, exactly as it did before this existed.
+  chatModel: undefined,
   automateBeta: false,
   agentKillswitch: false,
   agentAutoEnabled: false,

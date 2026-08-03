@@ -365,6 +365,79 @@ describe("the workspace chat", () => {
     throw new Error("the turn never settled — it hung, which is the bug")
   })
 
+  it("switches model mid-conversation when an admin flips the workspace override", async () => {
+    // THE OUTAGE LEVER. The deploy default lives in configuration, so changing it needs a
+    // redeploy — the wrong shape for a provider that has gone slow or dark while people are
+    // typing. This is the same choice held where it can be changed in seconds, and it has to
+    // reach conversations that are ALREADY going: an override every existing conversation
+    // ignores is not a lever.
+    const { app, meta } = await setup("ws-override", async () => ({
+      text: "ok",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    const { session, msgs } = await ask(app, meta, "hello")
+    expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+
+    // The admin flips it. No redeploy, no restart.
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatModel: "model-b",
+    })
+    await app.request(`/v1/sessions/${session?.id}/messages`, {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "and again" }), // no model named
+    })
+    for (let i = 0; i < 100; i++) {
+      const all = await meta.listSessionMessages(session?.id ?? "")
+      if (all.filter((m) => m.author_kind === "agent").length === 2) {
+        // The NEXT turn uses the override even though this conversation was on model-a.
+        expect(JSON.parse(all.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-b" })
+        // and the answer already given still records what actually produced it
+        expect(JSON.parse(all[1]?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+        return
+      }
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    throw new Error("second turn never landed")
+  })
+
+  it("lets a person's explicit pick beat the workspace override", async () => {
+    // The override is the deploy's opinion; a model named on THIS turn is the person's, made
+    // now, and it wins.
+    const { app, meta } = await setup("ws-override-beaten", async () => ({
+      text: "ok",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatModel: "model-b",
+    })
+    const { msgs } = await ask(app, meta, "hi", { model: "model-a" })
+    expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+  })
+
+  it("ignores an override that names nothing rather than failing every turn", async () => {
+    // A typo in one field must cost the override, not the workspace's whole chat surface.
+    const { app, meta } = await setup("ws-override-typo", async () => ({
+      text: "ok",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatModel: "not-a-real-model",
+    })
+    const { msgs } = await ask(app, meta, "hi")
+    expect(msgs.at(-1)?.author_kind).toBe("agent")
+    expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+  })
+
   it("refuses to Stop someone else's workspace chat session", async () => {
     const other = { id: "u-nosy", email: "nosy@x.com", name: "Nosy" }
     const { app } = await setup(

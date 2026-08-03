@@ -225,11 +225,24 @@ export const contextRoutes = (ctx: AppContext) => {
       return
     }
     const transcript = await meta.listSessionMessages(s.id)
-    // WHICH MODEL. What the person asked for on this turn, else the one this conversation was
-    // already using (read off the last agent message, so the choice sticks without a column),
-    // else the deploy's default.
+    const ws = await meta.getWorkspace(s.org_id).catch(() => null)
+    const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
+    // WHICH MODEL, read fresh every turn so an admin can change it mid-conversation.
+    //
+    // 1. What the person asked for on THIS turn — an explicit choice, made now, always wins.
+    // 2. The workspace override (settings.chatModel), which exists for the case the deploy
+    //    default cannot serve: a provider gone slow or dark while people are typing. It
+    //    deliberately outranks the conversation's own memory, because an outage lever that
+    //    every existing conversation ignores is not a lever. Ignored when it names nothing, so
+    //    a typo costs the override rather than every turn in the workspace.
+    // 3. What this conversation was already using (off the last agent message, so a choice
+    //    sticks without a column).
+    // 4. The deploy's default.
     const previous = lastModelId(transcript)
-    const model = ctx.models?.resolve(askedModelId ?? previous ?? null)
+    const override = settings?.chatModel && ctx.models?.resolve(settings.chatModel)
+    const model = askedModelId
+      ? ctx.models?.resolve(askedModelId)
+      : override || ctx.models?.resolve(previous ?? null)
     if (!model) {
       // A named model that is gone is worth saying out loud: silently answering with a different
       // one is a lie about which model produced the text.
@@ -242,8 +255,6 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       return
     }
-    const ws = await meta.getWorkspace(s.org_id).catch(() => null)
-    const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
     const tools = buildChatTools(ctx, {
       org: s.org_id,
       user: { id: me.id, name: me.name ?? me.username ?? null },
