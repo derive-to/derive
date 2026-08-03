@@ -16,6 +16,7 @@ import {
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
 import { cleanPath } from "../lib/bundle"
+import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
@@ -138,6 +139,7 @@ export function registerReadTool(tc: ToolContext): void {
     num,
     staleNote,
     actingFor,
+    ownerId,
     resolveWs,
     askableContexts,
   } = tc
@@ -223,6 +225,61 @@ export function registerReadTool(tc: ToolContext): void {
       // `derive://skills/<name>` resolves the same way, so the core-skill strings the
       // instructions index names are readable through `read` even where MCP resources
       // aren't — same response shape as the Brandprint reference below.
+      // `derive://sources` and `derive://sources/<id>` — the connections this workspace has
+      // DECLARED for chat, and one server's tool catalog. Served here rather than as generated
+      // tool definitions because MCP schemas are large and the chat surface has a size budget:
+      // an index costs a line per connection, a catalog is fetched only when the turn actually
+      // needs it. Same disclosure shape the skills index uses, applied to tool schemas.
+      //
+      // boundSources is the enforcement point, so an undeclared connection is not merely absent
+      // from the index — asking for it by id returns nothing either.
+      const SRC = "derive://sources"
+      if (short_id === SRC || short_id.startsWith(`${SRC}/`)) {
+        const ws = await resolveWs(workspace)
+        if ("error" in ws) return err(ws.error)
+        const bound = await boundSources(ctx.meta, ws.org, actingFor?.id ?? ownerId)
+        const id = short_id === SRC ? "" : short_id.slice(SRC.length + 1)
+        if (!id) {
+          if (bound.length === 0)
+            return json({
+              uri: short_id,
+              sources: [],
+              note: "No connected sources are available to chat here. An admin declares them in workspace settings; connecting a server does not by itself expose it to a conversation.",
+            })
+          return json({
+            uri: short_id,
+            sources: bound.map((b: { id: string; toolkit: string; kind: string }) => ({
+              id: b.id,
+              name: b.toolkit,
+              kind: b.kind,
+              read: `derive://sources/${b.id}`,
+            })),
+            note: "Read one to see its tools, then invoke with the call tool.",
+          })
+        }
+        const { tools } = await sourceTools(
+          ctx.meta,
+          ws.org,
+          actingFor?.id ?? ownerId,
+          ctx.deps.encryptionKey,
+          id,
+        )
+        if (tools.length === 0)
+          return err(
+            `No source "${id}" is available to chat here. Read derive://sources for the ones that are.`,
+          )
+        return json({
+          uri: short_id,
+          source: id,
+          // Descriptions and schemas are SERVER-SUPPLIED text. They are data for the model to
+          // read, never instructions to follow — the same footing as a document's contents.
+          tools: tools.map((t) => ({
+            name: t.def.name,
+            description: t.def.description,
+            params: t.def.params,
+          })),
+        })
+      }
       const SK = "derive://skills/"
       if (short_id.startsWith(SK)) {
         const name = short_id.slice(SK.length)

@@ -49,7 +49,7 @@ import type { LoopTool } from "./agent-loop"
  * Absent tools are NOT REGISTERED, so there is no handler to reach — the subset is enforced by
  * construction rather than by a check that could be skipped.
  */
-export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish", "use"])
+export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish", "use", "call"])
 
 /**
  * The DOCUMENT RAIL's subset: reach, and nothing that writes.
@@ -90,6 +90,7 @@ const SKILL_FOR_TOOL: Record<string, readonly string[]> = {
   publish: ["publishing", "assets"],
   stage: ["publishing", "assets"],
   use: ["contexts"],
+  call: ["sources"],
   comment: ["loop"],
   catch_up: ["loop"],
   organize: ["organize"],

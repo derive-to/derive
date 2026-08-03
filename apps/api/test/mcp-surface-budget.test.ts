@@ -63,8 +63,14 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // above: the summary went in at 147 chars and was cut to 92, taking its index line from 190 to
 // 135, the shortest of the eight. Measured 2383, so the cap keeps real headroom rather than the
 // 17 characters the trim alone would have left for whoever edits this next.
+// RAISED AGAIN 2500 → 2600 (2026-08-02) on merging main: `sources` (#619) and `helping` landed in
+// the same window, so the index grew by two lines rather than one and measured 2516. Neither is
+// trimmable much further — `sources` is 110 chars and `helping` is already the shortest line of
+// the nine at 135, cut from 190 before the first raise. Two skills arriving at once is the thing
+// to notice here: the index is now nine lines every connected agent reads before doing anything,
+// and the next addition should have to argue that it belongs in the always-loaded set at all.
 const TOOL_DESCRIPTIONS_BUDGET = 8950
-const INSTRUCTIONS_BUDGET = 2500
+const INSTRUCTIONS_BUDGET = 2600
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
