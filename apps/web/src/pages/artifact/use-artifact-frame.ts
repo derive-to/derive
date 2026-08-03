@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
+import { bareHotkey } from "@/lib/hotkey"
 import { groupThreads } from "./lib/layout"
 import { type AnchorConf, type FrameGeom, type Panel, parseAnchor, type Selection } from "./types"
 
@@ -54,6 +55,14 @@ export function useArtifactFrame(p: {
    *  opens anything else in a clean un-sandboxed tab. The href comes from
    *  untrusted artifact HTML: validate the scheme before acting. */
   onOpenExternal?: (href: string) => void
+  /** Is inline edit mode open? A GETTER, not a flag: this hook runs before the edit
+   *  hook exists, so the page hands it a live read instead of a value. The host's
+   *  own arrow keys stop driving the deck while it's true — the two share a
+   *  keyboard, and someone editing a slide reaches for the arrows to move a caret,
+   *  not to leave the slide they're working on. (Keys typed with the caret in the
+   *  document never reach the host at all; the frame owns those. This is the other
+   *  half: focus sitting on the host's chrome mid-session.) */
+  isEditing?: () => boolean
 }) {
   const {
     comments,
@@ -250,12 +259,16 @@ export function useArtifactFrame(p: {
   useEffect(() => {
     if (deck) post({ type: "remeasure" })
   }, [deck, post])
-  // Arrow keys drive the deck from the host (when not typing in a field).
+  // Arrow keys drive the deck from the host. Off while inline editing, and gated by
+  // the shared bare-hotkey rule — the hand-rolled INPUT/TEXTAREA test this used to
+  // carry missed contentEditable surfaces (the comment composer, the source editor)
+  // and open dialogs, so typing a reply moved the slide behind it.
+  const isEditingRef = useRef<() => boolean>(() => false)
+  isEditingRef.current = p.isEditing ?? (() => false)
   useEffect(() => {
     if (!deck) return
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return
+      if (!bareHotkey(e) || isEditingRef.current()) return
       if (e.key === "ArrowRight") deckCmd("next")
       else if (e.key === "ArrowLeft") deckCmd("prev")
     }

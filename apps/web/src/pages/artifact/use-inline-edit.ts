@@ -1,6 +1,7 @@
 import { type RefObject, useEffect, useRef, useState } from "react"
 import { ApiError, type Artifact, api, type QuoteEditInput } from "@/api"
 import { toast } from "@/components/ui/sonner"
+import { canPublishArtifact } from "@/lib/artifact"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
 const clip = (s: string, n = 28): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
@@ -51,6 +52,10 @@ export function useInlineEdit(p: {
   onOpenSourceEditor: () => void
   /** Clear selection/composer state the moment edit mode opens. */
   onEnter?: () => void
+  /** This viewer could open the mode right now (permission, current version, not a
+   *  bundle, not GitHub-managed). Arms the document's own entry gesture: a
+   *  double-click asks to edit there. A reader who can't save never fires one. */
+  canEdit: boolean
 }) {
   // The version the rendered frame is pinned to while editing — the mode flag AND
   // the freeze in one value (active ⇔ non-null), so no exit path can ever leave
@@ -75,6 +80,10 @@ export function useInlineEdit(p: {
   // bridges the two without re-subscribing the listener on every render.
   const saveRef = useRef<() => void>(() => {})
   const savingRef = useRef(false)
+  // Same bridge for the inbound entry request (see `start` below).
+  const startRef = useRef<(entry?: { at?: { x: number; y: number } }) => void>(() => {})
+  const canEditRef = useRef(false)
+  canEditRef.current = p.canEdit
 
   // Every way out of the mode funnels through here.
   //   "restore" — revert unsaved text and re-arm the read grammar (Done, Escape,
@@ -152,6 +161,17 @@ export function useInlineEdit(p: {
         // all. A save with nothing to collect is a no-op (see onSuccess), and the
         // in-flight guard is what stops key-repeat from stacking versions.
         if (activeRef.current && !savingRef.current) saveRef.current()
+      } else if (d.type === "edit-request") {
+        // A double-click on the text: the document asking to become editable there.
+        // Re-checked against the CURRENT permission rather than trusting the arming
+        // that let the frame speak, because a stale armed flag (a version swap, a
+        // lock landing over SSE) must not open a mode this viewer can't save from.
+        if (canEditRef.current && !activeRef.current)
+          startRef.current(
+            typeof d.x === "number" && typeof d.y === "number"
+              ? { at: { x: d.x, y: d.y } }
+              : undefined,
+          )
       } else if (d.type === "edit-blocked") {
         // A click landed somewhere inline editing can't reach. Quiet + deduped —
         // information, not an alarm.
@@ -180,13 +200,27 @@ export function useInlineEdit(p: {
       p.post({ type: "edit-collect", nonce })
     })
 
-  const start = () => {
+  /** Open the mode. `entry` is where the gesture that opened it pointed — a document
+   *  point (double-click) or the live selection (the Edit verb on a selection) — so
+   *  the caret lands on the words the user was already looking at instead of making
+   *  them click them again. Omitted for the header button: the mode opens, and the
+   *  first click chooses the block. */
+  const start = (entry?: { at?: { x: number; y: number }; fromSelection?: boolean }) => {
     if (!p.art || active) return
     p.onEnter?.()
     setDirty(0)
     setFrozenVersion(p.art.current_version)
-    p.post({ type: "edit-mode", on: true })
+    p.post({ type: "edit-mode", on: true, ...entry })
   }
+  startRef.current = start
+  // Tell the frame whether the document's own entry gesture is live. Re-posted on
+  // every change AND after a frame (re)load, because a fresh document boots with the
+  // flag off and would otherwise stay un-armed until something else changed.
+  const armed = p.canEdit && !active
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `post` is recreated per render by design; the flag is what this syncs.
+  useEffect(() => {
+    p.post({ type: "edit-armed", on: armed })
+  }, [armed])
   // Done only ever exits CLEAN (the bar swaps to Discard/Save once dirty); the
   // frame-side mode-off also restores any stragglers as a belt-and-suspenders.
   /** Leave the mode. With unsaved edits this asks first — Escape and Done both land
@@ -204,6 +238,8 @@ export function useInlineEdit(p: {
   /** The frame reloaded (version swap, retry, source editor) — the edit session
    *  died with it. Exit and say so if anything was pending. */
   const onFrameGone = () => {
+    // A fresh document boots un-armed whatever the host last said, so re-state it.
+    p.post({ type: "edit-armed", on: canEditRef.current && !activeRef.current })
     if (!activeRef.current) return
     const hadEdits = dirtyRef.current > 0
     exit("none") // the frame is a fresh document; there is nothing to restore
@@ -225,8 +261,7 @@ export function useInlineEdit(p: {
       // anything that moved), which is the closest thing to a clean auto-merge.
       const base = art.current_version
       const message = editMessage(collected)
-      const canPublish = (art.my_role === "editor" || art.my_role === "owner") && !art.locked
-      if (canPublish) {
+      if (canPublishArtifact(art)) {
         const a = await api.publishEdits(p.shortId, collected, base, message)
         return { kind: "published", version: a.current_version }
       }
@@ -309,6 +344,9 @@ export function useInlineEdit(p: {
 
   return {
     active,
+    /** Echoed back so the page's `e` shortcut and the selection bar ask ONE source
+     *  whether the mode is available, rather than re-deriving eligibility. */
+    canEdit: p.canEdit,
     dirty,
     frozenVersion,
     saving: save.isPending,

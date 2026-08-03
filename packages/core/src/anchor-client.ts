@@ -11,8 +11,10 @@
  * The frame has an opaque origin, so everything rides postMessage:
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
  *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
- *                  open-external / esc
- *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by
+ *                  open-external / esc / edit-state / edit-edits / edit-save /
+ *                  edit-blocked / edit-request
+ *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
+ *                  edit-mode / edit-collect / edit-restore / edit-armed
  *
  * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
  * bundles into one small self-contained script.
@@ -326,37 +328,69 @@ interface ElReg {
       post({ type: "cursor-leave" })
     }
   })
-  // Escape pressed while keyboard focus is INSIDE the frame (a click into the
-  // document moves it here): the host's window listener can't see it, so forward
-  // it for host-level dismissals (exiting focus mode, cancelling a composer).
-  document.addEventListener("keydown", (e) => {
-    // Save from the keyboard while editing. The keystroke happens INSIDE the frame,
-    // so the host's own window listener can never see it — forward it, and swallow
-    // the browser's Save-page dialog that ⌘S would otherwise open over the document.
-    if (
-      editOn &&
-      (e.metaKey || e.ctrlKey) &&
-      (e.key === "s" || e.key === "S" || e.key === "Enter")
-    ) {
-      e.preventDefault()
-      post({ type: "edit-save" })
-      return
-    }
-    if (e.key === "Escape") {
-      // Two steps, deliberately. With the caret in a block, Escape drops the caret
-      // and stops there — the typed text and the session both survive, which is what
-      // "get this cursor out of the way" should mean. Only an Escape with no block
-      // focused asks the host to leave the MODE (it exits clean, confirms dirty).
-      if (editOn) {
-        const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
-        if (focused instanceof HTMLElement) {
+  /** The editable block the caret is in, if any. */
+  const focusedEditable = (): HTMLElement | null => {
+    if (!editOn) return null
+    const el = asEl(document.activeElement)?.closest("[data-derive-editable]")
+    return el instanceof HTMLElement ? el : null
+  }
+
+  /* THE KEYBOARD, and who owns it.
+   *
+   * Registered on `window` with CAPTURE, which is the only phase that runs before
+   * the artifact's own handlers: this client is a script tag appended AFTER the
+   * document, so every inline script in the page — including a deck's slide
+   * switcher — registered first, and in the bubble phase registration order wins.
+   *
+   * While the caret sits in an editable block, the page's own shortcuts are OFF.
+   * A deck binds Space, the arrows, PageUp/PageDown and Home/End to slide
+   * navigation (that is what our own scaffold and authoring guide tell people to
+   * write), so without this, typing a space in a headline advances the slide and
+   * pressing Home jumps the deck instead of moving the caret. stopImmediatePropagation
+   * hides the key from other listeners; it does NOT preventDefault, so the character
+   * still types and the caret still moves. With no caret in a block, the page keeps
+   * its keyboard — you can still walk to slide 7 and then click a line to edit.
+   */
+  const ownKeys = (e: KeyboardEvent) => {
+    const focused = focusedEditable()
+    if (e.type === "keydown") {
+      // Save from the keyboard while editing. The keystroke happens INSIDE the frame,
+      // so the host's own window listener can never see it — forward it, and swallow
+      // the browser's Save-page dialog that ⌘S would otherwise open over the document.
+      if (
+        editOn &&
+        (e.metaKey || e.ctrlKey) &&
+        (e.key === "s" || e.key === "S" || e.key === "Enter")
+      ) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        post({ type: "edit-save" })
+        return
+      }
+      if (e.key === "Escape") {
+        // Two steps, deliberately. With the caret in a block, Escape drops the caret
+        // and stops there — the typed text and the session both survive, which is what
+        // "get this cursor out of the way" should mean. Only an Escape with no block
+        // focused asks the host to leave the MODE (it exits clean, confirms dirty).
+        if (focused) {
+          e.stopImmediatePropagation()
           focused.blur()
           return
         }
+        // Escape pressed while keyboard focus is INSIDE the frame (a click into the
+        // document moves it here): the host's window listener can't see it, so
+        // forward it for host-level dismissals (leaving focus mode, a composer).
+        post({ type: "esc" })
+        return
       }
-      post({ type: "esc" })
     }
-  })
+    if (focused) e.stopImmediatePropagation()
+  }
+  // keypress/keyup too: a page that binds either would still act on a key we let
+  // through here (the deck template uses keydown, but nothing makes that a rule).
+  window.addEventListener("keydown", ownKeys, true)
+  window.addEventListener("keypress", ownKeys, true)
+  window.addEventListener("keyup", ownKeys, true)
 
   /* -- highlight styles (mark's default yellow is overridden) -- */
   const st = document.createElement("style")
@@ -1222,8 +1256,21 @@ interface ElReg {
     (e) => {
       // Edit mode swallows the whole click grammar: no thread focusing, no link
       // navigation — a click places a caret (editClick handles link prevention).
+      // The PAGE's own click handlers are stopped too: a deck's invisible left/right
+      // "zones" cover the whole stage, so aiming at a headline to edit it would flip
+      // the slide out from under the caret. Capture + stopImmediatePropagation is
+      // what catches those, including handlers bound to the zone elements themselves.
       if (editOn) {
+        e.stopImmediatePropagation()
         editClick(e)
+        return
+      }
+      // The second half of a double-click that is about to open edit mode: the page
+      // must not act on it. A deck's click-to-advance would otherwise take the
+      // SECOND click as another "next slide" and land the caret on the wrong slide.
+      // The first click still does whatever the page does with a single click.
+      if (editArmed && e.detail >= 2) {
+        e.stopImmediatePropagation()
         return
       }
       const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
@@ -1354,6 +1401,11 @@ interface ElReg {
     structSig: string
   }
   let editOn = false
+  /* The host says this viewer may edit (permission, current version, not already in
+     the mode). It arms the in-document entry gestures — a double-click on text asks
+     the host to open edit mode there — so a reader who could never save never fires
+     a message, and a right-less viewer's double-click stays a plain word select. */
+  let editArmed = false
   let editTargets: EditTarget[] = []
   // The pre-edit snapshot. Nodes are joined with "\n" separators (and starts offsets
   // account for them) so a prefix/suffix window crossing a node seam carries
@@ -1409,7 +1461,10 @@ interface ElReg {
     el?.classList.add("derive-edit-hover")
   }
 
-  const setEditMode = (on: boolean, keep?: boolean) => {
+  /** Where an entry gesture asked the mode to open: a point (double-click) or the
+   *  live selection (the host's Edit verb on a selection). */
+  type EditEntry = { at?: { x: number; y: number }; fromSelection?: boolean }
+  const setEditMode = (on: boolean, keep?: boolean, entry?: EditEntry) => {
     if (on === editOn) return
     editOn = on
     if (on) {
@@ -1428,6 +1483,22 @@ interface ElReg {
       }
       editBase = { text: full, starts }
       setHover(null)
+      // Entered FROM the document (a double-click, or Edit on a selection): land the
+      // caret where the user pointed instead of making them click the same words a
+      // second time. Deferred a frame so the host's chrome has settled and the
+      // block's rect is final before revealBlock measures it.
+      if (entry)
+        requestAnimationFrame(() => {
+          if (!editOn) return
+          if (entry.at) {
+            const hit = editNodeAt(entry.at.x, entry.at.y)
+            if (hit) editActivate(hit.node, hit.caret)
+            return
+          }
+          const s = window.getSelection()
+          const n = s && s.rangeCount > 0 ? s.getRangeAt(0).startContainer : null
+          if (n && n.nodeType === 3) editActivate(n as Text, null)
+        })
     } else {
       // `keep`: drop the editing chrome but leave the typed text standing. Used right
       // after a PUBLISH — the text on screen is what was just saved, and the version
@@ -1518,23 +1589,16 @@ interface ElReg {
     return cand
   }
   const BLOCKED_EDIT = "input,textarea,select,button,video,audio,canvas,svg,iframe,embed,object"
-  const editClick = (e: MouseEvent) => {
+  /* Arm the block containing `node` and put the caret in it. Shared by the click
+     inside the mode and by the ENTRY gestures (double-click, the host's Edit verb),
+     so what a double-click opens is exactly what a click would have activated.
+     `caret` is where to land when there is nothing better; it is IGNORED when the
+     caller already made a selection worth keeping (a double-click just selected a
+     word, and collapsing that would break the most natural typo gesture there is:
+     double-click the word, type the fix). */
+  const editActivate = (node: Text, caret: { node: Node; offset: number } | null): void => {
     const base = editBase
     if (!base) return
-    // A keyboard-synthesized click (Enter/Space on a focused link) reports
-    // clientX/clientY 0, which would resolve a caret at the frame's top-left and
-    // silently arm an unrelated block. Editing is pointer-driven; ignore it.
-    if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
-    const el0 = asEl(e.target)
-    // Never navigate while editing — a click on a link edits its text instead.
-    if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
-    if (el0?.closest(BLOCKED_EDIT)) {
-      post({ type: "edit-blocked", reason: "control" })
-      return
-    }
-    const c = caretAt(e.clientX, e.clientY)
-    const node = c && c.node.nodeType === 3 ? (c.node as Text) : null
-    if (!node) return
     const cand = editContainerFor(node)
     if (!cand) return
     let target = targetFor(cand)
@@ -1569,16 +1633,23 @@ interface ElReg {
       cand.setAttribute("contenteditable", "plaintext-only")
       if (cand.contentEditable !== "plaintext-only") cand.setAttribute("contenteditable", "true")
     }
-    target.el.focus({ preventScroll: true })
-    // Place the caret at the click point — but never fight the browser's own
-    // selection gestures: a double/triple click just selected a word/paragraph
-    // (e.detail > 1), and collapsing that to a caret would break the most natural
-    // typo gesture there is (double-click the word, type the fix).
+    // Snapshot the selection BEFORE focus: turning an ancestor contenteditable and
+    // focusing it can drop a selection made while the block was still inert, which
+    // is exactly the double-click-to-edit case (the word is selected, then the host
+    // round-trip arms the block).
     const sel2 = window.getSelection()
-    if (sel2 && c && e.detail <= 1 && (sel2.isCollapsed || sel2.rangeCount === 0)) {
+    const keep =
+      sel2 && sel2.rangeCount > 0 && !sel2.isCollapsed ? sel2.getRangeAt(0).cloneRange() : null
+    target.el.focus({ preventScroll: true })
+    if (keep && target.el.contains(keep.commonAncestorContainer)) {
+      try {
+        sel2?.removeAllRanges()
+        sel2?.addRange(keep)
+      } catch (_e) {}
+    } else if (sel2 && caret && (sel2.isCollapsed || sel2.rangeCount === 0)) {
       try {
         const r = document.createRange()
-        r.setStart(c.node, Math.min(c.offset, node.nodeValue?.length ?? 0))
+        r.setStart(caret.node, Math.min(caret.offset, node.nodeValue?.length ?? 0))
         r.collapse(true)
         sel2.removeAllRanges()
         sel2.addRange(r)
@@ -1587,6 +1658,50 @@ interface ElReg {
     setEditHover(null) // it's the focused block now; the focus ring speaks for it
     revealBlock(target.el)
   }
+  /** The text node a point resolves to, or null where editing can't reach. */
+  const editNodeAt = (
+    x: number,
+    y: number,
+  ): { node: Text; caret: { node: Node; offset: number } } | null => {
+    const c = caretAt(x, y)
+    return c && c.node.nodeType === 3 ? { node: c.node as Text, caret: c } : null
+  }
+  const editClick = (e: MouseEvent) => {
+    if (!editBase) return
+    // A keyboard-synthesized click (Enter/Space on a focused link) reports
+    // clientX/clientY 0, which would resolve a caret at the frame's top-left and
+    // silently arm an unrelated block. Editing is pointer-driven; ignore it.
+    if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
+    const el0 = asEl(e.target)
+    // Never navigate while editing — a click on a link edits its text instead.
+    if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+    if (el0?.closest(BLOCKED_EDIT)) {
+      post({ type: "edit-blocked", reason: "control" })
+      return
+    }
+    const hit = editNodeAt(e.clientX, e.clientY)
+    if (!hit) return
+    // A double/triple click carries its own selection; editActivate keeps it.
+    editActivate(hit.node, e.detail <= 1 ? hit.caret : null)
+  }
+
+  /* THE WAY IN, from the document itself. Double-click any text and the host opens
+     edit mode with the caret already in that block — the mode used to be reachable
+     only from a button in the header, which is nowhere near the sentence you came to
+     fix. Only armed for a viewer who can actually save (the host says so), and only
+     where a click would have landed a caret anyway, so a double-click that lands on
+     a control or on a viewer's read-only page stays an ordinary word select. */
+  document.addEventListener(
+    "dblclick",
+    (e) => {
+      if (editOn || !editArmed) return
+      const el0 = asEl(e.target)
+      if (el0?.closest(BLOCKED_EDIT)) return
+      if (!editNodeAt(e.clientX, e.clientY)) return
+      post({ type: "edit-request", x: e.clientX, y: e.clientY })
+    },
+    true,
+  )
 
   /* Bring the block being edited into view. On a phone the host shrinks the frame by
      the keyboard's height, so "visible" here already means "above the keyboard" —
@@ -1746,9 +1861,15 @@ interface ElReg {
     const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
     return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
   }
-  const collectEdits = (): { edits: WireEdit[]; dirty: number } => {
+  /* `uncaptured` counts blocks the user changed that produced NO edit — the host
+     refuses to save a partial batch, because publishing some of the typing and
+     letting the post-save reload wipe the rest is data loss dressed up as success.
+     Only the all-or-nothing case used to be detectable (edits empty while dirty), so
+     one lost block among several good ones went out silently. */
+  const collectEdits = (): { edits: WireEdit[]; dirty: number; uncaptured: number } => {
     const edits: WireEdit[] = []
     let dirty = 0
+    let uncaptured = 0
     for (const t of editTargets) {
       if (!document.contains(t.el)) continue
       t.el.normalize()
@@ -1780,8 +1901,9 @@ interface ElReg {
       // span. The server refuses it if the span would cross markup in the source.
       const be = blockEdit(t, curVals)
       if (be) edits.push(be)
+      else uncaptured++
     }
-    return { edits, dirty }
+    return { edits, dirty, uncaptured }
   }
 
   window.addEventListener("message", (e: MessageEvent) => {
@@ -1790,12 +1912,18 @@ interface ElReg {
     if (d.type === "anchors") applyAnchors(d.anchors || [])
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
-    else if (d.type === "edit-mode") setEditMode(!!d.on, !!d.keep)
+    else if (d.type === "edit-mode")
+      setEditMode(
+        !!d.on,
+        !!d.keep,
+        d.at || d.fromSelection ? { at: d.at, fromSelection: !!d.fromSelection } : undefined,
+      )
+    else if (d.type === "edit-armed") editArmed = !!d.on
     else if (d.type === "edit-collect") {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.
-      const { edits, dirty } = collectEdits()
-      post({ type: "edit-edits", edits, dirty, nonce: d.nonce })
+      const { edits, dirty, uncaptured } = collectEdits()
+      post({ type: "edit-edits", edits, dirty, uncaptured, nonce: d.nonce })
     } else if (d.type === "edit-restore") restoreEdits()
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
     else if (d.type === "focus-anchor") {
