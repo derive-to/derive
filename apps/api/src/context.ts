@@ -109,6 +109,21 @@ export interface SessionUser {
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
+  /**
+   * How long an ATTENDED turn may run before it must settle itself, in ms.
+   *
+   * Set ONLY where the runtime imposes a deadline the turn cannot see. On Workers an attended
+   * turn is detached through `background()` → `waitUntil`, and Cloudflare terminates waitUntil
+   * work ~30s after the response is sent: the isolate stops, so no timer fires, no catch block
+   * runs, and the session is left `working` for ever with no answer and no error. Measured on
+   * two hung turns — wallTimeMs 30418 and 30586, cpuTimeMs 153 and 230, i.e. idle against a
+   * slow model rather than busy.
+   *
+   * So the turn has to give up while it is still ALIVE and can still write its own failure.
+   * Unset on Node, where `background()` awaits inline and nothing reclaims the turn: a
+   * self-host answering slowly is answering, not dying.
+   */
+  attendedTurnBudgetMs?: number
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
@@ -1392,6 +1407,7 @@ export function buildContext(deps: AppDeps) {
     notify,
     notifyRender,
     background,
+    attendedTurnBudgetMs: deps.attendedTurnBudgetMs,
     /**
      * Answer an @derive mention in a comment thread — the comment lane's arrival, built once
      * here because it needs the model catalog, the store and the publish path in one hand.

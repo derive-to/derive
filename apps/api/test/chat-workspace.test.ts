@@ -319,6 +319,52 @@ describe("the workspace chat", () => {
     expect((await meta.getSession(session.id))?.state).toBe("closed")
   })
 
+  it("settles a turn that outruns the runtime's budget instead of hanging on it", async () => {
+    // THE PRODUCTION HANG, at unit scale. On Workers an attended turn is detached through
+    // waitUntil, and Cloudflare ends that work ~30s after the response — the isolate stops, so a
+    // turn still waiting on the model writes nothing and the session stays `working` for ever
+    // with no answer and no error. Measured on two real hung turns: wallTimeMs 30418 and 30586
+    // against cpuTimeMs 153 and 230, i.e. idle on a slow model rather than busy.
+    //
+    // A model that never answers stands in for the slow gateway. What matters is that the turn
+    // settles ITSELF while it is still alive, so the transcript ends in a sentence rather than a
+    // spinner. `attendedTurnBudgetMs` is tiny here so the test does not sit for 22 seconds.
+    const never = () => new Promise<never>(() => {}) // never resolves, never rejects
+    const users = [{ id: "u-ws", email: "ws@x.com", name: "Wes" }]
+    const { app, meta } = makeAuthedApp("ws-budget", users, undefined, {
+      deps: {
+        attendedTurnBudgetMs: 50,
+        callModel: never,
+        models: catalogOf([{ id: "model-a", label: "A", isDefault: true, build: () => never }]),
+        rateLimiters: inMemoryRateLimiters(),
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    const opened = await app.request("/v1/chat-session", {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ workspace: "default", body_md: "something expensive" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+    for (let i = 0; i < 100; i++) {
+      const s = await meta.getSession(session.id)
+      if (s && s.state !== "working" && s.state !== "open") {
+        const msgs = await meta.listSessionMessages(session.id)
+        expect(s.state).toBe("failed")
+        // An honest sentence in the transcript, not silence.
+        expect(msgs.at(-1)?.author_kind).toBe("agent")
+        expect(msgs.at(-1)?.body_md ?? "").toMatch(/took longer/i)
+        return
+      }
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    throw new Error("the turn never settled — it hung, which is the bug")
+  })
+
   it("refuses to Stop someone else's workspace chat session", async () => {
     const other = { id: "u-nosy", email: "nosy@x.com", name: "Nosy" }
     const { app } = await setup(

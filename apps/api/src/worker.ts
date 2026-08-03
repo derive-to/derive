@@ -303,6 +303,16 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           .map((x) => x.trim())
           .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
+        // THE CEILING THIS TIER ACTUALLY HAS. An attended turn is detached through
+        // `background()` → waitUntil, and Cloudflare ends waitUntil work ~30s after the response
+        // is sent — the isolate stops, so a turn that overruns writes nothing, logs nothing, and
+        // leaves its session `working` for ever. Measured on two hung turns: wallTimeMs 30418 and
+        // 30586 against cpuTimeMs 153 and 230, i.e. idle on a slow model rather than busy.
+        //
+        // 22s leaves several seconds of live isolate for the turn to write its own failure into
+        // the transcript, which is the point: a sentence someone can act on instead of a spinner
+        // that never resolves. Set only here — Node awaits inline and has no such ceiling.
+        attendedTurnBudgetMs: 22_000,
         // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
         // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band
         // by apply-pg-schema, and PgVectorStore rides the request-scoped livePgPool exactly as the
