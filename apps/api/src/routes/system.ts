@@ -60,8 +60,8 @@ export const systemRoutes = (ctx: AppContext) => {
         headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
         body: JSON.stringify({
           model,
-          messages: [{ role: "user", content: "say hi in three words" }],
-          max_tokens: 16,
+          messages: [{ role: "user", content: c.req.query("q") || "say hi in three words" }],
+          max_tokens: Number(c.req.query("max") ?? 16),
           ...(stream ? { stream: true } : {}),
         }),
         signal: AbortSignal.timeout(60_000),
