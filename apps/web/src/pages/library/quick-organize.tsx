@@ -41,6 +41,7 @@ export function LibraryCollectionsDialog({
   return (
     <CollectionsDialog
       shortId={artifact.short_id}
+      artifactTitle={artifact.title ?? undefined}
       inCollections={ids ?? data?.collections ?? []}
       onChange={(next) => {
         setIds(next)

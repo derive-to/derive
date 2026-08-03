@@ -266,34 +266,44 @@ export const collectionsJson = (
   }
   const roleFor = (col: CollectionRecord): Role | null =>
     operator ? "owner" : col.created_by === meId ? "owner" : (roleMap[col.id] ?? null)
-  return cols
-    .map((col) => ({ col, role: roleFor(col) }))
-    .filter(({ role }) => role !== null)
-    .map(({ col, role }) =>
-      enrich(
-        {
-          ...col,
-          my_role: role,
-          starred: starredIds.has(col.id),
-          active: workedIn.has(col.id),
-          my_last_activity: workedIn.get(col.id),
-          // Everything the Collections digest renders per cover: the caption (title),
-          // the window check (updated_at), and the recent-editor avatars (byline).
-          // Only the internal id stays server-side.
-          preview: (previews[col.id] ?? []).map((p) => ({
-            short_id: p.short_id,
-            title: p.title,
-            current_version: p.current_version,
-            has_preview: p.has_preview,
-            updated_at: p.updated_at,
-            author_name: healedName(p),
-            author_login: p.author_login,
-            author_avatar: p.author_avatar,
-          })),
-          last_activity: previews[col.id]?.[0]?.updated_at,
-        },
-        srcByCollection,
-        branchByRepo,
-      ),
-    )
+  return (
+    cols
+      .map((col) => ({ col, role: roleFor(col) }))
+      .filter(({ role }) => role !== null)
+      // Pin the wire order: the Postgres overview read is a bare UNION ALL (heap order,
+      // free to shift between requests), while the SQLite store lists newest-first. Sort
+      // here so every store serves the same contract and no client inherits plan order.
+      .sort(
+        (a, b) =>
+          new Date(b.col.created_at).getTime() - new Date(a.col.created_at).getTime() ||
+          a.col.id.localeCompare(b.col.id),
+      )
+      .map(({ col, role }) =>
+        enrich(
+          {
+            ...col,
+            my_role: role,
+            starred: starredIds.has(col.id),
+            active: workedIn.has(col.id),
+            my_last_activity: workedIn.get(col.id),
+            // Everything the Collections digest renders per cover: the caption (title),
+            // the window check (updated_at), and the recent-editor avatars (byline).
+            // Only the internal id stays server-side.
+            preview: (previews[col.id] ?? []).map((p) => ({
+              short_id: p.short_id,
+              title: p.title,
+              current_version: p.current_version,
+              has_preview: p.has_preview,
+              updated_at: p.updated_at,
+              author_name: healedName(p),
+              author_login: p.author_login,
+              author_avatar: p.author_avatar,
+            })),
+            last_activity: previews[col.id]?.[0]?.updated_at,
+          },
+          srcByCollection,
+          branchByRepo,
+        ),
+      )
+  )
 }

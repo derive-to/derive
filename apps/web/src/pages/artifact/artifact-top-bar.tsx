@@ -32,6 +32,8 @@ import { ShareButton } from "./share-dialog"
  */
 export function ArtifactTopBar(props: {
   shortId: string
+  /** Feeds the collections picker's "similar title" suggestions. */
+  artifactTitle?: string
   /** The artifact's current workspace — threaded to the move dialog so it can
    *  exclude the current workspace from the destination picker. */
   orgId?: string
@@ -254,6 +256,7 @@ export function ArtifactTopBar(props: {
       {/* Portaled dialogs — invisible until opened from the ⋯ menu. */}
       <CollectionsDialog
         shortId={shortId}
+        artifactTitle={props.artifactTitle}
         inCollections={props.collections}
         onChange={props.onCollections}
         open={collectionsOpen}

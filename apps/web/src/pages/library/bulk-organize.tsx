@@ -3,6 +3,11 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { type Artifact, api, type Folder } from "@/api"
 import { Icon } from "@/components/icons"
+import {
+  CollectionToggleRow,
+  canAddTo,
+  pickableCollections,
+} from "@/components/shared/organize-dialogs"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
@@ -153,10 +158,12 @@ export function BulkCollectionsDialog({
   const { data: all = [], isError, refetch } = useQuery({ ...collectionsQuery(), enabled: open })
   const [draft, setDraft] = useState("")
   const [picked, setPicked] = useState<string[]>([])
-  // Brandprint-pointed collections take docs through /brandprint only — same exclusion
-  // the single-artifact dialog makes.
+  // Same offer policy as the single-artifact dialog (manual collections only, Brandprint
+  // excluded), alphabetized — this list has no suggestion tier, so A–Z is the whole order.
   const brandprintIds = useBrandprintCollectionIds()
-  const pickable = all.filter((col) => !brandprintIds.has(col.id))
+  const pickable = pickableCollections(all, brandprintIds).sort((a, b) =>
+    a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
+  )
 
   const apply = useApiMutation({
     // One call: the server folds the whole selection into every picked collection,
@@ -226,27 +233,19 @@ export function BulkCollectionsDialog({
         {pickable.length > 0 && (
           <div className="flex max-h-64 flex-col gap-px overflow-auto">
             {pickable.map((col) => (
-              <button
+              <CollectionToggleRow
                 key={col.id}
-                type="button"
-                data-testid={`bulk-collection-${col.id}`}
-                aria-pressed={picked.includes(col.id)}
-                onClick={() =>
+                col={col}
+                checked={picked.includes(col.id)}
+                disabled={!canAddTo(col)}
+                hint={!canAddTo(col) ? "view only" : undefined}
+                onSelect={() =>
                   setPicked((prev) =>
                     prev.includes(col.id) ? prev.filter((id) => id !== col.id) : [...prev, col.id],
                   )
                 }
-                className={cn(
-                  // The menu-row recipe, shared with the single-artifact dialog.
-                  "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                  picked.includes(col.id) && "bg-accent",
-                )}
-              >
-                <span className="grid w-3.5 shrink-0 place-items-center">
-                  {picked.includes(col.id) && <Icon name="check" size={16} />}
-                </span>
-                <span className="flex-1 truncate">{col.title}</span>
-              </button>
+                testId={`bulk-collection-${col.id}`}
+              />
             ))}
           </div>
         )}
