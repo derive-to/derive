@@ -4,6 +4,7 @@ import {
   newId,
   roleAllows,
   type SlackInstallRecord,
+  type UnfurlInfo,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -14,6 +15,7 @@ import { commentCreatedAction } from "../lib/comment-actions"
 import { commentDeepLink } from "../lib/comments"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { OG_TOKEN_TTL_MS, signOgToken } from "../lib/og-token"
 import { searchMatcher, searchWorkspace, toSearchHits } from "../lib/search"
 import {
   exchangeSlackOAuth,
@@ -262,6 +264,42 @@ export const slackRoutes = (ctx: AppContext) => {
     }
   }
 
+  /**
+   * The image a Slack card may show for this artifact, or null.
+   *
+   * Slack fetches preview images anonymously, so the question is never "may this viewer see it"
+   * but "may this be fetched with no credential at all" — and the answer, for anything short of
+   * world-readable, used to be no. A workspace-listed doc therefore rendered the title-less
+   * padlock, which is why the cards people paste most carried no picture.
+   *
+   * A signed token settles it without loosening `/v1/og` for anyone else: it buys that one
+   * version's rendered image, expires, and retires itself on the next publish. The reasoning for
+   * why a workspace-listed doc is the right place to draw this line is the product's own —
+   * `workspace` means the org may see it, a Slack channel in that org's own workspace is
+   * substantially that audience, and anything genuinely sensitive is marked `none`, which never
+   * reaches this function.
+   *
+   * Null when there is no signing secret (nothing could have been minted) or no render yet —
+   * `/v1/og` then serves the locked card it always has, so a missing preview is a plain card
+   * rather than a broken one.
+   */
+  const previewUrlFor = async (
+    artifact: ArtifactRecord,
+    info: UnfurlInfo,
+  ): Promise<string | null> => {
+    if (artifact.listed === "public") return info.imageUrl
+    if (artifact.listed !== "workspace" || !deps.encryptionKey) return null
+    const token = await signOgToken(
+      deps.encryptionKey,
+      artifact.id,
+      artifact.current_version,
+      Date.now() + OG_TOKEN_TTL_MS,
+    )
+    const u = new URL(info.imageUrl)
+    u.searchParams.set("t", token)
+    return u.toString()
+  }
+
   /** The Work Object for one decided link. A locked artifact still gets an entity — a title-less
    *  one, exactly as broadcast-safe as the block card it replaces — because the entity is what
    *  makes the card CLICKABLE, and the flexpane behind it is per-viewer. That is how someone
@@ -293,9 +331,12 @@ export const slackRoutes = (ctx: AppContext) => {
       artifact: d.artifact,
       info: d.info,
       status,
-      // Slack fetches preview images ANONYMOUSLY, so only a world-readable artifact can carry
-      // one; anything else would render /v1/og's title-less padlock as the card's picture.
-      previewUrl: d.artifact.listed === "public" ? d.info.imageUrl : null,
+      // The screenshot. Slack fetches preview images ANONYMOUSLY, so a world-readable artifact
+      // links its OG image directly and a workspace-listed one carries a signed, version-pinned
+      // token that buys that image and nothing else (lib/og-token.ts). `listed: "none"` never
+      // reaches here — decideUnfurl answered it with the locked card above — which is the line
+      // this feature deliberately does not cross: a doc someone marked private stays a padlock.
+      previewUrl: await previewUrlFor(d.artifact, d.info),
       withActions: status.review?.state === "pending",
       iconUrl,
     })
@@ -366,7 +407,14 @@ export const slackRoutes = (ctx: AppContext) => {
     return say(
       {
         kind: "details",
-        metadata: artifactDetails(artifact, info, status, userLink.user_id, iconUrl),
+        metadata: artifactDetails(
+          artifact,
+          info,
+          status,
+          userLink.user_id,
+          iconUrl,
+          await previewUrlFor(artifact, info),
+        ),
       },
       "details",
     )

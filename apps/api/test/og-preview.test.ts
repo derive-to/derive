@@ -10,6 +10,8 @@ import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
+import { OG_TOKEN_TTL_MS, signOgToken, verifyOgToken } from "../src/lib/og-token"
+import { signPreviewToken, verifyPreviewToken } from "../src/lib/preview-token"
 
 const dir = mkdtempSync(join(tmpdir(), "derive-og-preview-"))
 
@@ -93,6 +95,8 @@ const TINY_PNG = new Uint8Array([
   0x82,
 ])
 
+const SECRET = "og-secret"
+
 const makeApp = (name: string) => {
   const dbPath = join(dir, `${name}.db`)
   const meta = new SqliteMetaStore(dbPath)
@@ -102,6 +106,7 @@ const makeApp = (name: string) => {
     blobs,
     baseUrl: "http://derive.test",
     token: TOKEN,
+    encryptionKey: SECRET,
   })
   return { app, meta, blobs }
 }
@@ -247,5 +252,169 @@ describe("/v1/og/:ref — PNG preview serving", () => {
     const body = await res.text()
     expect(body).toContain("<svg")
     expect(body).not.toContain("Private Artifact")
+  })
+})
+
+// A SIGNED URL FOR ONE IMAGE (lib/og-token.ts).
+//
+// Slack fetches an unfurl's preview image ANONYMOUSLY, so a workspace-listed doc — the shape
+// people paste most — could only ever show the title-less padlock. A token minted for exactly
+// one artifact+version buys that image without loosening this endpoint for anyone else.
+//
+// Every test here is really the same question asked from a different angle: what ELSE does
+// holding this URL get you? The answer has to stay "nothing".
+
+describe("/v1/og/:ref — the signed preview token", () => {
+  /** A workspace-visible artifact with a rendered preview, plus its ids. */
+  const withPreview = async (name: string, visibility = "org") => {
+    const { app, meta, blobs } = makeApp(name)
+    const { short_id, current_version } = await publish(app, "<h1>Team</h1>", {
+      visibility,
+      title: "Team Doc",
+    })
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact not found after publish")
+    const pngKey = await blobs.put(TINY_PNG)
+    await meta.setVersionPreview(artifact.id, current_version, {
+      preview_key: pngKey,
+      preview_status: "ready",
+    })
+    return { app, meta, blobs, artifact, short_id, current_version }
+  }
+
+  const tokenFor = (artifactId: string, n: number, ttlMs = OG_TOKEN_TTL_MS) =>
+    signOgToken(SECRET, artifactId, n, Date.now() + ttlMs)
+
+  it("serves the PNG to an anonymous fetch that carries a valid token", async () => {
+    const { app, artifact, short_id, current_version } = await withPreview("og-tok-ok")
+    // No credential at all — exactly what Slack's image proxy sends.
+    const res = await app.request(
+      `/v1/og/${short_id}?t=${await tokenFor(artifact.id, current_version)}`,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(TINY_PNG)
+    // Shared-cacheable BECAUSE the credential is in the URL: a cache keyed on the full URL can
+    // only return these bytes to someone who already presented the token. Slack's proxy
+    // caching this is the point.
+    expect(res.headers.get("cache-control")).toContain("public")
+  })
+
+  it("without the token, the same fetch still gets the locked card", async () => {
+    const { app, short_id } = await withPreview("og-tok-absent")
+    const res = await app.request(`/v1/og/${short_id}`)
+    expect(res.headers.get("content-type")).toContain("image/svg+xml")
+    expect(await res.text()).not.toContain("Team Doc")
+  })
+
+  it("a token for one artifact cannot be spent on another", async () => {
+    // The check that keeps this from becoming a skeleton key: a doc I may read mints a token,
+    // and without binding it to `:ref` that token would fetch any other doc's screenshot.
+    const { app, meta, blobs, artifact, current_version } = await withPreview("og-tok-swap")
+    const other = await publish(app, "<h1>Other</h1>", { visibility: "org", title: "Other Doc" })
+    const otherRec = await meta.getByShortId(other.short_id)
+    if (!otherRec) throw new Error("other artifact not found")
+    // The other doc must have a preview of its OWN and be otherwise servable — else this
+    // passes for want of a render rather than because the binding held.
+    await meta.setVersionPreview(otherRec.id, other.current_version, {
+      preview_key: await blobs.put(TINY_PNG),
+      preview_status: "ready",
+    })
+    const res = await app.request(
+      `/v1/og/${other.short_id}?t=${await tokenFor(artifact.id, current_version)}`,
+    )
+    expect(res.headers.get("content-type")).toContain("image/svg+xml")
+  })
+
+  it("retires itself on the next publish, rather than following the document", async () => {
+    // The version pin is what bounds a leak: whatever escapes shows the doc as it WAS, and
+    // stops being current the moment somebody edits.
+    const { app, meta, blobs, artifact, short_id, current_version } =
+      await withPreview("og-tok-stale")
+    const stale = await tokenFor(artifact.id, current_version)
+    expect((await app.request(`/v1/og/${short_id}?t=${stale}`)).headers.get("content-type")).toBe(
+      "image/png",
+    )
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode("<h1>v2</h1>")]), "f.html")
+    const bumped = await app.request(`/v1/artifacts/${short_id}/versions`, {
+      method: "POST",
+      body: form,
+      headers: AUTH,
+    })
+    expect(bumped.status).toBeLessThan(300)
+    const v2 = (await meta.getByShortId(short_id))?.current_version
+    expect(v2).toBe(current_version + 1)
+    // v2 renders too — so the ONLY thing between the old token and a current screenshot is
+    // the pin. Without it this test would pass merely because v2 had no preview yet.
+    await meta.setVersionPreview(artifact.id, v2 as number, {
+      preview_key: await blobs.put(TINY_PNG),
+      preview_status: "ready",
+    })
+    const after = await app.request(`/v1/og/${short_id}?t=${stale}`)
+    expect(after.headers.get("content-type")).toContain("image/svg+xml")
+    // ...and a token minted for v2 works, so the pin is a pin and not a wall.
+    const fresh = await tokenFor(artifact.id, v2 as number)
+    expect((await app.request(`/v1/og/${short_id}?t=${fresh}`)).headers.get("content-type")).toBe(
+      "image/png",
+    )
+  })
+
+  it("expires, and expiry DEGRADES to the card rather than breaking the image", async () => {
+    // Why a long TTL is affordable: a Slack message keeps its unfurl for ever and Slack
+    // re-fetches on its own schedule, so every expiry eventually lands on a live message. The
+    // worst it may do is put back the card that predates this feature — never a 4xx, never a
+    // broken-image icon.
+    const { app, artifact, short_id, current_version } = await withPreview("og-tok-exp")
+    const expired = await tokenFor(artifact.id, current_version, -1000)
+    const res = await app.request(`/v1/og/${short_id}?t=${expired}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("image/svg+xml")
+  })
+
+  it("rejects a forged token, and one signed with a different secret", async () => {
+    const { app, artifact, short_id, current_version } = await withPreview("og-tok-forged")
+    const wrongKey = await signOgToken(
+      "not-the-secret",
+      artifact.id,
+      current_version,
+      Date.now() + OG_TOKEN_TTL_MS,
+    )
+    for (const t of ["garbage", "a.b", wrongKey]) {
+      const res = await app.request(`/v1/og/${short_id}?t=${encodeURIComponent(t)}`)
+      expect(res.status, t).toBe(200)
+      expect(res.headers.get("content-type"), t).toContain("image/svg+xml")
+    }
+  })
+
+  it("cannot be replayed as a renderer preview token — different domain, same shape", async () => {
+    // The two kinds carry an identical `<artifactId>.<n>` payload, and the renderer's grants
+    // RAW CONTENT. Only the domain string separates them, which is the whole reason
+    // capability-token.ts has one.
+    const { artifact, current_version } = await withPreview("og-tok-domain")
+    const og = await tokenFor(artifact.id, current_version)
+    expect(await verifyPreviewToken(SECRET, og, Date.now())).toBeNull()
+    const pv = await signPreviewToken(SECRET, artifact.id, current_version, Date.now() + 60_000)
+    expect(await verifyOgToken(SECRET, pv, Date.now())).toBeNull()
+  })
+
+  it("buys the image and NOT the metadata: no title leaks when the render is missing", async () => {
+    // The subtle one. A valid token whose PNG is not ready must land on the GENERIC card, not
+    // the revealed one — otherwise the grant silently widens into a metadata read for exactly
+    // as long as a render is pending or failed.
+    const { app, meta } = makeApp("og-tok-nopng")
+    const { short_id, current_version } = await publish(app, "<h1>Team</h1>", {
+      visibility: "org",
+      title: "Unrendered Secret",
+    })
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact not found after publish")
+    const res = await app.request(
+      `/v1/og/${short_id}?t=${await signOgToken(SECRET, artifact.id, current_version, Date.now() + OG_TOKEN_TTL_MS)}`,
+    )
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain("<svg")
+    expect(body).not.toContain("Unrendered Secret")
   })
 })

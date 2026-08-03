@@ -207,6 +207,12 @@ export const artifactDetails = (
   status: ArtifactStatus,
   viewerId: string | null,
   iconUrl: string,
+  /** The screenshot, when this artifact may carry one at all. Per-viewer though this panel is,
+   *  the IMAGE is still fetched anonymously by Slack and cached by its proxy — so the same line
+   *  applies here as on the broadcast card, and a `listed: "none"` doc passes null. Being
+   *  entitled to read something is not the same as consenting to a copy of it living in another
+   *  company's cache. */
+  previewUrl?: string | null,
 ): Record<string, unknown> => {
   const phrase = statusPhrase(status, viewerId)
   const fields: Record<string, unknown> = {
@@ -236,6 +242,15 @@ export const artifactDetails = (
         display_type: info.kindLabel,
         product_name: "Derive",
         product_icon: { url: iconUrl, alt_text: "Derive" },
+        ...(previewUrl
+          ? {
+              full_size_preview: {
+                is_supported: true,
+                preview_url: previewUrl,
+                mime_type: "image/png",
+              },
+            }
+          : {}),
       },
       fields,
       custom_fields: [
