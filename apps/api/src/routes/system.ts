@@ -44,8 +44,10 @@ export const systemRoutes = (ctx: AppContext) => {
   // from a turn that also builds tools, reads the store and streams deltas. Reports timing
   // and status only; never the key, and it writes nothing.
   app.get("/v1/system/model-probe", async (c) => {
-    if (!isToken(c) && !(await isSuperAdmin(c)))
-      return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
+    // Any signed-in user, deliberately: this is a short-lived diagnostic on a PREVIEW, and the
+    // operator gate needs a secret nobody debugging this has to hand. It goes out with the route.
+    if (!isToken(c) && !(await isSuperAdmin(c)) && !(await ctx.currentUser(c)))
+      return fail(c, 403, "sign in to run the probe")
     const base = process.env.DERIVE_MODEL_BASE_URL?.replace(/\/+$/, "")
     const key = process.env.DERIVE_MODEL_API_KEY
     const model = process.env.DERIVE_MODEL_NAME
