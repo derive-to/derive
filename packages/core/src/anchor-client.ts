@@ -229,9 +229,9 @@ interface ElReg {
       if (tMoved) return
       const el = asEl(e.target)
       if (!el || el.closest("a,button,input,textarea,select,label,[data-derive-id]")) return
-      /* touch has no hover, so the desktop chip never appears — a tap on a non-text media
-         element (image/chart/video/embed) is how you anchor a comment to it on mobile.
-         Text-ish containers (table/pre/figure cells) still fall through to block-tap. */
+      /* a tap on a non-text media element (image/chart/video/embed) is how you anchor
+         a comment to it on touch. Text-ish containers (table/pre/figure cells) still
+         fall through to block-tap. */
       const ael = anchorEl(el)
       if (
         ael &&
@@ -391,9 +391,6 @@ interface ElReg {
     ".derive-el-low .derive-el-badge{background:rgba(100,116,139,.55);box-shadow:0 1px 3px rgba(0,0,0,.16)}" +
     ".derive-el-low:hover .derive-el-badge{background:rgba(100,116,139,.95)}" +
     ".derive-el-pip{position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:rgba(100,116,139,.85);border:1.5px solid #fff;box-sizing:content-box}" +
-    /* the hover affordance: a small 'Comment' chip that follows the pointer over an
-       anchorable element; clicking it pins a comment to that element. */
-    ".derive-el-chip{position:absolute;display:none;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:#fff;color:#14161a;border:1px solid rgba(20,22,26,.1);font:500 12px/1 system-ui,-apple-system,sans-serif;pointer-events:auto;cursor:pointer;box-shadow:0 6px 20px -6px rgba(0,0,0,.28),0 1px 2px rgba(0,0,0,.1);z-index:2147483641;white-space:nowrap}" +
     ".derive-el-outline{position:absolute;display:none;pointer-events:none;border:2px dashed rgba(100,116,139,.6);border-radius:4px;z-index:2147483639}" +
     /* inline edit mode: the block being edited carries a quiet ring; a block with
        unsaved changes keeps a faint tint so you can see what you touched. Same slate
@@ -507,11 +504,7 @@ interface ElReg {
   const ANCHORABLE = "img,picture,svg,canvas,video,audio,iframe,embed,object,table,pre,figure"
   const anchorEl = (t: Element | null): Element | null => {
     if (!t?.closest) return null
-    if (
-      t.closest(
-        "[data-derive-id],.derive-el-chip,.derive-el-badge,a,button,input,textarea,select,label",
-      )
-    )
+    if (t.closest("[data-derive-id],.derive-el-badge,a,button,input,textarea,select,label"))
       return null
     const el = t.closest(ANCHORABLE)
     if (el) return el
@@ -817,73 +810,16 @@ interface ElReg {
       }, 150)
   }
 
-  /* hover affordance: a 'Comment' chip parked at the top-right of the anchorable
-     element under the pointer; clicking it pins a comment to that element. */
-  let chip: HTMLDivElement | null = null
-  let chipEl: Element | null = null
-  const ensureChip = (): HTMLDivElement => {
-    if (chip) return chip
-    chip = document.createElement("div")
-    chip.className = "derive-el-chip"
-    chip.textContent = "💬 Comment"
-    chip.addEventListener("click", (ev) => {
-      ev.preventDefault()
-      ev.stopPropagation()
-      if (!chipEl) return
-      const el = chipEl
-      const r = el.getBoundingClientRect()
-      // Guard the element selection we're about to place, exactly as the touch element-
-      // tap does: this click was preceded by a mouseup, which scheduled emitSelection —
-      // and with no text selected that would post a null `select` a beat later, wiping
-      // this one out (the reason clicking the chip appeared to do nothing). tapGuard
-      // makes emitSelection / selectionchange skip their null-post for a short window.
-      tapGuard = Date.now()
-      /* the host stamps the deck slide onto the selector, same as the text path. */
-      post({
-        type: "select",
-        element: true,
-        rect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
-        selector: buildElSelector(el),
-      })
-    })
-    document.body.appendChild(chip)
-    return chip
-  }
-  const showChip = (el: Element) => {
-    const c = ensureChip()
-    const r = el.getBoundingClientRect()
-    chipEl = el
-    c.style.display = "inline-flex"
-    c.style.left = `${r.right + window.scrollX - Math.min(110, r.width)}px`
-    c.style.top = `${r.top + scrollTop() - 10}px`
-  }
-  const hideChip = () => {
-    if (chip) chip.style.display = "none"
-    chipEl = null
-  }
-  document.addEventListener("mouseover", (e) => {
-    if (editOn) return
-    const el = anchorEl(asEl(e.target))
-    if (el) showChip(el)
-  })
-  document.addEventListener("mouseout", (e) => {
-    /* keep the chip while the pointer is on the chip itself or still over the element */
-    const to = asEl(e.relatedTarget)
-    if (to && (to.closest(".derive-el-chip") || anchorEl(to) === chipEl)) return
-    if (!anchorEl(asEl(e.target))) return
-    hideChip()
-  })
-
   const textNodes = (root: Node): Text[] => {
     const w = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: (n) => {
         const p = n.parentNode ? n.parentNode.nodeName : ""
         if (p === "SCRIPT" || p === "STYLE" || p === "NOSCRIPT") return NodeFilter.FILTER_REJECT
-        // Our OWN injected UI (the comment chip, element-overlay badges) is not page
-        // text: it must never leak into quote context windows or edit snapshots — a
-        // suffix containing "💬 Comment" can't resolve against the stored source.
+        // Our OWN injected UI (the element-overlay badges) is not page text: it must
+        // never leak into quote context windows or edit snapshots — a suffix containing
+        // a badge glyph can't resolve against the stored source.
         const el = (n as Text).parentElement
-        if (el?.closest?.(".derive-el-chip,.derive-el-hl")) return NodeFilter.FILTER_REJECT
+        if (el?.closest?.(".derive-el-hl")) return NodeFilter.FILTER_REJECT
         return NodeFilter.FILTER_ACCEPT
       },
     })
@@ -1492,7 +1428,6 @@ interface ElReg {
       }
       editBase = { text: full, starts }
       setHover(null)
-      hideChip()
     } else {
       // `keep`: drop the editing chrome but leave the typed text standing. Used right
       // after a PUBLISH — the text on screen is what was just saved, and the version
