@@ -362,7 +362,10 @@ export const slackRoutes = (ctx: AppContext) => {
     const info = await unfurlInfoFor(meta, deps.baseUrl, artifact)
     const status = await artifactStatus(meta, artifact)
     return say(
-      { kind: "details", metadata: artifactDetails(info, status, userLink.user_id, iconUrl) },
+      {
+        kind: "details",
+        metadata: artifactDetails(artifact, info, status, userLink.user_id, iconUrl),
+      },
       "details",
     )
   }

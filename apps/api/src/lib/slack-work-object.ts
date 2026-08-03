@@ -172,6 +172,7 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
  *  open-thread count and the review state are safe here for a reader who could open the doc
  *  anyway. */
 export const artifactDetails = (
+  artifact: Pick<ArtifactRecord, "short_id">,
   info: UnfurlInfo,
   status: ArtifactStatus,
   viewerId: string | null,
@@ -188,6 +189,14 @@ export const artifactDetails = (
   }
   const ago = agoLabel(status.updatedAt)
   return {
+    // `url` and `external_ref` are REQUIRED here, not optional identity decoration:
+    // entity.presentDetails answers `invalid_arguments` without them, with
+    // "missing required field: external_ref [json-pointer:/metadata]". The flexpane has to say
+    // WHICH entity it is describing — Slack does not infer it from the trigger — and the pair
+    // must match the unfurl's exactly, since it is the key behind search and the Conversations
+    // tab's aggregation.
+    url: info.pageUrl,
+    external_ref: { id: artifact.short_id, type: DERIVE_ENTITY_TYPE },
     entity_type: "slack#/entities/content_item",
     entity_payload: {
       // Mirrors the card's actions whenever a round is pending — see reviewActions.
