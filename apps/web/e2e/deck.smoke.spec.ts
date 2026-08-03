@@ -66,6 +66,35 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-fullscreen")).toBeVisible()
   })
 
+  test("a shared deck link presents for a signed-out visitor too", async ({ owner, browser }) => {
+    // Sharing a link is how a deck usually reaches its audience, so the recipient — who is
+    // typically not signed in — has to get the presentation chrome, not just a static first
+    // slide. This works because the rendered frame is built ONCE in pages/artifact/index.tsx
+    // and placed in both the workbench and the public viewer, and DeckBar is gated on the
+    // deck's own postMessage rather than on the viewer being authenticated.
+    //
+    // Pinned deliberately: reading public-viewer.tsx alone strongly suggests the opposite
+    // (it imports Presence from rail-deck and NOT DeckBar), and I reported it as broken on
+    // that basis before checking. A test is the cheap way to stop the next person doing the
+    // same in either direction.
+    const shortId = await publishArtifact(owner, "deck.html", DECK_TEMPLATE, "text/html")
+    const anon = await browser.newContext()
+    const page = await anon.newPage()
+    try {
+      await page.goto(`/artifacts/${shortId}`)
+      // Signed out for real — the public viewer's growth verbs, not the workbench.
+      await expect(page.getByRole("link", { name: /sign in/i })).toBeVisible()
+      const position = page.getByTestId("deck-position")
+      await expect(position).toHaveText("1 / 3")
+      await expect(page.getByTestId("deck-fullscreen")).toBeVisible()
+      // And it DRIVES, not just renders.
+      await page.getByTestId("deck-next").click()
+      await expect(position).toHaveText("2 / 3")
+    } finally {
+      await anon.close()
+    }
+  })
+
   test("an ordinary page gets no deck chrome", async ({ owner: page }) => {
     // The negative half: the bar is opt-in via the protocol, so a page that never posts
     // must stay a page. Without this, a bar that rendered unconditionally would pass
