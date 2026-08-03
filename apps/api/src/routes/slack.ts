@@ -63,6 +63,7 @@ import {
 } from "../lib/slack-comments"
 import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
+import { isVerifiedLink, linkToActMessage } from "../lib/slack-identity"
 import { handleSlackMention } from "../lib/slack-mention"
 import { runSlackProposalAction } from "../lib/slack-proposal"
 import { runSlackReviewAction } from "../lib/slack-review"
@@ -756,7 +757,9 @@ export const slackRoutes = (ctx: AppContext) => {
     const slackUserId = payload.user?.id
     if (!teamId || !slackUserId) return null
     const link = await meta.getSlackUserLinkBySlackId(teamId, slackUserId)
-    if (!link) return null
+    // Verified only: a capture is a comment authored AS this person. An email match is enough to
+    // know who they probably are, not enough to write under their name.
+    if (!link || !isVerifiedLink(link)) return null
     const install = await meta.getSlackInstall(link.org_id)
     // A workspace that disconnected keeps its members' account links, so re-check the install —
     // without it the shortcut would keep writing into a workspace that cut Slack off.
@@ -1094,6 +1097,14 @@ export const slackRoutes = (ctx: AppContext) => {
       const channelName = form.get("channel_name")
       if (!channelId)
         return c.json({ response_type: "ephemeral", text: "Run this inside a channel." })
+      // Verified only, on top of the admin role: changing what Derive posts is workspace
+      // configuration. `/derive <query>` below stays open to an email identity — it only
+      // searches what that person can already see.
+      if (!isVerifiedLink(link))
+        return c.json({
+          response_type: "ephemeral",
+          text: linkToActMessage("change what a channel gets", link),
+        })
       const seat = await meta.getMembership(link.org_id, link.user_id)
       if (!seat || !roleAllows(seat.role, "manage"))
         return c.json({

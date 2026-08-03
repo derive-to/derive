@@ -11,6 +11,7 @@ import {
 } from "./proposal-actions"
 import { postSlackResponseUrl } from "./slack"
 import { context, mrkdwnLabel } from "./slack-cards"
+import { isVerifiedLink, linkToActMessage } from "./slack-identity"
 
 /** `ProposalActionDeps` plus what THIS surface needs beyond what approve/request-changes
  *  themselves use: the billing gate, threaded in exactly like `meta` and the rest arrive —
@@ -44,9 +45,11 @@ export const runSlackProposalAction = async (
       : Promise.resolve(false)
 
   // No link → no Derive principal to authorize against; prompt them to link (private msg).
+  // A deliberate link, not merely a matched email: approving publishes a version under this
+  // person's name. See lib/slack-identity.ts for why the split is drawn at writes.
   const link = await deps.meta.getSlackUserLinkBySlackId(args.teamId, args.slackUserId)
-  if (!link) {
-    await eph("Link your Slack account (Settings → Integrations) to approve proposals from Slack.")
+  if (!link || !isVerifiedLink(link)) {
+    await eph(linkToActMessage("decide proposals", link))
     return
   }
   const artifact = await deps.meta.getArtifactById(args.artifactId)

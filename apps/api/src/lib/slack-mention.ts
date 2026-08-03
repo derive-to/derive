@@ -19,6 +19,7 @@ import type { ModelCatalog } from "./model-catalog"
 import { slackUserEmail, updateSlackMessage } from "./slack"
 import { escapeMrkdwn, mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
+import { chatSeatFor, isVerifiedLink } from "./slack-identity"
 
 /** How much of a Slack thread the turn is given. A mention usually arrives with a little
  *  context above it and the answer belongs to that, not to the channel's whole day. */
@@ -202,13 +203,17 @@ export const handleSlackMention = async (
     orgId: string,
     botToken: string,
   ): Promise<
-    { seat: Awaited<ReturnType<typeof seatFor>> } | { seat: null; why: "unknown" | "recent-miss" }
+    | { seat: Awaited<ReturnType<typeof seatFor>>; verified: boolean }
+    | { seat: null; why: "unknown" | "recent-miss" }
   > => {
     const known = await meta.getSlackIdentityState(p.teamId, p.userId).catch(() => null)
     const verdict = identityVerdict(known, Date.now())
     if (verdict === "use" && known) {
       const seat = await seatFor(orgId, known.user_id)
-      if (seat) return { seat }
+      // `verified` travels with the seat because the turn's POWERS depend on it, not just its
+      // name: an email match says who somebody probably is, and only a deliberate link lets us
+      // act as them. See lib/slack-identity.ts.
+      if (seat) return { seat, verified: isVerifiedLink(known) }
       // A link to somebody with no seat HERE is not a miss about their identity — they may well
       // be a member of another workspace on this team — so it is not remembered.
       return { seat: null, why: "unknown" }
@@ -232,7 +237,9 @@ export const handleSlackMention = async (
         checked_at: new Date().toISOString(),
       })
       .catch(() => {})
-    return seat ? { seat } : { seat: null, why: "unknown" }
+    // Resolved by email, which is exactly what this branch just recorded: enough to answer as
+    // them, never enough to write as them.
+    return seat ? { seat, verified: false } : { seat: null, why: "unknown" }
   }
 
   // WHICH WORKSPACE. One Slack team can back several Derive workspaces, so the channel's own
@@ -433,10 +440,15 @@ export const handleSlackMention = async (
   // costs the most trust is silence: the bot was mentioned in front of the channel and simply
   // never spoke. So the tail answers even when it fails.
   try {
+    // The whole enforcement for this lane. An email-matched asker acts at `viewer`, and the
+    // chat tools take their ceiling from the seat — `publish` refuses a viewer on its own, with
+    // no tool list to keep in step. Reading, finding and catching up are untouched, so the
+    // reason email identity exists at all still works for everyone.
+    const actingRole = chatSeatFor(resolved.verified, gate.seatRole)
     const tools = buildChatTools(deps.ctx, {
       org: install.org_id,
       user: { id: asker.id, name: asker.name },
-      seatRole: gate.seatRole,
+      seatRole: actingRole,
       flags: { agentKillswitch: settings.agentKillswitch },
     })
     const res = await runChatTurn(
@@ -458,7 +470,7 @@ export const handleSlackMention = async (
         tools,
         workspaceName:
           (await meta.getWorkspace(install.org_id).catch(() => null))?.name ?? "this workspace",
-        asker: { name: asker.name, role: gate.seatRole },
+        asker: { name: asker.name, role: actingRole },
         skills: tools.skills,
       },
     )

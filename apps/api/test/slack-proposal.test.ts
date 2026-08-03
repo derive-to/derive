@@ -66,6 +66,18 @@ const setup = async () => {
     checked_at: new Date().toISOString(),
     created_at: new Date().toISOString(),
   })
+  // U3 → an editor Derive knows only because their Slack profile email matched. Reading is
+  // fine; deciding a proposal is not (lib/slack-identity.ts).
+  await meta.setSlackUserLink({
+    id: newId("sul"),
+    org_id: "default",
+    user_id: "u-ed",
+    team_id: "T1",
+    slack_user_id: "U3",
+    origin: "email" as const,
+    checked_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
+  })
   const deps = {
     meta,
     blobs,
@@ -103,6 +115,14 @@ describe("runSlackProposalAction (approve/request-changes from Slack)", () => {
   it("a linked NON-member is denied (authz gate) — proposal stays open", async () => {
     const { meta, deps } = await setup()
     await runSlackProposalAction(deps, args("request_changes", "U2"))
+    expect((await meta.getProposal("p1"))?.state).toBe("open")
+  })
+
+  // Same Derive account as U1, same editor seat — and it still cannot decide, because what
+  // differs is the strength of the claim that this Slack user IS that account.
+  it("an email-matched identity cannot act, even at a seat that could", async () => {
+    const { meta, deps } = await setup()
+    await runSlackProposalAction(deps, args("request_changes", "U3"))
     expect((await meta.getProposal("p1"))?.state).toBe("open")
   })
 

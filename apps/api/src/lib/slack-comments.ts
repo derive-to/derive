@@ -29,6 +29,7 @@ import {
   section,
 } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
+import { isVerifiedLink } from "./slack-identity"
 import { authorKind, channelIsSubscribed, resolveChannels } from "./slack-subscriptions"
 import { encodeReviewAction, SLACK_REVIEW_ACTION } from "./slack-work-object"
 
@@ -553,7 +554,13 @@ export const makeSlackIngestSender =
     const name = await slackUserName(bot.token, p.userId)
     // If the Slack author has linked their account, attribute the comment to their real Derive
     // user (and name) instead of an opaque slack:<id>; otherwise fall back to the Slack name.
-    const userLink = await meta.getSlackUserLinkBySlackId(bot.install.team_id, p.userId)
+    //
+    // VERIFIED links only. Authorship is a claim about who said something, and an email match is
+    // not enough to put words in a named account's mouth. This DEGRADES rather than refuses: the
+    // reply still becomes a comment, attributed to `slack:<id>` under their Slack display name,
+    // so nothing is lost except the claim we cannot make.
+    const rawLink = await meta.getSlackUserLinkBySlackId(bot.install.team_id, p.userId)
+    const userLink = isVerifiedLink(rawLink) ? rawLink : null
     const deriveUser = userLink ? (await meta.getUsers([userLink.user_id]))[0] : undefined
     const created = await ingestSlackReply(meta, link, {
       ts: p.ts,
