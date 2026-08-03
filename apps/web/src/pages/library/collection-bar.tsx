@@ -82,10 +82,10 @@ export function CollectionBar({
                 search={a.collection ? { collection: a.collection } : {}}
                 data-testid={`crumb-${i}`}
                 title={`Back to ${a.label}`}
-                // One step below the leaf — the hierarchy is carried by ink and weight,
-                // not a size cliff.
+                // The leaf's exact face and size — the trail is one run of type, and
+                // muted ink + regular weight alone say "ancestor".
                 className={cn(
-                  "text-base",
+                  "font-serif text-lg tracking-tight",
                   crumbClass(ancestors.length > 1 && i < ancestors.length - 1),
                 )}
               >
