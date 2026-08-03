@@ -40,7 +40,11 @@ export const destinationsIn = (markdown: string): { label: string; path: string 
     // isInAppPath, not startsWith("/"): `//evil.com` satisfies the regex above and leaves the
     // origin. The text being parsed was written by a model that just read documents anyone in the
     // workspace can author, so a planted link is a realistic input, not a hypothetical one.
-    if (label && isInAppPath(path) && !found.has(path)) found.set(path, label)
+    // Trimmed of stray emphasis: a model that writes `**[name**](/path)` — bold closing inside
+    // the link, which real answers do — otherwise puts asterisks on a button. The link still
+    // parses, so the destination is right; only the label needs cleaning up.
+    const clean = label?.replace(/[*_`]+/g, "").trim()
+    if (clean && isInAppPath(path) && !found.has(path)) found.set(path, clean)
   }
   return [...found].map(([path, label]) => ({ label, path }))
 }
@@ -89,7 +93,7 @@ export function PaletteAsk(props: {
   }
 
   return (
-    <div className="flex min-h-0 flex-col" data-testid="palette-ask">
+    <div className="flex min-h-0 flex-col overflow-hidden" data-testid="palette-ask-view">
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm">
         <button
           type="button"
@@ -109,7 +113,7 @@ export function PaletteAsk(props: {
           content and the palette grows with every streamed token — a centred dialog resizing under
           the reader's eyes, which is the same jarring this surface exists to remove. Given a
           measured box to fill, it fills it and scrolls. */}
-      <div className="flex h-72 min-h-0 shrink-0 flex-col">
+      <div className="flex h-[min(18rem,38dvh)] min-h-32 flex-col">
         <ChatThread
           messages={chat.messages}
           working={chat.working}
@@ -147,7 +151,7 @@ export function PaletteAsk(props: {
           commits: it never navigates on its own, because a model deciding to move you off the
           page you were on is delightful exactly once. */}
       {destinations.length > 0 && (
-        <div className="shrink-0 border-t px-2 py-1.5">
+        <div className="max-h-32 shrink-0 overflow-y-auto border-t px-2 py-1.5">
           {destinations.map((d) => (
             <button
               key={d.path}

@@ -28,6 +28,13 @@ describe("destinations in an answer", () => {
     expect(destinationsIn(md)).toHaveLength(1)
   })
 
+  it("cleans up a label the model mangled, keeping the destination", () => {
+    // Real output from a production model, asked to list documents: the bold closes INSIDE the
+    // link text. The link still resolves, so the row is right — it just must not wear asterisks.
+    const md = "- **[ab-doc**](/artifacts/3ojux4am) — an A/B chat test doc"
+    expect(destinationsIn(md)).toEqual([{ label: "ab-doc", path: "/artifacts/3ojux4am" }])
+  })
+
   it("finds nothing in an answer that points nowhere", () => {
     expect(destinationsIn("I could not find anything about refunds you can reach.")).toEqual([])
     // A bare path in prose is not a link: the agent was told to write real markdown links, and a

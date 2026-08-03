@@ -299,6 +299,12 @@ export function CommandPalette() {
       // The sr-only accessible name matches what this palette actually does.
       title="Search"
       description="Search artifacts, people, and collections."
+      // ANSWERING IS A TALLER DIALOG, so it starts higher and is capped to the viewport. The
+      // palette's usual `top-1/3` is right for a short result list and wrong for a transcript
+      // plus a composer: measured on a 633px window, the composer sat 2px below the fold with a
+      // single destination row, and 141px below it with four. A control you cannot reach is
+      // worse than one that is not there.
+      className={asking !== null ? "top-[6vh] max-h-[88dvh]" : undefined}
     >
       {asking !== null ? (
         <PaletteAsk
