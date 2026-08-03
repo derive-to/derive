@@ -33,6 +33,31 @@ type Entry = NonNullable<Collection["preview"]>[number]
 const byActivity = (a: Collection, b: Collection) =>
   (b.last_activity ?? "").localeCompare(a.last_activity ?? "")
 
+/** Starred it, or published/commented in it lately — the two signals the server already
+ *  sends for "this shelf is yours to work in". */
+const involved = (c: Collection) => !!c.starred || !!c.active
+
+/**
+ * Which shelves lead the digest, and in what order. Pure, so the ordering — the thing a
+ * reader feels first — is pinned by tests rather than re-derived by reading JSX.
+ *
+ * The digest is WORKSPACE activity (seeing what teammates moved is its point), but your
+ * shelves outrank theirs: a teammate's Wednesday revision must not put a collection
+ * you've never touched above the ones you work in. Involvement first, recency within.
+ */
+export function digestFor(
+  collections: Collection[],
+  nowMs: number,
+): { week: boolean; cols: Collection[] } {
+  const cutoff = new Date(nowMs - WEEK_MS).toISOString()
+  const active = collections.filter((c) => (c.last_activity ?? "") >= cutoff)
+  const week = active.length > 0
+  const cols = (week ? active : collections.filter((c) => c.last_activity))
+    .sort((a, b) => Number(involved(b)) - Number(involved(a)) || byActivity(a, b))
+    .slice(0, week ? DIGEST_SHELVES : 3)
+  return { week, cols }
+}
+
 export function CollectionsView({
   collections,
   onStar,
@@ -54,14 +79,9 @@ export function CollectionsView({
     if (t) onCreate(t)
   }
 
-  const cutoff = new Date(Date.now() - WEEK_MS).toISOString()
-  const active = collections.filter((c) => (c.last_activity ?? "") >= cutoff)
   // A quiet week still gets a digest — the three most recently touched shelves, under a
   // label that says exactly that, rather than an empty section implying nothing exists.
-  const week = active.length > 0
-  const digest = (week ? active : collections.filter((c) => c.last_activity))
-    .sort(byActivity)
-    .slice(0, week ? DIGEST_SHELVES : 3)
+  const { week, cols: digest } = digestFor(collections, Date.now())
   const indexed = [...collections].sort((a, b) =>
     a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
   )
