@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { artifactQuery, collectionsQuery } from "@/lib/queries"
+import { artifactQuery, collectionSuggestionsQuery, collectionsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
@@ -82,7 +82,7 @@ export const titleAffinity = (a: string, b: string): number => {
   return n
 }
 
-export type SuggestReason = "recent" | "similar"
+export type SuggestReason = "recent" | "neighbors" | "similar"
 export type OrganizeList =
   /** No query: a short Suggested tier above the full alphabetical index (deduped). */
   | { mode: "browse"; suggested: { col: Collection; reason: SuggestReason }[]; rest: Collection[] }
@@ -100,14 +100,16 @@ const SUGGESTED_MIN_LIST = 6
  * digest earned the same treatment — see digestFor).
  *
  * Suggested = the collections YOU touched most recently (filing runs in batches, so
- * your last desk is the best guess), then title kinship with the artifact being filed.
- * Only collections the caller can add to are suggested; the rest stay reachable in the
- * alphabetical index below.
+ * your last desk is the best guess), then where semantically-similar artifacts already
+ * live (`semanticIds`, the server's neighbor vote — already ranked), then title kinship
+ * with the artifact being filed. Only collections the caller can add to are suggested;
+ * the rest stay reachable in the alphabetical index below.
  */
 export function organizeList(
   pickable: Collection[],
   query: string,
   artifactTitle?: string,
+  semanticIds?: string[],
 ): OrganizeList {
   const q = query.trim().toLowerCase()
   if (q) {
@@ -135,6 +137,15 @@ export function organizeList(
     .filter((col) => col.my_last_activity)
     .sort((a, b) => (b.my_last_activity ?? "").localeCompare(a.my_last_activity ?? ""))
   for (const col of recent.slice(0, 2)) suggested.push({ col, reason: "recent" })
+  if (semanticIds?.length) {
+    const byId = new Map(addable.map((col) => [col.id, col]))
+    for (const id of semanticIds) {
+      if (suggested.length >= SUGGESTED_MAX) break
+      const col = byId.get(id)
+      if (col && !suggested.some((s) => s.col.id === col.id))
+        suggested.push({ col, reason: "neighbors" })
+    }
+  }
   if (artifactTitle) {
     const kin = addable
       .filter((col) => !suggested.some((s) => s.col.id === col.id))
@@ -254,7 +265,14 @@ export function CollectionsDialog({
   // an artifact's organize menu.
   const brandprintIds = useBrandprintCollectionIds()
   const pickable = pickableCollections(all, brandprintIds)
-  const list = organizeList(pickable, query, artifactTitle)
+  // The semantic tier — "collections where similar artifacts already live", from the
+  // dense index's neighbor vote. Best-effort garnish: a miss, an error, or an install
+  // with no dense arm all read as "no suggestions" and the local tiers carry the list.
+  const { data: semanticIds } = useQuery({
+    ...collectionSuggestionsQuery(shortId),
+    enabled: open,
+  })
+  const list = organizeList(pickable, query, artifactTitle, semanticIds)
   const inSet = new Set(inCollections)
 
   // Toggle membership optimistically (via onChange); the primitive rolls it back and
@@ -311,9 +329,11 @@ export function CollectionsDialog({
             ? "view only"
             : reason === "recent" && col.my_last_activity
               ? ago(col.my_last_activity)
-              : reason === "similar"
-                ? "similar title"
-                : undefined
+              : reason === "neighbors"
+                ? "similar artifacts"
+                : reason === "similar"
+                  ? "similar title"
+                  : undefined
         }
         onSelect={() => toggle(col)}
         onHover={() => setCursor(idx)}

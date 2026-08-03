@@ -19,8 +19,10 @@ import {
   sourceMaps,
 } from "../lib/boot-shapes"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
+import { voteCollections } from "../lib/collection-suggest"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
+import { log } from "../log"
 import { ArtifactMember } from "../schemas"
 
 /** Collections: shareable groups of artifacts. A member's role on a collection
@@ -28,6 +30,23 @@ import { ArtifactMember } from "../schemas"
  *  Collection response schema is the single source for the web client's type
  *  (generated from the OpenAPI spec). Member endpoints return the shared ArtifactMember
  *  shape (see ../schemas). */
+
+// The suggestions read's shape: a dozen neighbors is plenty of voting signal at
+// interactive latency; six candidates absorb role-gate drops while still resolving in a
+// handful of reads; three suggestions is all the picker shows.
+const SUGGEST_NEIGHBORS = 12
+const SUGGEST_CANDIDATES = 6
+const SUGGEST_CAP = 3
+
+const CollectionSuggestion = z
+  .object({
+    id: z.string().describe("The suggested collection's id."),
+    score: z
+      .number()
+      .describe("Summed neighbor-similarity votes — an ordering signal, not a probability."),
+  })
+  .openapi("CollectionSuggestion")
+
 export const collectionRoutes = (ctx: AppContext) => {
   const {
     meta,
@@ -352,6 +371,88 @@ export const collectionRoutes = (ctx: AppContext) => {
       if (!art || art.org_id !== col.org_id) return bail(fail(c, 404, "artifact not found"))
       await meta.removeCollectionItem(col.id, art.id)
       return c.body(null, 204)
+    },
+  )
+
+  // Where does work like this get filed? The picker's semantic "Suggested" tier: the
+  // artifact's nearest neighbors (by the dense index's stored vectors — no embed call
+  // at request time) each vote for the collections they already live in. Best-effort by
+  // design: no dense arm, no vector yet, or a dense hiccup all answer [] and the picker
+  // falls back to its client-side heuristics.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}/collection-suggestions",
+      tags: ["Collections"],
+      summary: "Collections where work similar to this artifact already lives (members only).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "Suggested collections, best first. Empty whenever there's no signal.",
+          content: {
+            "application/json": {
+              schema: z.object({ suggestions: z.array(CollectionSuggestion) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const art = await meta.getByShortId(c.req.param("shortId"))
+      if (!art || art.current_version === 0 || !(await authorize(c, "read", art)))
+        return bail(fail(c, 404, "not found"))
+      const empty = { suggestions: [] as { id: string; score: number }[] }
+      // Members only — the same rule as GET /v1/collections, so this can't become a side
+      // channel that enumerates a workspace's collections off a public artifact.
+      if (!(await isMember(c, art.org_id))) return c.json(empty)
+      const search = ctx.search
+      if (!search?.similar) return c.json(empty)
+      const neighbors = await search
+        .similar(art.org_id, art.id, SUGGEST_NEIGHBORS)
+        .catch((err): { id: string; score: number }[] => {
+          // Best-effort on read, like every dense-arm consumer: a store hiccup degrades
+          // to "no suggestions", never a 500 on a picker open.
+          log.error("collection-suggestions dense lookup failed", {
+            artifact: art.id,
+            err: String(err),
+          })
+          return []
+        })
+      if (neighbors.length === 0) return c.json(empty)
+      // The access gate here is PER COLLECTION, not per neighbor — deliberately unlike
+      // workspace search's visibleArtifacts. The response reveals nothing about a
+      // neighbor except its presence in a collection, and collection visibility already
+      // implies enumerating its contents (collectionRole propagates to every item — the
+      // "no phantom-empty collections" rule), so a collection the caller may see leaks
+      // nothing when it votes. The LISTING gate would be wrong as well as redundant: it
+      // hides unlisted team drafts from everyone but their author, and team drafts are
+      // exactly what people file — the tier would almost never fire. The trusted read
+      // below only drops tombstones and cross-org strays a stale index could nominate;
+      // no field of it reaches the response.
+      const live = await meta.listArtifacts({
+        orgId: art.org_id,
+        ids: neighbors.map((n) => n.id),
+        excludeRemoved: true,
+      })
+      const liveIds = new Set(live.map((a) => a.id))
+      const byArtifact = await meta.collectionsForArtifacts([...liveIds])
+      const ranked = voteCollections(
+        neighbors.filter((n) => liveIds.has(n.id)),
+        byArtifact,
+        SUGGEST_CANDIDATES,
+      )
+      // The gate: collectionRole is the single source of truth (an invite-only
+      // collection a neighbor lives in must not surface for a non-member). Candidates
+      // are ≤ SUGGEST_CANDIDATES, so per-row resolution stays a handful of indexed
+      // reads.
+      const suggestions: { id: string; score: number }[] = []
+      for (const cand of ranked) {
+        if (suggestions.length >= SUGGEST_CAP) break
+        const col = await meta.getCollection(cand.id)
+        if (!col || !(await collectionRole(c, col))) continue
+        suggestions.push(cand)
+      }
+      return c.json({ suggestions })
     },
   )
 

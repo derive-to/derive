@@ -30,6 +30,7 @@ const makeStore = () => {
       for (const [k, r] of [...rows]) if (r.artifactId === id) rows.delete(k)
     },
     query: async () => queryResult,
+    getVector: async (vectorId) => rows.get(vectorId)?.embedding ?? null,
   }
   return {
     store,
@@ -211,6 +212,50 @@ describe("PgvectorSearchIndex", () => {
     const { embedder, calls } = makeEmbedder()
     expect(await new PgvectorSearchIndex(embedder, store).search("o1", "   ", 6)).toEqual([])
     expect(calls).toHaveLength(0)
+  })
+
+  it("similar queries FROM the stored lead vector — no embed call — and drops the artifact itself", async () => {
+    const { store, setQuery } = makeStore()
+    const { embedder, calls } = makeEmbedder()
+    const idx = new PgvectorSearchIndex(embedder, store)
+    await idx.indexArtifact("a1", "o1", "Pricing page", "the plans grid")
+    calls.length = 0 // forget the indexing embed; `similar` itself must not embed
+    setQuery([
+      { artifactId: "a1", chunk: "itself", score: 0.99 }, // the query doc is its own nearest hit
+      { artifactId: "a2", chunk: "pricing tiers doc", score: 0.71 },
+      { artifactId: "a3", chunk: "below floor", score: 0.3 },
+    ])
+    const hits = await idx.similar("o1", "a1", 6)
+    expect(calls).toHaveLength(0)
+    expect(hits.map((h) => h.id)).toEqual(["a2"]) // self excluded, floor applied
+  })
+
+  it("similar answers [] for an artifact with no stored vector", async () => {
+    const { store, setQuery } = makeStore()
+    const { embedder } = makeEmbedder()
+    setQuery([{ artifactId: "a2", chunk: "noise", score: 0.9 }])
+    expect(
+      await new PgvectorSearchIndex(embedder, store).similar("o1", "never-indexed", 6),
+    ).toEqual([])
+  })
+
+  it("similar falls back to a legacy bare-id vector from before chunking", async () => {
+    const { store, setQuery } = makeStore()
+    const { embedder } = makeEmbedder()
+    await store.upsert([
+      // A pre-chunking row: vectorId is the bare artifact id, no #0 twin exists.
+      {
+        vectorId: "a1",
+        artifactId: "a1",
+        orgId: "o1",
+        chunk: 0,
+        embedding: [1, 0, 0, 0],
+        snippet: "s",
+      },
+    ])
+    setQuery([{ artifactId: "a2", chunk: "neighbor", score: 0.8 }])
+    const hits = await new PgvectorSearchIndex(embedder, store).similar("o1", "a1", 6)
+    expect(hits.map((h) => h.id)).toEqual(["a2"])
   })
 
   it("throws (not misaligns) if the embedder returns a wrong vector count for a chunk group", async () => {
