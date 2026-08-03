@@ -45,6 +45,7 @@ import { FilterMenu } from "./filter-menu"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
+import { LibraryDropZone } from "./library-drop-zone"
 import { LibrarySkeleton } from "./library-skeleton"
 import { NewArtifactButton } from "./new-artifact-button"
 import { libraryFeedParams } from "./params"
@@ -403,15 +404,12 @@ function LibraryBody({ view }: { view: LibraryView }) {
             : undefined
 
   const connectNudge = useConnectNudge()
-  // One prompt at a time. The connect card's "publish" stage already says "publish your
-  // first document"; the drop-zone directly beneath it saying "Publish an artifact" is
-  // the same instruction twice, and the one asking for less always loses. The nudges
-  // themselves are already exclusive of each other (connect wins over Brandprint), so
-  // this is the last overlap.
-  const showPublish =
-    !isSearching &&
-    connectNudge.stage === null &&
-    (filter.kind === "all" || filter.kind === "mine" || filter.kind === "favorites")
+  // The page's one primary action, and it is STABLE: it does not blink out while you
+  // type in the filter, and it shows alongside the connect-agent card. (It used to
+  // share that card's one-prompt-at-a-time gate — inherited from the old publish
+  // BANNER, which really did compete with the card — which left a brand-new workspace
+  // with no visible way to create anything by hand.)
+  const showPublish = filter.kind === "all" || filter.kind === "mine" || filter.kind === "favorites"
 
   const emptyProps = emptyStateFor(filter, isSearching, debouncedQ, nav)
   // The first-run guide is for a genuinely blank home (your work is empty and you're not
@@ -445,6 +443,15 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   return (
     <PageShell scrollRef={scrollRef} width="wide">
+      {/* Anywhere you can see artifacts, you can drop files. On a collection page the
+          drop files them there too. Not mounted on the Collections digest — dropping a
+          file "into" a page of shelves has no honest meaning. */}
+      {!showCollections && (
+        <LibraryDropZone
+          collection={filter.kind === "collection" ? filter.id : undefined}
+          collectionTitle={filter.kind === "collection" ? collectionTitle : undefined}
+        />
+      )}
       {/* ONE header per page, and nothing on it louder than the page's name. The old
           chrome led with a full-width filter input — the loudest possible way to say
           "you might want to type" — and pushed the page's identity to the second row.

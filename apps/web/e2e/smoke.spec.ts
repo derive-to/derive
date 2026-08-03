@@ -319,3 +319,34 @@ test("a collection says where you are, and the way back is the trail", async ({ 
   // The chip it replaced is gone rather than living alongside it.
   await expect(owner.getByTestId("library-clear-filter")).toHaveCount(0)
 })
+
+test("the library is a drop target, and + New never hides", async ({ owner }) => {
+  await owner.goto("/")
+  // The one primary action is STABLE: visible even while the connect-agent card shows
+  // (a fresh workspace used to have no visible way to create anything by hand).
+  await expect(owner.getByTestId("library-new")).toBeVisible()
+
+  // Drag a file over the window: the whole app says "drop it".
+  const drag = (type: "dragenter" | "drop", withFile: boolean) =>
+    owner.evaluate(
+      ([t, f]) => {
+        const dt = new DataTransfer()
+        if (f)
+          dt.items.add(
+            new File(["# dropped\n\nvia drag"], "dropped-note.md", { type: "text/markdown" }),
+          )
+        window.dispatchEvent(new DragEvent(t as string, { dataTransfer: dt, bubbles: true }))
+      },
+      [type, withFile] as const,
+    )
+  await drag("dragenter", true)
+  await expect(owner.getByTestId("library-drop-overlay")).toBeVisible()
+  await drag("drop", true)
+  await expect(owner.getByTestId("library-drop-overlay")).toHaveCount(0)
+  // The drop published for real: the artifact lands in the grid.
+  await expect(owner.getByText("dropped-note")).toBeVisible()
+
+  // A text drag (no files) never summons the overlay.
+  await drag("dragenter", false)
+  await expect(owner.getByTestId("library-drop-overlay")).toHaveCount(0)
+})
