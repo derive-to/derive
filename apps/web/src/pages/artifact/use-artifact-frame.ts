@@ -138,6 +138,10 @@ export function useArtifactFrame(p: {
   const post = useCallback((msg: Record<string, unknown>) => {
     frame.current?.contentWindow?.postMessage({ source: "derive-host", ...msg }, "*")
   }, [])
+  // Present mode is set up below (it needs the deck), but the message listener above
+  // is registered once and must reach the CURRENT toggle — hence a ref, the same
+  // pattern the page uses for the inline-edit API.
+  const presentRef = useRef<() => void>(() => {})
 
   // Scroll the document by a pixel delta. The comments aside calls this to forward
   // wheel gestures over the panel into the doc, so scrolling there moves the page
@@ -222,6 +226,10 @@ export function useArtifactFrame(p: {
         onTap(d.x, d.y, deckRef.current?.i)
       } else if (d.type === "cursor-leave") {
         onPointerLeave()
+      } else if (d.type === "present") {
+        // `p` pressed with focus inside the document. Only a deck can be presented,
+        // and only from a read state — mid-edit the mode has its own answer.
+        if (deckRef.current) presentRef.current()
       } else if (d.type === "navigate" && typeof d.ref === "string") {
         onNavigate(d.ref, !!d.newTab)
       } else if (d.type === "open-external" && typeof d.href === "string") {
@@ -282,6 +290,7 @@ export function useArtifactFrame(p: {
     cmd: deckCmd,
     onEnter: p.onPresent,
   })
+  presentRef.current = present.toggle
   // Reset the per-document iframe state when the artifact/version changes — the
   // deck re-announces on load and a stale selection shouldn't carry over.
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the artifact/version change, not to anything the callbacks read.

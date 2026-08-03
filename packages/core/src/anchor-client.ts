@@ -11,8 +11,8 @@
  * The frame has an opaque origin, so everything rides postMessage:
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
  *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
- *                  open-external / esc / edit-state / edit-edits / edit-save /
- *                  edit-blocked / edit-request / deck-sniff
+ *                  open-external / esc / present / edit-state / edit-edits /
+ *                  edit-save / edit-blocked / edit-request / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
  *                  edit-mode / edit-collect / edit-restore / edit-armed / deck-drive
  *
@@ -383,6 +383,12 @@ interface ElReg {
         post({ type: "esc" })
         return
       }
+      // `p` presents. Same reason as Escape: one click into the document moves
+      // keyboard focus in here, and the host's own listener goes deaf — which is
+      // exactly the moment someone reaches for the present shortcut. Forwarded, not
+      // swallowed, so a deck that binds `p` itself still gets it.
+      if ((e.key === "p" || e.key === "P") && !e.metaKey && !e.ctrlKey && !e.altKey && !focused)
+        post({ type: "present" })
     }
     if (focused) e.stopImmediatePropagation()
   }
@@ -1117,10 +1123,59 @@ interface ElReg {
     const slides = slideEls()
     if (slides.length < 2 || !window.MutationObserver) return
     try {
-      const mo = new MutationObserver(postDeckSniff)
+      const mo = new MutationObserver(() => {
+        postDeckSniff()
+        // The slide changed under an open edit session — re-mask (see below).
+        if (editOn) maskOffscreenSlides()
+      })
       for (const s of slides)
         mo.observe(s, { attributes: true, attributeFilter: ["class", "style"] })
     } catch (_e) {}
+  }
+
+  /* 🚨 Hidden slides still catch clicks.
+     A deck stacks every slide at `inset:0` and hides the inactive ones with
+     OPACITY — which removes them from view but NOT from hit testing. So a click
+     aimed at the headline you can see resolves its caret in whichever slide is
+     last in DOM order at that point, and you edit a slide nobody is looking at.
+     Found by typing into slide 2 of a real deck and watching the text land in
+     slide 3's heading.
+     While editing, take every off-screen slide out of hit testing, and put each
+     one back exactly as it was on the way out (a deck may set pointer-events
+     itself). Text edits are built from text nodes, so this inline style can never
+     reach a saved quote.
+
+     🚨 IDEMPOTENT ON PURPOSE. Writing `style` is an attribute mutation, and the
+     slide observer above watches `style` — a mask that rewrote the same value every
+     pass re-triggered the observer, which re-masked, forever. The renderer spun hard
+     enough that CDP input timed out, which is how it was found. So: only ever write
+     when the value actually changes. */
+  let slideMask: { el: HTMLElement; prev: string }[] = []
+  const unmaskSlides = () => {
+    for (const m of slideMask) m.el.style.pointerEvents = m.prev
+    slideMask = []
+  }
+  const maskOffscreenSlides = () => {
+    const slides = slideEls()
+    if (slides.length < 2) return
+    // The ACTIVE index, not per-slide visibility: a slide mid-transition is still
+    // fading and would read as hidden (or as shown) depending on the frame.
+    const on = activeSlide(slides)
+    for (let i = 0; i < slides.length; i++) {
+      const el = slides[i]
+      if (!(el instanceof HTMLElement)) continue
+      const masked = slideMask.find((m) => m.el === el)
+      if (i === on) {
+        // The slide came back on screen: give it its own value back.
+        if (masked) {
+          el.style.pointerEvents = masked.prev
+          slideMask = slideMask.filter((m) => m.el !== el)
+        }
+      } else if (!masked) {
+        slideMask.push({ el, prev: el.style.pointerEvents })
+        el.style.pointerEvents = "none"
+      }
+    }
   }
 
   /* nearest slide ancestor of a DOM element (element anchors + a text range's start) */
@@ -1357,13 +1412,24 @@ interface ElReg {
         editClick(e)
         return
       }
-      // The second half of a double-click that is about to open edit mode: the page
-      // must not act on it. A deck's click-to-advance would otherwise take the
-      // SECOND click as another "next slide" and land the caret on the wrong slide.
-      // The first click still does whatever the page does with a single click.
-      if (editArmed && e.detail >= 2) {
-        e.stopImmediatePropagation()
-        return
+      // A click on the WORDS, by someone who can edit them, is not "next slide".
+      //
+      // A deck's click zones cover the stage — that's how every deck we scaffold is
+      // written — so the first click of a double-click flips the slide, and the
+      // caret then lands on a slide the reader never meant to be on (watched it
+      // happen: aim at slide 2's headline, arrive editing slide 3). For a viewer who
+      // can edit, a click that lands on text belongs to the text. Everything else
+      // still advances: the margins, the empty half of a title slide, links, and
+      // every click by someone who can't edit this document at all.
+      if (editArmed && !asEl(e.target)?.closest("a[href],a[data-derive-nav]")) {
+        if (e.detail >= 2) {
+          e.stopImmediatePropagation()
+          return
+        }
+        if (slideEls().length > 1 && editNodeVisibleAt(e.clientX, e.clientY)) {
+          e.stopImmediatePropagation()
+          return
+        }
       }
       const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
       if (badge) {
@@ -1553,9 +1619,9 @@ interface ElReg {
     el?.classList.add("derive-edit-hover")
   }
 
-  /** Where an entry gesture asked the mode to open: a point (double-click) or the
-   *  live selection (the host's Edit verb on a selection). */
-  type EditEntry = { at?: { x: number; y: number }; fromSelection?: boolean }
+  /** Which gesture asked the mode to open: the double-click whose target this client
+   *  already captured, or the host's Edit verb on the live selection. */
+  type EditEntry = { fromPointer?: boolean; fromSelection?: boolean }
   const setEditMode = (on: boolean, keep?: boolean, entry?: EditEntry) => {
     if (on === editOn) return
     editOn = on
@@ -1575,6 +1641,8 @@ interface ElReg {
       }
       editBase = { text: full, starts }
       setHover(null)
+      // Off-screen slides stop catching clicks meant for the slide on screen.
+      maskOffscreenSlides()
       // Entered FROM the document (a double-click, or Edit on a selection): land the
       // caret where the user pointed instead of making them click the same words a
       // second time. Deferred a frame so the host's chrome has settled and the
@@ -1582,9 +1650,13 @@ interface ElReg {
       if (entry)
         requestAnimationFrame(() => {
           if (!editOn) return
-          if (entry.at) {
-            const hit = editNodeAt(entry.at.x, entry.at.y)
-            if (hit) editActivate(hit.node, hit.caret)
+          if (entry.fromPointer) {
+            // Captured by the double-click that asked for the mode. Stale means the
+            // host answered something else (or much later); ignore rather than
+            // arming a block the user has forgotten about.
+            const p = pendingEntry
+            pendingEntry = null
+            if (p && Date.now() - p.at < 5000 && p.node.isConnected) editActivate(p.node, p.caret)
             return
           }
           const s = window.getSelection()
@@ -1600,6 +1672,7 @@ interface ElReg {
       else restoreEdits()
       editBase = null
       setEditHover(null)
+      unmaskSlides()
     }
   }
   const disableTarget = (t: EditTarget) => {
@@ -1693,6 +1766,17 @@ interface ElReg {
     if (!base) return
     const cand = editContainerFor(node)
     if (!cand) return
+    // Belt and braces for the hidden-slide trap (see maskOffscreenSlides): if a
+    // click still resolves into a slide that isn't the one on screen, say so
+    // rather than putting a caret somewhere the typist can't see.
+    const slides = slideEls()
+    if (slides.length > 1) {
+      const where = slideOfEl(cand, slides)
+      if (where != null && where !== activeSlide(slides)) {
+        post({ type: "edit-blocked", reason: "offscreen" })
+        return
+      }
+    }
     let target = targetFor(cand)
     if (!target) {
       cand.normalize()
@@ -1758,6 +1842,43 @@ interface ElReg {
     const c = caretAt(x, y)
     return c && c.node.nodeType === 3 ? { node: c.node as Text, caret: c } : null
   }
+  /* The same question, asked through whatever is lying on top of the text.
+     Caret hit-testing returns the TOPMOST element at a point, and a deck covers its
+     stage with invisible click-catchers ("next slide" / "previous slide" zones), so
+     aiming at a headline resolves the zone and editing finds nothing to edit. Peel:
+     take the top element out of hit testing, ask again, repeat a few times, and put
+     every one of them back. Bounded to four layers — past that, whatever is up there
+     is the page's own UI and a click belongs to it.
+     Off-screen slides are masked for the same reason (they are stacked at inset:0
+     and stay hit-testable at opacity 0), so this resolves the text a reader can
+     actually see. */
+  const editNodeVisibleAt = (
+    x: number,
+    y: number,
+  ): { node: Text; caret: { node: Node; offset: number } } | null => {
+    const peeled: { el: HTMLElement; prev: string }[] = []
+    const maskedHere = !editOn
+    if (maskedHere) maskOffscreenSlides()
+    try {
+      for (let pass = 0; pass < 4; pass++) {
+        const hit = editNodeAt(x, y)
+        if (hit) return hit
+        const top = document.elementFromPoint(x, y)
+        if (
+          !(top instanceof HTMLElement) ||
+          top === document.body ||
+          top === document.documentElement
+        )
+          return null
+        peeled.push({ el: top, prev: top.style.pointerEvents })
+        top.style.pointerEvents = "none"
+      }
+      return null
+    } finally {
+      for (const p of peeled) p.el.style.pointerEvents = p.prev
+      if (maskedHere) unmaskSlides()
+    }
+  }
   const editClick = (e: MouseEvent) => {
     if (!editBase) return
     // A keyboard-synthesized click (Enter/Space on a focused link) reports
@@ -1771,26 +1892,61 @@ interface ElReg {
       post({ type: "edit-blocked", reason: "control" })
       return
     }
-    const hit = editNodeAt(e.clientX, e.clientY)
+    const hit = editNodeVisibleAt(e.clientX, e.clientY)
     if (!hit) return
     // A double/triple click carries its own selection; editActivate keeps it.
     editActivate(hit.node, e.detail <= 1 ? hit.caret : null)
   }
+
+  /* Focus follows the WORDS, not what's lying on top of them.
+     Focus moves on mousedown, before any click handler runs, and it moves to the
+     element actually hit — which over a deck is the invisible click zone, not the
+     heading beneath it. So the block was armed and immediately un-focused, and
+     typing went nowhere (the caret was in the block; the focus was on the body).
+     Taking the default away when an overlay is between the pointer and the text
+     leaves focus where the caret is going. Only in edit mode, and only when
+     something IS in the way — an ordinary click on ordinary text keeps every
+     native behaviour, including drag-select. */
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      if (!editOn) return
+      const hit = editNodeVisibleAt(e.clientX, e.clientY)
+      if (!hit) return
+      const top = document.elementFromPoint(e.clientX, e.clientY)
+      if (top && !top.contains(hit.node)) e.preventDefault()
+    },
+    true,
+  )
 
   /* THE WAY IN, from the document itself. Double-click any text and the host opens
      edit mode with the caret already in that block — the mode used to be reachable
      only from a button in the header, which is nowhere near the sentence you came to
      fix. Only armed for a viewer who can actually save (the host says so), and only
      where a click would have landed a caret anyway, so a double-click that lands on
-     a control or on a viewer's read-only page stays an ordinary word select. */
+     a control or on a viewer's read-only page stays an ordinary word select.
+
+     The TEXT NODE is captured here, not the coordinates. Opening the mode adds a
+     band above the document, which resizes this frame — and a deck centres its
+     stage in whatever height it gets, so by the time the mode is open the words
+     that were under the pointer have moved. Re-resolving a point after that lands
+     the caret near the text, or in the gap beside it. A node reference survives the
+     reflow; the offset within it is still the character the user aimed at. */
+  let pendingEntry: {
+    node: Text
+    caret: { node: Node; offset: number } | null
+    at: number
+  } | null = null
   document.addEventListener(
     "dblclick",
     (e) => {
       if (editOn || !editArmed) return
       const el0 = asEl(e.target)
       if (el0?.closest(BLOCKED_EDIT)) return
-      if (!editNodeAt(e.clientX, e.clientY)) return
-      post({ type: "edit-request", x: e.clientX, y: e.clientY })
+      const hit = editNodeVisibleAt(e.clientX, e.clientY)
+      if (!hit) return
+      pendingEntry = { node: hit.node, caret: hit.caret, at: Date.now() }
+      post({ type: "edit-request" })
     },
     true,
   )
@@ -1828,10 +1984,11 @@ interface ElReg {
       editHoverTick = 0
       if (!editOn) return setEditHover(null)
       if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
-      const c = caretAt(x, y)
-      const node = c && c.node.nodeType === 3 ? (c.node as Text) : null
-      if (!node) return setEditHover(null)
-      const cand = editContainerFor(node)
+      // Through overlays, like the click that follows it — otherwise a deck's click
+      // zone means the hover invitation never lights the block a click would open.
+      const hit = editNodeVisibleAt(x, y)
+      if (!hit) return setEditHover(null)
+      const cand = editContainerFor(hit.node)
       // A block that's already editable wears the focus ring; don't double-decorate.
       setEditHover(cand && !cand.hasAttribute("data-derive-editable") ? cand : null)
     }, 50)
@@ -2008,7 +2165,9 @@ interface ElReg {
       setEditMode(
         !!d.on,
         !!d.keep,
-        d.at || d.fromSelection ? { at: d.at, fromSelection: !!d.fromSelection } : undefined,
+        d.fromPointer || d.fromSelection
+          ? { fromPointer: !!d.fromPointer, fromSelection: !!d.fromSelection }
+          : undefined,
       )
     else if (d.type === "edit-armed") editArmed = !!d.on
     // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
