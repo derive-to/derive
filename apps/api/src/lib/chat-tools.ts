@@ -20,8 +20,11 @@ import type { LoopTool } from "./agent-loop"
  *
  *   - `actingFor` + `ownerId` are the ASKER. Reach, attribution and membership all resolve to
  *     that human, so the model can touch exactly what they can touch.
- *   - `scopeForCap`/`defaultRole` are their real seat. A viewer's chat cannot publish because
- *     `publish` refuses a viewer, not because chat remembered to check.
+ *   - `scopeForCap`/`defaultRole` are the seat the turn acts at — normally the asker's real
+ *     one, but a caller may hand down a lower one (lib/slack-identity.ts clamps an
+ *     email-matched Slack asker to `viewer`). Either way a viewer's chat cannot publish
+ *     because `publish` routes a sub-editor to a proposal and `propose` needs `commenter`,
+ *     not because chat remembered to check.
  *   - `boundWorkspaces` is the ONE workspace of the conversation, so cross-workspace reach is
  *     structurally impossible even though the same code CAN roam for an OAuth grant.
  *   - `registered: false` — no inbox, no @mention identity, nothing to administer. It is a

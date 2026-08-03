@@ -58,7 +58,23 @@ export interface ChatTurnInput {
    * answer is either a hedge or a guess, and a guess about someone's own permissions is the kind
    * of wrong that sends a person hunting for a button that was never going to be there.
    */
-  asker: { name: string | null; role: Role }
+  asker: {
+    name: string | null
+    role: Role
+    /**
+     * Why `role` is lower than this person's real seat, when it is — one sentence, rendered
+     * verbatim into the prompt.
+     *
+     * The web lane never sets it: a session IS the account, so the seat is the seat. Slack does,
+     * because an identity resolved from a Slack profile email acts at `viewer` whatever the
+     * person actually holds (lib/slack-identity.ts). Without it the agent commits both halves
+     * of the mistake this input exists to prevent — it tells a Creator they are a Viewer, and
+     * then relays a tool's refusal verbatim, which talks about re-authorizing an MCP connector
+     * and means nothing to somebody talking to a bot in Slack. Both send them somewhere that
+     * cannot help, and neither mentions the thirty-second fix.
+     */
+    note?: string
+  }
   /** The skill index for the tools this turn holds — one line each in the prompt, bodies read
    *  on demand. Empty when the turn has no tools with separate procedure. */
   skills: { name: string; summary: string }[]
@@ -107,7 +123,7 @@ const systemPrompt = (input: ChatTurnInput): string => {
   )
   return `You are Derive, the agent built into Derive — a place teams keep living documents (called artifacts, or "derives") with full version history, review comments, and published web pages.
 
-You are talking with ${input.asker.name ?? "someone"} in the workspace "${input.workspaceName}". They are ${roleWord(input.asker.role)} here. They are watching this reply as you write it.
+You are talking with ${input.asker.name ?? "someone"} in the workspace "${input.workspaceName}". They are ${roleWord(input.asker.role)} here. They are watching this reply as you write it.${input.asker.note ? `\n${input.asker.note}` : ""}
 
 TOOLS: ${names.length ? names.join(", ") : "none on this turn"}. Use them rather than guessing — you are answering about THIS workspace, and you cannot know its contents from memory.
 

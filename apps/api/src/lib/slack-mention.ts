@@ -19,7 +19,7 @@ import type { ModelCatalog } from "./model-catalog"
 import { slackUserEmail, updateSlackMessage } from "./slack"
 import { escapeMrkdwn, mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
-import { chatSeatFor, isVerifiedLink } from "./slack-identity"
+import { CHAT_UNVERIFIED_NOTE, chatSeatFor, isVerifiedLink } from "./slack-identity"
 
 /** How much of a Slack thread the turn is given. A mention usually arrives with a little
  *  context above it and the answer belongs to that, not to the channel's whole day. */
@@ -440,10 +440,9 @@ export const handleSlackMention = async (
   // costs the most trust is silence: the bot was mentioned in front of the channel and simply
   // never spoke. So the tail answers even when it fails.
   try {
-    // The whole enforcement for this lane. An email-matched asker acts at `viewer`, and the
-    // chat tools take their ceiling from the seat — `publish` refuses a viewer on its own, with
-    // no tool list to keep in step. Reading, finding and catching up are untouched, so the
-    // reason email identity exists at all still works for everyone.
+    // The whole enforcement for this lane: an email-matched asker acts at `viewer`, and the
+    // tools take their ceiling from the seat, so every write stops without a check of its own.
+    // Reads are untouched. See lib/slack-identity.ts for why, and for the note below.
     const actingRole = chatSeatFor(resolved.verified, gate.seatRole)
     const tools = buildChatTools(deps.ctx, {
       org: install.org_id,
@@ -470,7 +469,13 @@ export const handleSlackMention = async (
         tools,
         workspaceName:
           (await meta.getWorkspace(install.org_id).catch(() => null))?.name ?? "this workspace",
-        asker: { name: asker.name, role: actingRole },
+        asker: {
+          name: asker.name,
+          role: actingRole,
+          // The clamp is silent from inside the turn, so the reason travels with it — see
+          // CHAT_UNVERIFIED_NOTE for what goes wrong when it does not.
+          ...(resolved.verified ? {} : { note: CHAT_UNVERIFIED_NOTE }),
+        },
         skills: tools.skills,
       },
     )
