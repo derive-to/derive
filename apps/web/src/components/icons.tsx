@@ -39,6 +39,7 @@ import {
   Mail,
   Maximize,
   MessageCircle,
+  Minimize,
   PanelLeft,
   Pencil,
   Pin,
@@ -106,6 +107,9 @@ const REG = {
   views: Eye,
   removed: Ban,
   present: Maximize,
+  // The way back out of present mode — the same glyph mirrored, so the control
+  // reads as one toggle rather than two unrelated buttons.
+  "present-exit": Minimize,
   lock: Lock,
   mail: Mail,
   unlock: LockOpen,

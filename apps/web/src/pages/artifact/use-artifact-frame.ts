@@ -3,7 +3,15 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { Comment } from "@/api"
 import { bareHotkey } from "@/lib/hotkey"
 import { groupThreads } from "./lib/layout"
-import { type AnchorConf, type FrameGeom, type Panel, parseAnchor, type Selection } from "./types"
+import {
+  type AnchorConf,
+  type Deck,
+  type FrameGeom,
+  type Panel,
+  parseAnchor,
+  type Selection,
+} from "./types"
+import { usePresentMode } from "./use-present-mode"
 
 // Keep `anchorTops` referentially stable when the tops are unchanged, so a re-post doesn't
 // churn the comment layout. The frame already dedupes anchor-rects on tops before sending
@@ -63,6 +71,11 @@ export function useArtifactFrame(p: {
    *  document never reach the host at all; the frame owns those. This is the other
    *  half: focus sitting on the host's chrome mid-session.) */
   isEditing?: () => boolean
+  /** Present mode is opening: the page closes an edit session and parks anything
+   *  modal, because a deck being typed into is not a deck being presented. Return
+   *  false to refuse (unsaved edits — the confirm belongs on the page, not in
+   *  front of a room). */
+  onPresent?: () => boolean
 }) {
   const {
     comments,
@@ -112,12 +125,15 @@ export function useArtifactFrame(p: {
       geomSubs.current.delete(cb)
     }
   }, [])
-  // Set when the artifact announces itself as a deck (derive-deck protocol).
-  const [deck, setDeck] = useState<{ i: number; total: number } | null>(null)
+  // Set when the artifact announces itself as a deck (derive-deck protocol), or when
+  // the injected client sniffed one out of the markup. `sniffed` decides who gets
+  // driven: a deck that speaks the protocol answers `deck` itself; a sniffed one is
+  // moved by the client on its behalf.
+  const [deck, setDeck] = useState<Deck | null>(null)
   // The deck position read inside the message handler (a stable closure that never
   // re-subscribes), so selection-capture and cursor-tagging see the CURRENT slide
   // rather than the stale value `deck` would be frozen at. Kept in sync below.
-  const deckRef = useRef<{ i: number; total: number } | null>(null)
+  const deckRef = useRef<Deck | null>(null)
 
   const post = useCallback((msg: Record<string, unknown>) => {
     frame.current?.contentWindow?.postMessage({ source: "derive-host", ...msg }, "*")
@@ -140,12 +156,23 @@ export function useArtifactFrame(p: {
       if (!d) return
       // A slide deck reporting its position (any HTML that speaks the protocol).
       if (d.source === "derive-deck" && d.type === "state") {
-        const next = { i: d.i ?? 0, total: d.total ?? 1 }
+        const next = { i: d.i ?? 0, total: d.total ?? 1, sniffed: false }
         deckRef.current = next
         setDeck(next)
         return
       }
       if (d.source !== "derive") return
+      // The injected client recognised a deck the artifact never announced. An
+      // artifact that speaks for itself always wins: once a protocol message has
+      // arrived, the sniff is ignored for the life of this document, so a deck can
+      // never be half-driven by both paths.
+      if (d.type === "deck-sniff") {
+        if (deckRef.current && !deckRef.current.sniffed) return
+        const next = { i: d.i ?? 0, total: d.total ?? 1, sniffed: true }
+        deckRef.current = next
+        setDeck(next)
+        return
+      }
       if (d.type === "select") {
         if (d.selector && d.rect) {
           const fr = frame.current?.getBoundingClientRect()
@@ -232,17 +259,29 @@ export function useArtifactFrame(p: {
   const deckCmd = useCallback(
     (action: "next" | "prev" | "goto", n?: number) =>
       frame.current?.contentWindow?.postMessage(
-        { source: "derive-host", type: "deck", action, n },
+        // A protocol deck moves itself; a sniffed one is moved by the injected
+        // client (which synthesizes the key the page already listens for, so the
+        // page's own idea of where it is stays true).
+        {
+          source: "derive-host",
+          type: deckRef.current?.sniffed ? "deck-drive" : "deck",
+          action,
+          n,
+        },
         "*",
       ),
     [],
   )
-  const toggleFullscreen = () => {
-    const el = presentWrap.current
-    if (!el) return
-    if (document.fullscreenElement) document.exitFullscreen()
-    else el.requestFullscreen?.()
-  }
+  // Present mode owns the fullscreen element, the presenting state and the keyboard
+  // that drives a deck while it's up (see use-present-mode). It lives here because
+  // this hook already owns the wrapper and the drive command.
+  const present = usePresentMode({
+    wrapRef: presentWrap,
+    hasDeck: !!deck,
+    total: deck?.total ?? 1,
+    cmd: deckCmd,
+    onEnter: p.onPresent,
+  })
   // Reset the per-document iframe state when the artifact/version changes — the
   // deck re-announces on load and a stale selection shouldn't carry over.
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the artifact/version change, not to anything the callbacks read.
@@ -265,10 +304,15 @@ export function useArtifactFrame(p: {
   // and open dialogs, so typing a reply moved the slide behind it.
   const isEditingRef = useRef<() => boolean>(() => false)
   isEditingRef.current = p.isEditing ?? (() => false)
+  const presentingRef = useRef(false)
+  presentingRef.current = present.presenting
   useEffect(() => {
     if (!deck) return
     const onKey = (e: KeyboardEvent) => {
-      if (!bareHotkey(e) || isEditingRef.current()) return
+      // While presenting, the present-mode listener owns the whole deck keyboard
+      // (it handles Space, PageUp/PageDown and Home/End too) — running both would
+      // advance two slides per press.
+      if (!bareHotkey(e) || isEditingRef.current() || presentingRef.current) return
       if (e.key === "ArrowRight") deckCmd("next")
       else if (e.key === "ArrowLeft") deckCmd("prev")
     }
@@ -336,7 +380,7 @@ export function useArtifactFrame(p: {
     scrollBy,
     deck,
     deckCmd,
-    toggleFullscreen,
+    present,
     sel,
     setSel,
     inDoc,

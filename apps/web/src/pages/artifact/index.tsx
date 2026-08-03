@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useBlocker, useNavigate, useParams } from "@tanstack/react-router"
+import { useBlocker, useNavigate, useParams, useSearch } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { ApiError, api } from "@/api"
@@ -106,6 +106,7 @@ function FocusShellSync({ focus }: { focus: boolean }) {
 
 export function Artifact() {
   const { ref } = useParams({ from: "/artifacts/$ref" })
+  const search = useSearch({ from: "/artifacts/$ref" })
   const { shortId, version } = parseRef(ref)
   const { me, loading } = useAuth()
   const nav = useNavigate()
@@ -271,12 +272,14 @@ export function Artifact() {
   const inlineEditRef = useRef<{
     active: boolean
     canEdit: boolean
+    dirty: number
     requestExit: () => void
     save: () => void
     start: () => void
   }>({
     active: false,
     canEdit: false,
+    dirty: 0,
     requestExit: () => {},
     save: () => {},
     start: () => {},
@@ -333,7 +336,7 @@ export function Artifact() {
     scrollBy,
     deck,
     deckCmd,
-    toggleFullscreen,
+    present,
     sel,
     setSel,
     inDoc,
@@ -363,6 +366,16 @@ export function Artifact() {
     // Live read (the edit hook is declared below this one) so the host's arrow keys
     // stop driving the deck the moment an edit session opens.
     isEditing: () => inlineEditRef.current.active,
+    // Presenting closes an open edit session first — but never over the top of
+    // unsaved work: with edits pending, requestExit raises the discard confirm on
+    // the page and present mode stays shut until that's answered.
+    onPresent: () => {
+      const ie = inlineEditRef.current
+      setComposer(null)
+      if (!ie.active) return true
+      ie.requestExit()
+      return !ie.dirty
+    },
     // Escape typed INTO the sandboxed frame (a click into the doc moves keyboard
     // focus there, out of the window listeners' reach) — mirror what a window
     // Escape does on this page: exit focus mode, cancel a parked composer.
@@ -419,6 +432,17 @@ export function Artifact() {
     setActiveThread(null)
     setComposer(null)
   }, [shortId, version])
+
+  // Deep link: ?present=1 opens a deck straight into present mode, once its slides
+  // have been reported. Browsers only grant real fullscreen off a user gesture, so a
+  // link-driven entry lands in the overlay — the deck still fills the viewport, and
+  // the bar's own button (a gesture) takes it the rest of the way.
+  const presentLinked = useRef(false)
+  useEffect(() => {
+    if (presentLinked.current || !deck || !search.present) return
+    presentLinked.current = true
+    present.enter()
+  }, [deck, search.present, present.enter])
 
   // Navigate the deck to the slide a comment lives on: its resolved slide, falling
   // back to the slide it was made on. No-op off a deck or already on that slide.
@@ -533,6 +557,7 @@ export function Artifact() {
   inlineEditRef.current = {
     active: inlineEdit.active,
     canEdit: inlineEdit.canEdit,
+    dirty: inlineEdit.dirty,
     requestExit: inlineEdit.requestExit,
     save: inlineEdit.save,
     start: inlineEdit.start,
@@ -748,7 +773,10 @@ export function Artifact() {
       }
       onDeckPrev={() => deckCmd("prev")}
       onDeckNext={() => deckCmd("next")}
-      onFullscreen={toggleFullscreen}
+      presenting={present.presenting}
+      presentOverlay={present.overlay}
+      controlsIdle={present.idle}
+      onPresent={present.toggle}
       anonView={isAnon}
     />
   )
@@ -936,7 +964,7 @@ export function Artifact() {
               canMove={canMove}
               automateBeta={automateBeta}
               locked={isLocked}
-              onPresent={toggleFullscreen}
+              onPresent={present.toggle}
               onLockToggle={() => lockMut.mutate(!isLocked)}
               onFavorite={(fav) =>
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>

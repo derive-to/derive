@@ -60,6 +60,7 @@ export function RenderStage({
   onFrameLoad,
   banner,
   overlays,
+  overlay = false,
   className,
 }: {
   /** null = the source isn't known yet (the record is still a list-row seed) — the
@@ -83,6 +84,8 @@ export function RenderStage({
   banner?: ReactNode
   /** Absolutely-positioned children inside the render (deck bar, cursor overlay). */
   overlays?: ReactNode
+  /** Present mode without the Fullscreen API — the stage covers the viewport itself. */
+  overlay?: boolean
   className?: string
 }) {
   // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
@@ -141,7 +144,14 @@ export function RenderStage({
           artifact never flashes a white rectangle before it takes over. */}
       <div
         ref={wrapRef}
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+        data-presenting={overlay || undefined}
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background",
+          // Presenting where the Fullscreen API isn't available (iOS Safari refuses
+          // it for anything but a video): the stage takes the viewport itself. Same
+          // result, one z-index instead of a capability we don't have.
+          overlay && "fixed inset-0 z-70",
+        )}
       >
         {rawSrc != null && (
           <iframe

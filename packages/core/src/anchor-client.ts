@@ -12,9 +12,9 @@
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
  *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
  *                  open-external / esc / edit-state / edit-edits / edit-save /
- *                  edit-blocked / edit-request
+ *                  edit-blocked / edit-request / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
- *                  edit-mode / edit-collect / edit-restore / edit-armed
+ *                  edit-mode / edit-collect / edit-restore / edit-armed / deck-drive
  *
  * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
  * bundles into one small self-contained script.
@@ -1036,6 +1036,93 @@ interface ElReg {
       )
     return Array.from(document.querySelectorAll(".slide"))
   }
+  /* ── Decks that never said so ──────────────────────────────────────────────────
+     The deck protocol is opt-in: a deck posts its position and the host shows a
+     presentation bar. Every deck written before that protocol existed — and every
+     one written from a template that predates it — is a real deck the viewer
+     treats as a flat page: no bar, no position, no Present.
+
+     But the structure is right there, and this client already reads it to keep
+     comments on the right slide. So SNIFF it: slides whose visibility is switched
+     (one shown, the rest hidden) is a deck, whatever it says about itself. The host
+     prefers a real protocol announcement and falls back to this, so an artifact
+     that speaks for itself is never second-guessed.
+
+     A page whose `.slide` sections are ALL visible is a long page that happens to
+     use the class name — it scrolls, it doesn't switch, and driving it would be
+     nonsense. Requiring at least one hidden slide is what tells the two apart. */
+  const shown = (el: Element): boolean => {
+    let st: CSSStyleDeclaration
+    try {
+      st = getComputedStyle(el)
+    } catch (_e) {
+      return true
+    }
+    if (st.display === "none" || st.visibility === "hidden") return false
+    return Number(st.opacity || "1") > 0.5
+  }
+  /** Which slide is on screen: the `.on` convention first (what our own template and
+   *  authoring guide write), else the first one that is actually painted. */
+  const activeSlide = (slides: Element[]): number => {
+    for (let i = 0; i < slides.length; i++)
+      if ((slides[i] as Element).classList.contains("on")) return i
+    for (let i = 0; i < slides.length; i++) if (shown(slides[i] as Element)) return i
+    return 0
+  }
+  const sniffDeck = (): { i: number; total: number } | null => {
+    const slides = slideEls()
+    if (slides.length < 2) return null
+    if (slides.every(shown)) return null
+    return { i: activeSlide(slides), total: slides.length }
+  }
+  let lastSniff = ""
+  const postDeckSniff = () => {
+    const d = sniffDeck()
+    if (!d) return
+    const key = `${d.i}/${d.total}`
+    if (key === lastSniff) return
+    lastSniff = key
+    post({ type: "deck-sniff", i: d.i, total: d.total })
+  }
+  /* Drive a sniffed deck. Synthesize the key the page already listens for rather
+     than reaching into its DOM: its own handler runs, so its index, progress bar and
+     counter stay consistent with what's on screen — a class we toggled ourselves
+     would desync the page from itself on the very next press of its own arrow key.
+     Toggling `.on` is the fallback for a deck that only wired up click zones. */
+  const dispatchKey = (key: string) => {
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+    } catch (_e) {}
+  }
+  const driveDeck = (action: string, n?: number) => {
+    const slides = slideEls()
+    if (slides.length < 2) return
+    const from = activeSlide(slides)
+    const want = action === "next" ? from + 1 : action === "prev" ? from - 1 : (n ?? 0)
+    const to = Math.max(0, Math.min(slides.length - 1, want))
+    if (to === from) return
+    const key = to > from ? "ArrowRight" : "ArrowLeft"
+    for (let s = 0; s < Math.abs(to - from); s++) dispatchKey(key)
+    requestAnimationFrame(() => {
+      const now = slideEls()
+      if (activeSlide(now) !== to)
+        for (let i = 0; i < now.length; i++) (now[i] as Element).classList.toggle("on", i === to)
+      postDeckSniff()
+    })
+  }
+  /* A slide flip is a class or style change, which fires no scroll, resize or load —
+     watch the slides themselves (bounded: one observer over the slide elements, not
+     the document) so the host's position stays truthful however the page moves. */
+  const watchSlides = () => {
+    const slides = slideEls()
+    if (slides.length < 2 || !window.MutationObserver) return
+    try {
+      const mo = new MutationObserver(postDeckSniff)
+      for (const s of slides)
+        mo.observe(s, { attributes: true, attributeFilter: ["class", "style"] })
+    } catch (_e) {}
+  }
+
   /* nearest slide ancestor of a DOM element (element anchors + a text range's start) */
   const slideOfEl = (el: Element | null, slides: Element[]): number | null => {
     for (let s = el; s; s = s.parentElement) {
@@ -1206,6 +1293,11 @@ interface ElReg {
     remeasure()
     setTimeout(remeasure, 400)
     setTimeout(remeasure, 1200)
+    // A deck's slides only exist once its own script has run, so sniff after load
+    // (and again on the settle passes, for one built by a script of its own).
+    watchSlides()
+    postDeckSniff()
+    setTimeout(postDeckSniff, 400)
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
      content animates, an accordion expands) — none of which fire scroll/resize/load. So
@@ -1919,6 +2011,9 @@ interface ElReg {
         d.at || d.fromSelection ? { at: d.at, fromSelection: !!d.fromSelection } : undefined,
       )
     else if (d.type === "edit-armed") editArmed = !!d.on
+    // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
+    // `deck` message, which it answers itself.
+    else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)
     else if (d.type === "edit-collect") {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.
