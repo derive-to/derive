@@ -18,6 +18,7 @@ import {
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail, toBody } from "../lib/http"
+import { verifyOgToken } from "../lib/og-token"
 import { unfurlInfoFor } from "../lib/unfurl-info"
 
 /**
@@ -74,12 +75,54 @@ export const embedRoutes = (ctx: AppContext) => {
     return (await authorize(c, "read", artifact)) ? artifact : null
   }
 
+  /**
+   * The artifact a valid `?t=` names, or null. Three things must agree, and each is a way the
+   * grant could otherwise widen:
+   *
+   *   - the signature verifies against THIS instance's secret, in the og-token domain, unexpired
+   *   - the artifact it names is the one `:ref` asked for — otherwise a token minted for a doc
+   *     someone may read would spend on any other doc's image
+   *   - the version it names is still the CURRENT one — so the token follows a snapshot, not the
+   *     document, and a publish since retires it
+   *
+   * Absent secret ⇒ null: a deployment with no signing key cannot have minted one, so anything
+   * presented is forged.
+   */
+  const ogTokenArtifact = async (c: Context): Promise<ArtifactRecord | null> => {
+    const token = c.req.query("t")
+    if (!token || !ctx.deps.encryptionKey) return null
+    const claim = await verifyOgToken(ctx.deps.encryptionKey, token, Date.now())
+    if (!claim) return null
+    const ref = c.req.param("ref")
+    if (!ref) return null
+    let artifact: ArtifactRecord | null = null
+    for (const id of candidateShortIds(ref)) {
+      artifact = await meta.getByShortId(id)
+      if (artifact) break
+    }
+    if (!artifact || artifact.removed_at) return null
+    if (artifact.id !== claim.artifactId) return null
+    if (artifact.current_version !== claim.n) return null
+    return artifact
+  }
+
   // The OG card image. SVG: zero-dep and identical on Node + Worker. A gated or
   // missing artifact gets a generic locked card (no title leak), still 200 so the
   // unfurl shows something. Cached hard (see the Cache-Control below) — the live
   // version/comment counts on the card are allowed to lag for an unfurl preview.
   app.get("/v1/og/:ref", async (c) => {
-    const artifact = await readable(c, c.req.param("ref"))
+    const readableArtifact = await readable(c, c.req.param("ref"))
+    // A signed token stands in for the read check for THIS IMAGE ALONE (lib/og-token.ts).
+    // It is what lets a Slack unfurl of a workspace-listed doc carry its screenshot: Slack
+    // fetches preview images anonymously, so without it the picture on the cards people paste
+    // most would be the title-less padlock.
+    //
+    // Deliberately not a general read: it never reaches `infoFor`, so a holder gets the
+    // rendered image and never a title, a description or a comment count. And it is spent only
+    // on the version it names — a doc republished since is a miss, and the token quietly ages
+    // into a locked card rather than following the document.
+    const tokened = readableArtifact ? null : await ogTokenArtifact(c)
+    const artifact = readableArtifact ?? tokened
     // readable() enforces visibility: a gated artifact for an anonymous crawler returns null
     // and never reaches the PNG branch, so a private artifact can never leak its screenshot.
     if (artifact) {
@@ -91,20 +134,32 @@ export const embedRoutes = (ctx: AppContext) => {
         // with no world link (or a locked one) means an authorized member. Their
         // screenshot must never land in a shared cache; keep it browser-only there
         // (max-age so the library card <img> stays cached across renders).
+        //
+        // A TOKENED fetch is the exception, and cacheable publicly for the reason capability
+        // URLs generally are: the credential is IN the URL, so a shared cache keyed on the
+        // full URL can only ever hand the bytes back to someone who already presented the
+        // token. Slack's image proxy caching this is the point, not a leak.
         if (png)
           return c.body(toBody(png), 200, {
             "Content-Type": "image/png",
-            "Cache-Control": cacheFor(
-              artifact,
-              "public, max-age=86400, stale-while-revalidate=604800",
-              3600,
-            ),
+            "Cache-Control": tokened
+              ? "public, max-age=86400, stale-while-revalidate=604800"
+              : cacheFor(artifact, "public, max-age=86400, stale-while-revalidate=604800", 3600),
             "X-Content-Type-Options": "nosniff",
           })
       }
     }
-    const svg = artifact
-      ? ogCardSvg({ ...(await infoFor(artifact)), reveal: true })
+    // FALLS THROUGH on purpose when the token is absent, expired, forged or names a version
+    // that is no longer current — to the same anonymous card this endpoint has always served.
+    // That is what makes a long token life affordable: the worst an expiry can do is put back
+    // the behaviour that predates it. Never a broken image, never an error.
+    //
+    // `readableArtifact`, NOT `artifact`: the token buys the rendered image and nothing else,
+    // and this branch reveals the title, description and counts. A tokened caller whose PNG
+    // was missing must land on the generic card exactly as an anonymous one does — otherwise
+    // the narrow grant widens into a metadata read the moment a render is pending or failed.
+    const svg = readableArtifact
+      ? ogCardSvg({ ...(await infoFor(readableArtifact)), reveal: true })
       : ogCardSvg({
           title: "",
           kindLabel: "Document",
@@ -120,7 +175,7 @@ export const embedRoutes = (ctx: AppContext) => {
       // branch only because the CALLER could read it, so its revealed card (title, counts,
       // slot figures) is browser-private — see cacheFor.
       "Cache-Control": cacheFor(
-        artifact,
+        readableArtifact,
         "public, max-age=86400, stale-while-revalidate=604800",
         3600,
       ),

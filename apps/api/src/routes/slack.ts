@@ -4,6 +4,7 @@ import {
   newId,
   roleAllows,
   type SlackInstallRecord,
+  type UnfurlInfo,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -14,6 +15,7 @@ import { commentCreatedAction } from "../lib/comment-actions"
 import { commentDeepLink } from "../lib/comments"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { OG_TOKEN_TTL_MS, signOgToken } from "../lib/og-token"
 import { searchMatcher, searchWorkspace, toSearchHits } from "../lib/search"
 import {
   exchangeSlackOAuth,
@@ -262,6 +264,56 @@ export const slackRoutes = (ctx: AppContext) => {
     }
   }
 
+  /**
+   * The image a Slack card may show for this artifact, or null.
+   *
+   * Slack fetches preview images anonymously, so the question is never "may this viewer see it"
+   * but "may this be fetched with no credential at all" — and the answer, for anything short of
+   * world-readable, used to be no. A workspace-listed doc therefore rendered the title-less
+   * padlock, which is why the cards people paste most carried no picture.
+   *
+   * A signed token settles it without loosening `/v1/og` for anyone else: it buys that one
+   * version's rendered image, expires, and retires itself on the next publish. The reasoning for
+   * why a workspace-listed doc is the right place to draw this line is the product's own —
+   * `workspace` means the org may see it, a Slack channel in that org's own workspace is
+   * substantially that audience, and anything genuinely sensitive is marked `none`, which never
+   * reaches this function.
+   *
+   * ONE RULE, both visibilities: offer a URL only when a rendered PNG is actually behind it.
+   *
+   * Renders are enqueued in the BACKGROUND after a publish, so a link pasted moments later finds
+   * one pending, and `/v1/og` answers meanwhile with an SVG — the doc's own card for a public
+   * artifact, the TITLE-LESS PADLOCK for a workspace one. Offering either is a card that
+   * declares `mime_type: "image/png"` and serves something else, and for the workspace case it
+   * puts a padlock graphic beside the title we are already showing: exactly what the block card
+   * avoided by carrying no image at all.
+   *
+   * Verified against the API, and the reason this is a check rather than a hope: `chat.unfurl`
+   * accepts a `preview_url` WITHOUT fetching it, answering `ok: true` with no warning. Nothing
+   * downstream will tell us the picture was wrong. So the card promises an image only when we
+   * know there is one, and otherwise says nothing — the fields and title stand on their own.
+   */
+  const previewUrlFor = async (
+    artifact: ArtifactRecord,
+    info: UnfurlInfo,
+  ): Promise<string | null> => {
+    if (artifact.listed !== "public" && artifact.listed !== "workspace") return null
+    const v = await meta.getVersion(artifact.id, artifact.current_version)
+    if (v?.preview_status !== "ready" || !v.preview_key) return null
+    // A world-readable doc needs no capability: /v1/og already serves its PNG to anyone.
+    if (artifact.listed === "public") return info.imageUrl
+    if (!deps.encryptionKey) return null
+    const token = await signOgToken(
+      deps.encryptionKey,
+      artifact.id,
+      artifact.current_version,
+      Date.now() + OG_TOKEN_TTL_MS,
+    )
+    const u = new URL(info.imageUrl)
+    u.searchParams.set("t", token)
+    return u.toString()
+  }
+
   /** The Work Object for one decided link. A locked artifact still gets an entity — a title-less
    *  one, exactly as broadcast-safe as the block card it replaces — because the entity is what
    *  makes the card CLICKABLE, and the flexpane behind it is per-viewer. That is how someone
@@ -293,9 +345,12 @@ export const slackRoutes = (ctx: AppContext) => {
       artifact: d.artifact,
       info: d.info,
       status,
-      // Slack fetches preview images ANONYMOUSLY, so only a world-readable artifact can carry
-      // one; anything else would render /v1/og's title-less padlock as the card's picture.
-      previewUrl: d.artifact.listed === "public" ? d.info.imageUrl : null,
+      // The screenshot. Slack fetches preview images ANONYMOUSLY, so a world-readable artifact
+      // links its OG image directly and a workspace-listed one carries a signed, version-pinned
+      // token that buys that image and nothing else (lib/og-token.ts). `listed: "none"` never
+      // reaches here — decideUnfurl answered it with the locked card above — which is the line
+      // this feature deliberately does not cross: a doc someone marked private stays a padlock.
+      previewUrl: await previewUrlFor(d.artifact, d.info),
       withActions: status.review?.state === "pending",
       iconUrl,
     })
@@ -366,7 +421,14 @@ export const slackRoutes = (ctx: AppContext) => {
     return say(
       {
         kind: "details",
-        metadata: artifactDetails(artifact, info, status, userLink.user_id, iconUrl),
+        metadata: artifactDetails(
+          artifact,
+          info,
+          status,
+          userLink.user_id,
+          iconUrl,
+          await previewUrlFor(artifact, info),
+        ),
       },
       "details",
     )
