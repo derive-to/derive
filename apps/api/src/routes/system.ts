@@ -39,6 +39,53 @@ export const systemRoutes = (ctx: AppContext) => {
     }
   })
 
+  // TEMPORARY DIAGNOSTIC — remove before merge. Times the model gateway with a RAW fetch,
+  // no AI SDK in the path, so "is the provider slow" can be answered without inferring it
+  // from a turn that also builds tools, reads the store and streams deltas. Reports timing
+  // and status only; never the key, and it writes nothing.
+  app.get("/v1/system/model-probe", async (c) => {
+    if (!isToken(c) && !(await isSuperAdmin(c)))
+      return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
+    const base = process.env.DERIVE_MODEL_BASE_URL?.replace(/\/+$/, "")
+    const key = process.env.DERIVE_MODEL_API_KEY
+    const model = process.env.DERIVE_MODEL_NAME
+    if (!base || !key || !model) return c.json({ configured: false, base: !!base, model })
+    const stream = c.req.query("stream") === "1"
+    const started = Date.now()
+    try {
+      const r = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: "say hi in three words" }],
+          max_tokens: 16,
+          ...(stream ? { stream: true } : {}),
+        }),
+        signal: AbortSignal.timeout(60_000),
+      })
+      const headersAt = Date.now() - started
+      const body = await r.text()
+      return c.json({
+        configured: true,
+        model,
+        stream,
+        status: r.status,
+        ms_to_headers: headersAt,
+        ms_total: Date.now() - started,
+        body: body.slice(0, 400),
+      })
+    } catch (e) {
+      return c.json({
+        configured: true,
+        model,
+        stream,
+        ms_total: Date.now() - started,
+        error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
+      })
+    }
+  })
+
   // Operator-only config introspection for `derive doctor`: which optional features are
   // on / off / half-configured, plus the env vars still missing (names only, never secret
   // values). process.env carries the vars on both runtimes (nodejs_compat populate).
