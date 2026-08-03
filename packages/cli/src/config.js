@@ -1101,7 +1101,12 @@ const starterSlides = (title) => `<!doctype html>
     slides.forEach(function(s,k){s.classList.toggle('on',k===i)});
     bar.style.width=((i+1)/slides.length*100)+'%';pos.textContent=(i+1)+' / '+slides.length;announce()}
   function full(){if(!document.fullscreenElement){(document.documentElement.requestFullscreen||function(){})()}else{document.exitFullscreen()}}
+  // Someone typing in this deck (Derive's inline editor makes a block editable) must
+  // get their keystrokes, not a slide change: a space types a space.
+  function editing(){var el=document.activeElement;
+    return !!(el&&(el.isContentEditable||/^(input|textarea|select)$/i.test(el.tagName)))}
   addEventListener('keydown',function(e){
+    if(editing())return;
     if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();show(i+1)}
     else if(e.key==='ArrowLeft'||e.key==='PageUp'){show(i-1)}
     else if(e.key==='f'||e.key==='F'){full()}
@@ -1110,8 +1115,8 @@ const starterSlides = (title) => `<!doctype html>
   document.querySelector('.ctrl').addEventListener('click',function(e){
     var b=e.target.closest('button'); if(!b)return;
     var a=b.getAttribute('data-act'); if(a==='prev')show(i-1); else if(a==='next')show(i+1); else if(a==='full')full()});
-  document.querySelector('.edge.l').addEventListener('click',function(){show(i-1)});
-  document.querySelector('.edge.r').addEventListener('click',function(){show(i+1)});
+  document.querySelector('.edge.l').addEventListener('click',function(){if(!editing())show(i-1)});
+  document.querySelector('.edge.r').addEventListener('click',function(){if(!editing())show(i+1)});
   // accept drive commands from the Derive viewer's presentation bar
   addEventListener('message',function(e){var d=e.data;
     if(!d||d.source!=='derive-host'||d.type!=='deck')return;

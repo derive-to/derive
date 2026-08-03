@@ -146,3 +146,51 @@ test("navigating away with unsaved edits is guarded, not silent", async ({ owner
   await expect(owner).not.toHaveURL(new RegExp(shortId))
   expect(await versionOf(owner, shortId)).toBe(1)
 })
+
+test("double-click the text to enter the mode, with the caret already there", async ({ owner }) => {
+  const shortId = await seed(owner)
+  // No mode yet — the document is being read.
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+
+  // The gesture: double-click the words you came to fix.
+  await doc(owner).locator("#two").dblclick()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+
+  // The caret is IN that block, so typing goes there without a second click.
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" Landed.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+
+  const src = await contentOf(owner, shortId)
+  expect(src).toContain("Second paragraph. Landed.")
+  expect(src).toContain("First paragraph.")
+})
+
+test("`e` opens the mode from the keyboard", async ({ owner }) => {
+  await seed(owner)
+  // The shortcut stays silent until the record says this viewer may edit, so wait
+  // for the affordance that proves it rather than racing the query.
+  await expect(owner.getByTestId("artifact-inline-edit")).toBeVisible()
+  await owner.keyboard.press("e")
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  // …and Escape closes it again (nothing typed, so no confirm).
+  await owner.keyboard.press("Escape")
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+})
+
+test("renaming is metadata — the title changes and the history does not", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "named.html", DOC, "text/html")
+  await openArtifact(owner, shortId)
+
+  await owner.getByTestId("artifact-title").dblclick()
+  const field = owner.getByTestId("artifact-title-rename")
+  await expect(field).toBeVisible()
+  await field.fill("A better name")
+  await field.press("Enter")
+
+  await expect(owner.getByTestId("artifact-title")).toHaveText("A better name")
+  // The rename must not mint a version: that was the whole point of the endpoint.
+  expect(await versionOf(owner, shortId)).toBe(1)
+})
