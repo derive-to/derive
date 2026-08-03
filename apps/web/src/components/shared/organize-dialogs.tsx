@@ -26,9 +26,10 @@ import { cn } from "@/lib/utils"
 // `onChange`; the caller keeps the cache writes.
 //
 // The list is a picker, so it answers "where do I file this" rather than inventorying:
-// a couple of suggestions (your recent desks, then title kinship) above an alphabetical
-// index, one filter-or-create input above both. Membership lives in the row's trailing
-// checkbox — bg-accent stays the pointer/keyboard wash, never a second meaning.
+// a couple of suggestions (your recent desks, where similar work already lives, title
+// kinship) above an alphabetical index, one filter-or-create input above both.
+// Membership lives in the row's trailing checkbox — bg-accent stays the
+// pointer/keyboard wash, never a second meaning.
 
 /** Collections an organize dialog offers at all: hand-made ones. Repo mirrors and PR
  *  previews fill themselves from GitHub, and Brandprint-pointed collections are managed
@@ -159,6 +160,15 @@ export function organizeList(
   return { mode: "browse", suggested, rest: rest.filter((col) => !picked.has(col.id)) }
 }
 
+// A row's small trailing note: why it's inert, or why the Suggested tier picked it.
+const rowHint = (col: Collection, addable: boolean, reason?: SuggestReason): string | undefined => {
+  if (!addable) return "view only"
+  if (reason === "recent" && col.my_last_activity) return ago(col.my_last_activity)
+  if (reason === "neighbors") return "similar artifacts"
+  if (reason === "similar") return "similar title"
+  return undefined
+}
+
 // The menu-row grammar (the dropdown item recipe): rounded-lg, bg-accent as the
 // pointer/keyboard wash only — membership renders in the checkbox, never as a wash.
 const ROW_CLASS =
@@ -265,9 +275,9 @@ export function CollectionsDialog({
   // an artifact's organize menu.
   const brandprintIds = useBrandprintCollectionIds()
   const pickable = pickableCollections(all, brandprintIds)
-  // The semantic tier — "collections where similar artifacts already live", from the
-  // dense index's neighbor vote. Best-effort garnish: a miss, an error, or an install
-  // with no dense arm all read as "no suggestions" and the local tiers carry the list.
+  // The neighbor-vote tier. `data` stays undefined on error or where no dense arm
+  // exists (see collectionSuggestionsQuery), and organizeList treats that as "no
+  // opinion" — the recency and kinship tiers carry the list.
   const { data: semanticIds } = useQuery({
     ...collectionSuggestionsQuery(shortId),
     enabled: open,
@@ -324,17 +334,7 @@ export function CollectionsDialog({
         checked={inSet.has(col.id)}
         disabled={!addable}
         highlighted={idx !== -1 && idx === cursor}
-        hint={
-          !addable
-            ? "view only"
-            : reason === "recent" && col.my_last_activity
-              ? ago(col.my_last_activity)
-              : reason === "neighbors"
-                ? "similar artifacts"
-                : reason === "similar"
-                  ? "similar title"
-                  : undefined
-        }
+        hint={rowHint(col, addable, reason)}
         onSelect={() => toggle(col)}
         onHover={() => setCursor(idx)}
         testId={`collections-menu-${col.id}`}

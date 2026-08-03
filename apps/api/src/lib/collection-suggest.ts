@@ -4,8 +4,9 @@
 // collection titles, so it works when the collections are named "Misc" and "Inbox".
 // Pure; the route owns the reads and every access gate.
 
-/** Rank collections by the summed similarity of the (already visibility-gated)
- *  neighbors filed in them. Ties break by id so equal-scoring collections can't flap
+/** Rank collections by the summed similarity of the neighbors filed in them. Callers
+ *  drop dead neighbors before voting and access-gate the RESULT per collection — this
+ *  sees only ids and scores. Ties break by id so equal-scoring collections can't flap
  *  between requests. */
 export const voteCollections = (
   neighbors: { id: string; score: number }[],

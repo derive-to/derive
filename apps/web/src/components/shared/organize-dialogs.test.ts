@@ -89,16 +89,15 @@ describe("organizeList — browse (no query)", () => {
   })
 
   it("semantic neighbors slot between your recent desks and title kinship", () => {
+    const hood = col({ title: "Neighborhood" })
     const cols = [
       col({ title: "Mine", my_last_activity: "2026-08-01T00:00:00Z" }),
-      col({ title: "Neighborhood" }),
+      hood,
       col({ title: "Pricing archive" }),
       col({ title: "Inbox" }),
       col({ title: "Misc" }),
       col({ title: "Research" }),
     ]
-    const hood = cols[1]
-    if (!hood) throw new Error("fixture")
     const out = organizeList(cols, "", "Q3 pricing page", [hood.id])
     if (out.mode !== "browse") throw new Error("expected browse")
     expect(out.suggested.map((s) => [s.col.title, s.reason])).toEqual([
@@ -109,16 +108,15 @@ describe("organizeList — browse (no query)", () => {
   })
 
   it("semantic ids the list doesn't offer (mirrors, brandprint, unknown) are ignored", () => {
+    const wiki = col({ title: "Wiki", my_role: "viewer" })
     const cols = [
       col({ title: "A" }),
       col({ title: "B" }),
       col({ title: "C" }),
       col({ title: "D" }),
       col({ title: "E" }),
-      col({ title: "Wiki", my_role: "viewer" }),
+      wiki,
     ]
-    const wiki = cols[5]
-    if (!wiki) throw new Error("fixture")
     // A stale/foreign id and a view-only collection: neither may surface as suggested.
     const out = organizeList(cols, "", undefined, ["col_gone", wiki.id])
     if (out.mode !== "browse") throw new Error("expected browse")

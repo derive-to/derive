@@ -95,7 +95,8 @@ describe("collection suggestions", () => {
     expect(anas.map((s) => s.id)).toEqual([colY.id, colX.id])
     expect(anas[0]?.score).toBeCloseTo(1.1)
 
-    // Ben additionally sees his invite-only Z (0.9 + 0.9 tie between X and Z breaks by id).
+    // Ben additionally sees his invite-only Z. X and Z tie at 0.9 and collection ids
+    // are random here, so pin Y first and compare the rest as a set.
     const bens = await suggestionsFor(B)
     expect(bens.map((s) => s.id).sort()).toEqual([colX.id, colY.id, colZ.id].sort())
     expect(bens[0]?.id).toBe(colY.id)
