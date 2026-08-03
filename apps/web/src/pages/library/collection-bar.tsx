@@ -1,20 +1,36 @@
 import { Link } from "@tanstack/react-router"
-import { useEffect, useState } from "react"
+import { type ReactNode, useEffect, useState } from "react"
 import { Icon } from "@/components/icons"
 import { Breadcrumb, CrumbSep, crumbClass } from "@/components/shared/breadcrumb"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { cn } from "@/lib/utils"
 
-// The bar shown when viewing a collection: where you are, and the owner actions
-// (share / rename / delete). Share is the headline — it grants the role on every
-// artifact in the collection.
+// The collection page's ONE chrome row: where you are on the left, what you can do on
+// the right, and nothing louder than the name.
 //
-// The name is the LEAF of a breadcrumb, so the bar answers "where am I" and "how do I
-// get back" in the line that was already showing the title. That replaces the `×
-// Collection` chip that used to sit in the toolbar as the only way out — a second
-// statement of the same fact, in a worse place for it.
+// What this replaced was three rows of chrome (~130px) whose loudest element was the
+// filter input and whose row of four same-sized boxes gave Star, Share, Rename and
+// Delete one visual weight for four different kinds of decision. The grammar now:
+//
+//   - Identity first, once. Breadcrumb + name + count; the count appears nowhere else.
+//   - Rename IS the name: click the title (also in ⋯, for discoverability).
+//   - One filled action — Share, the page's headline act (it grants the role on every
+//     artifact in the collection). Star drops to a quiet icon.
+//   - Destructive and occasional actions live behind ⋯: Rename, New folder, Delete
+//     (with its confirm). Delete as permanent red furniture was an alarm that never
+//     stopped ringing.
+//
+// `tools` is the slot for the page-level instruments the library owns (compact filter,
+// ask, display) so the whole row composes in one place.
 export function CollectionBar({
   title,
   count,
@@ -24,6 +40,8 @@ export function CollectionBar({
   onStar,
   onRename,
   onDelete,
+  onNewFolder,
+  tools,
 }: {
   title: string
   count: number
@@ -37,6 +55,11 @@ export function CollectionBar({
   onStar?: (next: boolean) => void
   onRename: (title: string) => void
   onDelete: () => void
+  /** Present on manual collections the caller can manage — surfaces "New folder" in ⋯. */
+  onNewFolder?: () => void
+  /** The library's instruments (filter, ask, display), rendered between identity and
+   *  actions. */
+  tools?: ReactNode
 }) {
   const [renaming, setRenaming] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -49,7 +72,7 @@ export function CollectionBar({
   }
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2.5 border-b border-border-soft pb-3.5">
+    <div className="mb-4 flex min-h-11 flex-wrap items-center gap-1.5 border-b border-border-soft pb-2">
       {!renaming && (
         <Breadcrumb>
           {ancestors.map((a, i) => (
@@ -59,8 +82,8 @@ export function CollectionBar({
                 search={a.collection ? { collection: a.collection } : {}}
                 data-testid={`crumb-${i}`}
                 title={`Back to ${a.label}`}
-                // One step below the leaf, not three. 14px muted next to a 20px black
-                // serif read as two components colliding, not as a trail.
+                // One step below the leaf — the hierarchy is carried by ink and weight,
+                // not a size cliff.
                 className={cn(
                   "text-base",
                   crumbClass(ancestors.length > 1 && i < ancestors.length - 1),
@@ -84,46 +107,80 @@ export function CollectionBar({
             if (e.key === "Enter") commitRename()
             if (e.key === "Escape") setRenaming(false)
           }}
+          onBlur={commitRename}
           className="max-w-70"
         />
       ) : (
-        // The collection's name is the user's content, not tool chrome — voice
-        // register; the count rides along in the machine register.
-        // The leaf: one step up from the crumb, and the weight and face do the rest.
-        // The count sits in the same register as the crumb rather than dropping to 10px
-        // with a middot in front of it, which read as debris trailing the title.
+        // The name is the page's loudest element, and it behaves like a name: click to
+        // rename. The count rides in the machine register, one step under the crumb.
         <h2 className="flex min-w-0 items-baseline gap-2">
-          <span className="truncate font-serif text-lg font-semibold tracking-tight text-foreground">
+          <button
+            type="button"
+            data-testid="collection-rename"
+            title="Rename"
+            onClick={() => setRenaming(true)}
+            className="min-w-0 cursor-text truncate rounded-sm text-left font-serif text-lg font-semibold tracking-tight text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
             {title}
-          </span>
+          </button>
           <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
             {count}
           </span>
         </h2>
       )}
-      <span className="flex-1" />
-      {/* The star is the whole pinning mechanism — same verb as an artifact's, so there
-          is one idea to learn rather than a separate "add to sidebar". Ghost, never
-          filled: Share is this view's single ink moment. */}
+      <span className="min-w-4 flex-1" />
+      {tools}
+      {/* The star is the whole pinning mechanism — same verb as an artifact's. A quiet
+          icon: Share holds this page's single ink moment. */}
       {onStar && (
-        <Button
-          variant="ghost"
-          size="sm"
+        <button
+          type="button"
           data-testid="collection-star"
           aria-pressed={!!starred}
+          aria-label={starred ? "Unstar" : "Star"}
           title={starred ? "Unstar — remove from your sidebar" : "Star — pin to your sidebar"}
           onClick={() => onStar(!starred)}
+          className="grid size-7 shrink-0 place-items-center rounded-md outline-none transition-colors duration-state hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
         >
           <Icon
             name="star"
-            size={16}
+            size={15}
             weight={starred ? "fill" : "regular"}
-            className={starred ? "text-primary" : undefined}
+            className={starred ? "text-primary" : "text-muted-foreground"}
           />
-          {starred ? "Starred" : "Star"}
-        </Button>
+        </button>
       )}
-      {/* Share is the collection view's one filled primary (the publish launcher
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            data-testid="collection-more"
+            aria-label="More actions"
+            className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors duration-state hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          >
+            <Icon name="more" size={15} />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem data-testid="collection-menu-rename" onSelect={() => setRenaming(true)}>
+            <Icon name="edit" size={16} /> Rename
+          </DropdownMenuItem>
+          {onNewFolder && (
+            <DropdownMenuItem data-testid="collection-new-folder" onSelect={onNewFolder}>
+              <Icon name="collection" size={16} /> New folder
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            data-testid="collection-delete"
+            variant="destructive"
+            onSelect={() => setConfirmingDelete(true)}
+          >
+            <Icon name="delete" size={16} /> Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {/* Share is the collection page's one filled primary (the publish launcher
           doesn't render on this view). */}
       <Button
         variant="default"
@@ -133,22 +190,6 @@ export function CollectionBar({
         title="Share this collection"
       >
         <Icon name="share" size={16} /> Share
-      </Button>
-      <Button
-        variant="outline"
-        size="sm"
-        data-testid="collection-rename"
-        onClick={() => (renaming ? commitRename() : setRenaming(true))}
-      >
-        {renaming ? "Save" : "Rename"}
-      </Button>
-      <Button
-        variant="destructive"
-        size="sm"
-        data-testid="collection-delete"
-        onClick={() => setConfirmingDelete(true)}
-      >
-        Delete
       </Button>
       <ConfirmDialog
         open={confirmingDelete}

@@ -1,4 +1,5 @@
 import { Check, ChevronDown } from "lucide-react"
+import { Icon } from "@/components/icons"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,14 +50,22 @@ export function FilterMenu({
           data-testid="library-filter"
           aria-label={`Filter: ${filterLabel(value)}`}
           className={cn(
-            "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-medium outline-none",
-            "hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-            // Non-default reads as active state — a neutral wash, never a tint (the
-            // ink-deployment rule): the label already says which filter is on.
-            value === "all" ? "text-muted-foreground" : "bg-accent text-foreground",
+            "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2.5 text-xs outline-none transition-colors duration-state",
+            "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+            // At rest it reads as optional, because it is: a dashed chip that says
+            // "+ Filter". A chosen facet fills quietly — the label carries which one.
+            value === "all"
+              ? "border border-dashed border-border text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+              : "border border-border bg-accent font-medium text-foreground",
           )}
         >
-          {filterLabel(value)}
+          {value === "all" ? (
+            <>
+              <Icon name="plus" size={12} aria-hidden /> Filter
+            </>
+          ) : (
+            filterLabel(value)
+          )}
           {needsYou > 0 && value !== "needs-you" && (
             <span
               data-testid="library-filter-needsyou-count"

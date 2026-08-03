@@ -37,11 +37,19 @@ const UNFILED = "__unfiled__"
 export function NewFolderControl({
   collectionId,
   className,
+  open,
+  onOpenChange,
 }: {
   collectionId: string
   className?: string
+  /** Controlled mode — the collection header's ⋯ menu opens this; the input closes
+   *  itself through onOpenChange. Uncontrolled, it renders its own trigger button. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
-  const [creating, setCreating] = useState(false)
+  const [internalCreating, setInternalCreating] = useState(false)
+  const creating = open ?? internalCreating
+  const setCreating = onOpenChange ?? setInternalCreating
   const [name, setName] = useState("")
   const create = useApiMutation({
     mutationFn: (n: string) => api.createFolder(collectionId, n),
@@ -72,11 +80,12 @@ export function NewFolderControl({
         className={cn("max-w-xs", className)}
       />
     )
+  if (open !== undefined) return null
   return (
     <Button
       variant="outline"
       size="sm"
-      data-testid="collection-new-folder"
+      data-testid="collection-new-folder-button"
       onClick={() => setCreating(true)}
       className={cn("self-start", className)}
     >
