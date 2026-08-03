@@ -43,6 +43,9 @@ export interface VectorStore {
   deleteByIds(ids: string[]): Promise<void>
   deleteByArtifact(artifactId: string): Promise<void>
   query(orgId: string, vector: number[], topK: number): Promise<VectorMatch[]>
+  /** One stored embedding by its vector id, or null when absent — lets a caller run a
+   *  similarity query FROM an already-indexed chunk without re-embedding anything. */
+  getVector(vectorId: string): Promise<number[] | null>
 }
 
 // Serialize a JS number[] to a pgvector text literal `[1,2,3]`. Guards NaN/Infinity (a bad
@@ -157,6 +160,21 @@ export class PgVectorStore implements VectorStore {
   // Every chunk vector for an artifact, in one statement — the clean hard-delete path (unindex).
   async deleteByArtifact(artifactId: string): Promise<void> {
     await this.sql.query(`DELETE FROM ${this.table} WHERE artifact_id = $1`, [artifactId])
+  }
+
+  // One stored embedding, read back as a JS vector. pgvector's text form is `[0.1,0.2,…]` —
+  // valid JSON — so parse rather than hand-split. Null when the id has no row.
+  async getVector(vectorId: string): Promise<number[] | null> {
+    const { rows } = await this.sql.query(
+      `SELECT embedding::text AS embedding FROM ${this.table} WHERE vector_id = $1`,
+      [vectorId],
+    )
+    const text = rows[0]?.embedding
+    if (typeof text !== "string") return null
+    const parsed: unknown = JSON.parse(text)
+    if (!Array.isArray(parsed) || parsed.some((n) => typeof n !== "number"))
+      throw new Error(`stored vector ${vectorId} did not parse to a number array`)
+    return parsed as number[]
   }
 
   // Top-`topK` nearest chunks in ONE org by cosine similarity. Returns similarity (1 − distance)

@@ -95,4 +95,27 @@ export class PgvectorSearchIndex implements SearchIndex {
     const matches = await this.store.query(orgId, vector, SEARCH_TOPK)
     return rollupBestChunk(matches, limit, this.embedder.minScore)
   }
+
+  // Nearest OTHER artifacts to one already-indexed artifact — same rollup, floor, and
+  // no-visibility contract as `search`, but the query vector is the artifact's stored
+  // LEAD chunk (chunk 0 = title + opening, the closest thing to a whole-doc summary
+  // vector), so no embed call happens at query time. The bare legacy id covers a
+  // pre-chunking vector that hasn't been re-indexed yet. Empty when the artifact has
+  // no vector (never indexed, or the dense arm was down at publish) — callers treat
+  // that as "no opinion", not an error.
+  async similar(
+    orgId: string,
+    artifactId: string,
+    limit: number,
+  ): Promise<{ id: string; score: number; chunk: string }[]> {
+    const vector =
+      (await this.store.getVector(`${artifactId}#0`)) ?? (await this.store.getVector(artifactId))
+    if (!vector) return []
+    const matches = await this.store.query(orgId, vector, SEARCH_TOPK)
+    return rollupBestChunk(
+      matches.filter((m) => m.artifactId !== artifactId),
+      limit,
+      this.embedder.minScore,
+    )
+  }
 }

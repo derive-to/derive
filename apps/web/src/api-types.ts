@@ -2585,6 +2585,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/collection-suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Collections where work similar to this artifact already lives (members only). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Suggested collections, best first. Empty whenever there's no signal. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            suggestions: components["schemas"]["CollectionSuggestion"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/bulk/collections": {
         parameters: {
             query?: never;
@@ -6429,6 +6469,12 @@ export interface components {
             prNumber?: number;
             /** @description For repo/PR collections: the "owner/name" slug. */
             repo?: string;
+        };
+        CollectionSuggestion: {
+            /** @description The suggested collection's id. */
+            id: string;
+            /** @description Summed neighbor-similarity votes — an ordering signal, not a probability. */
+            score: number;
         };
         Folder: {
             id: string;
