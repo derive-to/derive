@@ -29,8 +29,10 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 // here is chat machinery — it is components/chat/* plus this page's own three decisions: which
 // workspace, which model, and which past conversation.
 //
-// The full-width view of the conversation the assistant dock also holds (chrome/assistant-panel):
-// reached by the dock's Expand, by the rail row on a phone (where there is no dock), and by link.
+// The full-width view of the conversation the ⌘K palette also holds (chrome/palette-ask): reached
+// by that view's Open in chat, by the rail row on a phone (where a conversation does not fit in a
+// modal), and by link. It is also where the agent has room to WRITE — the palette is the same lane
+// and can too, but this is the surface with history and a stop control.
 
 interface ChatSessionRow {
   id: string
@@ -254,7 +256,7 @@ export function ChatPage() {
                 description={
                   chatOff
                     ? "An admin can turn chat on in workspace settings."
-                    : "Derive searches and reads with your own permissions, and links what it used."
+                    : "Derive searches, reads and writes with your own permissions, and links what it used."
                 }
               />
               {!chatOff && (
