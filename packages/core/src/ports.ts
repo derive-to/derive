@@ -1227,6 +1227,26 @@ export interface IntegrationStore {
    * Derive user — one of them DMs `user_id` directly — so a miss leaking through here would
    * be a message sent to an id that does not exist. Ask `getSlackIdentityState` when you
    * actually want to know whether we have looked before.
+   *
+   * IT RETURNS BOTH `oauth` AND `email` ROWS, and every Slack-originated authority in the
+   * product rests on that. Worth stating plainly, because the two are not the same claim: an
+   * `oauth` row means somebody completed Slack sign-in and proved control of the Derive
+   * account; an `email` row means their Slack profile address matched a member (lib/
+   * slack-mention.ts, which introduced it so that answering in Slack would not require a
+   * detour through Settings).
+   *
+   * The accepted policy is that BOTH are identities, workspace-wide. It is not an accident of
+   * this filter, and code should not quietly assume otherwise. Membership and role are checked
+   * separately in every case, so resolving an identity grants nothing on its own — a matched
+   * email with no seat is nobody. What it does mean is that an actor able to set a Slack
+   * profile email can act as the matching member: normally that requires verifying the address
+   * (so, control of their mailbox — at which point Derive's own password reset is open too),
+   * and the residual path is a workspace admin setting emails through SCIM without one.
+   *
+   * If that trade is ever revisited, revisit it HERE and for every lane at once. Tightening one
+   * caller alone would be incoherent while the chat turn — which already acts as the asker's
+   * seat with `publish` and `comment` in its tool surface — accepts the same row: somebody
+   * refused at a button could simply ask the agent to do it instead.
    */
   getSlackUserLinkBySlackId(
     teamId: string,
