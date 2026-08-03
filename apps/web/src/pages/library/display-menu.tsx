@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { cn } from "@/lib/utils"
 import { LIBRARY_SORTS } from "./sort"
 
 // The library's one "how is this list shown" control — order, and (in an organized
@@ -19,14 +20,22 @@ import { LIBRARY_SORTS } from "./sort"
 // the toolbar and a stray grouping toggle floating over the grid. Built on the dropdown
 // system (non-modal, composes inside dialogs) like SortMenu was.
 export function DisplayMenu({
+  layout,
+  onLayout,
   sort,
   onSort,
   group,
+  labeled = false,
 }: {
+  /** On the view row it wears its name, matching the Filter control beside it; in a
+   *  tight header (a collection page's tools cluster) it stays an icon. */
+  labeled?: boolean
   sort: SortMode
   onSort: (mode: SortMode) => void
   // Present only where grouping is possible (a manual collection with folders).
   group?: { on: boolean; onChange: (on: boolean) => void }
+  layout: "grid" | "list"
+  onLayout: (next: "grid" | "list") => void
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -35,13 +44,32 @@ export function DisplayMenu({
           type="button"
           data-testid="library-display"
           aria-label="Display options"
-          className="flex h-8 w-fit items-center gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2.5 pl-2.5 text-sm whitespace-nowrap shadow-(--shadow-sm) outline-none select-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 dark:bg-input/30 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground"
+          title="Display"
+          className={cn(
+            "shrink-0 rounded-md text-muted-foreground outline-none transition-colors duration-state hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+            labeled
+              ? "inline-flex h-7 items-center gap-1.5 px-2 text-xs [&_svg]:size-3.5"
+              : "grid size-7 place-items-center [&_svg]:size-4",
+          )}
         >
-          <SlidersHorizontal />
-          Display
+          <SlidersHorizontal aria-hidden />
+          {labeled && "Display"}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuLabel>Layout</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={layout}
+          onValueChange={(v) => onLayout(v as "grid" | "list")}
+        >
+          <DropdownMenuRadioItem value="grid" className="py-1.5 pr-8 pl-2">
+            Grid
+          </DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="list" className="py-1.5 pr-8 pl-2">
+            List
+          </DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>Sort by</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as SortMode)}>
           {LIBRARY_SORTS.map((s) => (

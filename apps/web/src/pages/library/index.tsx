@@ -1,3 +1,4 @@
+import type { SortMode } from "@derive/core"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { FolderTree, List } from "lucide-react"
@@ -9,10 +10,8 @@ import { AskButton } from "@/components/shared/ask-button"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ConnectAgentButton } from "@/components/shared/connect-agent"
 import { EmptyState } from "@/components/shared/empty-state"
-import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
@@ -28,34 +27,38 @@ import {
 } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { useDelayedPending } from "@/lib/use-delayed-pending"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
-import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactGrid } from "./artifact-grid"
-import { ArtifactRow, byRecency } from "./artifact-row"
+import { ArtifactListRow, ListShell } from "./artifact-list"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
+import { CollectionsView } from "./collections-view"
 import { ConnectNudge, useConnectNudge } from "./connect-nudge"
 import { DisplayMenu } from "./display-menu"
+import { FilterMenu } from "./filter-menu"
 import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
+import { LibraryDropZone } from "./library-drop-zone"
 import { LibrarySkeleton } from "./library-skeleton"
+import { NewArtifactButton } from "./new-artifact-button"
 import { libraryFeedParams } from "./params"
-import { PublishCard } from "./publish-card"
 import { LibraryCollectionsDialog } from "./quick-organize"
+import { byRecency } from "./recency"
 import { RepoPullRequests } from "./repo-pull-requests"
 import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import { DEFAULT_SORT } from "./sort"
-import { TriageBar } from "./triage-bar"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
 import { useLibraryFeed } from "./use-library-feed"
 import { type LibrarySelection, useLibrarySelection } from "./use-library-selection"
+import { ViewSwitch } from "./view-switch"
 
 // The library surface, shared by five routes: "/" (your work), "/favorites",
 // "/following", "/shared", and "/feedback". The base feed comes from the route (the
@@ -70,8 +73,8 @@ export function Library({ view }: { view: LibraryView }) {
 }
 
 // The active filter = the base feed (from the route: `view`) unless it's the home
-// library, where a collection query param narrows it. The named feeds are their own
-// routes, so their collection filter can't apply.
+// library, where the `filter` menu and a collection query param narrow it. The named
+// feeds are their own routes, so neither applies there.
 function deriveFilter(
   view: LibraryView,
   search: LibrarySearch,
@@ -81,7 +84,10 @@ function deriveFilter(
   if (view === "following") return { kind: "following" }
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
-  if (search.tab === "mine") return { kind: "mine" }
+  if (search.filter === "needs-you") return { kind: "feedback" }
+  if (search.filter === "mine") return { kind: "mine" }
+  if (search.filter === "shared") return { kind: "shared" }
+  if (search.filter === "starred") return { kind: "favorites" }
   if (search.collection)
     return {
       kind: "collection",
@@ -101,6 +107,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const bootGate = useBootGate()
   const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
   const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me && bootGate })
+  // The Collections view is home-only and never shows while a shelf is open — opening
+  // one IS the `collection` filter, so the switch would be offering you the place you
+  // are already standing.
+  const showCollections = view === "all" && search.view === "collections" && !search.collection
+  // Brandprint-pointed collections take artifacts through Settings, not the shelves.
+  const brandprintIds = useBrandprintCollectionIds()
+  const visibleCollections = collections.filter((c) => !brandprintIds.has(c.id))
   const prefetch = usePrefetchArtifact()
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
@@ -187,9 +200,39 @@ function LibraryBody({ view }: { view: LibraryView }) {
       return {}
     }
   })
+  // The ⋯ menu's "New folder" opens the inline input under the collection header.
+  const [newFolderOpen, setNewFolderOpen] = useState(false)
+  // Opened from the toolbar's one New button; the Collections view renders the field.
+  const [newCollection, setNewCollection] = useState<string | null>(null)
+  // Grid or list, remembered per browser and applied everywhere. Previously the route
+  // decided: cards at home, rows in a synced repo, a third arrangement under the folder
+  // toggle.
+  const [layout, setLayoutState] = useState<"grid" | "list">(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEYS.libraryLayout) === "list" ? "list" : "grid"
+    } catch {
+      return "grid"
+    }
+  })
+  const setLayout = (next: "grid" | "list") => {
+    setLayoutState(next)
+    try {
+      localStorage.setItem(STORAGE_KEYS.libraryLayout, next)
+    } catch {
+      /* private mode: the choice just doesn't persist */
+    }
+  }
   // Opening an artifact from a collection carries that collection as list context, so
   // the artifact header can page between its siblings (the sibling switcher). Other
   // feeds pass nothing — a direct/feed open has no single collection to page within.
+  // Sort has two controls now — the Display menu and the list's column headers — so the
+  // write lives in one place rather than being spelled out at each.
+  const setSort = (mode: SortMode) =>
+    nav({
+      to: ".",
+      search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
+      replace: true,
+    })
   const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
   const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
   // A manual collection that HAS folders defaults to the grouped folder view; the
@@ -241,12 +284,33 @@ function LibraryBody({ view }: { view: LibraryView }) {
     onSuccess: (_data, { id }) => nav({ to: "/", search: { collection: id } }),
   })
   const renameCollection = (id: string, title: string) => renameCol.mutate({ id, title })
+
+  // Creating a shelf belongs where you can see the ones you already have — the rail's
+  // permanent inline form is the thing this replaces.
+  const createCol = useApiMutation({
+    mutationFn: (title: string) => api.createCollection(title),
+    invalidate: [collectionsQuery().queryKey],
+    onSuccess: (col) => nav({ to: "/", search: { collection: col.id } }),
+  })
   const deleteCol = useApiMutation({
     mutationFn: (id: string) => api.deleteCollection(id),
     invalidate: [collectionsQuery().queryKey],
     onSuccess: () => nav({ to: "/", search: {} }),
   })
   const deleteCollection = (id: string) => deleteCol.mutate(id)
+
+  // Starring is optimistic: it is personal, reversible, and the sidebar should move the
+  // instant you click. The primitive rolls back and toasts if the write fails.
+  const starCol = useApiMutation({
+    mutationFn: ({ id, on }: { id: string; on: boolean }) => api.starCollection(id, on),
+    optimistic: ({ id, on }) => {
+      const key = collectionsQuery().queryKey
+      const prev = qc.getQueryData(key)
+      qc.setQueryData(key, (old) => old?.map((c) => (c.id === id ? { ...c, starred: on } : c)))
+      return () => qc.setQueryData(key, prev)
+    },
+    invalidate: [collectionsQuery().queryKey],
+  })
 
   // Destructive intent is confirmed in the shared ConfirmDialog — rows only stage here.
   const [pendingDelete, setPendingDelete] = useState<Artifact | null>(null)
@@ -286,6 +350,17 @@ function LibraryBody({ view }: { view: LibraryView }) {
         .filter((c) => c.kind === "pr" && c.parentId === prParentId)
         .sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
     : []
+  // Where this collection sits. A PR preview genuinely nests under its repo mirror, so
+  // the trail says so; everything else is one level under the library.
+  const parentRepo =
+    activeCollection?.kind === "pr" && activeCollection.parentId
+      ? collections.find((c) => c.id === activeCollection.parentId)
+      : undefined
+  const collectionAncestors = [
+    { label: "Library" },
+    ...(parentRepo ? [{ label: parentRepo.title, collection: parentRepo.id }] : []),
+  ]
+
   const collectionTitle =
     activeCollection?.title ?? feed.data?.pages?.[0]?.collection?.title ?? "Collection"
 
@@ -295,23 +370,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const homeView = (filter.kind === "all" || filter.kind === "mine") && !isSearching
   const { data: feedbackData } = useQuery({ ...needsFeedbackArtifactsQuery(), enabled: homeView })
   const feedbackCount = feedbackData?.length ?? 0
-
-  // The greeting NEVER branches on a pending query. The "/" loader prefetches the count
-  // without awaiting it (awaiting gated the whole grid behind this header, ~450ms on a
-  // cold boot), so on cold boots `summary` can be briefly unresolved — the `totalKnown`
-  // guard is the primary defense now, not belt-and-suspenders: neutral "Welcome," until
-  // the count says returning or new, never the wrong copy on a guess. Warm boots hit the
-  // cache and paint the full greeting on the first frame, exactly as before.
-  const firstName =
-    me?.name?.trim().split(/\s+/)[0] ||
-    (me?.username ? `@${me.username}` : me?.email?.split("@")[0]) ||
-    "there"
-  const totalKnown = summary !== undefined
-  const greetingTitle = !totalKnown
-    ? `Welcome, ${firstName}.`
-    : summary.total === 0
-      ? `Welcome to Derive, ${firstName}.`
-      : `Welcome back, ${firstName}.`
 
   const heading =
     filter.kind === "all"
@@ -345,8 +403,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
             ? activeCollection?.count
             : undefined
 
-  const showPublish =
-    !isSearching && (filter.kind === "all" || filter.kind === "mine" || filter.kind === "favorites")
+  const connectNudge = useConnectNudge()
+  // The page's one primary action, and it is STABLE: it does not blink out while you
+  // type in the filter, and it shows alongside the connect-agent card. (It used to
+  // share that card's one-prompt-at-a-time gate — inherited from the old publish
+  // BANNER, which really did compete with the card — which left a brand-new workspace
+  // with no visible way to create anything by hand.)
+  const showPublish = filter.kind === "all" || filter.kind === "mine" || filter.kind === "favorites"
 
   const emptyProps = emptyStateFor(filter, isSearching, debouncedQ, nav)
   // The first-run guide is for a genuinely blank home (your work is empty and you're not
@@ -356,125 +419,204 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   // The activation card's state — read here so the Brandprint nudge can yield to it
   // (one onboarding surface per screen; connecting an agent comes first).
-  const connectNudge = useConnectNudge()
+
+  // The identity row's count: the collections tab counts shelves; everything else
+  // reuses the heading count (server-authoritative numbers only, or the search hits).
+  const identityCount = showCollections ? visibleCollections.length : headingCount
+
+  // The filter, compact: a summoned tool, not resident chrome. It grows on focus, "/"
+  // still lands in it, typing filters by title, and Enter still escalates to full
+  // search — the affordance shrank, the reach didn't.
+  const filterField = (
+    <SearchField
+      value={query}
+      onValueChange={setQuery}
+      onEnter={(v) => nav({ to: "/search", search: { q: v } })}
+      placeholder="Filter…"
+      aria-label="Filter artifacts by title, or press Enter to search all content"
+      testId="library-search"
+      hotkey
+      onAsk={(v) => askFromField(v)}
+      className="w-44 transition-[width] duration-state focus-within:w-72"
+    />
+  )
 
   return (
     <PageShell scrollRef={scrollRef} width="wide">
-      {/* The full "Activity" feed, reached from the People tab's Recent-activity peek
-          ("View all"). The People page itself shows who you follow + a preview of this. */}
-      {view === "following" && (
-        <PageHeader
-          className="mb-5"
-          title="Activity"
-          subtitle="Recent work from the people you follow."
+      {/* Anywhere you can see artifacts, you can drop files. On a collection page the
+          drop files them there too. Not mounted on the Collections digest — dropping a
+          file "into" a page of shelves has no honest meaning. */}
+      {!showCollections && (
+        <LibraryDropZone
+          collection={filter.kind === "collection" ? filter.id : undefined}
+          collectionTitle={filter.kind === "collection" ? collectionTitle : undefined}
         />
       )}
-      {homeView && (
-        <PageHeader
-          className="mb-4"
-          titleTestId="library-greeting"
-          title={greetingTitle}
-          subtitle={
-            <>
-              Your artifacts live here — most recently updated first. Publish one below, or run{" "}
-              {/* Links to /welcome — reachable any time; its "Connect an agent" step
-                  is the in-app guide to publishing over the CLI/MCP. */}
-              <Link
-                to="/welcome"
-                data-testid="library-cli-guide"
-                title="How to publish from the CLI or an agent (MCP)"
-                className="inline-flex h-5 items-center rounded-sm bg-muted px-1 font-mono text-2xs font-medium text-foreground/70 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              >
-                derive publish
-              </Link>
-              .
-            </>
-          }
-        />
-      )}
-
-      <div className="mb-4.5 flex flex-wrap items-center gap-2.5">
-        <SearchField
-          value={query}
-          onValueChange={setQuery}
-          // The box filters the list by TITLE; Enter escalates to full-text + semantic search
-          // over the whole workspace on the /search page (the reach titles alone can't).
-          onEnter={(v) => nav({ to: "/search", search: { q: v } })}
-          placeholder="Filter by title, or ↵ to search everything…"
-          aria-label="Filter artifacts by title, or press Enter to search all content"
-          testId="library-search"
-          hotkey
-          onAsk={(v) => askFromField(v)}
-          className="min-w-50 flex-1"
-        />
-        {/* The third gear on the same box: typing filters, ↵ searches, this asks. A visible
-            control rather than only ⌘↵, because the whole point of putting it here is that
-            somebody who has never opened the chat finds it while doing something else. */}
-        <AskButton text={query} testId="library-ask" />
-        {filter.kind === "collection" && (
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="library-clear-filter"
-            onClick={() => nav({ to: "/", search: {} })}
-          >
-            <Icon name="collection" size={16} /> {collectionTitle}
-            <Icon name="close" size={16} />
-          </Button>
-        )}
-        {search.author && (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="library-author-filter-clear"
-              title={`Clear author filter: ${search.author}`}
-              onClick={clearAuthor}
-            >
-              <Icon name="user" size={16} /> {search.author}
-              <Icon name="close" size={16} />
-            </Button>
-            <Button
-              variant={followingAuthor ? "secondary" : "outline"}
-              size="sm"
-              data-testid={`library-follow-author-${search.author}`}
-              aria-pressed={followingAuthor}
-              title={
-                followingAuthor
-                  ? `Unfollow @${search.author}`
-                  : `Follow @${search.author} to see their changes in your feed`
-              }
-              onClick={() => search.author && toggleAuthor(search.author)}
-            >
-              {followingAuthor ? (
-                <>
-                  <Icon name="check" size={16} /> Following
-                </>
-              ) : (
-                <>
-                  <Icon name="following" size={16} /> Follow @{search.author}
-                </>
+      {/* ONE header per page, and nothing on it louder than the page's name. The old
+          chrome led with a full-width filter input — the loudest possible way to say
+          "you might want to type" — and pushed the page's identity to the second row.
+          Tools are summoned (the filter grows on focus, "/" still lands in it); actions
+          are few, small, and ranked. */}
+      {filter.kind === "collection" ? (
+        <>
+          <CollectionBar
+            title={heading}
+            count={headingCount ?? items.length}
+            ancestors={collectionAncestors}
+            onShare={() => activeCollection && setShareCol(activeCollection)}
+            starred={activeCollection?.starred}
+            onStar={
+              activeCollection
+                ? (next) => starCol.mutate({ id: activeCollection.id, on: next })
+                : undefined
+            }
+            onRename={(t) => renameCollection(filter.id, t)}
+            onDelete={() => deleteCollection(filter.id)}
+            onNewFolder={canManageFolders ? () => setNewFolderOpen(true) : undefined}
+            tools={
+              <>
+                {filterField}
+                <AskButton text={query} testId="library-ask" />
+                <DisplayMenu
+                  layout={layout}
+                  onLayout={setLayout}
+                  sort={search.sort ?? DEFAULT_SORT}
+                  onSort={setSort}
+                  group={
+                    isManualCollection && folders.length > 0
+                      ? { on: foldersView, onChange: setGrouped }
+                      : undefined
+                  }
+                />
+              </>
+            }
+          />
+          {canManageFolders && (
+            <NewFolderControl
+              collectionId={filter.id}
+              className="mb-3"
+              open={newFolderOpen}
+              onOpenChange={setNewFolderOpen}
+            />
+          )}
+          <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
+        </>
+      ) : (
+        <>
+          <div className="flex min-h-10 flex-wrap items-center gap-1.5">
+            <h1 className="flex min-w-0 items-baseline gap-2">
+              <span className="truncate font-serif text-lg font-semibold tracking-tight text-foreground">
+                {view === "all" ? "Library" : heading}
+              </span>
+              {identityCount !== undefined && (
+                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                  {identityCount}
+                </span>
               )}
-            </Button>
-          </>
-        )}
-        <DisplayMenu
-          sort={search.sort ?? DEFAULT_SORT}
-          onSort={(mode) =>
-            nav({
-              to: ".",
-              search: (prev) => ({ ...prev, sort: mode === DEFAULT_SORT ? undefined : mode }),
-              replace: true,
-            })
-          }
-          // The grouping knob lives here too, but only where grouping is possible.
-          group={
-            isManualCollection && folders.length > 0
-              ? { on: foldersView, onChange: setGrouped }
-              : undefined
-          }
-        />
-      </div>
+            </h1>
+            <span className="min-w-4 flex-1" />
+            {search.author && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="library-author-filter-clear"
+                  title={`Clear author filter: ${search.author}`}
+                  onClick={clearAuthor}
+                >
+                  <Icon name="user" size={16} /> {search.author}
+                  <Icon name="close" size={16} />
+                </Button>
+                <Button
+                  variant={followingAuthor ? "secondary" : "outline"}
+                  size="sm"
+                  data-testid={`library-follow-author-${search.author}`}
+                  aria-pressed={followingAuthor}
+                  title={
+                    followingAuthor
+                      ? `Unfollow @${search.author}`
+                      : `Follow @${search.author} to see their changes in your feed`
+                  }
+                  onClick={() => search.author && toggleAuthor(search.author)}
+                >
+                  {followingAuthor ? (
+                    <>
+                      <Icon name="check" size={16} /> Following
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="following" size={16} /> Follow @{search.author}
+                    </>
+                  )}
+                </Button>
+              </>
+            )}
+            {filterField}
+            <AskButton text={query} testId="library-ask" />
+            {/* Feeds have no view row, so Display stays up here for them; home's moves
+                down beside Filter — the two are one kind of control and sit together. */}
+            {view !== "all" && (
+              <DisplayMenu
+                layout={layout}
+                onLayout={setLayout}
+                sort={search.sort ?? DEFAULT_SORT}
+                onSort={setSort}
+              />
+            )}
+            {showCollections ? (
+              <Button size="sm" data-testid="collections-new" onClick={() => setNewCollection("")}>
+                <Icon name="plus" size={16} /> New collection
+              </Button>
+            ) : (
+              showPublish && <NewArtifactButton />
+            )}
+          </div>
+          {/* The tab row, home only: Artifacts ⇄ Collections are views of one place,
+              which is what underline tabs say. The facet menu rides the same line as a
+              quiet chip — it reads as optional because it is. A named feed IS a filter,
+              so it gets neither. */}
+          {view === "all" && !search.collection ? (
+            <div className="mb-5 flex items-center gap-4 border-b border-border-soft">
+              <ViewSwitch
+                value={showCollections ? "collections" : "artifacts"}
+                onChange={(next) =>
+                  nav({
+                    to: "/",
+                    search: {
+                      ...search,
+                      view: next === "collections" ? "collections" : undefined,
+                    },
+                  })
+                }
+              />
+              <span className="flex-1" />
+              {!showCollections && (
+                <span className="flex items-center gap-1">
+                  <FilterMenu
+                    needsYou={feedbackCount}
+                    value={search.filter ?? "all"}
+                    onChange={(next) =>
+                      nav({
+                        to: "/",
+                        search: { ...search, filter: next === "all" ? undefined : next },
+                      })
+                    }
+                  />
+                  <DisplayMenu
+                    labeled
+                    layout={layout}
+                    onLayout={setLayout}
+                    sort={search.sort ?? DEFAULT_SORT}
+                    onSort={setSort}
+                  />
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="mb-4" />
+          )}
+        </>
+      )}
 
       {/* Following feed: the manage strip of current follows sits above the heading. */}
       {filter.kind === "following" && (
@@ -486,128 +628,55 @@ function LibraryBody({ view }: { view: LibraryView }) {
           agent path leads; hand-publishing stays one row below. */}
       {homeView && <ConnectNudge nudge={connectNudge} />}
 
-      {showPublish && <PublishCard />}
-
-      {/* The quiet triage line — one entry point to the /feedback feed, home only. Its
-          count is prefetched (not awaited) by the "/" loader, so on a cold boot it can
-          resolve after first paint. While unresolved, hold the bar's exact height: the
-          common outcome (a returning user with feedback) then swaps in with zero shift.
-          Resolving to zero collapses the slot once — absorbed by the grid's above-content
-          observer (artifact-grid.tsx scrollMargin), and a disappearing gap reads as a
-          tidy-up where an appearing bar would read as a jump. */}
-      {homeView &&
-        (feedbackData === undefined ? (
-          <div aria-hidden className="mb-6 h-10" />
-        ) : feedbackCount > 0 ? (
-          <div className="mb-6">
-            <TriageBar count={feedbackCount} />
-          </div>
-        ) : null)}
-
       {/* One-time, dismissible: the owner of a Brandprint-less workspace gets the
           "first on the team" setup nudge here (spec: Onboarding / Timing). */}
       {homeView && connectNudge.stage === null && <BrandprintNudge />}
 
-      {filter.kind === "collection" ? (
-        <>
-          <CollectionBar
-            title={heading}
-            count={headingCount ?? items.length}
-            onShare={() => activeCollection && setShareCol(activeCollection)}
-            onRename={(t) => renameCollection(filter.id, t)}
-            onDelete={() => deleteCollection(filter.id)}
-          />
-          <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
-        </>
-      ) : view === "all" && !isSearching ? (
-        // Always both tabs, even over the first-run guide — an empty "Created
-        // by me" tab is a fine place to land before you've published anything.
-        <LibraryTabs
-          active={filter.kind === "mine" ? "mine" : "all"}
-          total={summary?.total}
-          mine={summary?.mine}
+      {showCollections ? (
+        <CollectionsView
+          collections={visibleCollections}
+          onStar={(id, next) => starCol.mutate({ id, on: next })}
+          onCreate={(title) => createCol.mutate(title)}
+          draft={newCollection}
+          setDraft={setNewCollection}
         />
-      ) : (
-        // Hide the heading on a brand-new empty home — the visual guide carries it.
-        !emptyHome && (
-          <SectionEyebrow className="mb-3.5" count={headingCount}>
-            {heading}
-          </SectionEyebrow>
-        )
-      )}
+      ) : null}
 
-      {isPending ? (
-        showSkeleton ? (
-          <LibrarySkeleton />
-        ) : null
-      ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn’t load the library"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="library-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
-        />
-      ) : items.length === 0 ? (
-        emptyHome ? (
-          <HowItWorks />
-        ) : (
-          <EmptyState {...emptyProps} />
-        )
-      ) : isSyncedCollection ? (
-        <SyncedCollection
-          items={recencyItems}
-          showFolders={showFolders}
-          onToggle={setShowFolders}
-          hasNextPage={!!hasNextPage}
-          isFetchingNextPage={isFetchingNextPage}
-          onLoadMore={() => fetchNextPage()}
-          onOpen={(a) =>
-            nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-          }
-          onToggleFavorite={toggleFavorite}
-          onPickAuthor={pickAuthor}
-          onAddToCollection={setPendingCollections}
-          onDelete={setPendingDelete}
-          onPrefetch={(a) => prefetch(a.short_id)}
-          selection={selection}
-        />
-      ) : isManualCollection && folders.length > 0 ? (
-        // An organized manual collection. Grouping is DECOUPLED from presentation: the
-        // Display menu's "Group by folder" flips grouping on/off, and BOTH states are the
-        // card grid — grouping never costs you the thumbnails. Default grouped.
-        foldersView ? (
-          <CollectionFolders
-            collectionId={filter.id}
-            items={items}
-            folders={folders}
-            assignments={folderAssignments}
-            canManage={!!canManageFolders}
-            hasNextPage={!!hasNextPage}
-            isFetchingNextPage={isFetchingNextPage}
-            scrollToFolderId={folderAnchor}
-            onOpen={(a) =>
-              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-            }
-            onToggleFavorite={toggleFavorite}
-            onAddToCollection={setPendingCollections}
-            onDelete={setPendingDelete}
-            onPrefetch={(a) => prefetch(a.short_id)}
-            selection={selection}
-          />
-        ) : (
-          <>
-            <ArtifactGrid
-              items={items}
-              scrollRef={scrollRef}
+      {/* The artifact body. Absent in the Collections view — that view IS the page, and
+          rendering the grid underneath it put shelves and artifacts on one screen. */}
+      {!showCollections && (
+        <>
+          {isPending ? (
+            showSkeleton ? (
+              <LibrarySkeleton />
+            ) : null
+          ) : isError ? (
+            <StatusPanel
+              tone="danger"
+              title="Couldn’t load the library"
+              description="This is usually temporary."
+              action={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="library-retry"
+                  onClick={() => refetch()}
+                >
+                  Try again
+                </Button>
+              }
+            />
+          ) : items.length === 0 ? (
+            emptyHome ? (
+              <HowItWorks />
+            ) : (
+              <EmptyState {...emptyProps} />
+            )
+          ) : isSyncedCollection ? (
+            <SyncedCollection
+              items={recencyItems}
+              showFolders={showFolders}
+              onToggle={setShowFolders}
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
               onLoadMore={() => fetchNextPage()}
@@ -615,44 +684,90 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
               }
               onToggleFavorite={toggleFavorite}
+              onPickAuthor={pickAuthor}
               onAddToCollection={setPendingCollections}
               onDelete={setPendingDelete}
               onPrefetch={(a) => prefetch(a.short_id)}
               selection={selection}
             />
-            {isFetchingNextPage && (
-              <div className="flex justify-center py-2" data-testid="library-loading-more">
-                <Spinner />
-              </div>
-            )}
-          </>
-        )
-      ) : (
-        <>
-          {/* No folders yet on a manual collection → keep the card grid; an editor gets a
-              "New folder" to start organizing (the view flips to folders once one exists). */}
-          {filter.kind === "collection" && canManageFolders && (
-            <NewFolderControl collectionId={filter.id} className="mb-3" />
-          )}
-          <ArtifactGrid
-            items={items}
-            scrollRef={scrollRef}
-            hasNextPage={!!hasNextPage}
-            isFetchingNextPage={isFetchingNextPage}
-            onLoadMore={() => fetchNextPage()}
-            onOpen={(a) =>
-              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-            }
-            onToggleFavorite={toggleFavorite}
-            onAddToCollection={setPendingCollections}
-            onDelete={setPendingDelete}
-            onPrefetch={(a) => prefetch(a.short_id)}
-            selection={selection}
-          />
-          {isFetchingNextPage && (
-            <div className="flex justify-center py-2" data-testid="library-loading-more">
-              <Spinner />
-            </div>
+          ) : isManualCollection && folders.length > 0 ? (
+            // An organized manual collection. Grouping is DECOUPLED from presentation: the
+            // Display menu's "Group by folder" flips grouping on/off, and BOTH states are the
+            // card grid — grouping never costs you the thumbnails. Default grouped.
+            foldersView ? (
+              <CollectionFolders
+                collectionId={filter.id}
+                items={items}
+                folders={folders}
+                assignments={folderAssignments}
+                canManage={!!canManageFolders}
+                hasNextPage={!!hasNextPage}
+                isFetchingNextPage={isFetchingNextPage}
+                scrollToFolderId={folderAnchor}
+                onOpen={(a) =>
+                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+                }
+                onToggleFavorite={toggleFavorite}
+                onAddToCollection={setPendingCollections}
+                onDelete={setPendingDelete}
+                onPrefetch={(a) => prefetch(a.short_id)}
+                selection={selection}
+              />
+            ) : (
+              <>
+                <ArtifactGrid
+                  layout={layout}
+                  sort={search.sort ?? DEFAULT_SORT}
+                  onSort={setSort}
+                  onPickAuthor={pickAuthor}
+                  items={items}
+                  scrollRef={scrollRef}
+                  hasNextPage={!!hasNextPage}
+                  isFetchingNextPage={isFetchingNextPage}
+                  onLoadMore={() => fetchNextPage()}
+                  onOpen={(a) =>
+                    nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+                  }
+                  onToggleFavorite={toggleFavorite}
+                  onAddToCollection={setPendingCollections}
+                  onDelete={setPendingDelete}
+                  onPrefetch={(a) => prefetch(a.short_id)}
+                  selection={selection}
+                />
+                {isFetchingNextPage && (
+                  <div className="flex justify-center py-2" data-testid="library-loading-more">
+                    <Spinner />
+                  </div>
+                )}
+              </>
+            )
+          ) : (
+            <>
+              <ArtifactGrid
+                layout={layout}
+                sort={search.sort ?? DEFAULT_SORT}
+                onSort={setSort}
+                onPickAuthor={pickAuthor}
+                items={items}
+                scrollRef={scrollRef}
+                hasNextPage={!!hasNextPage}
+                isFetchingNextPage={isFetchingNextPage}
+                onLoadMore={() => fetchNextPage()}
+                onOpen={(a) =>
+                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+                }
+                onToggleFavorite={toggleFavorite}
+                onAddToCollection={setPendingCollections}
+                onDelete={setPendingDelete}
+                onPrefetch={(a) => prefetch(a.short_id)}
+                selection={selection}
+              />
+              {isFetchingNextPage && (
+                <div className="flex justify-center py-2" data-testid="library-loading-more">
+                  <Spinner />
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -699,6 +814,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
   )
 }
 
+// A mirrored repo/PR collection: a flat, most-recently-updated list by default, with the
+// folder tree available behind a toggle (off by default). Split out of the render switch
 // A mirrored repo/PR collection: a flat, most-recently-updated list by default, with the
 // folder tree available behind a toggle (off by default). Split out of the render switch
 // so the body reads top-to-bottom.
@@ -766,72 +883,30 @@ function SyncedCollection({
           selection={selection}
         />
       ) : (
-        <div className="flex flex-col gap-2" data-testid="library-flat-list">
-          {items.map((a) => (
-            <ArtifactRow
-              key={a.short_id}
-              artifact={a}
-              onOpen={() => onOpen(a)}
-              onToggleFavorite={() => onToggleFavorite(a)}
-              onPickAuthor={onPickAuthor}
-              onAddToCollection={() => onAddToCollection(a)}
-              onDelete={() => onDelete(a)}
-              onPrefetch={() => onPrefetch(a)}
-              selected={selection?.selected.has(a.short_id)}
-              selectionActive={selection?.active}
-              onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
-            />
-          ))}
+        <ListShell>
+          <div data-testid="library-flat-list">
+            {items.map((a) => (
+              <ArtifactListRow
+                key={a.short_id}
+                artifact={a}
+                onOpen={() => onOpen(a)}
+                onToggleFavorite={() => onToggleFavorite(a)}
+                onAddToCollection={() => onAddToCollection(a)}
+                onDelete={() => onDelete(a)}
+                onPrefetch={() => onPrefetch(a)}
+                selected={selection?.selected.has(a.short_id)}
+                selectionActive={selection?.active}
+                onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
+              />
+            ))}
+          </div>
           {(hasNextPage || isFetchingNextPage) && (
             <div className="flex justify-center py-2">
               <Spinner />
             </div>
           )}
-        </div>
+        </ListShell>
       )}
-    </div>
-  )
-}
-
-// The home library's two tabs: everything, and just what you created. Route
-// stays "/", the tab rides ?tab=mine. `pending` counts your still-link-only
-// docs — the "waiting on you to surface it" signal the old Drafts badge
-// carried — shown as an accent pill beside the neutral total.
-function LibraryTabs({
-  active,
-  total,
-  mine,
-}: {
-  active: "all" | "mine"
-  total?: number
-  mine?: number
-}) {
-  const nav = useNavigate()
-  const tab = (id: "all" | "mine", label: string, count?: number) => (
-    <button
-      type="button"
-      data-testid={`library-tab-${id}`}
-      aria-current={active === id ? "page" : undefined}
-      onClick={() =>
-        nav({ to: "/", search: (s) => ({ ...s, tab: id === "mine" ? "mine" : undefined }) })
-      }
-      className={cn(
-        "flex items-center gap-1.5 border-b-2 pb-2 text-sm font-medium transition-colors",
-        active === id
-          ? "border-foreground text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {label}
-      {count != null && (
-        <span className="font-mono text-2xs tabular-nums text-muted-foreground">{count}</span>
-      )}
-    </button>
-  )
-  return (
-    <div className="mb-3.5 flex items-center gap-5 border-b border-border-soft">
-      {tab("all", "All artifacts", total)}
-      {tab("mine", "Created by me", mine)}
     </div>
   )
 }

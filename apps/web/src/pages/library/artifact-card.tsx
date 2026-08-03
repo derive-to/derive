@@ -3,7 +3,6 @@ import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
 import { Thumb } from "@/components/shared/thumb"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -15,16 +14,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { artifactTypeLabel, dirOf } from "@/lib/artifact"
+import { OVER_CONTENT, REVEAL_MENU, reveal } from "@/lib/interaction"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { CommentSignal } from "./comment-signal"
-import { ProposalSignal } from "./proposal-signal"
+import { NeedsYou, needsYouCount } from "./needs-you"
 
 // One card in the library grid, preview-first. The live render is the hero (bleeds to
 // the top edge, carrying a single machine-register TYPE placard); a hairline-divided
-// caption below holds the title in voice, a mono state line (version · freshness), and
-// one split meta row — who made it on the left, activity (review · comments · views)
-// on the right. Clean at rest; the actions (star, ⋯) reveal on hover, and the ink edge
+// caption below holds the title in voice, a mono state line (folder · freshness), and
+// one split meta row — who made it on the left, its state on the right. Clean at rest; the actions (star, ⋯) reveal on hover, and the ink edge
 // accent (a persistent "needs you" state) shows at rest.
 //
 // Stretched-link pattern: the open button's ::after covers the whole card (preview
@@ -66,9 +64,13 @@ export function ArtifactCard({
   const showDelete = isOwner && !!onDelete
   const showMenu = !!onAddToCollection || showDelete
   const author = a.author ?? null
+  // Every card names its author, including yours. Hiding it on your own work made the
+  // row's meaning depend on who was looking: a card with no chip could mean "you made
+  // it" or "we don't know who did", and scanning a mixed library for someone else's
+  // work meant reading the absences.
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
-  const versionDepth = Math.max(a.current_version, a.versions.length)
+  const _versionDepth = Math.max(a.current_version, a.versions.length)
   const sourceDir = a.source_path ? dirOf(a.source_path) : ""
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
   // Proposals you can act on (owner/editor) are a "needs you" signal — they soft-ink
@@ -79,10 +81,9 @@ export function ArtifactCard({
   // Machine-register state line under the title (house " · " join, matching the
   // workbench header): a synced file's folder, else its version when there's history,
   // then how fresh it is. The TYPE rides the placard, so it isn't repeated here.
-  const stateLine = [
-    sourceDir ? `${sourceDir}/` : versionDepth > 1 ? `v${a.current_version}` : "",
-    updated ? `updated ${ago(updated)}` : "",
-  ]
+  // Relative time, plus the folder for a synced doc (that is where it lives). The
+  // version number and type prefix are dropped — the render already shows the type.
+  const stateLine = [sourceDir ? `${sourceDir}/` : "", updated ? ago(updated) : ""]
     .filter(Boolean)
     .join(" · ")
 
@@ -130,12 +131,11 @@ export function ArtifactCard({
                 e.stopPropagation()
                 onSelect(e.shiftKey)
               }}
-              className={cn(
-                "size-5 shadow-(--shadow-sm) ring-1 ring-foreground/10 transition-opacity",
-                !selected &&
-                  !selectionActive &&
-                  "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100",
-              )}
+              // Same plate as the action buttons opposite it (OVER_CONTENT): the
+              // cluster that appears on hover was a bare ringed checkbox on one side
+              // and two outlined buttons on the other, which read as two different
+              // controls arriving at once.
+              className={cn("size-7 rounded-lg", OVER_CONTENT, reveal(selected || selectionActive))}
             />
           </div>
         )}
@@ -152,7 +152,7 @@ export function ArtifactCard({
                   data-testid={`artifact-card-more-${a.short_id}`}
                   aria-label="More actions"
                   onClick={(e) => e.stopPropagation()}
-                  className="relative border-border-soft bg-card opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 pointer-coarse:opacity-100"
+                  className={cn("relative border-border-soft bg-card", REVEAL_MENU)}
                 >
                   <Icon name="more" size={16} />
                   <span
@@ -198,10 +198,7 @@ export function ArtifactCard({
               e.stopPropagation()
               onToggleFavorite()
             }}
-            className={cn(
-              "relative border-border-soft bg-card transition-opacity focus-visible:opacity-100 pointer-coarse:opacity-100",
-              !a.favorite && "opacity-0 group-hover:opacity-100",
-            )}
+            className={cn("relative border-border-soft bg-card", reveal(!!a.favorite))}
           >
             <Icon
               name="star"
@@ -265,48 +262,41 @@ export function ArtifactCard({
           )}
         </button>
 
-        {/* People + activity: who made it on the left (avatar + name), the activity
-            cluster on the right. The author is the one interactive island here (z-20);
-            the rest clicks through to open. */}
-        <div className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
-          {hasAuthor && (
-            <AuthorChip
-              name={author?.name ?? a.author_name ?? null}
-              login={author?.login ?? a.author_login ?? null}
-              avatar={author?.avatar ?? a.author_avatar ?? null}
-              handle={author?.handle ?? null}
-              size="xs"
-              className="relative z-20 min-w-0"
-              data-testid={`artifact-card-author-${a.short_id}`}
-            />
-          )}
-          <span className={cn("inline-flex shrink-0 items-center gap-2.5", hasAuthor && "ml-auto")}>
-            {/* Invite-only work is invisible to everyone but its members — the chip
-                says so wherever the doc DOES surface (your library, Created by me). */}
-            {isPrivate && (
-              <Badge shape="pill" variant="outline" title="Only you and people you add">
-                <Icon name="lock" size={12} /> Private
-              </Badge>
+        {/* One line, three facts at most: who made it, whether it is private, and
+            whether it wants you. The card used to carry nine — a version
+            number, a type prefix, a Skill pill, a view count, and two separate activity
+            counts — which is a lot of ink for a surface whose job is to let you pick
+            something and open it. */}
+        {(hasAuthor || isPrivate || needsYouCount(a) > 0) && (
+          <div className="flex min-w-0 items-center gap-2 font-mono text-2xs tabular-nums text-muted-foreground">
+            {hasAuthor && (
+              <AuthorChip
+                name={author?.name ?? a.author_name ?? null}
+                login={author?.login ?? a.author_login ?? null}
+                avatar={author?.avatar ?? a.author_avatar ?? null}
+                handle={author?.handle ?? null}
+                size="xs"
+                className="relative z-20 min-w-0"
+                data-testid={`artifact-card-author-${a.short_id}`}
+              />
             )}
-            {/* A skill is reusable agent procedure (a bundle with a SKILL.md) — call it
-                out wherever it surfaces so the shelf is spottable in the grid. */}
-            {a.current_content_type === "derive/skill" && (
-              <Badge shape="pill" variant="secondary" title="A skill: reusable agent procedure">
-                Skill
-              </Badge>
-            )}
-            {/* Review queue, then discussion, then passive views — most-actionable first. */}
-            <ProposalSignal artifact={a} size={12} />
-            <CommentSignal artifact={a} size={12} compact />
-            {a.views !== undefined && a.views > 0 && (
-              <span className="inline-flex items-center gap-1" title={`${a.views} viewers`}>
-                <Icon name="views" size={12} />
-                {a.views > 999 ? `${(a.views / 1000).toFixed(1)}k` : a.views}
-                <span className="sr-only"> views</span>
-              </span>
-            )}
-          </span>
-        </div>
+            <span className={cn("inline-flex shrink-0 items-center gap-2", hasAuthor && "ml-auto")}>
+              {/* A glyph, not a worded pill: private is a state a lot of artifacts are
+                  in, and the lock is already understood. */}
+              {isPrivate && (
+                <span
+                  role="img"
+                  aria-label="Private"
+                  title="Private — only you and people you add"
+                  className="inline-flex opacity-70"
+                >
+                  <Icon name="lock" size={12} />
+                </span>
+              )}
+              <NeedsYou artifact={a} />
+            </span>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

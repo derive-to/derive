@@ -1,9 +1,11 @@
+import type { SortMode } from "@derive/core"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { type RefObject, useEffect, useRef, useState } from "react"
 import type { Artifact } from "@/api"
 import { CARD_GRID_COLS, MIN_CARD_PX } from "@/components/shared/card-grid"
 import { cn } from "@/lib/utils"
 import { ArtifactCard } from "./artifact-card"
+import { ArtifactListRow, ListHeader, ListShell } from "./artifact-list"
 import type { LibrarySelection } from "./use-library-selection"
 
 // Grid geometry comes from card-grid.tsx (one source with the live grid and the
@@ -15,6 +17,11 @@ const GAP = 16
 // width + ~72px caption + the 24px row gutter); measureElement corrects the real
 // height per row once mounted.
 const EST_ROW = 260
+// A list row is title + one meta line; the virtualizer measures the real height on
+// first paint, so this only has to be close enough to avoid a scrollbar jump.
+// A list row is 36px flat — the virtualizer's estimate should match, or the scrollbar
+// lies until every row has been measured.
+const EST_LIST_ROW = 36
 
 // The library grid, windowed. Only the rows in (or near) the viewport are in the
 // DOM, so the grid stays at 60fps no matter how large the library grows. The
@@ -31,6 +38,10 @@ export function ArtifactGrid({
   onDelete,
   onPrefetch,
   selection,
+  layout = "grid",
+  sort,
+  onSort,
+  onPickAuthor,
 }: {
   items: Artifact[]
   // The scrolling ancestor (the library's overflow-y-auto container).
@@ -46,7 +57,16 @@ export function ArtifactGrid({
   // Multi-select. The grid only threads it through: the set lives in the library body,
   // so it survives the virtualizer recycling a card out of the DOM on scroll.
   selection?: LibrarySelection
+  /** Grid of cards, or a dense row list — a remembered preference (see the library's
+   *  `layout`). Both go through this virtualizer: list mode is for large collections,
+   *  which is exactly where an unvirtualized path would hurt. */
+  layout?: "grid" | "list"
+  onPickAuthor?: (login: string) => void
+  /** List mode only: the header row is where sort lives. */
+  sort?: SortMode
+  onSort?: (mode: SortMode) => void
 }) {
+  const list = layout === "list"
   const gridRef = useRef<HTMLDivElement>(null)
   const [columns, setColumns] = useState(1)
   const [scrollMargin, setScrollMargin] = useState(0)
@@ -67,7 +87,7 @@ export function ArtifactGrid({
     if (!grid || !scroll) return
     const measure = () => {
       const w = grid.clientWidth
-      setColumns(Math.max(1, Math.floor((w + GAP) / (MIN_CARD_PX + GAP))))
+      setColumns(list ? 1 : Math.max(1, Math.floor((w + GAP) / (MIN_CARD_PX + GAP))))
       setScrollMargin(
         grid.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop,
       )
@@ -80,13 +100,13 @@ export function ArtifactGrid({
     // whenever above-grid content does, which a grid-only observer misses.
     if (scroll.firstElementChild) ro.observe(scroll.firstElementChild)
     return () => ro.disconnect()
-  }, [scrollRef])
+  }, [scrollRef, list])
 
   const rowCount = Math.ceil(items.length / columns)
   const virtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => EST_ROW,
+    estimateSize: () => (list ? EST_LIST_ROW : EST_ROW),
     overscan: 3,
     scrollMargin,
   })
@@ -99,7 +119,7 @@ export function ArtifactGrid({
     if (lastIndex >= rowCount - 1 && hasNextPage && !isFetchingNextPage) onLoadMore()
   }, [lastIndex, rowCount, hasNextPage, isFetchingNextPage, onLoadMore])
 
-  return (
+  const body = (
     <div ref={gridRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
       {virtualRows.map((vrow) => {
         const start = vrow.index * columns
@@ -112,28 +132,58 @@ export function ArtifactGrid({
             // Asymmetric gutter: a wider vertical gap (pb-6, measured into the row)
             // than the horizontal gap-x-4, so captions get air before the next row's
             // preview — reads as a curated gallery, not a tight data grid.
-            className={cn(CARD_GRID_COLS, "absolute top-0 left-0 w-full gap-x-4 pb-6")}
+            className={cn(
+              "absolute top-0 left-0 w-full",
+              // List is a dense register: no gallery gutter, a hairline between rows.
+              list ? "" : cn(CARD_GRID_COLS, "gap-x-4 pb-6"),
+            )}
             style={{
               transform: `translateY(${vrow.start - virtualizer.options.scrollMargin}px)`,
             }}
           >
-            {rowItems.map((a) => (
-              <ArtifactCard
-                key={a.short_id}
-                artifact={a}
-                onOpen={() => onOpen(a)}
-                onToggleFavorite={() => onToggleFavorite(a)}
-                onAddToCollection={() => onAddToCollection(a)}
-                onDelete={() => onDelete(a)}
-                onPrefetch={() => onPrefetch(a)}
-                selected={selection?.selected.has(a.short_id)}
-                selectionActive={selection?.active}
-                onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
-              />
-            ))}
+            {rowItems.map((a) =>
+              list ? (
+                <ArtifactListRow
+                  key={a.short_id}
+                  artifact={a}
+                  onOpen={() => onOpen(a)}
+                  onToggleFavorite={() => onToggleFavorite(a)}
+                  onAddToCollection={() => onAddToCollection(a)}
+                  onDelete={() => onDelete(a)}
+                  onPrefetch={() => onPrefetch(a)}
+                  selected={selection?.selected.has(a.short_id)}
+                  selectionActive={selection?.active}
+                  onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
+                />
+              ) : (
+                <ArtifactCard
+                  key={a.short_id}
+                  artifact={a}
+                  onOpen={() => onOpen(a)}
+                  onToggleFavorite={() => onToggleFavorite(a)}
+                  onAddToCollection={() => onAddToCollection(a)}
+                  onDelete={() => onDelete(a)}
+                  onPrefetch={() => onPrefetch(a)}
+                  selected={selection?.selected.has(a.short_id)}
+                  selectionActive={selection?.active}
+                  onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
+                />
+              ),
+            )}
           </div>
         )
       })}
     </div>
+  )
+
+  // In list mode the rows are one object: a single card with a sortable header and
+  // hairlines between rows, rather than a stack of individually-bordered cards.
+  return list && sort && onSort ? (
+    <ListShell>
+      <ListHeader sort={sort} onSort={onSort} />
+      {body}
+    </ListShell>
+  ) : (
+    body
   )
 }

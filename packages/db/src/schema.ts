@@ -615,6 +615,23 @@ export const collectionMember = sqliteTable(
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
 
+// Starred collections. A sibling of artifact_favorite rather than a `kind` column on
+// it: the boot-DDL generator emits CREATE TABLE and idempotent ADD COLUMN only, so
+// making artifact_id nullable or dropping its FK would need a hand-written migration
+// against already-deployed tables. A new table needs neither, and both keep a real FK.
+export const collectionFavorite = sqliteTable(
+  "collection_favorite",
+  {
+    id: text("id").primaryKey(),
+    collection_id: text("collection_id")
+      .notNull()
+      .references(() => collection.id),
+    user_id: text("user_id").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("collection_favorite_user").on(t.collection_id, t.user_id)],
+)
+
 // A GitHub repo mirrored into a collection, one-way. `files` is a JSON path→
 // {artifact_id, sha} map so a re-sync skips unchanged files and tombstones gone ones.
 export const repoSource = sqliteTable("repo_source", {
@@ -1153,6 +1170,7 @@ const TABLES = [
   collection,
   collectionItem,
   collectionMember,
+  collectionFavorite,
   folder,
   repoSource,
   orgSettings,

@@ -317,9 +317,10 @@ export function createD1Store(d1: D1Database): MetaStore {
     notificationsPage: (userId, limit) => composeNotificationsPage(store, userId, limit),
     automationsWithExecutors: (orgId, limit) =>
       composeAutomationsWithExecutors(store, orgId, limit),
-    collectionsOverview: (orgId) => composeCollectionsOverview(store, orgId),
+    collectionsOverview: (orgId, viewer) => composeCollectionsOverview(store, orgId, viewer),
     workspaceSummary: (orgId, userId) => composeWorkspaceSummary(store, orgId, userId),
-    bootstrap: (orgId, userId, limit) => composeBootstrap(store, orgId, userId, limit),
+    bootstrap: (orgId, userId, limit, viewer) =>
+      composeBootstrap(store, orgId, userId, limit, viewer),
     workspacesAndOauthBinding: (userId, clientId) =>
       composeWorkspacesAndOauthBinding(store, userId, clientId),
     orgContext: (orgId, userId) => composeOrgContext(store, orgId, userId),

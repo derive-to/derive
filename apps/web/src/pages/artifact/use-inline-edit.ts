@@ -208,7 +208,7 @@ export function useInlineEdit(p: {
     const hadEdits = dirtyRef.current > 0
     exit("none") // the frame is a fresh document; there is nothing to restore
     if (hadEdits)
-      toast.warning("The document reloaded, so unsaved inline edits were discarded.", {
+      toast.warning("The artifact reloaded, so unsaved inline edits were discarded.", {
         id: "inline-edit-stale",
       })
   }
@@ -276,7 +276,7 @@ export function useInlineEdit(p: {
     onError: (err) => {
       if (err instanceof ApiError && err.status === 409) {
         p.load()
-        toast.error("The document changed while you were editing.", {
+        toast.error("The artifact changed while you were editing.", {
           id: "inline-edit-conflict",
           description:
             "Your edits are still on the page. Save again to re-check them against the new version.",

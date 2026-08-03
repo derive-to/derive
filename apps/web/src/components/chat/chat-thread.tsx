@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { isInAppPath } from "@/lib/in-app-path"
+import { REVEAL } from "@/lib/interaction"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
 import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
@@ -245,7 +246,7 @@ function Bubble({ msg }: { msg: ChatMessage }) {
           onClick={copy}
           title={copied ? "Copied" : "Copy answer"}
           aria-label={copied ? "Copied" : "Copy answer"}
-          className="mt-1 size-6 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+          className={cn("mt-1 size-6 shrink-0", REVEAL)}
           data-testid="chat-copy"
         >
           <Icon name={copied ? "check" : "copy"} className="size-3.5" />

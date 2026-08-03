@@ -10,7 +10,14 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { Collection, collectionsJson, enrich, sourceMaps } from "../lib/boot-shapes"
+import {
+  activeSince,
+  Collection,
+  collectionsJson,
+  enrich,
+  PREVIEW_PER_COLLECTION,
+  sourceMaps,
+} from "../lib/boot-shapes"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { bail, fail, readJson } from "../lib/http"
 import { resolveUserRef } from "../lib/resolve-user"
@@ -27,6 +34,7 @@ export const collectionRoutes = (ctx: AppContext) => {
     isMember,
     isToken,
     currentUser,
+    requireUser,
     activeWorkspace,
     workspaceCan,
     authorize,
@@ -75,7 +83,23 @@ export const collectionRoutes = (ctx: AppContext) => {
       // token) see them. A non-member (incl. anon in open mode) gets an empty list, so
       // a workspace's collections can't be enumerated via a public artifact's workspace.
       if (!(await isMember(c, org))) return c.json({ collections: [] })
-      const { collections: cols, sources } = await meta.collectionsOverview(org)
+      // ONE store call answers the whole view: the org's collections + repo sources, and
+      // (for a signed-in reader) their stars, worked-in set, and per-shelf preview strip.
+      // Those last three were separate reads for one release — ~240ms of round trips on
+      // the edge tier, which round-trip-budget.test.ts now fails on.
+      const {
+        collections: cols,
+        sources,
+        starred,
+        workedIn,
+        previews: rawPreviews,
+        previewBylines,
+      } = await meta.collectionsOverview(
+        org,
+        me
+          ? { userId: me.id, activeSince: activeSince(), previewPer: PREVIEW_PER_COLLECTION }
+          : undefined,
+      )
       // Same share experience as an artifact: an invite-only collection
       // (workspace_access=none) only lists for its creator or an explicit
       // collectionMember — collectionRole (the single source of truth, shared with the
@@ -91,7 +115,17 @@ export const collectionRoutes = (ctx: AppContext) => {
               me.id,
             )
           : {}
-      const collections = collectionsJson(cols, sources, roleMap, me?.id ?? null, isToken(c))
+      const collections = collectionsJson(
+        cols,
+        sources,
+        roleMap,
+        me?.id ?? null,
+        isToken(c),
+        new Set(starred),
+        new Map(workedIn.map((w) => [w.id, w.at])),
+        rawPreviews,
+        previewBylines,
+      )
       return c.json({ collections })
     },
   )
@@ -142,6 +176,41 @@ export const collectionRoutes = (ctx: AppContext) => {
       return c.json({ ...col, count: 0, my_role: "owner" as const, kind: "manual" as const }, 201)
     },
   )
+
+  // Star a collection: it pins to the caller's sidebar. Deliberately gated on `read`,
+  // not `share` — starring changes nothing about the collection or who reaches it, it is
+  // a note-to-self about where you work. Anyone who can open it can star it.
+  for (const [method, on] of [
+    ["put", true],
+    ["delete", false],
+  ] as const) {
+    app.openapi(
+      createRoute({
+        method,
+        path: "/v1/collections/{id}/favorite",
+        tags: ["Collections"],
+        summary: on ? "Star a collection." : "Unstar a collection.",
+        request: { params: z.object({ id: z.string() }) },
+        responses: {
+          200: {
+            description: "The new starred state.",
+            content: { "application/json": { schema: z.object({ starred: z.boolean() }) } },
+          },
+        },
+      }),
+      async (c) => {
+        // The same guard the artifact star uses — a star belongs to a real account, and
+        // the shared helper is what makes an anonymous caller a 403 rather than a crash.
+        const me = await requireUser(c)
+        if (me instanceof Response) return bail(me)
+        const col = await requireCollection(c, "read")
+        if (col instanceof Response) return bail(col)
+        if (on) await meta.setCollectionFavorite(col.id, me.id)
+        else await meta.removeCollectionFavorite(col.id, me.id)
+        return c.json({ starred: on })
+      },
+    )
+  }
 
   app.openapi(
     createRoute({

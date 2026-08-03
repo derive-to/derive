@@ -1,4 +1,4 @@
-import type { CollectionRecord, Role, WorkspaceSummary } from "@derive/core"
+import type { CollectionPreview, CollectionRecord, Role, WorkspaceSummary } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { BrandprintSchema } from "../schemas"
 import { DEFAULT_WORKSPACE_NAME } from "./http"
@@ -102,6 +102,16 @@ export const Notification = z
 // A collection as it goes out: the stored row + its item `count` + where it came from
 // (`kind` = manual/repo/pr, with the repo/PR details). Origin is DERIVED here, not
 // stored. Every collection-returning endpoint emits this one shape.
+/** How far back "worked in" looks. Long enough that a fortnight away doesn't empty your
+ *  sidebar, short enough that a shelf you finished with drops off on its own. One
+ *  definition, so the list read and the boot batch can't disagree about what active means. */
+export const ACTIVE_WINDOW_DAYS = 30
+/** How many covers a shelf shows before "+N". Four reads as a strip; more turns the row
+ *  into a listing and starts costing real preview bytes. */
+export const PREVIEW_PER_COLLECTION = 4
+export const activeSince = (): string =>
+  new Date(Date.now() - ACTIVE_WINDOW_DAYS * 86400_000).toISOString()
+
 export const Collection = z
   .object({
     id: z.string(),
@@ -118,6 +128,39 @@ export const Collection = z
       .nullable()
       .optional()
       .describe("Caller's own role on the collection; drives the Share dialog. Null if none."),
+    starred: z
+      .boolean()
+      .optional()
+      .describe("Whether the caller starred this collection — it pins to their sidebar."),
+    /** Newest activity among the collection's artifacts. Derived from the preview strip
+     *  rather than stored — a collection has no mtime of its own. */
+    last_activity: z.string().optional(),
+    /** The CALLER's latest touch here (publish or comment, being added counts) within
+     *  the active window — what the Collections digest orders "your shelves" by. */
+    my_last_activity: z.string().optional(),
+    preview: z
+      .array(
+        z.object({
+          short_id: z.string(),
+          title: z.string().nullable(),
+          current_version: z.number(),
+          has_preview: z.boolean(),
+          updated_at: z.string(),
+          author_name: z.string().nullable(),
+          author_login: z.string().nullable(),
+          author_avatar: z.string().nullable(),
+        }),
+      )
+      .optional()
+      .describe(
+        "A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing.",
+      ),
+    active: z
+      .boolean()
+      .optional()
+      .describe(
+        "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded.",
+      ),
     kind: z
       .enum(["manual", "repo", "pr"])
       .optional()
@@ -147,7 +190,24 @@ export const sourceMaps = (
   return { srcByCollection, branchByRepo }
 }
 export const enrich = (
-  col: CollectionRecord & { count: number; my_role: Role | null },
+  col: CollectionRecord & {
+    count: number
+    my_role: Role | null
+    starred?: boolean
+    active?: boolean
+    last_activity?: string
+    my_last_activity?: string
+    preview?: {
+      short_id: string
+      title: string | null
+      current_version: number
+      has_preview: boolean
+      updated_at: string
+      author_name: string | null
+      author_login: string | null
+      author_avatar: string | null
+    }[]
+  },
   srcByCollection: Map<string, Src>,
   branchByRepo: Map<string, string>,
 ) => {
@@ -186,12 +246,54 @@ export const collectionsJson = (
   roleMap: Record<string, Role>,
   meId: string | null,
   operator: boolean,
+  /** Ids this caller starred. Rides the same read as the list so the sidebar's
+   *  starred group costs no extra request. */
+  starredIds: ReadonlySet<string> = new Set(),
+  /** The caller's latest touch per collection, lately. Same read as the list — the
+   *  Collections view orders on this and must not pay a second round trip for it. */
+  workedIn: ReadonlyMap<string, string> = new Map(),
+  previews: Record<string, CollectionPreview[]> = {},
+  /** Live rows for the previews' authors — heals the denormalized name to the person's
+   *  CURRENT one, same precedence as authorProfile: for an agent publish the stored
+   *  name is the CLIENT ("Claude Code (derive)"), and the id is the human it acted for. */
+  previewBylines: { id: string; name: string | null; username: string | null }[] = [],
 ) => {
   const { srcByCollection, branchByRepo } = sourceMaps(sources)
+  const bylineById = new Map(previewBylines.map((u) => [u.id, u]))
+  const healedName = (p: CollectionPreview) => {
+    const live = p.author_id ? bylineById.get(p.author_id) : undefined
+    return live?.name ?? live?.username ?? p.author_name
+  }
   const roleFor = (col: CollectionRecord): Role | null =>
     operator ? "owner" : col.created_by === meId ? "owner" : (roleMap[col.id] ?? null)
   return cols
     .map((col) => ({ col, role: roleFor(col) }))
     .filter(({ role }) => role !== null)
-    .map(({ col, role }) => enrich({ ...col, my_role: role }, srcByCollection, branchByRepo))
+    .map(({ col, role }) =>
+      enrich(
+        {
+          ...col,
+          my_role: role,
+          starred: starredIds.has(col.id),
+          active: workedIn.has(col.id),
+          my_last_activity: workedIn.get(col.id),
+          // Everything the Collections digest renders per cover: the caption (title),
+          // the window check (updated_at), and the recent-editor avatars (byline).
+          // Only the internal id stays server-side.
+          preview: (previews[col.id] ?? []).map((p) => ({
+            short_id: p.short_id,
+            title: p.title,
+            current_version: p.current_version,
+            has_preview: p.has_preview,
+            updated_at: p.updated_at,
+            author_name: healedName(p),
+            author_login: p.author_login,
+            author_avatar: p.author_avatar,
+          })),
+          last_activity: previews[col.id]?.[0]?.updated_at,
+        },
+        srcByCollection,
+        branchByRepo,
+      ),
+    )
 }

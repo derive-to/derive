@@ -64,14 +64,14 @@ describe("stampMode", () => {
 describe("targetSummary", () => {
   it("counts by kind and pluralizes; empty when there are no targets", () => {
     expect(targetSummary([])).toBe("")
-    expect(targetSummary([{ kind: "artifact", id: "a1" }])).toBe("1 document")
+    expect(targetSummary([{ kind: "artifact", id: "a1" }])).toBe("1 artifact")
     expect(
       targetSummary([
         { kind: "artifact", id: "a1" },
         { kind: "artifact", id: "a2" },
         { kind: "tag", tag: "weekly" },
       ]),
-    ).toBe("2 documents, 1 tag")
+    ).toBe("2 artifacts, 1 tag")
     expect(
       targetSummary([
         { kind: "collection", id: "c1" },

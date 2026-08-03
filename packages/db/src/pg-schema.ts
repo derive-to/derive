@@ -510,6 +510,21 @@ export const collectionMember = pgTable(
   },
   (t) => [uniqueIndex("collection_member_uniq").on(t.collection_id, t.user_id)],
 )
+
+// Starred collections — see the SQLite twin in schema.ts for why this is a sibling
+// table rather than a kind column on artifact_favorite.
+export const collectionFavorite = pgTable(
+  "collection_favorite",
+  {
+    id: text("id").primaryKey(),
+    collection_id: text("collection_id")
+      .notNull()
+      .references(() => collection.id),
+    user_id: text("user_id").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("collection_favorite_user").on(t.collection_id, t.user_id)],
+)
 export const repoSource = pgTable("repo_source", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull().default("local"),
@@ -944,6 +959,7 @@ const TABLES = [
   collection,
   collectionItem,
   collectionMember,
+  collectionFavorite,
   folder,
   repoSource,
   orgSettings,

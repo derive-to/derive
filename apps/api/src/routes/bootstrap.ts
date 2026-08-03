@@ -2,10 +2,12 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import {
+  activeSince,
   Collection,
   collectionsJson,
   Notification,
   OrgSettings,
+  PREVIEW_PER_COLLECTION,
   summaryJson,
 } from "../lib/boot-shapes"
 import { bail, fail } from "../lib/http"
@@ -77,7 +79,10 @@ export const bootstrapRoutes = (ctx: AppContext) => {
       // (empty summary, empty collections, …) and the client already knows them — a
       // 403 here sends it down that path rather than teaching this route four more.
       if (!(await isMember(c, org))) return bail(fail(c, 403, "forbidden"))
-      const b = await meta.bootstrap(org, me.id, NOTIFICATIONS_PAGE)
+      const b = await meta.bootstrap(org, me.id, NOTIFICATIONS_PAGE, {
+        activeSince: activeSince(),
+        previewPer: PREVIEW_PER_COLLECTION,
+      })
       // The publishing-blocked verdict, from the two inputs the batch just read.
       // resolveBillingState is pure — no Stripe call, no extra round trip — so this
       // whole field costs the request nothing. It exists because the app shell's
@@ -103,7 +108,17 @@ export const bootstrapRoutes = (ctx: AppContext) => {
         summary: summaryJson(b.summary),
         // Browser sessions only reach here (agents boot no app shell), so the
         // operator-token owner-everywhere branch is a plain `false`.
-        collections: collectionsJson(b.collections, b.sources, b.collectionRoles, me.id, false),
+        collections: collectionsJson(
+          b.collections,
+          b.sources,
+          b.collectionRoles,
+          me.id,
+          false,
+          new Set(b.starred),
+          new Map(b.workedIn.map((w) => [w.id, w.at])),
+          b.previews,
+          b.previewBylines,
+        ),
         settings: b.settings,
         notifications: b.notifications.notifications,
         unread: b.notifications.unread,

@@ -132,3 +132,221 @@ test("Brandprint and People live in Settings, and their old paths still resolve"
   await owner.goto("/people")
   await expect(owner).toHaveURL(/\/settings\/people$/)
 })
+
+test("starring a collection pins it to the sidebar's Starred group", async ({ owner }) => {
+  await owner.goto("/")
+  const name = `Shelf ${Date.now()}`
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(name)
+  await owner.getByTestId("collections-new-input").press("Enter")
+
+  // Creating drops you into the new collection, so its header is right here. It is
+  // unstarred, so the rail has no Starred group yet.
+  await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "false")
+  await expect(owner.getByTestId("sidebar-starred")).toHaveCount(0)
+
+  await owner.getByTestId("collection-star").click()
+  await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "true")
+
+  // The rail now carries a Starred group holding exactly this one. (Matched by testid,
+  // not text: the star button itself reads "Starred" when active.)
+  await expect(owner.getByTestId("sidebar-starred")).toBeVisible()
+  await expect(owner.getByRole("link", { name })).toHaveCount(1)
+
+  // Unstarring empties the group entirely rather than leaving a bare heading — a
+  // workspace with nothing starred opens on two nav rows.
+  await owner.getByTestId("collection-star").click()
+  await expect(owner.getByTestId("collection-star")).toHaveAttribute("aria-pressed", "false")
+  await expect(owner.getByTestId("sidebar-starred")).toHaveCount(0)
+  await expect(owner.getByRole("link", { name })).toHaveCount(0)
+})
+
+test("Collections is a digest of the week, then an alphabetical index", async ({ owner }) => {
+  await owner.goto("/")
+  const name = `Shelf ${Date.now()}`
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(name)
+  await owner.getByTestId("collections-new-input").press("Enter")
+  // Creating opens the collection; its header names it.
+  await expect(owner.getByTestId("collection-star")).toBeVisible()
+  const colId = new URL(owner.url()).searchParams.get("collection")
+
+  await owner.goto("/?view=collections")
+  // A brand-new empty collection is one index line — never a digest entry (no activity),
+  // and never an apology about its contents.
+  await expect(owner.getByTestId("collections-index")).toBeVisible()
+  await expect(owner.getByTestId(`index-open-${colId}`)).toBeVisible()
+  await expect(owner.getByTestId(`digest-entry-${colId}`)).toHaveCount(0)
+  await expect(owner.getByText("Nothing here is visible to you")).toHaveCount(0)
+
+  // The Collections view IS the page: the artifact grid must not render underneath it.
+  await expect(owner.locator('[data-testid^="artifact-card-open-"]')).toHaveCount(0)
+
+  // Starring works from the index row, optimistically.
+  await owner.getByTestId(`collection-star-${colId}`).click()
+  await expect(owner.getByTestId(`collection-star-${colId}`)).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  )
+
+  // The view rides the URL, so it survives a reload and can be linked.
+  await owner.reload()
+  await expect(owner.getByTestId("collections-index")).toBeVisible()
+
+  // Switching back to Artifacts leaves the Collections view entirely.
+  await owner.getByTestId("library-view-artifacts").click()
+  await expect(owner.getByTestId("collections-index")).toHaveCount(0)
+})
+
+test("a card states three facts, not nine", async ({ owner }) => {
+  const id = await publishArtifact(owner, "diet.md", "# Diet\n\nbody")
+  await owner.goto("/")
+  const card = owner.getByTestId(`artifact-card-open-${id}`)
+  await expect(card).toBeVisible()
+
+  // The version number and the type prefix are gone: the state line is the relative
+  // time alone. `v1`/`HTML ·` would both match this.
+  await expect(card).not.toContainText("v1")
+  await expect(card).not.toContainText("·")
+
+  // Every card names its author, yours included. Hiding it on your own work made a
+  // missing chip ambiguous — "you made it" and "we don't know who did" looked alike.
+  await expect(owner.getByTestId(`artifact-card-author-${id}`)).toBeVisible()
+
+  // No view count, and no separate proposal/comment counts — a quiet document says
+  // nothing at all in the meta row.
+  await expect(owner.getByTestId("needs-you")).toHaveCount(0)
+})
+
+test("Grid or List is a preference the app remembers, not the route's choice", async ({
+  owner,
+}) => {
+  await publishArtifact(owner, "layout.md", "# Layout\n\nbody")
+  await owner.goto("/")
+  await expect(owner.getByTestId("library-display")).toBeVisible()
+
+  // Grid is the default: the render is the point.
+  await owner.getByTestId("library-display").click()
+  await owner.getByRole("menuitemradio", { name: "List" }).click()
+
+  // Reload — the choice survives, which is what makes it a preference rather than a
+  // per-visit toggle the route can override.
+  await owner.reload()
+  await owner.getByTestId("library-display").click()
+  await expect(owner.getByRole("menuitemradio", { name: "List" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  )
+})
+
+test("a shelf with fresh work leads the digest, covers and all", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "cover.md", "# Cover\n\nbody")
+  await owner.goto("/")
+  const name = `Shelf ${Date.now()}`
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(name)
+  await owner.getByTestId("collections-new-input").press("Enter")
+  await expect(owner.getByTestId("collection-star")).toBeVisible()
+  const colId = new URL(owner.url()).searchParams.get("collection")
+  const put = await owner.request.put(`/v1/collections/${colId}/items/${shortId}`)
+  expect(put.ok(), `add item: ${put.status()}`).toBeTruthy()
+
+  await owner.goto("/?view=collections")
+  // Fresh work this week ⇒ a digest entry with the artifact's actual cover on it.
+  const entry = owner.getByTestId(`digest-entry-${colId}`)
+  await expect(entry).toBeVisible()
+  await expect(entry.locator(`iframe[src*="${shortId}"], img[src*="${shortId}"]`)).toHaveCount(1)
+
+  // The index carries the ledger line for the same shelf: a count, not a claim.
+  await expect(owner.getByTestId(`index-open-${colId}`)).toBeVisible()
+
+  // One shape, no knobs: the Display menu does not render on this view.
+  await expect(owner.getByTestId("library-display")).toHaveCount(0)
+})
+
+test("the current page keeps its selected state under the pointer", async ({ owner }) => {
+  await owner.goto("/")
+  const bgOf = (l: ReturnType<typeof owner.getByTestId>) =>
+    l.evaluate((el) => getComputedStyle(el.closest("a,button") ?? el).backgroundColor)
+
+  const current = owner.getByTestId("sidebar-all")
+  await expect(current).toBeVisible()
+  const currentRest = await bgOf(current)
+
+  // The bug this pins: `hover:bg-*` outranks `data-active:bg-*` on specificity — the
+  // `:where()` Tailwind wraps data variants in contributes none — so the rail used to
+  // repaint the current page's raised chip with the idle-row grey the moment you
+  // pointed at it. Reordering can't fix that; the hover has to be scoped
+  // (`not-data-active:`). See apps/web/src/lib/interaction.ts.
+  //
+  // Read the SETTLED colour, not a polled one: the row transitions over 100ms, and a
+  // retrying matcher passes on the first frame — before the (wrong) colour lands.
+  await current.hover()
+  await owner.waitForTimeout(400)
+  expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
+
+  // …and the scoping didn't just disable hover everywhere: an idle row still washes.
+  const idle = owner.getByTestId("nav-contexts")
+  const idleRest = await bgOf(idle)
+  await idle.hover()
+  await owner.waitForTimeout(400)
+  expect(await bgOf(idle), "an idle row stopped responding to hover").not.toBe(idleRest)
+})
+
+test("a collection says where you are, and the way back is the trail", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "in-col.md", "# In a collection\n\nbody")
+  await owner.goto("/")
+  await owner.getByTestId("library-view-collections").click()
+  await owner.getByTestId("collections-new").click()
+  await owner.getByTestId("collections-new-input").fill(`Shelf ${Date.now()}`)
+  await owner.getByTestId("collections-new-input").press("Enter")
+  await expect(owner.getByTestId("collection-share")).toBeVisible()
+  const colId = new URL(owner.url()).searchParams.get("collection")
+  const put = await owner.request.put(`/v1/collections/${colId}/items/${shortId}`)
+  expect(put.ok(), `add item: ${put.status()}`).toBeTruthy()
+
+  // The header answers "where am I" AND "how do I get out". It used to answer only the
+  // first, with the way out an `×` chip over in the toolbar.
+  await owner.goto(`/?collection=${colId}`)
+  const home = owner.getByTestId("crumb-0")
+  await expect(home).toHaveText("Library")
+  await home.click()
+  await expect(owner).toHaveURL(/\/$|\/\?/)
+  await expect(owner.getByTestId("collection-share")).toHaveCount(0)
+  // The chip it replaced is gone rather than living alongside it.
+  await expect(owner.getByTestId("library-clear-filter")).toHaveCount(0)
+})
+
+test("the library is a drop target, and + New never hides", async ({ owner }) => {
+  await owner.goto("/")
+  // The one primary action is STABLE: visible even while the connect-agent card shows
+  // (a fresh workspace used to have no visible way to create anything by hand).
+  await expect(owner.getByTestId("library-new")).toBeVisible()
+
+  // Drag a file over the window: the whole app says "drop it".
+  const drag = (type: "dragenter" | "drop", withFile: boolean) =>
+    owner.evaluate(
+      ([t, f]) => {
+        const dt = new DataTransfer()
+        if (f)
+          dt.items.add(
+            new File(["# dropped\n\nvia drag"], "dropped-note.md", { type: "text/markdown" }),
+          )
+        window.dispatchEvent(new DragEvent(t as string, { dataTransfer: dt, bubbles: true }))
+      },
+      [type, withFile] as const,
+    )
+  await drag("dragenter", true)
+  await expect(owner.getByTestId("library-drop-overlay")).toBeVisible()
+  await drag("drop", true)
+  await expect(owner.getByTestId("library-drop-overlay")).toHaveCount(0)
+  // The drop published for real: the artifact lands in the grid.
+  await expect(owner.getByText("dropped-note")).toBeVisible()
+
+  // A text drag (no files) never summons the overlay.
+  await drag("dragenter", false)
+  await expect(owner.getByTestId("library-drop-overlay")).toHaveCount(0)
+})

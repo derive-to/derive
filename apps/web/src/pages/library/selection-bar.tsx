@@ -116,7 +116,7 @@ export function SelectionBar({
           // so the actions and the count fit a 320px phone without wrapping or
           // horizontal scroll; each keeps its aria-label, so the icon-only form stays
           // announced.
-          className="pointer-events-auto flex max-w-[calc(100vw-1.5rem)] items-center gap-0.5 rounded-2xl bg-popover px-2 py-2 text-popover-foreground shadow-[var(--shadow-pop)] ring-1 ring-foreground/10 duration-200 ease-out animate-in fade-in-0 slide-in-from-bottom-2 sm:gap-1 sm:px-3"
+          className="pointer-events-auto flex max-w-[calc(100vw-1.5rem)] items-center gap-0.5 rounded-2xl bg-popover px-2 py-2 text-popover-foreground shadow-[var(--shadow-pop)] ring-1 ring-foreground/10 duration-state ease-out animate-in fade-in-0 slide-in-from-bottom-2 sm:gap-1 sm:px-3"
         >
           <div className="flex items-center gap-2 border-r border-border-soft pr-2 pl-1 sm:pr-3">
             <span

@@ -179,3 +179,204 @@ describe("collections", () => {
     expect(pr.parentId).toBe(repoCol.id)
   })
 })
+
+describe("collections: starring", () => {
+  const amy: TestUser = { id: "u_amy", email: "amy@derive.test", name: "Amy" }
+  const bob: TestUser = { id: "u_bob", email: "bob@derive.test", name: "Bob" }
+  const { app: authed } = makeAuthedApp("collection-stars", [amy, bob])
+
+  const mk = async (title: string) => {
+    const r = await authed.request("/v1/collections", {
+      method: "POST",
+      headers: { ...as(amy.email), "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    })
+    return (await r.json()) as { id: string }
+  }
+  const rowFor = async (email: string, id: string) => {
+    const j = await (await authed.request("/v1/collections", { headers: as(email) })).json()
+    return j.collections.find((c: { id: string }) => c.id === id)
+  }
+
+  it("stars, reports it on the list, and unstars", async () => {
+    const col = await mk("Q3 planning")
+    // Unstarred is stated, not absent — the sidebar decides what to pin off this field.
+    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
+
+    const on = await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+    expect(await on.json()).toEqual({ starred: true })
+    expect((await rowFor(amy.email, col.id)).starred).toBe(true)
+
+    // Twice stays true rather than erroring or double-inserting.
+    await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+    expect((await rowFor(amy.email, col.id)).starred).toBe(true)
+
+    const off = await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "DELETE",
+      headers: as(amy.email),
+    })
+    expect(await off.json()).toEqual({ starred: false })
+    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
+  })
+
+  it("reports a collection as active once you comment in it, not merely by access", async () => {
+    const col = await mk("Worked in")
+    const up = await authed.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(amy.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new File(["# doc"], "d.md", { type: "text/markdown" }))
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await up.json()) as { short_id: string }
+    await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+
+    // A shelf amy merely CREATED is not active: creating auto-adds you as owner, and
+    // counting that marked every collection you ever made as active.
+    const bare = await mk("Made but untouched")
+    expect((await rowFor(amy.email, bare.id)).active).toBe(false)
+
+    // This one she published into, which is a real signal.
+    expect((await rowFor(amy.email, col.id)).active).toBe(true)
+    // bob can open it and has done nothing: access is not activity. This is the whole
+    // distinction the grouping rests on.
+    expect((await rowFor(bob.email, col.id)).active).toBe(false)
+
+    await authed.request(`/v1/artifacts/${short_id}/comments`, {
+      method: "POST",
+      headers: { ...as(bob.email), "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "looks right" }),
+    })
+    // One deliberate act moves him.
+    expect((await rowFor(bob.email, col.id)).active).toBe(true)
+  })
+
+  it("carries a preview strip so the Collections view can show what's inside", async () => {
+    const col = await mk("Shelf with covers")
+    const shortIds: string[] = []
+    // One more than the strip holds, so both the cap and the "+N" the view derives from
+    // count-minus-strip are exercised.
+    for (let i = 0; i < 5; i++) {
+      const up = await authed.request("/v1/artifacts", {
+        method: "POST",
+        headers: as(amy.email),
+        body: (() => {
+          const f = new FormData()
+          f.set("file", new File([`# doc ${i}`], `d${i}.md`, { type: "text/markdown" }))
+          f.set("title", `Doc ${i}`)
+          return f
+        })(),
+      })
+      const { short_id } = (await up.json()) as { short_id: string }
+      shortIds.push(short_id)
+      await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
+        method: "PUT",
+        headers: as(amy.email),
+      })
+    }
+
+    const row = await rowFor(amy.email, col.id)
+    expect(row.count).toBe(5)
+    expect(row.preview).toHaveLength(4)
+    // Newest first, and each entry carries what a cover needs: the ref, the version to
+    // pin the render to, and whether a static PNG exists.
+    expect(row.preview[0].short_id).toBe(shortIds[4])
+    expect(row.preview[0].current_version).toBe(1)
+    expect(typeof row.preview[0].has_preview).toBe("boolean")
+    // Last activity is derived from the strip's head — a collection has no mtime of
+    // its own, so this is the only honest answer to "when was this touched". Each entry
+    // also carries its own timestamp, caption, and byline: the Collections digest
+    // filters covers to the week's window and attributes the work.
+    expect(typeof row.last_activity).toBe("string")
+    expect(typeof row.preview[0].updated_at).toBe("string")
+    expect(row.preview[0].title).toBe("Doc 4")
+    expect(row.preview[0]).toHaveProperty("author_name")
+
+    // An empty shelf reports an empty strip rather than omitting the field: the view
+    // renders "Nothing filed here yet" off this, and undefined would read as loading.
+    const bare = await mk("Empty shelf")
+    expect((await rowFor(amy.email, bare.id)).preview).toEqual([])
+    expect((await rowFor(amy.email, bare.id)).last_activity).toBeUndefined()
+  })
+
+  it("list rows carry their collection ids, from the batched read", async () => {
+    // The library's grouped-by-collection view groups on this field, from the LIST
+    // response — not the detail. It shipped broken once: the field was populated by
+    // `listEnrichment` but the Postgres fast path (`listPage`) builds its decoration
+    // inside one statement, and the arm was missing there — so every artifact grouped
+    // as unfiled in production while every SQLite test passed. This test runs under
+    // test:pg too, which is the whole point of it.
+    const col = await mk("Filed")
+    const up = await authed.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(amy.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new File(["# filed"], "filed.md", { type: "text/markdown" }))
+        f.set("title", "Filed doc")
+        return f
+      })(),
+    })
+    const { short_id } = (await up.json()) as { short_id: string }
+    await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+
+    // A second artifact, deliberately unfiled.
+    const up2 = await authed.request("/v1/artifacts", {
+      method: "POST",
+      headers: as(amy.email),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new File(["# loose"], "loose.md", { type: "text/markdown" }))
+        f.set("title", "Unfiled doc")
+        return f
+      })(),
+    })
+    const { short_id: looseId } = (await up2.json()) as { short_id: string }
+
+    const list = await (
+      await authed.request("/v1/artifacts?limit=30", { headers: as(amy.email) })
+    ).json()
+    const byId = (id: string) => list.artifacts.find((a: { short_id: string }) => a.short_id === id)
+    expect(byId(short_id), "the filed artifact is on the list").toBeTruthy()
+    expect(byId(short_id).collections).toEqual([col.id])
+    // An unfiled row says so with an empty array, not an absent field.
+    expect(byId(looseId).collections).toEqual([])
+  })
+
+  it("is per person, and gated on read rather than share", async () => {
+    // Starring is a note to yourself about where you work — it grants nothing — so any
+    // member who can open the collection can star it, and it stays theirs alone.
+    const col = await mk("Team shelf")
+    const res = await authed.request(`/v1/collections/${col.id}/favorite`, {
+      method: "PUT",
+      headers: as(bob.email),
+    })
+    expect(res.status).toBe(200)
+    expect((await rowFor(bob.email, col.id)).starred).toBe(true)
+    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
+  })
+
+  it("refuses an anonymous star", async () => {
+    // 403, matching the artifact star (anonymous.test pins the same): the workspace
+    // gate answers before the user guard does, and a caller with no session is not a
+    // member. Either way nothing is written.
+    const col = await mk("Anon check")
+    const res = await authed.request(`/v1/collections/${col.id}/favorite`, { method: "PUT" })
+    expect(res.status).toBe(403)
+  })
+})

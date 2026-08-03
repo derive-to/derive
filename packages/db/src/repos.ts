@@ -8,6 +8,7 @@ import type {
   AuditLogRecord,
   AutomationRecord,
   CollectionMemberRecord,
+  CollectionPreview,
   CollectionRecord,
   CommentListOpts,
   CommentRecord,
@@ -156,6 +157,7 @@ import {
   automation,
   betaSignup,
   collection,
+  collectionFavorite,
   collectionItem,
   collectionMember,
   comment,
@@ -323,6 +325,7 @@ export const schema = {
   collection,
   collectionItem,
   collectionMember,
+  collectionFavorite,
   folder,
   repoSource,
   githubApp,
@@ -1646,6 +1649,178 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  // Starred collections. Scoped by org like the artifact twin, so the rail never shows a
+  // star from a workspace you have switched away from.
+  const listUserFavoriteCollectionIds = async (
+    userId: string,
+    orgId?: string,
+  ): Promise<string[]> => {
+    if (orgId !== undefined) {
+      const rows = await db
+        .select({ id: collectionFavorite.collection_id })
+        .from(collectionFavorite)
+        .innerJoin(collection, eq(collection.id, collectionFavorite.collection_id))
+        .where(and(eq(collectionFavorite.user_id, userId), eq(collection.org_id, orgId)))
+        .all()
+      return rows.map((r) => r.id)
+    }
+    return (
+      await db
+        .select({ id: collectionFavorite.collection_id })
+        .from(collectionFavorite)
+        .where(eq(collectionFavorite.user_id, userId))
+        .all()
+    ).map((r) => r.id)
+  }
+  const setCollectionFavorite = async (collectionId: string, userId: string): Promise<void> => {
+    await db
+      .insert(collectionFavorite)
+      .values({ id: crypto.randomUUID(), collection_id: collectionId, user_id: userId })
+      .onConflictDoNothing({
+        target: [collectionFavorite.collection_id, collectionFavorite.user_id],
+      })
+      .run()
+  }
+  const removeCollectionFavorite = async (collectionId: string, userId: string): Promise<void> => {
+    await db
+      .delete(collectionFavorite)
+      .where(
+        and(
+          eq(collectionFavorite.collection_id, collectionId),
+          eq(collectionFavorite.user_id, userId),
+        ),
+      )
+      .run()
+  }
+  // Four small indexed reads rather than one join across versions, comments, items and
+  // members: each is cheap on its own index, and the set is small enough that unioning
+  // in JS beats asking either dialect for a four-way outer join.
+  const collectionsWorkedIn = async (
+    userId: string,
+    orgId: string,
+    sinceIso: string,
+  ): Promise<{ id: string; at: string }[]> => {
+    // Per artifact the viewer touched, WHEN they touched it — the digest orders "your
+    // shelves" by your own latest act, so the timestamp is the point, not a rider.
+    const touchedAt = new Map<string, string>()
+    const touch = (key: string, at: string) => {
+      const prev = touchedAt.get(key)
+      if (!prev || at > prev) touchedAt.set(key, at)
+    }
+    for (const r of await db
+      .select({ id: version.artifact_id, at: version.created_at })
+      .from(version)
+      .where(and(eq(version.author_id, userId), gte(version.created_at, sinceIso)))
+      .all())
+      touch(r.id, r.at)
+    for (const r of await db
+      .select({ id: comment.artifact_id, at: comment.created_at })
+      .from(comment)
+      .where(and(eq(comment.author_id, userId), gte(comment.created_at, sinceIso)))
+      .all())
+      touch(r.id, r.at)
+
+    const byCollection = new Map<string, string>()
+    const fold = (id: string, at: string) => {
+      const prev = byCollection.get(id)
+      if (!prev || at > prev) byCollection.set(id, at)
+    }
+    if (touchedAt.size > 0) {
+      for (const r of await db
+        .select({ id: collectionItem.collection_id, artifact: collectionItem.artifact_id })
+        .from(collectionItem)
+        .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
+        .where(
+          and(
+            inArray(collectionItem.artifact_id, [...touchedAt.keys()]),
+            eq(collection.org_id, orgId),
+          ),
+        )
+        .all()) {
+        const at = touchedAt.get(r.artifact)
+        if (at) fold(r.id, at)
+      }
+    }
+    // Being added by someone else is a signal you work there — it is how you land in a
+    // shelf you have not written in yet. Creating one is NOT: you are auto-added as
+    // owner, so counting it marked every collection you ever made as active and left
+    // "All collections" permanently empty.
+    for (const r of await db
+      .select({ id: collectionMember.collection_id, at: collectionMember.created_at })
+      .from(collectionMember)
+      .innerJoin(collection, eq(collection.id, collectionMember.collection_id))
+      .where(
+        and(
+          eq(collectionMember.user_id, userId),
+          gte(collectionMember.created_at, sinceIso),
+          eq(collection.org_id, orgId),
+          ne(collection.created_by, userId),
+        ),
+      )
+      .all())
+      fold(r.id, r.at)
+    return [...byCollection.entries()].map(([id, at]) => ({ id, at }))
+  }
+  // One read for every shelf on screen, sliced per collection in JS. A per-collection
+  // LIMIT means a lateral join or N queries; the rows are narrow and the page shows a
+  // dozen shelves, so ordering once and slicing is both simpler and fewer round trips.
+  const collectionPreviews = async (
+    collectionIds: string[],
+    perCollection: number,
+  ): Promise<Record<string, CollectionPreview[]>> => {
+    const out: Record<string, CollectionPreview[]> = {}
+    if (collectionIds.length === 0) return out
+    const rows = await db
+      .select({
+        collection_id: collectionItem.collection_id,
+        id: artifact.id,
+        short_id: artifact.short_id,
+        title: artifact.title,
+        current_version: artifact.current_version,
+        updated_at: artifact.updated_at,
+        created_at: artifact.created_at,
+        preview_status: version.preview_status,
+        author_id: artifact.author_id,
+        author_name: artifact.author_name,
+        author_login: artifact.author_login,
+        author_avatar: artifact.author_avatar,
+      })
+      .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      // Left join: an artifact whose current version is still rendering has no ready row
+      // and must fall back to the live iframe rather than a broken <img>.
+      .leftJoin(
+        version,
+        and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
+      )
+      .where(and(inArray(collectionItem.collection_id, collectionIds), isNull(artifact.removed_at)))
+      .all()
+    // Newest first, tie-broken on id: two artifacts published in the same millisecond
+    // would otherwise land in whatever order the driver returned them, and a strip that
+    // reshuffles between page loads reads as churn.
+    const at = (r: { updated_at: string | null; created_at: string }) =>
+      r.updated_at ?? r.created_at
+    rows.sort((a, b) => at(b).localeCompare(at(a)) || b.id.localeCompare(a.id))
+    for (const r of rows) {
+      const bucket = out[r.collection_id] ?? []
+      out[r.collection_id] = bucket
+      if (bucket.length < perCollection)
+        bucket.push({
+          id: r.id,
+          short_id: r.short_id,
+          title: r.title,
+          current_version: r.current_version,
+          updated_at: r.updated_at ?? r.created_at,
+          has_preview: r.preview_status === "ready",
+          author_id: r.author_id,
+          author_name: r.author_name,
+          author_login: r.author_login,
+          author_avatar: r.author_avatar,
+        })
+    }
+    return out
+  }
+
   // ---- Follows (track GitHub authors + repo path prefixes) ---------------
   // Insert-or-ignore on the (user, org, kind, target) unique key (idempotent, like
   // setFavorite), then read the row back so the caller always gets the persisted follow.
@@ -1913,6 +2088,26 @@ export function makeRepos(db: SqliteDb) {
     return out
   }
 
+  // Batched twin of collectionIdsForArtifact: one read for a whole listing page, so a
+  // grouped list doesn't turn into a round trip per row.
+  const collectionsForArtifacts = async (
+    artifactIds: string[],
+  ): Promise<Record<string, string[]>> => {
+    if (artifactIds.length === 0) return {}
+    const rows = await db
+      .select({ a: collectionItem.artifact_id, c: collectionItem.collection_id })
+      .from(collectionItem)
+      .where(inArray(collectionItem.artifact_id, artifactIds))
+      .all()
+    const out: Record<string, string[]> = {}
+    for (const r of rows) {
+      const list = out[r.a] ?? []
+      out[r.a] = list
+      list.push(r.c)
+    }
+    return out
+  }
+
   const previewReady = async (artifactIds: string[]): Promise<Record<string, boolean>> => {
     if (artifactIds.length === 0) return {}
     const rows = await db
@@ -1983,9 +2178,14 @@ export function makeRepos(db: SqliteDb) {
     const rows = await (orgId ? base.where(eq(collection.org_id, orgId)) : base)
       .orderBy(desc(collection.created_at))
       .all()
+    // Count LIVE artifacts, not item rows: a PR-preview teardown tombstones the
+    // artifacts but leaves the collection_item rows, and a shelf that says "3
+    // artifacts" over an empty strip is the count lying about what opening it shows.
     const counts = await db
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      .where(isNull(artifact.removed_at))
       .groupBy(collectionItem.collection_id)
       .all()
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
@@ -4231,6 +4431,11 @@ export function makeRepos(db: SqliteDb) {
     setArtifactMember,
     removeArtifactMember,
     listUserFavoriteIds,
+    listUserFavoriteCollectionIds,
+    setCollectionFavorite,
+    removeCollectionFavorite,
+    collectionsWorkedIn,
+    collectionPreviews,
     setFavorite,
     removeFavorite,
     addFollow,
@@ -4247,6 +4452,7 @@ export function makeRepos(db: SqliteDb) {
     listUserWorks,
     countUserWorks,
     tagsForArtifacts,
+    collectionsForArtifacts,
     previewReady,
     setArtifactTags,
     createCollection,

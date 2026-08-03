@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate, useParams } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
-import { API_BASE, ApiError, api } from "@/api"
+import { ApiError, api } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -689,6 +689,7 @@ export function Artifact() {
       // already announced the new version). Treating shown as current hides it.
       currentVersion={inlineEdit.active ? shown : art.current_version}
       title={art.title ?? shortId}
+      subject={shortId}
       rawSrc={rawSrc}
       view={view}
       diff={diff}

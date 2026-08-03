@@ -50,15 +50,20 @@ export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedba
  *  param — does not change which artifacts the home renders, so it must not disable the
  *  head-start. */
 export const LIBRARY_SEARCH_PARAMS = [
+  "view",
   "collection",
   "folder",
   "query",
   "author",
-  "tab",
+  "filter",
   "sort",
 ] as const
 
 export type LibrarySearch = {
+  /** Which of the library's two views is showing. Absent = Artifacts. Collections is
+   *  a view of the same page rather than its own route: it shares the toolbar, and
+   *  opening a shelf from it is just the `collection` filter below. */
+  view?: "collections"
   collection?: string
   // Anchor a collection view to one of its folders — scroll that section into view on
   // open. Set by the artifact breadcrumb's folder segment; ignored outside a collection.
@@ -67,10 +72,12 @@ export type LibrarySearch = {
   query?: string
   // Narrow to artifacts last changed by this GitHub login (synced collections).
   author?: string
-  // The home library's second tab: everything YOU created, any visibility. A
-  // query param, not a route — a view of your own work is a filter on the home
-  // library, not a separate feed (docs/decisions/0002).
-  tab?: "mine"
+  // How the home library is narrowed. Absent = everything you can see. These were
+  // three separate places — /favorites and /shared were routes, "Created by me" was
+  // a `tab` param — for one list under three names. They are facets of the home
+  // library, so they compose with a collection, a search and a sort, which three
+  // routes never could. The old paths redirect here.
+  filter?: "mine" | "shared" | "starred" | "needs-you"
   // How the grid is ordered; absent = the default ("Newest"). See ./sort.
   sort?: SortMode
 }

@@ -902,6 +902,206 @@ export function runStoreContract(
       expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)
     })
 
+    it("stars + unstars a collection, per user and idempotently", async () => {
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Q3 planning",
+        created_by: "amy",
+      })
+      await store.setCollectionFavorite(col.id, "amy")
+      // Starring twice must not throw or double-insert — the rail reads this list
+      // directly, so a duplicate would render the same row twice.
+      await store.setCollectionFavorite(col.id, "amy")
+      expect(await store.listUserFavoriteCollectionIds("amy")).toEqual([col.id])
+
+      // A star is per user: amy's must not appear for bob.
+      expect(await store.listUserFavoriteCollectionIds("bob")).not.toContain(col.id)
+
+      await store.removeCollectionFavorite(col.id, "amy")
+      expect(await store.listUserFavoriteCollectionIds("amy")).not.toContain(col.id)
+      // Removing again is a no-op rather than an error.
+      await store.removeCollectionFavorite(col.id, "amy")
+    })
+
+    it("reports the collections a user has worked in, and only those", async () => {
+      const worked = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Worked in",
+        created_by: "amy",
+      })
+      const untouched = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Never touched",
+        created_by: "amy",
+      })
+      const a1 = await store.createArtifact(newArtifact())
+      const a2 = await store.createArtifact(newArtifact())
+      await store.addCollectionItem(worked.id, a1.id)
+      await store.addCollectionItem(untouched.id, a2.id)
+
+      const since = new Date(Date.now() - 30 * 86400_000).toISOString()
+      // Nothing done yet. Creating a collection auto-adds you as its owner, and that
+      // must NOT count — otherwise every shelf you ever made reads as active forever.
+      expect(await store.collectionsWorkedIn("amy", ORG, since)).toEqual([])
+
+      // A comment is a deliberate act, and it carries a stable author id — and the read
+      // reports WHEN, because the digest orders your shelves by your own latest touch.
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a1.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "looks right",
+        author: "Amy",
+        author_id: "amy",
+      })
+      const worked1 = await store.collectionsWorkedIn("amy", ORG, since)
+      expect(worked1.map((w) => w.id)).toEqual([worked.id])
+      expect(typeof worked1[0]?.at).toBe("string")
+
+      // Someone else's comment is not your activity.
+      expect(await store.collectionsWorkedIn("bob", ORG, since)).toEqual([])
+
+      // The window is real: an act older than `since` does not count.
+      const future = new Date(Date.now() + 60_000).toISOString()
+      expect(await store.collectionsWorkedIn("amy", ORG, future)).toEqual([])
+    })
+
+    it("reports each artifact's collections in one batched read", async () => {
+      // The grouped-by-collection list groups on this. It must agree with the per-artifact
+      // method the detail route uses — one is the batched face of the other, and a listing
+      // that disagreed with the document you opened would be worse than no grouping.
+      const one = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "One",
+        created_by: "amy",
+      })
+      const two = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Two",
+        created_by: "amy",
+      })
+      const filedTwice = await store.createArtifact(newArtifact())
+      const filedOnce = await store.createArtifact(newArtifact())
+      const unfiled = await store.createArtifact(newArtifact())
+      await store.addCollectionItem(one.id, filedTwice.id)
+      await store.addCollectionItem(two.id, filedTwice.id)
+      await store.addCollectionItem(one.id, filedOnce.id)
+
+      const map = await store.collectionsForArtifacts([filedTwice.id, filedOnce.id, unfiled.id])
+      // Membership is not exclusive, and the list view shows such an artifact under both.
+      expect([...(map[filedTwice.id] ?? [])].sort()).toEqual([one.id, two.id].sort())
+      expect(map[filedOnce.id]).toEqual([one.id])
+      // Absent, not an empty array — the caller distinguishes "no collections" by absence.
+      expect(map[unfiled.id]).toBeUndefined()
+      expect(await store.collectionsForArtifacts([])).toEqual({})
+      // Scoped to the page asked for. Without the id filter every assertion above still
+      // passes while the query returns the whole table — right answers, ruinous read.
+      expect(Object.keys(map).sort()).toEqual([filedOnce.id, filedTwice.id].sort())
+
+      // Agrees with the single-artifact method it batches.
+      for (const id of [filedTwice.id, filedOnce.id, unfiled.id])
+        expect([...(map[id] ?? [])].sort(), `collections for ${id}`).toEqual(
+          [...(await store.collectionIdsForArtifact(id))].sort(),
+        )
+    })
+
+    it("previews a collection's newest artifacts, batched and capped", async () => {
+      const shelf = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Shelf",
+        created_by: "amy",
+      })
+      const other = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Other shelf",
+        created_by: "amy",
+      })
+      // Five artifacts, oldest first, so the newest-first order is unambiguous.
+      const made = []
+      for (let i = 0; i < 5; i++) {
+        const a = await store.createArtifact(
+          newArtifact({ title: `Doc ${i}`, updated_at: `2026-01-0${i + 1}T00:00:00.000Z` }),
+        )
+        await store.addCollectionItem(shelf.id, a.id)
+        made.push(a)
+      }
+      const lone = await store.createArtifact(newArtifact({ title: "Lone" }))
+      await store.addCollectionItem(other.id, lone.id)
+
+      const previews = await store.collectionPreviews([shelf.id, other.id], 3)
+      // Capped per collection, newest first — the strip is a preview, not a listing.
+      expect(previews[shelf.id]?.map((p) => p.short_id)).toEqual([
+        made[4].short_id,
+        made[3].short_id,
+        made[2].short_id,
+      ])
+      // One call covers every collection on screen.
+      expect(previews[other.id]?.map((p) => p.short_id)).toEqual([lone.short_id])
+
+      // A deleted artifact leaves the strip — the shelf must not show a cover that
+      // 404s when you click it.
+      await store.setArtifactRemoved(made[4].id, new Date().toISOString())
+      expect(previews[shelf.id]?.[0]?.short_id).toBe(made[4].short_id)
+      const after = await store.collectionPreviews([shelf.id], 3)
+      expect(after[shelf.id]?.map((p) => p.short_id)).toEqual([
+        made[3].short_id,
+        made[2].short_id,
+        made[1].short_id,
+      ])
+      // …and the COUNT agrees with the strip: item rows for tombstoned artifacts do not
+      // count. "3 artifacts" over an empty shelf was the count lying about what opening
+      // the collection actually shows (a PR-preview teardown tombstones the artifacts
+      // but keeps the collection_item rows).
+      const counted = (await store.listCollections(ORG)).find((c) => c.id === shelf.id)
+      expect(counted?.count).toBe(4)
+
+      // An empty collection is absent rather than an empty array, and no ids means no
+      // query at all.
+      const empty = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Empty",
+        created_by: "amy",
+      })
+      expect((await store.collectionPreviews([empty.id], 3))[empty.id]).toBeUndefined()
+      expect(await store.collectionPreviews([], 3)).toEqual({})
+    })
+
+    it("scopes starred collections to a workspace when one is given", async () => {
+      const here = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "This workspace",
+        created_by: "amy",
+      })
+      const elsewhere = await store.createCollection({
+        id: uuid(),
+        org_id: `org_${uuid()}`,
+        title: "Another workspace",
+        created_by: "amy",
+      })
+      await store.setCollectionFavorite(here.id, "amy")
+      await store.setCollectionFavorite(elsewhere.id, "amy")
+
+      // Unscoped: both, because the caller asked for every star this user holds.
+      const all = await store.listUserFavoriteCollectionIds("amy")
+      expect(all).toEqual(expect.arrayContaining([here.id, elsewhere.id]))
+
+      // Scoped: only this workspace's — the rail must not show a star from a
+      // workspace you have switched away from.
+      const scoped = await store.listUserFavoriteCollectionIds("amy", ORG)
+      expect(scoped).toContain(here.id)
+      expect(scoped).not.toContain(elsewhere.id)
+    })
+
     it("replaces a tag set and resolves ids/counts by tag", async () => {
       const a = await store.createArtifact(newArtifact())
       await store.setArtifactTags(a.id, ["alpha", "beta"])
@@ -1045,6 +1245,7 @@ export function runStoreContract(
       expect(enr).toEqual({
         views: {},
         tags: {},
+        collections: {},
         previews: {},
         handles: [],
         bylines: [],
@@ -2504,9 +2705,170 @@ export function runStoreContract(
       )
       expect(overview.sources).toEqual(await store.listRepoSources(org))
       expect(overview.sources).toHaveLength(1)
-      // An org with nothing yields both empty, not an error.
+      // No viewer ⇒ the per-user arms are empty rather than absent, so a caller can
+      // destructure them unconditionally.
+      expect(overview.starred).toEqual([])
+      expect(overview.workedIn).toEqual([])
+      expect(overview.previews).toEqual({})
+      // An org with nothing yields empties, not an error.
       const empty = await store.collectionsOverview(`org_${uuid()}`)
-      expect(empty).toEqual({ collections: [], sources: [] })
+      expect(empty).toEqual({
+        collections: [],
+        sources: [],
+        starred: [],
+        workedIn: [],
+        previews: {},
+        previewBylines: [],
+      })
+    })
+
+    it("bootstrap reports the same collection roles as the batched method", async () => {
+      // The boot batch and /v1/collections both feed the same UI, and a collection
+      // with no role is dropped from the response entirely — so if these two disagree,
+      // a collection appears on boot and vanishes on the next fetch (or the reverse).
+      // Postgres shipped exactly that: its bootstrap arm counted explicit member rows
+      // and forgot the workspace seat, so every workspace-open collection the caller
+      // had not explicitly joined flickered. Assert the two agree rather than
+      // re-asserting either one's contents.
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Roles parity")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "amy", role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: "zed", role: "owner" })
+
+      // The case that broke: workspace-open, created by someone else, amy is not an
+      // explicit member. Her seat is the ONLY thing that gives her a role here.
+      const open = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Workspace-open",
+        created_by: "zed",
+      })
+      // Invite-only, amy explicitly added — the half that never went missing.
+      const invited = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Invite only",
+        created_by: "zed",
+        workspace_access: "none",
+      })
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: invited.id,
+        user_id: "amy",
+        role: "commenter",
+      })
+      // Both sources at once: the higher of seat and member row must win, which is
+      // why the merge is maxRole and not last-one-in.
+      const both = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Seat and member row",
+        created_by: "zed",
+      })
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: both.id,
+        user_id: "amy",
+        role: "viewer",
+      })
+
+      const ids = [open.id, invited.id, both.id]
+      const batched = await store.collectionRolesForUser(ids, "amy")
+      const boot = await store.bootstrap(org, "amy", 20, {
+        activeSince: new Date(Date.now() - 30 * 86400_000).toISOString(),
+        previewPer: 4,
+      })
+
+      for (const id of ids) expect(boot.collectionRoles[id], `role for ${id}`).toBe(batched[id])
+      // Not vacuously equal: the seat really does grant a role on the open one.
+      expect(batched[open.id]).toBe("editor")
+      expect(batched[invited.id]).toBe("commenter")
+      // Seat (editor) outranks the explicit viewer row.
+      expect(batched[both.id]).toBe("editor")
+    })
+
+    it("answers the viewer's stars, worked-in set, and preview strips in the same call", async () => {
+      // The whole point of the viewer arms: three reads a route must NOT make separately
+      // (see apps/api/test/round-trip-budget.test.ts). They must agree exactly with the
+      // standalone methods, or folding them in changed behaviour rather than cost.
+      const org = `org_${uuid()}`
+      await store.setWorkspace(org, "Viewer overview")
+      const starredCol = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Starred",
+        created_by: "amy",
+      })
+      const workedCol = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Worked in",
+        created_by: "amy",
+      })
+      await store.setCollectionFavorite(starredCol.id, "amy")
+
+      const older = await store.createArtifact(
+        newArtifact({ org_id: org, title: "Older", updated_at: "2026-01-01T00:00:00.000Z" }),
+      )
+      const newer = await store.createArtifact(
+        newArtifact({ org_id: org, title: "Newer", updated_at: "2026-02-01T00:00:00.000Z" }),
+      )
+      await store.addCollectionItem(workedCol.id, older.id)
+      await store.addCollectionItem(workedCol.id, newer.id)
+      await store.createComment({
+        id: uuid(),
+        artifact_id: newer.id,
+        thread_id: uuid(),
+        base_version: 1,
+        body_md: "worked on this",
+        author: "Amy",
+        author_id: "amy",
+      })
+
+      const since = new Date(Date.now() - 30 * 86400_000).toISOString()
+      const viewer = { userId: "amy", activeSince: since, previewPer: 2 }
+      const read = await store.collectionsOverview(org, viewer)
+
+      expect(read.starred).toEqual(await store.listUserFavoriteCollectionIds("amy", org))
+      expect(read.starred).toEqual([starredCol.id])
+      const workedDirect = await store.collectionsWorkedIn("amy", org, since)
+      expect([...read.workedIn].sort((a, b) => a.id.localeCompare(b.id))).toEqual(
+        [...workedDirect].sort((a, b) => a.id.localeCompare(b.id)),
+      )
+      expect(read.workedIn.map((w) => w.id)).toEqual([workedCol.id])
+      // The touch is the viewer's own comment time — the digest orders on it.
+      expect(typeof read.workedIn[0]?.at).toBe("string")
+
+      // Newest first, capped, and each cover carries whether a static render exists.
+      expect(read.previews[workedCol.id]?.map((p) => p.short_id)).toEqual([
+        newer.short_id,
+        older.short_id,
+      ])
+      expect(read.previews[workedCol.id]?.[0]?.has_preview).toBe(false)
+      // The strip attributes the work: caption + byline ride the same read on every
+      // driver (the pg overview arm selects them; SQLite reads the artifact row).
+      expect(read.previews[workedCol.id]?.[0]?.title).toBe("Newer")
+      expect(read.previews[workedCol.id]?.[0]).toHaveProperty("author_name")
+      // A collection with nothing in it is absent, not mapped to an empty array.
+      expect(read.previews[starredCol.id]).toBeUndefined()
+
+      // Another member of the same workspace sees the org halves and none of amy's
+      // personal decoration — these arms are user-scoped, not org-scoped.
+      const bobs = await store.collectionsOverview(org, { ...viewer, userId: "bob" })
+      expect(bobs.collections.map((c) => c.id).sort()).toEqual(
+        read.collections.map((c) => c.id).sort(),
+      )
+      expect(bobs.starred).toEqual([])
+      expect(bobs.workedIn).toEqual([])
+      // Previews are a property of the collection, not the reader, so they still come.
+      expect(bobs.previews[workedCol.id]).toHaveLength(2)
+
+      // The contract schemas carry no Better Auth "user" table, so the byline heal has
+      // nothing to read: previewBylines is EMPTY (never an error), and the denormalized
+      // name stands. On Postgres this exercises the retry-without-bylines path — the
+      // statement's "user" join fails and the second pass answers.
+      expect(read.previewBylines).toEqual([])
+      expect(read.previews[workedCol.id]?.[0]?.author_id).toBeDefined()
     })
   })
 
@@ -4380,6 +4742,18 @@ export function runStoreContract(
         role: "editor",
       })
 
+      // A collection membership, so the collections arm is non-vacuous: the pg fast
+      // path shipped with this arm MISSING while every field-by-field assertion below
+      // passed — an empty map agrees with an empty map. The fixture is the assertion.
+      const shelf = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Page shelf",
+        created_by: me,
+      })
+      await store.addCollectionItem(shelf.id, first.id)
+      await store.addCollectionItem(shelf.id, second.id)
+
       const list = { orgId: org, limit: 10, sort: "created" as const }
       const opts = { list, viewerId: me, memberId: me, views: true }
 
@@ -4398,6 +4772,7 @@ export function runStoreContract(
       expect(fast.artifacts.map((a) => a.id)).toEqual(rows.map((r) => r.id))
       expect(fast.artifacts).toEqual(rows)
       expect(fast.enrichment.tags).toEqual(slow.tags)
+      expect(fast.enrichment.collections).toEqual(slow.collections)
       expect(fast.enrichment.previews).toEqual(slow.previews)
       expect(fast.enrichment.proposals).toEqual(slow.proposals)
       expect(fast.enrichment.views).toEqual(slow.views)
@@ -4409,6 +4784,8 @@ export function runStoreContract(
       expect(fast.enrichment.tags[first.id]).toEqual(["alpha", "zeta"])
       expect(fast.enrichment.favorites).toEqual([second.id])
       expect(fast.enrichment.shareRoles[first.id]).toBe("editor")
+      expect(fast.enrichment.collections[first.id]).toEqual([shelf.id])
+      expect(fast.enrichment.collections[second.id]).toEqual([shelf.id])
     })
 
     it("returns an empty page for an empty id narrowing, like the pair does", async () => {

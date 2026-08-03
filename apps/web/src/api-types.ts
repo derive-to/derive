@@ -2357,6 +2357,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/collections/{id}/favorite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Star a collection. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new starred state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            starred: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Unstar a collection. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new starred state. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            starred: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/collections/{id}": {
         parameters: {
             query?: never;
@@ -6337,6 +6401,23 @@ export interface components {
              * @enum {string|null}
              */
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
+            /** @description Whether the caller starred this collection — it pins to their sidebar. */
+            starred?: boolean;
+            last_activity?: string;
+            my_last_activity?: string;
+            /** @description A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing. */
+            preview?: {
+                short_id: string;
+                title: string | null;
+                current_version: number;
+                has_preview: boolean;
+                updated_at: string;
+                author_name: string | null;
+                author_login: string | null;
+                author_avatar: string | null;
+            }[];
+            /** @description Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded. */
+            active?: boolean;
             /**
              * @description Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).
              * @enum {string}

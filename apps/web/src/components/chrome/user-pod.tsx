@@ -139,6 +139,13 @@ export function UserPod({
           <DropdownMenuItem data-testid="menu-settings" onSelect={goSettings}>
             <Icon name="settings" size={16} /> Settings
           </DropdownMenuItem>
+          {/* The welcome tour, reachable again: the home greeting used to carry the only
+              link to /welcome, and deleting the greeting orphaned it. The account menu
+              is where a tour lives when it must not shout — findable when wanted,
+              invisible until then. */}
+          <DropdownMenuItem data-testid="menu-welcome" onSelect={() => nav({ to: "/welcome" })}>
+            <Icon name="sparkles" size={16} /> Welcome tour
+          </DropdownMenuItem>
         </DropdownMenuGroup>
 
         {/* CONTEXT — the workspace switcher, only when you're in more than one.

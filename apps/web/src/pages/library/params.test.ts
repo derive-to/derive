@@ -47,9 +47,14 @@ describe("libraryFeedParams", () => {
 
   it("keeps the Created-by-me tab to the home library", () => {
     // deriveFilter matches the named feeds first; /favorites?tab=mine is still favorites.
-    expect(libraryFeedParams("all", { tab: "mine" }).scope).toBe("mine")
-    expect(libraryFeedParams("favorites", { tab: "mine" }).scope).toBeUndefined()
-    expect(libraryFeedParams("shared", { tab: "mine" }).scope).toBe("shared")
+    expect(libraryFeedParams("all", { filter: "mine" }).scope).toBe("mine")
+    expect(libraryFeedParams("all", { filter: "shared" }).scope).toBe("shared")
+    // A named feed IS the filter — the menu is home-only, and a stray param must not
+    // turn /following into something else.
+    expect(libraryFeedParams("following", { filter: "mine" }).scope).toBe("following")
+    // `starred` is not a scope: it rides the favorite flag, so it composes with one.
+    expect(libraryFeedParams("all", { filter: "starred" }).scope).toBeUndefined()
+    expect(libraryFeedParams("all", { filter: "starred" }).favorite).toBe(true)
   })
 
   it("scopeFor stays the single mapping the routes and the body share", () => {
@@ -66,11 +71,12 @@ describe("LIBRARY_SEARCH_PARAMS", () => {
     // app renders another — a wasted request AND a slower page, with nothing visibly
     // wrong. This assignment fails to compile if the two drift.
     const everyKey: Record<keyof Required<LibrarySearch>, true> = {
+      view: true,
       collection: true,
       folder: true,
       query: true,
       author: true,
-      tab: true,
+      filter: true,
       sort: true,
     }
     expect([...LIBRARY_SEARCH_PARAMS].sort()).toEqual(Object.keys(everyKey).sort())

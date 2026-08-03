@@ -128,9 +128,10 @@ test("changing the feed drops the selection instead of carrying it off-screen", 
   await owner.getByTestId(`artifact-card-select-${a}`).click()
   await expect(owner.getByTestId("library-selection-bar")).toBeVisible()
 
-  // Switch to the "Created by me" tab — a different feed, so the set resets rather than
+  // Narrow to your own documents — a different feed, so the set resets rather than
   // leaving the bar counting artifacts the new feed may not even contain.
-  await owner.getByTestId("library-tab-mine").click()
+  await owner.getByTestId("library-filter").click()
+  await owner.getByTestId("library-filter-mine").click()
   await expect(owner.getByTestId("library-selection-bar")).toBeHidden()
 })
 

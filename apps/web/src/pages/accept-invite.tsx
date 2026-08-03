@@ -170,7 +170,7 @@ export function AcceptArtifactInvite() {
         <StatusPanel
           tone="danger"
           title="This invitation is invalid or has expired"
-          description="Ask the person who shared the document to send a new one."
+          description="Ask the person who shared the artifact to send a new one."
         />
         <Button variant="outline" data-testid="invite-go-home" onClick={() => nav({ to: "/" })}>
           Go to Derive
@@ -186,7 +186,7 @@ export function AcceptArtifactInvite() {
           <p className="text-sm text-pretty text-muted-foreground">
             Open{" "}
             <span className="font-medium text-foreground">
-              {preview.title ?? "an untitled document"}
+              {preview.title ?? "an untitled artifact"}
             </span>{" "}
             on Derive as <Badge variant="secondary">{ROLE_LABELS[preview.role]}</Badge>
           </p>
@@ -196,7 +196,7 @@ export function AcceptArtifactInvite() {
         </>
       }
       invitedEmail={preview.email}
-      cta={{ idle: "Open the document", busy: "Opening…", signIn: "Sign in to open" }}
+      cta={{ idle: "Open the artifact", busy: "Opening…", signIn: "Sign in to open" }}
       signedIn={!!me}
       accepting={acceptMut.isPending}
       err={acceptMut.error?.message ?? ""}

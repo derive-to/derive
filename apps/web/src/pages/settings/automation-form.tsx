@@ -373,7 +373,7 @@ export function AutomationForm({
                     {docs.isError ? "Couldn't search. Try again." : "No matches."}
                   </CommandEmpty>
                   {(docs.data?.artifacts ?? []).length > 0 && (
-                    <CommandGroup heading="Documents">
+                    <CommandGroup heading="Artifacts">
                       {(docs.data?.artifacts ?? []).map((a) => (
                         <CommandItem
                           key={a.short_id}

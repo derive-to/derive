@@ -1432,6 +1432,67 @@
             ],
             "description": "Caller's own role on the collection; drives the Share dialog. Null if none."
           },
+          "starred": {
+            "type": "boolean",
+            "description": "Whether the caller starred this collection — it pins to their sidebar."
+          },
+          "last_activity": {
+            "type": "string"
+          },
+          "my_last_activity": {
+            "type": "string"
+          },
+          "preview": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "short_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "current_version": {
+                  "type": "number"
+                },
+                "has_preview": {
+                  "type": "boolean"
+                },
+                "updated_at": {
+                  "type": "string"
+                },
+                "author_name": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_login": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "author_avatar": {
+                  "type": "string",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "short_id",
+                "title",
+                "current_version",
+                "has_preview",
+                "updated_at",
+                "author_name",
+                "author_login",
+                "author_avatar"
+              ]
+            },
+            "description": "A few of the collection's most recent artifacts, for the filmstrip the Collections view renders. A preview strip, not a listing."
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded."
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -5306,6 +5367,80 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/favorite": {
+      "put": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Star a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new starred state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "starred": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "starred"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Unstar a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new starred state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "starred": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "starred"
+                  ]
                 }
               }
             }

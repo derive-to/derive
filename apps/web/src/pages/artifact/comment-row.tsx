@@ -14,6 +14,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Textarea } from "@/components/ui/textarea"
 import { getInitials } from "@/lib/initials"
+import { reveal } from "@/lib/interaction"
 import { agoShort } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
@@ -237,10 +238,8 @@ export function CommentRow({
           // the actions visibly belong to the message under the pointer; flat
           // card language (bg-card + hairline), not popover chrome.
           className={cn(
-            "-top-2 absolute right-3 z-6 flex rounded-md bg-card ring-1 ring-border transition-opacity",
-            open
-              ? "opacity-100"
-              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+            "-top-2 absolute right-3 z-6 flex rounded-md bg-card ring-1 ring-border",
+            reveal(!!open),
           )}
           onClick={(e) => e.stopPropagation()}
         >

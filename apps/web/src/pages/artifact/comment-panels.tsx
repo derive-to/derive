@@ -220,7 +220,7 @@ export function MobileComments({
         // transition MUST target `translate` — not `transform` — or the sheet jumps
         // in and out instead of sliding. Height changes snap (auto isn't
         // animatable); the drag handlers suspend/restore this transition inline.
-        "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] transition-[translate] duration-200 ease-out",
+        "fixed inset-x-0 bottom-0 z-61 flex flex-col rounded-t-2xl border-t border-border bg-card shadow-[var(--shadow-pop)] transition-[translate] duration-state ease-out",
         // Heights are CONTENT-WEIGHTED: composing is a compact bar above the
         // keyboard; expanded hugs its comments up to half the screen (the doc
         // strip above stays visible and live — no reading mode that owns the
@@ -345,7 +345,7 @@ export function MobileComments({
                 description={
                   editing
                     ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
-                    : "Select text in the document, or add a general comment."
+                    : "Select text in the artifact, or add a general comment."
                 }
                 action={
                   canComment ? (
@@ -565,7 +565,7 @@ export function OpenPanel(props: {
               description={
                 editing
                   ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
-                  : "Select text in the document, or add a general comment."
+                  : "Select text in the artifact, or add a general comment."
               }
               action={
                 canComment ? (

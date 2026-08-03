@@ -28,6 +28,10 @@ export const STORAGE_KEYS = {
   // the same browser is still gated; old "1" values are deliberately not honored.
   onboarded: "derive:onboarded",
   libraryFolders: "derive:show-folders",
+  // Grid or list, for the whole library. A PREFERENCE, not a per-route default: the
+  // same document used to look like three different things depending on which door you
+  // came through, and none of it was a choice anyone made.
+  libraryLayout: "derive.library.layout",
   // Dismissal of the home's one-time "set up your team's Brandprint" nudge (owners
   // of a Brandprint-less workspace; see pages/library/brandprint-nudge).
   brandprintNudge: "derive:brandprint-nudge",

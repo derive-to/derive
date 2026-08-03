@@ -1,23 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { api, type Collection } from "@/api"
+import type { Collection } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -143,7 +135,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/favorites" | "/following" | "/shared" | "/contexts"
+  to: "/following" | "/contexts"
   active: boolean
   testId?: string
 }) {
@@ -363,7 +355,7 @@ export function NavRail() {
   // keeps its own timing.
   const bootGate = useBootGate()
   const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
-  const { data: collections = [], isPending: collectionsPending } = useQuery({
+  const { data: collections = [] } = useQuery({
     ...collectionsQuery(),
     enabled: !!me && bootGate,
   })
@@ -378,15 +370,13 @@ export function NavRail() {
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
   const workspaceLabel = activeWs?.personal ? "Personal" : (summary?.workspace ?? "")
   const { state, setOpenMobile } = useSidebar()
-  const nav = useNavigate()
+  const _nav = useNavigate()
   const loc = useLocation()
   const search = loc.search as LibrarySearch
   const onLibrary = loc.pathname === "/"
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const isFav = loc.pathname === "/favorites"
-  const onShared = loc.pathname === "/shared"
   const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
   const onChat = loc.pathname.startsWith("/chat")
@@ -399,8 +389,8 @@ export function NavRail() {
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
 
-  const [creating, setCreating] = useState(false)
-  const [newName, setNewName] = useState("")
+  const [_creating, _setCreating] = useState(false)
+  const [_newName, _setNewName] = useState("")
   // Repo collections whose nested PR previews are collapsed. Default-expanded, so the
   // set holds only the ones the user has folded shut.
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())
@@ -416,6 +406,9 @@ export function NavRail() {
   const brandprintIds = useBrandprintCollectionIds()
   const visibleCollections = collections.filter((col) => !brandprintIds.has(col.id))
 
+  // Only starred collections reach the rail; the rest live in the library's Collections
+  // view. Every collection used to be listed here, which grew unbounded.
+  //
   // Nest PR-preview collections under their repo. A "pr" collection with a known
   // parentId becomes a child; everything else (repos, manual, orphaned PRs) stays
   // top-level. Children sort newest-PR-first.
@@ -431,23 +424,10 @@ export function NavRail() {
   })
   for (const arr of childPrsByRepo.values())
     arr.sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
-  const submitCollection = async () => {
-    const t = newName.trim()
-    setNewName("")
-    setCreating(false)
-    if (!t) return
-    try {
-      const col = await api.createCollection(t)
-      qc.invalidateQueries({ queryKey: collectionsQuery().queryKey })
-      setOpenMobile(false)
-      nav({ to: "/", search: { collection: col.id } })
-    } catch {
-      /* surfaced on the library on next action */
-    }
-  }
-
   // One collection row. A repo with nested PRs keeps its bespoke collapsible row;
   // everything else is a flat CollectionRow.
+  const starredCollections = topCollections.filter((col) => col.starred)
+
   const renderCollection = (col: Collection) => {
     const childPrs = childPrsByRepo.get(col.id)
     const colActive = onLibrary && search.collection === col.id
@@ -553,45 +533,6 @@ export function NavRail() {
   // Collapsed icon rail: collections don't shrink to single letters (a letter alone is a
   // cheap object glyph). Instead one "Collections" icon opens a flyout listing them by
   // real name — full access without the letter tiles.
-  const renderCollapsedCollections = () => (
-    <SidebarMenuItem>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <SidebarMenuButton
-            tooltip="Collections"
-            data-testid="sidebar-collections-flyout"
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <Icon name="collections" />
-            <span>Collections</span>
-          </SidebarMenuButton>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="start" className="max-h-96 w-56 overflow-auto">
-          {topCollections.length === 0 && (
-            <DropdownMenuItem disabled>No collections yet</DropdownMenuItem>
-          )}
-          {topCollections.map((col) => (
-            <DropdownMenuItem
-              key={col.id}
-              data-testid={`flyout-collection-${col.id}`}
-              onSelect={() => {
-                closeMobile()
-                nav({ to: "/", search: { collection: col.id } })
-              }}
-              className="gap-2"
-            >
-              <CollectionGlyph col={col} />
-              <span className="min-w-0 flex-1 truncate">{col.title}</span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </SidebarMenuItem>
-  )
-
-  // Session still resolving → the neutral rail silhouette, so we never flash the
-  // anon rail before an authed user's data lands (in-app navs have `me` cached).
-  if (loading) return <RailSkeleton />
 
   return (
     <Sidebar collapsible="icon" variant="inset">
@@ -605,28 +546,11 @@ export function NavRail() {
             <SidebarMenu>
               <FilterItem
                 icon="all"
-                label="All artifacts"
+                label="Library"
                 count={summary?.total}
                 search={{}}
                 active={isAll}
                 testId="sidebar-all"
-              />
-              <NavItem
-                icon="favorites"
-                label="Favorites"
-                count={summary?.favorites}
-                to="/favorites"
-                active={isFav}
-                testId="sidebar-favorites"
-              />
-              {/* Shared with you — a durable named feed (things others gave you access to),
-                  a peer of the feeds above; not a home strip (that's the whole IA move). */}
-              <NavItem
-                icon="share"
-                label="Shared with you"
-                to="/shared"
-                active={onShared}
-                testId="nav-shared"
               />
               <NavItem
                 icon="context"
@@ -663,71 +587,19 @@ export function NavRail() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* TIER 2 — your library: the things you've organized. Each list carries a
-            mono eyebrow, so the section labels do the tier-separating work (no
-            divider needed between the eyebrowed groups). Collections stay in the
-            collapsed icon rail (each row keeps its kind glyph + a tooltip), so you can
-            still reach a collection with the rail collapsed — the primitive auto-hides
-            the label, the + action, the counts, and any nested PR list in icon mode. */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Collections</SidebarGroupLabel>
-          {/* The + stays neutral, not the accent: create-in-rail isn't a sanctioned
-              ink moment. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SidebarGroupAction
-                aria-label="New collection"
-                data-testid="sidebar-new-collection"
-                onClick={() => setCreating((v) => !v)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Icon name="plus" />
-              </SidebarGroupAction>
-            </TooltipTrigger>
-            <TooltipContent side="right">New collection</TooltipContent>
-          </Tooltip>
-          <SidebarGroupContent>
-            {creating && (
-              <Input
-                autoFocus
-                value={newName}
-                placeholder="Collection name…"
-                aria-label="Collection name"
-                data-testid="sidebar-new-collection-input"
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitCollection()
-                  if (e.key === "Escape") {
-                    setCreating(false)
-                    setNewName("")
-                  }
-                }}
-                onBlur={submitCollection}
-                // No text-size override: Input's base keeps 16px on touch (iOS
-                // no-zoom) and steps to 14px from sm up. Hidden in the collapsed icon
-                // rail (the + that opens it is hidden there too — no way to reach it).
-                className="mb-1 group-data-[collapsible=icon]:hidden"
-              />
-            )}
-            <SidebarMenu>
-              {/* Collapsed icon rail: a single Collections flyout (no letter tiles).
-                    Expanded: the flat collection list. */}
-              {state === "collapsed" ? (
-                renderCollapsedCollections()
-              ) : (
-                <>
-                  {/* First load only — a refetch keeps the current list (no data → no
-                      isPending), so switching views never flashes the collections. */}
-                  {collectionsPending &&
-                    RAIL_SKELETON_COLLECTIONS.map((r) => (
-                      <SidebarMenuSkeleton key={r.id} showIcon width={r.w} />
-                    ))}
-                  {topCollections.map((col) => renderCollection(col))}
-                </>
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {/* Starred — the shelves you pinned, and the rail's ONLY collection list. Every
+            collection used to be enumerated here, which grew until the navigation was a
+            file browser; they live in the library's Collections view now, and this is
+            the handful you chose. Absent entirely until you star something, so a new
+            workspace opens on two nav rows rather than an empty heading. */}
+        {starredCollections.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel data-testid="sidebar-starred">Starred</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>{starredCollections.map((col) => renderCollection(col))}</SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
 
         {/* Tools — a running sync, notifications, Settings. Pinned to the foot of
             the scroll (mt-auto); the whitespace above sets them apart, no divider. */}

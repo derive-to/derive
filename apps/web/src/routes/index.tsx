@@ -56,13 +56,24 @@ export const Route = createFileRoute("/")({
   // shareable. The named feeds (Favorites, Following) are their OWN routes, not params
   // here — path = the feed you're viewing, query = how it's filtered (docs/decisions/0002).
   validateSearch: (s: Record<string, unknown>): LibrarySearch => ({
+    view: s.view === "collections" ? ("collections" as const) : undefined,
     collection: typeof s.collection === "string" ? s.collection : undefined,
     folder: typeof s.folder === "string" ? s.folder : undefined,
     query: typeof s.query === "string" ? s.query : undefined,
     author: typeof s.author === "string" ? s.author : undefined,
     // "drafts" is the tab's retired name — old bookmarks and agent-emitted
     // links keep landing on the same view.
-    tab: s.tab === "mine" || s.tab === "drafts" ? "mine" : undefined,
+    // `tab` is the retired spelling of the mine filter — old bookmarks and
+    // agent-emitted links still carry it (and "drafts", the spelling before that).
+    filter:
+      s.filter === "mine" ||
+      s.filter === "shared" ||
+      s.filter === "starred" ||
+      s.filter === "needs-you"
+        ? s.filter
+        : s.tab === "mine" || s.tab === "drafts"
+          ? "mine"
+          : undefined,
     sort: parseLibrarySort(s.sort),
   }),
   component: () => <Library view="all" />,

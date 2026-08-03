@@ -35,7 +35,7 @@ export function AutomateDialog({
         <DialogHeader>
           <DialogTitle>Automate this artifact</DialogTitle>
           <DialogDescription>
-            A standing job for {title ? `“${title}”` : "this document"}: an agent keeps it current
+            A standing job for {title ? `“${title}”` : "this artifact"}: an agent keeps it current
             on a schedule, on an event, or on demand from Settings → Automations. Every run goes
             through the review loop.
           </DialogDescription>
@@ -43,7 +43,7 @@ export function AutomateDialog({
         {isAdmin ? (
           <AutomationForm
             refs={[shortId]}
-            defaultInstruction="Keep this document current."
+            defaultInstruction="Keep this artifact current."
             onDone={() => onOpenChange(false)}
           />
         ) : (

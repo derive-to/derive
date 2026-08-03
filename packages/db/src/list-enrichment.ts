@@ -4,6 +4,8 @@ import type {
   AutomationRecord,
   BootstrapRead,
   CollectionRecord,
+  CollectionsOverviewRead,
+  CollectionsViewer,
   CommentListOpts,
   CommentRecord,
   ContextRecord,
@@ -33,6 +35,7 @@ export const composeListEnrichment = async (
     MetaStore,
     | "viewCounts"
     | "tagsForArtifacts"
+    | "collectionsForArtifacts"
     | "previewReady"
     | "usersByGithubIds"
     | "getUsers"
@@ -45,6 +48,8 @@ export const composeListEnrichment = async (
 ): Promise<ListEnrichment> => {
   const views = opts.views ? await store.viewCounts(opts.ids) : {}
   const tags = await store.tagsForArtifacts(opts.ids)
+  // A free local read on embedded drivers; an arm of the one statement on Postgres.
+  const collections = await store.collectionsForArtifacts(opts.ids)
   const previews = await store.previewReady(opts.ids)
   const handles = (await store.usersByGithubIds(opts.ghIds)).map((u) => ({
     gh_id: u.gh_id,
@@ -64,7 +69,18 @@ export const composeListEnrichment = async (
   const starred = opts.viewerId ? await store.listUserFavoriteIds(opts.viewerId) : []
   const onPage = new Set(opts.ids)
   const favorites = starred.filter((id) => onPage.has(id))
-  return { views, tags, previews, handles, bylines, signals, proposals, shareRoles, favorites }
+  return {
+    views,
+    tags,
+    collections,
+    previews,
+    handles,
+    bylines,
+    signals,
+    proposals,
+    shareRoles,
+    favorites,
+  }
 }
 
 /** See `composeListEnrichment` — the artifact-detail twin. */
@@ -156,9 +172,11 @@ export const composeBootstrap = async (
   orgId: string,
   userId: string,
   notifLimit: number,
+  viewer: Omit<CollectionsViewer, "userId">,
 ): Promise<BootstrapRead> => {
   const summary = await composeWorkspaceSummary(store, orgId, userId)
-  const { collections, sources } = await composeCollectionsOverview(store, orgId)
+  const { collections, sources, starred, workedIn, previews, previewBylines } =
+    await composeCollectionsOverview(store, orgId, { userId, ...viewer })
   const collectionRoles = await store.collectionRolesForUser(
     collections.map((c) => c.id),
     userId,
@@ -175,6 +193,10 @@ export const composeBootstrap = async (
     summary,
     collections,
     sources,
+    starred,
+    workedIn,
+    previews,
+    previewBylines,
     collectionRoles,
     settings,
     notifications,
@@ -265,15 +287,48 @@ export const composeAutomationsWithExecutors = async (
 
 /** See `composeListEnrichment` — the collections list's org-scoped pair. */
 export const composeCollectionsOverview = async (
-  store: Pick<MetaStore, "listCollections" | "listRepoSources">,
+  store: Pick<
+    MetaStore,
+    | "listCollections"
+    | "listRepoSources"
+    | "listUserFavoriteCollectionIds"
+    | "collectionsWorkedIn"
+    | "collectionPreviews"
+    | "getUsers"
+  >,
   orgId: string,
-): Promise<{
-  collections: (CollectionRecord & { count: number })[]
-  sources: RepoSourceRecord[]
-}> => {
+  viewer?: CollectionsViewer,
+): Promise<CollectionsOverviewRead> => {
   const [collections, sources] = await Promise.all([
     store.listCollections(orgId),
     store.listRepoSources(orgId),
   ])
-  return { collections, sources }
+  if (!viewer)
+    return { collections, sources, starred: [], workedIn: [], previews: {}, previewBylines: [] }
+  // The pg driver answers these as arms of the one overview statement; here they are
+  // more free local reads.
+  const [starred, workedIn, previews] = await Promise.all([
+    store.listUserFavoriteCollectionIds(viewer.userId, orgId),
+    store.collectionsWorkedIn(viewer.userId, orgId, viewer.activeSince),
+    store.collectionPreviews(
+      collections.map((c) => c.id),
+      viewer.previewPer,
+    ),
+  ])
+  // The byline self-heal for the strip's authors: getUsers is best-effort (empty when
+  // the auth tables are absent), so the denormalized name simply stands in there.
+  const authorIds = [
+    ...new Set(
+      Object.values(previews)
+        .flat()
+        .map((p) => p.author_id)
+        .filter((x): x is string => !!x),
+    ),
+  ]
+  const previewBylines = (authorIds.length ? await store.getUsers(authorIds) : []).map((u) => ({
+    id: u.id,
+    name: u.name,
+    username: u.username,
+  }))
+  return { collections, sources, starred, workedIn, previews, previewBylines }
 }

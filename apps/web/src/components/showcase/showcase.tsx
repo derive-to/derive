@@ -59,6 +59,13 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import {
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+} from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
@@ -67,6 +74,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { getInitials } from "@/lib/initials"
+import { REVEAL } from "@/lib/interaction"
 import { cn } from "@/lib/utils"
 
 // /showcase — the design-system reference: the visual language shown through the
@@ -610,7 +618,7 @@ function ArtifactCardDemo({
   starred?: boolean
 }) {
   return (
-    <div className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] transition-shadow duration-150 hover:shadow-[var(--shadow)]">
+    <div className="group relative flex flex-col overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-sm)] transition-shadow duration-state hover:shadow-[var(--shadow)]">
       <div className="relative aspect-[16/10] overflow-hidden bg-linear-to-br from-accent to-secondary">
         <div className="pointer-events-none absolute inset-x-2 bottom-2 z-10 flex items-center justify-between gap-2">
           <span className="rounded-md bg-scrim/70 px-1.5 py-0.5 font-mono text-2xs text-scrim-foreground ring-1 ring-scrim-foreground/15">
@@ -777,32 +785,85 @@ const NAV: { icon: IconName; label: string; count?: number }[] = [
 /** A mini nav rail — the real row grammar: flush on the canvas, rest muted, hover
  *  a neutral wash, active the same neutral wash + re-inked label (no fill, no tick
  *  — the ink weight is the whole active signal). */
+// The REAL rail rows, not a restatement of them. This demo used to hand-roll its own
+// grammar (a `bg-foreground/5` active wash) which the shipping sidebar never used, so
+// the reference page and the app disagreed about what navigation looks like — and the
+// page you check your work against is the last place that should be guessing.
 function NavDemo() {
   return (
-    <div className="flex w-56 flex-col gap-px">
-      {NAV.map((r, i) => {
-        const active = i === 0
-        return (
-          <div
-            key={r.label}
-            className={cn(
-              "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm font-medium",
-              active
-                ? "bg-foreground/5 text-foreground"
-                : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-            )}
-          >
-            <Icon name={r.icon} size={16} />
-            <span>{r.label}</span>
-            {r.count ? (
-              <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
-                {r.count}
-              </span>
-            ) : null}
+    <SidebarProvider className="min-h-0 w-auto">
+      <SidebarMenu className="w-56">
+        {NAV.map((r, i) => (
+          <SidebarMenuItem key={r.label}>
+            <SidebarMenuButton isActive={i === 0}>
+              <Icon name={r.icon} size={16} />
+              <span>{r.label}</span>
+            </SidebarMenuButton>
+            {r.count ? <SidebarMenuBadge>{r.count}</SidebarMenuBadge> : null}
+          </SidebarMenuItem>
+        ))}
+      </SidebarMenu>
+    </SidebarProvider>
+  )
+}
+
+// Hover each row. The point of the row is the one rule that is easy to get wrong:
+// the CURRENT page keeps its raised chip under the pointer. It did not for a while —
+// `hover:bg-*` outranks `data-active:bg-*` on specificity, so the selected row
+// repainted itself as an idle row exactly when you pointed at it. See
+// lib/interaction.ts; check-interaction.mjs fails the build if it comes back.
+function RowStatesDemo() {
+  return (
+    <SidebarProvider className="min-h-0 w-auto">
+      <div className="flex flex-wrap gap-8">
+        <div className="flex flex-col gap-1.5">
+          <Eyebrow>Current page</Eyebrow>
+          <SidebarMenu className="w-48">
+            <SidebarMenuItem>
+              <SidebarMenuButton isActive>
+                <Icon name="all" size={16} />
+                <span>Library</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <p className="max-w-48 text-xs text-muted-foreground">
+            Raised chip — card surface, hairline ring. Survives hover.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Eyebrow>Idle</Eyebrow>
+          <SidebarMenu className="w-48">
+            <SidebarMenuItem>
+              <SidebarMenuButton>
+                <Icon name="context" size={16} />
+                <span>Contexts</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+          <p className="max-w-48 text-xs text-muted-foreground">
+            Transparent at rest, neutral wash on hover.
+          </p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Eyebrow>Reveal on hover</Eyebrow>
+          <div className="group flex w-48 items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-secondary">
+            <Icon name="collection" size={16} className="text-muted-foreground" />
+            <span className="flex-1 truncate">Product marketing</span>
+            <button
+              type="button"
+              aria-label="Star"
+              data-testid="showcase-reveal"
+              className={cn("grid size-6 shrink-0 place-items-center rounded-md", REVEAL)}
+            >
+              <Icon name="star" size={14} className="text-muted-foreground" />
+            </button>
           </div>
-        )
-      })}
-    </div>
+          <p className="max-w-48 text-xs text-muted-foreground">
+            One spelling (REVEAL): hover, focus anywhere in the row, always on touch.
+          </p>
+        </div>
+      </div>
+    </SidebarProvider>
   )
 }
 
@@ -1275,9 +1336,15 @@ export function Showcase() {
           </Row>
           <Row
             title="Navigation"
-            note="Flush on the canvas. Active is a neutral foreground wash with the label re-inked — no fill and no tick; the ink weight is the whole signal."
+            note="The rail's real rows. Active is a raised chip — card surface and a hairline ring — with the label re-inked; no fill, no tick, and never a weight change."
           >
             <NavDemo />
+          </Row>
+          <Row
+            title="Row states"
+            note="Rest, current, and reveal-on-hover — the three states every row in the app shares. Hover them; the current row must keep its chip."
+          >
+            <RowStatesDemo />
           </Row>
           <Row
             title="Toolbar"

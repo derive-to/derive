@@ -24,9 +24,36 @@ const BOOT_TIMEOUT_MS = 15_000
  * The frame/wrapper refs are owned by the page (the postMessage bridge + fullscreen
  * drive them) and passed in. `overlays` (deck bar, cursor layer) mount inside.
  */
+
+/** What the Updated cue remembers between renders: which document, at which version. */
+export type UpdateCueState = { subject: string; version: number } | null
+
+/**
+ * Pure decision for the soft "Updated · vN" cue. Fires ONLY when the SAME subject
+ * steps up in place — never on first sight of a document, never when navigation swaps
+ * the subject (that is a different document, not an update), never on stepping back
+ * to an older version.
+ */
+export const updateCue = (
+  prev: UpdateCueState,
+  subject: string,
+  version: number | undefined,
+): { fire: number | null; state: UpdateCueState } => {
+  // Source not known yet: keep the baseline only if it's still the same document.
+  if (version == null) return { fire: null, state: prev && prev.subject === subject ? prev : null }
+  const same = prev && prev.subject === subject
+  // The baseline is the HIGHEST version seen of this subject, not the last one shown:
+  // stepping back to v2 and returning to v3 is navigation, and firing on the return
+  // was the same phantom one level down.
+  const state = { subject, version: same ? Math.max(prev.version, version) : version }
+  if (!same || version <= prev.version) return { fire: null, state }
+  return { fire: version, state }
+}
+
 export function RenderStage({
   rawSrc,
   title,
+  subject,
   version,
   frameRef,
   wrapRef,
@@ -39,6 +66,11 @@ export function RenderStage({
    *  boot state shows without an iframe, and the frame mounts when the src lands. */
   rawSrc: string | null
   title: string
+  /** WHOSE render this is (the artifact's short id). The Updated cue is keyed on it —
+   *  the stage stays mounted across sibling navigation, and a version number alone
+   *  can't tell "this document gained a version" from "I'm looking at a different
+   *  document now". */
+  subject: string
   /** The shown version — when it steps UP (a new version published in place), a
    *  soft "Updated" badge flashes over the render (research: auto-swap + soft cue). */
   version?: number
@@ -77,21 +109,28 @@ export function RenderStage({
     setAttempt((n) => n + 1)
   }
 
-  // "Updated" cue: when the shown version steps up (a peer published a new version
-  // and the render auto-swapped in place), flash a soft, non-blocking badge instead
-  // of jolting the viewer (research: soft cue, never a modal). Skips the initial
-  // mount and any backward navigation (viewing an earlier version).
-  const prevVersion = useRef<number | undefined>(undefined)
+  // "Updated" cue: when the shown version steps up IN PLACE (a peer published a new
+  // version of the document being watched), flash a soft, non-blocking badge instead
+  // of jolting the viewer (research: soft cue, never a modal). Keyed by SUBJECT, not
+  // just number: this component stays mounted while the sibling switcher pages
+  // between artifacts, and a bare version comparison read "memo v1 → sibling v5" as
+  // "someone just published v5" — a phantom Updated pill floating over a document
+  // nobody touched. The decision is pure (updateCue) and pinned by tests.
+  const cueRef = useRef<UpdateCueState>(null)
   const [updatedTo, setUpdatedTo] = useState<number | null>(null)
   useEffect(() => {
-    if (version == null) return
-    const prev = prevVersion.current
-    prevVersion.current = version
-    if (prev == null || version <= prev) return
-    setUpdatedTo(version)
-    const t = setTimeout(() => setUpdatedTo(null), 3500)
-    return () => clearTimeout(t)
-  }, [version])
+    const prev = cueRef.current
+    const { fire, state } = updateCue(prev, subject, version)
+    cueRef.current = state
+    if (fire != null) {
+      setUpdatedTo(fire)
+      const t = setTimeout(() => setUpdatedTo(null), 3500)
+      return () => clearTimeout(t)
+    }
+    // Paging away mid-flash: the pill was about the OLD document; it must not ride
+    // into the new one.
+    if (prev && prev.subject !== subject) setUpdatedTo(null)
+  }, [subject, version])
 
   return (
     <div className={cn("relative flex min-h-0 flex-1 flex-col", className)}>
@@ -120,7 +159,7 @@ export function RenderStage({
             // gently over the neutral canvas instead of hard-flashing.
             sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
             className={cn(
-              "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-200",
+              "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-state",
               phase === "ready" && "opacity-100",
             )}
           />

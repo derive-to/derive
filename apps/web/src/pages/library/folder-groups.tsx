@@ -1,14 +1,14 @@
-import { ChevronRight } from "lucide-react"
 import { useState } from "react"
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
-import { Count } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { dirOf } from "@/lib/artifact"
+import { revealInFolder } from "@/lib/interaction"
 import { useFollows } from "@/lib/use-follows"
 import { cn } from "@/lib/utils"
-import { ArtifactRow } from "./artifact-row"
+import { ArtifactListRow } from "./artifact-list"
+import { FolderHeader } from "./folder-header"
 import type { LibrarySelection } from "./use-library-selection"
 
 interface Handlers {
@@ -99,58 +99,47 @@ function FolderSection({
   const followable = dir !== "/" && dir !== "Other"
   return (
     <div className="group/folder">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          data-testid={`folder-toggle-${dir}`}
-          onClick={() => setOpen((o) => !o)}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <ChevronRight
-            className={cn(
-              "size-4 shrink-0 text-muted-foreground transition-transform",
-              open && "rotate-90",
-            )}
-            aria-hidden
-          />
-          <Icon name="collection" className="text-muted-foreground" />
-          <span className="truncate font-mono text-sm font-medium text-foreground">{dir}</span>
-          <Count>{items.length}</Count>
-        </button>
-        {followable && (
-          // The followed state is a neutral wash (secondary) — the ink accent is reserved.
-          // Same variant flip as the library's author-follow button.
-          <Button
-            variant={following ? "secondary" : "outline"}
-            size="xs"
-            data-testid={`folder-follow-${dir}`}
-            aria-pressed={following}
-            title={
-              following ? `Unfollow ${dir}/` : `Follow ${dir}/ to see its changes in your feed`
-            }
-            onClick={onToggleFollow}
-            className={cn(
-              "shrink-0 transition-opacity",
-              !following && "opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100",
-            )}
-          >
-            <Icon name={following ? "check" : "following"} />
-            {following ? "Following" : "Follow"}
-          </Button>
-        )}
-      </div>
+      <FolderHeader
+        label={dir}
+        count={items.length}
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        path
+        muted={dir === "Other"}
+        testId={`folder-${dir}`}
+        trailing={
+          followable ? (
+            // The followed state is a neutral wash (secondary) — the ink accent is
+            // reserved. Same variant flip as the library's author-follow button.
+            <Button
+              variant={following ? "secondary" : "outline"}
+              size="xs"
+              data-testid={`folder-follow-${dir}`}
+              aria-pressed={following}
+              title={
+                following ? `Unfollow ${dir}/` : `Follow ${dir}/ to see its changes in your feed`
+              }
+              onClick={onToggleFollow}
+              className={cn("shrink-0", revealInFolder(!!following))}
+            >
+              <Icon name={following ? "check" : "following"} />
+              {following ? "Following" : "Follow"}
+            </Button>
+          ) : undefined
+        }
+      />
       {open && (
-        <div className="mt-1.5 flex flex-col gap-2 pl-6">
+        <div className="mt-1.5 overflow-hidden rounded-xl border border-border bg-card">
           {items.map((a) => (
-            <ArtifactRow
+            <ArtifactListRow
               key={a.short_id}
               artifact={a}
               onOpen={() => handlers.onOpen(a)}
               onToggleFavorite={() => handlers.onToggleFavorite(a)}
-              onPickAuthor={handlers.onPickAuthor}
               onAddToCollection={() => handlers.onAddToCollection(a)}
               onDelete={() => handlers.onDelete(a)}
               onPrefetch={() => handlers.onPrefetch(a)}
+              indent
               selected={handlers.selection?.selected.has(a.short_id)}
               selectionActive={handlers.selection?.active}
               onSelect={

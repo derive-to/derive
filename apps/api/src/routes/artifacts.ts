@@ -383,6 +383,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         }))
       const counts = enrichment.views
       const tags = enrichment.tags
+      const collectionsById = enrichment.collections
       const previews = enrichment.previews
       const handleByGhId = handlesFrom(enrichment.handles)
       const bylineByUserId = bylinesFrom(enrichment.bylines)
@@ -399,6 +400,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           ...toJson(deps.baseUrl, a, []),
           views: counts[a.id] ?? 0,
           tags: tags[a.id] ?? [],
+          // The library's grouped-by-collection list groups on this. Same batched read
+          // as everything else on the row — see ListEnrichment.collections.
+          collections: collectionsById[a.id] ?? [],
           favorite: favorites.has(a.id),
           has_preview: previews[a.id] === true,
           // Which actions the client may surface on the row (the card's quick-actions
