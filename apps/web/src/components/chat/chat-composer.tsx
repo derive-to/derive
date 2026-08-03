@@ -27,9 +27,14 @@ export function ChatComposer(props: {
   busy?: boolean
   /** Abandon the turn in flight. Absent, the surface simply offers no way out of a long answer. */
   onStop?: () => void
+  /** Take focus on mount. The palette's answer view needs it: entering that view unmounts the
+   *  command input the person was typing in, and focus left on a removed element falls to the
+   *  body — so the next keystroke goes nowhere and a keyboard user is stranded mid-dialog. */
+  autoFocus?: boolean
   className?: string
 }) {
-  const { onSend, placeholder, disabled, notice, accessory, busy, onStop, className } = props
+  const { onSend, placeholder, disabled, notice, accessory, busy, onStop, autoFocus, className } =
+    props
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
 
@@ -64,6 +69,8 @@ export function ChatComposer(props: {
       ) : null}
       <div className="flex items-end gap-2">
         <Textarea
+          // biome-ignore lint/a11y/noAutofocus: opt-in, and only where the view that just mounted took focus away from a control it unmounted.
+          autoFocus={autoFocus}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {

@@ -6,6 +6,7 @@ import { ChatThread } from "@/components/chat/chat-thread"
 import { json, useChatSession } from "@/components/chat/use-chat-session"
 import { Icon } from "@/components/icons"
 import { Kbd } from "@/components/ui/kbd"
+import { isInAppPath } from "@/lib/in-app-path"
 import { workspaceQuery } from "@/lib/queries"
 import { useChatEnabled } from "@/lib/use-chat-enabled"
 
@@ -36,7 +37,10 @@ export const destinationsIn = (markdown: string): { label: string; path: string 
   const found = new Map<string, string>()
   for (const m of markdown.matchAll(/\[([^\]]+)\]\((\/[^)\s]*)\)/g)) {
     const [, label, path] = m
-    if (label && path && !found.has(path)) found.set(path, label)
+    // isInAppPath, not startsWith("/"): `//evil.com` satisfies the regex above and leaves the
+    // origin. The text being parsed was written by a model that just read documents anyone in the
+    // workspace can author, so a planted link is a realistic input, not a hypothetical one.
+    if (label && isInAppPath(path) && !found.has(path)) found.set(path, label)
   }
   return [...found].map(([path, label]) => ({ label, path }))
 }
@@ -172,6 +176,9 @@ export function PaletteAsk(props: {
               : (chat.error ?? undefined)
         }
         placeholder="Ask a follow-up…"
+        // The command input this view replaced had focus; without taking it here, focus lands on
+        // the body and the keyboard has nowhere to go inside an open dialog.
+        autoFocus
         className="shrink-0"
       />
 

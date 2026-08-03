@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { isInAppPath } from "@/lib/in-app-path"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
 import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
@@ -83,7 +84,12 @@ export function ChatThread(props: {
       if (!a || a.target === "_blank") return
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
       const href = a.getAttribute("href")
-      if (!href?.startsWith("/")) return
+      // isInAppPath rather than startsWith("/"): `//evil.com` passes that test and is a
+      // protocol-relative URL, so handing it to the router walks the reader off the origin. The
+      // href comes from an answer, and an answer quotes documents anybody in the workspace can
+      // author — so this is a planted link away from being an open redirect. An external link is
+      // left to the browser, which is what the target=_blank check above already does.
+      if (!isInAppPath(href)) return
       e.preventDefault()
       void navigate({ to: href })
     }
