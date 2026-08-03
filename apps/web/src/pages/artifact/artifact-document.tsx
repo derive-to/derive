@@ -143,6 +143,7 @@ export function ArtifactDocument({
           wrapRef={presentWrapRef}
           onFrameLoad={onFrameLoad}
           overlay={presentOverlay}
+          presenting={presenting}
           overlays={
             <>
               {deck && onPresent && (
