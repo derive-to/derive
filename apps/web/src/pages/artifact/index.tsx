@@ -868,6 +868,7 @@ export function Artifact() {
           {!isAnon && (
             <ArtifactTopBar
               shortId={shortId}
+              artifactTitle={art.title ?? undefined}
               orgId={art.org_id}
               myRole={art.my_role}
               workspaceAccess={art.workspace_access}
