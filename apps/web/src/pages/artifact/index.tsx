@@ -689,6 +689,7 @@ export function Artifact() {
       // already announced the new version). Treating shown as current hides it.
       currentVersion={inlineEdit.active ? shown : art.current_version}
       title={art.title ?? shortId}
+      subject={shortId}
       rawSrc={rawSrc}
       view={view}
       diff={diff}

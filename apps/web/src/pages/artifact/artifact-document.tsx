@@ -18,6 +18,7 @@ export function ArtifactDocument({
   shown,
   currentVersion,
   title,
+  subject,
   rawSrc,
   view,
   diff,
@@ -41,6 +42,8 @@ export function ArtifactDocument({
   shown: number
   currentVersion: number
   title: string
+  /** The artifact's short id — keys the render stage's Updated cue. */
+  subject: string
   /** null = the record is still a list-row seed (no raw_token yet) — RenderStage
    *  holds its boot state and mounts the frame once the real source arrives. */
   rawSrc: string | null
@@ -122,6 +125,7 @@ export function ArtifactDocument({
         <RenderStage
           rawSrc={rawSrc}
           title={title}
+          subject={subject}
           version={shown}
           frameRef={frameRef}
           wrapRef={presentWrapRef}
