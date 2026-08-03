@@ -155,7 +155,7 @@ describe("artifactDetails (the flexpane)", () => {
       status: pending,
       withActions: true,
     })
-    const pane = artifactDetails(info, pending, "u-me", "https://d/i.png")
+    const pane = artifactDetails(artifact(), info, pending, "u-me", "https://d/i.png")
     const ids = (p: Record<string, unknown>) =>
       (
         (p.actions as { primary_actions?: { action_id: string }[] } | undefined)?.primary_actions ??
@@ -168,12 +168,25 @@ describe("artifactDetails (the flexpane)", () => {
   })
 
   it("offers no actions once the round is settled", () => {
-    const pane = artifactDetails(info, status(), "u-me", "https://d/i.png")
+    const pane = artifactDetails(artifact(), info, status(), "u-me", "https://d/i.png")
     expect((pane.entity_payload as Record<string, unknown>).actions).toBeUndefined()
+  })
+
+  // entity.presentDetails answers invalid_arguments without these — "missing required field:
+  // external_ref [json-pointer:/metadata]". The flexpane must say WHICH entity it describes;
+  // Slack does not infer it from the trigger. The pair must match the unfurl's, since it keys
+  // search and the Conversations tab.
+  it("identifies the entity, which presentDetails requires", () => {
+    const d = artifactDetails(artifact(), info, status(), "u", "https://d/i.png")
+    expect(d.url).toBe(info.pageUrl)
+    expect(d.external_ref).toEqual({ id: "abc123", type: "artifact" })
+    const card = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
+    expect(d.external_ref).toEqual(card.external_ref)
   })
 
   it("describes the artifact for a viewer entitled to it, and says 'your review'", () => {
     const d = artifactDetails(
+      artifact(),
       info,
       status({ review: { state: "pending", reviewerId: "u-me", reviewerName: "Mert" } }),
       "u-me",
