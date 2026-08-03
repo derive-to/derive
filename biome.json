@@ -12,6 +12,7 @@
       "!.claude/worktrees",
       "!**/routeTree.gen.ts",
       "!**/*.gen.ts",
+      "!**/*.gen.js",
       "!**/openapi.json",
       "!apps/api/test/e2e",
       "!**/api-types.ts",

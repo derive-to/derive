@@ -7,7 +7,9 @@ const deck = (n = 3) =>
   `<!doctype html><html><head><title>d</title></head><body>${Array.from(
     { length: n },
     (_, i) => `<section class="slide" data-derive-slide="${i}"><h2>${i}</h2></section>`,
-  ).join("")}<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:${n}},"*")</script></body></html>`
+  ).join(
+    "",
+  )}<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:${n}},"*")</script></body></html>`
 
 /** The same slides with the announce removed — what an agent builds without the skill. */
 const silentDeck = (n = 3) =>
@@ -29,12 +31,22 @@ describe("deck detection", () => {
     expect(countSlideElements(DECK_TEMPLATE)).toBeGreaterThanOrEqual(2)
   })
 
+  it("centres the stage out of flow, so a short viewport can't clip it (regression)", () => {
+    // Found by opening the starter in a 633px-tall window: a transform does NOT shrink an
+    // element's layout box, so the 720px stage still occupied 720px, overflowed, and got
+    // clipped by `overflow: hidden` at the bottom. Grid-centring looked correct at 800px
+    // and wrong on any laptop with a browser bar. Both halves of the fix are asserted
+    // because either one alone re-opens the bug.
+    expect(DECK_TEMPLATE).toContain("position: fixed")
+    expect(DECK_TEMPLATE).toContain("translate(-50%, -50%) scale(")
+  })
+
   // The reason detection needs BOTH halves. Every one of these mentions the protocol.
   it("does not call a document ABOUT decks a deck", () => {
     const doc =
       "<!doctype html><html><body><h1>How decks work</h1>" +
       "<p>Post <code>source:'derive-deck'</code> on every change, and give each slide a " +
-      "<code>&lt;section class=\"slide\" data-derive-slide=\"N\"&gt;</code> wrapper.</p></body></html>"
+      '<code>&lt;section class="slide" data-derive-slide="N"&gt;</code> wrapper.</p></body></html>'
     expect(speaksDeckProtocol(doc)).toBe(true) // it does say the word
     expect(countSlideElements(doc)).toBe(0) // but the samples are escaped, not markup
     expect(isDeckDocument(doc)).toBe(false)

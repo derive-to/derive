@@ -22,12 +22,19 @@ four pieces this file calls load-bearing.
    no transition, no protocol, the gallery preview captures only the entry page, and
    bundles carry no facts. Kind is immutable on republish, so a bundle can never become a
    deck later: you would publish a new artifact and retire the old one.
-2. **A fixed stage, scaled.** `.stage { position: relative; width: 1280px; height: 720px;
-   overflow: hidden }`, scaled to the viewport in JS on load and on resize:
+2. **A fixed stage, scaled.** `.stage { position: fixed; left: 50%; top: 50%; width: 1280px;
+   height: 720px; overflow: hidden }`, scaled to the viewport in JS on load and on resize:
 
    ```js
-   stage.style.transform = "scale(" + Math.min(innerWidth / 1280, innerHeight / 720) * 0.94 + ")"
+   const k = Math.min(innerWidth / 1280, innerHeight / 720) * 0.94
+   stage.style.transform = `translate(-50%, -50%) scale(${k})`
    ```
+
+   Both halves of that transform matter. **A transform does not change an element's layout
+   size**, so a 720px stage scaled to 0.8 still occupies 720px in flow: centre it with grid
+   or flex and it overflows any viewport shorter than 720px and gets clipped by
+   `overflow: hidden`. Taking it out of flow with `position: fixed` and centring by
+   translate is what makes the fit honest at every window size.
 
    Use fixed px type throughout. Do NOT use `clamp()` or `vw` sizing: a deck is fixed
    geometry, designed once, and a narrow window should shrink the whole composition rather

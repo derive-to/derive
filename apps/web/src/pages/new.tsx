@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useBlocker, useNavigate } from "@tanstack/react-router"
-import { useRef, useState } from "react"
+import { useBlocker, useNavigate, useSearch } from "@tanstack/react-router"
+import { useEffect, useRef, useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
@@ -33,10 +33,29 @@ const detectFormat = (t: string): "md" | "html" => {
 export function NewArtifact() {
   useDocumentTitle("New artifact")
   const nav = useNavigate()
+  const { start } = useSearch({ from: "/new" })
   const [src, setSrc] = useState("")
   const [title, setTitle] = useState("")
   const [message, setMessage] = useState("")
   const format = detectFormat(src)
+
+  // `?start=deck` (the library's "Start a deck") opens the editor on the canonical deck
+  // starter instead of a blank page — the same file the CLI scaffolds and the MCP serves.
+  // Imported lazily: it's ~12KB of HTML that only this one entry path ever needs, so it
+  // stays out of the main bundle. Guarded on empty `src` so it can never overwrite typing,
+  // and it deliberately does NOT set the title — naming the deck is the author's first act.
+  const started = useRef(false)
+  useEffect(() => {
+    if (start !== "deck" || started.current) return
+    started.current = true
+    let live = true
+    import("@/lib/deck-template.gen").then(({ DECK_TEMPLATE }) => {
+      if (live) setSrc((cur) => (cur ? cur : DECK_TEMPLATE))
+    })
+    return () => {
+      live = false
+    }
+  }, [start])
 
   // A draft is dirty once anything's been typed. Publishing must bypass the guard for its
   // own nav to the artifact — via a REF, not state: publish() sets it and calls nav() in the

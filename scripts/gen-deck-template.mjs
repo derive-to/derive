@@ -74,8 +74,7 @@ const BANNER = (lang) =>
   `// slide-pinned comments. Documented for agents in derive://skills/decks. A pure leaf: no\n` +
   `// imports, safe in every build.\n`
 
-const DOC =
-  `/** The canonical deck starter, with its own title. Pass the deck's title to name it. */`
+const DOC = `/** The canonical deck starter, with its own title. Pass the deck's title to name it. */`
 
 /** The generated module text for a target. `lang` is "ts" or "js". */
 const moduleFor = (lang) => {

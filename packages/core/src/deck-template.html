@@ -36,12 +36,17 @@
   body {
     background: var(--bg); color: var(--ink);
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, sans-serif;
-    display: grid; place-items: center;
   }
 
-  /* 1 — the fixed stage. transform-origin center + JS scale = letterboxed, never cropped. */
+  /* 1 — the fixed stage, letterboxed and never cropped.
+     `position: fixed` + translate(-50%, -50%) is load-bearing, not decoration: a
+     transform does NOT change an element's LAYOUT size, so a 720px-tall stage scaled to
+     0.8 still occupies 720px in flow. Centre it with grid/flex instead and it overflows a
+     shorter viewport and gets clipped by `overflow: hidden` — the deck looks right until
+     someone opens it in a window under 720px, which is most laptops with a browser bar. */
   .stage {
-    position: relative; width: 1280px; height: 720px; overflow: hidden;
+    position: fixed; left: 50%; top: 50%;
+    width: 1280px; height: 720px; overflow: hidden;
     background: var(--stage); border-radius: 10px;
     box-shadow: 0 30px 90px rgba(0, 0, 0, .5);
   }
@@ -170,56 +175,59 @@
 
 </div>
 
-<button class="zone l" id="prev" aria-label="Previous slide"></button>
-<button class="zone r" id="next" aria-label="Next slide"></button>
+<button type="button" class="zone l" id="prev" aria-label="Previous slide"></button>
+<button type="button" class="zone r" id="next" aria-label="Next slide"></button>
 <div class="rail"><i id="rail"></i></div>
 <span class="count" id="count"></span>
 
 <script>
-(function () {
-  var stage = document.getElementById("stage")
-  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"))
-  var rail = document.getElementById("rail")
-  var count = document.getElementById("count")
-  var at = 0
+{
+  const stage = document.getElementById("stage")
+  const slides = [...document.querySelectorAll(".slide")]
+  const rail = document.getElementById("rail")
+  const count = document.getElementById("count")
+  let at = 0
 
   // Fit the fixed stage inside the viewport, letterboxed. 0.94 leaves a little air.
-  function fit() {
-    var k = Math.min(window.innerWidth / 1280, window.innerHeight / 720) * 0.94
-    stage.style.transform = "scale(" + k + ")"
+  // The translate rides in the same transform as the scale — see the .stage rule.
+  const fitStage = () => {
+    const k = Math.min(window.innerWidth / 1280, window.innerHeight / 720) * 0.94
+    stage.style.transform = `translate(-50%, -50%) scale(${k})`
   }
 
   // 3 — tell the host where we are. This one call is what makes Derive treat the
   // artifact as a deck: the bar, Present mode, and slide-pinned comments all follow it.
-  function report() {
+  const report = () => {
     try {
       parent.postMessage({ source: "derive-deck", type: "state", i: at, total: slides.length }, "*")
-    } catch (e) {}
+    } catch {}
   }
 
-  function show(n, quiet) {
+  const show = (n, quiet) => {
     at = Math.max(0, Math.min(slides.length - 1, n))
-    for (var k = 0; k < slides.length; k++) slides[k].classList.toggle("on", k === at)
-    rail.style.width = ((at + 1) / slides.length) * 100 + "%"
-    count.textContent = at + 1 + " / " + slides.length
+    slides.forEach((s, k) => {
+      s.classList.toggle("on", k === at)
+    })
+    rail.style.width = `${((at + 1) / slides.length) * 100}%`
+    count.textContent = `${at + 1} / ${slides.length}`
     if (!quiet) {
       try {
-        history.replaceState(null, "", "#s" + (at + 1))
-      } catch (e) {}
+        history.replaceState(null, "", `#s${at + 1}`)
+      } catch {}
     }
     report()
   }
 
   // 4 — the host drives us too (its bar, and its arrow keys while the iframe isn't focused).
-  window.addEventListener("message", function (e) {
-    var d = e.data
-    if (!d || d.source !== "derive-host" || d.type !== "deck") return
+  window.addEventListener("message", (e) => {
+    const d = e.data
+    if (d?.source !== "derive-host" || d.type !== "deck") return
     if (d.action === "next") show(at + 1)
     else if (d.action === "prev") show(at - 1)
     else if (d.action === "goto") show(typeof d.n === "number" ? d.n : 0)
   })
 
-  document.addEventListener("keydown", function (e) {
+  document.addEventListener("keydown", (e) => {
     if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
       e.preventDefault()
       show(at + 1)
@@ -230,23 +238,19 @@
     else if (e.key === "End") show(slides.length - 1)
     else if (e.key === "f" || e.key === "F") {
       if (document.fullscreenElement) document.exitFullscreen()
-      else if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen()
+      else document.documentElement.requestFullscreen?.()
     }
   })
 
-  document.getElementById("prev").addEventListener("click", function () {
-    show(at - 1)
-  })
-  document.getElementById("next").addEventListener("click", function () {
-    show(at + 1)
-  })
+  document.getElementById("prev").addEventListener("click", () => show(at - 1))
+  document.getElementById("next").addEventListener("click", () => show(at + 1))
 
-  window.addEventListener("resize", fit)
-  fit()
+  window.addEventListener("resize", fitStage)
+  fitStage()
   // #s3 opens on slide 3 — deep links survive a reload and a shared URL.
-  var deep = parseInt(String(location.hash).replace(/^#s/, ""), 10)
+  const deep = Number.parseInt(String(location.hash).replace(/^#s/, ""), 10)
   show(deep > 0 ? deep - 1 : 0, true)
-})()
+}
 </script>
 
 </body>

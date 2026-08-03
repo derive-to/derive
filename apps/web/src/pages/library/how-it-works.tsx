@@ -23,7 +23,7 @@ export function HowItWorks() {
         <Step
           n={1}
           title="Publish"
-          blurb="Drop HTML, Markdown, or a whole site — you get a permanent, versioned URL."
+          blurb="Drop HTML, Markdown, a slide deck, or a whole site — you get a permanent, versioned URL."
         >
           <div className="h-1.5 w-12 rounded-full bg-foreground/70" />
           <div className="mt-1.5 h-1 w-full rounded-full bg-foreground/15" />
@@ -48,7 +48,7 @@ export function HowItWorks() {
         <Step
           n={3}
           title="Review"
-          blurb="Comments pin to the text. Revise, republish — the loop closes itself."
+          blurb="Comments pin to the text, or to the slide. Revise, republish — the loop closes itself."
         >
           <div className="h-1 w-full rounded-full bg-foreground/15" />
           <div className="mt-1 flex items-center gap-1">
