@@ -394,6 +394,19 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "DeepInfra,GMICloud",
   },
   {
+    name: "DERIVE_MODEL_GATEWAYS",
+    group: "advanced",
+    doc: 'ADDITIONAL model providers, as a JSON array — the way to run several at once and switch\nbetween them, rather than swapping one set of variables for another.\n\nEach entry carries its own credential, its own model list and its own backend routing:\n[{"name":"openrouter","baseUrl":"https://openrouter.ai/api/v1","apiKey":"sk-or-...",\n  "models":["deepseek/deepseek-v4-flash-0731"],"providers":"DeepInfra,GMICloud"}]\n\nJSON rather than numbered variables so a fourth provider is a list entry, not four more\nnames every entry point has to learn. Model ids are namespaced by the gateway\'s name\n(openrouter:deepseek/...), which is what keeps two providers serving the same model apart;\nthe DERIVE_MODEL_BASE_URL gateway stays unnamed so ids already in transcripts still resolve.\n\nIt carries KEYS, so treat it as a secret. Malformed JSON is ignored rather than fatal.',
+    example:
+      '[{"name":"openrouter","baseUrl":"https://openrouter.ai/api/v1","apiKey":"sk-or-...","models":["deepseek/deepseek-v4-flash-0731"],"providers":"DeepInfra,GMICloud"}]',
+  },
+  {
+    name: "DERIVE_MODEL_DEFAULT",
+    group: "advanced",
+    doc: "Which model id answers when nobody picked one — the switch for pointing a deploy at a\ndifferent provider without reordering anything or dropping the others. Use the catalog id,\nso namespaced for a named gateway (openrouter:deepseek/deepseek-v4-flash-0731) and bare for\nthe DERIVE_MODEL_NAME one. Unset = the first gateway's first model, as before. An id that\nnames nothing is ignored: a typo costs the default, never the whole chat surface.",
+    example: "openrouter:deepseek/deepseek-v4-flash-0731",
+  },
+  {
     name: "DERIVE_LOCAL_BROKER",
     group: "advanced",
     doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",

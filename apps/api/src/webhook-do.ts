@@ -11,7 +11,7 @@ import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { answerDeriveMention } from "./lib/comment-turn"
 import { emailDeliverySender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
-import { catalogFromGateway } from "./lib/model-catalog"
+import { catalogFromGateways, parseGatewaysJson } from "./lib/model-catalog"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
@@ -48,6 +48,8 @@ export interface WebhookOutboxEnv {
   DERIVE_MODEL_NAME?: string
   DERIVE_MODEL_NAMES?: string
   DERIVE_MODEL_PROVIDERS?: string
+  DERIVE_MODEL_GATEWAYS?: string
+  DERIVE_MODEL_DEFAULT?: string
   DERIVE_CHAT_ALLOWLIST?: string
 }
 
@@ -69,7 +71,10 @@ const mentionAnswerer = (env: WebhookOutboxEnv, store: MetaStore) => {
           providers: env.DERIVE_MODEL_PROVIDERS,
         }
       : undefined
-  const models = catalogFromGateway(gw)
+  const models = catalogFromGateways(
+    [gw, ...parseGatewaysJson(env.DERIVE_MODEL_GATEWAYS)],
+    env.DERIVE_MODEL_DEFAULT,
+  )
   if (!models || !env.BUCKET || !env.BASE_URL) return undefined
   return answerDeriveMention({
     meta: store,

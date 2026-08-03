@@ -29,7 +29,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
-import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { catalogFromGateways, type GatewayConfig, parseGatewaysJson } from "./lib/model-catalog"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
@@ -145,6 +145,11 @@ export interface Env {
    *  id is served by many backends at very different speeds, so the id alone does not decide
    *  what you get. Unset ⇒ the gateway routes however it likes. */
   DERIVE_MODEL_PROVIDERS?: string
+  /** Additional providers as JSON — see parseGatewaysJson. Each carries its own key, models and
+   *  backend routing, so a fourth provider is a list entry rather than four more variables. */
+  DERIVE_MODEL_GATEWAYS?: string
+  /** Which model id answers when nobody chose. Unset ⇒ the first gateway's first model. */
+  DERIVE_MODEL_DEFAULT?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
@@ -283,7 +288,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
         recordSignupAttribution: signupAttributionHook(meta),
       })
-      const models = catalogFromGateway(workerGateway(env))
+      // Every configured provider in ONE catalog: the legacy three vars, plus any declared in
+      // DERIVE_MODEL_GATEWAYS. DERIVE_MODEL_DEFAULT picks which answers when nobody chose.
+      const models = catalogFromGateways(
+        [workerGateway(env), ...parseGatewaysJson(env.DERIVE_MODEL_GATEWAYS)],
+        env.DERIVE_MODEL_DEFAULT,
+      )
       app = createApp({
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via

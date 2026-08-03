@@ -26,7 +26,7 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
-import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { catalogFromGateways, type GatewayConfig, parseGatewaysJson } from "./lib/model-catalog"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -346,7 +346,10 @@ const modelGateway = (): GatewayConfig | null => {
 
 // The model catalog, built before the channel senders because the Slack ingest sender needs
 // it (an @Derive mention typed in a thread runs the same turn the web app's mention does).
-const gatewayModels = catalogFromGateway(modelGateway())
+const gatewayModels = catalogFromGateways(
+  [modelGateway(), ...parseGatewaysJson(process.env.DERIVE_MODEL_GATEWAYS)],
+  process.env.DERIVE_MODEL_DEFAULT,
+)
 
 const channelSenders: ChannelSenders = {
   email: emailDeliverySender(
