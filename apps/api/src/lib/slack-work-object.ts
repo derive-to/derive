@@ -34,16 +34,25 @@ export const SLACK_REVIEW_ACTION = {
  *  orphans every previously-unfurled card from its related conversations and search entries. */
 export const DERIVE_ENTITY_TYPE = "artifact"
 
-/** A review state as a Slack status tag. `tag_color` is the whole point of using a typed field —
- *  a blocked doc reads as blocked at a glance, without us rendering a single character. */
-const statusField = (s: ArtifactStatus): Record<string, unknown> | null => {
+/** The review state as a short label.
+ *
+ *  It rides `custom_fields`, not `fields`. `slack#/entities/content_item` accepts exactly five
+ *  typed fields — description, created_by, last_modified_by, date_created, date_updated — and
+ *  SILENTLY DROPS anything else with "The field X will be omitted due to an invalid type".
+ *  `status` (with its colour tag) and `assignee` belong to `task` and `incident`. Measured
+ *  against the live API, not inferred: sending all ten plausible names and reading back which
+ *  survived is the only way to learn this, since the schema is not published per type.
+ *
+ *  A custom field loses the coloured tag a `task` status would render. That is the price of the
+ *  type being honest — a Derive artifact is a document with review state, not a ticket — and the
+ *  information itself is unchanged. */
+const reviewLabel = (s: ArtifactStatus): string | null => {
   if (!s.review) return null
-  const byState = {
-    pending: { value: "Awaiting review", tag_color: "blue" },
-    sent_back: { value: "Answers sent back", tag_color: "yellow" },
-    approved: { value: "Approved", tag_color: "green" },
-  } as const
-  return byState[s.review.state]
+  return {
+    pending: "Awaiting review",
+    sent_back: "Answers sent back",
+    approved: "Approved",
+  }[s.review.state]
 }
 
 export interface WorkObjectArgs {
@@ -68,16 +77,34 @@ export interface WorkObjectArgs {
 /** The entity for one artifact, as `chat.unfurl`'s `metadata.entities[]` wants it. */
 export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
   const { artifact, info, status } = a
-  const fields: Record<string, unknown> = {}
-  const st = statusField(status)
-  if (st) fields.status = st
-  if (status.review?.reviewerName)
-    // `{ text }` rather than `{ user_id }`: the reviewer is a DERIVE user, and we cannot assume
-    // their Slack id — only a linked account would give us one, and most reviewers are not the
-    // person who pasted the link.
-    fields.assignee = { type: "slack#/types/user", user: { text: status.review.reviewerName } }
+  // `fields` is REQUIRED — omitting it fails the whole payload with "missing required field:
+  // fields", which surfaces as a format error that looks like a wrapper problem. Only the five
+  // names content_item knows may go here; everything else belongs in custom_fields below.
+  const fields: Record<string, unknown> = {
+    description: {
+      value: statusPhrase(status)?.text
+        ? `${statusPhrase(status)?.text}${status.review?.reviewerName ? ` — ${status.review.reviewerName}` : ""}`
+        : unfurlDescription(info),
+      // "markdown", never "plain_text": the latter is not in the enum and rejects the payload.
+      format: "markdown",
+    },
+  }
+  if (status.updatedAt) {
+    const ms = Date.parse(status.updatedAt)
+    // A typed date, so Slack renders it in the reader's own locale and timezone.
+    if (!Number.isNaN(ms)) fields.date_updated = { value: Math.floor(ms / 1000) }
+  }
 
   const custom: Record<string, unknown>[] = []
+  const label = reviewLabel(status)
+  if (label) custom.push({ key: "review", label: "Review", value: label, type: "string" })
+  if (status.review?.reviewerName)
+    custom.push({
+      key: "reviewer",
+      label: "Waiting on",
+      value: status.review.reviewerName,
+      type: "string",
+    })
   if (status.openThreads > 0)
     custom.push({
       key: "open_threads",
@@ -142,17 +169,15 @@ export const artifactDetails = (
   viewerId: string | null,
   iconUrl: string,
 ): Record<string, unknown> => {
-  const fields: Record<string, unknown> = {
-    description: { value: unfurlDescription(info), format: "plain_text" },
-  }
-  const st = statusField(status)
-  if (st) fields.status = st
   const phrase = statusPhrase(status, viewerId)
-  if (phrase)
-    fields.waiting_on = {
-      type: "slack#/types/user",
-      user: { text: phrase.reviewerName ?? phrase.text },
-    }
+  const fields: Record<string, unknown> = {
+    description: {
+      value: phrase
+        ? `*${phrase.text}${phrase.reviewerName ? ` ${phrase.reviewerName}` : ""}*\n${unfurlDescription(info)}`
+        : unfurlDescription(info),
+      format: "markdown",
+    },
+  }
   const ago = agoLabel(status.updatedAt)
   return {
     entity_type: "slack#/entities/content_item",
@@ -165,6 +190,9 @@ export const artifactDetails = (
       },
       fields,
       custom_fields: [
+        ...(reviewLabel(status)
+          ? [{ key: "review", label: "Review", value: reviewLabel(status), type: "string" }]
+          : []),
         ...(status.openThreads > 0
           ? [
               {

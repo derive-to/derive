@@ -85,12 +85,18 @@ describe("artifactEntity", () => {
       }),
       withActions: true,
     })
-    const p = e.entity_payload as Record<string, never>
-    expect(p.fields).toMatchObject({
-      status: { value: "Awaiting review", tag_color: "blue" },
-      assignee: { type: "slack#/types/user", user: { text: "Mert" } },
-    })
-    expect(JSON.stringify(p.custom_fields)).toContain("Open threads")
+    const p = e.entity_payload as { fields: Record<string, never>; custom_fields: unknown[] }
+    // content_item accepts exactly five typed fields and silently DROPS the rest — `status` and
+    // `assignee` belong to `task`. Measured against the live API: sending them returns
+    // "The field status will be omitted due to an invalid type". So the review state rides
+    // custom_fields, and only `description` / `date_updated` go in `fields`.
+    expect(Object.keys(p.fields).sort()).toEqual(["date_updated", "description"])
+    expect(p.fields.description).toMatchObject({ format: "markdown" })
+    expect(JSON.stringify(p.fields)).not.toContain("tag_color")
+    const cf = JSON.stringify(p.custom_fields)
+    expect(cf).toContain("Awaiting review")
+    expect(cf).toContain("Mert")
+    expect(cf).toContain("Open threads")
   })
 
   // Buttons ride the BROADCAST card, so they appear only when there is something to settle.
@@ -134,7 +140,7 @@ describe("artifactEntity", () => {
 })
 
 describe("artifactDetails (the flexpane)", () => {
-  it("describes the artifact for a viewer entitled to it", () => {
+  it("describes the artifact for a viewer entitled to it, and says 'your review'", () => {
     const d = artifactDetails(
       info,
       status({ review: { state: "pending", reviewerId: "u-me", reviewerName: "Mert" } }),
@@ -142,7 +148,12 @@ describe("artifactDetails (the flexpane)", () => {
       "https://d/i.png",
     )
     expect(JSON.stringify(d)).toContain("Q4 plan")
-    expect((d.entity_payload as Record<string, never>).fields).toHaveProperty("status")
+    const f = (d.entity_payload as { fields: Record<string, never> }).fields
+    // Only content_item's own field names, and markdown — "plain_text" is not in the enum and
+    // rejects the entire payload.
+    expect(Object.keys(f)).toEqual(["description"])
+    expect(f.description).toMatchObject({ format: "markdown" })
+    expect(JSON.stringify(f.description)).toContain("Awaiting your review")
   })
 })
 
