@@ -292,4 +292,51 @@ describe("the workspace chat", () => {
     expect(msgs.at(-1)?.body_md).toMatch(/could not reach the model/i)
     expect((await meta.getSession(session?.id ?? ""))?.state).toBe("failed")
   })
+
+  it("lets the asker Stop a workspace chat session — it has no context to gate on", async () => {
+    // A workspace-chat session's context_id is always null, so the PATCH close route must not
+    // require a linked context the way the agent-fail branch does. It used to: Stop 404ed on
+    // every one of these sessions, the one lane the /chat page actually serves.
+    const { app, meta } = await setup("ws-stop", async () => ({
+      text: "answered",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    const opened = await app.request("/v1/chat-session", {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ workspace: "default", body_md: "hi" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+    const stopped = await app.request(`/v1/sessions/${session.id}`, {
+      method: "PATCH",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ state: "closed" }),
+    })
+    expect(stopped.status).toBe(200)
+    expect((await meta.getSession(session.id))?.state).toBe("closed")
+  })
+
+  it("refuses to Stop someone else's workspace chat session", async () => {
+    const other = { id: "u-nosy", email: "nosy@x.com", name: "Nosy" }
+    const { app } = await setup(
+      "ws-stop-other",
+      async () => ({ text: "answered", toolUses: [], costUsd: null, done: true }),
+      { extraUsers: [other] },
+    )
+    const opened = await app.request("/v1/chat-session", {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ workspace: "default", body_md: "hi" }),
+    })
+    const { session } = (await opened.json()) as { session: { id: string } }
+    const stopped = await app.request(`/v1/sessions/${session.id}`, {
+      method: "PATCH",
+      headers: { ...as(other.email), "content-type": "application/json" },
+      body: JSON.stringify({ state: "closed" }),
+    })
+    expect(stopped.status).toBe(404)
+  })
 })

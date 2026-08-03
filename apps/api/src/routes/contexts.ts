@@ -1997,11 +1997,14 @@ export const contextRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const s = await meta.getSession(c.req.param("id"))
-      const linked = s ? await contextOf(s) : null
-      if (!s || !linked) return bail(fail(c, 404, "not found"))
+      if (!s) return bail(fail(c, 404, "not found"))
+      const linked = await contextOf(s)
 
       const agent = await agentFor(c)
       if (agent) {
+        // An agent only ever fails a CONTEXT's run — a contextless (workspace chat)
+        // session has no context-bound agent to act as, so this stays gated on linked.
+        if (!linked) return bail(fail(c, 404, "not found"))
         if (isRunBearer(c)) return bail(fail(c, 403, NOT_THIS_LANE))
         if (agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
         // The asker may close mid-run; the run's eventual failure must not reopen
@@ -2017,13 +2020,19 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const me = await currentUser(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
+      // A CONTEXTLESS chat session has no context to gate on, so closing it is the
+      // asker's call alone — same carve-out the session read already makes. Without this,
+      // Stop 404s on every workspace-chat turn (the ask, not just the poll, matters here):
+      // a hung answer had no way to end early short of the ten-minute reaper.
+      const mine = !s.context_id && s.asker_id === me.id
       // Same membership floor as the session read: a removed asker/creator can't
       // touch the session at all (close included) once they're out of the workspace.
-      if (
-        !(await canAskContext(c, linked.context)) ||
-        (s.asker_id !== me.id && linked.context.created_by !== me.id)
-      )
-        return bail(fail(c, 404, "not found"))
+      const allowed =
+        mine ||
+        (!!linked &&
+          (await canAskContext(c, linked.context)) &&
+          (linked.context.created_by === me.id || s.asker_id === me.id))
+      if (!allowed) return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ state: z.literal("closed") }))
       if (b instanceof Response) return bail(b)
       const updated = await meta.setSessionState(s.id, b.state)
