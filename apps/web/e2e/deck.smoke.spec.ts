@@ -29,7 +29,9 @@ async function seedDeck(page: Page) {
 }
 
 test.describe("deck", () => {
-  test("the host bar reflects the deck's state and drives it both ways", async ({ page }) => {
+  test("the host bar reflects the deck's state and drives it both ways", async ({
+    owner: page,
+  }) => {
     await seedDeck(page)
 
     const position = page.getByTestId("deck-position")
@@ -56,7 +58,7 @@ test.describe("deck", () => {
     await expect(position).toHaveText("2 / 3")
   })
 
-  test("Present mode is offered for a deck", async ({ page }) => {
+  test("Present mode is offered for a deck", async ({ owner: page }) => {
     await seedDeck(page)
     // Fullscreen is host-side (it fullscreens the iframe wrapper), which is why a deck
     // needs nothing beyond the protocol to be presentable. Assert the affordance exists;
@@ -64,7 +66,7 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-fullscreen")).toBeVisible()
   })
 
-  test("an ordinary page gets no deck chrome", async ({ page }) => {
+  test("an ordinary page gets no deck chrome", async ({ owner: page }) => {
     // The negative half: the bar is opt-in via the protocol, so a page that never posts
     // must stay a page. Without this, a bar that rendered unconditionally would pass
     // every assertion above.
@@ -78,7 +80,9 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-position")).toHaveCount(0)
   })
 
-  test("the library's Start a deck opens the editor on the canonical starter", async ({ page }) => {
+  test("the library's Start a deck opens the editor on the canonical starter", async ({
+    owner: page,
+  }) => {
     // The human entry point. It has to arrive with the real starter in the editor —
     // an empty editor here is the whole feature failing silently.
     await page.goto("/")

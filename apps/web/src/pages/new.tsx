@@ -42,18 +42,24 @@ export function NewArtifact() {
   // `?start=deck` (the library's "Start a deck") opens the editor on the canonical deck
   // starter instead of a blank page — the same file the CLI scaffolds and the MCP serves.
   // Imported lazily: it's ~12KB of HTML that only this one entry path ever needs, so it
-  // stays out of the main bundle. Guarded on empty `src` so it can never overwrite typing,
-  // and it deliberately does NOT set the title — naming the deck is the author's first act.
-  const started = useRef(false)
+  // stays out of the main bundle. It deliberately does NOT set the title — naming the deck
+  // is the author's first act.
+  //
+  // The `cur || …` IS the idempotence guard, and it has to be the only one. An earlier
+  // version also carried a `started` ref, which deadlocked with the cancel flag whenever
+  // the effect was invoked twice (mount → cleanup → mount): the ref refused the second
+  // import while the cleanup had already cancelled the first, so the editor stayed empty
+  // forever. A production build never double-invokes, so it worked in the deploy preview
+  // and only failed locally — the e2e caught it.
   useEffect(() => {
-    if (start !== "deck" || started.current) return
-    started.current = true
-    let live = true
+    if (start !== "deck") return
+    let cancelled = false
     import("@/lib/deck-template.gen").then(({ DECK_TEMPLATE }) => {
-      if (live) setSrc((cur) => (cur ? cur : DECK_TEMPLATE))
+      // Functional update: never clobber anything already typed or pasted.
+      if (!cancelled) setSrc((cur) => cur || DECK_TEMPLATE)
     })
     return () => {
-      live = false
+      cancelled = true
     }
   }, [start])
 
