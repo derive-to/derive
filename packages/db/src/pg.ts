@@ -437,7 +437,28 @@ const collectionRolesSql = (scope: string, user: string) =>
 //
 // Every arm's second column must be `json`, not `jsonb`: UNION refuses to match the two,
 // and the first two arms are row_to_json. Hence to_json() on the scalar arms.
-const collectionsOverviewSql = (viewer?: { user: string; since: string; per: string }) =>
+// The ranked strip both viewer arms read: each collection's live artifacts, newest
+// first, numbered within the collection. Built once so 'preview' and 'byline' cannot
+// disagree about which artifacts are on the strip.
+const PREVIEW_STRIP_SQL = `SELECT ci.collection_id, a.id, a.short_id, a.title, a.current_version,
+                  COALESCE(a.updated_at, a.created_at) updated_at,
+                  (v.preview_status = 'ready') has_preview,
+                  a.author_id, a.author_name, a.author_login, a.author_avatar,
+                  row_number() OVER (
+                    PARTITION BY ci.collection_id
+                    ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id DESC) rn
+             FROM collection_item ci
+             JOIN collection c ON c.id = ci.collection_id AND c.org_id = $1
+             JOIN artifact a ON a.id = ci.artifact_id AND a.removed_at IS NULL
+             LEFT JOIN "version" v ON v.artifact_id = a.id AND v.n = a.current_version`
+
+// `bylines` joins the Better Auth "user" table, which fresh self-hosts may not have —
+// callers try WITH it and retry WITHOUT on failure, the same best-effort contract
+// listEnrichment keeps for its directory arms.
+const collectionsOverviewSql = (
+  viewer?: { user: string; since: string; per: string },
+  bylines = true,
+) =>
   `SELECT 'collection' kind, row_to_json(t) doc FROM (
          SELECT c.*, COALESCE(ci.cnt, 0)::int AS count
          FROM collection c
@@ -476,20 +497,19 @@ const collectionsOverviewSql = (viewer?: { user: string; since: string; per: str
        UNION ALL
        SELECT 'preview', row_to_json(p) FROM (
          SELECT collection_id, id, short_id, title, current_version, updated_at, has_preview,
-                author_name, author_login, author_avatar FROM (
-           SELECT ci.collection_id, a.id, a.short_id, a.title, a.current_version,
-                  COALESCE(a.updated_at, a.created_at) updated_at,
-                  (v.preview_status = 'ready') has_preview,
-                  a.author_name, a.author_login, a.author_avatar,
-                  row_number() OVER (
-                    PARTITION BY ci.collection_id
-                    ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id DESC) rn
-             FROM collection_item ci
-             JOIN collection c ON c.id = ci.collection_id AND c.org_id = $1
-             JOIN artifact a ON a.id = ci.artifact_id AND a.removed_at IS NULL
-             LEFT JOIN "version" v ON v.artifact_id = a.id AND v.n = a.current_version
-         ) r WHERE r.rn <= ${viewer.per}
-       ) p`
+                author_id, author_name, author_login, author_avatar
+           FROM (${PREVIEW_STRIP_SQL}) r WHERE r.rn <= ${viewer.per}
+       ) p${
+         !bylines
+           ? ""
+           : `
+       UNION ALL
+       SELECT 'byline', row_to_json(b) FROM (
+         SELECT DISTINCT u.id, u.name, u.username FROM "user" u
+          WHERE u.id IN (SELECT r2.author_id FROM (${PREVIEW_STRIP_SQL}) r2
+                          WHERE r2.rn <= ${viewer.per} AND r2.author_id IS NOT NULL)
+       ) b`
+}`
 }`
 /** The viewer-free statement, for callers that only want the org-scoped halves. */
 const COLLECTIONS_OVERVIEW_SQL = collectionsOverviewSql()
@@ -500,6 +520,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   const starred: string[] = []
   const active: string[] = []
   const previews: Record<string, CollectionPreview[]> = {}
+  const previewBylines: { id: string; name: string | null; username: string | null }[] = []
   for (const r of rows) {
     switch (r.kind) {
       case "collection":
@@ -510,6 +531,9 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
         break
       case "active":
         active.push(r.doc as string)
+        break
+      case "byline":
+        previewBylines.push(r.doc as { id: string; name: string | null; username: string | null })
         break
       case "preview": {
         const p = r.doc as CollectionPreview & { collection_id: string }
@@ -523,6 +547,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
           updated_at: p.updated_at,
           // A left-joined row with no ready version yields SQL NULL, not false.
           has_preview: p.has_preview === true,
+          author_id: p.author_id,
           author_name: p.author_name,
           author_login: p.author_login,
           author_avatar: p.author_avatar,
@@ -542,7 +567,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   // guarantee once the arms are merged — re-apply the strip's order here.
   for (const bucket of Object.values(previews))
     bucket.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id))
-  return { collections, sources, starred, active, previews }
+  return { collections, sources, starred, active, previews, previewBylines }
 }
 
 export class PgMetaStore implements MetaStore {
@@ -1800,12 +1825,10 @@ export class PgMetaStore implements MetaStore {
     // runs, with the aggregate ordered explicitly so the page order survives jsonb_agg.
     // On the hosted tier this replaces four boot REQUESTS (each paying its own auth and
     // round trips on its own pg.Client) with one round trip after auth.
-    const { rows } = await this.pool.query<{ arm: string; doc: unknown }>(
+    const bootSql = (bylines: boolean) =>
       `SELECT 'summary' arm, (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${WORKSPACE_SUMMARY_SQL}) t) doc
        UNION ALL
-       SELECT 'overview', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${collectionsOverviewSql(
-         { user: "$2", since: "$5", per: "$6" },
-       )}) t)
+       SELECT 'overview', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${collectionsOverviewSql({ user: "$2", since: "$5", per: "$6" }, bylines)}) t)
        UNION ALL
        SELECT 'roles', (SELECT COALESCE(jsonb_agg(row_to_json(t)), '[]'::jsonb) FROM (${collectionRolesSql(
          "SELECT id FROM collection WHERE org_id = $1",
@@ -1822,12 +1845,26 @@ export class PgMetaStore implements MetaStore {
        SELECT 'subscription', (SELECT to_jsonb(s) FROM subscription s WHERE s.org_id = $1)
        UNION ALL
        SELECT 'seats', to_jsonb((SELECT count(*)::int FROM membership m
-                                  WHERE m.org_id = $1 AND m.role = ANY($4)))`,
-      [orgId, userId, notifLimit, [...BILLABLE_ROLES], viewer.activeSince, viewer.previewPer],
-    )
+                                  WHERE m.org_id = $1 AND m.role = ANY($4)))`
+    const bootParams = [
+      orgId,
+      userId,
+      notifLimit,
+      [...BILLABLE_ROLES],
+      viewer.activeSince,
+      viewer.previewPer,
+    ]
+    let rows: { arm: string; doc: unknown }[]
+    try {
+      rows = (await this.pool.query<{ arm: string; doc: unknown }>(bootSql(true), bootParams)).rows
+    } catch {
+      // Same best-effort as collectionsOverview: the byline arm's "user" join is the
+      // only optional table in this statement.
+      rows = (await this.pool.query<{ arm: string; doc: unknown }>(bootSql(false), bootParams)).rows
+    }
     const arm: Record<string, unknown> = {}
     for (const r of rows) arm[r.arm] = r.doc
-    const { collections, sources, starred, active, previews } = mapOverviewRows(
+    const { collections, sources, starred, active, previews, previewBylines } = mapOverviewRows(
       (arm.overview as OverviewRow[] | null) ?? [],
     )
     // maxRole, not last-wins: the two arms both answer for a collection you are an
@@ -1844,6 +1881,7 @@ export class PgMetaStore implements MetaStore {
       starred,
       active,
       previews,
+      previewBylines,
       collectionRoles,
       billing: {
         subscription: (arm.subscription as SubscriptionRecord | null) ?? null,
@@ -2479,6 +2517,7 @@ export class PgMetaStore implements MetaStore {
         updated_at: artifact.updated_at,
         created_at: artifact.created_at,
         preview_status: version.preview_status,
+        author_id: artifact.author_id,
         author_name: artifact.author_name,
         author_login: artifact.author_login,
         author_avatar: artifact.author_avatar,
@@ -2509,6 +2548,7 @@ export class PgMetaStore implements MetaStore {
           current_version: r.current_version,
           updated_at: r.updated_at ?? r.created_at,
           has_preview: r.preview_status === "ready",
+          author_id: r.author_id,
           author_name: r.author_name,
           author_login: r.author_login,
           author_avatar: r.author_avatar,
@@ -2852,12 +2892,23 @@ export class PgMetaStore implements MetaStore {
     // into a single column set. The viewer arms join the same union rather than adding
     // three more trips.
     // Statement text shared with bootstrap() — see WORKSPACE_SUMMARY_SQL's note.
-    const { rows } = await this.pool.query<OverviewRow>(
-      viewer
-        ? collectionsOverviewSql({ user: "$2", since: "$3", per: "$4" })
-        : COLLECTIONS_OVERVIEW_SQL,
-      viewer ? [orgId, viewer.userId, viewer.activeSince, viewer.previewPer] : [orgId],
-    )
+    const params = viewer ? [orgId, viewer.userId, viewer.activeSince, viewer.previewPer] : [orgId]
+    const run = (bylines: boolean) =>
+      this.pool.query<OverviewRow>(
+        viewer
+          ? collectionsOverviewSql({ user: "$2", since: "$3", per: "$4" }, bylines)
+          : COLLECTIONS_OVERVIEW_SQL,
+        params,
+      )
+    let rows: OverviewRow[]
+    try {
+      rows = (await run(true)).rows
+    } catch (e) {
+      // The byline arm joins the Better Auth "user" table, absent on some self-hosts.
+      // A failure WITHOUT the arm has a real problem and still throws.
+      if (!viewer) throw e
+      rows = (await run(false)).rows
+    }
     return mapOverviewRows(rows)
   }
   // ---- Folders (organize a collection's artifacts) -----------------------

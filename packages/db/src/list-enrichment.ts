@@ -175,11 +175,8 @@ export const composeBootstrap = async (
   viewer: Omit<CollectionsViewer, "userId">,
 ): Promise<BootstrapRead> => {
   const summary = await composeWorkspaceSummary(store, orgId, userId)
-  const { collections, sources, starred, active, previews } = await composeCollectionsOverview(
-    store,
-    orgId,
-    { userId, ...viewer },
-  )
+  const { collections, sources, starred, active, previews, previewBylines } =
+    await composeCollectionsOverview(store, orgId, { userId, ...viewer })
   const collectionRoles = await store.collectionRolesForUser(
     collections.map((c) => c.id),
     userId,
@@ -199,6 +196,7 @@ export const composeBootstrap = async (
     starred,
     active,
     previews,
+    previewBylines,
     collectionRoles,
     settings,
     notifications,
@@ -296,6 +294,7 @@ export const composeCollectionsOverview = async (
     | "listUserFavoriteCollectionIds"
     | "collectionsWorkedIn"
     | "collectionPreviews"
+    | "getUsers"
   >,
   orgId: string,
   viewer?: CollectionsViewer,
@@ -304,9 +303,10 @@ export const composeCollectionsOverview = async (
     store.listCollections(orgId),
     store.listRepoSources(orgId),
   ])
-  if (!viewer) return { collections, sources, starred: [], active: [], previews: {} }
+  if (!viewer)
+    return { collections, sources, starred: [], active: [], previews: {}, previewBylines: [] }
   // The pg driver answers these as arms of the one overview statement; here they are
-  // three more free local reads.
+  // more free local reads.
   const [starred, active, previews] = await Promise.all([
     store.listUserFavoriteCollectionIds(viewer.userId, orgId),
     store.collectionsWorkedIn(viewer.userId, orgId, viewer.activeSince),
@@ -315,5 +315,20 @@ export const composeCollectionsOverview = async (
       viewer.previewPer,
     ),
   ])
-  return { collections, sources, starred, active, previews }
+  // The byline self-heal for the strip's authors: getUsers is best-effort (empty when
+  // the auth tables are absent), so the denormalized name simply stands in there.
+  const authorIds = [
+    ...new Set(
+      Object.values(previews)
+        .flat()
+        .map((p) => p.author_id)
+        .filter((x): x is string => !!x),
+    ),
+  ]
+  const previewBylines = (authorIds.length ? await store.getUsers(authorIds) : []).map((u) => ({
+    id: u.id,
+    name: u.name,
+    username: u.username,
+  }))
+  return { collections, sources, starred, active, previews, previewBylines }
 }

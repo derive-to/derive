@@ -1575,6 +1575,10 @@ export interface CollectionsOverviewRead {
   /** Newest-first covers per collection id. Empty without a viewer; a collection with
    *  nothing in it is absent rather than mapped to []. */
   previews: Record<string, CollectionPreview[]>
+  /** Live user-directory rows for the previews' authors — the byline self-heal, same
+   *  contract as ListEnrichment.bylines. Best-effort: empty when the auth tables are
+   *  absent (fresh self-host), and the denormalized name stands in. */
+  previewBylines: { id: string; name: string | null; username: string | null }[]
 }
 
 /** One round trip's worth of app-shell boot data — see MetaStore.bootstrap. */
@@ -1586,6 +1590,7 @@ export interface BootstrapRead {
   starred: string[]
   active: string[]
   previews: Record<string, CollectionPreview[]>
+  previewBylines: { id: string; name: string | null; username: string | null }[]
   /** The caller's explicit per-collection roles (creator-ownership is applied by the route). */
   collectionRoles: Record<string, Role>
   settings: OrgSettings
@@ -2119,8 +2124,11 @@ export interface CollectionPreview {
   /** Whether the current version has a ready static render, so the strip can serve a
    *  PNG instead of mounting an iframe (the same choice artifact cards make). */
   has_preview: boolean
-  /** Who last touched it — the denormalized byline the artifact row already carries.
-   *  The Collections digest derives its "recent editors" avatars from these. */
+  /** Who last touched it — the denormalized byline the artifact row already carries,
+   *  plus the author's user id so the caller can heal the name to the person's CURRENT
+   *  one (the denormalized name is the publishing client — "Claude Code (derive)" — for
+   *  agent publishes; the id is the human it acted for). */
+  author_id: string | null
   author_name: string | null
   author_login: string | null
   author_avatar: string | null

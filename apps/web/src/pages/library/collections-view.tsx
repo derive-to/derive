@@ -113,7 +113,7 @@ export function CollectionsView({
               <SectionRule label={week ? "This week" : "Recently"} />
               <div>
                 {digest.map((c) => (
-                  <DigestEntry key={c.id} col={c} weekOnly={week} cutoff={cutoff} />
+                  <DigestEntry key={c.id} col={c} />
                 ))}
               </div>
             </section>
@@ -155,38 +155,32 @@ function SectionRule({ label }: { label: string }) {
 // One shelf in the digest: name and byline above a strip of captioned covers at a size
 // you can actually read. The busiest shelf leads by POSITION — never by cell size, which
 // re-deals the layout every visit and turns "what makes a cell big" into a tuning tax.
-function DigestEntry({
-  col,
-  weekOnly,
-  cutoff,
-}: {
-  col: Collection
-  weekOnly: boolean
-  cutoff: string
-}) {
-  const strip = (col.preview ?? [])
-    .filter((p) => !weekOnly || p.updated_at >= cutoff)
-    .slice(0, DIGEST_COVERS)
-  // The strip's head is always the newest, so an in-window collection shows at least it.
-  const covers = strip.length > 0 ? strip : (col.preview ?? []).slice(0, 1)
+function DigestEntry({ col }: { col: Collection }) {
+  // The full strip, always — not just the week's touches. The entry EARNED its digest
+  // slot with recent work; once it's here, its four newest covers are more useful than
+  // one fresh cover beside implied emptiness.
+  const covers = (col.preview ?? []).slice(0, DIGEST_COVERS)
   const hidden = Math.max(0, (col.count ?? 0) - covers.length)
 
   return (
     <div
       data-testid={`digest-entry-${col.id}`}
-      className="border-b border-border-soft py-4 last:border-b-0"
+      className="border-b border-border-soft py-3.5 last:border-b-0"
     >
-      <div className="mb-2.5 flex min-w-0 items-baseline gap-2.5">
-        <Link
-          to="/"
-          search={{ collection: col.id }}
-          data-testid={`digest-open-${col.id}`}
-          className="min-w-0 truncate font-serif text-base font-semibold tracking-tight text-foreground outline-none transition-colors duration-state hover:text-foreground/70 focus-visible:rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
+      {/* The whole header line is the door, and it looks like one: full-width link, a
+          hover wash across the line, and a chevron that answers "this goes somewhere"
+          before you commit — the row grammar every list in the app already speaks. */}
+      <Link
+        to="/"
+        search={{ collection: col.id }}
+        data-testid={`digest-open-${col.id}`}
+        className="group/entry -mx-2 mb-2 flex min-w-0 items-baseline gap-2.5 rounded-md px-2 py-1.5 outline-none transition-colors duration-state hover:bg-secondary/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+      >
+        <span className="min-w-0 truncate font-serif text-base font-semibold tracking-tight text-foreground">
           {col.title}
-        </Link>
+        </span>
         {col.starred && (
-          <Icon name="star" size={12} weight="fill" className="shrink-0 text-primary" />
+          <Icon name="star" size={12} weight="fill" className="shrink-0 self-center text-primary" />
         )}
         <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground">
           {col.count} {col.count === 1 ? "artifact" : "artifacts"}
@@ -194,7 +188,13 @@ function DigestEntry({
         </span>
         <span className="min-w-0 flex-1" />
         <EditorDots entries={col.preview ?? []} withNames />
-      </div>
+        <Icon
+          name="chevron-right"
+          size={14}
+          aria-hidden
+          className="shrink-0 self-center text-muted-foreground/60 transition-[color,transform] duration-state group-hover/entry:translate-x-0.5 group-hover/entry:text-foreground"
+        />
+      </Link>
       <div className="flex items-center gap-2.5 overflow-hidden">
         {covers.map((p) => (
           <Cover key={p.short_id} p={p} collectionId={col.id} />

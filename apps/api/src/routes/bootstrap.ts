@@ -117,6 +117,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
           new Set(b.starred),
           new Set(b.active),
           b.previews,
+          b.previewBylines,
         ),
         settings: b.settings,
         notifications: b.notifications.notifications,

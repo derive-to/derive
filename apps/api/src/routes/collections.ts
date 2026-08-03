@@ -93,6 +93,7 @@ export const collectionRoutes = (ctx: AppContext) => {
         starred,
         active,
         previews: rawPreviews,
+        previewBylines,
       } = await meta.collectionsOverview(
         org,
         me
@@ -123,6 +124,7 @@ export const collectionRoutes = (ctx: AppContext) => {
         new Set(starred),
         new Set(active),
         rawPreviews,
+        previewBylines,
       )
       return c.json({ collections })
     },

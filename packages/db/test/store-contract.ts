@@ -2715,6 +2715,7 @@ export function runStoreContract(
         starred: [],
         active: [],
         previews: {},
+        previewBylines: [],
       })
     })
 
@@ -2855,6 +2856,13 @@ export function runStoreContract(
       expect(bobs.active).toEqual([])
       // Previews are a property of the collection, not the reader, so they still come.
       expect(bobs.previews[workedCol.id]).toHaveLength(2)
+
+      // The contract schemas carry no Better Auth "user" table, so the byline heal has
+      // nothing to read: previewBylines is EMPTY (never an error), and the denormalized
+      // name stands. On Postgres this exercises the retry-without-bylines path — the
+      // statement's "user" join fails and the second pass answers.
+      expect(read.previewBylines).toEqual([])
+      expect(read.previews[workedCol.id]?.[0]?.author_id).toBeDefined()
     })
   })
 

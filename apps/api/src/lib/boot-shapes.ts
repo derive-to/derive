@@ -249,8 +249,17 @@ export const collectionsJson = (
    *  view groups on this and must not pay a second round trip for it. */
   activeIds: ReadonlySet<string> = new Set(),
   previews: Record<string, CollectionPreview[]> = {},
+  /** Live rows for the previews' authors — heals the denormalized name to the person's
+   *  CURRENT one, same precedence as authorProfile: for an agent publish the stored
+   *  name is the CLIENT ("Claude Code (derive)"), and the id is the human it acted for. */
+  previewBylines: { id: string; name: string | null; username: string | null }[] = [],
 ) => {
   const { srcByCollection, branchByRepo } = sourceMaps(sources)
+  const bylineById = new Map(previewBylines.map((u) => [u.id, u]))
+  const healedName = (p: CollectionPreview) => {
+    const live = p.author_id ? bylineById.get(p.author_id) : undefined
+    return live?.name ?? live?.username ?? p.author_name
+  }
   const roleFor = (col: CollectionRecord): Role | null =>
     operator ? "owner" : col.created_by === meId ? "owner" : (roleMap[col.id] ?? null)
   return cols
@@ -272,7 +281,7 @@ export const collectionsJson = (
             current_version: p.current_version,
             has_preview: p.has_preview,
             updated_at: p.updated_at,
-            author_name: p.author_name,
+            author_name: healedName(p),
             author_login: p.author_login,
             author_avatar: p.author_avatar,
           })),
