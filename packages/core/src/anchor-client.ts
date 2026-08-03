@@ -367,6 +367,28 @@ interface ElReg {
         post({ type: "edit-save" })
         return
       }
+      // ⌘B / ⌘I / ⌘K on a selection inside a block. The browser's own bold/italic
+      // never fired here (plaintext-only contenteditable drops format commands), so
+      // these keys did nothing at all in a mode that looks like a text editor.
+      if (focused && (e.metaKey || e.ctrlKey) && !e.altKey) {
+        const k = e.key.toLowerCase()
+        if (k === "b" || k === "i") {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          applyFmt(k)
+          return
+        }
+        if (k === "k") {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          // The frame is sandboxed with allow-modals, so a prompt is available and
+          // is the least ceremony for "what should this link to". The host's own
+          // dialog can't reach into the selection that lives in here.
+          const href = window.prompt("Link to:")?.trim()
+          if (href) applyFmt("a", href)
+          return
+        }
+      }
       if (e.key === "Escape") {
         // Two steps, deliberately. With the caret in a block, Escape drops the caret
         // and stops there — the typed text and the session both survive, which is what
@@ -452,7 +474,13 @@ interface ElReg {
     "@supports (color: color-mix(in srgb, currentColor 10%, transparent)){" +
     ".derive-edit-hover{background-color:color-mix(in srgb, currentColor 8%, transparent);outline-color:color-mix(in srgb, currentColor 38%, transparent)}" +
     "[data-derive-editable]:focus{outline-color:color-mix(in srgb, currentColor 70%, transparent)}" +
-    "}"
+    "}" +
+    /* Formatting applied in this session, shown as it will read once saved. These
+       spans are the EDITOR's, not the document's: they carry the intent until the
+       save turns them into real tags, and they never reach the stored source. */
+    "[data-derive-fmt=b]{font-weight:700}" +
+    "[data-derive-fmt=i]{font-style:italic}" +
+    "[data-derive-fmt=a]{text-decoration:underline;text-underline-offset:2px}"
   ;(document.head || document.documentElement).appendChild(st)
 
   /* === Element anchors ========================================================
@@ -1590,7 +1618,10 @@ interface ElReg {
   const countDirty = () => {
     let n = 0
     for (const t of editTargets) {
-      const changed = document.contains(t.el) && concatText(t.el) !== t.origConcat
+      // Formatting counts even when not one character changed: bolding a word is a
+      // real edit, and the text-only compare called that block clean — so Save
+      // stayed hidden and the work was discardable without a warning.
+      const changed = document.contains(t.el) && (concatText(t.el) !== t.origConcat || hasFmt(t.el))
       t.el.classList.toggle("derive-edited", changed)
       if (changed) n++
     }
@@ -2024,8 +2055,19 @@ interface ElReg {
       const t = asEl(e.target)?.closest("[data-derive-editable]")
       if (!t) return
       const it = e.inputType || ""
-      // Text edits only: no new paragraphs/line breaks, no formatting commands.
-      if (it === "insertParagraph" || it === "insertLineBreak" || it.indexOf("format") === 0) {
+      // Enter breaks the line. Blocking it outright made the mode feel broken —
+      // pressing Enter mid-sentence is reflexive — while a real paragraph SPLIT
+      // stays out: that changes the document's structure, and this editor only ever
+      // rewrites the inside of one block. The break rides the same editor-span
+      // grammar as bold and italic and becomes a <br> on save.
+      if (it === "insertParagraph" || it === "insertLineBreak") {
+        e.preventDefault()
+        insertBreak()
+        return
+      }
+      // Formatting commands (⌘B and friends) don't reach a plaintext-only field
+      // anyway; the client applies its own (see applyFmt).
+      if (it.indexOf("format") === 0) {
         e.preventDefault()
         return
       }
@@ -2053,6 +2095,104 @@ interface ElReg {
     }
     scheduleDirty()
   })
+
+  /* ── Bold, italic, link ───────────────────────────────────────────────────────
+     Everything else in this mode is plain text by design: the contenteditable is
+     `plaintext-only`, and the server escapes every replacement. Formatting is the
+     one exception, and it is deliberately narrow — emphasis and a link, on a run of
+     words inside one block.
+
+     The wrap is the EDITOR's, not the document's: a `[data-derive-fmt]` span holds
+     the intent (and shows what it will look like) until the save turns it into a
+     real tag. Nothing here touches the stored source; `collectEdits` reads these
+     spans and sends the block as one `new_html` edit, which the server sanitizes
+     down to five inline tags.
+
+     ⌘B/⌘I/⌘K, because those are the keys every writing tool binds. The frame owns
+     the keyboard while a caret is in a block, so they can't reach the browser. */
+  const FMT_ATTR = "data-derive-fmt"
+  const HREF_ATTR = "data-derive-href"
+  const applyFmt = (kind: "b" | "i" | "a", href?: string): void => {
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount || sel.isCollapsed) {
+      post({ type: "edit-blocked", reason: "format-empty" })
+      return
+    }
+    const range = sel.getRangeAt(0)
+    // A selection inside one text run has a TEXT NODE as its common ancestor — which
+    // is the normal case here, and `closest` only exists on elements. Step up first.
+    const anchor = range.commonAncestorContainer
+    const el = anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement
+    const block = el?.closest("[data-derive-editable]")
+    if (!block) {
+      post({ type: "edit-blocked", reason: "format-outside" })
+      return
+    }
+    const span = document.createElement("span")
+    span.setAttribute(FMT_ATTR, kind)
+    if (href) span.setAttribute(HREF_ATTR, href)
+    try {
+      // Throws when the selection only half-contains an element — exactly the case
+      // we can't express as one inline run, so the refusal is the right answer.
+      range.surroundContents(span)
+    } catch (_e) {
+      post({ type: "edit-blocked", reason: "format-range" })
+      return
+    }
+    sel.removeAllRanges()
+    scheduleDirty()
+  }
+  /** Enter: a line break at the caret, carried by the same editor span the other
+   *  formatting uses (so one collect path handles all of it) and rendered by the
+   *  real <br> inside it, so the line breaks on screen the moment it's typed. */
+  const insertBreak = (): void => {
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) return
+    const range = sel.getRangeAt(0)
+    const el = range.startContainer
+    const block = (el.nodeType === 1 ? (el as Element) : el.parentElement)?.closest(
+      "[data-derive-editable]",
+    )
+    if (!block) return
+    const span = document.createElement("span")
+    span.setAttribute(FMT_ATTR, "br")
+    span.appendChild(document.createElement("br"))
+    range.deleteContents()
+    range.insertNode(span)
+    // Caret after the break, so typing continues on the new line.
+    range.setStartAfter(span)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    scheduleDirty()
+  }
+
+  /** Serialize a block as inline markup: text escaped, editor spans as real tags,
+   *  anything else contributing its text only (the server refuses a span that
+   *  crosses the document's own markup anyway, and this keeps that refusal clean). */
+  const serializeFmt = (el: Node): string => {
+    let out = ""
+    for (let n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3) {
+        out += escapeText(n.nodeValue ?? "")
+        continue
+      }
+      if (n.nodeType !== 1) continue
+      const e = n as Element
+      const kind = e.getAttribute(FMT_ATTR)
+      const inner = serializeFmt(e)
+      if (kind === "b") out += `<b>${inner}</b>`
+      else if (kind === "i") out += `<i>${inner}</i>`
+      else if (kind === "br") out += "<br>"
+      else if (kind === "a")
+        out += `<a href="${escapeText(e.getAttribute(HREF_ATTR) || "")}">${inner}</a>`
+      else out += inner
+    }
+    return out
+  }
+  const escapeText = (s: string): string =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+  const hasFmt = (el: Element): boolean => !!el.querySelector(`[${FMT_ATTR}]`)
 
   const isHiSur = (ch: string | undefined): boolean =>
     !!ch && ch.charCodeAt(0) >= 0xd800 && ch.charCodeAt(0) <= 0xdbff
@@ -2110,10 +2250,11 @@ interface ElReg {
       new_text: newText,
     }
   }
-  /** The wire shape of one collected edit. */
+  /** The wire shape of one collected edit: text, or (formatting only) markup. */
   interface WireEdit {
     quote: { exact: string; prefix: string; suffix: string }
-    new_text: string
+    new_text?: string
+    new_html?: string
   }
   const wireEdit = (qe: {
     exact: string
@@ -2124,6 +2265,29 @@ interface ElReg {
     quote: { exact: qe.exact, prefix: qe.prefix, suffix: qe.suffix },
     new_text: qe.new_text,
   })
+  /* A block someone formatted goes as ONE markup edit for the whole block, not a
+     per-run diff. Two reasons: the wrap splits text nodes, so the per-node
+     alignment the text path depends on is gone; and a bold run's boundaries are
+     only meaningful together with the words around them. The quote is the block's
+     PRE-edit text (which is what the stored source still holds), so a block that
+     already contains markup is refused by the server's tag-crossing guard rather
+     than mangled here — with a message that names the source editor. */
+  const blockHtmlEdit = (t: EditTarget): WireEdit | null => {
+    const base = editBase
+    if (!base) return null
+    const exact = t.origValues.join("\n")
+    if (!exact.trim()) return null
+    const start = t.origStarts[0] ?? 0
+    const end = start + exact.length
+    return {
+      quote: {
+        exact,
+        prefix: base.text.slice(Math.max(0, start - 40), start),
+        suffix: base.text.slice(end, end + 40),
+      },
+      new_html: serializeFmt(t.el).replace(/\s*\n\s*/g, " "),
+    }
+  }
   // The whole-block span: both sides joined with the same "\n" separators the
   // snapshot uses, so offsets line up with editBase.text; the replacement's seam
   // separators collapse to single spaces (typed content never contains newlines —
@@ -2143,6 +2307,16 @@ interface ElReg {
     let uncaptured = 0
     for (const t of editTargets) {
       if (!document.contains(t.el)) continue
+      // A formatted block is markup, whole. Checked BEFORE normalize(), which would
+      // merge the text either side of a wrap and lose nothing — but the html path
+      // doesn't need the per-node alignment normalize() exists to protect.
+      if (hasFmt(t.el)) {
+        dirty++
+        const he = blockHtmlEdit(t)
+        if (he) edits.push(he)
+        else uncaptured++
+        continue
+      }
       t.el.normalize()
       const curNodes = textNodes(t.el)
       const curVals = curNodes.map((n) => n.nodeValue ?? "")

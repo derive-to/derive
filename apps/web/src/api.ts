@@ -107,7 +107,11 @@ export type ProposalState = Proposal["state"]
  *  {exact, prefix, suffix}, resolved server-side against the stored source. */
 export interface QuoteEditInput {
   quote: { exact: string; prefix?: string; suffix?: string }
-  new_text: string
+  /** The replacement as text. Exactly one of `new_text` / `new_html` is set. */
+  new_text?: string
+  /** The replacement as inline markup — a run the reader made bold, italic, or a
+   *  link. Sanitized server-side down to a five-tag allowlist. */
+  new_html?: string
 }
 /** The other edit shape the server accepts: a literal string swap against the raw
  *  source. The inline editor uses it for exactly one thing — replacing an image's
