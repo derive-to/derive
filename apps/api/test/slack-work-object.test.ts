@@ -140,6 +140,38 @@ describe("artifactEntity", () => {
 })
 
 describe("artifactDetails (the flexpane)", () => {
+  // Opening a flexpane UPDATES the card from the metadata the app answers with — Slack: "the
+  // unfurl will also be updated given the entity metadata that has changed". So a details
+  // payload that omitted the actions would silently strip Approve and Send back from a card
+  // that had them, and the only symptom would be buttons quietly disappearing after a click.
+  it("carries the same actions as the card, so opening it cannot strip them", () => {
+    const pending = status({
+      review: { state: "pending", reviewerId: "u-me", reviewerName: "Mert" },
+    })
+    const card = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: pending,
+      withActions: true,
+    })
+    const pane = artifactDetails(info, pending, "u-me", "https://d/i.png")
+    const ids = (p: Record<string, unknown>) =>
+      (
+        (p.actions as { primary_actions?: { action_id: string }[] } | undefined)?.primary_actions ??
+        []
+      ).map((x) => x.action_id)
+    expect(ids(pane.entity_payload as Record<string, unknown>)).toEqual(
+      ids(card.entity_payload as Record<string, unknown>),
+    )
+    expect(ids(pane.entity_payload as Record<string, unknown>)).toHaveLength(2)
+  })
+
+  it("offers no actions once the round is settled", () => {
+    const pane = artifactDetails(info, status(), "u-me", "https://d/i.png")
+    expect((pane.entity_payload as Record<string, unknown>).actions).toBeUndefined()
+  })
+
   it("describes the artifact for a viewer entitled to it, and says 'your review'", () => {
     const d = artifactDetails(
       info,

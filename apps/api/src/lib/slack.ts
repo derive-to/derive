@@ -403,6 +403,24 @@ export const unfurlSlackLinks = async (
   if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
 }
 
+/** Slack's real diagnosis lives in `response_metadata.messages`, not in `error`.
+ *
+ *  `error` is a category — `invalid_arguments`, `error_processing_metadata` — while the messages
+ *  name the field: "The field status will be omitted due to an invalid type", "must be a valid
+ *  enum value (pointer: …/format)". Every Work Object bug in this integration was diagnosed from
+ *  that array and none from the code, so it belongs in the thrown error rather than the floor. */
+interface SlackApiResponse {
+  ok: boolean
+  error?: string
+  warning?: string
+  response_metadata?: { messages?: string[] }
+}
+
+const slackDetail = (d: SlackApiResponse): string => {
+  const parts = [d.error ?? d.warning ?? "unknown", ...(d.response_metadata?.messages ?? [])]
+  return parts.join(" | ").slice(0, 600)
+}
+
 /** Unfurl one or more links as WORK OBJECTS — typed entities rather than rendered blocks.
  *
  *  Throws on a warning as well as on `ok: false`, which is not paranoia: this API's documented
@@ -430,9 +448,8 @@ export const unfurlSlackEntities = async (
       metadata: { entities },
     }),
   })
-  const data = (await res.json()) as { ok: boolean; error?: string; warning?: string }
-  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
-  if (data.warning) throw new SlackApiError(`warning: ${data.warning}`)
+  const data = (await res.json()) as SlackApiResponse
+  if (!data.ok || data.warning) throw new SlackApiError(slackDetail(data))
 }
 
 /** Fill the flexpane for one viewer, in response to `entity_details_requested`.
@@ -460,7 +477,9 @@ export const presentSlackEntityDetails = async (
               status: "custom_partial_view",
               custom_title: body.title,
               custom_message: body.message,
-              message_format: "plain_text",
+              // "markdown" — `plain_text` is not in Slack's enum, the same trap that rejected
+              // a description earlier in this work.
+              message_format: "markdown",
             },
           }
   const res = await fetch(`${API}/entity.presentDetails`, {
@@ -471,9 +490,8 @@ export const presentSlackEntityDetails = async (
     },
     body: JSON.stringify(payload),
   })
-  const data = (await res.json()) as { ok: boolean; error?: string; warning?: string }
-  if (!data.ok) throw new SlackApiError(data.error ?? "unknown")
-  if (data.warning) throw new SlackApiError(`warning: ${data.warning}`)
+  const data = (await res.json()) as SlackApiResponse
+  if (!data.ok || data.warning) throw new SlackApiError(slackDetail(data))
 }
 
 /** The public channels the bot can see, for the subscription picker — so nobody has to paste a

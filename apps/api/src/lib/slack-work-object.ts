@@ -55,6 +55,20 @@ const reviewLabel = (s: ArtifactStatus): string | null => {
   }[s.review.state]
 }
 
+/** The review buttons.
+ *
+ *  Shared by the card and the flexpane ON PURPOSE. Opening a flexpane updates the unfurl from
+ *  the metadata the app answers with — Slack's words: "the unfurl will also be updated given the
+ *  entity metadata that has changed" — so a details payload that omitted these would silently
+ *  STRIP Approve and Send back from a card that had them. The two surfaces have to agree on the
+ *  actions for the same reason a PATCH has to send the fields it does not mean to clear. */
+const reviewActions = () => ({
+  primary_actions: [
+    { text: "Approve", action_id: SLACK_REVIEW_ACTION.approve, style: "primary" },
+    { text: "Send back", action_id: SLACK_REVIEW_ACTION.sendBack },
+  ],
+})
+
 export interface WorkObjectArgs {
   /** The URL exactly as pasted — Slack matches the unfurl back to the message by this, so it is
    *  NOT interchangeable with the canonical url below. */
@@ -140,13 +154,7 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
     }
 
   const payload: Record<string, unknown> = { attributes, fields, custom_fields: custom }
-  if (a.withActions)
-    payload.actions = {
-      primary_actions: [
-        { text: "Approve", action_id: SLACK_REVIEW_ACTION.approve, style: "primary" },
-        { text: "Send back", action_id: SLACK_REVIEW_ACTION.sendBack },
-      ],
-    }
+  if (a.withActions) payload.actions = reviewActions()
 
   return {
     app_unfurl_url: a.pastedUrl,
@@ -182,6 +190,8 @@ export const artifactDetails = (
   return {
     entity_type: "slack#/entities/content_item",
     entity_payload: {
+      // Mirrors the card's actions whenever a round is pending — see reviewActions.
+      ...(status.review?.state === "pending" ? { actions: reviewActions() } : {}),
       attributes: {
         title: { text: info.title },
         display_type: info.kindLabel,
