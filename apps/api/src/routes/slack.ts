@@ -76,6 +76,7 @@ import {
   artifactDetails,
   artifactEntity,
   DERIVE_ENTITY_TYPE,
+  decodeReviewAction,
   SLACK_REVIEW_ACTION,
 } from "../lib/slack-work-object"
 import { resolveThreadAction } from "../lib/thread-actions"
@@ -903,7 +904,56 @@ export const slackRoutes = (ctx: AppContext) => {
       return submitCapture(c, payload)
 
     const action = payload.actions?.[0]
-    if (payload.type !== "block_actions" || !action?.value) return c.json({ ok: true })
+    // A `value` is required by the thread and proposal buttons, which encode their target in
+    // one — but NOT by a Work Object action, where Slack round-trips the entity instead and the
+    // target is `external_ref`. Requiring it here made every Work Object button a no-op on
+    // click: the handler returned ok before reaching the branch that handles them.
+    if (payload.type !== "block_actions" || !action?.action_id) return c.json({ ok: true })
+
+    // A Work Object review button. The artifact comes from the card's external_ref rather than a
+    // button value — Slack round-trips the entity, so there is no attacker-supplied id to bind.
+    if (
+      action.action_id === SLACK_REVIEW_ACTION.approve ||
+      action.action_id === SLACK_REVIEW_ACTION.sendBack
+    ) {
+      // Two shapes reach here, because the same two actions now ride three surfaces. A Work
+      // Object button carries no value — Slack round-trips the entity, so the target is
+      // `external_ref`. A button on a review DM or a channel card has no entity behind it, so
+      // the target travels in `value`, exactly as the thread and proposal buttons do. Either
+      // way it only NAMES the artifact: runSlackReviewAction re-reads it and re-authorizes the
+      // clicker, so neither path is trusted as authorization.
+      const ref = payload.entity?.external_ref?.id
+      const byValue = action.value ? decodeReviewAction(action.value) : null
+      if ((ref || byValue) && payload.team?.id && payload.user?.id) {
+        let artifact: ArtifactRecord | null = byValue ? await meta.getArtifactById(byValue) : null
+        if (!artifact && ref)
+          for (const id of candidateShortIds(ref)) {
+            artifact = await meta.getByShortId(id)
+            if (artifact) break
+          }
+        // Bind the acting Slack team to the artifact's workspace, exactly as the thread and
+        // proposal branches do: one signed workspace must not act on another org's review.
+        const install = artifact ? await meta.getSlackInstall(artifact.org_id) : null
+        if (artifact && install && install.team_id === payload.team.id)
+          runAfterAck(
+            runSlackReviewAction(
+              { meta, bus, billingBlocked },
+              {
+                teamId: payload.team.id,
+                slackUserId: payload.user.id,
+                artifact,
+                op: action.action_id === SLACK_REVIEW_ACTION.approve ? "approve" : "send_back",
+                responseUrl: payload.response_url,
+              },
+            ),
+          )
+      }
+      return c.json({ ok: true })
+    }
+
+    // Everything below this point encodes its target in `value` (the Work Object branch above
+    // is the one exception, which is why the guard moved off it).
+    if (!action.value) return c.json({ ok: true })
 
     // Proposal Approve / Request-changes — editor-level, authorized AS the clicker's linked
     // Derive account. The work (approving publishes a version) can exceed 3s, so ack now and
@@ -929,39 +979,6 @@ export const slackRoutes = (ctx: AppContext) => {
             },
           ),
         )
-      }
-      return c.json({ ok: true })
-    }
-
-    // A Work Object review button. The artifact comes from the card's external_ref rather than a
-    // button value — Slack round-trips the entity, so there is no attacker-supplied id to bind.
-    if (
-      action.action_id === SLACK_REVIEW_ACTION.approve ||
-      action.action_id === SLACK_REVIEW_ACTION.sendBack
-    ) {
-      const ref = payload.entity?.external_ref?.id
-      if (ref && payload.team?.id && payload.user?.id) {
-        let artifact: ArtifactRecord | null = null
-        for (const id of candidateShortIds(ref)) {
-          artifact = await meta.getByShortId(id)
-          if (artifact) break
-        }
-        // Bind the acting Slack team to the artifact's workspace, exactly as the thread and
-        // proposal branches do: one signed workspace must not act on another org's review.
-        const install = artifact ? await meta.getSlackInstall(artifact.org_id) : null
-        if (artifact && install && install.team_id === payload.team.id)
-          runAfterAck(
-            runSlackReviewAction(
-              { meta, bus, billingBlocked },
-              {
-                teamId: payload.team.id,
-                slackUserId: payload.user.id,
-                artifact,
-                op: action.action_id === SLACK_REVIEW_ACTION.approve ? "approve" : "send_back",
-                responseUrl: payload.response_url,
-              },
-            ),
-          )
       }
       return c.json({ ok: true })
     }

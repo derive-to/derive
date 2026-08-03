@@ -2,7 +2,13 @@ import type { ArtifactRecord, UnfurlInfo } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { type ArtifactStatus, agoLabel, statusPhrase } from "../src/lib/artifact-status"
 import { SLACK_SUBSCRIBABLE_EVENTS } from "../src/lib/slack-subscriptions"
-import { artifactDetails, artifactEntity, SLACK_REVIEW_ACTION } from "../src/lib/slack-work-object"
+import {
+  artifactDetails,
+  artifactEntity,
+  decodeReviewAction,
+  encodeReviewAction,
+  SLACK_REVIEW_ACTION,
+} from "../src/lib/slack-work-object"
 
 const artifact = (over: Partial<ArtifactRecord> = {}) =>
   ({
@@ -238,5 +244,35 @@ describe("review events are channel-subscribable", () => {
   it("offers the review round alongside publishes and proposals", () => {
     for (const e of ["review.requested", "review.sent_back", "review.approved"])
       expect(SLACK_SUBSCRIBABLE_EVENTS).toContain(e)
+  })
+})
+
+// The same two actions now ride three surfaces: the Work Object card, the review-request DM and
+// the channel card. Only the first gets an entity echoed back by Slack, so every button carries
+// its target in `value` as well — one mechanism to get right instead of two, and the handler
+// never depends on Slack round-tripping an entity to know what was clicked.
+describe("review buttons target the artifact from any surface", () => {
+  it("round-trips the artifact id", () => {
+    expect(decodeReviewAction(encodeReviewAction("a_123"))).toBe("a_123")
+  })
+
+  // The value only NAMES the target; runSlackReviewAction re-reads and re-authorizes. A forged
+  // one can at worst point at a doc the clicker still cannot act on.
+  it("returns null for a malformed or empty value rather than throwing", () => {
+    for (const bad of ["", "{", "null", '{"a":""}', '{"b":"x"}'])
+      expect(decodeReviewAction(bad)).toBeNull()
+  })
+
+  it("puts a value on the Work Object buttons too", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: status({ review: { state: "pending", reviewerId: "u", reviewerName: "M" } }),
+      withActions: true,
+    })
+    const acts = (e.entity_payload as { actions: { primary_actions: { value?: string }[] } })
+      .actions
+    for (const a of acts.primary_actions) expect(decodeReviewAction(a.value ?? "")).toBe("a1")
   })
 })

@@ -30,6 +30,7 @@ import {
 } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
 import { authorKind, channelIsSubscribed, resolveChannels } from "./slack-subscriptions"
+import { encodeReviewAction, SLACK_REVIEW_ACTION } from "./slack-work-object"
 
 /** The Slack message payload an enqueued slack_app delivery carries (self-contained). */
 interface SlackCommentPayload {
@@ -301,6 +302,22 @@ const eventBlocks = (p: SlackEventPayload): unknown[] => {
   }
   const body = p.message ? `${head}\n> ${mrkdwnBody(p.message, 280)}` : head
   const blocks: unknown[] = [section(body)]
+  // A review REQUEST is the loop's blocking moment: an agent has stopped and is waiting on a
+  // person. Answering it should not require leaving Slack, so the card carries the same two
+  // actions the Work Object does. Broadcast is fine — the clicker is re-authorized as their own
+  // linked account, so anyone but the reviewer gets an ephemeral refusal rather than an action.
+  if (p.event === "review.requested")
+    blocks.push(
+      actions([
+        actionButton(
+          SLACK_REVIEW_ACTION.approve,
+          "Approve",
+          encodeReviewAction(p.artifactId),
+          "primary",
+        ),
+        actionButton(SLACK_REVIEW_ACTION.sendBack, "Send back", encodeReviewAction(p.artifactId)),
+      ]),
+    )
   // An open proposal gets Approve / Request-changes buttons (the clicker is authorized as
   // their linked Derive user in the interactivity handler).
   if (p.event === "proposal.created" && p.proposalId) {

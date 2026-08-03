@@ -21,8 +21,9 @@ import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention } from "./comments"
 import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
-import { actions, mrkdwnBody, mrkdwnLabel, openButton, section } from "./slack-cards"
+import { actionButton, actions, mrkdwnBody, mrkdwnLabel, openButton, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
+import { encodeReviewAction, SLACK_REVIEW_ACTION } from "./slack-work-object"
 
 /** The self-contained payload a slack_dm delivery carries. */
 interface SlackDmPayload {
@@ -103,7 +104,21 @@ export const enqueueSlackReviewRequestedDm = async (
       `:mag: *${mrkdwnLabel(proposal.requestedBy)}* requested your review of <${link}|${mrkdwnLabel(t)}> (v${proposal.version}).`,
     ),
     ...(proposal.note ? [section(`> ${mrkdwnBody(proposal.note, 600)}`)] : []),
-    actions([openButton(link, "Review in Derive")]),
+    // Settle it HERE. This DM is the one moment the loop is blocked on a named person, and it
+    // is addressed to exactly them — so the two answers the agent is waiting for belong on it,
+    // with "Review in Derive" kept for everything a button cannot express. Sending them to a
+    // browser to press the same two buttons is the difference between a notification and a
+    // place to work.
+    actions([
+      actionButton(
+        SLACK_REVIEW_ACTION.approve,
+        "Approve",
+        encodeReviewAction(artifact.id),
+        "primary",
+      ),
+      actionButton(SLACK_REVIEW_ACTION.sendBack, "Send back", encodeReviewAction(artifact.id)),
+      openButton(link, "Review in Derive"),
+    ]),
   ]
   await enqueueChannelDelivery(meta, "slack_dm", "review.requested", {
     orgId: artifact.org_id,
