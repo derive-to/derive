@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { openAiCompatModel } from "../src/lib/model-openai"
 
 // The OPENAI-COMPATIBLE adapter. Everything here is the mapping between the two wire formats,
@@ -491,6 +491,52 @@ describe("streaming failure modes", () => {
     expect(bodies[0]?.stream).toBe(true)
     expect(bodies[1]?.stream).toBeUndefined()
     expect(turn.text).toBe("buffered reply") // the person loses the animation, not the answer
+  })
+
+  it("gives up on a stream that opens, sends nothing, and never closes — and falls back", async () => {
+    // The shape reproduced live against a real gateway (2026-08-03, PR #633): the connection
+    // opens, the SDK's stream never yields another chunk, never fires onError, never resolves
+    // stream.text/toolCalls/finishReason/finalStep — nothing. A `for await` over that hangs
+    // forever with no error to catch, which is exactly what left a chat turn on "Working…" with
+    // no answer and no failure. This must not depend on the model call's own abortSignal (120s)
+    // actually firing against a given gateway; it is the backstop for when it does not.
+    vi.useFakeTimers()
+    try {
+      const bodies: Record<string, unknown>[] = []
+      const impl = (async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        bodies.push(body)
+        if (body.stream) {
+          // Opens and never enqueues, never closes, never errors.
+          return new Response(new ReadableStream({ start() {} }), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          })
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "buffered reply" }, finish_reason: "stop" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }) as unknown as typeof fetch
+      const turnPromise = model(impl)({
+        system: "s",
+        messages: [],
+        tools: [],
+        onDelta: () => {},
+      })
+      // Past the model call's own 120s abort AND this file's 130s stream deadline — whichever
+      // mechanism actually rescues it, the turn must settle rather than hang.
+      await vi.advanceTimersByTimeAsync(131_000)
+      const turn = await turnPromise
+      expect(bodies).toHaveLength(2)
+      expect(bodies[0]?.stream).toBe(true)
+      expect(bodies[1]?.stream).toBeUndefined()
+      expect(turn.text).toBe("buffered reply")
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("parses a JSON answer even when it was asked to stream", async () => {
