@@ -382,6 +382,26 @@ export const workspaceInvitesQuery = () =>
 // Per-workspace integration switches (email + GitHub mirroring + Slack posting)
 // behind the Integrations section. The toggles flip this cache entry optimistically
 // and roll it back on error.
+/** Whether the signed-in person is an INSTANCE operator (super-admin), by asking for something
+ *  only an operator may read. Errors for everyone else, which is the signal; `retry: false` so a
+ *  normal member's 403 costs one request and not four. */
+export const operatorQuery = () =>
+  queryOptions({
+    queryKey: ["system-capabilities"] as const,
+    queryFn: () => api.systemCapabilities(),
+    retry: false,
+    staleTime: 5 * 60_000,
+  })
+
+/** The deploy's model catalog. A capability of the instance, not of a workspace, so it is
+ *  fetched once and kept — it changes only when the operator reconfigures providers. */
+export const chatModelsQuery = () =>
+  queryOptions({
+    queryKey: ["chat-models"] as const,
+    queryFn: () => api.chatModels(),
+    staleTime: 5 * 60_000,
+  })
+
 export const workspaceSettingsQuery = () =>
   queryOptions({
     queryKey: ["workspace-settings"] as const,

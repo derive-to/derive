@@ -4,7 +4,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
-import { reportsQuery } from "@/lib/queries"
+import { chatModelsQuery, operatorQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
@@ -17,6 +17,7 @@ import { GithubSection } from "./github-section"
 import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
 import { ModelPlansSection } from "./model-plans-section"
+import { ModelsSection } from "./models-section"
 import { PeopleSection } from "./people-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
@@ -49,6 +50,7 @@ const SECTION_TITLES: Record<string, string> = {
   automations: "Automations",
   domains: "Domains",
   reports: "Reports",
+  models: "Chat model",
 }
 
 // Settings, reconceived as a scope-grouped two-pane: a sticky category rail
@@ -62,6 +64,12 @@ export function Settings() {
   const { me } = useAuth()
   const qc = useQueryClient()
   const { data: reports } = useQuery({ ...reportsQuery(), enabled: !!me })
+  // The catalog decides whether this workspace has a CHOICE to make. One configured model is a
+  // fact about the deploy rather than a decision, so the section stays out of the way until an
+  // operator has actually configured a second provider.
+  const { data: catalog } = useQuery({ ...chatModelsQuery(), enabled: !!me })
+  // Operator-only: the model is the operator's credential to spend, not a workspace's.
+  const { isSuccess: isOperator } = useQuery({ ...operatorQuery(), enabled: !!me })
   const { section } = route.useParams()
   const nav = route.useNavigate()
 
@@ -94,6 +102,9 @@ export function Settings() {
         { id: "billing", label: "Billing", testId: "settings-tab-billing" },
         { id: "integrations", label: "Integrations", testId: "settings-tab-integrations" },
         { id: "sources", label: "Sources", testId: "settings-tab-sources" },
+        ...((isOperator && (catalog?.models.length ?? 0) > 1
+          ? [{ id: "models", label: "Chat model", testId: "settings-tab-models" }]
+          : []) as SettingsNavGroup["items"]),
         { id: "brandprint", label: "Brandprint", testId: "settings-tab-brandprint" },
       ],
     },
@@ -164,6 +175,7 @@ export function Settings() {
             {active === "agents" && <AgentsSection meId={me.id} />}
             {active === "automations" && <AutomationsSection />}
             {active === "domains" && <CustomDomainsSection />}
+            {active === "models" && <ModelsSection />}
             {active === "reports" && (
               <ReportsSection
                 reports={openReports}

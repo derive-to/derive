@@ -61,6 +61,12 @@ export const OrgSettings = z
     agentAutoEnabled: z
       .boolean()
       .describe("Opt-in for autonomy 'auto' to live-publish (always with a review round)."),
+    chatModel: z
+      .string()
+      .optional()
+      .describe(
+        "Which model chat answers with in this workspace, as a catalog id. Absent = the deploy's default. Read fresh per turn, so changing it takes effect on the next message — the switch to reach for when a provider is slow or down.",
+      ),
     defaultAgentId: z
       .string()
       .optional()
