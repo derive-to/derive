@@ -2829,9 +2829,15 @@ export class PgMetaStore implements MetaStore {
     const rows = await (orgId ? base.where(eq(collection.org_id, orgId)) : base).orderBy(
       desc(collection.created_at),
     )
+    // Count LIVE artifacts, matching COLLECTIONS_OVERVIEW_SQL and the repos twin — a
+    // tombstoned artifact keeps its item row but is not something opening the shelf
+    // shows. This copy shipped uncorrected once: the contract test only caught it on
+    // CI's Postgres job, because SQLite answers this method from the shared repos code.
     const counts = await this.db
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
+      .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
+      .where(isNull(artifact.removed_at))
       .groupBy(collectionItem.collection_id)
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
