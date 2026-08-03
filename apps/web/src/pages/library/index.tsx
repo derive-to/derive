@@ -3,7 +3,9 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { FolderTree, List } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
+import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
+import { AskButton } from "@/components/shared/ask-button"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ConnectAgentButton } from "@/components/shared/connect-agent"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -103,6 +105,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const qc = useQueryClient()
   // The library is the scroll container; the virtualized grid windows against it.
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const { openAssistant } = useShell()
+  // ⌘↵ in the filter box and the Ask button beside it are one action, so they go through one
+  // call: whatever is typed, handed to the agent (empty simply opens the conversation).
+  const askFromField = (v: string) => openAssistant(v.trim() || undefined)
 
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
   const [query, setQuery] = useState(search.query ?? "")
@@ -397,8 +404,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
           aria-label="Filter artifacts by title, or press Enter to search all content"
           testId="library-search"
           hotkey
+          onAsk={(v) => askFromField(v)}
           className="min-w-50 flex-1"
         />
+        {/* The third gear on the same box: typing filters, ↵ searches, this asks. A visible
+            control rather than only ⌘↵, because the whole point of putting it here is that
+            somebody who has never opened the chat finds it while doing something else. */}
+        <AskButton text={query} testId="library-ask" />
         {filter.kind === "collection" && (
           <Button
             variant="outline"

@@ -219,7 +219,7 @@ export const contextRoutes = (ctx: AppContext) => {
         transcript,
         tools,
         workspaceName: ws?.name ?? "this workspace",
-        asker: { name: me.name ?? me.username ?? null },
+        asker: { name: me.name ?? me.username ?? null, role: seat.role },
         skills: tools.skills,
       },
     )

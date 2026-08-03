@@ -30,10 +30,16 @@ export const json = async <T>(url: string, init?: RequestInit): Promise<T> => {
   if (!r.ok) {
     // The server's own sentence when it has one — "chat is not enabled for this workspace" is
     // worth reading, and a bare status code is not.
+    //
+    // `error` FIRST, because that is the API's actual contract: lib/http's `fail()` returns
+    // `{ error: message }`, and this read only ever looked for `message`. So every refusal a
+    // person could act on — chat not enabled, not a member, over budget, no model configured —
+    // arrived here as "/v1/chat-session failed (503)". `message` stays as the fallback: a
+    // handful of routes shape their bodies that way, and reading both costs nothing.
     const said = await r
       .clone()
       .json()
-      .then((b: { message?: string }) => b?.message)
+      .then((b: { error?: string; message?: string }) => b?.error || b?.message)
       .catch(() => null)
     throw new Error(said || `${url} failed (${r.status})`)
   }

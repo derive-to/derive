@@ -458,7 +458,7 @@ export const handleSlackMention = async (
         tools,
         workspaceName:
           (await meta.getWorkspace(install.org_id).catch(() => null))?.name ?? "this workspace",
-        asker: { name: asker.name },
+        asker: { name: asker.name, role: gate.seatRole },
         skills: tools.skills,
       },
     )

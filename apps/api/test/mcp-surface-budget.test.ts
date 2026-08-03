@@ -55,8 +55,22 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // character-matching search, getting nothing, and reporting an empty workspace. Trimmed 165 → 157
 // before raising, per the rule above; the depth lives in derive://skills/finding rather than here.
 // Measured 8936 across 11 tools, keeping the ~2% headroom the previous raises settled on.
+// INSTRUCTIONS RAISED 2400 → 2500 (2026-08-02) for the `helping` skill: the eighth core skill,
+// and the first about DERIVE itself rather than a workspace's contents ("how do I add someone",
+// "what is a proposal"). It earns a permanent index line because the alternative is an agent
+// searching the library for an answer that was never going to be in a document and reporting that
+// nothing matched — which reads as the app not having the feature. Trimmed first, per the rule
+// above: the summary went in at 147 chars and was cut to 92, taking its index line from 190 to
+// 135, the shortest of the eight. Measured 2383, so the cap keeps real headroom rather than the
+// 17 characters the trim alone would have left for whoever edits this next.
+// RAISED AGAIN 2500 → 2600 (2026-08-02) on merging main: `sources` (#619) and `helping` landed in
+// the same window, so the index grew by two lines rather than one and measured 2516. Neither is
+// trimmable much further — `sources` is 110 chars and `helping` is already the shortest line of
+// the nine at 135, cut from 190 before the first raise. Two skills arriving at once is the thing
+// to notice here: the index is now nine lines every connected agent reads before doing anything,
+// and the next addition should have to argue that it belongs in the always-loaded set at all.
 const TOOL_DESCRIPTIONS_BUDGET = 8950
-const INSTRUCTIONS_BUDGET = 2400
+const INSTRUCTIONS_BUDGET = 2600
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))

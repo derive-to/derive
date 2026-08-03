@@ -97,11 +97,29 @@ const SKILL_FOR_TOOL: Record<string, readonly string[]> = {
   checkpoint: ["checkpoint"],
 }
 
-/** The skill index for a set of tools: CORE_SKILLS order, deduped, summaries as authored. */
+/**
+ * THE SKILL THAT BELONGS TO THE SURFACE RATHER THAN TO A TOOL.
+ *
+ * `helping` answers questions about DERIVE — where members are added, what a proposal is, which
+ * setting to change. No tool produces those answers, so the map above can never reach it, and
+ * without it the honest thing an agent can do with "how do I add someone" is search the library
+ * and report that nothing matched. That reads as "Derive cannot do that" about a screen two
+ * clicks away.
+ *
+ * Attached to every ATTENDED lane instead, because that is the shape of the thing: a person is
+ * sitting there, and the questions people type at an agent inside an app are as often about the
+ * app as about their documents. Costs one index line per turn; the body is read only when a
+ * question actually calls for it.
+ */
+const SURFACE_SKILLS = ["helping"] as const
+
+/** The skill index for a set of tools: CORE_SKILLS order, deduped, summaries as authored.
+ *  `also` adds skills that belong to the surface rather than to any tool. */
 export const skillsForTools = (
   toolNames: Iterable<string>,
+  also: readonly string[] = [],
 ): { name: string; summary: string }[] => {
-  const wanted = new Set<string>()
+  const wanted = new Set<string>(also)
   for (const t of toolNames) for (const s of SKILL_FOR_TOOL[t] ?? []) wanted.add(s)
   return CORE_SKILLS.filter((s) => wanted.has(s.name)).map((s) => ({
     name: s.name,
@@ -234,8 +252,8 @@ export const buildChatTools = (
   return {
     tools,
     // Derived from what actually registered, so the index can never advertise procedure for a
-    // tool this turn does not hold.
-    skills: skillsForTools(surface.names),
+    // tool this turn does not hold — plus the surface's own skill, which no tool implies.
+    skills: skillsForTools(surface.names, SURFACE_SKILLS),
     execute: async (name, input) => {
       const handler: ToolHandler | undefined = surface.registry.get(name)
       // An unknown name is the model's mistake and should read as data it can correct, not as a

@@ -10,17 +10,30 @@ export function ChatComposer(props: {
   onSend: (body: string) => Promise<void>
   placeholder: string
   disabled?: boolean
-  /** Why chat cannot be used, when it cannot (no model configured, no permission). */
-  disabledReason?: string
+  /**
+   * A sentence to show above the box: why chat cannot be used (no model configured, no
+   * permission), or why the last message did not send.
+   *
+   * It renders whenever there IS one. It used to render only while `disabled` was also true,
+   * which meant the failure case — the composer is fine, the SEND failed — was silently dropped
+   * on all three chat surfaces: the person's own message appeared, and then nothing, forever,
+   * with the server's actual sentence ("no model is configured on this deploy") sitting unused in
+   * state. A refusal you cannot see is indistinguishable from an agent ignoring you.
+   */
+  notice?: string
   /** Rendered on the row beside Send. */
   accessory?: ReactNode
   /** True while the agent owes a reply. With `onStop`, Send becomes Stop for the duration. */
   busy?: boolean
   /** Abandon the turn in flight. Absent, the surface simply offers no way out of a long answer. */
   onStop?: () => void
+  /** Take focus on mount. The palette's answer view needs it: entering that view unmounts the
+   *  command input the person was typing in, and focus left on a removed element falls to the
+   *  body — so the next keystroke goes nowhere and a keyboard user is stranded mid-dialog. */
+  autoFocus?: boolean
   className?: string
 }) {
-  const { onSend, placeholder, disabled, disabledReason, accessory, busy, onStop, className } =
+  const { onSend, placeholder, disabled, notice, accessory, busy, onStop, autoFocus, className } =
     props
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
@@ -39,11 +52,25 @@ export function ChatComposer(props: {
 
   return (
     <div className={cn("border-t border-border p-2.5", className)}>
-      {disabled && disabledReason ? (
-        <p className="px-1 pb-2 text-xs text-muted-foreground">{disabledReason}</p>
+      {/* Tone follows the state, with no second prop to keep in step: a DISABLED composer's
+          notice explains a standing condition (quiet), while an enabled one's is something that
+          just failed under the person's hand (loud enough to be read). */}
+      {notice ? (
+        <p
+          role={disabled ? undefined : "alert"}
+          data-testid="chat-composer-notice"
+          className={cn(
+            "px-1 pb-2 text-xs",
+            disabled ? "text-muted-foreground" : "text-destructive",
+          )}
+        >
+          {notice}
+        </p>
       ) : null}
       <div className="flex items-end gap-2">
         <Textarea
+          // biome-ignore lint/a11y/noAutofocus: opt-in, and only where the view that just mounted took focus away from a control it unmounted.
+          autoFocus={autoFocus}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {

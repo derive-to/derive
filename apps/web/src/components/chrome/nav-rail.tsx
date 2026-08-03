@@ -39,7 +39,12 @@ import { useAuth } from "@/ctx"
 import { useBootGate } from "@/lib/bootstrap"
 import { getMonogram } from "@/lib/initials"
 import { prTitle } from "@/lib/pr"
-import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
+import {
+  collectionsQuery,
+  summaryQuery,
+  workspaceSettingsQuery,
+  workspacesQuery,
+} from "@/lib/queries"
 import { useBrandprintCollectionIds } from "@/lib/use-brandprint-ids"
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "@/pages/library/types"
@@ -346,7 +351,7 @@ export function RailSkeleton() {
 // calm tiers top to bottom: brand + search → primary nav → your library
 // (collections) → tools → account — separated by whitespace, not dividers.
 export function NavRail() {
-  const { switchWorkspace } = useShell()
+  const { switchWorkspace, openAssistant } = useShell()
   const { me, loading } = useAuth()
   const qc = useQueryClient()
   // Nav data read straight from react-query (deduped with the loaders that warm
@@ -363,6 +368,11 @@ export function NavRail() {
     enabled: !!me && bootGate,
   })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: !!me })
+  // Seeded by the same boot batch as the counts above, so the Chat row costs no extra request.
+  const { data: settings } = useQuery({
+    ...workspaceSettingsQuery(),
+    enabled: !!me && bootGate,
+  })
   // The pod subtitle: "Personal" for the auto-provisioned workspace (its stored
   // name is provisioning plumbing), else the summary's workspace name.
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
@@ -379,6 +389,12 @@ export function NavRail() {
   const onShared = loc.pathname === "/shared"
   const onContexts = loc.pathname.startsWith("/contexts")
   const onSettings = loc.pathname.startsWith("/settings")
+  const onChat = loc.pathname.startsWith("/chat")
+  // Chat is on by default, so the row hides only once settings have RESOLVED and said otherwise
+  // — `undefined` (still loading, or the read failed) keeps the row rather than blinking it out
+  // and back on every cold boot. It rides the boot batch the rail already waits for, so this
+  // costs no request of its own.
+  const chatOn = settings ? settings.chatBeta === true : true
 
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
@@ -619,6 +635,30 @@ export function NavRail() {
                 active={onContexts}
                 testId="nav-contexts"
               />
+              {/* CHAT CLOSES THE TIER. It is the one row here that does not go anywhere — it
+                  opens the palette's answer view over the page you are on (openAssistant sends a
+                  phone to /chat instead, where a conversation does not fit in a modal) — so it
+                  sits after the feeds rather than above them, where it would push the library
+                  itself down a line. Hidden only once settings have actually said chat is off;
+                  chat defaults on, so an unresolved read must not blink the row out and back. */}
+              {chatOn && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={onChat}
+                    tooltip="Chat"
+                    aria-label="Chat"
+                    data-testid="nav-chat"
+                    onClick={() => {
+                      closeMobile()
+                      openAssistant()
+                    }}
+                    className={ROW_ICON}
+                  >
+                    <Icon name="sparkles" />
+                    <span>Chat</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

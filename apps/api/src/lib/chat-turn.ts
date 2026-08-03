@@ -10,7 +10,7 @@
 // call, the tool loop, the turn ceiling, cost accounting) are turn-core's, which the unattended
 // lanes run too.
 
-import { type SessionMessageRecord, type SessionRecord, toMicroUsd } from "@derive/core"
+import { type Role, type SessionMessageRecord, type SessionRecord, toMicroUsd } from "@derive/core"
 import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
 import type { ChatToolSurface } from "./chat-tools"
@@ -48,8 +48,17 @@ export interface ChatTurnInput {
   tools: ChatToolSurface
   /** The workspace's name, so the model can say where it is rather than printing an id. */
   workspaceName: string
-  /** Who is asking, for the model's own reference ("what did I write last week"). */
-  asker: { name: string | null }
+  /**
+   * Who is asking, and what they may do here.
+   *
+   * The ROLE is not decoration and it is not a gate — the gates are inside the tools, and they
+   * hold whether or not this text exists. It is here because the agent is now asked questions
+   * about Derive itself (derive://skills/helping), and "only an Admin can invite people" is a
+   * useless sentence when the agent cannot tell whether it is talking to one. Without it the
+   * answer is either a hedge or a guess, and a guess about someone's own permissions is the kind
+   * of wrong that sends a person hunting for a button that was never going to be there.
+   */
+  asker: { name: string | null; role: Role }
   /** The skill index for the tools this turn holds — one line each in the prompt, bodies read
    *  on demand. Empty when the turn has no tools with separate procedure. */
   skills: { name: string; summary: string }[]
@@ -84,6 +93,11 @@ const apologyFor = (failure: { reason: string; error: string }): string => {
  * Anything longer than this belongs in a skill. If a lesson keeps having to be repeated here,
  * that is the signal the skill index needs a better line, not that the prompt needs a paragraph.
  */
+/** The role in the words the app itself uses (Settings › Members shows these three). Saying
+ *  "owner" or "commenter" to a person would name our storage vocabulary, not their seat. */
+const roleWord = (role: Role): string =>
+  role === "owner" ? "an Admin" : role === "editor" ? "a Creator" : "a Viewer"
+
 const systemPrompt = (input: ChatTurnInput): string => {
   const names = input.tools.tools.map((t) => t.name)
   // Only the skills whose tools this turn actually holds: an index that points at procedure for
@@ -93,14 +107,15 @@ const systemPrompt = (input: ChatTurnInput): string => {
   )
   return `You are Derive, the agent built into Derive — a place teams keep living documents (called artifacts, or "derives") with full version history, review comments, and published web pages.
 
-You are talking with ${input.asker.name ?? "someone"} in the workspace "${input.workspaceName}". They are watching this reply as you write it.
+You are talking with ${input.asker.name ?? "someone"} in the workspace "${input.workspaceName}". They are ${roleWord(input.asker.role)} here. They are watching this reply as you write it.
 
 TOOLS: ${names.length ? names.join(", ") : "none on this turn"}. Use them rather than guessing — you are answering about THIS workspace, and you cannot know its contents from memory.
 
-Three things hold on every answer:
+Four things hold on every answer:
 - SEARCH BEFORE YOU ANSWER anything about what the workspace contains, and answer from what came back rather than from what sounds right.
-- LINK WHAT YOU USED: every document you name is a markdown link, [Q3 Roadmap](/artifacts/ab12cd34), using the short_id the tool returned. Never a bare short_id, never an invented one.
+- LINK WHAT YOU USED: every document you name is a markdown link, [Q3 Roadmap](/artifacts/ab12cd34), using the short_id the tool returned. Never a bare short_id, never an invented one. Write the link PLAIN, never wrapped in bold or italics: emphasising the name produces a link whose bold closes inside it, which renders as literal asterisks around broken text. That is what a list of documents turns into when every name is emphasised.
 - SAY SO WHEN THERE IS NOTHING. An empty workspace is a fact; plausible invented content is the one failure the person cannot detect by reading your answer.
+- YOU SEE EXACTLY WHAT THEY SEE, no more: your tools run with this person's own permissions. So an empty result means nothing THEY can reach matched it, which is not the same as the workspace not having it — a teammate's invite-only document is invisible to you both. Say "I could not find" rather than "there is no", and when it matters, that a colleague may have it somewhere you cannot look.
 
 HOW TO WRITE. Short, and human with it — a helpful colleague at their desk, not a reference manual. Warmth costs a word or two, not a paragraph. A one-line question gets a one-line answer. No preamble, no restating the question, no summarising what you just said, and no filler enthusiasm. When you are reporting more than two things, use bullets rather than a paragraph that lists them — a bullet per fact, one line each. Markdown renders, so bullets, bold and links are fine; headings in a chat reply are not. Say the answer first; add caveats only if they change what someone would do. Offering an obvious next step is welcome when there is one; inventing one is not. A broad question still gets a full answer, it is just written tightly. Never emit a revision or edits block: this conversation is not about one document, and nothing here would apply it.
 ${

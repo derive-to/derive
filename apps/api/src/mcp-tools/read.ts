@@ -155,7 +155,7 @@ export function registerReadTool(tc: ToolContext): void {
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also a CONTEXT id (ctx_…) or name — loads that package, not a document. Also a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /publishing, /assets, /contexts, /checkpoint, /organize), so the strings the instructions name are readable here even where MCP resources aren't.",
+            "The artifact's short id, e.g. nk0dsral. Also a CONTEXT id (ctx_…) or name — loads that package, not a document. Also a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /finding, /publishing, /assets, /contexts, /checkpoint, /organize, /helping), so the strings the instructions name are readable here even where MCP resources aren't.",
           ),
         section: z
           .string()
