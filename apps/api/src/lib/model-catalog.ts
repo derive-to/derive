@@ -99,17 +99,16 @@ export interface GatewayConfig {
    */
   providers?: string
   /**
-   * How much the model may THINK before answering: "off", or an effort level the host
-   * understands ("low" | "medium" | "high").
+   * Set "off" to stop the model THINKING before it answers.
    *
    * A reasoning model spends most of a short answer's tokens on reasoning — measured on
    * deepseek-v4-flash-0731 via DeepInfra, "say hi in three words" burned 137 reasoning tokens
-   * against 152 total and took 4.0s; with reasoning off it was 6 tokens and 0.54s. On a turn
-   * that makes several model calls that is the difference between an interactive answer and a
-   * wait. `effort:"low"` did NOT help (6.6s, more reasoning than the default), so this is
-   * deliberately off-or-on rather than a dial pretending to be finer than it is.
+   * against 152 total and took 4.0s; with thinking off it was 6 tokens and 0.54s. A turn makes
+   * several model calls, so that is the difference between an interactive answer and a wait.
    *
-   * Unset ⇒ nothing is sent and the model reasons however it likes.
+   * Off or nothing, with no effort levels in between: "low" measured SLOWER than the default on
+   * this model (6.6s, and MORE reasoning), so a graduated dial would imply a precision the
+   * provider does not actually give. Unset ⇒ nothing is sent and the model thinks as it likes.
    */
   reasoning?: string
 }
