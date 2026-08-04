@@ -337,8 +337,9 @@ interface ElReg {
       post({ type: "cursor-leave" })
     }
   })
-  /** The editable block the caret is in, if any. */
-  const focusedEditable = (): HTMLElement | null => {
+  /** THE gate: the editable block the caret is in, or null. Everything that
+   *  silences the page reads this and nothing else. */
+  const editingCaret = (): HTMLElement | null => {
     if (!editOn) return null
     const el = asEl(document.activeElement)?.closest("[data-derive-editable]")
     return el instanceof HTMLElement ? el : null
@@ -360,82 +361,96 @@ interface ElReg {
    * still types and the caret still moves. With no caret in a block, the page keeps
    * its keyboard — you can still walk to slide 7 and then click a line to edit.
    */
-  const ownKeys = (e: KeyboardEvent) => {
-    const focused = focusedEditable()
-    if (e.type === "keydown") {
-      // Save from the keyboard while editing. The keystroke happens INSIDE the frame,
-      // so the host's own window listener can never see it — forward it, and swallow
-      // the browser's Save-page dialog that ⌘S would otherwise open over the document.
-      if (
-        editOn &&
-        (e.metaKey || e.ctrlKey) &&
-        (e.key === "s" || e.key === "S" || e.key === "Enter")
-      ) {
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        post({ type: "edit-save" })
-        return
-      }
-      // ⌘B / ⌘I / ⌘K on a selection inside a block. The browser's own bold/italic
-      // never fired here (plaintext-only contenteditable drops format commands), so
-      // these keys did nothing at all in a mode that looks like a text editor.
-      if (focused && (e.metaKey || e.ctrlKey) && !e.altKey) {
-        const k = e.key.toLowerCase()
-        // ⌘Z / ⇧⌘Z drive OUR stack, not the browser's. The native one only sees
-        // typing in the block it happened in — it cannot undo a bold, a link, a
-        // break, or a block put back — and two stacks that disagree about what
-        // happened last are worse than one that is a little coarse.
-        if (k === "z") {
-          e.preventDefault()
-          e.stopImmediatePropagation()
-          if (e.shiftKey) redo()
-          else undo()
-          return
-        }
-        if (k === "b" || k === "i") {
-          e.preventDefault()
-          e.stopImmediatePropagation()
-          applyFmt(k)
-          return
-        }
-        if (k === "k") {
-          e.preventDefault()
-          e.stopImmediatePropagation()
-          // The frame is sandboxed with allow-modals, so a prompt is available and
-          // is the least ceremony for "what should this link to". The host's own
-          // dialog can't reach into the selection that lives in here.
-          const href = window.prompt("Link to:")?.trim()
-          if (href) applyFmt("a", href)
-          return
-        }
-      }
-      if (e.key === "Escape") {
-        // Two steps, deliberately. With the caret in a block, Escape drops the caret
-        // and stops there — the typed text and the session both survive, which is what
-        // "get this cursor out of the way" should mean. Only an Escape with no block
-        // focused asks the host to leave the MODE (it exits clean, confirms dirty).
-        if (focused) {
-          e.stopImmediatePropagation()
-          focused.blur()
-          return
-        }
-        // Escape pressed while keyboard focus is INSIDE the frame (a click into the
-        // document moves it here): the host's window listener can't see it, so
-        // forward it for host-level dismissals (leaving focus mode, a composer).
-        post({ type: "esc" })
-        return
-      }
-      // `p` presents. Same reason as Escape: one click into the document moves
-      // keyboard focus in here, and the host's own listener goes deaf — which is
-      // exactly the moment someone reaches for the present shortcut. Forwarded, not
-      // swallowed, so a deck that binds `p` itself still gets it.
-      if ((e.key === "p" || e.key === "P") && !e.metaKey && !e.ctrlKey && !e.altKey && !focused)
-        post({ type: "present" })
-    }
-    if (focused) e.stopImmediatePropagation()
+  /* THE RULE, whole: while a caret is in an editable block, the page is not
+     listening. Outside that one condition nothing here changes what the page gets.
+
+     Four properties this leans on, each deliberate:
+
+     • ONE gate. `editingCaret()` is the only thing that can silence the page, and
+       it is read once per event so a handler can never half-apply it.
+     • Propagation is stopped; the DEFAULT never is, except for the four chords we
+       answer ourselves. Stopping propagation hides a key from other LISTENERS —
+       preventing the default would stop the character being typed, which is the
+       one thing this must never do.
+     • A throw cannot wedge the keyboard. Everything runs inside `guard`, so a bug
+       in our chord handling degrades to "the shortcut did nothing", never to "this
+       document stopped accepting text".
+     • Composition is passed through untouched. Mid-IME keystrokes belong to the
+       input method; we neither interpret them nor let the page act on them. */
+  /** Run an interception so a throw inside it can never break input for the page. */
+  const guard = (fn: () => void) => {
+    try {
+      fn()
+    } catch (_e) {}
   }
-  // keypress/keyup too: a page that binds either would still act on a key we let
-  // through here (the deck template uses keydown, but nothing makes that a rule).
+  /** Our own chords, as a table: what the handler does is readable in one place,
+   *  and every one of them is a modifier chord — never a bare key. */
+  const chordFor = (e: KeyboardEvent, focused: HTMLElement | null): (() => void) | null => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return null
+    const k = e.key.toLowerCase()
+    // Save works with the mode open even when no block holds the caret: the host's
+    // own window listener cannot see keys typed in here, and ⌘S would otherwise
+    // open the browser's Save-page dialog over the document.
+    if (editOn && (k === "s" || k === "enter")) return () => post({ type: "edit-save" })
+    if (!focused) return null
+    // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
+    // happened in — it cannot undo a bold, a link, a break, or a block put back.
+    if (k === "z") return e.shiftKey ? redo : undo
+    // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
+    // format command, so these keys did nothing in a mode that looks like an editor.
+    if (k === "b") return () => applyFmt("b")
+    if (k === "i") return () => applyFmt("i")
+    if (k === "k")
+      return () => {
+        // The bar asks for the URL when the BUTTON is used; from the keyboard the
+        // sandbox's one available dialog is the least ceremony.
+        const href = window.prompt("Link to:")?.trim()
+        if (href) applyFmt("a", href)
+      }
+    return null
+  }
+  const ownKeys = (e: KeyboardEvent) =>
+    guard(() => {
+      const focused = editingCaret()
+      // An IME is mid-word. Not ours to interpret, and not the page's to act on.
+      if (e.isComposing || e.keyCode === 229) {
+        if (focused) e.stopImmediatePropagation()
+        return
+      }
+      if (e.type === "keydown") {
+        const run = chordFor(e, focused)
+        if (run) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          run()
+          return
+        }
+        if (e.key === "Escape") {
+          // Two steps, deliberately. With the caret in a block, Escape drops the
+          // caret and stops there — the typed text and the session both survive,
+          // which is what "get this cursor out of the way" should mean. Only an
+          // Escape with no block focused asks the host to leave the MODE.
+          if (focused) {
+            e.stopImmediatePropagation()
+            focused.blur()
+            return
+          }
+          // Focus is inside the frame, where the host's listener can't see it —
+          // forward it for host-level dismissals (leaving focus mode, a composer).
+          post({ type: "esc" })
+          return
+        }
+        // `p` presents, for the same reason: one click into a document moves
+        // keyboard focus in here and the host goes deaf. Forwarded, not swallowed,
+        // so a deck that binds `p` itself still gets it.
+        if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey && !e.altKey && !focused)
+          post({ type: "present" })
+      }
+      if (focused) e.stopImmediatePropagation()
+    })
+  // keypress/keyup as well: a page that binds either would still act on a key we
+  // let through here (our own deck template uses keydown, but nothing makes that a
+  // rule, and a half-silenced keyboard is worse than none).
   window.addEventListener("keydown", ownKeys, true)
   window.addEventListener("keypress", ownKeys, true)
   window.addEventListener("keyup", ownKeys, true)
@@ -1465,19 +1480,21 @@ interface ElReg {
       // A deck's click zones cover the stage — that's how every deck we scaffold is
       // written — so the first click of a double-click flips the slide, and the
       // caret then lands on a slide the reader never meant to be on (watched it
-      // happen: aim at slide 2's headline, arrive editing slide 3). For a viewer who
-      // can edit, a click that lands on text belongs to the text. Everything else
-      // still advances: the margins, the empty half of a title slide, links, and
-      // every click by someone who can't edit this document at all.
-      if (editArmed && !asEl(e.target)?.closest("a[href],a[data-derive-nav]")) {
-        if (e.detail >= 2) {
-          e.stopImmediatePropagation()
-          return
-        }
-        if (slideEls().length > 1 && editNodeVisibleAt(e.clientX, e.clientY)) {
-          e.stopImmediatePropagation()
-          return
-        }
+      // happen: aim at slide 2's headline, arrive editing slide 3).
+      //
+      // Narrow on purpose, and each clause earns its place: only on a DECK (a page
+      // with switched slides), only for a viewer the host has armed, never on a
+      // link, and only where the pointer is actually over text. A click outside all
+      // of that — the margins, the empty half of a title slide, or any click by
+      // someone who can't edit this document — reaches the page untouched.
+      if (
+        editArmed &&
+        slideEls().length > 1 &&
+        !asEl(e.target)?.closest("a[href],a[data-derive-nav]") &&
+        editNodeVisibleAt(e.clientX, e.clientY)
+      ) {
+        e.stopImmediatePropagation()
+        return
       }
       const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
       if (badge) {
@@ -2069,13 +2086,16 @@ interface ElReg {
      native behaviour, including drag-select. */
   document.addEventListener(
     "mousedown",
-    (e) => {
-      if (!editOn) return
-      const hit = editNodeVisibleAt(e.clientX, e.clientY)
-      if (!hit) return
-      const top = document.elementFromPoint(e.clientX, e.clientY)
-      if (top && !top.contains(hit.node)) e.preventDefault()
-    },
+    (e) =>
+      guard(() => {
+        if (!editOn) return
+        const top = document.elementFromPoint(e.clientX, e.clientY)
+        // Nothing on top of the words? Then the browser's own behaviour is already
+        // right, and this must not touch it — drag-select depends on that default.
+        if (!top || top.closest("[data-derive-editable]")) return
+        const hit = editNodeVisibleAt(e.clientX, e.clientY)
+        if (hit && !top.contains(hit.node)) e.preventDefault()
+      }),
     true,
   )
 

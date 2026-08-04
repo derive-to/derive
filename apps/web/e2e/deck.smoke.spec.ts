@@ -84,3 +84,58 @@ test("present mode covers the screen and leaves on Escape", async ({ owner }) =>
   await owner.keyboard.press("Escape")
   await expect(owner.getByTestId("deck-bar")).not.toContainText("Esc to exit")
 })
+
+/**
+ * The capture rule, stated as a test rather than as a comment.
+ *
+ * The client takes keys and clicks away from the page while a caret is in an
+ * editable block. That interception runs on EVERY artifact, so the blast radius if
+ * the gate is ever wrong is "documents stop receiving input" — the kind of thing
+ * that deserves an assertion rather than an argument. This fixture counts what the
+ * PAGE's own listeners see, and the test pins both halves of the rule: silence
+ * while editing, and everything back afterwards.
+ */
+const COUNTER = `<!doctype html><html><head><meta charset="utf-8"><title>Counter</title></head><body>
+<h1 id="h">Count me</h1>
+<p id="p">A paragraph to click into.</p>
+<script>
+  window.__keys = 0; window.__clicks = 0
+  document.addEventListener('keydown', function(){ window.__keys++ })
+  window.addEventListener('keydown', function(){ window.__keys++ })
+  document.addEventListener('click', function(){ window.__clicks++ })
+</script></body></html>`
+
+test("while a caret is in a block the page hears nothing, and hears again after", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "counter.html", COUNTER, "text/html")
+  await openArtifact(owner, shortId)
+  // The counter the fixture keeps, read from inside the sandboxed frame.
+  const seen = () =>
+    doc(owner)
+      .locator("body")
+      .evaluate(() => (window as unknown as { __keys: number }).__keys)
+
+  // Reading: the page owns its keyboard, exactly as it would without us.
+  await doc(owner).locator("#p").click()
+  await owner.keyboard.press("ArrowRight")
+  await expect.poll(seen).toBeGreaterThan(0)
+
+  // Editing, caret in a block: the page hears nothing at all.
+  await owner.getByTestId("artifact-inline-edit").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  await doc(owner).locator("#p").click()
+  const before = await seen()
+  await owner.keyboard.type("typed words")
+  await owner.keyboard.press("ArrowLeft")
+  await owner.keyboard.press("Home")
+  expect(await seen()).toBe(before)
+  // …and the characters still reached the document: propagation was stopped, the
+  // default never was.
+  await expect(doc(owner).locator("#p")).toContainText("typed words")
+
+  // Escape drops the caret. The page is listening again immediately.
+  await owner.keyboard.press("Escape")
+  await owner.keyboard.press("ArrowRight")
+  await expect.poll(seen).toBeGreaterThan(before)
+})
