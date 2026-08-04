@@ -155,6 +155,26 @@ describe("publish html file", () => {
     expect((await quiet.json()).advisories).toBeUndefined()
   })
 
+  it("advises a DECK too, not just text/html (regression)", async () => {
+    // The gate here used to compare content_type to "text/html" literally, so a deck —
+    // text/x-derive-deck — came back with no advisories at all over REST, while the same
+    // bytes over MCP (gated on kind alone) got them. A deck is exactly as capable of
+    // embedding an expiring upload URL or a broken blob ref as any other page.
+    const deck =
+      '<!doctype html><html><head><meta name="viewport" content="width=device-width">' +
+      "<title>D</title></head><body>" +
+      '<section class="slide" data-derive-slide="0"><h1>One</h1>' +
+      '<img src="https://x.test/v1/assets/t/expiring-token/shot.png"></section>' +
+      '<section class="slide" data-derive-slide="1"><h2>Two</h2></section>' +
+      '<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script>' +
+      "</body></html>"
+    const res = await upload("deck.html", deck, { title: "Deck" })
+    const json = await res.json()
+    // Typed as a deck — otherwise this passes vacuously through the text/html branch.
+    expect(json.current_content_type).toBe("text/x-derive-deck")
+    expect(json.advisories?.some((a: string) => a.includes("v1/assets/t/"))).toBe(true)
+  })
+
   it("echoes the stored content's sha256 so a caller can verify byte integrity", async () => {
     const content = "<h1>Checksum me</h1>"
     const res = await upload("sum.html", content, { title: "Sum" })

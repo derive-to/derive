@@ -1,5 +1,6 @@
 import {
   artifactUrl,
+  DECK_TEMPLATE,
   derivedGen,
   deriveFacts,
   isDerivedFactName,
@@ -155,7 +156,7 @@ export function registerReadTool(tc: ToolContext): void {
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also a CONTEXT id (ctx_…) or name — loads that package, not a document. Also a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — or a CORE SKILL URI (derive://skills/loop, /finding, /publishing, /assets, /contexts, /checkpoint, /organize, /helping), so the strings the instructions name are readable here even where MCP resources aren't.",
+            "The artifact's short id, e.g. nk0dsral. Also a CONTEXT id (ctx_…) or name — loads that package, not a document. Also a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — a CORE SKILL URI (derive://skills/<name>, as the instructions index lists them), or derive://decks/template (the deck starter), so the strings the instructions name are readable here even where MCP resources aren't.",
           ),
         section: z
           .string()
@@ -289,6 +290,16 @@ export function registerReadTool(tc: ToolContext): void {
             `No core skill "${name}". Available: ${CORE_SKILLS.map((s) => s.name).join(", ")}.`,
           )
         return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
+      }
+      // The deck starter, resolved here as well as via MCP resources — the skill that
+      // points at it is read through this same tool on clients without resource support,
+      // so a steer to it must never be a dead link.
+      if (short_id.startsWith("derive://decks/")) {
+        if (short_id !== "derive://decks/template")
+          return err(
+            `No deck resource "${short_id}". The starter is derive://decks/template; the guide is derive://skills/decks.`,
+          )
+        return json({ uri: short_id, mimeType: "text/html", content: DECK_TEMPLATE })
       }
       // A CONTEXT id or name loads the PACKAGE rather than a document: manifest inline,
       // skills and sources as pointers. Same gate as asking — askableContexts is the

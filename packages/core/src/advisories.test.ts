@@ -22,6 +22,35 @@ describe("publishAdvisories", () => {
     expect(publishAdvisories("# just a doc", "text/markdown")).toHaveLength(0)
   })
 
+  it("flags slides published without the deck protocol, and names what is off", () => {
+    // The one advisory here that the author cannot discover from the render: the page
+    // paginates correctly and looks finished, while the deck bar, Present mode, and
+    // slide-pinned comments are all silently unavailable.
+    const slides = Array.from(
+      { length: 6 },
+      (_, i) => `<section class="slide" data-derive-slide="${i}">s${i}</section>`,
+    ).join("")
+    const out = publishAdvisories(HTML_WITH_VIEWPORT + slides, "text/html")
+    expect(out).toHaveLength(1)
+    expect(out[0]).toContain("6 slide elements")
+    expect(out[0]).toContain("derive-deck")
+    expect(out[0]).toContain("derive://skills/decks")
+  })
+
+  it("stays quiet once the deck announces itself", () => {
+    const slides = Array.from(
+      { length: 6 },
+      (_, i) => `<section class="slide" data-derive-slide="${i}">s${i}</section>`,
+    ).join("")
+    const announced = `${HTML_WITH_VIEWPORT + slides}<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:6},"*")</script>`
+    expect(publishAdvisories(announced, "text/html")).toHaveLength(0)
+  })
+
+  it("never lectures ordinary prose that merely discusses decks", () => {
+    const about = `${HTML_WITH_VIEWPORT}<p>Post source:'derive-deck' from each slide.</p>`
+    expect(publishAdvisories(about, "text/html")).toHaveLength(0)
+  })
+
   it("flags large inlined base64 (binaries that should be assets), with the size", () => {
     const blob = "A".repeat(20 * 1024)
     const out = publishAdvisories(

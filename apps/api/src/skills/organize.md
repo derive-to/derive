@@ -1,7 +1,7 @@
 ---
 name: organize
 summary: make the library findable: browse the tag vocabulary + collections, and tag or collect artifacts (organize)
-order: 6
+order: 8
 ---
 # Organizing the library (tags + collections)
 
