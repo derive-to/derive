@@ -696,7 +696,10 @@ server.registerTool(
     annotations: {
       title: "Organize the library",
       readOnlyHint: false,
-      destructiveHint: true,
+      // Unlike the remote organize (whose destructive hint is earned by its
+      // state:'deleted' cascade), this tool only tags and collects; `set` replaces a
+      // tag list but the read mode recovers the prior set, so nothing is irreversible.
+      destructiveHint: false,
       openWorldHint: false,
     },
     inputSchema: {
