@@ -2546,6 +2546,20 @@
               "type": "string"
             },
             "description": "Connections this context may use — its tools, in every lane it runs in."
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "description": "The manifest's own first paragraph — frontmatter and a single leading heading stripped, capped. Null when the manifest has none or can't be read."
+          },
+          "skills_count": {
+            "type": "number",
+            "description": "How many skills the manifest's frontmatter pins."
+          },
+          "manifest_version": {
+            "type": "number",
+            "nullable": true,
+            "description": "The manifest artifact's current version; null if it can't be resolved."
           }
         },
         "required": [
@@ -2602,6 +2616,55 @@
         "required": [
           "profile_short_id",
           "members"
+        ]
+      },
+      "ManifestSkillInfo": {
+        "type": "object",
+        "properties": {
+          "short_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "pinned": {
+            "type": "number",
+            "nullable": true,
+            "description": "The pinned version; null = unpinned (runs current)."
+          },
+          "current": {
+            "type": "number",
+            "nullable": true,
+            "description": "The skill artifact's current version; null if it can't be resolved."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "True when the pin trails the artifact's current version."
+          }
+        },
+        "required": [
+          "short_id",
+          "title",
+          "pinned",
+          "current",
+          "stale"
+        ]
+      },
+      "ManifestRepoInfo": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "url",
+          "ref"
         ]
       },
       "Session": {
@@ -2668,6 +2731,25 @@
               "id"
             ],
             "description": "What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask."
+          },
+          "result_artifact_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "The artifact this session's answer bound as its result, if any."
+          },
+          "asker_username": {
+            "type": "string",
+            "nullable": true,
+            "description": "The asker's public handle. Only resolved on the owner's view of the sessions list — a picker of your own sessions already knows who you are."
+          },
+          "lane": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "local",
+              null
+            ],
+            "description": "'local' when this session's answer was recorded rather than served through the queue (see SessionMeta.lane). Only resolved on the owner's view of the sessions list."
           }
         },
         "required": [
@@ -2678,7 +2760,8 @@
           "state",
           "created_at",
           "updated_at",
-          "subject"
+          "subject",
+          "result_artifact_id"
         ]
       },
       "SessionMessage": {
@@ -2795,6 +2878,13 @@
             "type": "number",
             "nullable": true,
             "description": "Reported spend for the turn in millionths of a USD; null when unreported."
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "local"
+            ],
+            "description": "Stamped on a recorded answer: work that already ran on the owner's own machine, filed here rather than served through the queue. Mirrors automate record's run.meta.lane. Absent on every normally-served turn."
           }
         },
         "description": "Structured answer payload on agent messages; null on asker messages."
@@ -7631,7 +7721,7 @@
         "tags": [
           "Contexts"
         ],
-        "summary": "One context; the context's agent also gets the manifest source to run.",
+        "summary": "One context; a human asker also gets the manifest package, the agent the source to run.",
         "parameters": [
           {
             "schema": {
@@ -7644,7 +7734,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The context (with manifest source for the agent).",
+            "description": "The context — for a human asker, the manifest rendered as a package.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7655,15 +7745,67 @@
                     {
                       "type": "object",
                       "properties": {
-                        "manifest_version": {
-                          "type": "number"
-                        },
                         "manifest_md": {
                           "type": "string",
-                          "nullable": true
+                          "nullable": true,
+                          "description": "The manifest's raw source — the runner's system prompt. Agent branch only."
                         },
                         "brandprint": {
                           "$ref": "#/components/schemas/BrandprintConfig"
+                        },
+                        "manifest": {
+                          "type": "object",
+                          "nullable": true,
+                          "properties": {
+                            "short_id": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string",
+                              "nullable": true
+                            },
+                            "version": {
+                              "type": "number"
+                            },
+                            "md": {
+                              "type": "string"
+                            },
+                            "pushed_at": {
+                              "type": "string",
+                              "description": "When this version was published."
+                            }
+                          },
+                          "required": [
+                            "short_id",
+                            "title",
+                            "version",
+                            "md",
+                            "pushed_at"
+                          ],
+                          "description": "The manifest, framed for a reader rather than a runner. Human branch only."
+                        },
+                        "skills": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ManifestSkillInfo"
+                          },
+                          "description": "Every skill the manifest pins, with pin health. Human branch only."
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ManifestRepoInfo"
+                          },
+                          "description": "Repo pointers from the manifest's frontmatter. Human branch only."
+                        },
+                        "max_run_ms": {
+                          "type": "number",
+                          "nullable": true,
+                          "description": "Per-run wall-clock budget; null = the server default. Human branch only."
+                        },
+                        "max_concurrency": {
+                          "type": "number",
+                          "description": "How many sessions the runner may work at once. Human branch only."
                         }
                       }
                     }
@@ -8011,6 +8153,51 @@
                   },
                   "required": [
                     "sessions"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/sessions/record": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Record a run already done locally as an answered session (creator or manager).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The recorded session and its two messages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionMessage"
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "messages"
                   ]
                 }
               }

@@ -293,6 +293,12 @@ export interface Run {
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
 export type ContextInfo = components["schemas"]["ContextInfo"]
+/** GET /v1/contexts/:id's full response — ContextInfo plus, for a human asker, the
+ *  manifest framed as a package (pin health, repos, run knobs); for the context's own
+ *  agent, its raw manifest source instead. Generated from the OpenAPI spec. */
+export type ContextDetail =
+  paths["/v1/contexts/{id}"]["get"]["responses"][200]["content"]["application/json"]
+export type ManifestSkillInfo = components["schemas"]["ManifestSkillInfo"]
 /** The runner's structured payload on an agent message. Generated from the spec. */
 export type SessionMeta = components["schemas"]["SessionMeta"]
 export type SessionMessage = components["schemas"]["SessionMessage"]
@@ -966,7 +972,7 @@ export const api = {
 
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
-  getContext: (id: string): Promise<ContextInfo> => f(`/v1/contexts/${id}`, opts()).then(j),
+  getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
   // agent_id omitted → the server auto-mints a MANAGED agent for this context and
   // returns its bearer as agent_token, exactly once on this response.
   createContext: (input: {
@@ -979,6 +985,18 @@ export const api = {
     body_md: string,
   ): Promise<{ session: Session; messages: SessionMessage[] }> =>
     f(`/v1/contexts/${id}/sessions`, opts({ body_md })).then(j),
+  // Files a run that already happened on the owner's own machine — no dispatch, answered
+  // on arrival. Creator or workspace manager only (see routes/contexts.ts).
+  recordSession: (
+    id: string,
+    input: {
+      instruction: string
+      answer: string
+      outcome?: "answered" | "failed" | "escalated"
+      result_artifact_id?: string
+    },
+  ): Promise<{ session: Session; messages: SessionMessage[] }> =>
+    f(`/v1/contexts/${id}/sessions/record`, opts(input)).then(j),
   // Who may ask — workspace-scoped, never the manifest's artifact sharing.
   setContextAskPolicy: (id: string, ask_policy: "workspace" | "invited"): Promise<void> =>
     f(`/v1/contexts/${id}/access`, opts({ ask_policy })).then(() => undefined),
