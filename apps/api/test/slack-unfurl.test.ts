@@ -139,3 +139,77 @@ describe("decideUnfurl — the broadcast gate", () => {
     expect((await decideUnfurl(deps, `${BASE}/artifacts/nope404`, "u-1")).kind).toBe("skip")
   })
 })
+
+// WHY A SKIP HAPPENED, WHICH IS THE ONLY THING THAT MAKES ONE DIAGNOSABLE.
+//
+// Five rungs end in `skip` and the channel shows the same silent nothing for all of them. They
+// cannot be told apart afterwards either: a workspace-listed artifact answers an anonymous probe
+// exactly as a non-existent one does, so "try the URL yourself" resolves nothing. The reason has
+// to be recorded at the moment it is known.
+
+describe("a skip names the rung that caused it", () => {
+  const artifactIn = (org: string, over: Partial<ArtifactRecord> = {}) =>
+    ({
+      id: "a1",
+      short_id: "abc12345",
+      org_id: org,
+      title: "T",
+      listed: "workspace",
+      link_role: "none",
+      workspace_access: "member",
+      removed_at: null,
+      current_version: 1,
+      ...over,
+    }) as ArtifactRecord
+
+  const deps = (artifact: ArtifactRecord | null, canRead = true) => ({
+    meta: { getByShortId: async () => artifact } as never,
+    baseUrl: "https://derive.to",
+    orgId: "org-connected",
+    canRead: async () => canRead,
+  })
+
+  const skipWhy = async (
+    d: ReturnType<typeof deps>,
+    url = "https://derive.to/artifacts/abc12345",
+  ) => (await decideUnfurl(d, url, "u-sharer")) as { kind: string; why?: string }
+
+  it("distinguishes a link that is not ours at all", async () => {
+    const r = await skipWhy(deps(artifactIn("org-connected")), "https://example.com/whatever")
+    expect(r.kind).toBe("skip")
+    expect(r.why).toMatch(/not an artifact link/i)
+  })
+
+  it("distinguishes a short id nothing answers to", async () => {
+    const r = await skipWhy(deps(null))
+    expect(r.why).toMatch(/no artifact/i)
+  })
+
+  it("distinguishes a removed artifact from a missing one", async () => {
+    const r = await skipWhy(deps(artifactIn("org-connected", { removed_at: "2026-01-01" })))
+    expect(r.why).toMatch(/removed/i)
+  })
+
+  // The one worth naming most: the link works for the sharer, the channel shows nothing, and
+  // nothing about either fact points at the cause.
+  it("distinguishes an artifact living in another workspace", async () => {
+    const r = await skipWhy(deps(artifactIn("org-elsewhere")))
+    expect(r.why).toMatch(/different Derive workspace/i)
+  })
+
+  it("distinguishes a sharer without read standing", async () => {
+    const r = await skipWhy(deps(artifactIn("org-connected"), false))
+    expect(r.why).toMatch(/read standing/i)
+  })
+
+  it("gives every rung a distinct reason, or the log cannot tell them apart", async () => {
+    const reasons = [
+      (await skipWhy(deps(artifactIn("org-connected")), "https://example.com/x")).why,
+      (await skipWhy(deps(null))).why,
+      (await skipWhy(deps(artifactIn("org-connected", { removed_at: "2026-01-01" })))).why,
+      (await skipWhy(deps(artifactIn("org-elsewhere")))).why,
+      (await skipWhy(deps(artifactIn("org-connected"), false))).why,
+    ]
+    expect(new Set(reasons).size).toBe(5)
+  })
+})
