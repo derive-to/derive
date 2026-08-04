@@ -4044,6 +4044,20 @@ export class PgMetaStore implements MetaStore {
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
   }
+  /**
+   * The most recent AGENT answers across every session, newest first. Unscoped by design (see
+   * the port): it answers a question about the DEPLOY, and the route that calls it is
+   * operator-only. `desc(created_at)` rides the `session_message_recent` index.
+   */
+  async listRecentAgentMessages(limit: number): Promise<SessionMessageRecord[]> {
+    return this.db
+      .select()
+      .from(sessionMessage)
+      .where(eq(sessionMessage.author_kind, "agent"))
+      .orderBy(desc(sessionMessage.created_at))
+      .limit(limit)
+  }
+
   async listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]> {
     if (sessionIds.length === 0) return []
     return this.db

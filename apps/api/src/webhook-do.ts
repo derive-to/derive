@@ -12,6 +12,7 @@ import { answerDeriveMention } from "./lib/comment-turn"
 import { emailDeliverySender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { catalogFromGateway } from "./lib/model-catalog"
+import { modelSource } from "./lib/model-library"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { type ChannelSenders, edgeGuard, runDeliveryTick } from "./webhooks"
@@ -76,7 +77,8 @@ const mentionAnswerer = (env: WebhookOutboxEnv, store: MetaStore) => {
     blobs: new R2BlobStore(env.BUCKET),
     bus: { publish: () => {}, subscribe: () => () => {} } as never,
     baseUrl: env.BASE_URL,
-    models,
+    // Per turn, not held: the same operator library the API tier reads (lib/model-library.ts).
+    models: modelSource(models, gw, store),
     notify: async () => {},
     chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
       .split(",")

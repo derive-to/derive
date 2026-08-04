@@ -4,7 +4,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
-import { instanceChatModelQuery, reportsQuery } from "@/lib/queries"
+import { modelLibraryQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
@@ -50,7 +50,7 @@ const SECTION_TITLES: Record<string, string> = {
   automations: "Automations",
   domains: "Domains",
   reports: "Reports",
-  models: "Chat model",
+  models: "Models",
 }
 
 // Settings, reconceived as a scope-grouped two-pane: a sticky category rail
@@ -67,7 +67,12 @@ export function Settings() {
   // Operator-only, and the query IS the gate: it 403s for everyone who does not run this
   // instance. It also carries the catalog, so the tab appears only once there is a real choice —
   // one configured model is a fact about the deployment rather than a decision.
-  const { data: instanceModel } = useQuery({ ...instanceChatModelQuery(), enabled: !!me })
+  // Operator-only, and the query IS the gate: it 403s for everyone who does not run this
+  // instance. It used to also decide whether the section was WORTH showing, by requiring more
+  // than one model to choose between — which, once an operator can ADD models, hid the only
+  // surface that could ever create the second one.
+  const { data: library } = useQuery({ ...modelLibraryQuery(), enabled: !!me })
+  const isOperator = !!library
   const { section } = route.useParams()
   const nav = route.useNavigate()
 
@@ -100,9 +105,6 @@ export function Settings() {
         { id: "billing", label: "Billing", testId: "settings-tab-billing" },
         { id: "integrations", label: "Integrations", testId: "settings-tab-integrations" },
         { id: "sources", label: "Sources", testId: "settings-tab-sources" },
-        ...(((instanceModel?.options.length ?? 0) > 1
-          ? [{ id: "models", label: "Chat model", testId: "settings-tab-models" }]
-          : []) as SettingsNavGroup["items"]),
         { id: "brandprint", label: "Brandprint", testId: "settings-tab-brandprint" },
       ],
     },
@@ -117,23 +119,26 @@ export function Settings() {
       ],
     },
   ]
+  // INSTANCE, not workspace: these are the deployment's own controls, and grouping the model
+  // library under Workspace said the opposite — a workspace Admin would look for it and a
+  // reader would reasonably conclude their workspace owned the choice. Reports lives here for
+  // the same reason, so the two share a group rather than a coincidence.
+  const operatorItems: SettingsNavGroup["items"] = []
+  if (isOperator)
+    operatorItems.push({ id: "models", label: "Models", testId: "settings-tab-models" })
   if (hasReports) {
-    groups.push({
-      label: "Moderation",
-      items: [
-        {
-          id: "reports",
-          label: "Reports",
-          testId: "settings-tab-reports",
-          badge: (
-            <Badge variant="destructive" shape="pill">
-              {openReports.length}
-            </Badge>
-          ),
-        },
-      ],
+    operatorItems.push({
+      id: "reports",
+      label: "Reports",
+      testId: "settings-tab-reports",
+      badge: (
+        <Badge variant="destructive" shape="pill">
+          {openReports.length}
+        </Badge>
+      ),
     })
   }
+  if (operatorItems.length) groups.push({ label: "Instance", items: operatorItems })
 
   // Guard the `$section` against unknown/stale values (e.g. `reports` after the last
   // report clears, or a hand-typed path) — fall back to Profile so the pane never

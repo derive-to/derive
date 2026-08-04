@@ -26,7 +26,9 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
+import { getInstanceAutomationModel } from "./lib/instance-settings"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { modelSource } from "./lib/model-library"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -347,6 +349,10 @@ const modelGateway = (): GatewayConfig | null => {
 // The model catalog, built before the channel senders because the Slack ingest sender needs
 // it (an @Derive mention typed in a thread runs the same turn the web app's mention does).
 const gatewayModels = catalogFromGateway(modelGateway())
+// …and the LIVE view of it: the configured catalog widened, per turn, by the operator's model
+// library. This sender is built once at boot and outlives every settings change, so it takes
+// the source rather than the catalog — see lib/model-library.ts.
+const gatewayModelSource = modelSource(gatewayModels, modelGateway(), meta)
 
 const channelSenders: ChannelSenders = {
   email: emailDeliverySender(
@@ -376,7 +382,7 @@ const channelSenders: ChannelSenders = {
           blobs,
           bus: backplane,
           baseUrl: cfg.baseUrl,
-          models: gatewayModels,
+          models: gatewayModelSource,
           notify: async () => {},
           chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
             .split(",")
@@ -441,6 +447,10 @@ const hostedDispatch = cfg.hostedRuns
               // path at api.anthropic.com and 404'd every run that resolved a real plan.
               model: process.env.DERIVE_LOOP_MODEL,
               gateway: modelGateway() ?? undefined,
+              // The operator's live pin for this lane, read per run. `meta` is module-scope and
+              // always valid on this tier, so there is nothing to capture at dispatch time (the
+              // Worker twin does have to — see withHostedDispatch).
+              gatewayModel: async () => (await getInstanceAutomationModel(meta)) ?? undefined,
             })
           : nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
@@ -466,6 +476,10 @@ const app = createApp({
   // means the same thing to a lane that picks one and a lane that does not.
   callModel: gatewayModels?.resolve(null)?.callModel,
   models: gatewayModels ?? undefined,
+  // The gateway that catalog was built from, so the operator's model library can reach an id
+  // the environment never named — same endpoint, same key, no new secret. Without it the
+  // library can still relabel and pin a lane, but not ADD. See lib/model-library.ts.
+  modelGateway: gateway ?? undefined,
   chatAllowlist: (process.env.DERIVE_CHAT_ALLOWLIST ?? "")
     .split(",")
     .map((x) => x.trim())

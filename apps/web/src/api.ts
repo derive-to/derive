@@ -161,6 +161,59 @@ export type ShareResult = components["schemas"]["ShareResult"]
 export type OrgSettings = components["schemas"]["OrgSettings"]
 export type ChatModelOption = components["schemas"]["ChatModel"]
 
+/**
+ * THE MODEL LIBRARY, as the operator's settings page reads it.
+ *
+ * Hand-written rather than generated, because the /v1/system routes are plain Hono and
+ * deliberately outside the OpenAPI surface — that surface is the PRODUCT's API, and how an
+ * operator configures their own deployment is not part of it.
+ */
+export interface ModelProbeView {
+  at: string
+  ok: boolean
+  /** Time to first token, ms. Null when the provider did not stream. */
+  ttft_ms: number | null
+  /** Whole call, ms. */
+  total_ms: number | null
+  error: string | null
+}
+
+/** What real traffic says, folded from recent answers. Null until a model has served one. */
+export interface ModelObservedView {
+  samples: number
+  ttft_p50_ms: number | null
+  ttft_p95_ms: number | null
+  total_p50_ms: number | null
+  total_p95_ms: number | null
+  last_at: string | null
+}
+
+export interface ModelLibraryEntry {
+  id: string
+  label: string
+  /** The deploy's configured default — what answers when no lane is pinned. */
+  is_default: boolean
+  /** `configured` came from the environment; `library` was added by an operator. */
+  source: "configured" | "library"
+  /** Only a library entry can be removed: a configured id belongs to the environment. */
+  removable: boolean
+  probe: ModelProbeView | null
+  observed: ModelObservedView | null
+}
+
+export interface ModelSlots {
+  chat: string | null
+  automation: string | null
+}
+
+export interface ModelLibraryView {
+  slots: ModelSlots
+  /** False when this deploy has no gateway, so a model cannot be ADDED here (only relabelled
+   *  and pinned). The page has to say so rather than offer an input that always refuses. */
+  can_add: boolean
+  models: ModelLibraryEntry[]
+}
+
 /** GET /v1/bootstrap — the four boot endpoints' bodies in one response. Each field is
  *  exactly the corresponding endpoint's shape (server-side the mappers are shared), so
  *  seeding a query cache from it is indistinguishable from that endpoint having
@@ -1107,6 +1160,23 @@ export const api = {
   }> => f("/v1/system/chat-model", opts()).then(j),
   setInstanceChatModel: (model: string | null): Promise<{ model: string | null }> =>
     f("/v1/system/chat-model", { ...opts({ model }), method: "PUT" }).then(j),
+
+  // THE MODEL LIBRARY — operator-only. One GET for the whole page: what is pinned, what this
+  // deploy can answer with, what the last probe found, and how each model is actually
+  // performing. Split across calls, the page renders three of them and a spinner at exactly the
+  // moment somebody needs to act.
+  modelLibrary: (): Promise<ModelLibraryView> => f("/v1/system/models", opts()).then(j),
+  addModel: (id: string, label?: string): Promise<{ id: string; probe: ModelProbeView }> =>
+    f("/v1/system/models", { ...opts({ id, label }), method: "POST" }).then(j),
+  removeModel: (id: string): Promise<{ removed: string }> =>
+    f(`/v1/system/models/${encodeURIComponent(id)}`, { ...opts(), method: "DELETE" }).then(j),
+  probeModel: (id: string): Promise<{ id: string; probe: ModelProbeView }> =>
+    f(`/v1/system/models/${encodeURIComponent(id)}/probe`, { ...opts(), method: "POST" }).then(j),
+  setModelSlot: (
+    lane: "chat" | "automation",
+    model: string | null,
+  ): Promise<{ slots: ModelSlots }> =>
+    f(`/v1/system/models/slots/${lane}`, { ...opts({ model }), method: "PUT" }).then(j),
 
   // Which models this deploy can answer a chat turn with, default first. Readable by any
   // signed-in user (it is the deploy's capability list, not a workspace's data); CHANGING which

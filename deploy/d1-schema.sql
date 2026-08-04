@@ -718,6 +718,8 @@ CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at);
 
 CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at);
 
+CREATE INDEX IF NOT EXISTS session_message_recent ON session_message (author_kind, created_at);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS artifact_search USING fts5(text, artifact_id UNINDEXED, org_id UNINDEXED, tokenize='unicode61 remove_diacritics 0');
 
 CREATE UNIQUE INDEX IF NOT EXISTS context_session_dedupe ON context_session (context_id, asker_id, dedupe_key) WHERE dedupe_key IS NOT NULL AND state IN ('open', 'working');

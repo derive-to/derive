@@ -43,6 +43,7 @@ import {
   parseManifestSkillPins,
   stalePins,
 } from "../lib/manifest-pins"
+import { meterModel, timingMeta } from "../lib/model-timing"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
@@ -110,7 +111,7 @@ export const contextRoutes = (ctx: AppContext) => {
   const lastModelId = (transcript: SessionMessageRecord[]): string | null => {
     for (let i = transcript.length - 1; i >= 0; i--) {
       const m = transcript[i]
-      if (!m || m.author_kind !== "agent" || !m.meta) continue
+      if (m?.author_kind !== "agent" || !m.meta) continue
       try {
         const id = (JSON.parse(m.meta) as { model?: { id?: unknown } }).model?.id
         if (typeof id === "string" && id) return id
@@ -154,7 +155,13 @@ export const contextRoutes = (ctx: AppContext) => {
     const rl = await limited(c, askLimiter)
     if (rl) return rl
     const gate = await chatArrival(
-      { meta, models: ctx.models, chatAllowlist: ctx.callModel ? ctx.chatAllowlist : [] },
+      {
+        meta,
+        // The LIVE catalog (configured + the operator's library), so a deploy whose only
+        // usable model was added without a redeploy still passes the no_model rung.
+        models: (await ctx.modelsFor()) ?? undefined,
+        chatAllowlist: ctx.callModel ? ctx.chatAllowlist : [],
+      },
       { org: orgId, userId },
     )
     if (gate.ok) return null
@@ -242,10 +249,14 @@ export const contextRoutes = (ctx: AppContext) => {
     // 4. The deploy's default.
     const previous = lastModelId(transcript)
     const operatorPick = await getInstanceChatModel(meta).catch(() => null)
-    const override = operatorPick && ctx.models?.resolve(operatorPick)
+    // The configured catalog WIDENED by the operator's live library, so a model added without a
+    // deploy is selectable here — including as the pin above, which is validated against this
+    // same catalog when it is set.
+    const catalog = await ctx.modelsFor()
+    const override = operatorPick && catalog?.resolve(operatorPick)
     const model = askedModelId
-      ? ctx.models?.resolve(askedModelId)
-      : override || ctx.models?.resolve(previous ?? null)
+      ? catalog?.resolve(askedModelId)
+      : override || catalog?.resolve(previous ?? null)
     if (!model) {
       // A named model that is gone is worth saying out loud: silently answering with a different
       // one is a lie about which model produced the text.
@@ -266,9 +277,12 @@ export const contextRoutes = (ctx: AppContext) => {
       // the next write, not merely the next session.
       flags: { agentKillswitch: settings?.agentKillswitch ?? false },
     })
+    // Metered around the STREAM wrapper, so the time recorded is the time the person waited —
+    // deltas included. What it excludes is tool execution, which is not this model's latency.
+    const meter = meterModel(stream.wrap(model.callModel))
     const res = await withinTurnBudget(
       runChatTurn(
-        { model: { ...model, callModel: stream.wrap(model.callModel) } },
+        { model: { ...model, callModel: meter.call } },
         {
           session: s,
           transcript,
@@ -286,6 +300,10 @@ export const contextRoutes = (ctx: AppContext) => {
       ...("costMicroUsd" in res ? { cost_micro_usd: res.costMicroUsd } : {}),
       ...("model" in res ? { model: res.model } : {}),
       ...("tools" in res ? { tools: res.tools } : {}),
+      // UNCONDITIONAL, unlike the fields above: a turn that was cut short still waited on the
+      // model for however long it waited, and a slow model is the likeliest reason it was cut.
+      // This is the one measurement whose failures matter as much as its successes.
+      ...timingMeta(meter.timing()),
     })
   }
 
@@ -354,9 +372,22 @@ export const contextRoutes = (ctx: AppContext) => {
       if (state !== "open") settleWake(s, state)
     }
     const flags = await meta.getOrgSettings(s.org_id).catch(() => null)
+    // WHICH MODEL ANSWERS THE DOCUMENT RAIL. Resolved through the catalog with the operator's
+    // pin, exactly as the workspace lane does — this used to take `ctx.callModel` (the
+    // deploy's configured default) directly, so the deploy-wide switch that exists to move
+    // everyone off a failing provider moved every surface EXCEPT this one, while its own
+    // settings copy promised "across this whole deployment". A lever with a hole in it is
+    // worse than no lever, because it is trusted.
+    //
+    // No per-turn pick here: the rail has no picker, so there is nothing to honor beyond the
+    // operator's choice and the deploy default behind it.
+    const railCatalog = await ctx.modelsFor()
+    const operatorPin = await getInstanceChatModel(meta).catch(() => null)
+    const railModel =
+      (operatorPin ? railCatalog?.resolve(operatorPin) : null) ?? railCatalog?.resolve(null)
     // No model wired (the common self-host case) — say so in the transcript rather than leaving
     // the session `open` forever waiting on a runner that will never come.
-    if (!ctx.callModel) {
+    if (!railModel) {
       await reply(
         "No model is configured on this deploy, so I cannot answer. Set DERIVE_MODEL_BASE_URL, DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME.",
         "failed",
@@ -454,6 +485,8 @@ export const contextRoutes = (ctx: AppContext) => {
         subject.mode === "publish" && roleAllows(role, "publish")
           ? subject
           : { kind: "artifact", id: subject.id }
+      // See the workspace lane: metered around the stream wrapper, tool time excluded.
+      const railMeter = meterModel(stream.wrap(railModel.callModel))
       const res = await withinTurnBudget(
         runSessionTurn(
           {
@@ -467,7 +500,7 @@ export const contextRoutes = (ctx: AppContext) => {
             // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
             // `callModel` along exactly as before, and the streaming decision stays here, where
             // the transport (this asker's channel) is actually known.
-            callModel: stream.wrap(ctx.callModel),
+            callModel: railMeter.call,
             billingBlocked: ctx.billingBlocked,
           },
           {
@@ -516,6 +549,10 @@ export const contextRoutes = (ctx: AppContext) => {
         // read as a turn that wrote nothing and cost nothing rather than one that was stopped.
         ...("wrote" in res ? { wrote: res.wrote } : {}),
         ...("costMicroUsd" in res ? { cost_micro_usd: res.costMicroUsd } : {}),
+        // WHICH model answered, which this lane never recorded — so a rail answer could not be
+        // attributed and its latency counted for nobody. Same shape the workspace lane writes.
+        model: { id: railModel.id, label: railModel.label },
+        ...timingMeta(railMeter.timing()),
       })
     } catch (e) {
       log.error("attended turn failed", {
@@ -1917,7 +1954,7 @@ export const contextRoutes = (ctx: AppContext) => {
       // capability, and it carries no workspace data. A signed-in person asking what models
       // exist learns nothing about who may use them.
       return c.json({
-        models: (ctx.models?.options ?? []).map((m) => ({
+        models: ((await ctx.modelsFor())?.options ?? []).map((m) => ({
           id: m.id,
           label: m.label,
           is_default: m.isDefault,
@@ -1964,7 +2001,7 @@ export const contextRoutes = (ctx: AppContext) => {
       if (gate) return bail(gate)
       // A model named here must exist NOW — better a 400 the person can act on than a session
       // that opens and then answers with something they did not choose.
-      if (b.model && !ctx.models?.resolve(b.model))
+      if (b.model && !(await ctx.modelsFor())?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
       const created = await meta.createSessionWithMessage(
         {
@@ -2295,7 +2332,7 @@ export const contextRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
-      if (b.model && !ctx.models?.resolve(b.model))
+      if (b.model && !(await ctx.modelsFor())?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
       // THE MONTHLY BUDGET, for the same reason. Dispatch enforces it on every hosted run and
       // every queued session; an attended follow-up bypassed dispatch entirely, so the one lane

@@ -27,7 +27,8 @@ import type { AgentLoopInput } from "./agent-loop"
 import { chatArrival } from "./chat-gate"
 import { type CommentActionDeps, commentCreatedAction } from "./comment-actions"
 import { DERIVE_AUTHOR_ID, quoteOf } from "./comments"
-import type { ModelCatalog, ResolvedChatModel } from "./model-catalog"
+import type { ResolvedChatModel } from "./model-catalog"
+import type { ModelSource } from "./model-library"
 import { asTurns, documentBlock, documentContract, documentName, runTurn } from "./turn-core"
 
 /** Exactly what this lane needs: the comment fan-out's deps (its settle IS a comment) plus a
@@ -211,7 +212,10 @@ export const answerDeriveMention =
     blobs: BlobStore
     bus: Backplane
     baseUrl: string
-    models: ModelCatalog
+    /** Read PER TURN (lib/model-library.ts), not held. This lane is constructed once at boot,
+     *  so a held catalog would answer with the model the process started with — which is the
+     *  exact failure the live library exists to prevent. */
+    models: ModelSource
     notify: CommentActionDeps["notify"]
     /** The operator allowlist, when the deploy pays. Same meaning as DERIVE_CHAT_ALLOWLIST. */
     chatAllowlist?: string[]
@@ -232,7 +236,7 @@ export const answerDeriveMention =
     // EVERY RUNG, ONCE (lib/chat-gate.ts). No rate key: this arrival rides the comment route's
     // own limiter, so a second one here would charge the same person twice for one action.
     const gate = await chatArrival(
-      { meta, models: deps.models, chatAllowlist: deps.chatAllowlist },
+      { meta, models: (await deps.models()) ?? undefined, chatAllowlist: deps.chatAllowlist },
       { org: artifact.org_id, userId: asker.id },
     )
     // Silence (logged), not a message: unlike Slack, nobody is waiting on a reply that never

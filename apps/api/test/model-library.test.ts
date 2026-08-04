@@ -1,0 +1,515 @@
+import { describe, expect, it } from "vitest"
+import type { ModelTurn } from "../src/lib/agent-loop"
+import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
+import { catalogOf, type GatewayConfig } from "../src/lib/model-catalog"
+import { effectiveCatalog, parseLibrary, probeModel } from "../src/lib/model-library"
+import { foldTimings, meterModel } from "../src/lib/model-timing"
+import { as, makeAuthedApp } from "./helpers"
+
+// THE MODEL LIBRARY — an operator adds a model, pins a lane to it, probes it, and reads how it
+// is actually performing, all without a deploy.
+//
+// The routes are the real ones behind the real operator gate. Only the PROVIDER is faked, and
+// deliberately only the provider: what is under test is who may do this, what a pin actually
+// moves, and whether a bad id can ever reach a turn.
+
+const turn = (text: string): ModelTurn => ({ text, toolUses: [], costUsd: null, done: true })
+
+const GATEWAY: GatewayConfig = { baseUrl: "https://gw.test/v1", apiKey: "k", model: "configured" }
+
+const setup = (name: string, opts?: { operators?: string[]; gateway?: GatewayConfig | null }) =>
+  makeAuthedApp(
+    name,
+    [
+      { id: "u-op", email: "op@x.com", name: "Olive" },
+      { id: "u-mem", email: "mem@x.com", name: "Mem" },
+    ],
+    undefined,
+    {
+      deps: {
+        models: catalogOf([
+          {
+            id: "configured",
+            label: "Configured",
+            isDefault: true,
+            build: () => async () => turn("hi"),
+          },
+        ]),
+        ...(opts?.gateway === null ? {} : { modelGateway: opts?.gateway ?? GATEWAY }),
+        superAdmins: opts?.operators ?? ["op@x.com"],
+      },
+    },
+  )
+
+describe("who may touch the model library", () => {
+  // The whole point of the feature is that it is the OPERATOR's lever. A workspace Admin is an
+  // Admin of a tenant; this spends the operator's credential for every tenant at once.
+  it("refuses every route to a workspace admin, who is not an operator", async () => {
+    // u-mem is a member of the shared workspace but not in the operator allowlist. u-op IS the
+    // workspace owner AND an operator, so a passing test cannot be explained by workspace role.
+    const { app } = setup("lib-authz")
+    const calls: [string, RequestInit][] = [
+      ["/v1/system/models", { method: "GET" }],
+      ["/v1/system/models", { method: "POST", body: JSON.stringify({ id: "x" }) }],
+      ["/v1/system/models/configured", { method: "DELETE" }],
+      ["/v1/system/models/configured/probe", { method: "POST" }],
+      [
+        "/v1/system/models/slots/chat",
+        { method: "PUT", body: JSON.stringify({ model: "configured" }) },
+      ],
+    ]
+    for (const [path, init] of calls) {
+      const res = await app.request(path, { ...init, headers: as("mem@x.com") })
+      expect([path, res.status]).toEqual([path, 403])
+    }
+    // …and an anonymous caller gets the same, so the gate is not merely "signed in".
+    const anon = await app.request("/v1/system/models")
+    expect(anon.status).toBe(403)
+  })
+
+  it("lets an operator read the library", async () => {
+    const { app } = setup("lib-authz-ok")
+    const res = await app.request("/v1/system/models", { headers: as("op@x.com") })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { models: { id: string }[]; can_add: boolean }
+    expect(body.models.map((m) => m.id)).toEqual(["configured"])
+    expect(body.can_add).toBe(true)
+  })
+})
+
+describe("the reserved instance row is not a workspace", () => {
+  /**
+   * The library lives on an `org_settings` row keyed `__instance__`. Nothing today can point a
+   * tenant route at it — but `ensureMembership` PROVISIONS OWNER on a workspace with no members,
+   * so if a cookie could ever name that row, the first caller to send it would own the deploy's
+   * model configuration. This is the guardrail that does not depend on the other checks.
+   */
+  it("ignores a derive_ws cookie naming the reserved settings row", async () => {
+    const { app, meta } = setup("lib-reserved")
+    // Put something in the reserved row so a leak would be visible.
+    await meta.setOrgSettings(INSTANCE_SETTINGS_ID, {
+      ...(await meta.getOrgSettings(INSTANCE_SETTINGS_ID)),
+      whiteLabel: true,
+    })
+    const res = await app.request("/v1/workspace/settings", {
+      headers: { ...as("mem@x.com"), cookie: `derive_ws=${INSTANCE_SETTINGS_ID}` },
+    })
+    expect(res.status).toBe(200)
+    // The caller got their OWN workspace's settings, not the instance row's.
+    expect(((await res.json()) as { whiteLabel: boolean }).whiteLabel).toBe(false)
+    // And no membership was minted on the reserved row, which is the escalation itself.
+    expect(await meta.getMembership(INSTANCE_SETTINGS_ID, "u-mem")).toBeNull()
+  })
+
+  it("refuses to switch into it even when asked by id", async () => {
+    const { app } = setup("lib-reserved-switch")
+    const res = await app.request("/v1/workspace/switch", {
+      method: "POST",
+      headers: as("mem@x.com"),
+      body: JSON.stringify({ id: INSTANCE_SETTINGS_ID }),
+    })
+    expect(res.status).toBe(403)
+  })
+})
+
+describe("adding a model without a deploy", () => {
+  it("refuses an id the provider will not answer for, and stores nothing", async () => {
+    // No fetch is stubbed, so the probe's real request fails — which is exactly the shape of a
+    // typo'd model id, and the reason adding is probed rather than trusted.
+    const { app, meta } = setup("lib-add-bad")
+    const res = await app.request("/v1/system/models", {
+      method: "POST",
+      headers: as("op@x.com"),
+      body: JSON.stringify({ id: "acme/does-not-exist" }),
+    })
+    expect(res.status).toBe(400)
+    expect((await meta.getOrgSettings(INSTANCE_SETTINGS_ID)).models ?? []).toEqual([])
+  })
+
+  it("refuses an id already configured in the environment", async () => {
+    const { app } = setup("lib-add-dupe")
+    const res = await app.request("/v1/system/models", {
+      method: "POST",
+      headers: as("op@x.com"),
+      body: JSON.stringify({ id: "configured" }),
+    })
+    expect(res.status).toBe(409)
+  })
+
+  it("bounds the id, the label and the library itself", async () => {
+    const { app, meta } = setup("lib-add-bounds")
+    const post = (body: unknown) =>
+      app.request("/v1/system/models", {
+        method: "POST",
+        headers: as("op@x.com"),
+        body: JSON.stringify(body),
+      })
+    expect((await post({ id: "" })).status).toBe(400)
+    expect((await post({ id: "x".repeat(201) })).status).toBe(400)
+    expect((await post({ id: "ok/id", label: "y".repeat(81) })).status).toBe(400)
+    // The library is one JSON blob on a row the chat path reads per turn, so its size is a
+    // latency budget. Seeded directly at the cap: what is under test is the refusal, not 50
+    // round trips through a probe.
+    await meta.setOrgSettings(INSTANCE_SETTINGS_ID, {
+      ...(await meta.getOrgSettings(INSTANCE_SETTINGS_ID)),
+      models: Array.from({ length: 50 }, (_, i) => ({ id: `acme/m${i}` })),
+    })
+    const full = await post({ id: "acme/one-more" })
+    expect(full.status).toBe(400)
+    expect(((await full.json()) as { error: string }).error).toContain("full")
+  })
+
+  it("answers 400 on a malformed model id rather than throwing a 500", async () => {
+    // Ids carry slashes, so they arrive percent-encoded, and a bad escape throws out of
+    // decodeURIComponent — a typo must not read as "Derive is broken".
+    const { app } = setup("lib-bad-escape")
+    for (const path of ["/v1/system/models/%E0%A4%A", "/v1/system/models/%E0%A4%A/probe"]) {
+      const res = await app.request(path, {
+        method: path.endsWith("/probe") ? "POST" : "DELETE",
+        headers: as("op@x.com"),
+      })
+      expect([path, res.status]).toEqual([path, 400])
+    }
+  })
+
+  it("refuses when the deploy has no gateway to reach a new model on", async () => {
+    const { app } = setup("lib-add-nogw", { gateway: null })
+    const res = await app.request("/v1/system/models", {
+      method: "POST",
+      headers: as("op@x.com"),
+      body: JSON.stringify({ id: "acme/new" }),
+    })
+    expect(res.status).toBe(400)
+    const listed = await app.request("/v1/system/models", { headers: as("op@x.com") })
+    expect(((await listed.json()) as { can_add: boolean }).can_add).toBe(false)
+  })
+})
+
+describe("pinning a lane", () => {
+  it("refuses a pin naming a model that does not exist", async () => {
+    const { app } = setup("lib-pin-bad")
+    for (const lane of ["chat", "automation"]) {
+      const res = await app.request(`/v1/system/models/slots/${lane}`, {
+        method: "PUT",
+        headers: as("op@x.com"),
+        body: JSON.stringify({ model: "acme/ghost" }),
+      })
+      expect([lane, res.status]).toEqual([lane, 400])
+    }
+  })
+
+  it("pins each lane independently and clears with null", async () => {
+    const { app } = setup("lib-pin-ok")
+    const put = (lane: string, model: string | null) =>
+      app.request(`/v1/system/models/slots/${lane}`, {
+        method: "PUT",
+        headers: as("op@x.com"),
+        body: JSON.stringify({ model }),
+      })
+    expect((await put("chat", "configured")).status).toBe(200)
+    const both = (await (await put("automation", "configured")).json()) as {
+      slots: { chat: string | null; automation: string | null }
+    }
+    expect(both.slots).toEqual({ chat: "configured", automation: "configured" })
+    // Clearing ONE lane leaves the other pinned — they are separate levers.
+    const cleared = (await (await put("chat", null)).json()) as {
+      slots: { chat: string | null; automation: string | null }
+    }
+    expect(cleared.slots).toEqual({ chat: null, automation: "configured" })
+  })
+
+  it("unpins a lane when the model it named is removed", async () => {
+    // A slot pointing at a model that no longer resolves is a silent fallback to the default —
+    // a lane that quietly stopped honoring its pin is worse than one that was never pinned.
+    const { app, meta } = setup("lib-remove-unpins")
+    await meta.setOrgSettings(INSTANCE_SETTINGS_ID, {
+      ...(await meta.getOrgSettings(INSTANCE_SETTINGS_ID)),
+      models: [{ id: "acme/added" }],
+      slots: { chat: "acme/added", automation: "acme/added" },
+    })
+    const res = await app.request("/v1/system/models/acme%2Fadded", {
+      method: "DELETE",
+      headers: as("op@x.com"),
+    })
+    expect(res.status).toBe(200)
+    const after = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
+    expect(after.models ?? []).toEqual([])
+    expect(after.slots?.chat).toBeUndefined()
+    expect(after.slots?.automation).toBeUndefined()
+  })
+
+  it("refuses to remove a CONFIGURED model — the environment owns those", async () => {
+    const { app } = setup("lib-remove-configured")
+    const res = await app.request("/v1/system/models/configured", {
+      method: "DELETE",
+      headers: as("op@x.com"),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it("refuses an unknown lane rather than silently accepting it", async () => {
+    const { app } = setup("lib-pin-lane")
+    const res = await app.request("/v1/system/models/slots/embeddings", {
+      method: "PUT",
+      headers: as("op@x.com"),
+      body: JSON.stringify({ model: "configured" }),
+    })
+    expect(res.status).toBe(404)
+  })
+})
+
+describe("the catalog the library produces", () => {
+  const base = catalogOf([
+    { id: "configured", label: "Configured", isDefault: true, build: () => async () => turn("a") },
+  ])
+
+  it("adds library ids and keeps the configured default", () => {
+    const cat = effectiveCatalog(base, GATEWAY, {
+      models: [{ id: "acme/added" }],
+      slots: {},
+    })
+    expect(cat?.options.map((o) => [o.id, o.isDefault])).toEqual([
+      ["configured", true],
+      ["acme/added", false],
+    ])
+    expect(cat?.resolve("acme/added")?.id).toBe("acme/added")
+  })
+
+  it("will not offer an added id with no gateway behind it", () => {
+    // A model with no credential is a choice that 401s on every turn; better absent than broken.
+    const cat = effectiveCatalog(base, null, { models: [{ id: "acme/added" }], slots: {} })
+    expect(cat?.options.map((o) => o.id)).toEqual(["configured"])
+    expect(cat?.resolve("acme/added")).toBeNull()
+  })
+
+  it("relabels a configured model without needing a key", () => {
+    const cat = effectiveCatalog(base, null, {
+      models: [{ id: "configured", label: "The fast one" }],
+      slots: {},
+    })
+    expect(cat?.options[0]?.label).toBe("The fast one")
+    expect(cat?.resolve("configured")?.label).toBe("The fast one")
+  })
+
+  it("still refuses an id nobody configured — a miss is never the default", () => {
+    const cat = effectiveCatalog(base, GATEWAY, { models: [], slots: {} })
+    expect(cat?.resolve("acme/ghost")).toBeNull()
+    expect(cat?.resolve(null)?.id).toBe("configured")
+  })
+
+  it("drops junk entries rather than failing the whole library", () => {
+    const lib = parseLibrary({
+      models: [{ id: "  spaced  " }, { id: "" }, { id: "dupe" }, { id: "dupe" }] as unknown as {
+        id: string
+      }[],
+      slots: { chat: "  " },
+    })
+    expect(lib.models.map((m) => m.id)).toEqual(["spaced", "dupe"])
+    expect(lib.slots.chat).toBeUndefined()
+  })
+})
+
+describe("probing", () => {
+  const model = (callModel: Parameters<typeof probeModel>[0]["callModel"]) => ({
+    id: "m",
+    label: "M",
+    isDefault: true,
+    callModel,
+  })
+
+  it("reports time to first token and total, separately", async () => {
+    let t = 0
+    const now = () => t
+    const probe = await probeModel(
+      model(async ({ onDelta }) => {
+        t = 120
+        onDelta?.("O")
+        t = 400
+        return turn("OK")
+      }),
+      { now },
+    )
+    expect(probe).toMatchObject({ ok: true, ttftMs: 120, totalMs: 400 })
+  })
+
+  it("records a failure as a finding rather than throwing", async () => {
+    const probe = await probeModel(
+      model(async () => {
+        throw new Error("401 invalid api key")
+      }),
+    )
+    expect(probe.ok).toBe(false)
+    expect(probe.error).toContain("401")
+  })
+
+  it("counts an empty reply as a failure — a 200 with no content is a misrouted id", async () => {
+    const probe = await probeModel(model(async () => turn("   ")))
+    expect(probe.ok).toBe(false)
+  })
+
+  it("gives up rather than hanging on a provider that never answers", async () => {
+    const probe = await probeModel(
+      model(() => new Promise(() => {})),
+      { timeoutMs: 10 },
+    )
+    expect(probe.ok).toBe(false)
+    expect(probe.error).toContain("no reply")
+  })
+
+  it("stores the result on a CONFIGURED model, which had no library entry before", async () => {
+    // "How fast is what we are already running" is the first question anyone comparing models
+    // asks, so probing is not restricted to models the library added. Doing so creates an entry
+    // that holds nothing but the probe.
+    const { app, meta } = setup("lib-probe-store")
+    const res = await app.request("/v1/system/models/configured/probe", {
+      method: "POST",
+      headers: as("op@x.com"),
+    })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { probe: { ok: boolean } }).probe.ok).toBe(true)
+    const stored = (await meta.getOrgSettings(INSTANCE_SETTINGS_ID)).models ?? []
+    expect(stored[0]?.id).toBe("configured")
+    expect(stored[0]?.probe?.ok).toBe(true)
+    // And it comes back on the operator's view, which is where "up front" actually happens.
+    const listed = await app.request("/v1/system/models", { headers: as("op@x.com") })
+    const body = (await listed.json()) as { models: { probe: { ok: boolean } | null }[] }
+    expect(body.models[0]?.probe?.ok).toBe(true)
+  })
+
+  it("answers 200 when the MODEL failed — the probe still succeeded, it found out", async () => {
+    // A 5xx here would say Derive is broken when the finding is that a provider is, which is the
+    // opposite of what this page exists to tell somebody.
+    const { app, meta } = makeAuthedApp(
+      "lib-probe-down",
+      [{ id: "u-op", email: "op@x.com", name: "Olive" }],
+      undefined,
+      {
+        deps: {
+          models: catalogOf([
+            {
+              id: "down",
+              label: "Down",
+              isDefault: true,
+              build: () => async () => {
+                throw new Error("503 upstream unavailable")
+              },
+            },
+          ]),
+          modelGateway: GATEWAY,
+          superAdmins: ["op@x.com"],
+        },
+      },
+    )
+    const res = await app.request("/v1/system/models/down/probe", {
+      method: "POST",
+      headers: as("op@x.com"),
+    })
+    expect(res.status).toBe(200)
+    const probe = ((await res.json()) as { probe: { ok: boolean; error: string } }).probe
+    expect(probe.ok).toBe(false)
+    expect(probe.error).toContain("503")
+    expect((await meta.getOrgSettings(INSTANCE_SETTINGS_ID)).models?.[0]?.probe?.ok).toBe(false)
+  })
+
+  it("refuses to probe a model this deploy does not have", async () => {
+    const { app } = setup("lib-probe-ghost")
+    const res = await app.request("/v1/system/models/acme%2Fghost/probe", {
+      method: "POST",
+      headers: as("op@x.com"),
+    })
+    expect(res.status).toBe(404)
+  })
+})
+
+describe("observed call times", () => {
+  it("meters model time across a turn, excluding what happens between calls", async () => {
+    let t = 0
+    const meter = meterModel(
+      async ({ onDelta }) => {
+        t += 50
+        onDelta?.("x")
+        t += 50
+        return turn("done")
+      },
+      () => t,
+    )
+    await meter.call({ system: "", messages: [], tools: [] })
+    t += 1000 // a tool ran here: not the model's latency
+    await meter.call({ system: "", messages: [], tools: [] })
+    const timing = meter.timing()
+    expect(timing.calls).toBe(2)
+    expect(timing.modelMs).toBe(200)
+    // First call only: a later first-token arrives after tools have run.
+    expect(timing.ttftMs).toBe(50)
+  })
+
+  it("still reports what a FAILING call burned", async () => {
+    let t = 0
+    const meter = meterModel(
+      async () => {
+        t += 300
+        throw new Error("upstream 500")
+      },
+      () => t,
+    )
+    await expect(meter.call({ system: "", messages: [], tools: [] })).rejects.toThrow()
+    expect(meter.timing().modelMs).toBe(300)
+  })
+
+  it("folds answers into per-model medians and skips ones with no timing", () => {
+    const msg = (id: string, ms: number | null, at: string) => ({
+      id: `m-${at}`,
+      session_id: "s",
+      author_kind: "agent" as const,
+      author_id: "a",
+      body_md: "",
+      meta: JSON.stringify({
+        model: { id, label: id },
+        ...(ms === null ? {} : { model_ms: ms, ttft_ms: ms / 2 }),
+      }),
+      created_at: at,
+    })
+    const folded = foldTimings([
+      msg("fast", 100, "2026-08-04T10:00:00Z"),
+      msg("fast", 300, "2026-08-04T09:00:00Z"),
+      msg("fast", 200, "2026-08-04T08:00:00Z"),
+      msg("slow", 9000, "2026-08-04T07:00:00Z"),
+      // Every answer written before timings shipped looks like this. Counting it as zero would
+      // report every model as faster than it is.
+      msg("fast", null, "2026-08-04T06:00:00Z"),
+    ])
+    const fast = folded.find((f) => f.modelId === "fast")
+    expect(fast).toMatchObject({ samples: 3, totalP50: 200, totalP95: 300, ttftP50: 100 })
+    expect(fast?.lastAt).toBe("2026-08-04T10:00:00Z")
+    expect(folded.find((f) => f.modelId === "slow")?.samples).toBe(1)
+  })
+
+  it("surfaces them on the operator's view", async () => {
+    const { app, meta } = setup("lib-observed")
+    const { session } = await meta.createSessionWithMessage(
+      { id: "ses-1", context_id: null, context_version: null, org_id: "default", asker_id: "u-op" },
+      { id: "sm-1", author_kind: "asker", author_id: "u-op", body_md: "hi" },
+      "open",
+    )
+    await meta.addSessionMessage(
+      {
+        id: "sm-2",
+        session_id: session.id,
+        author_kind: "agent",
+        author_id: "a",
+        body_md: "hello",
+        meta: JSON.stringify({
+          model: { id: "configured", label: "Configured" },
+          model_ms: 1234,
+          ttft_ms: 210,
+        }),
+      },
+      "answered",
+    )
+    const res = await app.request("/v1/system/models", { headers: as("op@x.com") })
+    const body = (await res.json()) as {
+      models: { id: string; observed: { samples: number; total_p50_ms: number } | null }[]
+    }
+    expect(body.models[0]?.observed).toMatchObject({ samples: 1, total_p50_ms: 1234 })
+  })
+})
