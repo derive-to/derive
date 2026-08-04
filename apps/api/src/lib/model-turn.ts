@@ -46,6 +46,38 @@ export class TruncatedReplyError extends Error {
   }
 }
 
+/** How long draining a stream may take before this code gives up on it, independent of whether
+ *  the SDK's own `abortSignal` (120s, on `req` below) actually fires. 10s past that, so the SDK
+ *  gets first right of way — this is the backstop for when it does not. */
+const STREAM_DEADLINE_MS = 130_000
+
+/** Not an APICallError, so a caller's `APICallError.isInstance` check correctly says no — a
+ *  stalled drain is OUR verdict, never the provider's, and must fall to the same buffered retry a
+ *  gateway that cannot stream at all already gets. */
+class StreamStalledError extends Error {
+  constructor(ms: number) {
+    super(`stream produced nothing for ${ms}ms`)
+    this.name = "StreamStalledError"
+  }
+}
+
+/** Race a promise against a hard deadline. The loser keeps running (there is no cancelling a
+ *  `for await` from outside it), but nothing here waits on it any longer. */
+const withDeadline = <T>(p: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new StreamStalledError(ms)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(t)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(t)
+        reject(e)
+      },
+    )
+  })
+
 /**
  * The tools this turn may call, as the SDK's tool set.
  *
@@ -331,39 +363,53 @@ export const turnFor = (opts: TurnOptions): AgentLoopInput["callModel"] => {
           fault = error
         },
       })
-      for await (const piece of stream.textStream) {
-        try {
-          onDelta(piece)
-        } catch {
-          /* a listener that throws must not cost us the rest of the reply */
+      const drain = async () => {
+        for await (const piece of stream.textStream) {
+          try {
+            onDelta(piece)
+          } catch {
+            /* a listener that throws must not cost us the rest of the reply */
+          }
         }
+        // EVERY ONE OF THESE IS MARKED HANDLED, even though only the first rejection is read.
+        //
+        // `Promise.all` rejects as soon as one does and abandons the rest — and a stream fault
+        // rejects ALL of them, so three rejected promises would be left with no handler. Node
+        // prints a warning and carries on, which is why no test here would ever notice (vitest
+        // swallows the process event outright). workerd is stricter: an unhandled rejection can
+        // tear down the request context, and an attended turn runs DETACHED inside one
+        // (ctx.background → waitUntil), so the turn would die before the loop could classify the
+        // failure and settle the session — leaving a transcript stuck in "working" with no error
+        // and no retry.
+        const handled = <T>(p: PromiseLike<T>): Promise<T> => {
+          const q = Promise.resolve(p)
+          q.catch(() => {})
+          return q
+        }
+        return Promise.all([
+          handled(stream.text),
+          handled(stream.toolCalls),
+          handled(stream.finishReason),
+          handled(stream.finalStep),
+        ])
       }
-      // EVERY ONE OF THESE IS MARKED HANDLED, even though only the first rejection is read.
+      // A DEADLINE THIS CODE OWNS, independent of the SDK's own `abortSignal` above.
       //
-      // `Promise.all` rejects as soon as one does and abandons the rest — and a stream fault
-      // rejects ALL of them, so three rejected promises would be left with no handler. Node
-      // prints a warning and carries on, which is why no test here would ever notice (vitest
-      // swallows the process event outright). workerd is stricter: an unhandled rejection can
-      // tear down the request context, and an attended turn runs DETACHED inside one
-      // (ctx.background → waitUntil), so the turn would die before the loop could classify the
-      // failure and settle the session — leaving a transcript stuck in "working" with no error
-      // and no retry.
-      //
-      // Written after a preview turn hung in exactly that state. That turn was never reproduced,
-      // so this is the mechanism that FITS rather than one proven to have caused it; it is kept
-      // because it is free and the hazard is real either way. `Promise.all` still rejects with
-      // the first fault, and the catch below still decides what to do about it.
-      const handled = <T>(p: PromiseLike<T>): Promise<T> => {
-        const q = Promise.resolve(p)
-        q.catch(() => {})
-        return q
-      }
-      const [text, toolCalls, finishReason, finalStep] = await Promise.all([
-        handled(stream.text),
-        handled(stream.toolCalls),
-        handled(stream.finishReason),
-        handled(stream.finalStep),
-      ])
+      // Reproduced live (2026-08-03, PR #633, against a real gateway): a turn's `for await` over
+      // `stream.textStream` never yielded another chunk and never threw — no error, no `onError`
+      // call, nothing — so the abort at req.abortSignal either never fired against this gateway's
+      // connection or fired somewhere the async iterator never observed it. Confirmed idle 9+
+      // minutes with zero log output. The comment this replaced already suspected this exact
+      // shape ("a preview turn hung in exactly that state... never reproduced") and left a
+      // mitigation for the case the SDK's OWN promises reject; it did nothing for the case where
+      // nothing ever rejects at all. This is the backstop for that: however the gateway or the
+      // SDK misbehaves, draining the stream cannot block the turn past STREAM_DEADLINE_MS. A
+      // timeout here is not an APICallError, so the catch below falls to the buffered retry —
+      // the same recovery already used for a gateway that cannot stream at all.
+      const [text, toolCalls, finishReason, finalStep] = await withDeadline(
+        drain(),
+        STREAM_DEADLINE_MS,
+      )
       // NOTHING AT ALL is not an empty answer, it is a gateway that did not stream: it honoured
       // `stream: true` with ordinary JSON, which read as SSE yields no frames and no finish.
       // Asking again without the flag is the difference between an answer and a silent blank.

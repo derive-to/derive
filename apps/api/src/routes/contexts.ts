@@ -36,6 +36,7 @@ import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { getInstanceChatModel } from "../lib/instance-settings"
 import {
   manifestDescription,
   parseManifestRepos,
@@ -167,6 +168,43 @@ export const contextRoutes = (ctx: AppContext) => {
   }
 
   /**
+   * THE TURN MUST OUTLIVE NOTHING — it has to settle before the runtime reclaims it.
+   *
+   * An attended turn is detached (`ctx.background` → `waitUntil` on Workers), and Cloudflare
+   * ends waitUntil work ~30s after the response went out. When that happens the isolate simply
+   * stops: no timer fires, no catch runs, nothing is written. The session stays `working` with
+   * no answer and no error, and the only thing left to rescue it is the 10-minute reaper.
+   * So the turn races its own budget and, on losing, writes a real failure into the transcript
+   * while it is still alive to do it. `ctx.attendedTurnBudgetMs` is set only where such a
+   * ceiling exists (the Workers entry); on Node it is unset and this is a plain await, because
+   * there a slow answer is still an answer.
+   *
+   * Resolves rather than rejects, so the caller settles the session in the ordinary way instead
+   * of routing a deadline through the generic "something went wrong" catch.
+   */
+  const withinTurnBudget = async <T extends { reply: string; outcome: string }>(
+    work: Promise<T>,
+  ): Promise<T | { reply: string; outcome: string }> => {
+    const budget = ctx.attendedTurnBudgetMs
+    if (!budget) return work
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const expired = new Promise<{ reply: string; outcome: string }>((resolve) => {
+      timer = setTimeout(
+        () =>
+          resolve({
+            reply:
+              "That took longer than I am allowed to spend on one answer, so I stopped rather than leave you waiting. Nothing was changed. Asking something narrower usually gets through.",
+            outcome: "failed",
+          }),
+        budget,
+      )
+    })
+    // The loser keeps running until the runtime reclaims it — there is no cancelling the turn
+    // from out here — but the session is already settled by then, so nothing it does can land.
+    return Promise.race([work, expired]).finally(() => clearTimeout(timer))
+  }
+
+  /**
    * One WORKSPACE chat turn: the model, this workspace's tools, and the transcript.
    *
    * The tools are Derive's own MCP tools, constructed for the ASKER (see lib/chat-tools.ts), so
@@ -191,11 +229,23 @@ export const contextRoutes = (ctx: AppContext) => {
       return
     }
     const transcript = await meta.listSessionMessages(s.id)
-    // WHICH MODEL. What the person asked for on this turn, else the one this conversation was
-    // already using (read off the last agent message, so the choice sticks without a column),
-    // else the deploy's default.
+    const ws = await meta.getWorkspace(s.org_id).catch(() => null)
+    const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
+    // WHICH MODEL, read fresh every turn so an admin can change it mid-conversation.
+    //
+    // 1. What the person asked for on THIS turn — an explicit choice, made now, always wins.
+    // 2. The OPERATOR's deploy-wide override — the lever for when the configured default
+    //    cannot serve. It outranks the conversation's memory on purpose: an override every
+    //    in-flight conversation ignores is not a lever. Ignored when it names nothing.
+    // 3. What this conversation was already using (off the last agent message, so a choice
+    //    sticks without a column).
+    // 4. The deploy's default.
     const previous = lastModelId(transcript)
-    const model = ctx.models?.resolve(askedModelId ?? previous ?? null)
+    const operatorPick = await getInstanceChatModel(meta).catch(() => null)
+    const override = operatorPick && ctx.models?.resolve(operatorPick)
+    const model = askedModelId
+      ? ctx.models?.resolve(askedModelId)
+      : override || ctx.models?.resolve(previous ?? null)
     if (!model) {
       // A named model that is gone is worth saying out loud: silently answering with a different
       // one is a lie about which model produced the text.
@@ -208,8 +258,6 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       return
     }
-    const ws = await meta.getWorkspace(s.org_id).catch(() => null)
-    const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
     const tools = buildChatTools(ctx, {
       org: s.org_id,
       user: { id: me.id, name: me.name ?? me.username ?? null },
@@ -218,22 +266,26 @@ export const contextRoutes = (ctx: AppContext) => {
       // the next write, not merely the next session.
       flags: { agentKillswitch: settings?.agentKillswitch ?? false },
     })
-    const res = await runChatTurn(
-      { model: { ...model, callModel: stream.wrap(model.callModel) } },
-      {
-        session: s,
-        transcript,
-        tools,
-        workspaceName: ws?.name ?? "this workspace",
-        asker: { name: me.name ?? me.username ?? null, role: seat.role },
-        skills: tools.skills,
-      },
+    const res = await withinTurnBudget(
+      runChatTurn(
+        { model: { ...model, callModel: stream.wrap(model.callModel) } },
+        {
+          session: s,
+          transcript,
+          tools,
+          workspaceName: ws?.name ?? "this workspace",
+          asker: { name: me.name ?? me.username ?? null, role: seat.role },
+          skills: tools.skills,
+        },
+      ),
     )
     await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
       outcome: res.outcome,
-      cost_micro_usd: res.costMicroUsd,
-      model: res.model,
-      tools: res.tools,
+      // Absent on a turn that ran out of budget — it never got a cost or a model back, and
+      // inventing zeroes there would read as a turn that was free rather than one that was cut.
+      ...("costMicroUsd" in res ? { cost_micro_usd: res.costMicroUsd } : {}),
+      ...("model" in res ? { model: res.model } : {}),
+      ...("tools" in res ? { tools: res.tools } : {}),
     })
   }
 
@@ -402,54 +454,56 @@ export const contextRoutes = (ctx: AppContext) => {
         subject.mode === "publish" && roleAllows(role, "publish")
           ? subject
           : { kind: "artifact", id: subject.id }
-      const res = await runSessionTurn(
-        {
-          meta,
-          blobs: ctx.blobs,
-          bus,
-          notify: ctx.notify,
-          notifyRender: ctx.notifyRender,
-          background: ctx.background,
-          search: ctx.search,
-          // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
-          // `callModel` along exactly as before, and the streaming decision stays here, where
-          // the transport (this asker's channel) is actually known.
-          callModel: stream.wrap(ctx.callModel),
-          billingBlocked: ctx.billingBlocked,
-        },
-        {
-          session: s,
-          subject: effective,
-          artifact,
-          transcript: await meta.listSessionMessages(s.id),
-          // READ-ONLY reach for the document rail: the conversation can look something up in
-          // the workspace, and the DOCUMENT's own write stays on the landing port below. The
-          // subset is enforced by not registering the rest (see chat-tools), so this is a
-          // narrower surface than the workspace chat rather than the same one with a guard.
-          ...(() => {
-            const t = seat
-              ? buildChatTools(
-                  ctx,
-                  {
-                    org: artifact.org_id,
-                    user: { id: me.id, name: me.name ?? me.username ?? null },
-                    seatRole: seat.role,
-                  },
-                  RAIL_CHAT_TOOLS,
-                )
-              : null
-            return t ? { tools: t, skills: t.skills } : {}
-          })(),
-          // REAL workspace flags, not hardcoded ones. Hardcoding these made chat ignore the
-          // killswitch entirely and granted the `auto` opt-in that a workspace has to enable
-          // deliberately (it defaults OFF) — so an operator who flipped the killswitch after a
-          // bad run would have found chat still live-publishing.
-          flags: {
-            agentKillswitch: flags?.agentKillswitch ?? false,
-            agentAutoEnabled: flags?.agentAutoEnabled ?? false,
+      const res = await withinTurnBudget(
+        runSessionTurn(
+          {
+            meta,
+            blobs: ctx.blobs,
+            bus,
+            notify: ctx.notify,
+            notifyRender: ctx.notifyRender,
+            background: ctx.background,
+            search: ctx.search,
+            // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
+            // `callModel` along exactly as before, and the streaming decision stays here, where
+            // the transport (this asker's channel) is actually known.
+            callModel: stream.wrap(ctx.callModel),
+            billingBlocked: ctx.billingBlocked,
           },
-          onBehalf: { id: me.id, name: me.name ?? me.username ?? me.email ?? "someone" },
-        },
+          {
+            session: s,
+            subject: effective,
+            artifact,
+            transcript: await meta.listSessionMessages(s.id),
+            // READ-ONLY reach for the document rail: the conversation can look something up in
+            // the workspace, and the DOCUMENT's own write stays on the landing port below. The
+            // subset is enforced by not registering the rest (see chat-tools), so this is a
+            // narrower surface than the workspace chat rather than the same one with a guard.
+            ...(() => {
+              const t = seat
+                ? buildChatTools(
+                    ctx,
+                    {
+                      org: artifact.org_id,
+                      user: { id: me.id, name: me.name ?? me.username ?? null },
+                      seatRole: seat.role,
+                    },
+                    RAIL_CHAT_TOOLS,
+                  )
+                : null
+              return t ? { tools: t, skills: t.skills } : {}
+            })(),
+            // REAL workspace flags, not hardcoded ones. Hardcoding these made chat ignore the
+            // killswitch entirely and granted the `auto` opt-in that a workspace has to enable
+            // deliberately (it defaults OFF) — so an operator who flipped the killswitch after a
+            // bad run would have found chat still live-publishing.
+            flags: {
+              agentKillswitch: flags?.agentKillswitch ?? false,
+              agentAutoEnabled: flags?.agentAutoEnabled ?? false,
+            },
+            onBehalf: { id: me.id, name: me.name ?? me.username ?? me.email ?? "someone" },
+          },
+        ),
       )
       // METERING. The turn computes its spend and this used to throw it away, so attended chat
       // — the lane on the operator's key — left no trace anywhere. Recorded on the agent message
@@ -458,8 +512,10 @@ export const contextRoutes = (ctx: AppContext) => {
       // design — see costOf); the OUTCOME and turn count are still worth having on their own.
       await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
         outcome: res.outcome,
-        wrote: res.wrote,
-        cost_micro_usd: res.costMicroUsd,
+        // Absent on a turn cut short by the budget — it never produced these, and a zero would
+        // read as a turn that wrote nothing and cost nothing rather than one that was stopped.
+        ...("wrote" in res ? { wrote: res.wrote } : {}),
+        ...("costMicroUsd" in res ? { cost_micro_usd: res.costMicroUsd } : {}),
       })
     } catch (e) {
       log.error("attended turn failed", {
@@ -2306,11 +2362,14 @@ export const contextRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const s = await meta.getSession(c.req.param("id"))
-      const linked = s ? await contextOf(s) : null
-      if (!s || !linked) return bail(fail(c, 404, "not found"))
+      if (!s) return bail(fail(c, 404, "not found"))
+      const linked = await contextOf(s)
 
       const agent = await agentFor(c)
       if (agent) {
+        // An agent only ever fails a CONTEXT's run — a contextless (workspace chat)
+        // session has no context-bound agent to act as, so this stays gated on linked.
+        if (!linked) return bail(fail(c, 404, "not found"))
         if (isRunBearer(c)) return bail(fail(c, 403, NOT_THIS_LANE))
         if (agent.id !== linked.context.agent_id) return bail(fail(c, 404, "not found"))
         // The asker may close mid-run; the run's eventual failure must not reopen
@@ -2326,13 +2385,19 @@ export const contextRoutes = (ctx: AppContext) => {
 
       const me = await currentUser(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
+      // A CONTEXTLESS chat session has no context to gate on, so closing it is the
+      // asker's call alone — same carve-out the session read already makes. Without this,
+      // Stop 404s on every workspace-chat turn (the ask, not just the poll, matters here):
+      // a hung answer had no way to end early short of the ten-minute reaper.
+      const mine = !s.context_id && s.asker_id === me.id
       // Same membership floor as the session read: a removed asker/creator can't
       // touch the session at all (close included) once they're out of the workspace.
-      if (
-        !(await canAskContext(c, linked.context)) ||
-        (s.asker_id !== me.id && linked.context.created_by !== me.id)
-      )
-        return bail(fail(c, 404, "not found"))
+      const allowed =
+        mine ||
+        (!!linked &&
+          (await canAskContext(c, linked.context)) &&
+          (linked.context.created_by === me.id || s.asker_id === me.id))
+      if (!allowed) return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ state: z.literal("closed") }))
       if (b instanceof Response) return bail(b)
       const updated = await meta.setSessionState(s.id, b.state)

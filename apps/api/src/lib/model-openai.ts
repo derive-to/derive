@@ -21,6 +21,9 @@ export interface OpenAiCompatOptions {
   baseUrl: string
   model: string
   maxTokens?: number
+  /** Extra top-level fields merged into every request body — the seam hosts use for their own
+   *  knobs (routing, reasoning). Never overwrites what the adapter sets; see the merge below. */
+  extraBody?: Record<string, unknown>
   /** Injected in tests so the turn mapping is exercised without a key or a network. */
   fetchImpl?: typeof fetch
 }
@@ -74,13 +77,38 @@ const priceFromGateway: PriceTurn = ({ providerMetadata }) => {
   return typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null
 }
 
+/**
+ * Merge `extraBody` into an outgoing request, at the fetch seam.
+ *
+ * Done here rather than through the SDK's provider options because this has to reach the WIRE
+ * whatever the SDK does with unknown fields, and because the seam already exists for tests. The
+ * SDK's own body wins on any key collision: routing is the caller's business, the request shape
+ * is the adapter's, and a config typo must never be able to rewrite `messages`.
+ */
+const withExtraBody = (base: typeof fetch, extra: Record<string, unknown>): typeof fetch =>
+  (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    if (!init?.body || typeof init.body !== "string") return base(input, init)
+    let merged = init.body
+    try {
+      merged = JSON.stringify({ ...extra, ...(JSON.parse(init.body) as Record<string, unknown>) })
+    } catch {
+      /* not JSON — send it exactly as the SDK built it */
+    }
+    return base(input, { ...init, body: merged })
+  }) as typeof fetch
+
 export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["callModel"] => {
+  const baseFetch = opts.fetchImpl ?? globalThis.fetch.bind(globalThis)
+  const doFetch =
+    opts.extraBody && Object.keys(opts.extraBody).length
+      ? withExtraBody(baseFetch, opts.extraBody)
+      : opts.fetchImpl
   const provider = createOpenAICompatible({
     name: PROVIDER_KEY,
     // Trailing slashes are a configuration mistake nobody should have to debug from a 404.
     baseURL: opts.baseUrl.replace(/\/+$/, ""),
     apiKey: opts.apiKey,
-    ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
+    ...(doFetch ? { fetch: doFetch } : {}),
     // Ask for the final usage frame a stream otherwise omits; without it every streamed turn
     // would report cost as unknown.
     includeUsage: true,

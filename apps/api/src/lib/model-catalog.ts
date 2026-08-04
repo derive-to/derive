@@ -74,7 +74,24 @@ export interface GatewayConfig {
    * accidentally configure a catalog whose default is unreachable.
    */
   alsoModels?: string
+  /** Preferred upstream backends, best first, comma-separated. Only meaningful on a gateway that
+   *  routes; unset sends nothing. */
+  providers?: string
 }
+
+/**
+ * NO THINKING BEFORE AN ANSWER.
+ *
+ * A reasoning model spends most of a short answer's budget thinking, and an attended turn makes
+ * several model calls — so it is the difference between a reply that arrives and one that is
+ * waited for. Measured locally across both the SDK and a raw request: roughly 1.7x faster with
+ * it off, and a capped thinking budget was slower than off while an effort level was slower than
+ * the default.
+ *
+ * A constant rather than configuration: chat is interactive, and there is no deployment that
+ * wants its interactive turns slower. Hosts that do not understand the field ignore it.
+ */
+const NO_THINKING = { reasoning: { enabled: false } } as const
 
 /**
  * A model id's display label: the part after the last `/`, which is what distinguishes
@@ -106,12 +123,28 @@ const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
 export const catalogFromGateway = (gw: GatewayConfig | null | undefined): ModelCatalog | null => {
   if (!gw) return null
   const ids = [gw.model, ...parseAlso(gw.alsoModels, gw.model)]
+  // Fallbacks stay ON: pinning a list and refusing everything else turns "slower than we hoped"
+  // into "no answer at all" the moment the preferred backend is busy.
+  const order = (gw.providers ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const extraBody = {
+    ...(order.length ? { provider: { order, allow_fallbacks: true } } : {}),
+    ...NO_THINKING,
+  }
   return catalogOf(
     ids.map((id, i) => ({
       id,
       label: labelFor(id),
       isDefault: i === 0,
-      build: () => openAiCompatModel({ baseUrl: gw.baseUrl, apiKey: gw.apiKey, model: id }),
+      build: () =>
+        openAiCompatModel({
+          baseUrl: gw.baseUrl,
+          apiKey: gw.apiKey,
+          model: id,
+          ...(Object.keys(extraBody).length ? { extraBody } : {}),
+        }),
     })),
   )
 }

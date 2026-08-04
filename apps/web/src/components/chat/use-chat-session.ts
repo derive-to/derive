@@ -21,10 +21,20 @@ interface SessionPayload {
   messages: ChatMessage[]
 }
 
+// Every call on this lane — open, follow-up, poll — is supposed to be FAST: the turn itself runs
+// detached (background()/waitUntil), so the response here is just a DB read or a single insert,
+// never the model call. A request that is still pending past this is not a slow answer, it is a
+// hung one — a dropped connection, or the isolate-died failure abandoned-turn.ts describes, caught
+// one step earlier than that reaper can reach it (it needs a session id to poll; `open()` has not
+// received one yet). Bounded well under the 10-minute server reaper, so a hang here fails fast
+// with a real error instead of leaving the composer on "Working…" with nothing to recover it.
+const REQUEST_TIMEOUT_MS = 30_000
+
 export const json = async <T>(url: string, init?: RequestInit): Promise<T> => {
   const r = await fetch(url, {
     ...init,
     credentials: "include",
+    signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
   })
   if (!r.ok) {

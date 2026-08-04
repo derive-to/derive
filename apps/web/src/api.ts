@@ -159,6 +159,7 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
+export type ChatModelOption = components["schemas"]["ChatModel"]
 
 /** GET /v1/bootstrap — the four boot endpoints' bodies in one response. Each field is
  *  exactly the corresponding endpoint's shape (server-side the mappers are shared), so
@@ -1093,9 +1094,38 @@ export const api = {
       credentials: "include",
     }).then(() => undefined),
 
+  // OPERATOR-ONLY, and used as the operator SIGNAL itself: it 403s for everyone who is not a
+  // super-admin, so a component can gate on whether this resolves rather than on a role the
+  // client would otherwise have to be told separately.
+  systemCapabilities: (): Promise<unknown> => f("/v1/system/capabilities", opts()).then(j),
+
+  // THE DEPLOY-WIDE model, operator-only. Both 403 for everyone else, which is also how the UI
+  // knows whether to offer the switch at all.
+  getInstanceChatModel: (): Promise<{
+    model: string | null
+    options: ChatModelOption[]
+  }> => f("/v1/system/chat-model", opts()).then(j),
+  setInstanceChatModel: (model: string | null): Promise<{ model: string | null }> =>
+    f("/v1/system/chat-model", { ...opts({ model }), method: "PUT" }).then(j),
+
+  // Which models this deploy can answer a chat turn with, default first. Readable by any
+  // signed-in user (it is the deploy's capability list, not a workspace's data); CHANGING which
+  // one answers is `updateWorkspaceSettings({ chatModel })`, which needs Admin.
+  chatModels: (): Promise<{ models: ChatModelOption[] }> => f("/v1/chat/models", opts()).then(j),
+
   // Integration switches (enable/disable each channel) — Admin to change.
   getWorkspaceSettings: (): Promise<OrgSettings> => f("/v1/workspace/settings", opts()).then(j),
-  updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
+  // `null` CLEARS a pointer-shaped setting back to its default — which the response type cannot
+  // express (it only ever reads back as set-or-absent), so the clears the route accepts are
+  // spelled out here rather than cast away at each call site.
+  updateWorkspaceSettings: (
+    // Omit-then-restate, because an intersection would NARROW these back to `string` — the
+    // response type only ever reads them as set-or-absent, and `null` is the clear.
+    patch: Omit<Partial<OrgSettings>, "chatModel" | "defaultAgentId"> & {
+      chatModel?: string | null
+      defaultAgentId?: string | null
+    },
+  ): Promise<OrgSettings> =>
     f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
 
   // Billing: plan truth (any member can read), checkout, and the Stripe portal
