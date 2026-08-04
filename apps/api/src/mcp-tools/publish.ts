@@ -1,4 +1,5 @@
 import {
+  type AnyDocEdit,
   artifactUrl,
   assertedOnly,
   bundleFactsAdvisory,
@@ -26,7 +27,12 @@ import {
   RENDER_WAIT_MAX,
   type RenderVariant,
 } from "../lib/collect-render"
-import { type MaterializedEdits, materializeEdits, preservingFilename } from "../lib/edits"
+import {
+  type MaterializedEdits,
+  materializeEdits,
+  materializeSlideOps,
+  preservingFilename,
+} from "../lib/edits"
 import { buildReviewEmail } from "../lib/email"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { badChoice, choiceDescription } from "../lib/open-choice"
@@ -296,11 +302,33 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             "Surgical revision of a SINGLE-FILE artifact without resending it. Two shapes, not mixable in one batch: {old_str, new_str} — exact-match against the current stored source, applied in order (read format:'html' first so old_str matches the raw source); or {quote: {exact, prefix, suffix}, new_text} — located by VISIBLE text and resolved server-side, no raw read needed. Requires `short_id`; use INSTEAD of `content`. See derive://skills/publishing. A miss applies nothing and returns why.",
           ),
+        slide_ops: z
+          .array(
+            z.union([
+              z.object({
+                op: z.literal("move"),
+                from: z.coerce.number().describe("1-based position of the slide to move."),
+                to: z.coerce.number().describe("1-based position it should end up at."),
+              }),
+              z.object({
+                op: z.literal("delete"),
+                at: z.coerce.number().describe("1-based position of the slide to remove."),
+              }),
+              z.object({
+                op: z.literal("duplicate"),
+                at: z.coerce.number().describe("1-based position of the slide to copy."),
+              }),
+            ]),
+          )
+          .optional()
+          .describe(
+            "Rearrange a DECK by position: move / delete / duplicate whole slides, applied in order. Use this instead of `edits` for structural changes — it never sends slide markup, so it costs the same whatever the slide holds, and it cannot half-apply. Positions are 1-based, as the deck bar shows them; `data-derive-slide` is identity and is never renumbered, so comment threads follow their slide. Requires `short_id`; use INSTEAD of `content`/`edits`. Ambiguous structure (nested slides, content between slides) refuses the whole batch and says why.",
+          ),
         base_version: z.coerce
           .number()
           .optional()
           .describe(
-            "Safety check for `edits`: pass the version you read; the publish errors instead of applying when the artifact has moved past it.",
+            "Safety check for `edits`/`slide_ops`: pass the version you read; the publish errors instead of applying when the artifact has moved past it.",
           ),
       },
     },
@@ -324,6 +352,7 @@ export function registerPublishTool(tc: ToolContext): void {
       wait,
       workspace,
       edits,
+      slide_ops,
       base_version,
     }) => {
       // BEFORE anything is written. Validating this after the publish committed meant a
@@ -424,21 +453,29 @@ export function registerPublishTool(tc: ToolContext): void {
         actRole = t.role
       }
 
-      // `edits` — materialize the full new content up front, then fall through to the
-      // untouched publish/proposal pipeline (sweep, addresses, receipts all inherit).
+      // `edits` / `slide_ops` — materialize the full new content up front, then fall
+      // through to the untouched publish/proposal pipeline (sweep, addresses, receipts
+      // all inherit). Text and structure are separate fields because they are separate
+      // kinds of intent, and a batch mixing them would have no honest ordering.
       let editsApplied = 0
-      if (edits !== undefined) {
+      let slideOpsApplied = 0
+      if (edits !== undefined || slide_ops !== undefined) {
+        const field = slide_ops !== undefined ? "slide_ops" : "edits"
+        if (edits !== undefined && slide_ops !== undefined)
+          return err("Provide `edits` OR `slide_ops`, not both.")
         if (content !== undefined || files)
-          return err("Provide `edits` OR `content`/`files`, not both.")
-        if (!existing) return err("`edits` revises an EXISTING artifact — pass its `short_id`.")
+          return err(`Provide \`${field}\` OR \`content\`/\`files\`, not both.`)
+        if (!existing)
+          return err(`\`${field}\` revises an EXISTING artifact — pass its \`short_id\`.`)
+        const deps = {
+          getVersion: ctx.meta.getVersion.bind(ctx.meta),
+          sourceText: ctx.sourceText,
+        }
         let materialized: MaterializedEdits
         try {
-          materialized = await materializeEdits(
-            { getVersion: ctx.meta.getVersion.bind(ctx.meta), sourceText: ctx.sourceText },
-            existing,
-            edits,
-            base_version,
-          )
+          materialized = slide_ops
+            ? await materializeSlideOps(deps, existing, slide_ops, base_version)
+            : await materializeEdits(deps, existing, edits as AnyDocEdit[], base_version)
         } catch (e) {
           if (e instanceof EditError) return err(e.message)
           throw e
@@ -450,7 +487,8 @@ export function registerPublishTool(tc: ToolContext): void {
         if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
         if (await ctx.overStorage(targetOrg, editedBytes)) return err(ctx.blockCopy.storage.message)
         content = materialized.content
-        editsApplied = edits.length
+        if (slide_ops) slideOpsApplied = slide_ops.length
+        else editsApplied = (edits as AnyDocEdit[]).length
         if (!filename) filename = materialized.filename
       }
 
@@ -518,6 +556,7 @@ export function registerPublishTool(tc: ToolContext): void {
             base_version: proposal.base_version,
             addressed,
             ...(editsApplied ? { edits_applied: editsApplied } : {}),
+            ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
             note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
           })
         } catch (e) {
@@ -822,6 +861,7 @@ export function registerPublishTool(tc: ToolContext): void {
           link_role: artifact.link_role,
           listed: artifact.listed,
           ...(editsApplied ? { edits_applied: editsApplied } : {}),
+          ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),
           note:

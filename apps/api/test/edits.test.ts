@@ -5,6 +5,7 @@ import {
   EditConflictError,
   MAX_EDITS_PER_BATCH,
   materializeEdits,
+  materializeSlideOps,
   parseBaseVersion,
   preservingFilename,
 } from "../src/lib/edits"
@@ -305,5 +306,58 @@ describe("image swap (old_str on a src attribute)", () => {
     await expect(
       materializeEdits(deps, fileArtifact(1), [{ old_str: src, new_str: "x" }], 1),
     ).rejects.toThrow(EditError)
+  })
+})
+
+describe("materializeSlideOps", () => {
+  const deck = (order: number[]) =>
+    `<!doctype html><html><body>\n${order
+      .map((id) => `<section class="slide" data-derive-slide="${id}"><h2>s${id}</h2></section>`)
+      .join(
+        "\n",
+      )}\n<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:${order.length}},"*")</script></body></html>`
+
+  const htmlDeps = (text: string) => mkDeps({ 1: { text, contentType: "text/html" } })
+
+  it("applies a move and preserves the artifact's content type", async () => {
+    const out = await materializeSlideOps(
+      htmlDeps(deck([0, 1, 2])),
+      fileArtifact(1),
+      [{ op: "move", from: 3, to: 1 }],
+      1,
+    )
+    expect(out.filename).toBe("index.html")
+    // Identity travels with the slide; the attribute is never renumbered.
+    expect([...out.content.matchAll(/data-derive-slide="(\d+)"/g)].map((m) => m[1])).toEqual([
+      "2",
+      "0",
+      "1",
+    ])
+  })
+
+  it("shares the base_version staleness check with edits (409-shaped)", async () => {
+    await expect(
+      materializeSlideOps(htmlDeps(deck([0, 1])), fileArtifact(3), [{ op: "delete", at: 1 }], 2),
+    ).rejects.toBeInstanceOf(EditConflictError)
+  })
+
+  it("refuses a bundle, naming the field the caller used", async () => {
+    const bundle = { ...fileArtifact(1), kind: "bundle" as const }
+    await expect(
+      materializeSlideOps(htmlDeps(deck([0, 1])), bundle, [{ op: "delete", at: 1 }], 1),
+    ).rejects.toThrow(/slide_ops/)
+  })
+
+  it("refuses a document that isn't HTML", async () => {
+    const md = mkDeps({ 1: { text: "# not a deck", contentType: "text/markdown" } })
+    await expect(
+      materializeSlideOps(md, fileArtifact(1), [{ op: "delete", at: 1 }], 1),
+    ).rejects.toThrow(/no slides to arrange/i)
+  })
+
+  it("refuses a non-array payload as a clean edit error, not a 500", async () => {
+    await expect(
+      materializeSlideOps(htmlDeps(deck([0, 1])), fileArtifact(1), { op: "move" } as never, 1),
+    ).rejects.toBeInstanceOf(EditError)
   })
 })

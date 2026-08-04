@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { DECK_TEMPLATE } from "./deck-template.gen"
-import { countSlideElements, isDeckDocument, isUnannouncedDeck, speaksDeckProtocol } from "./decks"
+import {
+  applySlideOps,
+  countSlideElements,
+  isDeckDocument,
+  isUnannouncedDeck,
+  MAX_SLIDE_OPS,
+  sliceSlides,
+  speaksDeckProtocol,
+} from "./decks"
 
 /** A minimal real deck: the protocol plus slides that carry the stable index. */
 const deck = (n = 3) =>
@@ -109,5 +117,201 @@ describe("unannounced decks", () => {
   it("stays quiet on an ordinary page that happens to use a slide class twice", () => {
     // A carousel, a hero, a stray utility class: two is not a deck attempt.
     expect(isUnannouncedDeck('<div class="slide"></div><div class="slide"></div>')).toBe(false)
+  })
+})
+
+/** Slides separated by real whitespace, the way an authored deck actually reads. */
+const spaced = (slides: string[]) =>
+  `<!doctype html><html><body>\n  ${slides.join("\n  ")}\n<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:${slides.length}},"*")</script></body></html>`
+
+const sl = (id: number | null, body: string) =>
+  id === null
+    ? `<section class="slide"><h2>${body}</h2></section>`
+    : `<section class="slide" data-derive-slide="${id}"><h2>${body}</h2></section>`
+
+/** The visible order of a deck's slides, by their heading text. */
+const order = (html: string) =>
+  sliceSlides(html).map((s) => /<h2>([^<]*)</.exec(html.slice(s.start, s.end))?.[1])
+
+/** Each slide's stable identity, in document order. */
+const idsOf = (html: string) => sliceSlides(html).map((s) => s.id)
+
+describe("sliceSlides", () => {
+  it("returns each slide's exact span, in DOCUMENT order", () => {
+    const html = spaced([sl(0, "a"), sl(1, "b"), sl(2, "c")])
+    const spans = sliceSlides(html)
+    expect(spans.map((s) => s.position)).toEqual([1, 2, 3])
+    expect(spans.map((s) => html.slice(s.start, s.end))).toEqual([
+      sl(0, "a"),
+      sl(1, "b"),
+      sl(2, "c"),
+    ])
+  })
+
+  it("orders by the DOM, not by the identity attribute", () => {
+    // After one reorder these disagree. Document order is what the deck's own script
+    // reveals, so it is what "slide 2" means to anyone watching.
+    const html = spaced([sl(2, "third"), sl(0, "first"), sl(1, "second")])
+    expect(order(html)).toEqual(["third", "first", "second"])
+    expect(idsOf(html)).toEqual([2, 0, 1])
+  })
+
+  it("ignores slides that only exist inside a comment", () => {
+    const html = spaced([sl(0, "a"), sl(1, "b")]).replace(
+      "<body>",
+      `<body><!-- ${sl(9, "ghost")} -->`,
+    )
+    expect(order(html)).toEqual(["a", "b"])
+  })
+
+  it("is not fooled by markup inside a script", () => {
+    // A close tag in a JS string is text, not structure — counting it would end a slide early.
+    const html = spaced([
+      `<section class="slide" data-derive-slide="0"><h2>a</h2><script>const t = "</section>"</script></section>`,
+      sl(1, "b"),
+    ])
+    expect(order(html)).toEqual(["a", "b"])
+  })
+
+  it("handles a `>` inside an attribute value", () => {
+    const html = spaced([
+      `<section class="slide" data-derive-slide="0" title="a > b"><h2>a</h2></section>`,
+      sl(1, "b"),
+    ])
+    expect(order(html)).toEqual(["a", "b"])
+  })
+
+  it("counts nested non-slide elements of the same tag correctly", () => {
+    const html = spaced([
+      `<section class="slide" data-derive-slide="0"><section><h2>a</h2></section></section>`,
+      sl(1, "b"),
+    ])
+    expect(order(html)).toEqual(["a", "b"])
+  })
+
+  it("refuses a deck that nests one slide inside another", () => {
+    const html = spaced([
+      `<section class="slide"><section class="slide"><h2>a</h2></section></section>`,
+    ])
+    expect(() => sliceSlides(html)).toThrow(/nests a slide/i)
+  })
+
+  it("refuses a slide that never closes", () => {
+    expect(() => sliceSlides(`<body><section class="slide"><h2>a</h2></body>`)).toThrow(
+      /never closed/i,
+    )
+  })
+
+  it("returns nothing for a page with no slides", () => {
+    expect(sliceSlides("<html><body><p>hi</p></body></html>")).toEqual([])
+  })
+})
+
+describe("applySlideOps", () => {
+  const three = () => spaced([sl(0, "a"), sl(1, "b"), sl(2, "c")])
+
+  it("moves a slide and NEVER renumbers identities", () => {
+    // The whole comment-safety argument rests on this: threads ride the attribute.
+    const out = applySlideOps(three(), [{ op: "move", from: 3, to: 1 }])
+    expect(order(out)).toEqual(["c", "a", "b"])
+    expect(idsOf(out)).toEqual([2, 0, 1])
+  })
+
+  it("moves forward as well as back", () => {
+    expect(order(applySlideOps(three(), [{ op: "move", from: 1, to: 3 }]))).toEqual(["b", "c", "a"])
+  })
+
+  it("deletes by position", () => {
+    const out = applySlideOps(three(), [{ op: "delete", at: 2 }])
+    expect(order(out)).toEqual(["a", "c"])
+    expect(idsOf(out)).toEqual([0, 2])
+  })
+
+  it("duplicates after the original with a FRESH identity", () => {
+    // A copy sharing its original's id would make every thread claim both slides.
+    const out = applySlideOps(three(), [{ op: "duplicate", at: 1 }])
+    expect(order(out)).toEqual(["a", "a", "b", "c"])
+    expect(idsOf(out)).toEqual([0, 3, 1, 2])
+  })
+
+  it("applies ops in order, each seeing the last one's result", () => {
+    const out = applySlideOps(three(), [
+      { op: "move", from: 3, to: 1 },
+      { op: "delete", at: 2 },
+    ])
+    expect(order(out)).toEqual(["c", "b"])
+  })
+
+  it("keeps the document around the slides byte-for-byte", () => {
+    const src = three()
+    const out = applySlideOps(src, [{ op: "move", from: 1, to: 2 }])
+    expect(out.startsWith("<!doctype html><html><body>\n  ")).toBe(true)
+    expect(out.endsWith("</body></html>")).toBe(true)
+    expect(isDeckDocument(out)).toBe(true)
+    expect(countSlideElements(out)).toBe(countSlideElements(src))
+  })
+
+  it("stamps identities onto a class-only deck on its first arrange", () => {
+    const html = spaced([sl(null, "a"), sl(null, "b"), sl(null, "c")])
+    expect(idsOf(html)).toEqual([null, null, null])
+    const out = applySlideOps(html, [{ op: "move", from: 1, to: 2 }])
+    expect(order(out)).toEqual(["b", "a", "c"])
+    expect(idsOf(out)).toEqual([1, 0, 2])
+  })
+
+  it("mints identities only for the slides that lack one", () => {
+    const html = spaced([sl(4, "a"), sl(null, "b")])
+    const out = applySlideOps(html, [{ op: "move", from: 2, to: 1 }])
+    expect(idsOf(out)).toEqual([5, 4])
+  })
+
+  it("refuses content sitting between two slides", () => {
+    // It belongs to neither slide, so a reorder would move it somewhere it doesn't belong.
+    const withOrphan = spaced([sl(0, "a"), "<p>orphan</p>", sl(1, "b")])
+    expect(() => applySlideOps(withOrphan, [{ op: "move", from: 1, to: 2 }])).toThrow(
+      /between slides/i,
+    )
+  })
+
+  it("refuses two slides that share an identity", () => {
+    const html = spaced([sl(0, "a"), sl(0, "b")])
+    expect(() => applySlideOps(html, [{ op: "move", from: 1, to: 2 }])).toThrow(
+      /same data-derive-slide/i,
+    )
+  })
+
+  it("refuses an out-of-range position and applies NOTHING", () => {
+    expect(() => applySlideOps(three(), [{ op: "move", from: 9, to: 1 }])).toThrow(/out of range/i)
+    expect(() => applySlideOps(three(), [{ op: "delete", at: 0 }])).toThrow(/out of range/i)
+  })
+
+  it("refuses to delete the last slide standing", () => {
+    const html = spaced([sl(0, "a")])
+    expect(() => applySlideOps(html, [{ op: "delete", at: 1 }])).toThrow(/only slide/i)
+  })
+
+  it("refuses an unknown op, an empty batch, and an oversized one", () => {
+    expect(() => applySlideOps(three(), [{ op: "shuffle" } as never])).toThrow(/unknown op/i)
+    expect(() => applySlideOps(three(), [])).toThrow(/empty/i)
+    expect(() =>
+      applySlideOps(
+        three(),
+        Array.from({ length: MAX_SLIDE_OPS + 1 }, () => ({ op: "move", from: 1, to: 2 }) as const),
+      ),
+    ).toThrow(/maximum per request/i)
+  })
+
+  it("refuses a document with no slides at all", () => {
+    expect(() =>
+      applySlideOps("<html><body><p>hi</p></body></html>", [{ op: "delete", at: 1 }]),
+    ).toThrow(/no slide elements/i)
+  })
+
+  it("rearranges the canonical template and leaves it a deck", () => {
+    // The starter every surface hands over is the deck most likely to be arranged first.
+    const out = applySlideOps(DECK_TEMPLATE, [{ op: "move", from: 3, to: 1 }])
+    expect(isDeckDocument(out)).toBe(true)
+    expect(countSlideElements(out)).toBe(countSlideElements(DECK_TEMPLATE))
+    expect(idsOf(out)).toEqual([2, 0, 1])
   })
 })
