@@ -406,6 +406,10 @@ export function registerPublishTool(tc: ToolContext): void {
           short_id = seg
         } else if (short_id.startsWith("derive://skills/")) {
           return err("Core skills are read-only — you can't publish to a derive://skills/ URI.")
+        } else if (short_id.startsWith("derive://decks/")) {
+          return err(
+            "The deck starter is read-only — copy it, restyle it, and publish your deck as a new artifact (omit short_id).",
+          )
         } else {
           return err(
             `Can't publish to "${short_id}" — the only writeable derive:// target is derive://brandprint/profile.`,

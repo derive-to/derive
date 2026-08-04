@@ -32,6 +32,7 @@ import {
   roleAllows,
   sectionOf,
   slotShapeDriftAdvisories,
+  slugify,
   sortKeyOf,
   toJson,
   toMarkdown,
@@ -88,6 +89,7 @@ import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
+  isTextType,
   searchArtifactVersion,
   searchMatcher,
   searchReport,
@@ -965,10 +967,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // refs) — computed server-side so every client relays the same guidance; the
       // boundary rules keep @derive/core out of the clients.
       let advisories: string[] = []
-      if (
-        artifact.kind === "file" &&
-        (version.content_type === "text/html" || version.content_type === "text/markdown")
-      ) {
+      // isTextType, not a local text/html check: a DECK is text/x-derive-deck, and the
+      // literal comparison here meant a deck published over REST came back with
+      // advisories:null while the same bytes over MCP (gated on kind alone) got them —
+      // so a deck never heard about an expiring upload URL or a broken blob ref. Caught
+      // by publishing one against a deploy preview and reading the response.
+      if (artifact.kind === "file" && isTextType(version.content_type)) {
         const text = new TextDecoder().decode(bytes)
         advisories = publishAdvisories(text, version.content_type)
         const blobAdvisory = await missingBlobAdvisory(text, blobs)
@@ -1732,6 +1736,59 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       await meta.setLocked(artifact.id, b.locked ? 1 : 0)
       return c.json({ locked: b.locked })
+    },
+  )
+
+  // Rename. A title is metadata, not content — but renaming used to mean
+  // republishing the whole document through the source editor, which minted a
+  // version whose diff was empty and pushed a "new version" cue at everyone reading
+  // it. This touches the row and the search index, nothing else, so history stays
+  // about content. The url name follows the title (same reasoning as publish's
+  // rename path) and every link already shared keeps working: a ref resolves on its
+  // trailing short id.
+  app.openapi(
+    createRoute({
+      method: "patch",
+      path: "/v1/artifacts/{shortId}",
+      tags: ["Artifacts"],
+      summary: "Rename an artifact (metadata only — no new version).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        200: {
+          description: "The new title and url name.",
+          content: {
+            "application/json": {
+              schema: z.object({ title: z.string(), slug: z.string().nullable() }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact) return bail(fail(c, 404, "not found"))
+      // Publish rights, the same bar as editing the words — a rename is an edit
+      // everyone can see. A LOCKED artifact is still renamable: the lock is about
+      // content going through review, and a title carries none.
+      if (!(await authorizeStanding(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
+      if (await meta.isManagedArtifact(artifact.org_id, artifact.id))
+        return bail(fail(c, 409, "managed by GitHub sync — rename the file in the repo"))
+      const b = await readJson(c, z.object({ title: z.string().min(1).max(200) }))
+      if (b instanceof Response) return bail(b)
+      const title = b.title.trim()
+      if (!title) return bail(fail(c, 400, "title is empty"))
+      const slug = slugify(title) || null
+      await meta.setArtifactTitle(artifact.id, title, slug)
+      // The index carries the title beside the text, so skipping it would leave the
+      // old name findable and the new one not. Best-effort, like every other
+      // re-index path: a search hiccup must not fail the rename that committed.
+      try {
+        const v = await meta.getVersion(artifact.id, artifact.current_version)
+        if (v) await indexArtifactVersion(meta, blobs, { ...artifact, title }, v, search)
+      } catch (err) {
+        log.error("re-index after rename failed", { artifact: artifact.id, err: String(err) })
+      }
+      return c.json({ title, slug })
     },
   )
 

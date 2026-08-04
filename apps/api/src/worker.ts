@@ -141,6 +141,15 @@ export interface Env {
   /** Comma-separated ADDITIONAL model ids the same gateway serves, offered to chat as a
    *  choice. Unset ⇒ one model, and no picker. See lib/model-catalog.ts. */
   DERIVE_MODEL_NAMES?: string
+  /** Preferred upstream backends, best first, on a gateway that ROUTES one model id to several
+   *  of them. Unset ⇒ the gateway routes however it likes. */
+  /** "off", or an effort level — how much the model may think before answering. */
+  /** Preferred upstream backends, best first, on a gateway that ROUTES one model id to several
+   *  of them. Unset ⇒ the gateway routes however it likes. */
+  DERIVE_MODEL_PROVIDERS?: string
+  /** Additional providers as JSON — see parseGatewaysJson. Each carries its own key, models and
+   *  backend routing, so a fourth provider is a list entry rather than four more variables. */
+  DERIVE_MODEL_GATEWAYS?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
@@ -303,6 +312,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           .map((x) => x.trim())
           .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
+        // THE CEILING THIS TIER ACTUALLY HAS. An attended turn is detached through
+        // `background()` → waitUntil, which the runtime ends a short while after the response is
+        // sent — the isolate stops, so a turn that overruns writes nothing and leaves its session
+        // `working` for ever. This leaves the turn several seconds of live isolate to write its
+        // own failure instead. Set only here; Node awaits inline and has no such ceiling.
+        attendedTurnBudgetMs: 22_000,
         // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
         // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band
         // by apply-pg-schema, and PgVectorStore rides the request-scoped livePgPool exactly as the
@@ -501,8 +516,10 @@ function workerGateway(env: Env): GatewayConfig | undefined {
     DERIVE_MODEL_NAME: model,
     // Optional and additive: more model ids the SAME gateway serves. Unset ⇒ one model, as before.
     DERIVE_MODEL_NAMES: alsoModels,
+    // Preferred upstream backends on a gateway that routes; meaningless on one that does not.
+    DERIVE_MODEL_PROVIDERS: providers,
   } = env
-  return baseUrl && apiKey && model ? { baseUrl, apiKey, model, alsoModels } : undefined
+  return baseUrl && apiKey && model ? { baseUrl, apiKey, model, alsoModels, providers } : undefined
 }
 
 /** Run something with hosted-dispatch deps, inside a request-scoped DB context (a binding

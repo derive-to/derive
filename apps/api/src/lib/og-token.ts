@@ -60,3 +60,20 @@ export const verifyOgToken = async (
   if (!Number.isInteger(n)) return null
   return { artifactId: claim.rest.slice(0, midDot), n }
 }
+
+/**
+ * The origin Slack requires on a preview image's response, verbatim from its implementation
+ * guide: "For security reasons, these public URLs must include the CORS response header set to
+ * access-control-allow-origin:https://app.slack.com."
+ *
+ * Which tells us something the docs do not say outright. CORS is a BROWSER mechanism — a server
+ * fetching an image never consults it — so the Slack client loads `preview_url` from the
+ * viewer's own browser rather than proxying it. The token in that URL is therefore spent by the
+ * reader, not by Slack, and is visible to anyone who opens their network tab in that channel.
+ * That is the capability-URL bargain this whole feature rests on, and it is worth knowing it is
+ * literal rather than theoretical.
+ *
+ * A constant rather than an echo of the request's Origin, so the response does not vary by
+ * caller and stays cacheable on one key.
+ */
+export const SLACK_PREVIEW_ORIGIN = "https://app.slack.com"

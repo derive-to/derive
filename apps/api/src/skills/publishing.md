@@ -1,7 +1,7 @@
 ---
 name: publishing
 summary: create and revise artifacts (incl. fully-styled HTML pages), stage large documents, and file proposals for review (publish, stage)
-order: 2
+order: 3
 ---
 # Publishing to Derive
 
@@ -87,6 +87,12 @@ After publishing a styled page, call `read` with `render:"top"` (or `"full"`/`"m
 to SEE what shipped — a screenshot of the served page catches visual breakage (a failed
 font, a broken layout) that no text read can. The screenshots are computed a few seconds
 after each publish.
+
+**Building slides? Read `derive://skills/decks` first.** A deck is single-file HTML like any
+other page, but it has to announce itself over the `derive-deck` protocol to get the
+presentation bar, Present mode, and comments that pin to a slide — and a deck that skips
+that still looks right, so the loss is invisible. `derive://decks/template` is a complete
+working starter.
 
 ## stage target:'doc' for large docs and bundles
 

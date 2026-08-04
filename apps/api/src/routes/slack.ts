@@ -10,7 +10,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { artifactStatus } from "../lib/artifact-status"
+import { type ArtifactStatus, artifactStatus } from "../lib/artifact-status"
 import { commentCreatedAction } from "../lib/comment-actions"
 import { commentDeepLink } from "../lib/comments"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
@@ -296,10 +296,10 @@ export const slackRoutes = (ctx: AppContext) => {
   const previewUrlFor = async (
     artifact: ArtifactRecord,
     info: UnfurlInfo,
+    status: ArtifactStatus,
   ): Promise<string | null> => {
     if (artifact.listed !== "public" && artifact.listed !== "workspace") return null
-    const v = await meta.getVersion(artifact.id, artifact.current_version)
-    if (v?.preview_status !== "ready" || !v.preview_key) return null
+    if (!status.previewReady) return null
     // A world-readable doc needs no capability: /v1/og already serves its PNG to anyone.
     if (artifact.listed === "public") return info.imageUrl
     if (!deps.encryptionKey) return null
@@ -350,7 +350,7 @@ export const slackRoutes = (ctx: AppContext) => {
       // token that buys that image and nothing else (lib/og-token.ts). `listed: "none"` never
       // reaches here — decideUnfurl answered it with the locked card above — which is the line
       // this feature deliberately does not cross: a doc someone marked private stays a padlock.
-      previewUrl: await previewUrlFor(d.artifact, d.info),
+      previewUrl: await previewUrlFor(d.artifact, d.info, status),
       withActions: status.review?.state === "pending",
       iconUrl,
     })
@@ -427,7 +427,7 @@ export const slackRoutes = (ctx: AppContext) => {
           status,
           userLink.user_id,
           iconUrl,
-          await previewUrlFor(artifact, info),
+          await previewUrlFor(artifact, info, status),
         ),
       },
       "details",

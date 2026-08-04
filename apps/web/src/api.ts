@@ -107,7 +107,20 @@ export type ProposalState = Proposal["state"]
  *  {exact, prefix, suffix}, resolved server-side against the stored source. */
 export interface QuoteEditInput {
   quote: { exact: string; prefix?: string; suffix?: string }
-  new_text: string
+  /** The replacement as text. Exactly one of `new_text` / `new_html` is set. */
+  new_text?: string
+  /** The replacement as inline markup — a run the reader made bold, italic, or a
+   *  link. Sanitized server-side down to a five-tag allowlist. */
+  new_html?: string
+}
+/** The other edit shape the server accepts: a literal string swap against the raw
+ *  source. The inline editor uses it for exactly one thing — replacing an image's
+ *  URL, which lives in an attribute and so has no visible text to quote. The two
+ *  shapes can't be mixed in one request (they resolve against different baselines),
+ *  which is why an image swap is its own save. */
+export interface StrEditInput {
+  old_str: string
+  new_str: string
 }
 /** A collaborator on an artifact or collection — by public @handle, never email.
  *  Generated from the OpenAPI spec (one shared schema across sharing + collections). */
@@ -146,6 +159,7 @@ export interface DraftClaimPreview {
 export type ShareResult = components["schemas"]["ShareResult"]
 /** Per-workspace integration switches. Generated from the OpenAPI spec. */
 export type OrgSettings = components["schemas"]["OrgSettings"]
+export type ChatModelOption = components["schemas"]["ChatModel"]
 
 /** GET /v1/bootstrap — the four boot endpoints' bodies in one response. Each field is
  *  exactly the corresponding endpoint's shape (server-side the mappers are shared), so
@@ -293,6 +307,12 @@ export interface Run {
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
 export type ContextInfo = components["schemas"]["ContextInfo"]
+/** GET /v1/contexts/:id's full response — ContextInfo plus, for a human asker, the
+ *  manifest framed as a package (pin health, repos, run knobs); for the context's own
+ *  agent, its raw manifest source instead. Generated from the OpenAPI spec. */
+export type ContextDetail =
+  paths["/v1/contexts/{id}"]["get"]["responses"][200]["content"]["application/json"]
+export type ManifestSkillInfo = components["schemas"]["ManifestSkillInfo"]
 /** The runner's structured payload on an agent message. Generated from the spec. */
 export type SessionMeta = components["schemas"]["SessionMeta"]
 export type SessionMessage = components["schemas"]["SessionMessage"]
@@ -739,6 +759,21 @@ export const api = {
       ...opts({ locked }),
       method: "PATCH",
     }).then(j),
+  /** Stage an image and get its permanent URL. The bytes are content-addressed and
+   *  served from /blob/<hash>, so the same picture uploaded twice costs one copy. */
+  uploadAsset: (
+    file: File,
+  ): Promise<{ url: string; type: string; width?: number; height?: number }> => {
+    const form = new FormData()
+    form.append("file", file)
+    return f("/v1/assets", { method: "POST", body: form }).then(j)
+  },
+  /** Rename. Metadata only — no version, no diff, no "new version" cue for readers. */
+  renameArtifact: (id: string, title: string): Promise<{ title: string; slug: string | null }> =>
+    f(`/v1/artifacts/${id}`, {
+      ...opts({ title }),
+      method: "PATCH",
+    }).then(j),
   // Move to a different workspace you belong to. Owner-only server-side.
   moveArtifact: (id: string, targetOrgId: string): Promise<{ org_id: string }> =>
     f(`/v1/artifacts/${id}/move`, opts({ targetOrgId })).then(j),
@@ -966,7 +1001,7 @@ export const api = {
 
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
-  getContext: (id: string): Promise<ContextInfo> => f(`/v1/contexts/${id}`, opts()).then(j),
+  getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
   // agent_id omitted → the server auto-mints a MANAGED agent for this context and
   // returns its bearer as agent_token, exactly once on this response.
   createContext: (input: {
@@ -979,6 +1014,18 @@ export const api = {
     body_md: string,
   ): Promise<{ session: Session; messages: SessionMessage[] }> =>
     f(`/v1/contexts/${id}/sessions`, opts({ body_md })).then(j),
+  // Files a run that already happened on the owner's own machine — no dispatch, answered
+  // on arrival. Creator or workspace manager only (see routes/contexts.ts).
+  recordSession: (
+    id: string,
+    input: {
+      instruction: string
+      answer: string
+      outcome?: "answered" | "failed" | "escalated"
+      result_artifact_id?: string
+    },
+  ): Promise<{ session: Session; messages: SessionMessage[] }> =>
+    f(`/v1/contexts/${id}/sessions/record`, opts(input)).then(j),
   // Who may ask — workspace-scoped, never the manifest's artifact sharing.
   setContextAskPolicy: (id: string, ask_policy: "workspace" | "invited"): Promise<void> =>
     f(`/v1/contexts/${id}/access`, opts({ ask_policy })).then(() => undefined),
@@ -1047,9 +1094,38 @@ export const api = {
       credentials: "include",
     }).then(() => undefined),
 
+  // OPERATOR-ONLY, and used as the operator SIGNAL itself: it 403s for everyone who is not a
+  // super-admin, so a component can gate on whether this resolves rather than on a role the
+  // client would otherwise have to be told separately.
+  systemCapabilities: (): Promise<unknown> => f("/v1/system/capabilities", opts()).then(j),
+
+  // THE DEPLOY-WIDE model, operator-only. Both 403 for everyone else, which is also how the UI
+  // knows whether to offer the switch at all.
+  getInstanceChatModel: (): Promise<{
+    model: string | null
+    options: ChatModelOption[]
+  }> => f("/v1/system/chat-model", opts()).then(j),
+  setInstanceChatModel: (model: string | null): Promise<{ model: string | null }> =>
+    f("/v1/system/chat-model", { ...opts({ model }), method: "PUT" }).then(j),
+
+  // Which models this deploy can answer a chat turn with, default first. Readable by any
+  // signed-in user (it is the deploy's capability list, not a workspace's data); CHANGING which
+  // one answers is `updateWorkspaceSettings({ chatModel })`, which needs Admin.
+  chatModels: (): Promise<{ models: ChatModelOption[] }> => f("/v1/chat/models", opts()).then(j),
+
   // Integration switches (enable/disable each channel) — Admin to change.
   getWorkspaceSettings: (): Promise<OrgSettings> => f("/v1/workspace/settings", opts()).then(j),
-  updateWorkspaceSettings: (patch: Partial<OrgSettings>): Promise<OrgSettings> =>
+  // `null` CLEARS a pointer-shaped setting back to its default — which the response type cannot
+  // express (it only ever reads back as set-or-absent), so the clears the route accepts are
+  // spelled out here rather than cast away at each call site.
+  updateWorkspaceSettings: (
+    // Omit-then-restate, because an intersection would NARROW these back to `string` — the
+    // response type only ever reads them as set-or-absent, and `null` is the clear.
+    patch: Omit<Partial<OrgSettings>, "chatModel" | "defaultAgentId"> & {
+      chatModel?: string | null
+      defaultAgentId?: string | null
+    },
+  ): Promise<OrgSettings> =>
     f("/v1/workspace/settings", { ...opts(patch), method: "PATCH" }).then(j),
 
   // Billing: plan truth (any member can read), checkout, and the Stripe portal
@@ -1312,7 +1388,7 @@ export const api = {
   // silently mis-placed splice.
   publishEdits(
     id: string,
-    edits: QuoteEditInput[],
+    edits: (QuoteEditInput | StrEditInput)[],
     baseVersion: number,
     message: string,
   ): Promise<Artifact> {

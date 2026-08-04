@@ -388,6 +388,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "accounts/fireworks/models/qwen3-235b,accounts/fireworks/models/kimi-k2",
   },
   {
+    name: "DERIVE_MODEL_PROVIDERS",
+    group: "advanced",
+    doc: "Preferred upstream backends, best first, comma-separated. Only meaningful on a gateway\nthat routes one model id to several of them; unset = the gateway routes as it likes.",
+    example: "provider-a,provider-b",
+  },
+  {
     name: "DERIVE_LOCAL_BROKER",
     group: "advanced",
     doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",

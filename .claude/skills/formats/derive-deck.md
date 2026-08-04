@@ -17,6 +17,12 @@ ingredients:
    on every slide change and listens for the host's `next` / `prev` / `goto` commands
    (below). Posting that message once is what flips the artifact to a Deck.
 
+A deck that only has ingredient 1 still gets the bar: Derive's client recognises
+switched slides (one shown, the rest hidden) and reports the position on the deck's
+behalf, so every deck written before the protocol existed presents fine. Speak the
+protocol anyway when you can — a deck that answers `next`/`prev` itself keeps its own
+counter and progress bar in step, which the fallback can only approximate.
+
 ```html
 <section class="slide" data-derive-slide="0">
   <h1>First slide</h1>
@@ -76,7 +82,17 @@ window.addEventListener('message', function(e) {
 Add keyboard and click navigation so the deck works when opened directly (outside Derive):
 
 ```js
+// `editing`: someone is typing in this deck (Derive's inline editor makes a block
+// contenteditable). Without the guard, a space types nothing and advances the slide.
+// Derive's own client also suppresses these keys while a caret is in a block, so a
+// deck is safe inside the viewer either way — this is for a deck opened directly.
+function editing() {
+  var el = document.activeElement
+  return !!(el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName)))
+}
+
 document.addEventListener('keydown', function(e) {
+  if (editing()) return
   if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
     e.preventDefault(); show(i + 1)
   } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
@@ -85,8 +101,12 @@ document.addEventListener('keydown', function(e) {
   else if (e.key === 'End') show(slides.length - 1)
 })
 
+// Keep click-to-advance OFF the words: aim the zones at the margins rather than the
+// whole stage. A click on a headline is someone reaching for the headline.
 document.addEventListener('click', function(e) {
+  if (editing()) return
   if (window.getSelection && String(window.getSelection())) return  // don't fire on text selection
+  if (e.target.closest('h1,h2,h3,p,li,figcaption,a,img')) return
   show(e.clientX > window.innerWidth / 2 ? i + 1 : i - 1)
 })
 ```
@@ -160,14 +180,22 @@ document.addEventListener('click', function(e) {
     else if (d.action === 'prev') show(i - 1)
     else if (d.action === 'goto') show(typeof d.n === 'number' ? d.n : 0)
   })
+  // Not while someone is typing in the deck (see "Standalone fallback").
+  function editing() {
+    var el = document.activeElement
+    return !!(el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName)))
+  }
   document.addEventListener('keydown', function(e) {
+    if (editing()) return
     if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); show(i + 1) }
     else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); show(i - 1) }
     else if (e.key === 'Home') show(0)
     else if (e.key === 'End') show(slides.length - 1)
   })
   document.addEventListener('click', function(e) {
+    if (editing()) return
     if (window.getSelection && String(window.getSelection())) return
+    if (e.target.closest('h1,h2,h3,p,li,figcaption,a,img')) return  // a click on words is not "next"
     show(e.clientX > window.innerWidth / 2 ? i + 1 : i - 1)
   })
 
@@ -177,6 +205,24 @@ document.addEventListener('click', function(e) {
 </body>
 </html>
 ```
+
+---
+
+## Presenting, and editing
+
+**Present** is Derive's, not yours: the viewer fullscreens the deck (or covers the
+viewport where fullscreen is refused, as on iOS), hides every other piece of chrome,
+drives the deck with arrows / Space / PageUp / PageDown / Home / End, and fades its
+own bar when the room settles. `p` enters, Escape leaves, and `?present=1` on the
+artifact URL opens straight into it — that's the link to put in the calendar invite.
+
+**Editing** works on a deck like any other artifact: double-click a headline and
+type. While a caret is in a block, Derive's client takes the keyboard and clicks away
+from your page, so a space types a space instead of advancing, and off-screen slides
+stop catching clicks meant for the one on screen. Two things make that smoother:
+keep click zones off the words (above), and hide inactive slides in a way a reader
+would recognise (`opacity` or `display` on `.slide` / `.slide.on`), which is also how
+the viewer finds the slides in the first place.
 
 ---
 

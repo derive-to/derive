@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { openAiCompatModel } from "../src/lib/model-openai"
 
 // The OPENAI-COMPATIBLE adapter. Everything here is the mapping between the two wire formats,
@@ -98,6 +98,64 @@ describe("the request it builds", () => {
         function: { name: "svc.read", description: "read", parameters: { type: "object" } },
       },
     ])
+  })
+})
+
+describe("routing preferences on a gateway that routes", () => {
+  // OpenRouter serves one model id from a dozen backends whose generation speed differs by an
+  // order of magnitude, so "which model" is only half the request. Measured on the incumbent
+  // gateway: ~18 tokens/sec, which is what turned a three-call agent turn into half a minute.
+  const send = async (extraBody?: Record<string, unknown>) => {
+    let body: Record<string, unknown> | undefined
+    const impl = (async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body))
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }) as unknown as typeof fetch
+    await openAiCompatModel({
+      apiKey: "k",
+      baseUrl: "https://gw.test/v1",
+      model: "deepseek/deepseek-v4-flash-0731",
+      fetchImpl: impl,
+      ...(extraBody ? { extraBody } : {}),
+    })({ system: "s", messages: [], tools: [] })
+    return body
+  }
+
+  it("sends the provider order when one is configured", async () => {
+    const body = await send({
+      provider: { order: ["DeepInfra", "GMICloud"], allow_fallbacks: true },
+    })
+    expect(body?.provider).toEqual({ order: ["DeepInfra", "GMICloud"], allow_fallbacks: true })
+    // and still the ordinary request
+    expect(body?.model).toBe("deepseek/deepseek-v4-flash-0731")
+  })
+
+  it("always tells the model not to think, since chat is interactive", async () => {
+    // A constant, not configuration: a reasoning model spends most of a short answer's budget
+    // thinking, an attended turn makes several calls, and no deployment wants its interactive
+    // turns slower. Measured ~1.7x faster with it off.
+    const body = await send({ reasoning: { enabled: false } })
+    expect(body?.reasoning).toEqual({ enabled: false })
+  })
+
+  it("sends NOTHING extra when unset, so a non-routing gateway sees no stray field", async () => {
+    const body = await send()
+    expect(body).not.toHaveProperty("provider")
+  })
+
+  it("never lets a routing field overwrite the request the adapter built", async () => {
+    // A config typo must not be able to rewrite `messages` or `model` — routing is the caller's
+    // business, the request shape is the adapter's.
+    const body = await send({
+      model: "someone-elses-model",
+      messages: [],
+      provider: { order: ["X"] },
+    })
+    expect(body?.model).toBe("deepseek/deepseek-v4-flash-0731")
+    expect(body?.provider).toEqual({ order: ["X"] })
   })
 })
 
@@ -491,6 +549,52 @@ describe("streaming failure modes", () => {
     expect(bodies[0]?.stream).toBe(true)
     expect(bodies[1]?.stream).toBeUndefined()
     expect(turn.text).toBe("buffered reply") // the person loses the animation, not the answer
+  })
+
+  it("gives up on a stream that opens, sends nothing, and never closes — and falls back", async () => {
+    // The shape reproduced live against a real gateway (2026-08-03, PR #633): the connection
+    // opens, the SDK's stream never yields another chunk, never fires onError, never resolves
+    // stream.text/toolCalls/finishReason/finalStep — nothing. A `for await` over that hangs
+    // forever with no error to catch, which is exactly what left a chat turn on "Working…" with
+    // no answer and no failure. This must not depend on the model call's own abortSignal (120s)
+    // actually firing against a given gateway; it is the backstop for when it does not.
+    vi.useFakeTimers()
+    try {
+      const bodies: Record<string, unknown>[] = []
+      const impl = (async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        bodies.push(body)
+        if (body.stream) {
+          // Opens and never enqueues, never closes, never errors.
+          return new Response(new ReadableStream({ start() {} }), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          })
+        }
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "buffered reply" }, finish_reason: "stop" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )
+      }) as unknown as typeof fetch
+      const turnPromise = model(impl)({
+        system: "s",
+        messages: [],
+        tools: [],
+        onDelta: () => {},
+      })
+      // Past the model call's own 120s abort AND this file's 130s stream deadline — whichever
+      // mechanism actually rescues it, the turn must settle rather than hang.
+      await vi.advanceTimersByTimeAsync(131_000)
+      const turn = await turnPromise
+      expect(bodies).toHaveLength(2)
+      expect(bodies[0]?.stream).toBe(true)
+      expect(bodies[1]?.stream).toBeUndefined()
+      expect(turn.text).toBe("buffered reply")
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("parses a JSON answer even when it was asked to stream", async () => {

@@ -333,7 +333,13 @@ const modelGateway = (): GatewayConfig | null => {
   // DERIVE_MODEL_NAMES is optional and additive: more model ids the SAME gateway serves, which
   // is how every one of these hosts works. Unset ⇒ a one-model catalog, exactly as before.
   if (baseUrl && apiKey && model)
-    return { baseUrl, apiKey, model, alsoModels: process.env.DERIVE_MODEL_NAMES }
+    return {
+      baseUrl,
+      apiKey,
+      model,
+      alsoModels: process.env.DERIVE_MODEL_NAMES,
+      providers: process.env.DERIVE_MODEL_PROVIDERS,
+    }
   if (baseUrl || apiKey || model)
     log.warn("model gateway ignored: set DERIVE_MODEL_BASE_URL, _API_KEY and _NAME together", {
       baseUrl: !!baseUrl,

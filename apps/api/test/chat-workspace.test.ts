@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
+import { setInstanceChatModel } from "../src/lib/instance-settings"
 import { catalogOf } from "../src/lib/model-catalog"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp, publishAs } from "./helpers"
@@ -291,5 +292,162 @@ describe("the workspace chat", () => {
     expect(msgs.at(-1)?.author_kind).toBe("agent")
     expect(msgs.at(-1)?.body_md).toMatch(/could not reach the model/i)
     expect((await meta.getSession(session?.id ?? ""))?.state).toBe("failed")
+  })
+
+  it("lets the asker Stop a workspace chat session — it has no context to gate on", async () => {
+    // A workspace-chat session's context_id is always null, so the PATCH close route must not
+    // require a linked context the way the agent-fail branch does. It used to: Stop 404ed on
+    // every one of these sessions, the one lane the /chat page actually serves.
+    const { app, meta } = await setup("ws-stop", async () => ({
+      text: "answered",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    const opened = await app.request("/v1/chat-session", {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ workspace: "default", body_md: "hi" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+    const stopped = await app.request(`/v1/sessions/${session.id}`, {
+      method: "PATCH",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ state: "closed" }),
+    })
+    expect(stopped.status).toBe(200)
+    expect((await meta.getSession(session.id))?.state).toBe("closed")
+  })
+
+  it("settles a turn that outruns the runtime's budget instead of hanging on it", async () => {
+    // THE PRODUCTION HANG, at unit scale. On Workers an attended turn is detached through
+    // waitUntil, and Cloudflare ends that work ~30s after the response — the isolate stops, so a
+    // turn still waiting on the model writes nothing and the session stays `working` for ever
+    // with no answer and no error. Measured on two real hung turns: wallTimeMs 30418 and 30586
+    // against cpuTimeMs 153 and 230, i.e. idle on a slow model rather than busy.
+    //
+    // A model that never answers stands in for the slow gateway. What matters is that the turn
+    // settles ITSELF while it is still alive, so the transcript ends in a sentence rather than a
+    // spinner. `attendedTurnBudgetMs` is tiny here so the test does not sit for 22 seconds.
+    const never = () => new Promise<never>(() => {}) // never resolves, never rejects
+    const users = [{ id: "u-ws", email: "ws@x.com", name: "Wes" }]
+    const { app, meta } = makeAuthedApp("ws-budget", users, undefined, {
+      deps: {
+        attendedTurnBudgetMs: 50,
+        callModel: never,
+        models: catalogOf([{ id: "model-a", label: "A", isDefault: true, build: () => never }]),
+        rateLimiters: inMemoryRateLimiters(),
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    const opened = await app.request("/v1/chat-session", {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ workspace: "default", body_md: "something expensive" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+    for (let i = 0; i < 100; i++) {
+      const s = await meta.getSession(session.id)
+      if (s && s.state !== "working" && s.state !== "open") {
+        const msgs = await meta.listSessionMessages(session.id)
+        expect(s.state).toBe("failed")
+        // An honest sentence in the transcript, not silence.
+        expect(msgs.at(-1)?.author_kind).toBe("agent")
+        expect(msgs.at(-1)?.body_md ?? "").toMatch(/took longer/i)
+        return
+      }
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    throw new Error("the turn never settled — it hung, which is the bug")
+  })
+
+  it("switches model mid-conversation when the operator flips the deploy override", async () => {
+    // THE OUTAGE LEVER. The deploy default lives in configuration, so changing it needs a
+    // redeploy — the wrong shape for a provider that has gone slow or dark while people are
+    // typing. This is the same choice held where it can be changed in seconds, and it has to
+    // reach conversations that are ALREADY going: an override every existing conversation
+    // ignores is not a lever.
+    const { app, meta } = await setup("ws-override", async () => ({
+      text: "ok",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    const { session, msgs } = await ask(app, meta, "hello")
+    expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+
+    // The OPERATOR flips it, deploy-wide. No redeploy, no restart.
+    await setInstanceChatModel(meta, "model-b")
+    await app.request(`/v1/sessions/${session?.id}/messages`, {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "and again" }), // no model named
+    })
+    for (let i = 0; i < 100; i++) {
+      const all = await meta.listSessionMessages(session?.id ?? "")
+      if (all.filter((m) => m.author_kind === "agent").length === 2) {
+        // The NEXT turn uses the override even though this conversation was on model-a.
+        expect(JSON.parse(all.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-b" })
+        // and the answer already given still records what actually produced it
+        expect(JSON.parse(all[1]?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+        return
+      }
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    throw new Error("second turn never landed")
+  })
+
+  it("lets a person's explicit pick beat the operator override", async () => {
+    // The override is the deploy's opinion; a model named on THIS turn is the person's, made
+    // now, and it wins.
+    const { app, meta } = await setup("ws-override-beaten", async () => ({
+      text: "ok",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    await setInstanceChatModel(meta, "model-b")
+    const { msgs } = await ask(app, meta, "hi", { model: "model-a" })
+    expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+  })
+
+  it("ignores an override that names nothing rather than failing every turn", async () => {
+    // A typo in one field must cost the override, not the workspace's whole chat surface.
+    const { app, meta } = await setup("ws-override-typo", async () => ({
+      text: "ok",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    await setInstanceChatModel(meta, "not-a-real-model")
+    const { msgs } = await ask(app, meta, "hi")
+    expect(msgs.at(-1)?.author_kind).toBe("agent")
+    expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
+  })
+
+  it("refuses to Stop someone else's workspace chat session", async () => {
+    const other = { id: "u-nosy", email: "nosy@x.com", name: "Nosy" }
+    const { app } = await setup(
+      "ws-stop-other",
+      async () => ({ text: "answered", toolUses: [], costUsd: null, done: true }),
+      { extraUsers: [other] },
+    )
+    const opened = await app.request("/v1/chat-session", {
+      method: "POST",
+      headers: { ...as("ws@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ workspace: "default", body_md: "hi" }),
+    })
+    const { session } = (await opened.json()) as { session: { id: string } }
+    const stopped = await app.request(`/v1/sessions/${session.id}`, {
+      method: "PATCH",
+      headers: { ...as(other.email), "content-type": "application/json" },
+      body: JSON.stringify({ state: "closed" }),
+    })
+    expect(stopped.status).toBe(404)
   })
 })

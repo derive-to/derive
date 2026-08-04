@@ -1,7 +1,7 @@
 ---
 name: assets
 summary: stage image/font bytes, choose the permanent URL or bundle ref, publish the reference, and verify the render (stage, publish, read)
-order: 3
+order: 5
 ---
 # Staging assets in Derive
 

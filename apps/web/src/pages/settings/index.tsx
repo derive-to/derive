@@ -4,7 +4,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
-import { reportsQuery } from "@/lib/queries"
+import { instanceChatModelQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
@@ -17,6 +17,7 @@ import { GithubSection } from "./github-section"
 import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
 import { ModelPlansSection } from "./model-plans-section"
+import { ModelsSection } from "./models-section"
 import { PeopleSection } from "./people-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
@@ -49,6 +50,7 @@ const SECTION_TITLES: Record<string, string> = {
   automations: "Automations",
   domains: "Domains",
   reports: "Reports",
+  models: "Chat model",
 }
 
 // Settings, reconceived as a scope-grouped two-pane: a sticky category rail
@@ -62,6 +64,10 @@ export function Settings() {
   const { me } = useAuth()
   const qc = useQueryClient()
   const { data: reports } = useQuery({ ...reportsQuery(), enabled: !!me })
+  // Operator-only, and the query IS the gate: it 403s for everyone who does not run this
+  // instance. It also carries the catalog, so the tab appears only once there is a real choice —
+  // one configured model is a fact about the deployment rather than a decision.
+  const { data: instanceModel } = useQuery({ ...instanceChatModelQuery(), enabled: !!me })
   const { section } = route.useParams()
   const nav = route.useNavigate()
 
@@ -94,6 +100,9 @@ export function Settings() {
         { id: "billing", label: "Billing", testId: "settings-tab-billing" },
         { id: "integrations", label: "Integrations", testId: "settings-tab-integrations" },
         { id: "sources", label: "Sources", testId: "settings-tab-sources" },
+        ...(((instanceModel?.options.length ?? 0) > 1
+          ? [{ id: "models", label: "Chat model", testId: "settings-tab-models" }]
+          : []) as SettingsNavGroup["items"]),
         { id: "brandprint", label: "Brandprint", testId: "settings-tab-brandprint" },
       ],
     },
@@ -164,6 +173,7 @@ export function Settings() {
             {active === "agents" && <AgentsSection meId={me.id} />}
             {active === "automations" && <AutomationsSection />}
             {active === "domains" && <CustomDomainsSection />}
+            {active === "models" && <ModelsSection />}
             {active === "reports" && (
               <ReportsSection
                 reports={openReports}
