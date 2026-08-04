@@ -44,11 +44,21 @@ describe("stdio MCP onboarding surface", () => {
       ])
 
       // The read path advertises readOnlyHint so annotation-honoring clients run it
-      // without an approval prompt; comment/organize/publish stay unannotated.
+      // without an approval prompt; comment/organize/publish are writers and carry
+      // readOnlyHint: false instead (asserted below alongside every tool's title).
       const readOnly = listed
         .filter((tool) => tool.annotations?.readOnlyHint === true)
         .map((tool) => tool.name)
       expect(readOnly).toEqual(["list_workspaces", "list_artifacts", "search", "read", "catch_up"])
+
+      // Directory listings and clients' auto-approval UX both read `annotations` —
+      // every tool needs a human-readable title and an explicit (not merely absent)
+      // readOnlyHint, never left to a reviewer's guess.
+      expect(listed.length).toBeGreaterThan(0)
+      for (const tool of listed) {
+        expect(tool.annotations?.title, `${tool.name} title`).toBeTruthy()
+        expect(typeof tool.annotations?.readOnlyHint, `${tool.name} readOnlyHint`).toBe("boolean")
+      }
 
       const resources = (await client.listResources()).resources.map((resource) => resource.uri)
       expect(resources).toEqual(
