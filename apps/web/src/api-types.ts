@@ -6946,7 +6946,7 @@ export interface components {
             /** @description The asker's public handle. Only resolved on the owner's view of the sessions list — a picker of your own sessions already knows who you are. */
             asker_username?: string | null;
             /**
-             * @description 'local' when this session's answer was recorded rather than served through the queue (see SessionMeta.lane). Only resolved on the owner's view of the sessions list.
+             * @description 'local' when this session's MOST RECENT agent turn was recorded rather than served through the queue (see SessionMeta.lane) — a session recorded once and later genuinely followed-up through the queue reads as null again, because the turn that answer describes changed. Only resolved on the owner's view of the sessions list.
              * @enum {string|null}
              */
             lane?: "local" | null;

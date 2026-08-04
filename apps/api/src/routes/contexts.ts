@@ -40,6 +40,7 @@ import {
   manifestDescription,
   parseManifestRepos,
   parseManifestSkillPins,
+  stalePins,
 } from "../lib/manifest-pins"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
@@ -695,7 +696,7 @@ export const contextRoutes = (ctx: AppContext) => {
         .nullable()
         .optional()
         .describe(
-          "'local' when this session's answer was recorded rather than served through the queue (see SessionMeta.lane). Only resolved on the owner's view of the sessions list.",
+          "'local' when this session's MOST RECENT agent turn was recorded rather than served through the queue (see SessionMeta.lane) — a session recorded once and later genuinely followed-up through the queue reads as null again, because the turn that answer describes changed. Only resolved on the owner's view of the sessions list.",
         ),
     })
     .openapi("Session")
@@ -1175,11 +1176,14 @@ export const contextRoutes = (ctx: AppContext) => {
         return c.json({ ...base, manifest_md: md, brandprint: await resolveContextBrandprint(x) })
       }
       // A human with ask-access: the manifest framed as a package rather than a raw
-      // artifact link — pin health computed against each pinned skill's ACTUAL current
-      // version (parseManifestSkillPins already does this narrowly for the runner's own
-      // advisory; this is the same read, shaped for the console's Manifest tab), the
-      // frontmatter's repo pointers, and the run knobs the Runner card explains.
+      // artifact link — pin health, the frontmatter's repo pointers, and the run knobs
+      // the Runner card explains. "Stale" is computed by stalePins(), the SAME function
+      // the runner's own pull advisory uses (mcp-tools/use-runner.ts) — one definition
+      // of the word, so the console can never disagree with what a claim actually warns
+      // about. That call only returns the stale ones, so titles/current versions for
+      // every pin (stale or not) are still resolved here for the table.
       const pins = md ? parseManifestSkillPins(md) : []
+      const staleIds = new Set((await stalePins(meta, pins)).map((s) => s.short_id))
       const skills = await Promise.all(
         pins.map(async (p) => {
           const a = await meta.getByShortId(p.id).catch(() => null)
@@ -1188,7 +1192,7 @@ export const contextRoutes = (ctx: AppContext) => {
             title: a?.title ?? null,
             pinned: p.version,
             current: a?.current_version ?? null,
-            stale: p.version !== null && !!a && a.current_version > p.version,
+            stale: staleIds.has(p.id),
           }
         }),
       )
@@ -2019,6 +2023,10 @@ export const contextRoutes = (ctx: AppContext) => {
         if (arr) arr.push(m)
         else bySession.set(m.session_id, [m])
       }
+      // The LAST agent turn's lane, deliberately — not "was this session ever recorded".
+      // A session recorded once and later genuinely followed-up through the queue should
+      // stop reading as local: the turn Activity is describing changed, and the badge
+      // describes the answer on screen, not the session's history.
       const laneOf = (s: SessionRecord): "local" | null => {
         const agentMsgs = (bySession.get(s.id) ?? []).filter((m) => m.author_kind === "agent")
         const last = agentMsgs.at(-1)
