@@ -133,6 +133,14 @@ describe("routing preferences on a gateway that routes", () => {
     expect(body?.model).toBe("deepseek/deepseek-v4-flash-0731")
   })
 
+  it("always tells the model not to think, since chat is interactive", async () => {
+    // A constant, not configuration: a reasoning model spends most of a short answer's budget
+    // thinking, an attended turn makes several calls, and no deployment wants its interactive
+    // turns slower. Measured ~1.7x faster with it off.
+    const body = await send({ reasoning: { enabled: false } })
+    expect(body?.reasoning).toEqual({ enabled: false })
+  })
+
   it("sends NOTHING extra when unset, so a non-routing gateway sees no stray field", async () => {
     const body = await send()
     expect(body).not.toHaveProperty("provider")

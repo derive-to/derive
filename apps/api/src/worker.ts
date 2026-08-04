@@ -147,8 +147,6 @@ export interface Env {
   /** Preferred upstream backends, best first, on a gateway that ROUTES one model id to several
    *  of them. Unset ⇒ the gateway routes however it likes. */
   DERIVE_MODEL_PROVIDERS?: string
-  /** "off" stops the model thinking before it answers. */
-  DERIVE_MODEL_REASONING?: string
   /** Additional providers as JSON — see parseGatewaysJson. Each carries its own key, models and
    *  backend routing, so a fourth provider is a list entry rather than four more variables. */
   DERIVE_MODEL_GATEWAYS?: string
@@ -518,7 +516,6 @@ function workerGateway(env: Env): GatewayConfig | undefined {
     DERIVE_MODEL_NAMES: alsoModels,
     // Preferred upstream backends on a gateway that routes; meaningless on one that does not.
     DERIVE_MODEL_PROVIDERS: providers,
-    DERIVE_MODEL_REASONING: reasoning,
   } = env
   return baseUrl && apiKey && model ? { baseUrl, apiKey, model, alsoModels, providers } : undefined
 }

@@ -394,12 +394,6 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "provider-a,provider-b",
   },
   {
-    name: "DERIVE_MODEL_REASONING",
-    group: "advanced",
-    doc: 'Set "off" to stop the model thinking before it answers, which is markedly faster on a\nreasoning model. Unset = nothing is sent and the model thinks as it likes.',
-    example: "off",
-  },
-  {
     name: "DERIVE_LOCAL_BROKER",
     group: "advanced",
     doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",
