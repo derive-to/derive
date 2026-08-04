@@ -1,10 +1,11 @@
+import type { MetaStore } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
 import { catalogOf } from "../src/lib/model-catalog"
 import { setInstanceChatModel } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
-import { as, makeAuthedApp, publishAs } from "./helpers"
+import { as, countingStore, makeAuthedApp, publishAs } from "./helpers"
 
 // THE WORKSPACE CHAT, end to end through the real routes: open a session about no document at
 // all, and the model answers using Derive's own tools against the asker's real permissions.
@@ -98,27 +99,48 @@ describe("what a workspace turn costs to route", () => {
    * attended path, where each is a Hyperdrive round trip on the hosted tier and somebody is
    * waiting on all of them.
    *
-   * Counted end to end through the real route, because the mechanism that keeps it at one (a
-   * per-turn memo, and a gate that deliberately reads the CONFIGURED catalog since the library
-   * can only add to it) lives in two files and a unit test of either would miss the other.
+   * Counted end to end through the real route, because the mechanism that holds it at one (a
+   * per-turn memo, and a gate that reads the CONFIGURED catalog since the library can only add
+   * to it) lives in two files and a unit test of either would miss the other. It found the third
+   * read the first time it ran.
+   *
+   * At the STORE BOUNDARY through the shared `countingStore`, and specifically NOT by assigning
+   * over `meta.getOrgSettings`: the pg store is itself a Proxy, so patching a method counts
+   * nothing there. This test made exactly that mistake first and passed on SQLite while
+   * measuring zero on Postgres — which is what the helper's own comment warns about.
    */
+  // The same user `setup` seeds: the probe app's own store is discarded, so a user seeded
+  // only there is a member of nothing in the store the requests actually reach.
+  const owner = { id: "u-ws", email: "ws@x.com", name: "Wes" }
+  const answer = async () => ({ text: "hi", toolUses: [], costUsd: null, done: true })
+
   it("reads the instance settings row ONCE for a whole turn", async () => {
-    const { app, meta } = await setup("ws-read-count", async () => ({
-      text: "hi",
-      toolUses: [],
-      costUsd: null,
-      done: true,
-    }))
-    let reads = 0
-    const real = meta.getOrgSettings.bind(meta)
-    meta.getOrgSettings = async (orgId: string) => {
-      if (orgId === INSTANCE_SETTINGS_ID) reads += 1
-      return real(orgId)
+    const base = await setup("ws-read-count", answer)
+    const { proxy, countWhere, reset } = countingStore(base.meta as MetaStore)
+    // Its OWN name: two apps sharing one share a Postgres schema and race to create it. The
+    // probe's own store is built and never used — `deps.meta` overrides it with the wrapper.
+    const { app } = makeAuthedApp("ws-read-count-probe", [owner], undefined, {
+      deps: {
+        meta: proxy,
+        models: catalogOf([{ id: "model-a", label: "A", isDefault: true, build: () => answer }]),
+        rateLimiters: inMemoryRateLimiters(),
+      },
+    })
+    reset()
+    const { session } = await ask(app, base.meta, "hello", undefined, owner.email)
+    // WAIT LONGER THAN `ask` DOES, on purpose. Its 2s budget is generous on embedded SQLite and
+    // marginal on the Postgres lane, where the turn settles through a container — the surrounding
+    // suite's occasional reds there are that window, not the turn, which logs its outcome either
+    // way. A budget test that flakes gets deleted rather than read, so this one waits.
+    let msgs = await base.meta.listSessionMessages(session?.id ?? "")
+    for (let i = 0; i < 400 && !msgs.some((m) => m.author_kind === "agent"); i++) {
+      await new Promise((r) => setTimeout(r, 25))
+      msgs = await base.meta.listSessionMessages(session?.id ?? "")
     }
-    const { msgs } = await ask(app, meta, "hello")
-    // The turn really ran — a count of zero on a turn that never happened proves nothing.
+    // The turn really ran — a count of zero on a turn that never happened proves nothing, which
+    // is the OTHER way this assertion could pass while measuring nothing.
     expect(msgs.at(-1)?.author_kind).toBe("agent")
-    expect(reads).toBe(1)
+    expect(countWhere("getOrgSettings", (a) => a[0] === INSTANCE_SETTINGS_ID)).toBe(1)
   })
 })
 
