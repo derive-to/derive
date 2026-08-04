@@ -19,6 +19,7 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { isAbandoned } from "../lib/abandoned-turn"
+import type { AgentLoopInput } from "../lib/agent-loop"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -205,6 +206,33 @@ export const contextRoutes = (ctx: AppContext) => {
   }
 
   /**
+   * WHERE A TURN'S TIME ACTUALLY WENT.
+   *
+   * A turn is a loop — model, tool, model — and the two halves have completely different fixes:
+   * time inside the model is the provider's, time outside it is ours (store round trips, tool
+   * work). Without splitting them, "chat feels slow" is unactionable, and the two are easy to
+   * confuse: the same turn measured 2.5s against a local disk store and 8s on the hosted tier,
+   * which says most of the gap is not the model at all.
+   *
+   * So: count the model calls and the milliseconds spent inside them, and log both next to the
+   * total when the turn settles. One line per turn, no sampling — a turn is already an expensive
+   * thing, and this is what makes the next round of work aimable.
+   */
+  const timedModel = (call: AgentLoopInput["callModel"]) => {
+    const stat = { calls: 0, ms: 0 }
+    const wrapped: AgentLoopInput["callModel"] = async (req) => {
+      stat.calls++
+      const t0 = Date.now()
+      try {
+        return await call(req)
+      } finally {
+        stat.ms += Date.now() - t0
+      }
+    }
+    return { stat, wrapped }
+  }
+
+  /**
    * One WORKSPACE chat turn: the model, this workspace's tools, and the transcript.
    *
    * The tools are Derive's own MCP tools, constructed for the ASKER (see lib/chat-tools.ts), so
@@ -266,9 +294,11 @@ export const contextRoutes = (ctx: AppContext) => {
       // the next write, not merely the next session.
       flags: { agentKillswitch: settings?.agentKillswitch ?? false },
     })
+    const timed = timedModel(stream.wrap(model.callModel))
+    const startedAt = Date.now()
     const res = await withinTurnBudget(
       runChatTurn(
-        { model: { ...model, callModel: stream.wrap(model.callModel) } },
+        { model: { ...model, callModel: timed.wrapped } },
         {
           session: s,
           transcript,
@@ -279,6 +309,17 @@ export const contextRoutes = (ctx: AppContext) => {
         },
       ),
     )
+    log.info("attended turn", {
+      session: s.id,
+      org: s.org_id,
+      total_ms: Date.now() - startedAt,
+      model_ms: timed.stat.ms,
+      // Everything that was NOT the model: store round trips, tool work, our own code. The half
+      // we can actually do something about.
+      other_ms: Date.now() - startedAt - timed.stat.ms,
+      model_calls: timed.stat.calls,
+      outcome: res.outcome,
+    })
     await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
       outcome: res.outcome,
       // Absent on a turn that ran out of budget — it never got a cost or a model back, and
