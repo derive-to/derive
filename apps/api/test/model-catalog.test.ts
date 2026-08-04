@@ -116,6 +116,43 @@ describe("declaring extra providers as configuration", () => {
     ])
   })
 
+  it("takes the key BY REFERENCE, so it stays its own rotatable secret", () => {
+    // How an operator actually holds a key: as its own secret, not pasted inside a JSON blob
+    // that then becomes a secret itself and has to be re-pasted whole to change one field.
+    process.env.TEST_OR_KEY = "sk-or-from-env"
+    try {
+      const gws = parseGatewaysJson(
+        JSON.stringify([
+          {
+            name: "openrouter",
+            baseUrl: "https://openrouter.ai/api/v1",
+            apiKeyEnv: "TEST_OR_KEY",
+            models: ["deepseek/deepseek-v4-flash-0731"],
+            providers: "DeepInfra,GMICloud,Fireworks",
+          },
+        ]),
+      )
+      expect(gws[0]?.apiKey).toBe("sk-or-from-env")
+      expect(gws[0]?.providers).toBe("DeepInfra,GMICloud,Fireworks")
+    } finally {
+      process.env.TEST_OR_KEY = undefined
+    }
+  })
+
+  it("drops a gateway whose named key is not set, rather than advertising a model that 401s", () => {
+    const gws = parseGatewaysJson(
+      JSON.stringify([
+        {
+          name: "openrouter",
+          baseUrl: "https://x/v1",
+          apiKeyEnv: "NOT_SET_ANYWHERE",
+          models: ["m"],
+        },
+      ]),
+    )
+    expect(gws).toEqual([])
+  })
+
   it("drops a half-configured gateway instead of half-breaking the catalog", () => {
     const gws = parseGatewaysJson(
       JSON.stringify([

@@ -202,10 +202,19 @@ export const parseGatewaysJson = (raw: string | undefined): GatewayConfig[] => {
     const parsed: unknown = JSON.parse(raw)
     const list = Array.isArray(parsed) ? parsed : [parsed]
     return list.flatMap((x) => {
-      const g = x as Partial<GatewayConfig> & { models?: unknown }
+      const g = x as Partial<GatewayConfig> & { models?: unknown; apiKeyEnv?: unknown }
+      // THE KEY BY REFERENCE, which is how an operator will actually hold it: as its own secret,
+      // rotatable on its own, rather than pasted inside a JSON blob that then becomes a secret
+      // itself and has to be re-pasted whole to change one field. `apiKey` still works for the
+      // simple case; `apiKeyEnv` names the variable to read instead. process.env carries these
+      // on both runtimes (nodejs_compat_populate_process_env on Workers).
+      const apiKey =
+        g.apiKey ?? (typeof g.apiKeyEnv === "string" ? process.env[g.apiKeyEnv] : undefined)
       // A gateway missing any of the three essentials cannot answer, and half-configuring one
-      // should not half-break the catalog — drop it and keep the rest.
-      if (!g.baseUrl || !g.apiKey || !(g.model || Array.isArray(g.models))) return []
+      // should not half-break the catalog — drop it and keep the rest. A named-but-unset key
+      // lands here too, which is the right outcome: better one absent provider than a catalog
+      // advertising a model every turn then 401s on.
+      if (!g.baseUrl || !apiKey || !(g.model || Array.isArray(g.models))) return []
       const models = Array.isArray(g.models) ? g.models.filter((m) => typeof m === "string") : []
       const model = g.model ?? models[0]
       if (!model) return []
@@ -213,7 +222,7 @@ export const parseGatewaysJson = (raw: string | undefined): GatewayConfig[] => {
         {
           ...(g.name ? { name: String(g.name) } : {}),
           baseUrl: String(g.baseUrl),
-          apiKey: String(g.apiKey),
+          apiKey: String(apiKey),
           model: String(model),
           alsoModels: [...models.slice(g.model ? 0 : 1), g.alsoModels ?? ""]
             .filter(Boolean)
