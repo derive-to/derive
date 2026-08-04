@@ -562,7 +562,16 @@ function RunnerCard({
         <div className="flex flex-col gap-2 border-t border-border-soft pt-2.5">
           <div>
             <p className="text-2xs text-muted-foreground">
-              Serve it from your own session — no token:
+              Give it work — from Chat above, or any coding session:
+            </p>
+            <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
+              use({"{"} context: "{context.name}", instruction: "…" {"}"})
+            </code>
+          </div>
+          <div>
+            <p className="text-2xs text-muted-foreground">
+              Then serve it from your own session — no token. This only claims what's already been
+              given; it does nothing on an empty queue:
             </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               use({"{"} context: "{context.name}" {"}"})
@@ -1304,12 +1313,19 @@ function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: 
   return (
     <ul className="flex flex-col">
       {sessions.map((s) => (
-        <li key={s.id} className="border-b last:border-0">
+        <li
+          key={s.id}
+          className="flex items-center gap-3 border-b px-1 py-2.5 text-sm last:border-0 hover:bg-accent"
+        >
+          {/* A Link can't nest inside a button (invalid HTML, and the result link needs its
+              own navigation) — the row's open-chat click zone and the result link are siblings,
+              not parent/child; the result link stops propagation so it navigates instead of
+              also opening the thread underneath it. */}
           <button
             type="button"
             data-testid="console-activity-row"
             onClick={() => onOpen(s.id)}
-            className="flex w-full items-center gap-3 px-1 py-2.5 text-left text-sm hover:bg-accent"
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
           >
             <span className="text-foreground">{ago(s.created_at)}</span>
             {s.asker_username && <span className="text-muted-foreground">@{s.asker_username}</span>}
@@ -1319,13 +1335,20 @@ function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: 
                 local
               </Badge>
             )}
-            <span className="ml-auto flex items-center gap-2.5">
-              <span className="font-mono text-xs text-muted-foreground">v{s.context_version}</span>
-              {s.result_artifact_id && (
-                <span className="font-mono text-xs text-muted-foreground">▤ result</span>
-              )}
-            </span>
           </button>
+          <span className="font-mono text-xs text-muted-foreground">v{s.context_version}</span>
+          {s.result_artifact_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: s.result_artifact_id }}
+              data-testid="console-activity-result"
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              <Icon name="all" size={12} />
+              result
+            </Link>
+          )}
         </li>
       ))}
     </ul>
