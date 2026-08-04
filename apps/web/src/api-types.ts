@@ -4868,7 +4868,11 @@ export interface paths {
         /** A context's sessions (owner sees all; others only their own). */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    limit?: string;
+                    /** @description Keyset cursor (`created_at|id`, from `next_cursor`) — return sessions strictly older than it. An offset would repeat rows as new sessions open; the id half keeps sessions that share a created_at from being skipped at the boundary. */
+                    cursor?: string;
+                };
                 header?: never;
                 path: {
                     id: string;
@@ -4885,6 +4889,8 @@ export interface paths {
                     content: {
                         "application/json": {
                             sessions: components["schemas"]["Session"][];
+                            /** @description Pass as `cursor` for the next page; null when this page reached the end. */
+                            next_cursor: string | null;
                         };
                     };
                 };
@@ -5109,6 +5115,54 @@ export interface paths {
                             sessions: (components["schemas"]["Session"] & {
                                 preview: string;
                             })[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/contexts/{id}/outputs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The artifacts a context has produced, grouped by artifact with a run count. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The context's outputs, most recently produced first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            outputs: {
+                                short_id: string;
+                                /** @description Null when this viewer cannot read the artifact, or it is gone. */
+                                title: string | null;
+                                version: number | null;
+                                /** @description How many of this context's sessions bound it. */
+                                runs: number;
+                                last_run_at: string;
+                            }[];
                         };
                     };
                 };
