@@ -36,7 +36,7 @@ server was added after the current task began.
 
 ## Cursor
 
-[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](cursor://anysphere.cursor-deeplink/mcp/install?name=derive&config=eyJ1cmwiOiJodHRwczovL2Rlcml2ZS50by9tY3AifQ==)
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://cursor.com/install-mcp?name=derive&config=eyJ1cmwiOiJodHRwczovL2Rlcml2ZS50by9tY3AifQ%3D%3D)
 
 Or add it by hand: name `derive`, URL `https://derive.to/mcp`, no headers. Cursor completes
 OAuth on first use.

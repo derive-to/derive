@@ -109,24 +109,6 @@ header.head.wrap{padding:150px 24px 0;text-align:center}
 .beta .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--warning);white-space:nowrap;position:relative;top:-1px}
 .beta strong{color:var(--fg);font-weight:500}
 
-.tiers{margin-top:64px;display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--card)}
-@media(max-width:960px){.tiers{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:560px){.tiers{grid-template-columns:1fr}}
-.tier{padding:28px 26px 30px;border-left:1px solid var(--border-soft);display:flex;flex-direction:column}
-.tier:first-child{border-left:0}
-@media(max-width:960px){.tier{border-top:1px solid var(--border-soft)}.tier:nth-child(-n+2){border-top:0}.tier:nth-child(3){border-left:0}}
-@media(max-width:560px){.tier{border-left:0;border-top:1px solid var(--border-soft)}.tier:first-child{border-top:0}}
-.tier .tname{font-size:15px;font-weight:500;display:flex;align-items:center;gap:8px}
-.tier .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;color:var(--muted-fg);border:1px solid var(--border);border-radius:4px;padding:1px 6px}
-.tier .tfor{margin-top:6px;font-size:12.5px;color:var(--muted-fg);min-height:38px}
-.tier .price{margin-top:16px;font-size:30px;font-weight:500;letter-spacing:-0.02em}
-.tier .price small{font-size:12px;font-weight:400;color:var(--muted-fg);letter-spacing:0;display:block;margin-top:2px;font-family:var(--font-mono)}
-.tier .btn{margin-top:18px;height:34px;font-size:13px;border-radius:6px}
-.tier ul{margin:22px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
-.tier li{font-size:13px;color:var(--muted-fg);padding-left:18px;position:relative;line-height:1.5}
-.tier li::before{content:"";position:absolute;left:2px;top:8px;width:7px;height:7px;border-radius:2px;background:var(--secondary);border:1px solid var(--border)}
-.tier li strong{color:var(--fg);font-weight:500}
-
 section.wrap{padding:120px 24px 0}
 .section-head{max-width:640px}
 .section-head h2{font-size:clamp(26px,3.6vw,36px);line-height:1.15;margin-top:14px}
@@ -151,14 +133,6 @@ section.wrap{padding:120px 24px 0}
 section.wrap.final{padding:130px 24px 0;text-align:center}
 .final h2{font-size:clamp(28px,4vw,40px)}
 .final .body{margin:16px auto 0;max-width:50ch;font-size:15px;color:var(--muted-fg)}
-.waitlist{margin:32px auto 0;display:flex;justify-content:center}
-.waitlist form{display:flex;gap:8px;padding:6px;border-radius:12px;background:var(--card);border:1px solid var(--border);width:min(440px,100%)}
-.waitlist input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;font-size:14px;padding:0 12px}
-.waitlist input::placeholder{color:var(--muted-fg)}
-.waitlist form:focus-within{border-color:var(--fg)}
-.waitlist .btn{height:36px;border-radius:8px}
-.waitlist-done{display:none;align-items:center;gap:10px;height:50px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:var(--card);font-size:14px}
-.waitlist-done .tick{color:var(--success)}
 
 footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 .foot-inner{max-width:var(--maxw);margin:0 auto;padding:34px 24px 44px;display:flex;align-items:center;gap:16px 28px;flex-wrap:wrap}
@@ -169,20 +143,10 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 @media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
 @media(max-width:640px){
   header.head.wrap{padding-top:124px}
-  .tiers{margin-top:44px}
-  .tier{padding:24px 20px 26px}
-  .tier .tfor{min-height:0}
   section.wrap{padding-top:92px}
   section.wrap.final{padding-top:100px}
   .principle{padding:22px 20px}
-  .waitlist input{font-size:16px} /* <16px makes iOS zoom the page on focus */
-  .waitlist-done{height:auto;min-height:50px;padding:12px 16px}
   footer{margin-top:96px}
-}
-@media(max-width:360px){
-  .waitlist form{flex-direction:column;padding:8px}
-  .waitlist input{padding:10px 8px}
-  .waitlist .btn{width:100%}
 }
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
@@ -230,7 +194,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
     </div>
     <div class="principle">
       <h3>Usage</h3>
-      <p>First-party view analytics on what you publish (who's reading, roughly from where) and one signup-attribution stamp noting which link brought you here.</p>
+      <p>First-party view analytics on what you publish (who's reading and when) and one signup-attribution stamp noting which link brought you here.</p>
     </div>
     <div class="principle">
       <h3>What we never do</h3>
@@ -247,11 +211,11 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   <div class="faq">
     <details>
       <summary>Who processes data on our behalf?</summary>
-      <p class="a">A short, named list, nothing hidden behind "and our partners." <strong>Cloudflare</strong> hosts the app and serves its static pages, storage, and edge database. <strong>Neon</strong> runs the Postgres database that holds your workspace's metadata. <strong>Stripe</strong> processes billing once billing exists. <strong>Resend</strong> delivers transactional email like password resets and notifications. <strong>Slack and GitHub</strong> only see anything once a workspace owner explicitly connects that integration, and only for that workspace. <strong>Model providers</strong> only see a request when you turn on an opt-in AI feature like chat or an automation; nothing is sent to a model without that switch being on.</p>
+      <p class="a">A short, named list, nothing hidden behind "and our partners." <strong>Cloudflare</strong> hosts the app and serves its static pages. <strong>Neon</strong> runs the database behind your workspace: artifact records, comments, and the search index; artifact files themselves live in Cloudflare storage. <strong>Stripe</strong> processes payment details when you buy a paid tier; Derive never sees your card. <strong>Resend</strong> delivers transactional email like password resets and notifications. <strong>Slack and GitHub</strong> only see anything once a workspace owner explicitly connects that integration, and only for that workspace. No third-party model provider sees your content unless an opt-in feature like chat or an automation is turned on; search indexing runs on models inside Cloudflare's own infrastructure, the same host that already stores your content.</p>
     </details>
     <details>
       <summary>What happens when I delete my account or a workspace?</summary>
-      <p class="a">Deleting your account <strong>purges the content you own</strong>. If you're the last owner of a workspace, deleting it removes the workspace and everything in it. One honest exception: a URL you already published and shared stays live at that link until you (or a remaining owner) take it down yourself, the same way a link you emailed someone doesn't un-send when you delete the file on your end. We won't pretend a link that's already out in the world quietly disappears.</p>
+      <p class="a">Deleting your account removes your sign-in data, your memberships, and your personal workspace container, and it permanently disconnects your name from everything you authored. It does not delete the artifacts themselves: that's a separate, explicit step. Delete an artifact and its versions and search entries go with it; do that first, then delete your account. A workspace works the same way: it has to be empty before it can be deleted, so remove or move its artifacts before you delete the workspace itself. One honest exception either way: a URL you already published and shared stays live at that link until you (or a remaining owner) take it down yourself, the same way a link you emailed someone doesn't un-send when you delete the file on your end. We won't pretend a link that's already out in the world quietly disappears.</p>
     </details>
     <details>
       <summary>Can I avoid all of this by self-hosting?</summary>
@@ -286,7 +250,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <a href="https://github.com/derive-to/derive">GitHub</a>
       <a href="/login">Log in</a>
     </div>
-    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0 · Prices in USD</span>
+    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0</span>
   </div>
 </footer>
 

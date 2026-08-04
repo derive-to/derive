@@ -157,7 +157,7 @@ derive publish                         # versioned URL; the id is saved to deriv
 
 ### Connect an agent (MCP)
 
-[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](cursor://anysphere.cursor-deeplink/mcp/install?name=derive&config=eyJ1cmwiOiJodHRwczovL2Rlcml2ZS50by9tY3AifQ==)
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://cursor.com/install-mcp?name=derive&config=eyJ1cmwiOiJodHRwczovL2Rlcml2ZS50by9tY3AifQ%3D%3D)
 &nbsp;or one line for Claude Code: `claude mcp add --transport http derive https://derive.to/mcp`
 
 ```bash
