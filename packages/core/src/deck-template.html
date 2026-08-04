@@ -227,7 +227,17 @@
     else if (d.action === "goto") show(typeof d.n === "number" ? d.n : 0)
   })
 
+  /* Someone typing IN this deck must get their keystrokes, not a slide change — a
+     space types a space. Derive's inline editor makes a block contenteditable, and
+     its client already silences these keys while a caret is in one, so a deck is safe
+     inside the viewer either way; this is what makes it safe anywhere else. */
+  const typing = () => {
+    const el = document.activeElement
+    return !!(el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName)))
+  }
+
   document.addEventListener("keydown", (e) => {
+    if (typing()) return
     if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
       e.preventDefault()
       show(at + 1)
@@ -242,8 +252,12 @@
     }
   })
 
-  document.getElementById("prev").addEventListener("click", () => show(at - 1))
-  document.getElementById("next").addEventListener("click", () => show(at + 1))
+  document.getElementById("prev").addEventListener("click", () => {
+    if (!typing()) show(at - 1)
+  })
+  document.getElementById("next").addEventListener("click", () => {
+    if (!typing()) show(at + 1)
+  })
 
   window.addEventListener("resize", fitStage)
   fitStage()

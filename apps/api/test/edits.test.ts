@@ -277,3 +277,33 @@ describe("parseBaseVersion", () => {
     expect(() => parseBaseVersion("1.5")).toThrow(EditError)
   })
 })
+
+// The inline editor's image swap: an image URL lives in an attribute, where there is
+// no visible text to quote, so it rides the old_str shape instead. This pins the
+// round trip the "replace this picture" affordance depends on.
+describe("image swap (old_str on a src attribute)", () => {
+  const doc = (src: string) =>
+    `<!doctype html><html><body><h1>Report</h1><img src="${src}" alt="chart"><p>after</p></body></html>`
+
+  it("swaps the URL and leaves the rest of the markup byte-identical", async () => {
+    const deps = mkDeps({
+      1: { text: doc("https://old.example/chart.png"), contentType: "text/html" },
+    })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ old_str: "https://old.example/chart.png", new_str: "https://blob.example/abc123.png" }],
+      1,
+    )
+    expect(out.content).toBe(doc("https://blob.example/abc123.png"))
+    expect(out.filename).toBe("index.html")
+  })
+
+  it("refuses when the same URL appears twice (which picture did you mean?)", async () => {
+    const src = "https://old.example/chart.png"
+    const deps = mkDeps({ 1: { text: `${doc(src)}<img src="${src}">`, contentType: "text/html" } })
+    await expect(
+      materializeEdits(deps, fileArtifact(1), [{ old_str: src, new_str: "x" }], 1),
+    ).rejects.toThrow(EditError)
+  })
+})

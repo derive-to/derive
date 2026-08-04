@@ -60,6 +60,8 @@ export function RenderStage({
   onFrameLoad,
   banner,
   overlays,
+  overlay = false,
+  presenting = false,
   className,
 }: {
   /** null = the source isn't known yet (the record is still a list-row seed) — the
@@ -83,6 +85,10 @@ export function RenderStage({
   banner?: ReactNode
   /** Absolutely-positioned children inside the render (deck bar, cursor overlay). */
   overlays?: ReactNode
+  /** Present mode without the Fullscreen API — the stage covers the viewport itself. */
+  overlay?: boolean
+  /** Present mode (either path): the controls get a strip of their own — see below. */
+  presenting?: boolean
   className?: string
 }) {
   // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
@@ -141,7 +147,34 @@ export function RenderStage({
           artifact never flashes a white rectangle before it takes over. */}
       <div
         ref={wrapRef}
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+        data-presenting={overlay || undefined}
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background",
+          // Presenting where the Fullscreen API isn't available (iOS Safari refuses
+          // it for anything but a video): the stage takes the viewport itself. Same
+          // result, one z-index instead of a capability we don't have.
+          overlay && "fixed inset-0 z-70",
+          // The controls get a strip of their OWN while presenting, instead of
+          // floating over the last few pixels of the slide.
+          //
+          // A deck sizes itself to the viewport it is handed and puts its own
+          // furniture — page number, progress bar, "← → to navigate" — along the
+          // bottom edge. Handed the entire screen, a 16:9 deck's stage grows until
+          // that furniture is jammed against the slide (measured: 24px of clearance
+          // at 1440×810), and our bar then lands on top of the same 24px. Two sets of
+          // controls, one strip, and a bottom edge that reads crowded and heavier
+          // than the top.
+          //
+          // Reserving the strip costs ~56px of stage. The deck re-fits into what's
+          // left and re-centres itself, so its own furniture gets room AND the slide
+          // sits evenly between top and bar. The bar is absolutely positioned against
+          // the padding box, so it lands in the strip without moving.
+          //
+          // Black rather than the app canvas: the strip sits directly under a deck
+          // painting its own backdrop, and two near-black tones meeting read as a
+          // rendering seam. Black reads as letterbox, which is what it is.
+          presenting && "bg-black pb-14",
+        )}
       >
         {rawSrc != null && (
           <iframe
