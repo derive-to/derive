@@ -115,6 +115,7 @@ jobs:
           OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           MODEL_GATEWAYS: ${{ secrets.DERIVE_MODEL_GATEWAYS }}
           MODEL_DEFAULT: ${{ vars.DERIVE_MODEL_DEFAULT }}
+          MODEL_PROVIDERS: ${{ vars.DERIVE_MODEL_PROVIDERS }}
           MODEL_BASE_URL: ${{ vars.DERIVE_MODEL_BASE_URL }}
           MODEL_NAME: ${{ vars.DERIVE_MODEL_NAME }}
           # Optional: more model ids the SAME gateway serves. Set it and a preview can exercise
@@ -134,6 +135,7 @@ jobs:
           if [ -n "$OPENROUTER_KEY" ]; then put OPENROUTER_API_KEY "$OPENROUTER_KEY"; fi
           if [ -n "$MODEL_GATEWAYS" ]; then put DERIVE_MODEL_GATEWAYS "$MODEL_GATEWAYS"; fi
           if [ -n "$MODEL_DEFAULT" ]; then put DERIVE_MODEL_DEFAULT "$MODEL_DEFAULT"; fi
+          if [ -n "$MODEL_PROVIDERS" ]; then put DERIVE_MODEL_PROVIDERS "$MODEL_PROVIDERS"; fi
           if [ -n "$MODEL_BASE_URL" ]; then put DERIVE_MODEL_BASE_URL "$MODEL_BASE_URL"; fi
           if [ -n "$MODEL_NAME" ]; then put DERIVE_MODEL_NAME "$MODEL_NAME"; fi
           if [ -n "$MODEL_NAMES" ]; then put DERIVE_MODEL_NAMES "$MODEL_NAMES"; fi
