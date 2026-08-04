@@ -156,19 +156,19 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the fact). Pass `render` (with `wait`) to get the screenshot back here instead of a second call. Read derive://skills/publishing before bundles or edits, and derive://skills/assets before embedding images or fonts.",
+        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for any change to an existing doc — read format:'html' first, each search string must hit exactly once), `slide_ops` (rearrange a deck), `content` (a whole single file), `files` (a bundle). NEVER inline anything past ~a page, or any image/font — use stage; oversized payloads are rejected. Goes LIVE at your role, or pass for_review:true to file a proposal. Read derive://skills/publishing first.",
       inputSchema: {
         content: z
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. Stage images and fonts, then embed the upload response's permanent url (never upload_url or a base64 data: URI here) — see derive://skills/assets. Push a large document via stage target:'doc' rather than inlining it — see derive://skills/publishing.",
+            "The complete content for a SINGLE-FILE artifact. Embed images/fonts by their staged permanent url, never a base64 data: URI. Stage anything large instead of inlining it.",
           ),
         files: z
           .record(z.string(), z.string())
           .optional()
           .describe(
-            "A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is a text page (plain string), a base64 data: URI for a small inline binary, or — PREFERRED for real images/fonts — the exact \"asset:<hash>\" ref returned after uploading through stage target:'asset'. The root index.html (else the shallowest .html) becomes the entry page; a plain republish REPLACES the bundle, so include every page and asset (or use `merge`). See derive://skills/assets for staged refs and derive://skills/publishing for bundle semantics.",
+            "A MULTI-PAGE bundle: path → content. Values are text pages, or an \"asset:<hash>\" ref from stage target:'asset' for images/fonts. Root index.html is the entry page. A plain republish REPLACES the bundle — include every file, or use `merge`.",
           ),
         title: z
           .string()
@@ -184,19 +184,19 @@ export function registerPublishTool(tc: ToolContext): void {
           .enum(["none", "member"])
           .optional()
           .describe(
-            "Do THIS workspace's members reach a NEW artifact (each at their seat role — admin/editor/commenter)? member (the usual default — a pasted link opens for a teammate) or none (invite-only, even for the workspace). Omit to use the workspace's default. Ignored on republish.",
+            "Do this workspace's members reach a NEW artifact, each at their seat role: member (default) or none (invite-only). Ignored on republish.",
           ),
         link_role: z
           .enum(["none", "viewer", "commenter", "editor"])
           .optional()
           .describe(
-            "What merely holding a NEW artifact's URL confers on ANYONE (incl. people outside the workspace): none (no world link — the usual default), viewer, commenter, or editor. Anonymous holders are always clamped to viewer. Omit to use the workspace's default. Ignored on republish.",
+            "What merely holding a NEW artifact's URL confers on ANYONE, including outside the workspace: none (default) | viewer | commenter | editor. Anonymous holders clamp to viewer. Ignored on republish.",
           ),
         listed: z
           .enum(["none", "workspace", "public"])
           .optional()
           .describe(
-            "Where a NEW artifact SURFACES for discovery (no access of its own): none (no feeds/libraries — the usual default; a human promotes it when ready), workspace (the team library — needs workspace_access=member), or public (the public directory — needs a link_role). Omit to use the workspace's default. Ignored on republish — the human promotes via the share dialog.",
+            "Where a NEW artifact surfaces for discovery (no access of its own): none (default) | workspace (needs workspace_access=member) | public (needs a link_role). Ignored on republish.",
           ),
         spa: z
           .boolean()
@@ -215,7 +215,7 @@ export function registerPublishTool(tc: ToolContext): void {
           .array(z.string())
           .optional()
           .describe(
-            "Browse tags to set on the artifact — workspace-wide labels that make it findable (organize shows the vocabulary and proposes tags from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ REPLACES the set (normalized: trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves existing tags untouched on a republish.",
+            "Workspace-wide labels that make it findable; reuse an existing tag over a near-duplicate. REPLACES the set (trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves them untouched.",
           ),
         filename: z
           .string()
@@ -272,14 +272,14 @@ export function registerPublishTool(tc: ToolContext): void {
                 old_str: z
                   .string()
                   .describe(
-                    "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
+                    "Exact text from the STORED SOURCE (read format:'html' first). Must occur exactly once unless `occurrence` picks one.",
                   ),
                 new_str: z.string().describe("Replacement text. Empty string deletes."),
                 occurrence: z.coerce
                   .number()
                   .optional()
                   .describe(
-                    "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
+                    "1-based index of which match to replace, when old_str is intentionally non-unique.",
                   ),
               }),
               z.object({
@@ -290,7 +290,7 @@ export function registerPublishTool(tc: ToolContext): void {
                     suffix: z.string().optional().describe("Visible text just after it."),
                   })
                   .describe(
-                    "Locates the edit by RENDERED text (the selector comment anchors use) instead of raw source — no format:'html' read needed. Strict resolution: the context must pin exactly one spot (or the exact be globally unique), the span may not cross markup, and a miss applies nothing.",
+                    "Locates the edit by RENDERED text instead of raw source. The context must pin exactly one spot, and the span may not cross markup.",
                   ),
                 new_text: z
                   .string()
@@ -300,7 +300,7 @@ export function registerPublishTool(tc: ToolContext): void {
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it. Two shapes, not mixable in one batch: {old_str, new_str} — exact-match against the current stored source, applied in order (read format:'html' first so old_str matches the raw source); or {quote: {exact, prefix, suffix}, new_text} — located by VISIBLE text and resolved server-side, no raw read needed. Requires `short_id`; use INSTEAD of `content`. See derive://skills/publishing. A miss applies nothing and returns why.",
+            "Revise a single-file artifact without resending it. Two shapes, not mixable: {old_str, new_str} against the stored source, or {quote:{exact,prefix,suffix}, new_text} against visible text. A miss applies nothing and says why.",
           ),
         slide_ops: z
           .array(
@@ -322,13 +322,13 @@ export function registerPublishTool(tc: ToolContext): void {
           )
           .optional()
           .describe(
-            "Rearrange a DECK by position: move / delete / duplicate whole slides, applied in order. Use this instead of `edits` for structural changes — it never sends slide markup, so it costs the same whatever the slide holds, and it cannot half-apply. Positions are 1-based, as the deck bar shows them; `data-derive-slide` is identity and is never renumbered, so comment threads follow their slide. Requires `short_id`; use INSTEAD of `content`/`edits`. Ambiguous structure (nested slides, content between slides) refuses the whole batch and says why.",
+            "Rearrange a DECK: move / delete / duplicate whole slides by 1-based position, applied in order. Use instead of `edits` for structural changes. Ambiguous structure refuses the whole batch.",
           ),
         base_version: z.coerce
           .number()
           .optional()
           .describe(
-            "Safety check for `edits`/`slide_ops`: pass the version you read; the publish errors instead of applying when the artifact has moved past it.",
+            "Pass the version you read; the publish errors instead of applying if the artifact moved past it.",
           ),
       },
     },

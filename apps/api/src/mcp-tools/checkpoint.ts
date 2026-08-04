@@ -45,7 +45,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
     "checkpoint",
     {
       description:
-        "Commit a compact LAYER of working state to this work's lineage — a one-page, human-readable checkpoint (state / decisions / open threads / next steps / refs) that lets ANY later session continue the work cold, on any machine. Call it at task boundaries: a task just completed, before a risky step, when wrapping up a session. FIRST call for a piece of work: pass `work` (a short name); the result names a short_id — record it (e.g. in a .derive/lineage file) and pass it as `short_id` on every checkpoint after. Each checkpoint REPLACES the page (versions keep the history), so restate what still matters and prefer refs over restated detail — the tool rejects more than a page. See derive://skills/checkpoint.",
+        "Commit a one-page checkpoint (state / decisions / open threads / next steps / refs) so ANY later session continues this work cold. Call it at task boundaries. FIRST call: pass `work` (a short name), record the short_id it returns, and pass that `short_id` every time after. Each checkpoint REPLACES the page — restate what still matters, prefer refs, and it rejects more than a page. See derive://skills/checkpoint.",
       inputSchema: {
         work: z
           .string()

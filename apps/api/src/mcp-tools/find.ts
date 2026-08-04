@@ -125,7 +125,7 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things in Derive — the MODE is decided by what you pass. Pass `short_id` + `query` to GREP within one artifact: matching lines with line numbers (in:'source'|'text', context lines, a past `version`), so you can then read a `lines` range or edit that spot. Pass `query` ALONE to SEARCH the whole workspace — artifacts ranked by relevance with a snippet each, so you find WHICH doc has something before opening it; this ALSO surfaces any askable context whose name matches. That search is LITERAL: ONE keyword, never a whole question; empty ⇒ try another word or BROWSE, never a claim that nothing exists (derive://skills/finding). Pass `links_to` for BACKLINKS — which artifacts link TO one target, exhaustively rather than ranked, which is the question `query` cannot answer honestly. Pass NEITHER to BROWSE the library: every artifact (short id, title, kind, is_skill, version, access, tags — skills:true or a `tag` narrows it) PLUS the askable contexts. Rows are typed (artifact | match | context | backlink); `read` a context row for its package, `use` it to give it work. Includes your own unlisted work. For the browse→work rhythm, read derive://skills/loop.",
+        "Find things in Derive; what you pass picks the MODE. `short_id` + `query` GREPs one artifact (matching lines with line numbers). `query` alone SEARCHES the workspace, ranked with snippets. `links_to` returns BACKLINKS, exhaustively. NEITHER browses the library plus the askable contexts. Search is LITERAL: ONE keyword, never a question; empty means try another word or browse, never that nothing exists. Rows are typed (artifact|match|context|backlink). See derive://skills/finding.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         query: z
@@ -148,7 +148,7 @@ export function registerFindTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe(
-            'Read one FACT across every artifact in the workspace that carries it — "where does this metric stand everywhere", the cross-artifact companion to read(data, versions) which answers "how did this ONE page change over time". Each row is that artifact\'s CURRENT version. Combine with `tag` to scope it to a set (e.g. data:"checks", tag:"nightly"). Pass "*" to list which AUTHORED facts exist and how many artifacts carry each; "$*" lists the host-DERIVED ones ($outline/$links/$stats — computed, never authored, never counted as adoption). Reaches exactly what a search would: your own artifacts plus the workspace-listed ones, never a teammate\'s invite-only doc — so a count here is what YOU can see, not what the workspace holds.',
+            'Read one FACT across every artifact carrying it, at each one\'s current version. Scope with `tag`. "*" lists authored facts, "$*" the host-derived ones. Reaches what a search would, never a teammate\'s invite-only doc.',
           ),
         skills: z
           .boolean()
@@ -177,7 +177,7 @@ export function registerFindTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe(
-            "BACKLINKS: which artifacts link TO this one. Pass a short id or an artifact URL; returns every artifact in the workspace whose CURRENT version references it, exhaustively — unlike `query`, which ranks and caps a guess at relevance. Combine with `tag` to scope the set. Reads the host-derived $links fact, so bundles and skills (which carry no facts) are never counted as linkers, and a version published before derivation carries no row until it is read once. A link to @v4 and a link to current are the same edge.",
+            "BACKLINKS: which artifacts link TO this one, by short id or URL. Exhaustive, unlike `query`. Bundles and skills carry no facts, so links inside them are never counted.",
           ),
         version: z.coerce
           .number()

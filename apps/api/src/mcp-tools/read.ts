@@ -161,36 +161,36 @@ export function registerReadTool(tc: ToolContext): void {
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also a CONTEXT id (ctx_…) or name — loads that package, not a document. Also a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — a CORE SKILL URI (derive://skills/<name>, as the instructions index lists them), or derive://decks/template (the deck starter), so the strings the instructions name are readable here even where MCP resources aren't.",
+            "An artifact short id (nk0dsral). Also resolves a ctx_ id/name (a context package), derive://skills/<name>, derive://brandprint/reference|template|profile, derive://decks/template, derive://sources.",
           ),
         section: z
           .string()
           .optional()
           .describe(
-            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan), or a region ref like "@2" from a headless page\'s map. Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline or region map.',
+            'A heading slug, or "@2" for a region. Bundle: a page path, optionally page.html#slug. "*" forces the whole (clipped) doc. Omitted: small returns whole, large returns an outline.',
           ),
         format: z
           .enum(["markdown", "html", "text"])
           .optional()
           .describe(
-            "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
+            "markdown (default) | html: the exact stored source, required BEFORE publish `edits` | text: flat visible text, what comment `quote`s anchor against.",
           ),
         lines: z
           .string()
           .optional()
           .describe(
-            'Windowed read: a 1-indexed inclusive line range of the body in the chosen format — "40-120", "40" (one line), or "40-" (to the end). Windows a single-file doc, or one bundle page named by a bare `section` path. Pair with format:"html" to window the exact source before an edit. Skips the outline; still capped.',
+            '1-indexed inclusive line range of the body in the chosen format: "40-120", "40", "40-".',
           ),
         render: z
           .enum(["top", "full", "marked"])
           .optional()
           .describe(
-            'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
+            'SEE the page as a viewer does, catching visual breakage no text read can. "top": the 1200x630 crop. "full": the whole page. "marked": full, with @N region refs drawn on. Computed seconds after a publish; pass alone.',
           ),
         wait: num("wait", { int: true, min: 1, max: 30 })
           .optional()
           .describe(
-            "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
+            "With `render`: block up to this many seconds (max 30) for a screenshot that is still computing.",
           ),
         map: z
           .boolean()
@@ -206,14 +206,12 @@ export function registerReadTool(tc: ToolContext): void {
         data: z
           .string()
           .optional()
-          .describe(
-            'A version\'s structured DATA slot: the JSON a `derive-data` block on the page stored under this name (see the publishing skill), so you can read back data you published instead of re-parsing old markup. Pass "*" to list the facts this version carries. Reads the current version unless `version` is set.',
-          ),
+          .describe('A version\'s stored fact slot, by name. "*" lists what this version carries.'),
         versions: z
           .string()
           .optional()
           .describe(
-            'With `data`: read that slot across a RANGE of versions in ONE call — the trend read. "1-30", "12" (one), "20-" (to the current version), or "all". Versions are the time axis, so this answers "how did this change over time" without fetching each version. Returns oldest first; versions that carry no such slot are simply absent, and the response says how many.',
+            'With `data`: that slot across a version RANGE in one call — "1-30", "12", "20-", "all". Oldest first.',
           ),
         workspace: wsArg,
       },

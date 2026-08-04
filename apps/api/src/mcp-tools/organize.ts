@@ -30,7 +30,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
     "organize",
     {
       description:
-        "Tags, collections, and shelving in one tool — the library layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, `collection`, and/or `state`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. `state:'removed'` retires an artifact from the library and `state:'live'` puts it back, so cleaning up after yourself is safe; `state:'deleted'` is the permanent one (manage-level, no undo). For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
+        "Tags, collections and shelving — the library layer. READ (no `short_ids`) returns the tag vocabulary + collections; with `short_ids`, their tags and suggestions. WRITE (`add`/`remove`/`set` tags, `collection`, `state`) authorizes each artifact on its own, so ones you cannot touch come back skipped. `state:'removed'` retires reversibly, `state:'deleted'` is permanent and manage-level. See derive://skills/organize.",
       inputSchema: {
         short_ids: z
           .array(z.string())

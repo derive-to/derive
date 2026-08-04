@@ -52,7 +52,7 @@ export function registerStageTool(tc: ToolContext): void {
     "stage",
     {
       description:
-        "Work out-of-band from your shell — mint a SHORT-LIVED capability, then curl with it (zero bytes through context). target:'doc' for a whole big document or bundle more than ~a page (returns a no-bearer publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target; read derive://skills/publishing). target:'asset' for an image or font a document EMBEDS (returns a permanent url + an asset:<hash> ref; raster images and WOFF/WOFF2 only, max 25MB; read derive://skills/assets). target:'api' mints a REAL BEARER TOKEN for REST from your shell — 15 min, one workspace, capped at your role (narrow with `access`); a live credential in this transcript, so treat it like one. Staging alone does not publish an artifact. NEVER base64 a binary through a tool call — a pasted image is already a file on disk.",
+        "Mint a SHORT-LIVED capability, then curl with it — zero bytes through context. target:'doc' for a document or bundle past ~a page (omit short_id to CREATE, pass it to REVISE). target:'asset' for an image or font a document embeds (raster + WOFF/WOFF2, max 25MB). target:'api' mints a REAL BEARER for REST: 15 min, one workspace, capped at your role, and live in this transcript. Staging alone publishes nothing. NEVER base64 a binary through a tool call.",
       inputSchema: {
         // A STRING, not an enum, on purpose: this discriminator grows (api was added
         // after doc/asset), and a cached client validates an enum locally — so a new
@@ -61,7 +61,7 @@ export function registerStageTool(tc: ToolContext): void {
         target: z
           .string()
           .describe(
-            "doc: a whole document/bundle too big to inline (returns a publish URL). asset: an image or font a doc embeds (returns a permanent asset url + ref). api: a short-lived BEARER TOKEN for calling REST from your shell at the access this connection already holds. One of: doc, asset, api.",
+            "doc: a document/bundle too big to inline. asset: an image or font a doc embeds. api: a short-lived bearer for REST from your shell.",
           ),
         short_id: z
           .string()

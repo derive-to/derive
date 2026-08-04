@@ -29,17 +29,7 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Give a context WORK on your user's behalf (rate-limited): an INSTRUCTION it serves in one " +
-        "session. A context is a PACKAGE — `read` loads what it knows, `use` has it act; find " +
-        "discovers them. GIVE: " +
-        "`context` (id or name) + `instruction` — 'with this context, do this' (a question OR a " +
-        "task; always name the target, e.g. 'for Acme'). FOLLOW UP: `session_id` + `instruction`. " +
-        "CHECK/RESUME: `session_id` alone. The call waits up to `wait` seconds (default 25) for the " +
-        "result; real runs take minutes and STREAM, so a still-working response is NORMAL — re-call " +
-        "with the returned session_id until it settles. RUN a context you serve: `use({context})` " +
-        "with no instruction PULLS queued work; " +
-        "`use({session_id, answer})` reports back (+ `progress` / `state` / `result_artifact_id`). " +
-        "For the modes and the runner loop, read derive://skills/contexts.",
+        "Give a context WORK on your user's behalf (rate-limited). A context is a PACKAGE: `read` loads what it knows, `use` has it act. GIVE: `context` (id or name) + `instruction`, always naming the target. FOLLOW UP: `session_id` + `instruction`. CHECK/RESUME: `session_id` alone. The call waits up to `wait` seconds (default 25); real runs take minutes, so a still-working response is NORMAL — re-call with the session_id until it settles. RUN one you serve: `use({context})` pulls queued work, `use({session_id, answer})` reports back. See derive://skills/contexts.",
       inputSchema: {
         context: z
           .string()

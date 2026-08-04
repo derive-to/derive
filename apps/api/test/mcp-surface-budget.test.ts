@@ -93,7 +93,20 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // 🚨 That leaves ~14 chars of headroom at 8936/8950. The next param to land here CANNOT
 // simply be added: reclaim first (a stale clause, a list a generated index already
 // covers), or make the case for raising the ceiling on its own merits.
-const TOOL_DESCRIPTIONS_BUDGET = 8950
+// 🚨 THE BUDGET USED TO MEASURE A THIRD OF THE SURFACE. Tool descriptions were capped;
+// PARAM descriptions — the bigger half by far — were not counted at all, so the tool text
+// stayed disciplined while schemas grew unwatched to roughly twice its size. Both are in
+// the same always-loaded payload. All three numbers below are measured together now, and
+// the one that matters is SURFACE_BUDGET.
+//
+// The rule that keeps them small, applied when these were cut: a description says WHAT to
+// pass and WHAT SILENTLY BREAKS if you get it wrong. Rationale, comparisons with sibling
+// params, worked examples and edge-case history go to the skill body, which is fetched only
+// by a session that needs it, or to the tool's own RESPONSE, which teaches at the moment of
+// use and costs nothing to sessions that never call it.
+const TOOL_DESCRIPTIONS_BUDGET = 6_500
+const PARAM_DESCRIPTIONS_BUDGET = 12_000
+const SURFACE_BUDGET = 18_000
 const INSTRUCTIONS_BUDGET = 2750
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
@@ -178,10 +191,27 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     for (const t of tools) expect(t.description, `tool ${t.name} has no description`).toBeTruthy()
 
     const summed = tools.reduce((n, t) => n + (t.description?.length ?? 0), 0)
+    // PARAM descriptions are part of the same always-loaded payload, and for years they
+    // were not counted here: the surface was budgeted at its tool descriptions (~8.9k)
+    // while its schemas quietly carried ~16k more. Every char of both is re-sent to the
+    // model on every turn, so the honest number is the sum.
+    const paramChars = tools.reduce((n, t) => {
+      const props = (t as { inputSchema?: { properties?: Record<string, unknown> } }).inputSchema
+        ?.properties
+      return (
+        n +
+        Object.values(props ?? {}).reduce(
+          (m: number, p) => m + ((p as { description?: string })?.description?.length ?? 0),
+          0,
+        )
+      )
+    }, 0)
     console.log(
-      `MCP surface: ${tools.length} tools, descriptions ${summed} chars, instructions ${instructions.length} chars`,
+      `MCP surface: ${tools.length} tools, descriptions ${summed} chars, params ${paramChars} chars, total ${summed + paramChars} chars, instructions ${instructions.length} chars`,
     )
     expect(summed).toBeLessThan(TOOL_DESCRIPTIONS_BUDGET)
+    expect(paramChars).toBeLessThan(PARAM_DESCRIPTIONS_BUDGET)
+    expect(summed + paramChars).toBeLessThan(SURFACE_BUDGET)
     expect(instructions.length).toBeLessThan(INSTRUCTIONS_BUDGET)
   })
 
