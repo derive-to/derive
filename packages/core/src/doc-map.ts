@@ -25,7 +25,7 @@
  * add later and impossible to remove once agents depend on it.
  */
 
-import { isDeckDocument, sliceSlides } from "./decks"
+import { countSlideElements, isDeckDocument, sliceSlides } from "./decks"
 import { flatSectionSpans, isHtmlLike, landmarkSpans } from "./doc-text"
 import { attrValue, elementEnd, type HtmlTag, tags } from "./html-tags"
 
@@ -115,7 +115,21 @@ const assetBlocks = (
  */
 export const docMap = (source: string, contentType: string): DocMap => {
   const html = isHtmlLike(contentType)
-  const kind: DocMap["kind"] = html ? (isDeckDocument(source) ? "deck" : "page") : "markdown"
+  // Slides are the content units when the document is a deck STRUCTURALLY, whether or not
+  // it announces itself over the protocol.
+  //
+  // Keying this on `isDeckDocument` alone (which requires the announce) split the surface
+  // in half on real published decks: a deck written before the protocol existed slices
+  // into 23 slides for `slide_ops`, while the map called it a page and offered 71 heading
+  // sections and no slide refs at all. Read and write have to agree about what a document
+  // is made of, or an agent reading the map never learns it can rearrange.
+  //
+  // The two thresholds are the ones already in use, not new judgment: an announced deck
+  // needs 2 slides (isDeckDocument), an unannounced one needs 3 (the same bar the publish
+  // advisory uses before it calls a page a deck attempt), so an ordinary page that happens
+  // to use a `slide` class twice stays a page.
+  const slideStructured = html && (isDeckDocument(source) || countSlideElements(source) >= 3)
+  const kind: DocMap["kind"] = html ? (slideStructured ? "deck" : "page") : "markdown"
 
   // 1. Content anchors: what the document is made of.
   const anchors: DocNode[] = []

@@ -238,3 +238,33 @@ describe("mapJson", () => {
     expect(resolveNode(map, `sec:h${MAX_MAP_NODES + 10}`)).not.toBeNull()
   })
 })
+
+describe("docMap: decks that never announced themselves", () => {
+  // Found by mapping a real 165KB published deck: it predates the protocol, so
+  // `isDeckDocument` called it a page and the map offered 71 heading sections and no slide
+  // refs — while `slide_ops` sliced the same file into 23 slides. Read and write have to
+  // agree about what a document is made of.
+  const silent = (n: number) =>
+    `<!doctype html><html><body>\n  ${Array.from(
+      { length: n },
+      (_, i) => `<section class="slide"><div class="slide-inner"><h2>s${i}</h2></div></section>`,
+    ).join("\n  ")}\n</body></html>`
+
+  it("maps a silent deck's SLIDES, not its headings", () => {
+    const map = tiles(silent(4), HTML)
+    expect(map.kind).toBe("deck")
+    expect(map.nodes.filter((n) => n.type === "slide")).toHaveLength(4)
+    expect(map.nodes.some((n) => n.type === "section")).toBe(false)
+  })
+
+  it("leaves an ordinary page that merely uses a slide class alone", () => {
+    // Two is a carousel, not a deck attempt — the same bar the publish advisory draws.
+    const carousel = `<!doctype html><html><body><h2>Gallery</h2>
+  <div class="slide">a</div>
+  <div class="slide">b</div>
+</body></html>`
+    const map = docMap(carousel, HTML)
+    expect(map.kind).toBe("page")
+    expect(map.nodes.some((n) => n.type === "slide")).toBe(false)
+  })
+})
