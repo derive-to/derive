@@ -8,9 +8,15 @@ import type { FrameGeom, Selection } from "./types"
  * The action bar on a text selection — a compact horizontal bar above the
  * selection, shown instantly, restyled onto the popover grammar: surface + ring +
  * pop shadow and an arrow tethering it to the highlighted text. No entrance
- * animation — it appears in place. One verb: Comment. Addressing an agent is just
- * an @mention typed into the composer (see the "Comments, Sessions & Presence"
- * RFC) — not a parallel action here.
+ * animation — it appears in place.
+ *
+ * Two verbs, and they are the two things a reader does with a sentence they stopped
+ * on: say something about it, or change it. Edit only appears for someone who can
+ * actually land the change (it files a proposal for a commenter, hence the label
+ * swap) — and it opens the mode with the caret already in that block, so the fix
+ * costs one click instead of a trip to the header. Addressing an agent is NOT a
+ * third verb: that's an @mention typed into the composer (see the "Comments,
+ * Sessions & Presence" RFC).
  *
  * The selection lives in the sandboxed iframe, so this positions against the
  * frame-reported rect: doc-absolute top (live against scroll, via the geometry
@@ -30,12 +36,18 @@ export function SelectionMenu({
   subscribeGeom,
   asideWidth,
   onComment,
+  editLabel,
+  onEdit,
 }: {
   sel: NonNullable<Selection>
   frameRef: RefObject<HTMLIFrameElement | null>
   subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
   asideWidth: number
   onComment: () => void
+  /** "Edit" for someone who publishes, "Suggest" where it lands as a proposal.
+   *  Absent ⇒ this viewer can't edit and the verb doesn't appear at all. */
+  editLabel?: string
+  onEdit?: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const { docTop } = sel
@@ -91,6 +103,19 @@ export function SelectionMenu({
         <Icon name="comments" size={15} className="text-muted-foreground" />
         Comment
       </Button>
+      {editLabel && onEdit && (
+        <Button
+          variant="ghost"
+          size="sm"
+          title="Edit this text (e)"
+          data-testid="edit-selection"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onEdit}
+        >
+          <Icon name="pencil" size={15} className="text-muted-foreground" />
+          {editLabel}
+        </Button>
+      )}
       {/* The tether: a rotated square riding the edge nearest the selection,
           its two exposed sides picking up the same hairline as the surface ring. */}
       <span

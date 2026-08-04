@@ -21,6 +21,11 @@ export interface StalePin {
   current: number
 }
 
+export interface ManifestRepo {
+  url: string
+  ref: string | null
+}
+
 /** Parse the `skills:` list out of a manifest's YAML-ish frontmatter. Deliberately
  *  narrow, mirroring the runner's parseManifest: a `- id:` item optionally followed
  *  by indented `version:`; a top-level key closes the list; no frontmatter or no
@@ -72,4 +77,65 @@ export const stalePins = async (meta: MetaStore, pins: SkillPin[]): Promise<Stal
       out.push({ short_id: pin.id, pinned: pin.version, current: a.current_version })
   }
   return out
+}
+
+/** Parse the `repos:` list out of a manifest's frontmatter — the same grammar the
+ *  runner's own parseManifest reads (packages/cli/src/runner.js), ported here so the
+ *  console can show a context's repo pointers without a round trip through the CLI.
+ *  Deliberately narrow: url required and validated against the runner's own scheme
+ *  allowlist, ref optional; everything else in the frontmatter is ignored. */
+export const parseManifestRepos = (md: string): ManifestRepo[] => {
+  const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
+  if (!m) return []
+  const unquote = (v: string): string => {
+    const t = v.trim()
+    const q = t[0]
+    return t.length >= 2 && (q === '"' || q === "'") && t.at(-1) === q ? t.slice(1, -1) : t
+  }
+  const repos: Record<string, string>[] = []
+  let inRepos = false
+  let cur: Record<string, string> | null = null
+  for (const line of (m[1] ?? "").split(/\r?\n/)) {
+    if (/^repos:\s*$/.test(line)) {
+      inRepos = true
+      continue
+    }
+    if (inRepos && /^\S/.test(line)) inRepos = false // next top-level key
+    if (!inRepos) continue
+    const item = line.match(/^\s*-\s+(\w+):\s*(.+)$/)
+    const kv = line.match(/^\s+(\w+):\s*(.+)$/)
+    if (item) {
+      cur = { [item[1] as string]: unquote(item[2] as string) }
+      repos.push(cur)
+    } else if (kv && cur) cur[kv[1] as string] = unquote(kv[2] as string)
+  }
+  return repos
+    .filter((r) => typeof r.url === "string" && /^(https:\/\/|ssh:\/\/|git@|file:\/\/)/.test(r.url))
+    .map((r) => ({ url: r.url as string, ref: r.ref ?? null }))
+}
+
+/** The manifest's own first paragraph, for a one-line "what is this" — frontmatter
+ *  stripped, a single leading heading skipped (most manifests open `# Name`), then the
+ *  first non-blank run of lines joined and capped. Null on an empty/frontmatter-only
+ *  body rather than an empty string, so callers can tell "no description" from "". */
+export const manifestDescription = (md: string, maxChars = 220): string | null => {
+  const body = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
+  const lines = body.split(/\r?\n/)
+  let i = 0
+  const skipBlank = () => {
+    while (i < lines.length && (lines[i] as string).trim() === "") i++
+  }
+  skipBlank()
+  if (i < lines.length && /^#{1,6}\s/.test(lines[i] as string)) {
+    i++
+    skipBlank()
+  }
+  const para: string[] = []
+  while (i < lines.length && (lines[i] as string).trim() !== "") {
+    para.push((lines[i] as string).trim())
+    i++
+  }
+  const text = para.join(" ").trim()
+  if (!text) return null
+  return text.length > maxChars ? `${text.slice(0, maxChars).trimEnd()}…` : text
 }

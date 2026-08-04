@@ -322,3 +322,92 @@ describe("quote-edit shapes", () => {
     ).toThrow(/wasn't found/)
   })
 })
+
+// `new_html`: the one path where a manual edit carries markup into the source (the
+// editor's bold / italic / link). Every other guard still applies to it — these pin
+// the allowlist, the scheme check, and the markdown refusal.
+describe("applyQuoteEdits — new_html", () => {
+  const htmlEdit = (
+    exact: string,
+    new_html: string,
+    ctx: { prefix?: string; suffix?: string } = {},
+  ) => ({
+    quote: { exact, ...ctx },
+    new_html,
+  })
+
+  it("splices allowlisted inline markup", () => {
+    const out = applyQuoteEdits("<p>we shipped it late</p>", HTML, [
+      htmlEdit("late", "<b>late</b>"),
+    ])
+    expect(out).toBe("<p>we shipped it <b>late</b></p>")
+  })
+
+  it("keeps a link, with its href", () => {
+    const out = applyQuoteEdits("<p>read the report today</p>", HTML, [
+      htmlEdit("the report", '<a href="https://example.com/r">the report</a>'),
+    ])
+    expect(out).toBe('<p>read <a href="https://example.com/r">the report</a> today</p>')
+  })
+
+  it("strips everything outside the allowlist", () => {
+    const out = applyQuoteEdits("<p>plain words here</p>", HTML, [
+      htmlEdit("words", '<div class="x" style="color:red"><b>words</b></div>'),
+    ])
+    expect(out).toBe("<p>plain <b>words</b> here</p>")
+  })
+
+  it("refuses a script, and the javascript: scheme on a link", () => {
+    const script = applyQuoteEdits("<p>one two three</p>", HTML, [
+      htmlEdit("two", "<b>two</b><script>alert(1)</script>"),
+    ])
+    expect(script).not.toContain("alert(1)")
+    expect(script).not.toContain("<script")
+    // Built from parts so the literal scheme never appears in source (the linter
+    // reads it as a real javascript: URL; here it is the thing under test).
+    const jsScheme = `java${"script"}:alert(1)`
+    const js = applyQuoteEdits("<p>one two three</p>", HTML, [
+      htmlEdit("two", `<a href="${jsScheme}">two</a>`),
+    ])
+    expect(js).not.toContain("javascript:")
+    expect(js).toContain(">two</a>")
+  })
+
+  it("is refused on a markdown document — formatting there is markdown text", () => {
+    expect(() =>
+      applyQuoteEdits("we shipped it late", MD, [htmlEdit("late", "<b>late</b>")]),
+    ).toThrow(/Markdown/)
+  })
+
+  it("still refuses a span that crosses an element boundary", () => {
+    expect(() =>
+      applyQuoteEdits("<p>part <b>bold</b> tail</p>", HTML, [htmlEdit("part bold", "<i>x</i>")]),
+    ).toThrow(EditError)
+  })
+
+  it("isQuoteEdit takes exactly one replacement", () => {
+    expect(isQuoteEdit({ quote: { exact: "a" }, new_text: "b" })).toBe(true)
+    expect(isQuoteEdit({ quote: { exact: "a" }, new_html: "<b>b</b>" })).toBe(true)
+    expect(isQuoteEdit({ quote: { exact: "a" }, new_text: "b", new_html: "<b>b</b>" })).toBe(false)
+    expect(isQuoteEdit({ quote: { exact: "a" } })).toBe(false)
+  })
+})
+
+// Enter inside a block: a line break, not a paragraph split. The editor sends it as
+// markup like any other formatting; this pins that <br> is in the allowlist and that
+// nothing structural sneaks in beside it.
+describe("applyQuoteEdits — line breaks", () => {
+  it("keeps a <br> from the editor", () => {
+    const out = applyQuoteEdits("<p>one two</p>", HTML, [
+      { quote: { exact: "one two" }, new_html: "one<br>two" },
+    ])
+    expect(out).toBe("<p>one<br>two</p>")
+  })
+
+  it("still drops block tags — a paragraph split is not an inline edit", () => {
+    const out = applyQuoteEdits("<p>one two</p>", HTML, [
+      { quote: { exact: "one two" }, new_html: "one</p><p>two" },
+    ])
+    expect(out).toBe("<p>onetwo</p>")
+  })
+})

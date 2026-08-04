@@ -1,17 +1,25 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { Copy as CopyIcon } from "lucide-react"
+import { Copy as CopyIcon, Cpu, Plug, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
-import { ApiError, api, type Session, type SessionMessage, type SessionMeta } from "@/api"
+import {
+  ApiError,
+  api,
+  type ContextDetail,
+  type ManifestSkillInfo,
+  type Session,
+  type SessionMessage,
+  type SessionMeta,
+} from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { Badge } from "@/components/ui/badge"
+import { Badge, type badgeVariants } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -24,7 +32,7 @@ import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
+import { artifactQuery, contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
 import { applyDelta, type DeltaState, EMPTY_DELTA } from "@/lib/session-delta"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -36,19 +44,47 @@ import { mdToHtml } from "../artifact/lib/markdown"
 import { ConsolePending } from "./context-skeleton"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 
-// The context console: ask, read the answer (with the query/confidence/caveats the
-// runner attaches), follow up. One conversation at a time — older sessions are a
-// picker away; the owner additionally gets the activity view. The transcript polls
-// fast only while the runner owes a reply (sessionQuery's refetchInterval), and refetches
-// immediately on the server's session.settled/session.progress push (SessionThread) —
-// the poll is the fallback, the push is what makes a reply land without waiting out
-// the interval.
+// The context console: a context's HOME, not a bare chat widget — what it is (the
+// manifest), what it can do (the skills it pins), where it runs (its owner's own
+// machine, usually), and what it produced (sessions and the reports they bind). Chat
+// stays the primary surface, but the header + rail earn the conversation first.
+//
+// The transcript polls fast only while the runner owes a reply (sessionQuery's
+// refetchInterval), and refetches immediately on the server's session.settled /
+// session.progress push (SessionThread) — the poll is the fallback, the push is what
+// makes a reply land without waiting out the interval.
 export function ContextConsole() {
   const { id } = useParams({ from: "/contexts/$id" })
   // Keyed by context id: the router keeps this route's component mounted across
   // /contexts/A → /contexts/B, and a `picked` session id from A must not
   // survive into B's console.
   return <Console key={id} id={id} />
+}
+
+// A context's own scopes, read off its manifest's body — a presentation-layer parse
+// (never authoritative; the server never sees this), mirroring the narrow spirit of
+// the server's own frontmatter parsers. Looks for the first heading naming
+// scope/try/example, then takes inline-code spans out of what follows it, stopping at
+// the next heading. No matching section ⇒ no chips — nothing here is invented.
+function tryChipsFrom(md: string | null | undefined): string[] {
+  if (!md) return []
+  const body = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
+  const lines = body.split(/\r?\n/)
+  const start = lines.findIndex((l) => /^#{1,6}\s.*\b(scope|try|example)/i.test(l))
+  if (start === -1) return []
+  const chips: string[] = []
+  for (let i = start + 1; i < lines.length && chips.length < 5; i++) {
+    const line = lines[i] as string
+    if (/^#{1,6}\s/.test(line)) break
+    for (const m of line.matchAll(/`([^`]+)`/g)) {
+      if (m[1] && chips.length < 5) chips.push(m[1])
+    }
+  }
+  return chips
+}
+
+function stripFrontmatter(md: string): string {
+  return md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
 }
 
 function Console({ id }: { id: string }) {
@@ -75,9 +111,9 @@ function Console({ id }: { id: string }) {
 
   // The session on screen: sticky once picked; defaults to the most recent.
   const [picked, setPicked] = useState<string | null>(null)
-  // Controlled tabs so the Activity view can hand a session to the Ask view —
-  // with defaultValue the row click would select a thread inside a hidden tab.
-  const [tab, setTab] = useState("ask")
+  // Controlled tabs so the Activity view can hand a session to Chat, and the rail's
+  // "see manifest" link can hand off to the Manifest tab.
+  const [tab, setTab] = useState("chat")
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
@@ -116,89 +152,47 @@ function Console({ id }: { id: string }) {
   }
   if (!context || isLoading) return <ConsolePending />
 
-  return (
-    <PageShell className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-center gap-3">
-        <Icon name="context" className="text-muted-foreground" />
-        <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
-          {context.name}
-        </h1>
-        <RunnerLiveness seenAt={context.runner_seen_at} />
-        <div className="ml-auto flex items-center gap-3">
-          {isOwner && <ContextAccess id={id} name={context.name} policy={context.ask_policy} />}
-          {isOwner && (
-            <Button
-              data-testid="console-rotate-token"
-              variant="ghost"
-              size="sm"
-              onClick={() => rotateToken.mutate()}
-              loading={rotateToken.isPending}
-              disabled={rotateToken.isPending}
-            >
-              Rotate token
-            </Button>
-          )}
-          {isOwner && context.manifest_short_id && (
-            <Link
-              to="/artifacts/$ref"
-              params={{ ref: context.manifest_short_id }}
-              data-testid="console-manifest-link"
-              className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-            >
-              Manifest ↗
-            </Link>
-          )}
-        </div>
-      </div>
+  const skillsCount = context.skills?.length ?? context.skills_count ?? 0
+  const sourcesCount = context.connection_ids.length
+  const budgetMin = context.max_run_ms ? Math.round(context.max_run_ms / 60_000) : null
 
-      {rotatedToken && (
-        <div data-testid="console-rotated-token">
-          <StatusPanel
-            tone="warning"
-            layout="inline"
-            title="New runner token — copy it now, it won't be shown again. The old one is dead."
-            description={
-              <div className="flex flex-col gap-1.5">
-                <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
-                  {rotatedToken}
-                </code>
-                <span className="text-2xs text-muted-foreground">
-                  Update it where the runner reads it (e.g.{" "}
-                  <code className="font-mono">.derive/agent-token</code>) and restart the runner.
-                </span>
-              </div>
-            }
-            action={
-              <div className="flex items-center gap-2">
-                <Button
-                  data-testid="console-rotated-copy"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(rotatedToken)
-                    toast.success("Token copied")
-                  }}
-                >
-                  Copy
-                </Button>
-                <Button
-                  data-testid="console-rotated-done"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setRotatedToken(null)}
-                >
-                  Done
-                </Button>
-              </div>
-            }
-          />
+  return (
+    <PageShell width="wide" className="flex flex-col gap-5">
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-3">
+          <Icon name="context" className="text-muted-foreground" />
+          <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+            {context.name}
+          </h1>
+          <RunnerLiveness seenAt={context.runner_seen_at} />
         </div>
-      )}
+        <Eyebrow>
+          context
+          {context.manifest_version != null && <> · manifest v{context.manifest_version}</>}
+          {" · "}
+          {skillsCount} {skillsCount === 1 ? "skill" : "skills"}
+          {sourcesCount > 0 && (
+            <>
+              {" · "}
+              {sourcesCount} {sourcesCount === 1 ? "source" : "sources"}
+            </>
+          )}
+          {budgetMin != null && <> · budget {budgetMin}m</>}
+        </Eyebrow>
+        {context.description && (
+          <p className="max-w-2xl text-pretty text-sm text-muted-foreground">
+            {context.description}
+          </p>
+        )}
+      </div>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line">
-          <TabsTrigger value="ask" data-testid="console-tab-ask">
-            Ask
+          <TabsTrigger value="chat" data-testid="console-tab-chat">
+            Chat
+          </TabsTrigger>
+          <TabsTrigger value="manifest" data-testid="console-tab-manifest">
+            Manifest
           </TabsTrigger>
           {isOwner && (
             <TabsTrigger value="activity" data-testid="console-tab-activity">
@@ -207,72 +201,111 @@ function Console({ id }: { id: string }) {
           )}
         </TabsList>
 
-        <TabsContent value="ask" className="flex flex-col gap-4 pt-4">
-          {/* A failed sessions load mustn't masquerade as "no conversations yet" — say so and
-              let them retry (they can still ask a fresh question below). */}
-          {sessionsFailed && !sessions && (
-            <StatusPanel
-              tone="danger"
-              layout="inline"
-              title="Couldn't load your conversations"
-              description="You can still ask below, or try again."
-              action={
+        <TabsContent
+          value="chat"
+          className="flex flex-col gap-4 pt-4 lg:flex-row lg:items-start lg:gap-6"
+        >
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
+            {/* A failed sessions load mustn't masquerade as "no conversations yet" — say so and
+                let them retry (they can still ask a fresh question below). */}
+            {sessionsFailed && !sessions && (
+              <StatusPanel
+                tone="danger"
+                layout="inline"
+                title="Couldn't load your conversations"
+                description="You can still message it below, or try again."
+                action={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="console-sessions-retry"
+                    onClick={() => refetchSessions()}
+                  >
+                    Try again
+                  </Button>
+                }
+              />
+            )}
+            {mine.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {/* Recent conversations only — the full history is the owner's
+                    Activity view, not a chat surface's job. */}
+                {mine.slice(0, 6).map((s) => (
+                  <Button
+                    key={s.id}
+                    variant={s.id === active ? "secondary" : "ghost"}
+                    size="sm"
+                    data-testid="console-session-pick"
+                    onClick={() => setPicked(s.id)}
+                    className="text-muted-foreground data-[here=true]:text-foreground"
+                    data-here={s.id === active}
+                  >
+                    {ago(s.created_at)}
+                    <StateBadge state={s.state} />
+                  </Button>
+                ))}
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  data-testid="console-sessions-retry"
-                  onClick={() => refetchSessions()}
+                  data-testid="console-new-session"
+                  onClick={() => setPicked("new")}
+                  className="text-muted-foreground"
                 >
-                  Try again
+                  <Icon name="plus" /> New chat
                 </Button>
-              }
-            />
-          )}
-          {mine.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {/* Recent conversations only — the full history is the owner's
-                  Activity view, not a chat surface's job. */}
-              {mine.slice(0, 6).map((s) => (
-                <Button
-                  key={s.id}
-                  variant={s.id === active ? "secondary" : "ghost"}
-                  size="sm"
-                  data-testid="console-session-pick"
-                  onClick={() => setPicked(s.id)}
-                  className="text-muted-foreground data-[here=true]:text-foreground"
-                  data-here={s.id === active}
-                >
-                  {ago(s.created_at)}
-                  <StateBadge state={s.state} />
-                </Button>
-              ))}
-              <Button
-                variant="ghost"
-                size="sm"
-                data-testid="console-new-session"
-                onClick={() => setPicked("new")}
-                className="text-muted-foreground"
-              >
-                <Icon name="plus" /> New question
-              </Button>
-            </div>
-          )}
-          {active ? (
-            <SessionThread
-              sessionId={active}
-              contextId={id}
-              contextName={context.name}
-              onClosed={() => qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })}
-            />
-          ) : (
-            <AskComposer
-              contextId={id}
-              onAsked={(s) => {
-                setPicked(s.id)
-                qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
+              </div>
+            )}
+            {active ? (
+              <SessionThread
+                sessionId={active}
+                contextId={id}
+                contextName={context.name}
+                onClosed={() =>
+                  qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
+                }
+              />
+            ) : (
+              <ChatComposer
+                contextId={id}
+                contextName={context.name}
+                tryChips={tryChipsFrom(context.manifest?.md)}
+                onAsked={(s) => {
+                  setPicked(s.id)
+                  qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
+                }}
+              />
+            )}
+          </div>
+
+          <div className="flex w-full flex-col gap-3 lg:w-72 lg:flex-none">
+            <RunnerCard
+              context={context}
+              isOwner={isOwner}
+              rotatedToken={rotatedToken}
+              onRotate={() => rotateToken.mutate()}
+              rotating={rotateToken.isPending}
+              onCopy={() => {
+                if (!rotatedToken) return
+                navigator.clipboard?.writeText(rotatedToken)
+                toast.success("Token copied")
               }}
+              onDoneRotate={() => setRotatedToken(null)}
             />
-          )}
+            {skillsCount > 0 && (
+              <SkillsCard skills={context.skills ?? []} onSeeManifest={() => setTab("manifest")} />
+            )}
+            {sourcesCount > 0 && <SourcesCard count={sourcesCount} />}
+            {isOwner && (
+              <div className="rounded-xl border bg-card p-3.5">
+                <SectionEyebrow className="mb-2.5">Access</SectionEyebrow>
+                <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="manifest" className="pt-4">
+          <ManifestTab context={context} />
         </TabsContent>
 
         {isOwner && (
@@ -281,7 +314,7 @@ function Console({ id }: { id: string }) {
               sessions={sessions ?? []}
               onOpen={(sid) => {
                 setPicked(sid)
-                setTab("ask")
+                setTab("chat")
               }}
             />
           </TabsContent>
@@ -347,7 +380,12 @@ function ContextAccess({
       <DialogTrigger asChild>
         {/* Ghost, like the artifact toolbar's non-primary actions; the glyph
             carries the state — lock = invited, people = whole workspace. */}
-        <Button variant="ghost" size="sm" data-testid="context-access" className="gap-1.5">
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="context-access"
+          className="-ml-2 gap-1.5 text-muted-foreground"
+        >
           <Icon name={policy === "workspace" ? "workspace" : "lock"} />
           {policy === "workspace" ? "Workspace can ask" : "Invited only"}
         </Button>
@@ -470,8 +508,357 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
   )
 }
 
-// Ask the first question — the empty-conversation state.
-function AskComposer({ contextId, onAsked }: { contextId: string; onAsked: (s: Session) => void }) {
+// The rail's Runner card — the "runs from your own machine" story, everyone reads it;
+// the serve instructions and rotate live below a hairline, owner-only. Presence and
+// last-seen read as messenger grammar on purpose: a context runs wherever its owner
+// runs it, and offline is its normal resting state, not an outage.
+function RunnerCard({
+  context,
+  isOwner,
+  rotatedToken,
+  onRotate,
+  rotating,
+  onCopy,
+  onDoneRotate,
+}: {
+  context: ContextDetail
+  isOwner: boolean
+  rotatedToken: string | null
+  onRotate: () => void
+  rotating: boolean
+  onCopy: () => void
+  onDoneRotate: () => void
+}) {
+  const seenAt = context.runner_seen_at
+  const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
+  const online = age < 90_000
+  const away = !online && age < 600_000
+  const [dot, status] = online
+    ? ["bg-success", `online — last poll ${ago(seenAt as string)}`]
+    : away
+      ? ["bg-warning", `away — seen ${ago(seenAt as string)}`]
+      : [
+          "bg-muted-foreground",
+          seenAt ? `offline — seen ${ago(seenAt)}` : "offline — never connected",
+        ]
+
+  return (
+    <div
+      className="flex flex-col gap-2.5 rounded-xl border bg-card p-3.5"
+      data-testid="rail-runner"
+    >
+      <SectionEyebrow icon={<Cpu className="size-3" />}>Runner</SectionEyebrow>
+      <div className="flex items-center gap-1.5 text-xs text-foreground">
+        <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
+        {status}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Runs on its owner's machine — a coding session that polls for work.{" "}
+        {online
+          ? "Answers usually land in minutes."
+          : "Messages queue while it's away and run when it returns."}
+      </p>
+      {isOwner && (
+        <div className="flex flex-col gap-2 border-t border-border-soft pt-2.5">
+          <div>
+            <p className="text-2xs text-muted-foreground">
+              Serve it from your own session — no token:
+            </p>
+            <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
+              use({"{"} context: "{context.name}" {"}"})
+            </code>
+          </div>
+          <div>
+            <p className="text-2xs text-muted-foreground">Or a dedicated runner, with its token:</p>
+            <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
+              derive runner serve {context.id}
+            </code>
+          </div>
+          {context.max_run_ms != null && (
+            <p className="font-mono text-2xs text-muted-foreground">
+              budget {Math.round(context.max_run_ms / 60_000)}m per run ·{" "}
+              {context.max_concurrency ?? 1} {context.max_concurrency === 1 ? "run" : "runs"} at a
+              time
+            </p>
+          )}
+          <div className="flex flex-col gap-1.5 pt-1">
+            <Button
+              data-testid="console-rotate-token"
+              variant="outline"
+              size="sm"
+              onClick={onRotate}
+              loading={rotating}
+              disabled={rotating}
+              className="self-start"
+            >
+              Rotate token
+            </Button>
+            <p className="text-2xs text-muted-foreground">
+              Kills the old token immediately. Owner-run keeps working.
+            </p>
+          </div>
+          {rotatedToken && (
+            <div data-testid="console-rotated-token">
+              <StatusPanel
+                tone="warning"
+                layout="inline"
+                title="New runner token — copy it now, it won't be shown again. The old one is dead."
+                description={
+                  <div className="flex flex-col gap-1.5">
+                    <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
+                      {rotatedToken}
+                    </code>
+                    <span className="text-2xs text-muted-foreground">
+                      Update it where the runner reads it (e.g.{" "}
+                      <code className="font-mono">.derive/agent-token</code>) and restart the
+                      runner.
+                    </span>
+                  </div>
+                }
+                action={
+                  <div className="flex items-center gap-2">
+                    <Button
+                      data-testid="console-rotated-copy"
+                      variant="secondary"
+                      size="sm"
+                      onClick={onCopy}
+                    >
+                      Copy
+                    </Button>
+                    <Button
+                      data-testid="console-rotated-done"
+                      variant="ghost"
+                      size="sm"
+                      onClick={onDoneRotate}
+                    >
+                      Done
+                    </Button>
+                  </div>
+                }
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SkillsCard({
+  skills,
+  onSeeManifest,
+}: {
+  skills: ManifestSkillInfo[]
+  onSeeManifest: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border bg-card p-3.5" data-testid="rail-skills">
+      <SectionEyebrow>Skills · {skills.length}</SectionEyebrow>
+      <ul className="flex flex-col gap-1.5">
+        {skills.slice(0, 6).map((s) => (
+          <li key={s.short_id} className="flex items-center gap-2 text-sm text-foreground">
+            <span className="truncate">{s.title ?? s.short_id}</span>
+            <span
+              className={cn(
+                "ml-auto shrink-0 font-mono text-2xs tabular-nums",
+                s.stale ? "text-warning" : "text-muted-foreground",
+              )}
+            >
+              {s.pinned == null
+                ? "unpinned"
+                : s.stale
+                  ? `v${s.pinned} → v${s.current}`
+                  : `v${s.pinned}`}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        data-testid="rail-see-manifest"
+        onClick={onSeeManifest}
+        className="self-start text-xs text-muted-foreground underline-offset-4 hover:underline"
+      >
+        see manifest →
+      </button>
+    </div>
+  )
+}
+
+function SourcesCard({ count }: { count: number }) {
+  return (
+    <div
+      className="flex flex-col gap-1.5 rounded-xl border bg-card p-3.5"
+      data-testid="rail-sources"
+    >
+      <SectionEyebrow icon={<Plug className="size-3" />}>Sources · {count}</SectionEyebrow>
+      <p className="text-xs text-muted-foreground">
+        {count === 1 ? "One connection" : `${count} connections`} this context may use as tools.
+      </p>
+    </div>
+  )
+}
+
+// The manifest, framed as a package rather than a raw document: pin health (each
+// skill's pinned version against its actual current one), the frontmatter's repo
+// pointers, and the body as a doc — the YAML never renders raw, because a human
+// reading "id: cd34y version: 3" learns nothing a title + a status column can't say
+// better. "Open as artifact ↗" keeps history, comments, and raw source one click away.
+function ManifestTab({ context }: { context: ContextDetail }) {
+  const manifest = context.manifest
+  const skills = context.skills ?? []
+  const staleCount = skills.filter((s) => s.stale).length
+  if (!manifest) {
+    return (
+      <EmptyState
+        icon={<Icon name="context" strokeWidth={1.75} />}
+        title="No manifest"
+        description="This context's manifest artifact can't be resolved."
+      />
+    )
+  }
+  return (
+    <div className="flex flex-col gap-6" data-testid="manifest-tab">
+      <div className="flex flex-wrap items-center gap-3">
+        <Eyebrow>
+          manifest · {manifest.title ?? context.name} · v{manifest.version} · pushed{" "}
+          {ago(manifest.pushed_at)}
+        </Eyebrow>
+        <Link
+          to="/artifacts/$ref"
+          params={{ ref: manifest.short_id }}
+          data-testid="manifest-open-artifact"
+          className="ml-auto text-sm text-muted-foreground underline-offset-4 hover:underline"
+        >
+          Open as artifact ↗
+        </Link>
+      </div>
+
+      {skills.length > 0 && (
+        <div className="flex flex-col gap-2.5">
+          <SectionEyebrow
+            action={
+              staleCount > 0 ? (
+                <span className="font-mono text-2xs text-warning">
+                  ▲ {staleCount} {staleCount === 1 ? "pin" : "pins"} behind
+                </span>
+              ) : (
+                <span className="font-mono text-2xs text-muted-foreground">all pins current</span>
+              )
+            }
+          >
+            Skills · {skills.length}
+          </SectionEyebrow>
+          <div className="overflow-x-auto rounded-xl border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-card">
+                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Skill
+                  </th>
+                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Pinned
+                  </th>
+                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Current
+                  </th>
+                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Status
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {skills.map((s) => (
+                  <tr
+                    key={s.short_id}
+                    className={cn(
+                      "border-b border-border-soft last:border-0",
+                      s.stale && "bg-warning/5",
+                    )}
+                  >
+                    <td className="px-3.5 py-2">
+                      <Link
+                        to="/artifacts/$ref"
+                        params={{ ref: s.short_id }}
+                        data-testid="manifest-skill-link"
+                        className="text-foreground hover:underline"
+                      >
+                        {s.title ?? s.short_id}
+                      </Link>{" "}
+                      <span className="font-mono text-2xs text-muted-foreground">{s.short_id}</span>
+                    </td>
+                    <td className="px-3.5 py-2 font-mono text-xs tabular-nums text-muted-foreground">
+                      {s.pinned ?? "—"}
+                    </td>
+                    <td className="px-3.5 py-2 font-mono text-xs tabular-nums text-muted-foreground">
+                      {s.current ?? "—"}
+                    </td>
+                    <td
+                      className={cn(
+                        "px-3.5 py-2 text-xs",
+                        s.stale ? "text-warning" : "text-muted-foreground",
+                      )}
+                    >
+                      {s.pinned == null
+                        ? "unpinned"
+                        : s.stale
+                          ? `▲ ${(s.current as number) - s.pinned} behind`
+                          : "current"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            A pin is exact — the runner materializes the pinned version, not the latest.{" "}
+            <code className="font-mono">derive context push</code> re-pins to current and publishes
+            a new manifest version; the runner picks it up on its next pull. No deploy.
+          </p>
+        </div>
+      )}
+
+      {context.repos && context.repos.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <SectionEyebrow>Repos · {context.repos.length}</SectionEyebrow>
+          <ul className="flex flex-col gap-1">
+            {context.repos.map((r) => (
+              <li key={r.url} className="flex items-center gap-2 font-mono text-sm text-foreground">
+                <Icon name="repo" size={14} className="text-muted-foreground" />
+                {r.url}
+                {r.ref && <span className="text-muted-foreground">@{r.ref}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="border-t pt-5">
+        <SectionEyebrow className="mb-3">Document</SectionEyebrow>
+        <div
+          className={ANSWER_PROSE}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized in answerMdToHtml (xss whitelist).
+          dangerouslySetInnerHTML={{ __html: answerMdToHtml(stripFrontmatter(manifest.md)) }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Message it the first time — the empty-conversation state. The manifest's own
+// scopes surface as `try` chips: click to prefill, never to send, so a first-time
+// visitor learns the vocabulary without reading a page.
+function ChatComposer({
+  contextId,
+  contextName,
+  tryChips,
+  onAsked,
+}: {
+  contextId: string
+  contextName: string
+  tryChips: string[]
+  onAsked: (s: Session) => void
+}) {
   const [text, setText] = useState("")
   const ask = useApiMutation({
     mutationFn: () => api.askContext(contextId, text.trim()),
@@ -487,8 +874,8 @@ function AskComposer({ contextId, onAsked }: { contextId: string; onAsked: (s: S
     <div className="flex flex-col gap-2">
       <Textarea
         data-testid="console-ask-input"
-        aria-label="Your question"
-        placeholder="Ask a question — the answer arrives here, with the query behind it."
+        aria-label="Message"
+        placeholder={`Message ${contextName} — a scope to run, or a question about a past run.`}
         value={text}
         rows={3}
         onChange={(e) => setText(e.target.value)}
@@ -496,15 +883,33 @@ function AskComposer({ contextId, onAsked }: { contextId: string; onAsked: (s: S
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit()
         }}
       />
-      <Button
-        data-testid="console-ask-submit"
-        onClick={submit}
-        loading={ask.isPending}
-        disabled={ask.isPending || !text.trim()}
-        className="self-end"
-      >
-        Ask
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        {tryChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Eyebrow>try</Eyebrow>
+            {tryChips.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                data-testid="console-try-chip"
+                onClick={() => setText(chip)}
+                className="rounded-full bg-secondary px-2.5 py-1 font-mono text-xs text-foreground hover:bg-accent"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+        )}
+        <Button
+          data-testid="console-ask-submit"
+          onClick={submit}
+          loading={ask.isPending}
+          disabled={ask.isPending || !text.trim()}
+          className="ml-auto"
+        >
+          Send
+        </Button>
+      </div>
     </div>
   )
 }
@@ -646,12 +1051,18 @@ function SessionThread({
     if (text.trim() && !post.isPending && session.state !== "open") post.mutate()
   }
   const close = () => closeMut.mutate()
+  const lastAgentIdx = messages.map((m) => m.author_kind).lastIndexOf("agent")
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-3" data-testid="console-thread">
-        {messages.map((m) => (
-          <MessageRow key={m.id} m={m} contextName={contextName} />
+        {messages.map((m, i) => (
+          <div key={m.id} className="flex flex-col gap-2">
+            <MessageRow m={m} contextName={contextName} />
+            {i === lastAgentIdx && session.result_artifact_id && (
+              <ResultChip shortId={session.result_artifact_id} />
+            )}
+          </div>
         ))}
         {/* The answer mid-write. Plain text with preserved whitespace, not the markdown the
             settled row renders: a half-arrived reply is half-arrived markup too, and running
@@ -672,12 +1083,12 @@ function SessionThread({
         {session.state === "open" && !streaming && (
           <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
             <Spinner size="sm" tone="current" data-testid="console-waiting" />
-            Thinking — the runner picks this up on its next poll.
+            Waiting — the runner picks this up on its next poll.
           </div>
         )}
         {session.state === "failed" && (
           <p className="px-1 text-sm text-destructive" data-testid="console-failed">
-            The run failed. Ask again, or check the runner's log.
+            The run failed. Give it again, or check the runner's log.
           </p>
         )}
       </div>
@@ -730,6 +1141,31 @@ function SessionThread({
           </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+// A session's bound result artifact — republished each run, so its own version
+// history is the trend line. Renders once, right after the answer that bound it.
+function ResultChip({ shortId }: { shortId: string }) {
+  const { data } = useQuery({ ...artifactQuery(shortId), enabled: !!shortId })
+  return (
+    <div className="ml-1 flex flex-col gap-0.5">
+      <Link
+        to="/artifacts/$ref"
+        params={{ ref: shortId }}
+        data-testid="console-result-chip"
+        className="inline-flex w-fit items-center gap-2 rounded-lg border bg-secondary px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent"
+      >
+        <Icon name="all" size={14} className="text-muted-foreground" />
+        {data?.title ?? shortId}
+        {data?.current_version != null && (
+          <span className="font-mono text-2xs text-muted-foreground">v{data.current_version}</span>
+        )}
+      </Link>
+      <span className="text-2xs text-muted-foreground">
+        republished each run — its history is the trend.
+      </span>
     </div>
   )
 }
@@ -830,9 +1266,12 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
         </div>
       )}
       {meta.caveats.length > 0 && (
-        <ul className="mt-2 flex flex-col gap-0.5 text-xs text-muted-foreground">
+        <ul className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
           {meta.caveats.map((c) => (
-            <li key={c}>⚠ {c}</li>
+            <li key={c} className="flex items-start gap-1.5">
+              <TriangleAlert className="mt-0.5 size-3 shrink-0 text-warning" />
+              {c}
+            </li>
           ))}
         </ul>
       )}
@@ -861,7 +1300,7 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
 // The owner's view: every session on this context, most recent first.
 function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: string) => void }) {
   if (sessions.length === 0)
-    return <EmptyState title="No sessions yet" description="Questions will show up here." />
+    return <EmptyState title="No sessions yet" description="The first message starts the record." />
   return (
     <ul className="flex flex-col">
       {sessions.map((s) => (
@@ -873,9 +1312,18 @@ function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: 
             className="flex w-full items-center gap-3 px-1 py-2.5 text-left text-sm hover:bg-accent"
           >
             <span className="text-foreground">{ago(s.created_at)}</span>
+            {s.asker_username && <span className="text-muted-foreground">@{s.asker_username}</span>}
             <StateBadge state={s.state} />
-            <span className="ml-auto font-mono text-xs text-muted-foreground">
-              v{s.context_version}
+            {s.lane === "local" && (
+              <Badge variant="default" shape="pill" className="text-2xs">
+                local
+              </Badge>
+            )}
+            <span className="ml-auto flex items-center gap-2.5">
+              <span className="font-mono text-xs text-muted-foreground">v{s.context_version}</span>
+              {s.result_artifact_id && (
+                <span className="font-mono text-xs text-muted-foreground">▤ result</span>
+              )}
             </span>
           </button>
         </li>
@@ -884,10 +1332,29 @@ function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: 
   )
 }
 
+// Six real states, told apart with the tokens the app already has — never a new
+// color. "queued" isn't a server state; the runner explains its own absence in the
+// rail, so the picker/Activity pill stays the honest "waiting" either way.
+const STATE_BADGE: Record<
+  Session["state"],
+  { variant: NonNullable<Parameters<typeof badgeVariants>[0]>["variant"]; label: string }
+> = {
+  open: { variant: "outline", label: "waiting" },
+  working: { variant: "outline", label: "working" },
+  answered: { variant: "success", label: "answered" },
+  escalated: { variant: "warning", label: "escalated" },
+  failed: { variant: "destructive", label: "failed" },
+  closed: { variant: "default", label: "closed" },
+}
+
 function StateBadge({ state }: { state: Session["state"] }) {
+  const cfg = STATE_BADGE[state]
   return (
-    <Badge variant="outline" shape="pill" className="text-xs">
-      {state}
+    <Badge variant={cfg.variant} shape="pill" className="gap-1 text-xs">
+      {state === "working" && (
+        <Spinner size="sm" tone="current" className="size-2.5 border-[1.5px]" aria-hidden />
+      )}
+      {cfg.label}
     </Badge>
   )
 }

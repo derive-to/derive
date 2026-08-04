@@ -8,9 +8,18 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**"],
+      // The injected browser client is DOM code end to end — ranges, caret hit
+      // testing, contenteditable, postMessage across a sandboxed frame — and runs in
+      // a real browser, never in this node suite; the Playwright specs
+      // (inline-edit / deck smoke) are what cover it. Counted here it contributes
+      // 2k+ permanently-uncovered lines, which turns this gate into a measure of how
+      // BIG the client is rather than how well the shared logic is tested. Its
+      // generated twin is one string constant.
+      exclude: ["src/anchor-client.ts", "src/anchor-client.gen.ts"],
       reporter: ["text-summary"],
-      // Ratchet floors just under current (57.6/51.9/64.9/58.4). Raise over time.
-      thresholds: { statements: 55, branches: 49, functions: 62, lines: 56 },
+      // Ratchet floors just under current (92.5/83.0/92.5/94.3 with the browser
+      // client out of the denominator). Raise over time.
+      thresholds: { statements: 91, branches: 82, functions: 91, lines: 93 },
     },
   },
 })

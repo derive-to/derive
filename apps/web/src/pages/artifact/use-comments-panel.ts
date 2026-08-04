@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { bareHotkey } from "@/lib/hotkey"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import type { Panel } from "./types"
 
@@ -48,18 +49,11 @@ export function useCommentsPanel(onEscape: () => void) {
   // Keyboard: 'c' toggles the panel open/closed; Escape cancels a composer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement
       if (e.key === "Escape") {
         escRef.current()
         return
       }
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
-      // Never fire while typing: form fields AND contentEditable surfaces — the
-      // comment composer and the CodeMirror source editor are contentEditable, so
-      // the tag test alone let "c" toggle the panel mid-sentence. Dialogs opt out
-      // too (same set the app-shell "/" handler guards).
-      if (el && (/^(input|textarea|select)$/i.test(el.tagName) || el.isContentEditable)) return
-      if (document.querySelector('[role="dialog"]')) return
+      if (!bareHotkey(e)) return
       if (e.key === "c" || e.key === "C") setPanel((p) => (p === "open" ? "hidden" : "open"))
     }
     window.addEventListener("keydown", onKey)

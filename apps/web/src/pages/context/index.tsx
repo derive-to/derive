@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
-import { api } from "@/api"
+import { api, type ContextInfo } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
@@ -19,12 +19,12 @@ import { toast } from "@/components/ui/sonner"
 import { agentsQuery, contextsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { cn } from "@/lib/utils"
 import { ContextRowsSkeleton } from "./context-skeleton"
 
-// The contexts directory: the workspace's askable agent setups. Creation pairs a
-// manifest artifact (by short id) with agent access the server auto-mints — or,
-// optionally, an existing service agent — the
-// two halves already exist as first-class objects; a context is just the joint.
+// The contexts directory: the workspace's askable agent setups. Each one pairs a
+// registered agent with a manifest — the versioned document that defines what it
+// knows and what it can do. Sharing the manifest is sharing the context.
 export function Contexts() {
   useDocumentTitle("Contexts")
   const qc = useQueryClient()
@@ -32,22 +32,38 @@ export function Contexts() {
   // Agents load lazily for the create form; a 403 (non-admin) just hides it —
   // asking doesn't require admin, only creating does.
   const { data: agents } = useQuery({ ...agentsQuery(), retry: false })
+  const [showCreate, setShowCreate] = useState(false)
 
   return (
     <PageShell className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">Contexts</h1>
-        <p className="text-sm text-pretty text-muted-foreground">
-          Agent setups you can ask. Each one pairs a registered agent with a manifest — the
-          versioned document that defines what it knows. Sharing the manifest is sharing the
-          context.
-        </p>
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+            Contexts
+          </h1>
+          <p className="max-w-2xl text-pretty text-sm text-muted-foreground">
+            Each context is a packaged agent — a versioned manifest, the skills it pins, and a
+            runner, usually its owner's own machine. Read one to see what it does, or message it;
+            work queues while the runner is away.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid="contexts-new-toggle"
+          onClick={() => setShowCreate((v) => !v)}
+          className="ml-auto"
+        >
+          <Icon name="plus" /> New context
+        </Button>
       </div>
 
-      <NewContext
-        agents={(agents ?? []).filter((a) => !a.managed).map((a) => ({ id: a.id, name: a.name }))}
-        onCreated={() => qc.invalidateQueries({ queryKey: contextsQuery().queryKey })}
-      />
+      {showCreate && (
+        <NewContext
+          agents={(agents ?? []).filter((a) => !a.managed).map((a) => ({ id: a.id, name: a.name }))}
+          onCreated={() => qc.invalidateQueries({ queryKey: contextsQuery().queryKey })}
+        />
+      )}
 
       {isPending ? (
         <ContextRowsSkeleton />
@@ -71,27 +87,57 @@ export function Contexts() {
         <EmptyState
           icon={<Icon name="context" />}
           title="No contexts yet"
-          description="Publish a manifest, then create a context from it here — it gets its own agent access automatically."
+          description="Publish a manifest, then wire it here — `derive context push` does both in one step."
         />
       ) : (
         <ul className="flex flex-col gap-2">
           {contexts.map((x) => (
             <li key={x.id}>
-              <Link
-                to="/contexts/$id"
-                params={{ id: x.id }}
-                data-testid="context-card"
-                className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 transition-colors hover:bg-accent"
-              >
-                <Icon name="context" className="text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">{x.name}</span>
-                <span className="ml-auto text-sm text-muted-foreground">Ask →</span>
-              </Link>
+              <ContextRow context={x} />
             </li>
           ))}
         </ul>
       )}
     </PageShell>
+  )
+}
+
+function ContextRow({ context: x }: { context: ContextInfo }) {
+  const age = x.runner_seen_at
+    ? Date.now() - new Date(x.runner_seen_at).getTime()
+    : Number.POSITIVE_INFINITY
+  const online = age < 90_000
+  const facts = [
+    x.skills_count ? `${x.skills_count} ${x.skills_count === 1 ? "skill" : "skills"}` : null,
+    x.manifest_version != null ? `manifest v${x.manifest_version}` : null,
+    x.connection_ids.length
+      ? `${x.connection_ids.length} ${x.connection_ids.length === 1 ? "source" : "sources"}`
+      : null,
+  ].filter((v): v is string => !!v)
+  return (
+    <Link
+      to="/contexts/$id"
+      params={{ id: x.id }}
+      data-testid="context-card"
+      className="flex flex-col gap-1 rounded-xl border bg-card px-4 py-3 transition-colors hover:bg-accent"
+    >
+      <div className="flex items-center gap-2">
+        <Icon name="context" className="text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">{x.name}</span>
+        <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span
+            className={cn("size-1.5 rounded-full", online ? "bg-success" : "bg-muted-foreground")}
+          />
+          {online ? "online" : x.runner_seen_at ? "offline" : "never connected"}
+        </span>
+      </div>
+      {x.description && (
+        <p className="line-clamp-1 pl-6 text-sm text-muted-foreground">{x.description}</p>
+      )}
+      {facts.length > 0 && (
+        <p className="pl-6 font-mono text-2xs text-muted-foreground">{facts.join(" · ")}</p>
+      )}
+    </Link>
   )
 }
 

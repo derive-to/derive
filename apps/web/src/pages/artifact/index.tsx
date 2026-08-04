@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useBlocker, useNavigate, useParams } from "@tanstack/react-router"
+import { useBlocker, useNavigate, useParams, useSearch } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { ApiError, api } from "@/api"
@@ -9,8 +9,9 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
-import { artifactTypeLabel } from "@/lib/artifact"
+import { artifactTypeLabel, canEditArtifactDoc, canPublishArtifact } from "@/lib/artifact"
 import { guestPresenceId } from "@/lib/guest-id"
+import { bareHotkey } from "@/lib/hotkey"
 import {
   artifactAgentsQuery,
   artifactQuery,
@@ -105,6 +106,7 @@ function FocusShellSync({ focus }: { focus: boolean }) {
 
 export function Artifact() {
   const { ref } = useParams({ from: "/artifacts/$ref" })
+  const search = useSearch({ from: "/artifacts/$ref" })
   const { shortId, version } = parseRef(ref)
   const { me, loading } = useAuth()
   const nav = useNavigate()
@@ -182,6 +184,19 @@ export function Artifact() {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [])
+  // `e` opens edit mode, the keyboard twin of double-clicking the text. No entry
+  // point, no key: the ref carries whether the mode is even available, so this is
+  // silent on a version you're reading, a bundle, or someone else's locked doc.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!bareHotkey(e) || (e.key !== "e" && e.key !== "E")) return
+      const { active, canEdit, start } = inlineEditRef.current
+      if (active || !canEdit) return
+      start()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
   // The review overlay: null = closed. A ?review deep link (or a surface that knows
   // which proposal it means) opens it ON that proposal; the ⋯ menu opens it bare.
   const [reviewing, setReviewing] = useState<{ proposalId?: string } | null>(null)
@@ -254,10 +269,20 @@ export function Artifact() {
   // Holds the inline-edit API (not just a flag) so the SSE handler and the two
   // Escape listeners — all declared ABOVE the hook — can read live state and call
   // back into it without re-subscribing on every render.
-  const inlineEditRef = useRef<{ active: boolean; requestExit: () => void; save: () => void }>({
+  const inlineEditRef = useRef<{
+    active: boolean
+    canEdit: boolean
+    dirty: number
+    requestExit: () => void
+    save: () => void
+    start: () => void
+  }>({
     active: false,
+    canEdit: false,
+    dirty: 0,
     requestExit: () => {},
     save: () => {},
+    start: () => {},
   })
   const pinnedRef = useRef(version)
   pinnedRef.current = version
@@ -311,7 +336,7 @@ export function Artifact() {
     scrollBy,
     deck,
     deckCmd,
-    toggleFullscreen,
+    present,
     sel,
     setSel,
     inDoc,
@@ -337,6 +362,19 @@ export function Artifact() {
       // tab (the frame's own new tab would inherit the sandbox and break the app).
       if (newTab) window.open(`/artifacts/${ref}`, "_blank", "noopener")
       else nav({ to: "/artifacts/$ref", params: { ref } })
+    },
+    // Live read (the edit hook is declared below this one) so the host's arrow keys
+    // stop driving the deck the moment an edit session opens.
+    isEditing: () => inlineEditRef.current.active,
+    // Presenting closes an open edit session first — but never over the top of
+    // unsaved work: with edits pending, requestExit raises the discard confirm on
+    // the page and present mode stays shut until that's answered.
+    onPresent: () => {
+      const ie = inlineEditRef.current
+      setComposer(null)
+      if (!ie.active) return true
+      ie.requestExit()
+      return !ie.dirty
     },
     // Escape typed INTO the sandboxed frame (a click into the doc moves keyboard
     // focus there, out of the window listeners' reach) — mirror what a window
@@ -394,6 +432,17 @@ export function Artifact() {
     setActiveThread(null)
     setComposer(null)
   }, [shortId, version])
+
+  // Deep link: ?present=1 opens a deck straight into present mode, once its slides
+  // have been reported. Browsers only grant real fullscreen off a user gesture, so a
+  // link-driven entry lands in the overlay — the deck still fills the viewport, and
+  // the bar's own button (a gesture) takes it the rest of the way.
+  const presentLinked = useRef(false)
+  useEffect(() => {
+    if (presentLinked.current || !deck || !search.present) return
+    presentLinked.current = true
+    present.enter()
+  }, [deck, search.present, present.enter])
 
   // Navigate the deck to the slide a comment lives on: its resolved slide, falling
   // back to the slide it was made on. No-op off a deck or already on that slide.
@@ -493,6 +542,11 @@ export function Artifact() {
     frameRef: frame,
     post,
     load,
+    // Arming the document's double-click is decided BEFORE the mode's own state
+    // exists, so it reads the URL's version rather than the shown one. The two
+    // differ only while the mode is open (it freezes the view), and an open mode
+    // is un-armed anyway.
+    canEdit: canEditArtifactDoc(art, version ?? art?.current_version, editing),
     onOpenSourceEditor: startEdit,
     onEnter: () => {
       setSel(null)
@@ -502,8 +556,11 @@ export function Artifact() {
   })
   inlineEditRef.current = {
     active: inlineEdit.active,
+    canEdit: inlineEdit.canEdit,
+    dirty: inlineEdit.dirty,
     requestExit: inlineEdit.requestExit,
     save: inlineEdit.save,
+    start: inlineEdit.start,
   }
 
   // Unsaved inline edits live only in the frame's DOM — a route change unmounts it
@@ -582,7 +639,6 @@ export function Artifact() {
   // and they must not flash a not-found for a version they can see.
   if (!loading && !me && shown !== art.current_version && !art.public_history)
     return <ArtifactNotFound onBack={() => nav({ to: "/" })} />
-  const editable = art.kind === "file" && shown === art.current_version
   // The `t/:raw_token` segment is the sandboxed iframe's own proof of access: it has no
   // `allow-same-origin` (by design — the content must never touch our cookies/storage),
   // so it has no origin to send our session cookie back on, and Chrome refuses to attach
@@ -623,17 +679,16 @@ export function Artifact() {
     art.versions.find((v) => v.n === art.current_version)?.content_type === "text/markdown"
       ? "md"
       : "html"
-  const canPropose = canPublish || art.my_role === "commenter"
   // Lock: any editor can toggle it (advanced menu). While locked, even an editor
   // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
   const canLock = canPublish
   const canMove = art.my_role === "owner"
   const isLocked = !!art.locked
-  const effectiveCanPublish = canPublish && !isLocked
+  const effectiveCanPublish = canPublishArtifact(art)
   // The ONE eligibility base both edit affordances (inline + raw source) share, so
   // a new rule can't land in one and not the other; the deck test likewise has a
   // single spelling that the isDeck prop and the inline gate both read.
-  const canEditDoc = editable && canPropose && !editing && !art.managed
+  const canEditDoc = canEditArtifactDoc(art, shown, editing)
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
@@ -718,7 +773,10 @@ export function Artifact() {
       }
       onDeckPrev={() => deckCmd("prev")}
       onDeckNext={() => deckCmd("next")}
-      onFullscreen={toggleFullscreen}
+      presenting={present.presenting}
+      presentOverlay={present.overlay}
+      controlsIdle={present.idle}
+      onPresent={present.toggle}
       anonView={isAnon}
     />
   )
@@ -887,20 +945,26 @@ export function Artifact() {
               // The source editor unmounts the iframe — mid-inline-session that
               // silently discards typed edits, so its entry hides while editing.
               showEdit={canEditDoc && !inlineEdit.active}
-              editLabel={effectiveCanPublish ? "Edit source (dev)" : "Propose change (dev)"}
-              // Inline editing: current version, single file, not a deck (slides
-              // present their own surface), not GitHub-managed. Commenters get the
-              // same affordance as a suggestion (it lands as a proposal). Phones
-              // included: tap a block, type on the keyboard, save from the bar.
-              showInlineEdit={canEditDoc && !inlineEdit.active && !isDeckLike}
+              // The raw-source fallback. It is not a dev tool (the inline editor's
+              // own errors send people here by name), so it no longer says "(dev)".
+              editLabel={effectiveCanPublish ? "Edit source" : "Propose a change"}
+              // Inline editing: current version, single file, not GitHub-managed.
+              // Commenters get the same affordance as a suggestion (it lands as a
+              // proposal). Phones included: tap a block, type on the keyboard, save
+              // from the bar. DECKS INCLUDED — a slide's headline is the most
+              // typo-prone text Derive holds and the source editor was the only way
+              // to fix one. What used to make a deck unsafe to edit (its own Space
+              // and arrow keys flipping slides under the caret) is handled in the
+              // frame: while a caret is in a block, the page's keyboard is off.
+              showInlineEdit={canEditDoc && !inlineEdit.active}
               inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
-              onInlineEdit={inlineEdit.start}
+              onInlineEdit={() => inlineEdit.start()}
               isDeck={isDeckLike}
               canLock={canLock}
               canMove={canMove}
               automateBeta={automateBeta}
               locked={isLocked}
-              onPresent={toggleFullscreen}
+              onPresent={present.toggle}
               onLockToggle={() => lockMut.mutate(!isLocked)}
               onFavorite={(fav) =>
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
@@ -957,13 +1021,23 @@ export function Artifact() {
             )}
             {/* Inline edit mode's one piece of chrome: a slim band above the document
                 (in flow, so it can never cover or swallow clicks on the text you came
-                to fix). The document itself is the editor — click a block, type. */}
-            {inlineEdit.active && !editing && !focus && (
+                to fix). The document itself is the editor — click a block, type.
+                Focus mode keeps it: focus hides the chrome you don't need to READ,
+                and the band is the only thing on screen that says the page is
+                editable and carries the way to save. Hiding it left a mode with
+                unsaved work and no visible Save. */}
+            {inlineEdit.active && !editing && (
               <EditBar
                 dirty={inlineEdit.dirty}
                 canPublish={effectiveCanPublish}
                 saving={inlineEdit.saving}
                 touch={coarsePointer}
+                canUndo={inlineEdit.tools.canUndo}
+                canRedo={inlineEdit.tools.canRedo}
+                canFormat={inlineEdit.tools.canFormat}
+                onUndo={inlineEdit.undo}
+                onRedo={inlineEdit.redo}
+                onFormat={inlineEdit.format}
                 onSave={inlineEdit.save}
                 onDiscard={inlineEdit.discard}
                 onDone={inlineEdit.done}
@@ -1047,6 +1121,12 @@ export function Artifact() {
               onSheetHeight={setSheetInset}
               docLive={docLive}
               editing={inlineEdit.active}
+              // The selection bar's Edit verb: opens the mode with the caret already
+              // in the selected text, so a typo you just read costs one click.
+              editLabel={canEditDoc ? (effectiveCanPublish ? "Edit" : "Suggest") : undefined}
+              onEditSelection={
+                canEditDoc ? () => inlineEdit.start({ fromSelection: true }) : undefined
+              }
               panel={effectivePanel}
               asideWidth={asideWidth}
               openCount={openCount}

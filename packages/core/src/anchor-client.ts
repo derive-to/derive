@@ -11,8 +11,11 @@
  * The frame has an opaque origin, so everything rides postMessage:
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
  *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
- *                  open-external / esc
- *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by
+ *                  open-external / esc / present / edit-state / edit-edits /
+ *                  edit-save / edit-blocked / edit-request / deck-sniff
+ *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
+ *                  edit-mode / edit-collect / edit-restore / edit-armed /
+ *                  edit-undo / edit-redo / edit-format / deck-drive
  *
  * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
  * bundles into one small self-contained script.
@@ -188,7 +191,15 @@ interface ElReg {
     emitT = window.setTimeout(emitSelection, 120)
   }
   document.addEventListener("selectionchange", () => {
-    if (editOn) return
+    // While editing, a selection means something different: not "comment on this"
+    // but "format this". The bar's B / I / link enable on it, so the state goes up
+    // through the same debounce the dirty count uses.
+    if (editOn) {
+      const r = formattableRange()
+      if (r) pendingRange = r.cloneRange()
+      scheduleDirty()
+      return
+    }
     const s = window.getSelection()
     if (s && !s.isCollapsed) {
       scheduleEmit()
@@ -326,37 +337,123 @@ interface ElReg {
       post({ type: "cursor-leave" })
     }
   })
-  // Escape pressed while keyboard focus is INSIDE the frame (a click into the
-  // document moves it here): the host's window listener can't see it, so forward
-  // it for host-level dismissals (exiting focus mode, cancelling a composer).
-  document.addEventListener("keydown", (e) => {
-    // Save from the keyboard while editing. The keystroke happens INSIDE the frame,
-    // so the host's own window listener can never see it — forward it, and swallow
-    // the browser's Save-page dialog that ⌘S would otherwise open over the document.
-    if (
-      editOn &&
-      (e.metaKey || e.ctrlKey) &&
-      (e.key === "s" || e.key === "S" || e.key === "Enter")
-    ) {
-      e.preventDefault()
-      post({ type: "edit-save" })
-      return
-    }
-    if (e.key === "Escape") {
-      // Two steps, deliberately. With the caret in a block, Escape drops the caret
-      // and stops there — the typed text and the session both survive, which is what
-      // "get this cursor out of the way" should mean. Only an Escape with no block
-      // focused asks the host to leave the MODE (it exits clean, confirms dirty).
-      if (editOn) {
-        const focused = asEl(document.activeElement)?.closest("[data-derive-editable]")
-        if (focused instanceof HTMLElement) {
-          focused.blur()
+  /** THE gate: the editable block the caret is in, or null. Everything that
+   *  silences the page reads this and nothing else. */
+  const editingCaret = (): HTMLElement | null => {
+    if (!editOn) return null
+    const el = asEl(document.activeElement)?.closest("[data-derive-editable]")
+    return el instanceof HTMLElement ? el : null
+  }
+
+  /* THE KEYBOARD, and who owns it.
+   *
+   * Registered on `window` with CAPTURE, which is the only phase that runs before
+   * the artifact's own handlers: this client is a script tag appended AFTER the
+   * document, so every inline script in the page — including a deck's slide
+   * switcher — registered first, and in the bubble phase registration order wins.
+   *
+   * While the caret sits in an editable block, the page's own shortcuts are OFF.
+   * A deck binds Space, the arrows, PageUp/PageDown and Home/End to slide
+   * navigation (that is what our own scaffold and authoring guide tell people to
+   * write), so without this, typing a space in a headline advances the slide and
+   * pressing Home jumps the deck instead of moving the caret. stopImmediatePropagation
+   * hides the key from other listeners; it does NOT preventDefault, so the character
+   * still types and the caret still moves. With no caret in a block, the page keeps
+   * its keyboard — you can still walk to slide 7 and then click a line to edit.
+   */
+  /* THE RULE, whole: while a caret is in an editable block, the page is not
+     listening. Outside that one condition nothing here changes what the page gets.
+
+     Four properties this leans on, each deliberate:
+
+     • ONE gate. `editingCaret()` is the only thing that can silence the page, and
+       it is read once per event so a handler can never half-apply it.
+     • Propagation is stopped; the DEFAULT never is, except for the four chords we
+       answer ourselves. Stopping propagation hides a key from other LISTENERS —
+       preventing the default would stop the character being typed, which is the
+       one thing this must never do.
+     • A throw cannot wedge the keyboard. Everything runs inside `guard`, so a bug
+       in our chord handling degrades to "the shortcut did nothing", never to "this
+       document stopped accepting text".
+     • Composition is passed through untouched. Mid-IME keystrokes belong to the
+       input method; we neither interpret them nor let the page act on them. */
+  /** Run an interception so a throw inside it can never break input for the page. */
+  const guard = (fn: () => void) => {
+    try {
+      fn()
+    } catch (_e) {}
+  }
+  /** Our own chords, as a table: what the handler does is readable in one place,
+   *  and every one of them is a modifier chord — never a bare key. */
+  const chordFor = (e: KeyboardEvent, focused: HTMLElement | null): (() => void) | null => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return null
+    const k = e.key.toLowerCase()
+    // Save works with the mode open even when no block holds the caret: the host's
+    // own window listener cannot see keys typed in here, and ⌘S would otherwise
+    // open the browser's Save-page dialog over the document.
+    if (editOn && (k === "s" || k === "enter")) return () => post({ type: "edit-save" })
+    if (!focused) return null
+    // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
+    // happened in — it cannot undo a bold, a link, a break, or a block put back.
+    if (k === "z") return e.shiftKey ? redo : undo
+    // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
+    // format command, so these keys did nothing in a mode that looks like an editor.
+    if (k === "b") return () => applyFmt("b")
+    if (k === "i") return () => applyFmt("i")
+    if (k === "k")
+      return () => {
+        // The bar asks for the URL when the BUTTON is used; from the keyboard the
+        // sandbox's one available dialog is the least ceremony.
+        const href = window.prompt("Link to:")?.trim()
+        if (href) applyFmt("a", href)
+      }
+    return null
+  }
+  const ownKeys = (e: KeyboardEvent) =>
+    guard(() => {
+      const focused = editingCaret()
+      // An IME is mid-word. Not ours to interpret, and not the page's to act on.
+      if (e.isComposing || e.keyCode === 229) {
+        if (focused) e.stopImmediatePropagation()
+        return
+      }
+      if (e.type === "keydown") {
+        const run = chordFor(e, focused)
+        if (run) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          run()
           return
         }
+        if (e.key === "Escape") {
+          // Two steps, deliberately. With the caret in a block, Escape drops the
+          // caret and stops there — the typed text and the session both survive,
+          // which is what "get this cursor out of the way" should mean. Only an
+          // Escape with no block focused asks the host to leave the MODE.
+          if (focused) {
+            e.stopImmediatePropagation()
+            focused.blur()
+            return
+          }
+          // Focus is inside the frame, where the host's listener can't see it —
+          // forward it for host-level dismissals (leaving focus mode, a composer).
+          post({ type: "esc" })
+          return
+        }
+        // `p` presents, for the same reason: one click into a document moves
+        // keyboard focus in here and the host goes deaf. Forwarded, not swallowed,
+        // so a deck that binds `p` itself still gets it.
+        if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey && !e.altKey && !focused)
+          post({ type: "present" })
       }
-      post({ type: "esc" })
-    }
-  })
+      if (focused) e.stopImmediatePropagation()
+    })
+  // keypress/keyup as well: a page that binds either would still act on a key we
+  // let through here (our own deck template uses keydown, but nothing makes that a
+  // rule, and a half-silenced keyboard is worse than none).
+  window.addEventListener("keydown", ownKeys, true)
+  window.addEventListener("keypress", ownKeys, true)
+  window.addEventListener("keyup", ownKeys, true)
 
   /* -- highlight styles (mark's default yellow is overridden) -- */
   const st = document.createElement("style")
@@ -412,7 +509,13 @@ interface ElReg {
     "@supports (color: color-mix(in srgb, currentColor 10%, transparent)){" +
     ".derive-edit-hover{background-color:color-mix(in srgb, currentColor 8%, transparent);outline-color:color-mix(in srgb, currentColor 38%, transparent)}" +
     "[data-derive-editable]:focus{outline-color:color-mix(in srgb, currentColor 70%, transparent)}" +
-    "}"
+    "}" +
+    /* Formatting applied in this session, shown as it will read once saved. These
+       spans are the EDITOR's, not the document's: they carry the intent until the
+       save turns them into real tags, and they never reach the stored source. */
+    "[data-derive-fmt=b]{font-weight:700}" +
+    "[data-derive-fmt=i]{font-style:italic}" +
+    "[data-derive-fmt=a]{text-decoration:underline;text-underline-offset:2px}"
   ;(document.head || document.documentElement).appendChild(st)
 
   /* === Element anchors ========================================================
@@ -1002,6 +1105,142 @@ interface ElReg {
       )
     return Array.from(document.querySelectorAll(".slide"))
   }
+  /* ── Decks that never said so ──────────────────────────────────────────────────
+     The deck protocol is opt-in: a deck posts its position and the host shows a
+     presentation bar. Every deck written before that protocol existed — and every
+     one written from a template that predates it — is a real deck the viewer
+     treats as a flat page: no bar, no position, no Present.
+
+     But the structure is right there, and this client already reads it to keep
+     comments on the right slide. So SNIFF it: slides whose visibility is switched
+     (one shown, the rest hidden) is a deck, whatever it says about itself. The host
+     prefers a real protocol announcement and falls back to this, so an artifact
+     that speaks for itself is never second-guessed.
+
+     A page whose `.slide` sections are ALL visible is a long page that happens to
+     use the class name — it scrolls, it doesn't switch, and driving it would be
+     nonsense. Requiring at least one hidden slide is what tells the two apart. */
+  const shown = (el: Element): boolean => {
+    let st: CSSStyleDeclaration
+    try {
+      st = getComputedStyle(el)
+    } catch (_e) {
+      return true
+    }
+    if (st.display === "none" || st.visibility === "hidden") return false
+    return Number(st.opacity || "1") > 0.5
+  }
+  /** Which slide is on screen: the `.on` convention first (what our own template and
+   *  authoring guide write), else the first one that is actually painted. */
+  const activeSlide = (slides: Element[]): number => {
+    for (let i = 0; i < slides.length; i++)
+      if ((slides[i] as Element).classList.contains("on")) return i
+    for (let i = 0; i < slides.length; i++) if (shown(slides[i] as Element)) return i
+    return 0
+  }
+  const sniffDeck = (): { i: number; total: number } | null => {
+    const slides = slideEls()
+    if (slides.length < 2) return null
+    if (slides.every(shown)) return null
+    return { i: activeSlide(slides), total: slides.length }
+  }
+  let lastSniff = ""
+  const postDeckSniff = () => {
+    const d = sniffDeck()
+    if (!d) return
+    const key = `${d.i}/${d.total}`
+    if (key === lastSniff) return
+    lastSniff = key
+    post({ type: "deck-sniff", i: d.i, total: d.total })
+  }
+  /* Drive a sniffed deck. Synthesize the key the page already listens for rather
+     than reaching into its DOM: its own handler runs, so its index, progress bar and
+     counter stay consistent with what's on screen — a class we toggled ourselves
+     would desync the page from itself on the very next press of its own arrow key.
+     Toggling `.on` is the fallback for a deck that only wired up click zones. */
+  const dispatchKey = (key: string) => {
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+    } catch (_e) {}
+  }
+  const driveDeck = (action: string, n?: number) => {
+    const slides = slideEls()
+    if (slides.length < 2) return
+    const from = activeSlide(slides)
+    const want = action === "next" ? from + 1 : action === "prev" ? from - 1 : (n ?? 0)
+    const to = Math.max(0, Math.min(slides.length - 1, want))
+    if (to === from) return
+    const key = to > from ? "ArrowRight" : "ArrowLeft"
+    for (let s = 0; s < Math.abs(to - from); s++) dispatchKey(key)
+    requestAnimationFrame(() => {
+      const now = slideEls()
+      if (activeSlide(now) !== to)
+        for (let i = 0; i < now.length; i++) (now[i] as Element).classList.toggle("on", i === to)
+      postDeckSniff()
+    })
+  }
+  /* A slide flip is a class or style change, which fires no scroll, resize or load —
+     watch the slides themselves (bounded: one observer over the slide elements, not
+     the document) so the host's position stays truthful however the page moves. */
+  const watchSlides = () => {
+    const slides = slideEls()
+    if (slides.length < 2 || !window.MutationObserver) return
+    try {
+      const mo = new MutationObserver(() => {
+        postDeckSniff()
+        // The slide changed under an open edit session — re-mask (see below).
+        if (editOn) maskOffscreenSlides()
+      })
+      for (const s of slides)
+        mo.observe(s, { attributes: true, attributeFilter: ["class", "style"] })
+    } catch (_e) {}
+  }
+
+  /* 🚨 Hidden slides still catch clicks.
+     A deck stacks every slide at `inset:0` and hides the inactive ones with
+     OPACITY — which removes them from view but NOT from hit testing. So a click
+     aimed at the headline you can see resolves its caret in whichever slide is
+     last in DOM order at that point, and you edit a slide nobody is looking at.
+     Found by typing into slide 2 of a real deck and watching the text land in
+     slide 3's heading.
+     While editing, take every off-screen slide out of hit testing, and put each
+     one back exactly as it was on the way out (a deck may set pointer-events
+     itself). Text edits are built from text nodes, so this inline style can never
+     reach a saved quote.
+
+     🚨 IDEMPOTENT ON PURPOSE. Writing `style` is an attribute mutation, and the
+     slide observer above watches `style` — a mask that rewrote the same value every
+     pass re-triggered the observer, which re-masked, forever. The renderer spun hard
+     enough that CDP input timed out, which is how it was found. So: only ever write
+     when the value actually changes. */
+  let slideMask: { el: HTMLElement; prev: string }[] = []
+  const unmaskSlides = () => {
+    for (const m of slideMask) m.el.style.pointerEvents = m.prev
+    slideMask = []
+  }
+  const maskOffscreenSlides = () => {
+    const slides = slideEls()
+    if (slides.length < 2) return
+    // The ACTIVE index, not per-slide visibility: a slide mid-transition is still
+    // fading and would read as hidden (or as shown) depending on the frame.
+    const on = activeSlide(slides)
+    for (let i = 0; i < slides.length; i++) {
+      const el = slides[i]
+      if (!(el instanceof HTMLElement)) continue
+      const masked = slideMask.find((m) => m.el === el)
+      if (i === on) {
+        // The slide came back on screen: give it its own value back.
+        if (masked) {
+          el.style.pointerEvents = masked.prev
+          slideMask = slideMask.filter((m) => m.el !== el)
+        }
+      } else if (!masked) {
+        slideMask.push({ el, prev: el.style.pointerEvents })
+        el.style.pointerEvents = "none"
+      }
+    }
+  }
+
   /* nearest slide ancestor of a DOM element (element anchors + a text range's start) */
   const slideOfEl = (el: Element | null, slides: Element[]): number | null => {
     for (let s = el; s; s = s.parentElement) {
@@ -1172,6 +1411,11 @@ interface ElReg {
     remeasure()
     setTimeout(remeasure, 400)
     setTimeout(remeasure, 1200)
+    // A deck's slides only exist once its own script has run, so sniff after load
+    // (and again on the settle passes, for one built by a script of its own).
+    watchSlides()
+    postDeckSniff()
+    setTimeout(postDeckSniff, 400)
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
      content animates, an accordion expands) — none of which fire scroll/resize/load. So
@@ -1222,8 +1466,34 @@ interface ElReg {
     (e) => {
       // Edit mode swallows the whole click grammar: no thread focusing, no link
       // navigation — a click places a caret (editClick handles link prevention).
+      // The PAGE's own click handlers are stopped too: a deck's invisible left/right
+      // "zones" cover the whole stage, so aiming at a headline to edit it would flip
+      // the slide out from under the caret. Capture + stopImmediatePropagation is
+      // what catches those, including handlers bound to the zone elements themselves.
       if (editOn) {
+        e.stopImmediatePropagation()
         editClick(e)
+        return
+      }
+      // A click on the WORDS, by someone who can edit them, is not "next slide".
+      //
+      // A deck's click zones cover the stage — that's how every deck we scaffold is
+      // written — so the first click of a double-click flips the slide, and the
+      // caret then lands on a slide the reader never meant to be on (watched it
+      // happen: aim at slide 2's headline, arrive editing slide 3).
+      //
+      // Narrow on purpose, and each clause earns its place: only on a DECK (a page
+      // with switched slides), only for a viewer the host has armed, never on a
+      // link, and only where the pointer is actually over text. A click outside all
+      // of that — the margins, the empty half of a title slide, or any click by
+      // someone who can't edit this document — reaches the page untouched.
+      if (
+        editArmed &&
+        slideEls().length > 1 &&
+        !asEl(e.target)?.closest("a[href],a[data-derive-nav]") &&
+        editNodeVisibleAt(e.clientX, e.clientY)
+      ) {
+        e.stopImmediatePropagation()
         return
       }
       const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
@@ -1354,6 +1624,11 @@ interface ElReg {
     structSig: string
   }
   let editOn = false
+  /* The host says this viewer may edit (permission, current version, not already in
+     the mode). It arms the in-document entry gestures — a double-click on text asks
+     the host to open edit mode there — so a reader who could never save never fires
+     a message, and a right-less viewer's double-click stays a plain word select. */
+  let editArmed = false
   let editTargets: EditTarget[] = []
   // The pre-edit snapshot. Nodes are joined with "\n" separators (and starts offsets
   // account for them) so a prefix/suffix window crossing a node seam carries
@@ -1361,6 +1636,10 @@ interface ElReg {
   // every tag. A bare concat ("high.Set") could never context-match "high. Set".
   let editBase: { text: string; starts: Map<Text, number> } | null = null
   let lastDirty = -1
+  /** Everything the edit bar reads, as one comparable string — so a mode where four
+   *  things can change (dirty count, undo, redo, a live selection) still posts only
+   *  when something a control would show actually moved. */
+  let lastState = ""
 
   const structSigOf = (el: Element): string => {
     const list = el.querySelectorAll("*")
@@ -1380,17 +1659,100 @@ interface ElReg {
   const countDirty = () => {
     let n = 0
     for (const t of editTargets) {
-      const changed = document.contains(t.el) && concatText(t.el) !== t.origConcat
+      // Formatting counts even when not one character changed: bolding a word is a
+      // real edit, and the text-only compare called that block clean — so Save
+      // stayed hidden and the work was discardable without a warning.
+      const changed = document.contains(t.el) && (concatText(t.el) !== t.origConcat || hasFmt(t.el))
       t.el.classList.toggle("derive-edited", changed)
       if (changed) n++
     }
     return n
   }
+  /* ── Undo, for the whole session ──────────────────────────────────────────────
+     The browser's own undo only knows typing, and only inside the one block it
+     happened in: it cannot see a bold, a link, a line break, or a block someone
+     put back. Two stacks that disagree is worse than one that is a little coarse,
+     so the client owns ⌘Z and keeps the only stack.
+
+     A checkpoint is the block's HTML before a discrete action. Typing checkpoints
+     once per BURST (a new block, or a pause) rather than per keystroke — "undo the
+     last thing you did" is what a button implies, and per-character undo through a
+     round trip to the host would be neither. */
+  const UNDO_LIMIT = 60
+  const TYPING_BURST_MS = 900
+  let undoStack: { el: HTMLElement; html: string }[] = []
+  let redoStack: { el: HTMLElement; html: string }[] = []
+  let lastBurst: { el: HTMLElement; at: number } | null = null
+  const checkpoint = (el: HTMLElement) => {
+    undoStack.push({ el, html: el.innerHTML })
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift()
+    // A new action forks the timeline: whatever was undone is no longer ahead of us.
+    redoStack = []
+  }
+  /** Checkpoint at the start of a typing burst, never mid-word. */
+  const checkpointTyping = (el: HTMLElement) => {
+    const now = Date.now()
+    if (lastBurst && lastBurst.el === el && now - lastBurst.at < TYPING_BURST_MS) {
+      lastBurst.at = now
+      return
+    }
+    lastBurst = { el, at: now }
+    checkpoint(el)
+  }
+  /* Restoring a block's HTML replaces its text nodes with new objects. A block that
+     is ALREADY an edit target is fine (activation only consults the snapshot map when
+     it arms a block for the first time), but re-registering when the shape matches
+     keeps the aligned per-node diff available instead of falling back to a whole-block
+     span — the same care restoreEdits takes for Discard. */
+  const reregister = (t: EditTarget | null, el: HTMLElement) => {
+    if (!t || !editBase) return
+    const fresh = textNodes(el)
+    if (fresh.length !== t.origValues.length) return
+    for (let i = 0; i < fresh.length; i++)
+      editBase.starts.set(fresh[i] as Text, t.origStarts[i] as number)
+  }
+  const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
+    const entry = from.pop()
+    if (!entry || !document.contains(entry.el)) return
+    to.push({ el: entry.el, html: entry.el.innerHTML })
+    entry.el.innerHTML = entry.html
+    reregister(targetFor(entry.el), entry.el)
+    lastBurst = null
+    postDirty()
+  }
+  const undo = () => stepHistory(undoStack, redoStack)
+  const redo = () => stepHistory(redoStack, undoStack)
+
+  /** Is there a selection the format verbs could act on — one run, inside one
+   *  editable block? The bar's B / I / link enable on exactly this. */
+  const formattableRange = (): Range | null => {
+    if (!editOn) return null
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount || sel.isCollapsed) return null
+    const r = sel.getRangeAt(0)
+    const n = r.commonAncestorContainer
+    const el = n.nodeType === 1 ? (n as Element) : n.parentElement
+    return el?.closest("[data-derive-editable]") ? r : null
+  }
+  /* The range the format verbs will use. Kept because clicking a button in the HOST
+     moves focus out of this frame, and the link flow then asks for a URL up there —
+     by the time the answer comes back the live selection may be gone. */
+  let pendingRange: Range | null = null
+
   const postDirty = () => {
     const n = countDirty()
-    if (n !== lastDirty) {
+    const canFormat = !!formattableRange()
+    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}`
+    if (state !== lastState) {
+      lastState = state
       lastDirty = n
-      post({ type: "edit-state", dirty: n })
+      post({
+        type: "edit-state",
+        dirty: n,
+        canUndo: undoStack.length > 0,
+        canRedo: redoStack.length > 0,
+        canFormat,
+      })
     }
   }
   let dirtyT = 0
@@ -1409,7 +1771,10 @@ interface ElReg {
     el?.classList.add("derive-edit-hover")
   }
 
-  const setEditMode = (on: boolean, keep?: boolean) => {
+  /** Which gesture asked the mode to open: the double-click whose target this client
+   *  already captured, or the host's Edit verb on the live selection. */
+  type EditEntry = { fromPointer?: boolean; fromSelection?: boolean }
+  const setEditMode = (on: boolean, keep?: boolean, entry?: EditEntry) => {
     if (on === editOn) return
     editOn = on
     if (on) {
@@ -1428,6 +1793,28 @@ interface ElReg {
       }
       editBase = { text: full, starts }
       setHover(null)
+      // Off-screen slides stop catching clicks meant for the slide on screen.
+      maskOffscreenSlides()
+      // Entered FROM the document (a double-click, or Edit on a selection): land the
+      // caret where the user pointed instead of making them click the same words a
+      // second time. Deferred a frame so the host's chrome has settled and the
+      // block's rect is final before revealBlock measures it.
+      if (entry)
+        requestAnimationFrame(() => {
+          if (!editOn) return
+          if (entry.fromPointer) {
+            // Captured by the double-click that asked for the mode. Stale means the
+            // host answered something else (or much later); ignore rather than
+            // arming a block the user has forgotten about.
+            const p = pendingEntry
+            pendingEntry = null
+            if (p && Date.now() - p.at < 5000 && p.node.isConnected) editActivate(p.node, p.caret)
+            return
+          }
+          const s = window.getSelection()
+          const n = s && s.rangeCount > 0 ? s.getRangeAt(0).startContainer : null
+          if (n && n.nodeType === 3) editActivate(n as Text, null)
+        })
     } else {
       // `keep`: drop the editing chrome but leave the typed text standing. Used right
       // after a PUBLISH — the text on screen is what was just saved, and the version
@@ -1437,6 +1824,14 @@ interface ElReg {
       else restoreEdits()
       editBase = null
       setEditHover(null)
+      unmaskSlides()
+      // History belongs to the session that made it. Carrying it across would offer
+      // to undo into a document that has already been saved and reloaded.
+      undoStack = []
+      redoStack = []
+      lastBurst = null
+      pendingRange = null
+      lastState = ""
     }
   }
   const disableTarget = (t: EditTarget) => {
@@ -1518,25 +1913,29 @@ interface ElReg {
     return cand
   }
   const BLOCKED_EDIT = "input,textarea,select,button,video,audio,canvas,svg,iframe,embed,object"
-  const editClick = (e: MouseEvent) => {
+  /* Arm the block containing `node` and put the caret in it. Shared by the click
+     inside the mode and by the ENTRY gestures (double-click, the host's Edit verb),
+     so what a double-click opens is exactly what a click would have activated.
+     `caret` is where to land when there is nothing better; it is IGNORED when the
+     caller already made a selection worth keeping (a double-click just selected a
+     word, and collapsing that would break the most natural typo gesture there is:
+     double-click the word, type the fix). */
+  const editActivate = (node: Text, caret: { node: Node; offset: number } | null): void => {
     const base = editBase
     if (!base) return
-    // A keyboard-synthesized click (Enter/Space on a focused link) reports
-    // clientX/clientY 0, which would resolve a caret at the frame's top-left and
-    // silently arm an unrelated block. Editing is pointer-driven; ignore it.
-    if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
-    const el0 = asEl(e.target)
-    // Never navigate while editing — a click on a link edits its text instead.
-    if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
-    if (el0?.closest(BLOCKED_EDIT)) {
-      post({ type: "edit-blocked", reason: "control" })
-      return
-    }
-    const c = caretAt(e.clientX, e.clientY)
-    const node = c && c.node.nodeType === 3 ? (c.node as Text) : null
-    if (!node) return
     const cand = editContainerFor(node)
     if (!cand) return
+    // Belt and braces for the hidden-slide trap (see maskOffscreenSlides): if a
+    // click still resolves into a slide that isn't the one on screen, say so
+    // rather than putting a caret somewhere the typist can't see.
+    const slides = slideEls()
+    if (slides.length > 1) {
+      const where = slideOfEl(cand, slides)
+      if (where != null && where !== activeSlide(slides)) {
+        post({ type: "edit-blocked", reason: "offscreen" })
+        return
+      }
+    }
     let target = targetFor(cand)
     if (!target) {
       cand.normalize()
@@ -1569,16 +1968,23 @@ interface ElReg {
       cand.setAttribute("contenteditable", "plaintext-only")
       if (cand.contentEditable !== "plaintext-only") cand.setAttribute("contenteditable", "true")
     }
-    target.el.focus({ preventScroll: true })
-    // Place the caret at the click point — but never fight the browser's own
-    // selection gestures: a double/triple click just selected a word/paragraph
-    // (e.detail > 1), and collapsing that to a caret would break the most natural
-    // typo gesture there is (double-click the word, type the fix).
+    // Snapshot the selection BEFORE focus: turning an ancestor contenteditable and
+    // focusing it can drop a selection made while the block was still inert, which
+    // is exactly the double-click-to-edit case (the word is selected, then the host
+    // round-trip arms the block).
     const sel2 = window.getSelection()
-    if (sel2 && c && e.detail <= 1 && (sel2.isCollapsed || sel2.rangeCount === 0)) {
+    const keep =
+      sel2 && sel2.rangeCount > 0 && !sel2.isCollapsed ? sel2.getRangeAt(0).cloneRange() : null
+    target.el.focus({ preventScroll: true })
+    if (keep && target.el.contains(keep.commonAncestorContainer)) {
+      try {
+        sel2?.removeAllRanges()
+        sel2?.addRange(keep)
+      } catch (_e) {}
+    } else if (sel2 && caret && (sel2.isCollapsed || sel2.rangeCount === 0)) {
       try {
         const r = document.createRange()
-        r.setStart(c.node, Math.min(c.offset, node.nodeValue?.length ?? 0))
+        r.setStart(caret.node, Math.min(caret.offset, node.nodeValue?.length ?? 0))
         r.collapse(true)
         sel2.removeAllRanges()
         sel2.addRange(r)
@@ -1587,6 +1993,143 @@ interface ElReg {
     setEditHover(null) // it's the focused block now; the focus ring speaks for it
     revealBlock(target.el)
   }
+  /** The text node a point resolves to, or null where editing can't reach. */
+  const editNodeAt = (
+    x: number,
+    y: number,
+  ): { node: Text; caret: { node: Node; offset: number } } | null => {
+    const c = caretAt(x, y)
+    return c && c.node.nodeType === 3 ? { node: c.node as Text, caret: c } : null
+  }
+  /* The same question, asked through whatever is lying on top of the text.
+     Caret hit-testing returns the TOPMOST element at a point, and a deck covers its
+     stage with invisible click-catchers ("next slide" / "previous slide" zones), so
+     aiming at a headline resolves the zone and editing finds nothing to edit. Peel:
+     take the top element out of hit testing, ask again, repeat a few times, and put
+     every one of them back. Bounded to four layers — past that, whatever is up there
+     is the page's own UI and a click belongs to it.
+     Off-screen slides are masked for the same reason (they are stacked at inset:0
+     and stay hit-testable at opacity 0), so this resolves the text a reader can
+     actually see. */
+  const editNodeVisibleAt = (
+    x: number,
+    y: number,
+  ): { node: Text; caret: { node: Node; offset: number } } | null => {
+    const peeled: { el: HTMLElement; prev: string }[] = []
+    const maskedHere = !editOn
+    if (maskedHere) maskOffscreenSlides()
+    try {
+      for (let pass = 0; pass < 4; pass++) {
+        const hit = editNodeAt(x, y)
+        if (hit) return hit
+        const top = document.elementFromPoint(x, y)
+        if (
+          !(top instanceof HTMLElement) ||
+          top === document.body ||
+          top === document.documentElement
+        )
+          return null
+        peeled.push({ el: top, prev: top.style.pointerEvents })
+        top.style.pointerEvents = "none"
+      }
+      return null
+    } finally {
+      for (const p of peeled) p.el.style.pointerEvents = p.prev
+      if (maskedHere) unmaskSlides()
+    }
+  }
+  /** An image under the pointer — the one editable thing here that isn't text. */
+  const imageAt = (e: MouseEvent): HTMLImageElement | null => {
+    const el = asEl(e.target)?.closest("img")
+    return el instanceof HTMLImageElement ? el : null
+  }
+  const editClick = (e: MouseEvent) => {
+    if (!editBase) return
+    // A keyboard-synthesized click (Enter/Space on a focused link) reports
+    // clientX/clientY 0, which would resolve a caret at the frame's top-left and
+    // silently arm an unrelated block. Editing is pointer-driven; ignore it.
+    if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
+    const el0 = asEl(e.target)
+    // Never navigate while editing — a click on a link edits its text instead.
+    if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+    // A picture. Nothing in the caret path can reach one (images hold no text), so
+    // clicking a picture in edit mode used to do nothing at all and the only way to
+    // change one was the source editor. Hand it to the host: pick a file, upload,
+    // swap the URL. A data: URI is refused — the picture IS the source there, and
+    // there is no URL to swap for a person to recognise.
+    const img = imageAt(e)
+    if (img) {
+      const src = img.getAttribute("src") || ""
+      if (!src || src.slice(0, 5).toLowerCase() === "data:")
+        post({ type: "edit-blocked", reason: "embedded-image" })
+      else post({ type: "edit-image", src, alt: img.getAttribute("alt") || "" })
+      return
+    }
+    if (el0?.closest(BLOCKED_EDIT)) {
+      post({ type: "edit-blocked", reason: "control" })
+      return
+    }
+    const hit = editNodeVisibleAt(e.clientX, e.clientY)
+    if (!hit) return
+    // A double/triple click carries its own selection; editActivate keeps it.
+    editActivate(hit.node, e.detail <= 1 ? hit.caret : null)
+  }
+
+  /* Focus follows the WORDS, not what's lying on top of them.
+     Focus moves on mousedown, before any click handler runs, and it moves to the
+     element actually hit — which over a deck is the invisible click zone, not the
+     heading beneath it. So the block was armed and immediately un-focused, and
+     typing went nowhere (the caret was in the block; the focus was on the body).
+     Taking the default away when an overlay is between the pointer and the text
+     leaves focus where the caret is going. Only in edit mode, and only when
+     something IS in the way — an ordinary click on ordinary text keeps every
+     native behaviour, including drag-select. */
+  document.addEventListener(
+    "mousedown",
+    (e) =>
+      guard(() => {
+        if (!editOn) return
+        const top = document.elementFromPoint(e.clientX, e.clientY)
+        // Nothing on top of the words? Then the browser's own behaviour is already
+        // right, and this must not touch it — drag-select depends on that default.
+        if (!top || top.closest("[data-derive-editable]")) return
+        const hit = editNodeVisibleAt(e.clientX, e.clientY)
+        if (hit && !top.contains(hit.node)) e.preventDefault()
+      }),
+    true,
+  )
+
+  /* THE WAY IN, from the document itself. Double-click any text and the host opens
+     edit mode with the caret already in that block — the mode used to be reachable
+     only from a button in the header, which is nowhere near the sentence you came to
+     fix. Only armed for a viewer who can actually save (the host says so), and only
+     where a click would have landed a caret anyway, so a double-click that lands on
+     a control or on a viewer's read-only page stays an ordinary word select.
+
+     The TEXT NODE is captured here, not the coordinates. Opening the mode adds a
+     band above the document, which resizes this frame — and a deck centres its
+     stage in whatever height it gets, so by the time the mode is open the words
+     that were under the pointer have moved. Re-resolving a point after that lands
+     the caret near the text, or in the gap beside it. A node reference survives the
+     reflow; the offset within it is still the character the user aimed at. */
+  let pendingEntry: {
+    node: Text
+    caret: { node: Node; offset: number } | null
+    at: number
+  } | null = null
+  document.addEventListener(
+    "dblclick",
+    (e) => {
+      if (editOn || !editArmed) return
+      const el0 = asEl(e.target)
+      if (el0?.closest(BLOCKED_EDIT)) return
+      const hit = editNodeVisibleAt(e.clientX, e.clientY)
+      if (!hit) return
+      pendingEntry = { node: hit.node, caret: hit.caret, at: Date.now() }
+      post({ type: "edit-request" })
+    },
+    true,
+  )
 
   /* Bring the block being edited into view. On a phone the host shrinks the frame by
      the keyboard's height, so "visible" here already means "above the keyboard" —
@@ -1621,10 +2164,15 @@ interface ElReg {
       editHoverTick = 0
       if (!editOn) return setEditHover(null)
       if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
-      const c = caretAt(x, y)
-      const node = c && c.node.nodeType === 3 ? (c.node as Text) : null
-      if (!node) return setEditHover(null)
-      const cand = editContainerFor(node)
+      // An image lights up too: a click on one starts a replacement, and the
+      // invitation is the only thing that says so.
+      const overImg = asEl(target)?.closest("img")
+      if (overImg instanceof HTMLElement) return setEditHover(overImg)
+      // Through overlays, like the click that follows it — otherwise a deck's click
+      // zone means the hover invitation never lights the block a click would open.
+      const hit = editNodeVisibleAt(x, y)
+      if (!hit) return setEditHover(null)
+      const cand = editContainerFor(hit.node)
       // A block that's already editable wears the focus ring; don't double-decorate.
       setEditHover(cand && !cand.hasAttribute("data-derive-editable") ? cand : null)
     }, 50)
@@ -1638,8 +2186,22 @@ interface ElReg {
       const t = asEl(e.target)?.closest("[data-derive-editable]")
       if (!t) return
       const it = e.inputType || ""
-      // Text edits only: no new paragraphs/line breaks, no formatting commands.
-      if (it === "insertParagraph" || it === "insertLineBreak" || it.indexOf("format") === 0) {
+      // Before the mutation, not after: this is the only place we can capture what
+      // the block looked like a keystroke ago.
+      if (t instanceof HTMLElement) checkpointTyping(t)
+      // Enter breaks the line. Blocking it outright made the mode feel broken —
+      // pressing Enter mid-sentence is reflexive — while a real paragraph SPLIT
+      // stays out: that changes the document's structure, and this editor only ever
+      // rewrites the inside of one block. The break rides the same editor-span
+      // grammar as bold and italic and becomes a <br> on save.
+      if (it === "insertParagraph" || it === "insertLineBreak") {
+        e.preventDefault()
+        insertBreak()
+        return
+      }
+      // Formatting commands (⌘B and friends) don't reach a plaintext-only field
+      // anyway; the client applies its own (see applyFmt).
+      if (it.indexOf("format") === 0) {
         e.preventDefault()
         return
       }
@@ -1667,6 +2229,112 @@ interface ElReg {
     }
     scheduleDirty()
   })
+
+  /* ── Bold, italic, link ───────────────────────────────────────────────────────
+     Everything else in this mode is plain text by design: the contenteditable is
+     `plaintext-only`, and the server escapes every replacement. Formatting is the
+     one exception, and it is deliberately narrow — emphasis and a link, on a run of
+     words inside one block.
+
+     The wrap is the EDITOR's, not the document's: a `[data-derive-fmt]` span holds
+     the intent (and shows what it will look like) until the save turns it into a
+     real tag. Nothing here touches the stored source; `collectEdits` reads these
+     spans and sends the block as one `new_html` edit, which the server sanitizes
+     down to five inline tags.
+
+     ⌘B/⌘I/⌘K, because those are the keys every writing tool binds. The frame owns
+     the keyboard while a caret is in a block, so they can't reach the browser. */
+  const FMT_ATTR = "data-derive-fmt"
+  const HREF_ATTR = "data-derive-href"
+  const applyFmt = (kind: "b" | "i" | "a", href?: string): void => {
+    // The live selection, or the one stashed when the bar's button took focus out of
+    // this frame (the link flow asks for a URL up in the host, and the answer arrives
+    // after the selection here has gone).
+    const live = formattableRange()
+    const range =
+      live ?? (pendingRange && pendingRange.startContainer.isConnected ? pendingRange : null)
+    pendingRange = null
+    if (!range) {
+      post({ type: "edit-blocked", reason: "format-empty" })
+      return
+    }
+    const anchor = range.commonAncestorContainer
+    const el = anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement
+    const block = el?.closest("[data-derive-editable]")
+    if (!(block instanceof HTMLElement)) {
+      post({ type: "edit-blocked", reason: "format-outside" })
+      return
+    }
+    checkpoint(block)
+    const span = document.createElement("span")
+    span.setAttribute(FMT_ATTR, kind)
+    if (href) span.setAttribute(HREF_ATTR, href)
+    try {
+      // Throws when the selection only half-contains an element — exactly the case
+      // we can't express as one inline run, so the refusal is the right answer.
+      range.surroundContents(span)
+    } catch (_e) {
+      // The checkpoint was for an action that didn't happen — drop it, or Undo would
+      // have a step that changes nothing.
+      undoStack.pop()
+      post({ type: "edit-blocked", reason: "format-range" })
+      return
+    }
+    window.getSelection()?.removeAllRanges()
+    scheduleDirty()
+  }
+  /** Enter: a line break at the caret, carried by the same editor span the other
+   *  formatting uses (so one collect path handles all of it) and rendered by the
+   *  real <br> inside it, so the line breaks on screen the moment it's typed. */
+  const insertBreak = (): void => {
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) return
+    const range = sel.getRangeAt(0)
+    const el = range.startContainer
+    const block = (el.nodeType === 1 ? (el as Element) : el.parentElement)?.closest(
+      "[data-derive-editable]",
+    )
+    if (!(block instanceof HTMLElement)) return
+    checkpoint(block)
+    const span = document.createElement("span")
+    span.setAttribute(FMT_ATTR, "br")
+    span.appendChild(document.createElement("br"))
+    range.deleteContents()
+    range.insertNode(span)
+    // Caret after the break, so typing continues on the new line.
+    range.setStartAfter(span)
+    range.collapse(true)
+    sel.removeAllRanges()
+    sel.addRange(range)
+    scheduleDirty()
+  }
+
+  /** Serialize a block as inline markup: text escaped, editor spans as real tags,
+   *  anything else contributing its text only (the server refuses a span that
+   *  crosses the document's own markup anyway, and this keeps that refusal clean). */
+  const serializeFmt = (el: Node): string => {
+    let out = ""
+    for (let n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3) {
+        out += escapeText(n.nodeValue ?? "")
+        continue
+      }
+      if (n.nodeType !== 1) continue
+      const e = n as Element
+      const kind = e.getAttribute(FMT_ATTR)
+      const inner = serializeFmt(e)
+      if (kind === "b") out += `<b>${inner}</b>`
+      else if (kind === "i") out += `<i>${inner}</i>`
+      else if (kind === "br") out += "<br>"
+      else if (kind === "a")
+        out += `<a href="${escapeText(e.getAttribute(HREF_ATTR) || "")}">${inner}</a>`
+      else out += inner
+    }
+    return out
+  }
+  const escapeText = (s: string): string =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+  const hasFmt = (el: Element): boolean => !!el.querySelector(`[${FMT_ATTR}]`)
 
   const isHiSur = (ch: string | undefined): boolean =>
     !!ch && ch.charCodeAt(0) >= 0xd800 && ch.charCodeAt(0) <= 0xdbff
@@ -1724,10 +2392,11 @@ interface ElReg {
       new_text: newText,
     }
   }
-  /** The wire shape of one collected edit. */
+  /** The wire shape of one collected edit: text, or (formatting only) markup. */
   interface WireEdit {
     quote: { exact: string; prefix: string; suffix: string }
-    new_text: string
+    new_text?: string
+    new_html?: string
   }
   const wireEdit = (qe: {
     exact: string
@@ -1738,6 +2407,29 @@ interface ElReg {
     quote: { exact: qe.exact, prefix: qe.prefix, suffix: qe.suffix },
     new_text: qe.new_text,
   })
+  /* A block someone formatted goes as ONE markup edit for the whole block, not a
+     per-run diff. Two reasons: the wrap splits text nodes, so the per-node
+     alignment the text path depends on is gone; and a bold run's boundaries are
+     only meaningful together with the words around them. The quote is the block's
+     PRE-edit text (which is what the stored source still holds), so a block that
+     already contains markup is refused by the server's tag-crossing guard rather
+     than mangled here — with a message that names the source editor. */
+  const blockHtmlEdit = (t: EditTarget): WireEdit | null => {
+    const base = editBase
+    if (!base) return null
+    const exact = t.origValues.join("\n")
+    if (!exact.trim()) return null
+    const start = t.origStarts[0] ?? 0
+    const end = start + exact.length
+    return {
+      quote: {
+        exact,
+        prefix: base.text.slice(Math.max(0, start - 40), start),
+        suffix: base.text.slice(end, end + 40),
+      },
+      new_html: serializeFmt(t.el).replace(/\s*\n\s*/g, " "),
+    }
+  }
   // The whole-block span: both sides joined with the same "\n" separators the
   // snapshot uses, so offsets line up with editBase.text; the replacement's seam
   // separators collapse to single spaces (typed content never contains newlines —
@@ -1746,11 +2438,27 @@ interface ElReg {
     const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
     return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
   }
-  const collectEdits = (): { edits: WireEdit[]; dirty: number } => {
+  /* `uncaptured` counts blocks the user changed that produced NO edit — the host
+     refuses to save a partial batch, because publishing some of the typing and
+     letting the post-save reload wipe the rest is data loss dressed up as success.
+     Only the all-or-nothing case used to be detectable (edits empty while dirty), so
+     one lost block among several good ones went out silently. */
+  const collectEdits = (): { edits: WireEdit[]; dirty: number; uncaptured: number } => {
     const edits: WireEdit[] = []
     let dirty = 0
+    let uncaptured = 0
     for (const t of editTargets) {
       if (!document.contains(t.el)) continue
+      // A formatted block is markup, whole. Checked BEFORE normalize(), which would
+      // merge the text either side of a wrap and lose nothing — but the html path
+      // doesn't need the per-node alignment normalize() exists to protect.
+      if (hasFmt(t.el)) {
+        dirty++
+        const he = blockHtmlEdit(t)
+        if (he) edits.push(he)
+        else uncaptured++
+        continue
+      }
       t.el.normalize()
       const curNodes = textNodes(t.el)
       const curVals = curNodes.map((n) => n.nodeValue ?? "")
@@ -1780,8 +2488,9 @@ interface ElReg {
       // span. The server refuses it if the span would cross markup in the source.
       const be = blockEdit(t, curVals)
       if (be) edits.push(be)
+      else uncaptured++
     }
-    return { edits, dirty }
+    return { edits, dirty, uncaptured }
   }
 
   window.addEventListener("message", (e: MessageEvent) => {
@@ -1790,12 +2499,32 @@ interface ElReg {
     if (d.type === "anchors") applyAnchors(d.anchors || [])
     else if (d.type === "remeasure") reportRects()
     else if (d.type === "emphasize") setOn(d.id)
-    else if (d.type === "edit-mode") setEditMode(!!d.on, !!d.keep)
+    else if (d.type === "edit-mode")
+      setEditMode(
+        !!d.on,
+        !!d.keep,
+        d.fromPointer || d.fromSelection
+          ? { fromPointer: !!d.fromPointer, fromSelection: !!d.fromSelection }
+          : undefined,
+      )
+    else if (d.type === "edit-armed") editArmed = !!d.on
+    // The edit bar's controls, driven from the host. Same functions the keyboard
+    // chords call, so a button and its shortcut can never mean different things.
+    else if (d.type === "edit-undo") undo()
+    else if (d.type === "edit-redo") redo()
+    else if (d.type === "edit-format")
+      applyFmt(
+        d.kind === "i" ? "i" : d.kind === "a" ? "a" : "b",
+        typeof d.href === "string" ? d.href : undefined,
+      )
+    // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
+    // `deck` message, which it answers itself.
+    else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)
     else if (d.type === "edit-collect") {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.
-      const { edits, dirty } = collectEdits()
-      post({ type: "edit-edits", edits, dirty, nonce: d.nonce })
+      const { edits, dirty, uncaptured } = collectEdits()
+      post({ type: "edit-edits", edits, dirty, uncaptured, nonce: d.nonce })
     } else if (d.type === "edit-restore") restoreEdits()
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
     else if (d.type === "focus-anchor") {
