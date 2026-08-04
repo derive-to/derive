@@ -1,14 +1,19 @@
 import {
   artifactUrl,
   DECK_TEMPLATE,
+  type DocMap,
   derivedGen,
   deriveFacts,
+  docMap,
   isDerivedFactName,
   landmarkSlice,
   landmarksOf,
+  mapJson,
   newId,
   type OutlineSection,
   outlineOf,
+  refsOf,
+  resolveNode,
   sectionOf,
   toMarkdown,
   type VersionDataRecord,
@@ -187,6 +192,16 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
           ),
+        map: z
+          .boolean()
+          .optional()
+          .describe(
+            "The document's addressable parts: one line per node with the `ref` that names it. Read this first to work on part of a big doc.",
+          ),
+        node: z
+          .string()
+          .optional()
+          .describe("Read ONE part, by a `ref` from `map` (slide:2, sec:pricing, style:1)."),
         version: num("version").optional().describe("Defaults to the current version."),
         data: z
           .string()
@@ -209,6 +224,8 @@ export function registerReadTool(tc: ToolContext): void {
       format,
       version,
       lines,
+      map: wantMap,
+      node,
       render,
       wait,
       data,
@@ -617,6 +634,44 @@ export function registerReadTool(tc: ToolContext): void {
           format: formatLabel(ct, fmt),
           url,
         }
+        // The map rung: the document's addressable parts. Read before working on part of
+        // a big doc — it is the cheap structural view the full-document read is not, and
+        // every ref it hands back is what `node` (and, next, a scoped edit) takes.
+        if (wantMap || node) {
+          if (wantMap && node) return err("Pass `map` OR `node`, not both.")
+          if (section || lines || render)
+            return err("`map`/`node` address the document's parts — pass with `version` only.")
+          let structure: DocMap
+          try {
+            structure = docMap(src, ct ?? "text/html")
+          } catch (e) {
+            return err(e instanceof Error ? e.message : "This document's structure can't be read.")
+          }
+          if (wantMap)
+            return json({
+              ...meta,
+              ...mapJson(structure, n),
+              // Steering lives in the RESPONSE, not in the tool description: the surface
+              // teaches itself at the moment it is used, and costs nothing to sessions
+              // that never ask for it.
+              note: "Read one part with read(node:\"<ref>\"), format:'html' for its exact source. Same JSON at /raw/<short_id>/data/$map.json.",
+            })
+          const target = resolveNode(structure, node as string)
+          if (!target)
+            return err(
+              `No node "${node}" in "${short_id}" v${n}. Refs here: ${refsOf(structure).join(", ")}.`,
+            )
+          const slice = src.slice(target.start, target.end)
+          return json({
+            ...meta,
+            node: target.ref,
+            type: target.type,
+            bytes: target.end - target.start,
+            ...(target.title ? { title: target.title } : {}),
+            body: clip(present(slice, ct, fmt)),
+          })
+        }
+
         if (lines) {
           if (section && section !== "*")
             return err("Pass `lines` OR `section`, not both — windowing applies to the whole doc.")

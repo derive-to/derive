@@ -84,6 +84,15 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // the read tool's short_id doc absorbed the deck URI by replacing its hand-maintained list of
 // skill names (already stale — it never gained `sources`) with the generated index it
 // duplicated. That freed chars rather than spending them.
+// DOC MAP (read `map`/`node`, the addressing surface): added at ~196 chars against the
+// SAME ceiling, by keeping both params to one line each and putting the steering in the
+// map's own RESPONSE instead ("read one part with read(node:...)"), plus a paragraph in
+// the finding skill that is fetched only when a session needs it. The surface teaches
+// itself at the moment of use rather than in every session's preamble.
+//
+// 🚨 That leaves ~14 chars of headroom at 8936/8950. The next param to land here CANNOT
+// simply be added: reclaim first (a stale clause, a list a generated index already
+// covers), or make the case for raising the ceiling on its own merits.
 const TOOL_DESCRIPTIONS_BUDGET = 8950
 const INSTRUCTIONS_BUDGET = 2750
 

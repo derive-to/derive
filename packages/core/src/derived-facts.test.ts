@@ -94,7 +94,7 @@ describe("deriveFacts", () => {
     // field of a DERIVERS entry, so a new deriver cannot compile without declaring one.
     const page = '<!doctype html><h1>A</h1><p>t</p><h2>B</h2><a href="/artifacts/x-abc12345">l</a>'
     const rows = deriveFacts(page, "text/html")
-    expect(rows.map((f) => f.slot).sort()).toEqual(["$links", "$outline", "$stats"])
+    expect(rows.map((f) => f.slot).sort()).toEqual(["$links", "$map", "$outline", "$stats"])
     for (const f of rows) expect(f.gen).toBe(derivedGen(f.slot))
   })
 
@@ -148,5 +148,39 @@ describe("hostile hrefs", () => {
       deriveFacts(page, "text/html").map((f) => [f.slot, JSON.parse(f.json)]),
     )
     expect(d.$links.refs).toEqual(["abc12345"])
+  })
+})
+
+describe("$map", () => {
+  it("carries the document's addressable structure, refs and all", () => {
+    const page =
+      '<!doctype html><html><body><h2 id="a">A</h2><p>x</p><h2>B</h2><p>y</p></body></html>'
+    const row = deriveFacts(page, "text/html").find((f) => f.slot === "$map")
+    expect(row).toBeDefined()
+    const json = JSON.parse((row as { json: string }).json)
+    expect(json.kind).toBe("page")
+    expect(json.nodes.map((n: { ref: string }) => n.ref)).toContain("sec:a")
+    // The row is per version; a `version` field would be the reader's business, not a
+    // stored row's.
+    expect(json).not.toHaveProperty("version")
+    // Offsets are never serialized: they are an implementation detail, not a contract.
+    expect((row as { json: string }).json).not.toContain('"start"')
+  })
+
+  it("has no row when there is nothing to address", () => {
+    // A one-node map tells a reader nothing the read path doesn't already handle.
+    expect(
+      deriveFacts("<html><body><p>flat</p></body></html>", "text/html").map((f) => f.slot),
+    ).not.toContain("$map")
+  })
+
+  it("never fails a publish on a document the mapper refuses", () => {
+    // A deck with a slide nested in a slide: no row, and the other rows still land.
+    const bad =
+      '<html><body><section class="slide"><section class="slide">x</section></section>' +
+      '<section class="slide">y</section><script>"derive-deck"</script></body></html>'
+    const slots = deriveFacts(bad, "text/html").map((f) => f.slot)
+    expect(slots).not.toContain("$map")
+    expect(slots).toContain("$stats")
   })
 })

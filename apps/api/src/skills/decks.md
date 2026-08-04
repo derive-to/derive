@@ -76,6 +76,13 @@ the comments drawer with a "Slide 3" badge otherwise; clicking it flips the deck
 - Keep commented phrasing stable. The anchor re-matches on surrounding text, so small
   wording changes are fine, but rewriting a sentence orphans its thread.
 
+## Reading one slide
+
+`read(short_id, map:true)` lists the deck's slides with the `ref` that names each one, its
+identity and its title; `read(short_id, node:"slide:4", format:"html")` returns that slide's
+exact source. A slide is typically well under 1% of its deck, so this is how you work on one
+without carrying the rest.
+
 ## Rearranging: `slide_ops`, not find-and-replace
 
 To move, remove, or copy whole slides, pass `slide_ops` to `publish` — never `edits`.

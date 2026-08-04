@@ -29,7 +29,7 @@ import { DEFAULT_MAX_TURNS } from "./agent-loop"
 import { BillingBlockedError } from "./billing"
 import type { ChatToolSurface } from "./chat-tools"
 import {
-  documentBlock,
+  documentContext,
   documentContract,
   documentName,
   type LandingPort,
@@ -169,7 +169,7 @@ ${
       }\n`
     : ""
 }
-${documentBlock(src.text, documentName(input.artifact.short_id, input.artifact.current_content_type))}`
+${documentContext(src.text, documentName(input.artifact.short_id, input.artifact.current_content_type), input.artifact.current_content_type ?? "text/html", !!input.tools?.tools.length)}`
 
   const out = await runTurn({
     system,

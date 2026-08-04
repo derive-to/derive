@@ -8,6 +8,7 @@
 // The authoring guide is derive://skills/decks; the starter is deck-template.html.
 
 import { EditError } from "./doc-text"
+import { classTokens, elementEnd, type HtmlTag, tags } from "./html-tags"
 
 /** HTML comments hold prose ABOUT decks (including this repo's own annotated starter) and
  *  render nothing, so they must never make a page look like a deck. Stripped before any
@@ -36,15 +37,6 @@ const withoutComments = (html: string): string => {
 /** A container tag that MIGHT be a slide — the cheap linear scan; `isSlideAttrs` decides. */
 const SLIDE_CANDIDATE = /<(?:section|div|article|li)\b([^>]*)>/gi
 
-/** The class attribute's tokens. CSS classes are whitespace-separated, and that
- *  separation is the whole point here: `slide` is a class, `slide-inner` is a different
- *  class that merely starts with the same word. */
-const classTokens = (attrs: string): string[] => {
-  const m = attrs.match(/class\s*=\s*(?:"([^"]*)"|'([^']*)')/i)
-  const v = m?.[1] ?? m?.[2]
-  return v ? v.trim().split(/\s+/) : []
-}
-
 /** Is this opening tag a slide? It carries the stable `data-derive-slide` index, or `slide`
  *  as a WHOLE class token.
  *
@@ -53,7 +45,7 @@ const classTokens = (attrs: string): string[] => {
  *  `slide-kicker`. That made every such wrapper look like a slide nested inside its own
  *  slide, which inflated the count and made the slicer refuse the deck outright. Found by
  *  running this over real published decks rather than fixtures. */
-const isSlideAttrs = (attrs: string): boolean =>
+export const isSlideAttrs = (attrs: string): boolean =>
   /data-derive-slide\s*=/i.test(attrs) ||
   classTokens(attrs).some((t) => t.toLowerCase() === "slide")
 
@@ -120,72 +112,6 @@ const idOf = (attrs: string): number | null => {
   return Number.isInteger(n) ? n : null
 }
 
-interface Tag {
-  name: string
-  closing: boolean
-  selfClosing: boolean
-  attrs: string
-  start: number
-  /** Offset just past the tag's `>`. */
-  end: number
-}
-
-/** Walk the document's real tags, skipping what a browser would not read as markup:
- *  comment bodies, and the raw-text bodies of <script>/<style> (where a `</section>`
- *  inside a string or a template literal is text, not a close tag). Everything
- *  structural here is decided from this one pass, so the sniffer's view of the page and
- *  the slicer's can't diverge. */
-const tags = (html: string): Tag[] => {
-  const out: Tag[] = []
-  let i = 0
-  while (i < html.length) {
-    const lt = html.indexOf("<", i)
-    if (lt === -1) break
-    if (html.startsWith("<!--", lt)) {
-      const close = html.indexOf("-->", lt + 4)
-      if (close === -1) break // unterminated: a browser comments out the rest
-      i = close + 3
-      continue
-    }
-    const m = /^<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(html.slice(lt, lt + 64))
-    if (!m?.[1]) {
-      i = lt + 1
-      continue
-    }
-    // Find this tag's `>`, honoring quoted attribute values so a `>` inside one
-    // (title="a > b") doesn't end the tag early.
-    let j = lt + 1 + (m[0].length - 1)
-    let quote = ""
-    for (; j < html.length; j++) {
-      const ch = html[j] as string
-      if (quote) {
-        if (ch === quote) quote = ""
-      } else if (ch === '"' || ch === "'") quote = ch
-      else if (ch === ">") break
-    }
-    if (j >= html.length) break // unterminated tag: nothing structural left to trust
-    const name = m[1].toLowerCase()
-    const closing = m[0][1] === "/"
-    const attrs = html.slice(lt + m[0].length, j)
-    out.push({
-      name,
-      closing,
-      selfClosing: attrs.trimEnd().endsWith("/"),
-      attrs,
-      start: lt,
-      end: j + 1,
-    })
-    i = j + 1
-    // Raw-text elements: their content is text, so skip straight past the close tag.
-    if (!closing && (name === "script" || name === "style")) {
-      const close = new RegExp(`</${name}\\b`, "i").exec(html.slice(i))
-      if (!close) break
-      i += close.index
-    }
-  }
-  return out
-}
-
 /** One slide element's exact span in the source. */
 export interface SlideSpan {
   /** 1-based position in document order — what a person sees on the deck bar. */
@@ -211,24 +137,9 @@ export const sliceSlides = (html: string): SlideSpan[] => {
   const all = tags(html)
   const spans: SlideSpan[] = []
   for (let t = 0; t < all.length; t++) {
-    const open = all[t] as Tag
+    const open = all[t] as HtmlTag
     if (open.closing || !SLIDE_TAGS.has(open.name) || !isSlideAttrs(open.attrs)) continue
-    if (open.selfClosing) {
-      spans.push({ position: 0, start: open.start, end: open.end, id: idOf(open.attrs) })
-      continue
-    }
-    // Walk to this element's own close tag, counting same-name nesting on the way.
-    let depth = 1
-    let end = -1
-    for (let k = t + 1; k < all.length; k++) {
-      const tag = all[k] as Tag
-      if (tag.name !== open.name || tag.selfClosing) continue
-      depth += tag.closing ? -1 : 1
-      if (depth === 0) {
-        end = tag.end
-        break
-      }
-    }
+    const end = elementEnd(all, t)
     if (end === -1)
       throw new EditError(
         `A slide element (<${open.name}> at character ${open.start}) is never closed — the deck's structure can't be read. Fix the markup, or edit the source directly.`,

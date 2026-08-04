@@ -574,7 +574,9 @@ const LANDMARK = new Set(LANDMARK_TAGS)
 // Top-level landmark spans, balanced-matched by tag name (so nested same-name tags
 // don't close a parent early). Drop-subtree content is masked out first, exactly like
 // the heading scan, so a landmark tag inside a <template>/<script> is never surfaced.
-const landmarkSpans = (
+/** Top-level landmark element spans, exported so the doc map addresses the SAME regions
+ *  `landmarkMap` previews and `landmarkSlice` returns. */
+export const landmarkSpans = (
   html: string,
 ): { name: string; attrs: string; start: number; end: number }[] => {
   const drop: [number, number][] = []
@@ -697,15 +699,73 @@ export const enclosingMarker = (markers: SectionMarker[], line: number): string 
 
 /** The h1–h6 spine of an HTML document. Empty array = unsectionable (no headings). */
 export function docOutline(html: string): OutlineSection[] {
-  const spans = headingSpans(html)
   // `chars` is the section's raw-source span (offset math, O(1) per heading) — the
   // same cheap measure the markdown outline uses, not a per-section htmlToMarkdown
   // reconversion (which made the outline of a heading-heavy doc O(headings × size)).
-  return spans.map((s, i) => ({
+  return sectionSpans(html, "text/html").map((s) => ({
     level: s.level,
     text: s.text,
     slug: s.slug,
-    chars: sectionEnd(html, spans, i) - s.start,
+    chars: s.end - s.start,
+  }))
+}
+
+/** One section's exact span: heading tag to the next heading of the same or higher level.
+ *  THE definition of a section — `sectionOf`, `outlineOf` and the doc map all read it, so
+ *  a section slug means the same bytes on every surface. */
+export interface SectionSpan {
+  level: number
+  text: string
+  slug: string
+  /** Offset of the heading tag (HTML) or the line start (markdown). */
+  start: number
+  /** Offset just past the section's last byte. */
+  end: number
+}
+
+/** FLAT section spans: each heading to the NEXT heading of any level.
+ *
+ *  The nesting `sectionSpans` describes (heading to the next same-or-higher level) is the
+ *  right reading semantic and the wrong slicing one: an h2 containing an h3 CONTAINS its
+ *  span, and a markdown doc under one h1 is a single section covering everything. Spans
+ *  that contain each other cannot tile a document, and tiling is what makes a structural
+ *  replace safe. So the doc map slices flat, and nesting stays recoverable by composition:
+ *  a section plus every following node of deeper level is exactly its nested span (asserted
+ *  in doc-map's parity tests). Both flavours read the SAME headings and the same slugs, so
+ *  what a section IS can never drift between them. */
+export const flatSectionSpans = (source: string, contentType: string): SectionSpan[] => {
+  const nested = sectionSpans(source, contentType)
+  if (!nested.length) return []
+  // The document's own end for the last section: HTML stops at </body> so the closing
+  // tags become the map's tail, exactly as the nesting slicer does.
+  const bodyAt = isHtmlLike(contentType) ? source.lastIndexOf("</body>") : -1
+  const lastStart = (nested[nested.length - 1] as SectionSpan).start
+  const docEnd = bodyAt > lastStart ? bodyAt : source.length
+  return nested.map((h, i) => ({
+    ...h,
+    end: i + 1 < nested.length ? (nested[i + 1] as SectionSpan).start : docEnd,
+  }))
+}
+
+/** Section spans for any text source, in document order. */
+export const sectionSpans = (source: string, contentType: string): SectionSpan[] => {
+  if (isHtmlLike(contentType)) {
+    const hs = headingSpans(source)
+    return hs.map((h, i) => ({
+      level: h.level,
+      text: h.text,
+      slug: h.slug,
+      start: h.start,
+      end: sectionEnd(source, hs, i),
+    }))
+  }
+  const hs = mdHeadings(source)
+  return hs.map((h, i) => ({
+    level: h.level,
+    text: h.text,
+    slug: h.slug,
+    start: h.start,
+    end: mdSectionEnd(source, hs, i),
   }))
 }
 
@@ -713,10 +773,8 @@ export function docOutline(html: string): OutlineSection[] {
  *  higher level (or </body>). Byte-identical substring of the source, so a section an
  *  agent reads with format:"html" is exactly the text publish `edits` will match. */
 export function sectionSlice(html: string, slug: string): string | null {
-  const spans = headingSpans(html)
-  const i = spans.findIndex((s) => s.slug === slug)
-  if (i < 0) return null
-  return html.slice((spans[i] as HeadingSpan).start, sectionEnd(html, spans, i))
+  const span = sectionSpans(html, "text/html").find((s) => s.slug === slug)
+  return span ? html.slice(span.start, span.end) : null
 }
 
 // ---------------------------------------------------------------------------------
@@ -805,12 +863,11 @@ export const elideDataUris = (s: string): string =>
 /** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown). */
 export const outlineOf = (source: string, contentType: string): OutlineSection[] => {
   if (isHtmlLike(contentType)) return docOutline(source)
-  const hs = mdHeadings(source)
-  return hs.map((h, i) => ({
+  return sectionSpans(source, contentType).map((h) => ({
     level: h.level,
     text: h.text,
     slug: h.slug,
-    chars: mdSectionEnd(source, hs, i) - h.start,
+    chars: h.end - h.start,
   }))
 }
 
@@ -822,10 +879,9 @@ export const landmarksOf = (source: string, contentType: string): LandmarkRegion
 /** The SOURCE slice a section slug addresses (raw HTML or raw markdown). */
 export const sectionOf = (source: string, contentType: string, slug: string): string | null => {
   if (isHtmlLike(contentType)) return sectionSlice(source, slug)
-  const hs = mdHeadings(source)
-  const i = hs.findIndex((h) => h.slug === slug)
-  if (i < 0) return null
-  return source.slice((hs[i] as MdHeading).start, mdSectionEnd(source, hs, i)).replace(/\n+$/, "\n")
+  const span = sectionSpans(source, contentType).find((h) => h.slug === slug)
+  if (!span) return null
+  return source.slice(span.start, span.end).replace(/\n+$/, "\n")
 }
 
 // ---------------------------------------------------------------------------------
