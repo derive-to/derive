@@ -4592,7 +4592,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One context; the context's agent also gets the manifest source to run. */
+        /** One context; a human asker also gets the manifest package, the agent the source to run. */
         get: {
             parameters: {
                 query?: never;
@@ -4604,16 +4604,33 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The context (with manifest source for the agent). */
+                /** @description The context — for a human asker, the manifest rendered as a package. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": components["schemas"]["ContextInfo"] & {
-                            manifest_version?: number;
+                            /** @description The manifest's raw source — the runner's system prompt. Agent branch only. */
                             manifest_md?: string | null;
                             brandprint?: components["schemas"]["BrandprintConfig"];
+                            /** @description The manifest, framed for a reader rather than a runner. Human branch only. */
+                            manifest?: {
+                                short_id: string;
+                                title: string | null;
+                                version: number;
+                                md: string;
+                                /** @description When this version was published. */
+                                pushed_at: string;
+                            } | null;
+                            /** @description Every skill the manifest pins, with pin health. Human branch only. */
+                            skills?: components["schemas"]["ManifestSkillInfo"][];
+                            /** @description Repo pointers from the manifest's frontmatter. Human branch only. */
+                            repos?: components["schemas"]["ManifestRepoInfo"][];
+                            /** @description Per-run wall-clock budget; null = the server default. Human branch only. */
+                            max_run_ms?: number | null;
+                            /** @description How many sessions the runner may work at once. Human branch only. */
+                            max_concurrency?: number;
                         };
                     };
                 };
@@ -4887,6 +4904,47 @@ export interface paths {
             requestBody?: never;
             responses: {
                 /** @description The new session and its first message. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            session: components["schemas"]["Session"];
+                            messages: components["schemas"]["SessionMessage"][];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/contexts/{id}/sessions/record": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record a run already done locally as an answered session (creator or manager). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The recorded session and its two messages. */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -6851,6 +6909,12 @@ export interface components {
             ask_policy: "workspace" | "invited";
             /** @description Connections this context may use — its tools, in every lane it runs in. */
             connection_ids: string[];
+            /** @description The manifest's own first paragraph — frontmatter and a single leading heading stripped, capped. Null when the manifest has none or can't be read. */
+            description?: string | null;
+            /** @description How many skills the manifest's frontmatter pins. */
+            skills_count?: number;
+            /** @description The manifest artifact's current version; null if it can't be resolved. */
+            manifest_version?: number | null;
         };
         BrandprintConfig: {
             /** @description The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note. */
@@ -6864,6 +6928,20 @@ export interface components {
                 /** @description A skill bundle (materialize into skills/) vs a prose note. */
                 is_skill: boolean;
             }[];
+        };
+        ManifestSkillInfo: {
+            short_id: string;
+            title: string | null;
+            /** @description The pinned version; null = unpinned (runs current). */
+            pinned: number | null;
+            /** @description The skill artifact's current version; null if it can't be resolved. */
+            current: number | null;
+            /** @description True when the pin trails the artifact's current version. */
+            stale: boolean;
+        };
+        ManifestRepoInfo: {
+            url: string;
+            ref: string | null;
         };
         Session: {
             id: string;
@@ -6888,6 +6966,15 @@ export interface components {
                 /** @enum {string} */
                 mode?: "publish" | "propose";
             } | null;
+            /** @description The artifact this session's answer bound as its result, if any. */
+            result_artifact_id: string | null;
+            /** @description The asker's public handle. Only resolved on the owner's view of the sessions list — a picker of your own sessions already knows who you are. */
+            asker_username?: string | null;
+            /**
+             * @description 'local' when this session's MOST RECENT agent turn was recorded rather than served through the queue (see SessionMeta.lane) — a session recorded once and later genuinely followed-up through the queue reads as null again, because the turn that answer describes changed. Only resolved on the owner's view of the sessions list.
+             * @enum {string|null}
+             */
+            lane?: "local" | null;
         };
         SessionMessage: {
             id: string;
@@ -6929,6 +7016,11 @@ export interface components {
             outcome?: string;
             /** @description Reported spend for the turn in millionths of a USD; null when unreported. */
             cost_micro_usd?: number | null;
+            /**
+             * @description Stamped on a recorded answer: work that already ran on the owner's own machine, filed here rather than served through the queue. Mirrors automate record's run.meta.lane. Absent on every normally-served turn.
+             * @enum {string}
+             */
+            lane?: "local";
         } | null;
         ChatModel: {
             /** @description The provider's model id — what to send back to pick it. */

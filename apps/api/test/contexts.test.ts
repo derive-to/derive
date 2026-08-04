@@ -729,3 +729,206 @@ describe("session.settled — the terminal-turn wake event", () => {
     expect(settled()).toMatchObject([{ session_id: session.id, state: "failed" }])
   })
 })
+
+// The manifest, framed for a reader: pin health against each skill's ACTUAL current
+// version, repo pointers, description + skill count on both GET :id and the list —
+// and none of it reaches the runner's own (agent) branch, which keeps getting raw
+// manifest_md like before this widening.
+describe("contexts: the manifest package (skills, pin health, repos, description)", () => {
+  const owner: TestUser = { id: "u_mf_own", email: "mfown@derive.test", name: "Owner" }
+  const asker: TestUser = { id: "u_mf_ask", email: "mfask@derive.test", name: "Asker" }
+  const { app } = makeAuthedApp("contexts-manifest", [owner, asker], "commenter")
+
+  let contextId: string
+  let agentId: string
+  let currentSkillId: string
+  let staleSkillId: string
+
+  it("setup: pin one skill current and one behind, add a repo, wire the context", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(asker.email) })
+
+    currentSkillId = (await (await publishAs(app, "# Skill A v1", {}, as(owner.email))).json())
+      .short_id
+    const staleSkill = await publishAs(app, "# Skill B v1", {}, as(owner.email))
+    staleSkillId = (await staleSkill.json()).short_id
+    // Push a second version so the pin below (v1) trails the artifact's real current (v2).
+    await publishAs(app, "# Skill B v2", {}, as(owner.email), staleSkillId)
+
+    const manifestMd = [
+      "---",
+      "skills:",
+      `  - id: ${currentSkillId}`,
+      "    version: 1",
+      `  - id: ${staleSkillId}`,
+      "    version: 1",
+      "repos:",
+      "  - url: https://github.com/acme/widget-e2e",
+      "    ref: main",
+      "---",
+      "",
+      "# Staging QA",
+      "",
+      "Smoke-tests the staging app in a real browser.",
+      "",
+      "## Scopes",
+      "",
+      "Try `run smoke` or `run full`.",
+    ].join("\n")
+    const manifestShortId = (await (await publishAs(app, manifestMd, {}, as(owner.email))).json())
+      .short_id
+
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "QA Agent" }))
+    ).json()
+    agentId = ag.id
+    const x = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Staging QA",
+          agent_id: agentId,
+          manifest_short_id: manifestShortId,
+          max_run_ms: 1_800_000,
+        }),
+      )
+    ).json()
+    contextId = x.id
+    await app.request(
+      `/v1/contexts/${contextId}/askers`,
+      jsonAs(as(owner.email), { email: asker.email }),
+    )
+  })
+
+  it("GET :id gives an asker the package: description, skill pin health, repos, budget", async () => {
+    const res = await app.request(`/v1/contexts/${contextId}`, { headers: as(asker.email) })
+    expect(res.status).toBe(200)
+    const x = await res.json()
+    expect(x.description).toBe("Smoke-tests the staging app in a real browser.")
+    expect(x.skills_count).toBe(2)
+    expect(x.manifest_version).toBe(1)
+    expect(x.manifest).toMatchObject({ version: 1 })
+    expect(x.manifest.md).toContain("Staging QA")
+    expect(x.repos).toEqual([{ url: "https://github.com/acme/widget-e2e", ref: "main" }])
+    expect(x.max_run_ms).toBe(1_800_000)
+    expect(x.max_concurrency).toBe(1)
+    const current = x.skills.find((s: { short_id: string }) => s.short_id === currentSkillId)
+    const stale = x.skills.find((s: { short_id: string }) => s.short_id === staleSkillId)
+    expect(current).toMatchObject({ pinned: 1, current: 1, stale: false })
+    expect(stale).toMatchObject({ pinned: 1, current: 2, stale: true })
+  })
+
+  it("the list route carries the same description + skill count + manifest version", async () => {
+    const res = await app.request("/v1/contexts", { headers: as(owner.email) })
+    const row = (await res.json()).contexts.find((c: { id: string }) => c.id === contextId)
+    expect(row).toMatchObject({
+      description: "Smoke-tests the staging app in a real browser.",
+      skills_count: 2,
+      manifest_version: 1,
+    })
+  })
+
+  it("the runner's OWN branch never gets the reader package — raw manifest_md only", async () => {
+    // A dk_agt_ bearer needs its own request; rotate the context's registered agent to get one.
+    const rotated = await app.request(`/v1/agents/${agentId}/rotate`, jsonAs(as(owner.email), {}))
+    const token = (await rotated.json()).token
+    const res = await app.request(`/v1/contexts/${contextId}`, { headers: bearer(token) })
+    const x = await res.json()
+    expect(typeof x.manifest_md).toBe("string")
+    expect(x.manifest).toBeUndefined()
+    expect(x.skills).toBeUndefined()
+    expect(x.repos).toBeUndefined()
+  })
+})
+
+// The RECORD lane: files a run that already happened on the owner's own machine —
+// no dispatch, no queue, answered on arrival. The context ledger's analog of
+// `automate record` (mcp-tools/automate.ts), stamped via SessionMeta.lane rather
+// than a new column.
+describe("contexts: record a run that already happened locally", () => {
+  const owner: TestUser = {
+    id: "u_rec_own",
+    email: "recown@derive.test",
+    name: "Owner",
+    username: "recowner",
+  }
+  const member: TestUser = { id: "u_rec_mem", email: "recmem@derive.test", name: "Member" }
+  const { app } = makeAuthedApp("contexts-record", [owner, member], "commenter")
+
+  let contextId: string
+
+  it("setup: wire a context", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(member.email) })
+    const manifestShortId = (
+      await (await publishAs(app, "# Staging QA", {}, as(owner.email))).json()
+    ).short_id
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "QA Agent" }))
+    ).json()
+    contextId = (
+      await (
+        await app.request(
+          "/v1/contexts",
+          jsonAs(as(owner.email), {
+            name: "Staging QA",
+            agent_id: ag.id,
+            manifest_short_id: manifestShortId,
+          }),
+        )
+      ).json()
+    ).id
+  })
+
+  it("the owner records a run: an already-answered session, lane:local on the reply", async () => {
+    const artifact = await (await publishAs(app, "# Daily Run", {}, as(owner.email))).json()
+    const res = await app.request(
+      `/v1/contexts/${contextId}/sessions/record`,
+      jsonAs(as(owner.email), {
+        instruction: "run smoke",
+        answer: "14 of 15 checks passed.",
+        result_artifact_id: artifact.short_id,
+      }),
+    )
+    expect(res.status).toBe(201)
+    const { session, messages } = await res.json()
+    expect(session.state).toBe("answered")
+    expect(session.result_artifact_id).toBe(artifact.short_id)
+    expect(messages).toHaveLength(2)
+    expect(messages[0]).toMatchObject({ author_kind: "asker", body_md: "run smoke" })
+    expect(messages[1]).toMatchObject({
+      author_kind: "agent",
+      body_md: "14 of 15 checks passed.",
+      meta: { lane: "local" },
+    })
+
+    // Filed into the SAME ledger a normal ask uses — the owner's Activity view sees it,
+    // with the asker resolved and the lane surfaced.
+    const list = await (
+      await app.request(`/v1/contexts/${contextId}/sessions`, { headers: as(owner.email) })
+    ).json()
+    const row = list.sessions.find((s: { id: string }) => s.id === session.id)
+    expect(row).toMatchObject({ lane: "local", asker_username: expect.any(String) })
+  })
+
+  it("a workspace member who isn't the creator or a manager cannot record", async () => {
+    const res = await app.request(
+      `/v1/contexts/${contextId}/sessions/record`,
+      jsonAs(as(member.email), { instruction: "run smoke", answer: "done" }),
+    )
+    expect(res.status).toBe(403)
+  })
+
+  it("an outcome of failed lands the session failed, not answered", async () => {
+    const res = await app.request(
+      `/v1/contexts/${contextId}/sessions/record`,
+      jsonAs(as(owner.email), {
+        instruction: "run full",
+        answer: "the suite crashed before finishing.",
+        outcome: "failed",
+      }),
+    )
+    expect(res.status).toBe(201)
+    expect((await res.json()).session.state).toBe("failed")
+  })
+})
