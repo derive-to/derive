@@ -1051,6 +1051,15 @@ export const api = {
   // client would otherwise have to be told separately.
   systemCapabilities: (): Promise<unknown> => f("/v1/system/capabilities", opts()).then(j),
 
+  // THE DEPLOY-WIDE model, operator-only. Both 403 for everyone else, which is also how the UI
+  // knows whether to offer the switch at all.
+  getInstanceChatModel: (): Promise<{
+    model: string | null
+    options: ChatModelOption[]
+  }> => f("/v1/system/chat-model", opts()).then(j),
+  setInstanceChatModel: (model: string | null): Promise<{ model: string | null }> =>
+    f("/v1/system/chat-model", { ...opts({ model }), method: "PUT" }).then(j),
+
   // Which models this deploy can answer a chat turn with, default first. Readable by any
   // signed-in user (it is the deploy's capability list, not a workspace's data); CHANGING which
   // one answers is `updateWorkspaceSettings({ chatModel })`, which needs Admin.

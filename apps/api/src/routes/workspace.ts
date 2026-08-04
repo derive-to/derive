@@ -627,9 +627,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
             chatBeta: z.boolean(),
             // Connection ids chat may reach. Admin-set, empty by default — see OrgSettings.
             chatSources: z.array(z.string()),
-            // The live model override (see OrgSettings.chatModel). Nullable so it can be
-            // CLEARED back to the deploy default, which is the other half of a switch.
-            chatModel: z.string().nullable(),
             automateBeta: z.boolean(),
             agentKillswitch: z.boolean(),
             agentAutoEnabled: z.boolean(),
@@ -644,18 +641,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
       // doesn't wipe an existing profileId (and vice versa). defaultAgentId is pulled
       // out too: null clears it, and a set must name an agent in THIS workspace (the
       // store doesn't check ownership, so the route does — same rule as brandprint).
-      const { brandprint, defaultAgentId, chatModel, ...flat } = b
+      const { brandprint, defaultAgentId, ...flat } = b
       const cur = await meta.getOrgSettings(org)
       const next = { ...cur, ...flat }
-      // null clears the override (back to the deploy default); a string sets it. Validated
-      // against the catalog so a typo is refused HERE, where somebody is looking at the
-      // response, rather than silently costing every turn later.
-      if (chatModel === null) next.chatModel = undefined
-      else if (chatModel) {
-        if (!ctx.models?.resolve(chatModel))
-          return bail(fail(c, 400, `unknown model "${chatModel}"`))
-        next.chatModel = chatModel
-      }
       if (defaultAgentId === null) next.defaultAgentId = undefined
       else if (defaultAgentId) {
         const agents = await meta.listAgents(org)

@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import { capabilityReport } from "../config-manifest"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
+import { getInstanceChatModel, setInstanceChatModel } from "../lib/instance-settings"
 import { reindexSearchBatch } from "../lib/search"
 import { log } from "../log"
 
@@ -86,6 +87,39 @@ export const systemRoutes = (ctx: AppContext) => {
         error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
       })
     }
+  })
+
+  // THE DEPLOY-WIDE MODEL, read and set by the operator.
+  //
+  // Not a workspace setting: the operator holds the model credential and pays for every turn on
+  // it, and when a provider goes slow or dark the person who has to move everyone at once is the
+  // one who runs the instance. Read fresh per turn, so a change lands on the next message rather
+  // than the next deploy.
+  app.get("/v1/system/chat-model", async (c) => {
+    if (!isToken(c) && !(await isSuperAdmin(c)))
+      return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
+    return c.json({
+      model: await getInstanceChatModel(meta),
+      // The catalog travels with it so the picker needs one call, and so "what is set" and "what
+      // could be set" can never disagree about which ids exist.
+      options: (ctx.models?.options ?? []).map((m) => ({
+        id: m.id,
+        label: m.label,
+        is_default: m.isDefault,
+      })),
+    })
+  })
+
+  app.put("/v1/system/chat-model", async (c) => {
+    if (!isToken(c) && !(await isSuperAdmin(c)))
+      return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
+    const b = await readJson(c, z.object({ model: z.string().nullable() }))
+    if (b instanceof Response) return b
+    // Validated against the catalog, so a typo is refused HERE where somebody is looking at the
+    // response rather than silently costing every turn on the deploy.
+    if (b.model && !ctx.models?.resolve(b.model)) return fail(c, 400, `unknown model "${b.model}"`)
+    await setInstanceChatModel(meta, b.model)
+    return c.json({ model: await getInstanceChatModel(meta) })
   })
 
   // Operator-only config introspection for `derive doctor`: which optional features are

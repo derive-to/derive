@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
+import { setInstanceChatModel } from "../src/lib/instance-settings"
 import { catalogOf } from "../src/lib/model-catalog"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp, publishAs } from "./helpers"
@@ -365,7 +366,7 @@ describe("the workspace chat", () => {
     throw new Error("the turn never settled — it hung, which is the bug")
   })
 
-  it("switches model mid-conversation when an admin flips the workspace override", async () => {
+  it("switches model mid-conversation when the operator flips the deploy override", async () => {
     // THE OUTAGE LEVER. The deploy default lives in configuration, so changing it needs a
     // redeploy — the wrong shape for a provider that has gone slow or dark while people are
     // typing. This is the same choice held where it can be changed in seconds, and it has to
@@ -380,11 +381,8 @@ describe("the workspace chat", () => {
     const { session, msgs } = await ask(app, meta, "hello")
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
 
-    // The admin flips it. No redeploy, no restart.
-    await meta.setOrgSettings("default", {
-      ...(await meta.getOrgSettings("default")),
-      chatModel: "model-b",
-    })
+    // The OPERATOR flips it, deploy-wide. No redeploy, no restart.
+    await setInstanceChatModel(meta, "model-b")
     await app.request(`/v1/sessions/${session?.id}/messages`, {
       method: "POST",
       headers: { ...as("ws@x.com"), "content-type": "application/json" },
@@ -404,7 +402,7 @@ describe("the workspace chat", () => {
     throw new Error("second turn never landed")
   })
 
-  it("lets a person's explicit pick beat the workspace override", async () => {
+  it("lets a person's explicit pick beat the operator override", async () => {
     // The override is the deploy's opinion; a model named on THIS turn is the person's, made
     // now, and it wins.
     const { app, meta } = await setup("ws-override-beaten", async () => ({
@@ -413,10 +411,7 @@ describe("the workspace chat", () => {
       costUsd: null,
       done: true,
     }))
-    await meta.setOrgSettings("default", {
-      ...(await meta.getOrgSettings("default")),
-      chatModel: "model-b",
-    })
+    await setInstanceChatModel(meta, "model-b")
     const { msgs } = await ask(app, meta, "hi", { model: "model-a" })
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
   })
@@ -429,10 +424,7 @@ describe("the workspace chat", () => {
       costUsd: null,
       done: true,
     }))
-    await meta.setOrgSettings("default", {
-      ...(await meta.getOrgSettings("default")),
-      chatModel: "not-a-real-model",
-    })
+    await setInstanceChatModel(meta, "not-a-real-model")
     const { msgs } = await ask(app, meta, "hi")
     expect(msgs.at(-1)?.author_kind).toBe("agent")
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })

@@ -4,7 +4,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
-import { chatModelsQuery, operatorQuery, reportsQuery } from "@/lib/queries"
+import { instanceChatModelQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
@@ -64,12 +64,10 @@ export function Settings() {
   const { me } = useAuth()
   const qc = useQueryClient()
   const { data: reports } = useQuery({ ...reportsQuery(), enabled: !!me })
-  // The catalog decides whether this workspace has a CHOICE to make. One configured model is a
-  // fact about the deploy rather than a decision, so the section stays out of the way until an
-  // operator has actually configured a second provider.
-  const { data: catalog } = useQuery({ ...chatModelsQuery(), enabled: !!me })
-  // Operator-only: the model is the operator's credential to spend, not a workspace's.
-  const { isSuccess: isOperator } = useQuery({ ...operatorQuery(), enabled: !!me })
+  // Operator-only, and the query IS the gate: it 403s for everyone who does not run this
+  // instance. It also carries the catalog, so the tab appears only once there is a real choice —
+  // one configured model is a fact about the deployment rather than a decision.
+  const { data: instanceModel } = useQuery({ ...instanceChatModelQuery(), enabled: !!me })
   const { section } = route.useParams()
   const nav = route.useNavigate()
 
@@ -102,7 +100,7 @@ export function Settings() {
         { id: "billing", label: "Billing", testId: "settings-tab-billing" },
         { id: "integrations", label: "Integrations", testId: "settings-tab-integrations" },
         { id: "sources", label: "Sources", testId: "settings-tab-sources" },
-        ...((isOperator && (catalog?.models.length ?? 0) > 1
+        ...(((instanceModel?.options.length ?? 0) > 1
           ? [{ id: "models", label: "Chat model", testId: "settings-tab-models" }]
           : []) as SettingsNavGroup["items"]),
         { id: "brandprint", label: "Brandprint", testId: "settings-tab-brandprint" },

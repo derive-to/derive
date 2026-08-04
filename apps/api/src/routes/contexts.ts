@@ -36,6 +36,7 @@ import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
+import { getInstanceChatModel } from "../lib/instance-settings"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
@@ -230,16 +231,18 @@ export const contextRoutes = (ctx: AppContext) => {
     // WHICH MODEL, read fresh every turn so an admin can change it mid-conversation.
     //
     // 1. What the person asked for on THIS turn — an explicit choice, made now, always wins.
-    // 2. The workspace override (settings.chatModel), which exists for the case the deploy
-    //    default cannot serve: a provider gone slow or dark while people are typing. It
-    //    deliberately outranks the conversation's own memory, because an outage lever that
-    //    every existing conversation ignores is not a lever. Ignored when it names nothing, so
-    //    a typo costs the override rather than every turn in the workspace.
+    // 2. The OPERATOR's deploy-wide override, which exists for the case the configured default
+    //    cannot serve: a provider gone slow or dark while people are typing. It is instance-level
+    //    because the operator holds the credential and pays for the turn, and it deliberately
+    //    outranks the conversation's own memory — an outage lever that every conversation
+    //    already in flight ignores is not a lever. Ignored when it names nothing, so a typo
+    //    costs the override rather than every turn on the deploy.
     // 3. What this conversation was already using (off the last agent message, so a choice
     //    sticks without a column).
     // 4. The deploy's default.
     const previous = lastModelId(transcript)
-    const override = settings?.chatModel && ctx.models?.resolve(settings.chatModel)
+    const operatorPick = await getInstanceChatModel(meta).catch(() => null)
+    const override = operatorPick && ctx.models?.resolve(operatorPick)
     const model = askedModelId
       ? ctx.models?.resolve(askedModelId)
       : override || ctx.models?.resolve(previous ?? null)

@@ -4,53 +4,52 @@ import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { chatModelsQuery, operatorQuery, workspaceSettingsQuery } from "@/lib/queries"
+import { instanceChatModelQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { SettingsSection } from "./settings-section"
 
-// WHICH MODEL ANSWERS, changeable while people are typing.
+// WHICH MODEL ANSWERS, for the whole deployment, changeable while people are typing.
 //
-// The deploy's default lives in configuration, so changing it needs a redeploy — the wrong shape
-// for the moment it is most needed in, which is a provider that has gone slow or dark mid-day.
-// This is the same choice held where an admin can change it in seconds; the turn re-reads it, so
-// the next message uses the new one, including in conversations already open.
+// An OPERATOR control, not a workspace one: the operator holds the model credential and pays for
+// every turn on it, so a workspace Admin changing it would be spending somebody else's key — and
+// when a provider goes slow or dark, the person who has to move everyone at once is the one who
+// runs the instance.
 //
-// It renders only where there is a choice to make (see Settings): one configured model is a fact
-// about the deploy, not a decision, and a picker with a single row would imply otherwise.
+// The configured default lives in the deployment's environment and therefore needs a redeploy,
+// which is the wrong shape for exactly that moment. This is the same choice held where it can be
+// changed in seconds; the turn re-reads it, so the next message uses the new one — including in
+// conversations that are already open.
 
 export function ModelsSection() {
   const qc = useQueryClient()
-  const { data, isError, refetch } = useQuery(chatModelsQuery())
-  const { data: settings } = useQuery(workspaceSettingsQuery())
-  // INSTANCE operator, not workspace Admin. Which provider answers is the operator's call —
-  // they hold the credential and pay for it — and a workspace Admin changing it would be
-  // spending somebody else's key. The query 403s for everyone else, which is the signal.
-  const { isSuccess: isOperator } = useQuery(operatorQuery())
-  const models = data?.models ?? []
-  const override = settings?.chatModel ?? null
-  const deployDefault = models.find((m) => m.is_default)
+  // Operator-only. A 403 here means "not an operator", which is why the section is not offered to
+  // anyone else in the first place (see Settings) — this state is for a genuine load failure.
+  const { data, isError, refetch } = useQuery(instanceChatModelQuery())
+  const models = data?.options ?? []
+  const override = data?.model ?? null
+  const configured = models.find((m) => m.is_default)
 
   const pick = useApiMutation({
-    // null clears the override and hands the choice back to the deploy default.
-    mutationFn: (chatModel: string | null) => api.updateWorkspaceSettings({ chatModel }),
-    success: (_d, chatModel) =>
-      chatModel ? "Chat will answer with the model you picked" : "Back to the deploy default",
-    onSuccess: () => qc.invalidateQueries({ queryKey: workspaceSettingsQuery().queryKey }),
+    // null hands the choice back to whatever the deployment is configured with.
+    mutationFn: (model: string | null) => api.setInstanceChatModel(model),
+    success: (_d, model) =>
+      model ? "Chat answers with that model now, everywhere" : "Back to the configured default",
+    onSuccess: () => qc.invalidateQueries({ queryKey: instanceChatModelQuery().queryKey }),
   })
 
   return (
     <SettingsSection
       title="Chat model"
-      description="Which model answers chat in this workspace. It takes effect on the next message — including in conversations that are already open — so it is the switch to reach for when a provider is slow or down."
+      description="Which model answers chat across this whole deployment. It takes effect on the next message — including in conversations that are already open — so it is the switch to reach for when a provider is slow or down."
     >
-      {/* Without the catalog there is nothing to choose BETWEEN, and guessing at it would offer
-          a switch that cannot be trusted — say so and let them retry. */}
+      {/* Without the catalog there is nothing to choose BETWEEN, and guessing at it would offer a
+          switch that cannot be trusted — say so and let them retry. */}
       {isError ? (
         <StatusPanel
           tone="danger"
           title="Couldn't load the models"
-          description="The list of models this deploy can answer with didn't load, so there is nothing to choose between."
+          description="The list of models this deployment can answer with didn't load, so there is nothing to choose between."
           action={
             <Button size="sm" onClick={() => void refetch()} data-testid="chat-models-retry">
               Try again
@@ -60,10 +59,10 @@ export function ModelsSection() {
       ) : (
         <SettingsGroup>
           <Row
-            label="Use the deploy default"
-            hint={deployDefault ? `Currently ${deployDefault.label}` : undefined}
+            label="Use the configured default"
+            hint={configured ? `Currently ${configured.label}` : undefined}
             selected={!override}
-            busy={pick.isPending || !isOperator}
+            busy={pick.isPending}
             onSelect={() => pick.mutate(null)}
             testId="chat-model-default"
           />
@@ -73,7 +72,7 @@ export function ModelsSection() {
               label={m.label}
               hint={m.id}
               selected={override === m.id}
-              busy={pick.isPending || !isOperator}
+              busy={pick.isPending}
               onSelect={() => pick.mutate(m.id)}
               testId={`chat-model-${m.id}`}
             />
