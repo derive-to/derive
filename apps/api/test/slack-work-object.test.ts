@@ -38,6 +38,7 @@ const status = (over: Partial<ArtifactStatus> = {}): ArtifactStatus => ({
   openThreads: 0,
   updatedAt: "2026-08-01T10:00:00.000Z",
   lastModifiedBy: "Dana",
+  previewReady: true,
   ...over,
 })
 
@@ -342,11 +343,14 @@ describe("the card's own image", () => {
   })
 })
 
-describe("one fact, one place", () => {
-  // The card used to state a pending review three times: once in the description and twice more
-  // as its own chips. The chips win — they are what Slack draws where the eye goes, which is the
-  // reason for using a typed entity at all.
-  it("does not repeat the review status in the description", () => {
+describe("what the description leads with", () => {
+  // REGRESSION GUARD. This was once "de-duplicated" on the reasoning that the Review and
+  // Waiting-on chips already say it. The result was a headline reading "Markdown · 3 versions ·
+  // 7 comments · on Derive" — the inventory line the typed card exists to stop leading with.
+  //
+  // The two slots are not peers: `description` is the prominent line, `custom_fields` are
+  // secondary labelled pairs. Repetition between them is the point, not an accident.
+  it("leads with what the doc wants from you, not with what it is", () => {
     const e = artifactEntity({
       ...base,
       artifact: artifact(),
@@ -356,13 +360,22 @@ describe("one fact, one place", () => {
       }),
     })
     const p = e.entity_payload as Payload
-    expect(String(p.fields.description?.value)).not.toContain("Awaiting")
-    // ...because it is here instead, labelled and scannable.
-    expect(JSON.stringify(p.custom_fields)).toContain("Awaiting")
-    expect(JSON.stringify(p.custom_fields)).toContain("Mert")
+    expect(String(p.fields.description?.value)).toContain("Awaiting review")
+    expect(String(p.fields.description?.value)).toContain("Mert")
+    expect(String(p.fields.description?.value)).not.toContain("versions")
+    // ...and the chips still carry it too. Both, deliberately.
+    expect(JSON.stringify(p.custom_fields)).toContain("Awaiting review")
   })
 
-  it("does not repeat the data summary either — it has its own chip", () => {
+  it("falls back to the inventory line only when nothing is pending", () => {
+    const e = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
+    const p = e.entity_payload as Payload
+    expect(String(p.fields.description?.value)).toContain("3 versions")
+  })
+
+  it("leads with the data summary when a version carries facts", () => {
+    // `dataSummary` leads `unfurlDescription` for a reason of its own — the numbers are what a
+    // reader scanning a shared link wants. It has a `Data` chip as well; same non-peer logic.
     const e = artifactEntity({
       ...base,
       artifact: artifact(),
@@ -370,7 +383,7 @@ describe("one fact, one place", () => {
       status: status(),
     })
     const p = e.entity_payload as Payload
-    expect(String(p.fields.description?.value)).not.toContain("pass 48")
+    expect(String(p.fields.description?.value)).toContain("pass 48")
     expect(JSON.stringify(p.custom_fields)).toContain("pass 48")
   })
 

@@ -125,19 +125,25 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
   // fields", which surfaces as a format error that looks like a wrapper problem. Only the five
   // names content_item knows may go here; everything else belongs in custom_fields below.
   //
-  // ONE FACT, ONE PLACE. The description used to lead with the review sentence, which
-  // `custom_fields` below states again as `Review` and `Waiting on` — three renderings of the
-  // same thing on a card with room for none of them. The labelled fields win that tie: they are
-  // what Slack draws as scannable chips where the eye goes, which is the whole reason for
-  // adopting a typed entity over a block card. So `description` stops repeating them, and stops
-  // leading with `dataSummary` too — that has its own `Data` chip.
+  // THE HEADLINE, and it deliberately REPEATS what the chips below say.
   //
-  // What is left is the inventory line. Thin, but it is genuinely all the prose there is: an
-  // artifact carries no summary or excerpt anywhere in `UnfurlInfo`, so there is nothing better
-  // to put here and nothing lost by not trying.
+  // I removed that repetition once, on the reasoning that `Review` and `Waiting on` already
+  // carry it and a card has room for one rendering, not three. That was wrong, and the payload
+  // it produced showed why: the description fell back to "Markdown · 3 versions · 7 comments ·
+  // on Derive" — the inventory line this whole feature exists to stop leading with. It answers
+  // "what is this?" when the question a shared link needs answered is "does this want something
+  // from me?".
+  //
+  // The two slots are not peers. `description` is the prominent line; `custom_fields` are
+  // secondary labelled pairs. They serve skimming and scanning respectively, so the same fact
+  // in both is not waste — and de-duplicating cost the headline its meaning to buy tidiness
+  // nobody asked for. (The duplication is not even removable in principle: `display_type`
+  // repeats the kind, and `Version` repeats the version count, in the very same line.)
   const fields: Record<string, unknown> = {
     description: {
-      value: unfurlDescription({ ...info, dataSummary: null }),
+      value: statusPhrase(status)?.text
+        ? `${statusPhrase(status)?.text}${status.review?.reviewerName ? ` — ${status.review.reviewerName}` : ""}`
+        : unfurlDescription(info),
       // "markdown", never "plain_text": the latter is not in the enum and rejects the payload.
       format: "markdown",
     },
@@ -242,10 +248,11 @@ export const artifactDetails = (
   previewUrl?: string | null,
 ): Record<string, unknown> => {
   const phrase = statusPhrase(status, viewerId)
-  // Unlike the card, this one KEEPS the status sentence alongside the description. It is not the
-  // same sentence: `statusPhrase` takes the viewer, so this panel says "Awaiting YOUR review" to
-  // the person actually being waited on — which no labelled chip can express, because a chip is
-  // the same for everybody and this surface is not.
+  // Both surfaces lead with the status, but this sentence is not the card's: `statusPhrase`
+  // takes the viewer here, so the panel says "Awaiting YOUR review" to the person actually being
+  // waited on. No chip can say that — a chip is the same for everybody, and this surface is not.
+  // It also keeps the description BELOW the status rather than replacing it, because a panel
+  // opened deliberately has the room a broadcast card does not.
   const fields: Record<string, unknown> = {
     description: {
       value: phrase

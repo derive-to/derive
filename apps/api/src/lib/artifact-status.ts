@@ -44,6 +44,12 @@ export interface ArtifactStatus {
    *  only — a slack_user_id, an avatar url, or either alongside the name are all rejected with
    *  "failed to match exactly one allowed schema" — so there is no @-link or avatar to be had. */
   lastModifiedBy: string | null
+  /** Whether the current version's OG render has finished, so a card may promise a picture.
+   *
+   *  Here rather than re-read where it is needed: this resolver already reads the version row
+   *  for `lastModifiedBy`, and the Slack card was fetching the identical row a second time in
+   *  the same request to answer this one question. */
+  previewReady: boolean
 }
 
 export const artifactStatus = async (
@@ -68,6 +74,7 @@ export const artifactStatus = async (
     openThreads: signals[artifact.id]?.open_threads ?? 0,
     updatedAt: artifact.updated_at,
     lastModifiedBy: current?.author ?? null,
+    previewReady: current?.preview_status === "ready" && !!current.preview_key,
   }
 }
 
