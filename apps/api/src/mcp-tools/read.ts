@@ -155,13 +155,13 @@ export function registerReadTool(tc: ToolContext): void {
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short_id — or a CONTEXT's package by its ctx_ id/name (manifest inline, skills as pointers; `use` gives it work instead). A small doc returns whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug (or a `lines` range) for just that part. Markdown by default; a styled HTML page is FLATTENED to text here, so pass render:'top' or 'full' to SEE it as a viewer does (do this after publishing a designed page to catch visual breakage). Bundle: omit `section` for the page list, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required BEFORE publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead.",
+        "Read an artifact by short_id. Small docs return whole; large ones return an OUTLINE — then pass `section`, or `map:true` then `node` to work on one part. format:'html' gives the exact source, required before publish `edits`. Also reads contexts and derive:// URIs. See derive://skills/finding.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         short_id: z
           .string()
           .describe(
-            "An artifact short id (nk0dsral). Also resolves a ctx_ id/name (a context package), derive://skills/<name>, derive://brandprint/reference|template|profile, derive://decks/template, derive://sources.",
+            "An artifact short id. Also a ctx_ id/name, or a derive:// URI (skills, brandprint, decks/template, sources).",
           ),
         section: z
           .string()
@@ -185,7 +185,7 @@ export function registerReadTool(tc: ToolContext): void {
           .enum(["top", "full", "marked"])
           .optional()
           .describe(
-            'SEE the page as a viewer does, catching visual breakage no text read can. "top": the 1200x630 crop. "full": the whole page. "marked": full, with @N region refs drawn on. Computed seconds after a publish; pass alone.',
+            'SEE the page as a viewer does, catching visual breakage no text read can. "top" is the 1200x630 crop, "full" the whole page, "marked" adds @N region refs.',
           ),
         wait: num("wait", { int: true, min: 1, max: 30 })
           .optional()
@@ -202,7 +202,7 @@ export function registerReadTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("Read ONE part, by a `ref` from `map` (slide:2, sec:pricing, style:1)."),
-        version: num("version").optional().describe("Defaults to the current version."),
+        version: num("version").optional(),
         data: z
           .string()
           .optional()

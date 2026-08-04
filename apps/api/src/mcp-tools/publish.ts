@@ -156,7 +156,7 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for any change to an existing doc — read format:'html' first, each search string must hit exactly once), `slide_ops` (rearrange a deck), `content` (a whole single file), `files` (a bundle). NEVER inline anything past ~a page, or any image/font — use stage; oversized payloads are rejected. Goes LIVE at your role, or pass for_review:true to file a proposal. Read derive://skills/publishing first.",
+        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Goes LIVE at your role unless for_review. See derive://skills/publishing.",
       inputSchema: {
         content: z
           .string()
@@ -170,16 +170,8 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             "A MULTI-PAGE bundle: path → content. Values are text pages, or an \"asset:<hash>\" ref from stage target:'asset' for images/fonts. Root index.html is the entry page. A plain republish REPLACES the bundle — include every file, or use `merge`.",
           ),
-        title: z
-          .string()
-          .optional()
-          .describe(
-            "Title for a NEW artifact (required when creating). On republish, renames only if provided.",
-          ),
-        short_id: z
-          .string()
-          .optional()
-          .describe("Omit to create a new artifact; pass it to revise one you own."),
+        title: z.string().optional(),
+        short_id: z.string().optional(),
         workspace_access: z
           .enum(["none", "member"])
           .optional()
@@ -201,45 +193,36 @@ export function registerPublishTool(tc: ToolContext): void {
         spa: z
           .boolean()
           .optional()
-          .describe(
-            "For a NEW bundle only: serve unknown paths from the entry page (single-page-app routing). Default false.",
-          ),
+          .describe("NEW bundle only: serve unknown paths from the entry page (SPA routing)."),
         merge: z
           .boolean()
           .optional()
           .describe(
-            "Add/overwrite the given `files` INTO the existing bundle instead of replacing it (default false). Requires `short_id` of a bundle; same-path files overwrite, the rest are kept. See derive://skills/publishing.",
+            "Add/overwrite `files` INTO the existing bundle instead of replacing it. Requires `short_id`.",
           ),
-        message: z.string().optional().describe("What changed — recorded as the version message."),
+        message: z.string().optional(),
         tags: z
           .array(z.string())
           .optional()
           .describe(
             "Workspace-wide labels that make it findable; reuse an existing tag over a near-duplicate. REPLACES the set (trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves them untouched.",
           ),
-        filename: z
-          .string()
-          .optional()
-          .describe(
-            "Filename hint for the content type of a single file, e.g. index.html or notes.md.",
-          ),
+        filename: z.string().optional(),
         for_review: z
           .boolean()
           .optional()
           .describe(
-            "File this as a PROPOSAL for a human to approve instead of publishing live (single-file only). Forced on when your role can't publish directly.",
+            "File this as a PROPOSAL a human approves, instead of publishing live (single-file only).",
           ),
         addresses: z
           .array(z.string())
           .optional()
-          .describe(
-            "Thread ids (from catch_up) this revision resolves. On a live publish they resolve; on a proposal they flip to `addressed` and resolve on approval.",
-          ),
+          .describe("Thread ids (from catch_up) this revision resolves."),
         request_review: z
           .boolean()
           .optional()
           .describe(
-            "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
+            "After a LIVE publish, ask your human to review this version — the /derive loop.",
           ),
         // SEE IT in the same call. Optional and off by default, so an existing caller's
         // response shape never changes.
@@ -249,7 +232,7 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             choiceDescription(
               RENDER_VARIANTS,
-              "Return a screenshot of the published page with this response, instead of a second read.",
+              "Return a screenshot with this response instead of a second read.",
             ),
           ),
         // COERCED, not bare `z.number()`. A client caches the tool schema at connect, so a

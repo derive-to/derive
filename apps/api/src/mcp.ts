@@ -130,6 +130,11 @@ async function buildServer(
   // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
   // same array the resources register from. The workflow/protocol prose lives in those
   // lazily-read skills, not here.
+  // The full URI PER SKILL, deliberately, though the pattern is stated once above it.
+  // Compressing this to name + summary saved ~220 chars and broke the budget suite's
+  // discoverability assertion — correctly. This index is the spine the whole thin surface
+  // hangs on: every procedure it dropped is reachable only if the agent can copy an exact
+  // string, and making it infer one to save 220 chars trades a silent failure for nothing.
   const skillsIndex = CORE_SKILLS.map(
     (s) => `- ${s.name} — ${s.summary} — read derive://skills/${s.name}`,
   ).join("\n")
@@ -185,29 +190,24 @@ async function buildServer(
       // arrives), and list_workspaces reports the live surface (so staleness is
       // diagnosable instead of looking like a missing feature).
       capabilities: { tools: { listChanged: true } },
-      // High-level ORIENTATION, not a manual (SOTA per the MCP spec's "hint" framing and
-      // GitHub/Goose/Cline/Codex: identity first, capability pointers second, procedure
-      // deferred). Carries only what no single tool description conveys — identity, the loop
-      // at altitude, where durable context lives (Brandprint), that work is queued, and the
-      // core-skills index. The detailed workflow lives in the derive://skills/* bodies, and
-      // actionable errors steer the rest at runtime.
+      // High-level ORIENTATION, not a manual: identity first, capability pointers second,
+      // procedure deferred. It carries ONLY what no tool description can and no skill would be
+      // fetched for — who you are, the loop at altitude, that a designed page is the norm here
+      // (an agent that does not know that never looks it up), and the core-skills index, which
+      // is the spine progressive disclosure hangs on. Everything else is in a derive://skills/*
+      // body fetched when it is needed, or in an actionable error at runtime.
       instructions:
         `You are connected to Derive as "${agent.name}"${
           actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
-        }, acting in workspace ${agent.org_id} ` +
-        `with ${agent.role} permissions. Derive hosts living documents, plans, and skills with ` +
-        `versioned history, text-anchored review comments, and a publish → review → revise loop; ` +
-        `fully-styled HTML pages are first-class artifacts that render as-authored in a sandboxed ` +
-        `viewer, so publish real designed pages, not just prose. Work the loop: start with catch_up ` +
-        `to see what changed and what feedback is open, read to pull only the sections you need, then ` +
-        `act — comment to give or resolve feedback, publish a revision, respond to review. This one ` +
-        `login reaches every workspace in your grant: call list_workspaces to see them, then pass a ` +
-        `workspace id or name as the "workspace" argument to act in another (read, catch_up, comment, ` +
-        `publish, find); read/catch_up/comment also find a short_id in any of them ` +
-        `automatically.\n\n` +
-        `CORE SKILLS carry the working procedure for each intent — read the matching one (a resource, ` +
-        `or read("derive://skills/<name>")) before you act:\n${skillsIndex}\n\n` +
-        `Workspace skills (team procedures) exist too: find skills:true, then read.` +
+        }, in workspace ${agent.org_id} with ${agent.role} permissions. ` +
+        `Derive hosts living documents with versioned history, text-anchored comments, and a ` +
+        `publish → review → revise loop. A fully-styled HTML page is a first-class artifact that ` +
+        `renders as authored, so publish real designed pages, not just prose. Work the loop: ` +
+        `catch_up for what changed, read only the parts you need, then act. Other workspaces: ` +
+        `list_workspaces, then pass \`workspace\`.\n\n` +
+        `CORE SKILLS carry the procedure for each intent. Read the matching one before you act ` +
+        `(a resource, or read("derive://skills/<name>")):\n${skillsIndex}\n\n` +
+        `Team procedures exist too: find skills:true, then read.` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),
     },

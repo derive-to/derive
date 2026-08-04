@@ -125,7 +125,7 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things in Derive; what you pass picks the MODE. `short_id` + `query` GREPs one artifact (matching lines with line numbers). `query` alone SEARCHES the workspace, ranked with snippets. `links_to` returns BACKLINKS, exhaustively. NEITHER browses the library plus the askable contexts. Search is LITERAL: ONE keyword, never a question; empty means try another word or browse, never that nothing exists. Rows are typed (artifact|match|context|backlink). See derive://skills/finding.",
+        "Find things; what you pass picks the MODE. `short_id`+`query` GREPs one artifact, `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a question; empty means try another word, never that nothing exists. See derive://skills/finding.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         query: z
@@ -156,7 +156,7 @@ export function registerFindTool(tc: ToolContext): void {
           .describe(
             "Browse only: list only skills (bundles with a SKILL.md — reusable agent procedure).",
           ),
-        case_sensitive: z.boolean().optional().describe("Grep/search: default false."),
+        case_sensitive: z.boolean().optional(),
         in: z
           .enum(["source", "text"])
           .optional()
@@ -179,10 +179,7 @@ export function registerFindTool(tc: ToolContext): void {
           .describe(
             "BACKLINKS: which artifacts link TO this one, by short id or URL. Exhaustive, unlike `query`. Bundles and skills carry no facts, so links inside them are never counted.",
           ),
-        version: z.coerce
-          .number()
-          .optional()
-          .describe("Grep within a past version (short_id mode). Defaults to the current one."),
+        version: z.coerce.number().optional(),
         workspace: wsArg,
       },
     },

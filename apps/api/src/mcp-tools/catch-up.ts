@@ -20,7 +20,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
     "catch_up",
     {
       description:
-        "With a `short_id`: START HERE on an artifact — its state in one call (summary, versions since `since_version`, open and outdated comment threads, the review round, history). `comments` filters to a thread list; `response_format='detailed'` gives a line-by-line diff. WITHOUT a short_id: your WORK QUEUE of requests teammates @mentioned you in; `ack:[id,…]` clears finished ones. `wait` (max 50s) blocks until the human acts instead of polling. See derive://skills/loop.",
+        "START HERE on an artifact: its state in one call (versions since `since_version`, open comment threads, the review round). WITHOUT a short_id, your WORK QUEUE; `ack` clears finished items. `wait` long-polls instead of sleeping. See derive://skills/loop.",
       // Read-only except `ack`, which clears handled requests off the queue. The hint
       // stays true so planning-mode clients don't gate the start-here call on approval.
       annotations: { readOnlyHint: true },
@@ -32,17 +32,9 @@ export function registerCatchUpTool(tc: ToolContext): void {
         ack: z
           .array(z.string())
           .optional()
-          .describe(
-            "Work-queue mode (no short_id): request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
-          ),
-        since_version: z.coerce
-          .number()
-          .optional()
-          .describe("The version you last saw (the diff base). Defaults to to_version − 1."),
-        to_version: z.coerce
-          .number()
-          .optional()
-          .describe("Compare up to this version instead of the current one (for an exact diff)."),
+          .describe("Work-queue mode: request ids you have HANDLED, to clear them off the queue."),
+        since_version: z.coerce.number().optional(),
+        to_version: z.coerce.number().optional(),
         comments: z
           .enum(["open", "addressed", "resolved", "outdated"])
           .optional()
@@ -62,7 +54,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
           .max(50)
           .optional()
           .describe(
-            "Long-poll: block up to this many seconds for the human's next action (send back, approve, a new comment, or a new published version — e.g. co-editing the artifact live) before returning. Returns immediately when something is already actionable.",
+            "Long-poll: block up to this many seconds (max 50) for the human's next action, instead of sleeping between polls.",
           ),
         workspace: wsArg,
       },

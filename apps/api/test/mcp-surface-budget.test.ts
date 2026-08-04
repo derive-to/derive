@@ -104,10 +104,16 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // params, worked examples and edge-case history go to the skill body, which is fetched only
 // by a session that needs it, or to the tool's own RESPONSE, which teaches at the moment of
 // use and costs nothing to sessions that never call it.
-const TOOL_DESCRIPTIONS_BUDGET = 6_500
-const PARAM_DESCRIPTIONS_BUDGET = 12_000
-const SURFACE_BUDGET = 18_000
-const INSTRUCTIONS_BUDGET = 2750
+const TOOL_DESCRIPTIONS_BUDGET = 3_200
+const PARAM_DESCRIPTIONS_BUDGET = 8_000
+const SURFACE_BUDGET = 11_000
+const INSTRUCTIONS_BUDGET = 2_400
+
+/** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
+ *  and a pointer to its skill. */
+const MAX_TOOL_DESCRIPTION = 420
+/** No single param may sprawl: what to pass, and what silently breaks. */
+const MAX_PARAM_DESCRIPTION = 250
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -213,6 +219,20 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     expect(paramChars).toBeLessThan(PARAM_DESCRIPTIONS_BUDGET)
     expect(summed + paramChars).toBeLessThan(SURFACE_BUDGET)
     expect(instructions.length).toBeLessThan(INSTRUCTIONS_BUDGET)
+
+    // PER-ITEM caps. A total alone lets one description balloon while its neighbours shrink
+    // to pay for it — which is precisely how this surface grew to 25k while looking budgeted.
+    for (const t of tools) {
+      expect(t.description?.length ?? 0, `${t.name}'s description sprawls`).toBeLessThanOrEqual(
+        MAX_TOOL_DESCRIPTION,
+      )
+      const props = (t as { inputSchema?: { properties?: Record<string, unknown> } }).inputSchema
+        ?.properties
+      for (const [param, schema] of Object.entries(props ?? {})) {
+        const len = (schema as { description?: string })?.description?.length ?? 0
+        expect(len, `${t.name}.${param} sprawls`).toBeLessThanOrEqual(MAX_PARAM_DESCRIPTION)
+      }
+    }
   })
 
   it("resolves every core skill through read('derive://skills/<name>')", async () => {

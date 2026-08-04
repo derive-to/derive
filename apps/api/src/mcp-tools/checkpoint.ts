@@ -45,14 +45,12 @@ export function registerCheckpointTool(tc: ToolContext): void {
     "checkpoint",
     {
       description:
-        "Commit a one-page checkpoint (state / decisions / open threads / next steps / refs) so ANY later session continues this work cold. Call it at task boundaries. FIRST call: pass `work` (a short name), record the short_id it returns, and pass that `short_id` every time after. Each checkpoint REPLACES the page — restate what still matters, prefer refs, and it rejects more than a page. See derive://skills/checkpoint.",
+        "Commit a one-page checkpoint (state / decisions / open / next / refs) so any later session continues cold. FIRST call passes `work` and returns a short_id; pass that every time after. Each one REPLACES the page. See derive://skills/checkpoint.",
       inputSchema: {
         work: z
           .string()
           .optional()
-          .describe(
-            "Short name for the work (becomes the lineage's title), e.g. the feature or branch name. Required on the FIRST checkpoint; ignored after.",
-          ),
+          .describe("Short name for the work. Required on the FIRST checkpoint of a lineage."),
         short_id: z
           .string()
           .optional()
@@ -72,9 +70,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
         refs: z
           .array(z.string())
           .optional()
-          .describe(
-            "Pointers a continuing session should follow — artifact short_ids, PR/issue URLs, key file paths.",
-          ),
+          .describe("Pointers to follow: artifact short_ids, PR/issue URLs, key file paths."),
         workspace: wsArg,
       },
     },

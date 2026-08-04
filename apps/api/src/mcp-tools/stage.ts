@@ -52,7 +52,7 @@ export function registerStageTool(tc: ToolContext): void {
     "stage",
     {
       description:
-        "Mint a SHORT-LIVED capability, then curl with it — zero bytes through context. target:'doc' for a document or bundle past ~a page (omit short_id to CREATE, pass it to REVISE). target:'asset' for an image or font a document embeds (raster + WOFF/WOFF2, max 25MB). target:'api' mints a REAL BEARER for REST: 15 min, one workspace, capped at your role, and live in this transcript. Staging alone publishes nothing. NEVER base64 a binary through a tool call.",
+        "Mint a SHORT-LIVED capability and curl with it — zero bytes through context. target:'doc' a document/bundle past ~a page, 'asset' an image or font (max 25MB), 'api' a REAL bearer for REST (15 min, capped at your role, live in this transcript). NEVER base64 a binary through a tool call. See derive://skills/publishing.",
       inputSchema: {
         // A STRING, not an enum, on purpose: this discriminator grows (api was added
         // after doc/asset), and a cached client validates an enum locally — so a new
@@ -66,14 +66,12 @@ export function registerStageTool(tc: ToolContext): void {
         short_id: z
           .string()
           .optional()
-          .describe(
-            "target:'doc' ONLY — revise THIS artifact; omit to create a new one (the token is scoped to it). Rejected with target:'asset' and target:'api'.",
-          ),
+          .describe("target:'doc': revise THIS artifact; omit to create a new one."),
         access: z
           .enum(API_TOKEN_ACCESS)
           .optional()
           .describe(
-            "target:'api' ONLY — narrow the minted token below what this connection holds (least privilege). Omit to mint at your current role. Asking for MORE than the grant holds is refused, naming the scope that would fix it.",
+            "target:'api': narrow the minted token below what this connection holds (least privilege).",
           ),
         workspace: wsArg,
       },
