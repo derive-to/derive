@@ -282,12 +282,15 @@ export const contextRoutes = (ctx: AppContext) => {
       // the next write, not merely the next session.
       flags: { agentKillswitch: settings?.agentKillswitch ?? false },
     })
-    // Metered around the STREAM wrapper, so the time recorded is the time the person waited —
-    // deltas included. What it excludes is tool execution, which is not this model's latency.
-    const meter = meterModel(stream.wrap(model.callModel))
+    // METERED INSIDE THE STREAM WRAPPER, not around it. `stream.wrap` builds its own `onDelta`
+    // and hands THAT to the adapter, so a meter on the outside is never called back and reports
+    // time-to-first-token as null on every turn — the number silently missing from every row of
+    // the operator's page. Innermost is also the honest place to measure a MODEL: it excludes
+    // the wrapper's own coalescing, and it still excludes tool execution either way.
+    const meter = meterModel(model.callModel)
     const res = await withinTurnBudget(
       runChatTurn(
-        { model: { ...model, callModel: meter.call } },
+        { model: { ...model, callModel: stream.wrap(meter.call) } },
         {
           session: s,
           transcript,
@@ -504,8 +507,8 @@ export const contextRoutes = (ctx: AppContext) => {
         subject.mode === "publish" && roleAllows(role, "publish")
           ? subject
           : { kind: "artifact", id: subject.id }
-      // See the workspace lane: metered around the stream wrapper, tool time excluded.
-      const railMeter = meterModel(stream.wrap(railModel.callModel))
+      // See the workspace lane: metered INSIDE the stream wrapper, or TTFT is never recorded.
+      const railMeter = meterModel(railModel.callModel)
       const res = await withinTurnBudget(
         runSessionTurn(
           {
@@ -519,7 +522,7 @@ export const contextRoutes = (ctx: AppContext) => {
             // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
             // `callModel` along exactly as before, and the streaming decision stays here, where
             // the transport (this asker's channel) is actually known.
-            callModel: railMeter.call,
+            callModel: stream.wrap(railMeter.call),
             billingBlocked: ctx.billingBlocked,
           },
           {

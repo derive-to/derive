@@ -21,6 +21,9 @@ const setup = async (
     system: string
     messages: { role: string; content: unknown }[]
     tools: { name: string }[]
+    /** The real contract carries this, and a scripted model that STREAMS is the only way to
+     *  exercise time-to-first-token. Optional, exactly as the adapters treat it. */
+    onDelta?: (text: string) => void
   }) => Promise<ModelTurn>,
   opts?: { chatBeta?: boolean; extraUsers?: { id: string; email: string; name: string }[] },
 ) => {
@@ -90,6 +93,44 @@ const ask = async (
   }
   return { res, session, msgs: await meta.listSessionMessages(session.id) }
 }
+
+describe("a streamed turn records time to first token", () => {
+  /**
+   * TTFT WAS SILENTLY NULL ON EVERY REAL TURN. `session-stream`'s `wrap` spreads the caller's
+   * input and then REPLACES `onDelta` with its own publisher, so the turn meter — composed
+   * around it — was never called back. Nothing failed: the answer arrived, `model_ms` was
+   * recorded, and the one number that predicts how chat FEELS was absent from every row of the
+   * operator's page. A missing measurement does not announce itself, which is exactly why this
+   * test exists and why it asserts a VALUE rather than a shape.
+   *
+   * Two things have to hold, and they are independent: the meter must sit inside the wrapper,
+   * and the wrapper must pass a caller's callback through. Either alone fixes today's bug; both
+   * together mean the next person to compose here cannot reintroduce it by choosing an order.
+   */
+  it("stores ttft_ms from the deltas the model actually streamed", async () => {
+    const { app, meta } = await setup("ws-ttft", async ({ onDelta }) => {
+      // A real stream: something arrives, then the rest of the turn happens.
+      onDelta?.("Hel")
+      await new Promise((r) => setTimeout(r, 30))
+      onDelta?.("lo")
+      return { text: "Hello", toolUses: [], costUsd: null, done: true }
+    })
+    const { msgs } = await ask(app, meta, "hi")
+    const answer = msgs.at(-1)
+    expect(answer?.author_kind).toBe("agent")
+    const stored = JSON.parse(answer?.meta ?? "{}") as {
+      ttft_ms?: number | null
+      model_ms?: number
+      model?: { id: string }
+    }
+    // A NUMBER, not merely a key: `null` is precisely what the bug produced.
+    expect(typeof stored.ttft_ms).toBe("number")
+    expect(stored.ttft_ms).toBeGreaterThanOrEqual(0)
+    // First token before the turn finished — the whole point of measuring the two separately.
+    expect(stored.ttft_ms as number).toBeLessThanOrEqual(stored.model_ms as number)
+    expect(stored.model?.id).toBe("model-a")
+  })
+})
 
 describe("what a workspace turn costs to route", () => {
   /**
