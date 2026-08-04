@@ -164,6 +164,12 @@ export const systemRoutes = (ctx: AppContext) => {
     ])
     const timings = new Map(foldTimings(sample).map((t) => [t.modelId, t]))
     const added = new Set(lib.models.map((m) => m.id))
+    // WHICH IDS THE ENVIRONMENT OWNS. Not "everything the library has no entry for": probing a
+    // CONFIGURED model creates an entry to hold its probe, which made that model start
+    // reporting itself as library-sourced and removable. Removing it then deleted the probe and
+    // nothing else — the model stayed in the catalog, because the environment still names it —
+    // so the button did approximately nothing and said otherwise.
+    const configured = new Set(ctx.models?.options.map((o) => o.id) ?? [])
     const probes = new Map(lib.models.map((m) => [m.id, m.probe]))
     return c.json({
       slots: {
@@ -183,8 +189,8 @@ export const systemRoutes = (ctx: AppContext) => {
           is_default: m.isDefault,
           // Configured models come from the environment and cannot be removed here — taking the
           // last reachable model off a running deploy is not a lever (see lib/model-library.ts).
-          source: added.has(m.id) && !m.isDefault ? "library" : "configured",
-          removable: added.has(m.id),
+          source: configured.has(m.id) ? "configured" : "library",
+          removable: added.has(m.id) && !configured.has(m.id),
           probe: probe
             ? {
                 at: probe.at,

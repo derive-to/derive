@@ -247,6 +247,25 @@ describe("pinning a lane", () => {
     expect(after.slots?.automation).toBeUndefined()
   })
 
+  it("keeps a CONFIGURED model non-removable even after it has been probed", async () => {
+    // Probing a configured model files a library entry to hold the probe. That entry must not
+    // make the model look like the library's — the environment still names it, so "Remove" would
+    // delete a probe and leave the model exactly where it was.
+    const { app } = setup("lib-probed-configured")
+    await app.request("/v1/system/models/configured/probe", {
+      method: "POST",
+      headers: as("op@x.com"),
+    })
+    const res = await app.request("/v1/system/models", { headers: as("op@x.com") })
+    const body = (await res.json()) as {
+      models: { id: string; source: string; removable: boolean; probe: unknown }[]
+    }
+    const row = body.models.find((m) => m.id === "configured")
+    expect(row?.probe).not.toBeNull()
+    expect(row?.source).toBe("configured")
+    expect(row?.removable).toBe(false)
+  })
+
   it("refuses to remove a CONFIGURED model — the environment owns those", async () => {
     const { app } = setup("lib-remove-configured")
     const res = await app.request("/v1/system/models/configured", {
