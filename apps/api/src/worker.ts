@@ -29,7 +29,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
-import { catalogFromGateways, type GatewayConfig, parseGatewaysJson } from "./lib/model-catalog"
+import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
@@ -141,17 +141,17 @@ export interface Env {
   /** Comma-separated ADDITIONAL model ids the same gateway serves, offered to chat as a
    *  choice. Unset ⇒ one model, and no picker. See lib/model-catalog.ts. */
   DERIVE_MODEL_NAMES?: string
-  /** Preferred upstream backends, best first, on a gateway that ROUTES (OpenRouter). One model
-   *  id is served by many backends at very different speeds, so the id alone does not decide
-   *  what you get. Unset ⇒ the gateway routes however it likes. */
-  DERIVE_MODEL_PROVIDERS?: string
+  /** Preferred upstream backends, best first, on a gateway that ROUTES one model id to several
+   *  of them. Unset ⇒ the gateway routes however it likes. */
   /** "off", or an effort level — how much the model may think before answering. */
+  /** Preferred upstream backends, best first, on a gateway that ROUTES one model id to several
+   *  of them. Unset ⇒ the gateway routes however it likes. */
+  DERIVE_MODEL_PROVIDERS?: string
+  /** "off" stops the model thinking before it answers. */
   DERIVE_MODEL_REASONING?: string
   /** Additional providers as JSON — see parseGatewaysJson. Each carries its own key, models and
    *  backend routing, so a fourth provider is a list entry rather than four more variables. */
   DERIVE_MODEL_GATEWAYS?: string
-  /** Which model id answers when nobody chose. Unset ⇒ the first gateway's first model. */
-  DERIVE_MODEL_DEFAULT?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
@@ -290,12 +290,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
         recordSignupAttribution: signupAttributionHook(meta),
       })
-      // Every configured provider in ONE catalog: the legacy three vars, plus any declared in
-      // DERIVE_MODEL_GATEWAYS. DERIVE_MODEL_DEFAULT picks which answers when nobody chose.
-      const models = catalogFromGateways(
-        [workerGateway(env), ...parseGatewaysJson(env.DERIVE_MODEL_GATEWAYS)],
-        env.DERIVE_MODEL_DEFAULT,
-      )
+      const models = catalogFromGateway(workerGateway(env))
       app = createApp({
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via
@@ -320,14 +315,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
         // THE CEILING THIS TIER ACTUALLY HAS. An attended turn is detached through
-        // `background()` → waitUntil, and Cloudflare ends waitUntil work ~30s after the response
-        // is sent — the isolate stops, so a turn that overruns writes nothing, logs nothing, and
-        // leaves its session `working` for ever. Measured on two hung turns: wallTimeMs 30418 and
-        // 30586 against cpuTimeMs 153 and 230, i.e. idle on a slow model rather than busy.
-        //
-        // 22s leaves several seconds of live isolate for the turn to write its own failure into
-        // the transcript, which is the point: a sentence someone can act on instead of a spinner
-        // that never resolves. Set only here — Node awaits inline and has no such ceiling.
+        // `background()` → waitUntil, which the runtime ends a short while after the response is
+        // sent — the isolate stops, so a turn that overruns writes nothing and leaves its session
+        // `working` for ever. This leaves the turn several seconds of live isolate to write its
+        // own failure instead. Set only here; Node awaits inline and has no such ceiling.
         attendedTurnBudgetMs: 22_000,
         // Hybrid search's dense arm, embeddings from Workers AI (env.AI). The vectors live in
         // pgvector in the SAME Postgres as metadata (HYPERDRIVE) — the table is created out of band
@@ -525,8 +516,7 @@ function workerGateway(env: Env): GatewayConfig | undefined {
     DERIVE_MODEL_NAME: model,
     // Optional and additive: more model ids the SAME gateway serves. Unset ⇒ one model, as before.
     DERIVE_MODEL_NAMES: alsoModels,
-    // Preferred upstream backends on a gateway that routes (OpenRouter). Unset on one that
-    // does not, where the field would be meaningless.
+    // Preferred upstream backends on a gateway that routes; meaningless on one that does not.
     DERIVE_MODEL_PROVIDERS: providers,
     DERIVE_MODEL_REASONING: reasoning,
   } = env

@@ -168,9 +168,6 @@ export const contextRoutes = (ctx: AppContext) => {
    * ends waitUntil work ~30s after the response went out. When that happens the isolate simply
    * stops: no timer fires, no catch runs, nothing is written. The session stays `working` with
    * no answer and no error, and the only thing left to rescue it is the 10-minute reaper.
-   * Measured on two hung turns — wallTimeMs 30418 / 30586 against cpuTimeMs 153 / 230, i.e. the
-   * turn was idle on a slow model, not busy.
-   *
    * So the turn races its own budget and, on losing, writes a real failure into the transcript
    * while it is still alive to do it. `ctx.attendedTurnBudgetMs` is set only where such a
    * ceiling exists (the Workers entry); on Node it is unset and this is a plain await, because
@@ -231,12 +228,9 @@ export const contextRoutes = (ctx: AppContext) => {
     // WHICH MODEL, read fresh every turn so an admin can change it mid-conversation.
     //
     // 1. What the person asked for on THIS turn — an explicit choice, made now, always wins.
-    // 2. The OPERATOR's deploy-wide override, which exists for the case the configured default
-    //    cannot serve: a provider gone slow or dark while people are typing. It is instance-level
-    //    because the operator holds the credential and pays for the turn, and it deliberately
-    //    outranks the conversation's own memory — an outage lever that every conversation
-    //    already in flight ignores is not a lever. Ignored when it names nothing, so a typo
-    //    costs the override rather than every turn on the deploy.
+    // 2. The OPERATOR's deploy-wide override — the lever for when the configured default
+    //    cannot serve. It outranks the conversation's memory on purpose: an override every
+    //    in-flight conversation ignores is not a lever. Ignored when it names nothing.
     // 3. What this conversation was already using (off the last agent message, so a choice
     //    sticks without a column).
     // 4. The deploy's default.

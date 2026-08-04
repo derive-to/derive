@@ -113,15 +113,12 @@ export interface AppDeps {
    * How long an ATTENDED turn may run before it must settle itself, in ms.
    *
    * Set ONLY where the runtime imposes a deadline the turn cannot see. On Workers an attended
-   * turn is detached through `background()` → `waitUntil`, and Cloudflare terminates waitUntil
-   * work ~30s after the response is sent: the isolate stops, so no timer fires, no catch block
-   * runs, and the session is left `working` for ever with no answer and no error. Measured on
-   * two hung turns — wallTimeMs 30418 and 30586, cpuTimeMs 153 and 230, i.e. idle against a
-   * slow model rather than busy.
+   * turn is detached through `background()` → `waitUntil`, which the runtime ends a short while
+   * after the response is sent: the isolate stops, so no timer fires, no catch runs, and the
+   * session is left `working` for ever with no answer and no error.
    *
    * So the turn has to give up while it is still ALIVE and can still write its own failure.
-   * Unset on Node, where `background()` awaits inline and nothing reclaims the turn: a
-   * self-host answering slowly is answering, not dying.
+   * Unset on Node, where `background()` awaits inline and nothing reclaims the turn.
    */
   attendedTurnBudgetMs?: number
   /** Optional dense/semantic search index. Unset ⇒ workspace search stays lexical-only. Both the

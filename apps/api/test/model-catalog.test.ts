@@ -1,190 +1,33 @@
 import { describe, expect, it } from "vitest"
-import {
-  catalogFromGateway,
-  catalogFromGateways,
-  catalogOf,
-  parseGatewaysJson,
-} from "../src/lib/model-catalog"
+import { catalogFromGateway, catalogOf } from "../src/lib/model-catalog"
 import { as, makeAuthedApp } from "./helpers"
 
-/** A settled turn — these tests are about ROUTING and access, never about what a model says. */
+/** A settled turn — these tests are about routing and access, never about what a model says. */
 const THE_TURN = { text: "ok", toolUses: [], costUsd: null, done: true }
 
-// ROUTING BETWEEN PROVIDERS, which is a different question from routing between models.
-//
-// One gateway serving many model ids was always supported. What was not: several gateways at
-// once, each with its own credential, its own speed and its own price, all offered together so a
-// person can switch mid-conversation and an operator can add a fourth without a code change.
-//
-// The ids are the load-bearing detail. They are stored on every answer, so they have to stay
-// stable AND stay unambiguous once two providers serve a model of the same name.
-
-const gw = (over: Partial<Parameters<typeof catalogFromGateways>[0][number]> = {}) => ({
-  baseUrl: "https://gw.test/v1",
-  apiKey: "k",
-  model: "deepseek-v4-flash",
-  ...over,
-})
-
-describe("several providers in one catalog", () => {
-  it("offers every gateway's models together", () => {
-    const c = catalogFromGateways([
-      gw({ name: "openrouter", model: "deepseek/deepseek-v4-flash-0731" }),
-      gw({ name: "makora", model: "deepseek-ai/DeepSeek-V4-Flash" }),
-    ])
-    expect(c?.options.map((o) => o.id)).toEqual([
-      "openrouter:deepseek/deepseek-v4-flash-0731",
-      "makora:deepseek-ai/DeepSeek-V4-Flash",
-    ])
+describe("gateway extras reach the request", () => {
+  const gw = (over: Record<string, unknown> = {}) => ({
+    baseUrl: "https://gw.test/v1",
+    apiKey: "k",
+    model: "m",
+    ...over,
   })
 
-  it("keeps the SAME model id on two providers apart", () => {
-    // The case that makes namespacing necessary rather than tidy: same name, different
-    // credential, different speed, different price. Collapsed, a catalog would resolve to
-    // whichever happened to be declared last.
-    const c = catalogFromGateways([
-      gw({ name: "a", model: "deepseek-v4-flash" }),
-      gw({ name: "b", model: "deepseek-v4-flash" }),
-    ])
-    expect(c?.options.map((o) => o.id)).toEqual(["a:deepseek-v4-flash", "b:deepseek-v4-flash"])
-    // and they are distinguishable to a reader, not just to the code
-    expect(c?.options.map((o) => o.label)).toEqual([
-      "deepseek-v4-flash (a)",
-      "deepseek-v4-flash (b)",
-    ])
-  })
-
-  it("leaves the legacy gateway's ids BARE, so stored transcripts keep resolving", () => {
-    // An id is written onto every answer. Re-pointing an existing one would silently rewrite
-    // what the record says produced it.
-    const c = catalogFromGateways([gw({ model: "deepseek-v4-flash", alsoModels: "kimi-k2" })])
-    expect(c?.options.map((o) => o.id)).toEqual(["deepseek-v4-flash", "kimi-k2"])
-    expect(c?.resolve("deepseek-v4-flash")?.id).toBe("deepseek-v4-flash")
-  })
-
-  it("switches the default with one variable, without reordering anything", () => {
-    const c = catalogFromGateways(
-      [gw({ model: "slow-one" }), gw({ name: "openrouter", model: "fast-one" })],
-      "openrouter:fast-one",
-    )
-    expect(c?.resolve()?.id).toBe("openrouter:fast-one")
-    expect(c?.options.find((o) => o.isDefault)?.id).toBe("openrouter:fast-one")
-    // the others stay reachable — switching the default is not hiding the rest
-    expect(c?.resolve("slow-one")?.id).toBe("slow-one")
-  })
-
-  it("ignores a default that names nothing rather than losing the catalog", () => {
-    // A typo in one variable must cost the default, never the whole chat surface.
-    const c = catalogFromGateways([gw({ model: "real" })], "typo:not-a-model")
-    expect(c?.resolve()?.id).toBe("real")
+  it("offers the gateway's models, default first", () => {
+    const c = catalogFromGateway(gw({ alsoModels: "second" }))
+    expect(c?.options.map((o) => o.id)).toEqual(["m", "second"])
+    expect(c?.options.find((o) => o.isDefault)?.id).toBe("m")
   })
 
   it("still returns null when nothing is configured", () => {
-    expect(catalogFromGateways([])).toBeNull()
     expect(catalogFromGateway(null)).toBeNull()
   })
 
   it("never resolves an unknown id to the default", () => {
     // Answering with a different model than the one asked for is a lie about provenance.
-    const c = catalogFromGateways([gw({ name: "openrouter", model: "fast" })])
-    expect(c?.resolve("openrouter:gone")).toBeNull()
+    expect(catalogFromGateway(gw())?.resolve("gone")).toBeNull()
   })
 })
-
-describe("declaring extra providers as configuration", () => {
-  it("reads a list of gateways, each with its own key, models and routing", () => {
-    const gws = parseGatewaysJson(
-      JSON.stringify([
-        {
-          name: "openrouter",
-          baseUrl: "https://openrouter.ai/api/v1",
-          apiKey: "sk-or-test",
-          models: ["deepseek/deepseek-v4-flash-0731", "anthropic/claude-haiku-4.5"],
-          providers: "DeepInfra,GMICloud",
-        },
-      ]),
-    )
-    expect(gws).toHaveLength(1)
-    expect(gws[0]?.model).toBe("deepseek/deepseek-v4-flash-0731")
-    expect(gws[0]?.alsoModels).toBe("anthropic/claude-haiku-4.5")
-    expect(gws[0]?.providers).toBe("DeepInfra,GMICloud")
-    // and it reaches the catalog as real, separately-addressable entries
-    const c = catalogFromGateways(gws)
-    expect(c?.options.map((o) => o.id)).toEqual([
-      "openrouter:deepseek/deepseek-v4-flash-0731",
-      "openrouter:anthropic/claude-haiku-4.5",
-    ])
-  })
-
-  it("takes the key BY REFERENCE, so it stays its own rotatable secret", () => {
-    // How an operator actually holds a key: as its own secret, not pasted inside a JSON blob
-    // that then becomes a secret itself and has to be re-pasted whole to change one field.
-    process.env.TEST_OR_KEY = "sk-or-from-env"
-    try {
-      const gws = parseGatewaysJson(
-        JSON.stringify([
-          {
-            name: "openrouter",
-            baseUrl: "https://openrouter.ai/api/v1",
-            apiKeyEnv: "TEST_OR_KEY",
-            models: ["deepseek/deepseek-v4-flash-0731"],
-            providers: "DeepInfra,GMICloud,Fireworks",
-          },
-        ]),
-      )
-      expect(gws[0]?.apiKey).toBe("sk-or-from-env")
-      expect(gws[0]?.providers).toBe("DeepInfra,GMICloud,Fireworks")
-    } finally {
-      process.env.TEST_OR_KEY = undefined
-    }
-  })
-
-  it("drops a gateway whose named key is not set, rather than advertising a model that 401s", () => {
-    const gws = parseGatewaysJson(
-      JSON.stringify([
-        {
-          name: "openrouter",
-          baseUrl: "https://x/v1",
-          apiKeyEnv: "NOT_SET_ANYWHERE",
-          models: ["m"],
-        },
-      ]),
-    )
-    expect(gws).toEqual([])
-  })
-
-  it("carries the reasoning setting through to the request", () => {
-    // A reasoning model spends most of a short answer's budget thinking — 137 reasoning tokens
-    // of 152 for "say hi in three words", 4.0s, against 0.54s with it off. Off-or-on rather
-    // than a dial: "low" measured SLOWER than the default on that model.
-    const gws = parseGatewaysJson(
-      JSON.stringify([
-        { name: "or", baseUrl: "https://x/v1", apiKey: "k", models: ["m"], reasoning: "off" },
-      ]),
-    )
-    expect(gws[0]?.reasoning).toBe("off")
-  })
-
-  it("drops a half-configured gateway instead of half-breaking the catalog", () => {
-    const gws = parseGatewaysJson(
-      JSON.stringify([
-        { name: "broken", baseUrl: "https://x/v1", models: ["m"] }, // no apiKey
-        { name: "fine", baseUrl: "https://y/v1", apiKey: "k", models: ["m"] },
-      ]),
-    )
-    expect(gws.map((g) => g.name)).toEqual(["fine"])
-  })
-
-  it("yields nothing on malformed JSON rather than taking the deploy down", () => {
-    // Read at boot on a path that also serves anonymous reads; a stray comma is not a reason to
-    // stop answering.
-    expect(parseGatewaysJson("{not json")).toEqual([])
-    expect(parseGatewaysJson(undefined)).toEqual([])
-    expect(parseGatewaysJson("   ")).toEqual([])
-  })
-})
-
-// ---- The deploy-wide switch, through the real routes -----------------------
 
 describe("the operator's deploy-wide model", () => {
   const setup = () =>
@@ -194,13 +37,13 @@ describe("the operator's deploy-wide model", () => {
           { id: "fast", label: "Fast", isDefault: true, build: () => async () => THE_TURN },
           { id: "slow", label: "Slow", isDefault: false, build: () => async () => THE_TURN },
         ]),
-        // The operator allow-list is what makes a human an operator at all. Unset on the real
-        // deployment today, which is why nobody can reach this yet.
         superAdmins: ["op@x.com"],
       },
     })
 
   it("is refused to somebody who does not run the instance", async () => {
+    // A workspace Admin is still not an operator: the model is the operator's credential to
+    // spend, which is why this does not live in workspace settings.
     const { app } = makeAuthedApp(
       "instance-model-denied",
       [{ id: "u-mem", email: "mem@x.com", name: "Mem" }],
@@ -213,8 +56,6 @@ describe("the operator's deploy-wide model", () => {
         },
       },
     )
-    // A workspace Admin is still not an operator: the model is the operator's credential to
-    // spend, and this is the whole reason it does not live in workspace settings.
     expect((await app.request("/v1/system/chat-model", { headers: as("mem@x.com") })).status).toBe(
       403,
     )

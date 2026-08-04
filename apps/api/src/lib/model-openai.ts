@@ -21,19 +21,8 @@ export interface OpenAiCompatOptions {
   baseUrl: string
   model: string
   maxTokens?: number
-  /**
-   * Extra top-level fields merged into every request body.
-   *
-   * "OpenAI-compatible" is the shape of the CORE request; the interesting hosts each add their
-   * own top-level knobs on the side, and routing is the one that changes what you actually get.
-   * OpenRouter's `provider` is the case in hand — the same model id is served by a dozen
-   * backends at different speeds, so "which model" is only half the request. Kept generic
-   * rather than named `provider`, because this is the seam every such host uses and none of
-   * them agree on the key.
-   *
-   * Ours never overwrite the fields the adapter itself sets (model, messages, tools) — see the
-   * merge below, which puts these UNDER the SDK's own body.
-   */
+  /** Extra top-level fields merged into every request body — the seam hosts use for their own
+   *  knobs (routing, reasoning). Never overwrites what the adapter sets; see the merge below. */
   extraBody?: Record<string, unknown>
   /** Injected in tests so the turn mapping is exercised without a key or a network. */
   fetchImpl?: typeof fetch

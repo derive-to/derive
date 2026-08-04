@@ -3,10 +3,8 @@ import type { MetaStore } from "@derive/core"
 /**
  * SETTINGS THAT BELONG TO THE DEPLOY, not to any workspace.
  *
- * Which model answers is the clearest case: the operator holds the credential and pays for every
- * turn on it, so it is their call and not a tenant's. A workspace Admin flipping it would be
- * spending somebody else's key, and during a provider outage the person who needs to move
- * everyone at once is the person who runs the instance.
+ * Which model answers is the clearest case: the operator holds the credential and pays for
+ * every turn on it, so it is their call and not a tenant's.
  *
  * Stored as an ordinary `org_settings` row under a RESERVED key. That table is `org_id TEXT
  * PRIMARY KEY` with a JSON blob and no foreign key to a workspace — identical on sqlite, Postgres
