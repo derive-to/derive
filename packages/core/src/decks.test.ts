@@ -101,6 +101,20 @@ describe("deck detection", () => {
     // A class that merely CONTAINS "slide" as a word boundary miss must not count.
     expect(countSlideElements('<div class="slideshow"></div>')).toBe(0)
   })
+
+  it("counts `slide` as a whole class token, never a hyphenated relative", () => {
+    // Found on real published decks: `\bslide\b` treats a hyphen as a word boundary, so
+    // every slide-inner / slide-chart / slide-kicker wrapper counted as its own slide.
+    // That inflated the count AND made each one look like a slide nested in a slide.
+    const inner =
+      '<section class="slide"><div class="slide-inner"><div class="slide-chart"></div>' +
+      '<p class="slide-kicker">k</p></div></section>'
+    expect(countSlideElements(inner)).toBe(1)
+    expect(countSlideElements('<div class="kpi-row kpi-row-slide"></div>')).toBe(0)
+    // …but `slide` alongside other classes is still a slide.
+    expect(countSlideElements('<section class="slide slide-title-card"></section>')).toBe(1)
+    expect(countSlideElements('<section class="on slide "></section>')).toBe(1)
+  })
 })
 
 describe("unannounced decks", () => {
@@ -187,6 +201,18 @@ describe("sliceSlides", () => {
       sl(1, "b"),
     ])
     expect(order(html)).toEqual(["a", "b"])
+  })
+
+  it("slices a real-world deck whose slides contain slide-* wrappers", () => {
+    // The shape that broke this on a real 165KB deck: every slide wraps a `slide-inner`,
+    // which used to read as a slide nested inside a slide and refused the whole document.
+    const html = spaced([
+      '<section class="slide" data-derive-slide="0"><div class="slide-inner"><h2>a</h2><div class="slide-chart"></div></div></section>',
+      '<section class="slide" data-derive-slide="1"><div class="slide-inner"><h2>b</h2></div></section>',
+    ])
+    expect(order(html)).toEqual(["a", "b"])
+    expect(applySlideOps(html, [{ op: "move", from: 2, to: 1 }])).toContain("slide-inner")
+    expect(order(applySlideOps(html, [{ op: "move", from: 2, to: 1 }]))).toEqual(["b", "a"])
   })
 
   it("refuses a deck that nests one slide inside another", () => {

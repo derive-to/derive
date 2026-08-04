@@ -33,15 +33,37 @@ const withoutComments = (html: string): string => {
   }
 }
 
-/** A real slide element opening — a container tag carrying `class="…slide…"` or the stable
- *  `data-derive-slide` index. Deliberately requires a live tag, so an escaped code sample
- *  (`&lt;section class="slide"&gt;`) on a page documenting the pattern doesn't count. */
-const SLIDE_ELEMENT =
-  /<(?:section|div|article|li)\b[^>]*(?:class\s*=\s*["'][^"']*\bslide\b|data-derive-slide\s*=)/gi
+/** A container tag that MIGHT be a slide — the cheap linear scan; `isSlideAttrs` decides. */
+const SLIDE_CANDIDATE = /<(?:section|div|article|li)\b([^>]*)>/gi
+
+/** The class attribute's tokens. CSS classes are whitespace-separated, and that
+ *  separation is the whole point here: `slide` is a class, `slide-inner` is a different
+ *  class that merely starts with the same word. */
+const classTokens = (attrs: string): string[] => {
+  const m = attrs.match(/class\s*=\s*(?:"([^"]*)"|'([^']*)')/i)
+  const v = m?.[1] ?? m?.[2]
+  return v ? v.trim().split(/\s+/) : []
+}
+
+/** Is this opening tag a slide? It carries the stable `data-derive-slide` index, or `slide`
+ *  as a WHOLE class token.
+ *
+ *  Whole token, not a substring: `\bslide\b` treats a hyphen as a word boundary, so
+ *  `class="slide-inner"` matched — and real decks are full of `slide-inner`, `slide-chart`,
+ *  `slide-kicker`. That made every such wrapper look like a slide nested inside its own
+ *  slide, which inflated the count and made the slicer refuse the deck outright. Found by
+ *  running this over real published decks rather than fixtures. */
+const isSlideAttrs = (attrs: string): boolean =>
+  /data-derive-slide\s*=/i.test(attrs) ||
+  classTokens(attrs).some((t) => t.toLowerCase() === "slide")
 
 /** How many slide elements this HTML actually contains. */
-export const countSlideElements = (html: string): number =>
-  (withoutComments(html).match(SLIDE_ELEMENT) ?? []).length
+export const countSlideElements = (html: string): number => {
+  const src = withoutComments(html)
+  let n = 0
+  for (const m of src.matchAll(SLIDE_CANDIDATE)) if (isSlideAttrs(m[1] ?? "")) n++
+  return n
+}
 
 /** Does this page announce itself to the host over the deck protocol? Matches the bare
  *  protocol name so either quote style (source:'derive-deck' / "derive-deck") is found. */
@@ -85,12 +107,10 @@ export const isUnannouncedDeck = (html: string): boolean =>
 //   3. Positions are 1-based, matching what the deck bar and the arrange grid show a
 //      person. The protocol's own `i` is 0-based; that is a wire detail, not a UI one.
 
-/** The tag names a slide element may use — the same set the sniffer counts. */
+/** The tag names a slide element may use — the same set the sniffer counts. The slicer and
+ *  the sniffer share `isSlideAttrs` above, so what gets counted and what gets sliced can
+ *  never disagree about what a slide is. */
 const SLIDE_TAGS = new Set(["section", "div", "article", "li"])
-
-/** Does this opening tag's attribute text mark it as a slide? Mirrors SLIDE_ELEMENT. */
-const isSlideAttrs = (attrs: string): boolean =>
-  /class\s*=\s*["'][^"']*\bslide\b/i.test(attrs) || /data-derive-slide\s*=/i.test(attrs)
 
 /** The `data-derive-slide` value on an opening tag, when it carries a numeric one. */
 const idOf = (attrs: string): number | null => {
