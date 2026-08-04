@@ -50,6 +50,9 @@ export function ArtifactComments(p: {
   /** Inline edit mode is on — the comment empty states say so instead of telling
    *  the reader to select text (selection edits while editing). */
   editing?: boolean
+  /** The selection bar's second verb. Absent ⇒ this viewer can't edit the doc. */
+  editLabel?: string
+  onEditSelection?: () => void
   panel: Panel
   asideWidth: number
   openCount: number
@@ -223,6 +226,8 @@ export function ArtifactComments(p: {
               if (panel !== "open") p.setPanel("open")
               p.startSelComment()
             }}
+            editLabel={p.editLabel}
+            onEdit={p.onEditSelection}
           />
         )}
         {/* Phones: a selection (drag) OR a tapped paragraph surfaces this bottom bar,

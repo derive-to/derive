@@ -93,6 +93,18 @@ export type ComposerState = {
   docTop: number | null
 } | null
 
+/**
+ * A slide deck's live position, and how it got here.
+ *
+ * `sniffed` = the artifact never claimed to be a deck; the injected client
+ * recognised switched slides in the markup and reports the position on its behalf.
+ * That is the majority of decks — the protocol is younger than they are — and it is
+ * the difference between the presentation bar existing and not. It also decides who
+ * moves the deck: a protocol deck answers the host's `deck` message itself, while a
+ * sniffed one is driven by the client (see `deck-drive`).
+ */
+export type Deck = { i: number; total: number; sniffed: boolean }
+
 // A parsed anchor — text (a quote) or element (a non-text selector), read back from a
 // stored comment's `anchor` JSON (the counterpart to the live `Sel` above). Both may
 // carry a `slide` (decks); `label` is the display string; `element` is the full

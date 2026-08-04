@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import { deckTemplate } from "./deck-template.gen.js"
 
 export const CONFIG_FILE = "derive.json"
 
@@ -1023,104 +1024,13 @@ const starterHtml = (title) => `<!doctype html>
 </html>
 `
 
-// Pure-HTML slides with a real presentation layer: on-screen prev/next +
-// fullscreen, keyboard, and the derive-deck protocol so the Derive viewer can drive
-// it too (postMessage). Self-contained, renders in the sandbox.
-const starterSlides = (title) => `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title}</title>
-<style>
-  :root{--bg:#15101f;--fg:#f6e9d6;--ac:#b9aef0;--mut:#a99cc4}
-  *{box-sizing:border-box}
-  html,body{height:100%;margin:0}
-  body{background:var(--bg);color:var(--fg);font:20px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
-  .deck{height:100%}
-  .slide{position:absolute;inset:0;display:none;flex-direction:column;justify-content:center;
-    padding:8vh 10vw;animation:in .35s ease}
-  .slide.on{display:flex}
-  @keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-  h1{font-size:clamp(34px,6vw,68px);letter-spacing:-.025em;line-height:1.05;margin:0 0 .3em}
-  h2{font-size:clamp(26px,4vw,44px);letter-spacing:-.02em;margin:0 0 .4em}
-  p,li{font-size:clamp(18px,2.4vw,26px);color:var(--fg)}
-  .lede{color:var(--mut)}
-  ul{padding-left:1.1em} li{margin:.3em 0}
-  .bar{position:fixed;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.08)}
-  .bar i{display:block;height:100%;background:var(--ac);transition:width .3s}
-  /* on-screen controls — fade in on hover/move, always reachable */
-  .ctrl{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;
-    background:rgba(20,16,31,.72);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 8px;
-    backdrop-filter:blur(8px);opacity:0;transition:opacity .25s;z-index:5}
-  body:hover .ctrl,.ctrl:focus-within{opacity:1}
-  .ctrl button{width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:var(--fg);
-    font-size:16px;cursor:pointer;display:grid;place-items:center}
-  .ctrl button:hover{background:rgba(255,255,255,.12)}
-  .ctrl .pos{font-size:13px;color:var(--mut);padding:0 8px;font-variant-numeric:tabular-nums;min-width:54px;text-align:center}
-  .edge{position:fixed;top:0;bottom:0;width:18vw;border:0;background:transparent;cursor:pointer;z-index:4}
-  .edge.l{left:0} .edge.r{right:0}
-  kbd{background:rgba(255,255,255,.1);border-radius:4px;padding:1px 6px;font-size:.8em}
-</style>
-</head>
-<body>
-<div class="deck">
-  <section class="slide on" data-derive-slide="0">
-    <h1>${title}</h1>
-    <p class="lede">Pure-HTML slides. <kbd>→</kbd> / <kbd>Space</kbd> advance, <kbd>←</kbd> back, <kbd>F</kbd> fullscreen.</p>
-  </section>
-  <section class="slide" data-derive-slide="1">
-    <h2>One idea per slide</h2>
-    <ul>
-      <li>Write each slide as a <code>&lt;section class="slide" data-derive-slide="N"&gt;</code>.</li>
-      <li>Publish with <code>derive publish</code>; reviewers comment on any slide.</li>
-      <li>Every publish is a new version at the same URL.</li>
-    </ul>
-  </section>
-  <section class="slide" data-derive-slide="2">
-    <h2>Make it yours</h2>
-    <p class="lede">Edit the markup and styles. It's just HTML.</p>
-  </section>
-</div>
-<button class="edge l" aria-label="Previous"></button>
-<button class="edge r" aria-label="Next"></button>
-<div class="bar"><i></i></div>
-<div class="ctrl">
-  <button data-act="prev" aria-label="Previous slide">‹</button>
-  <span class="pos"></span>
-  <button data-act="next" aria-label="Next slide">›</button>
-  <button data-act="full" aria-label="Fullscreen" title="Fullscreen (F)">⛶</button>
-</div>
-<script>
-  var slides=[].slice.call(document.querySelectorAll('.slide')),i=0;
-  var bar=document.querySelector('.bar i'),pos=document.querySelector('.pos');
-  function announce(){ // derive-deck protocol: report position to the Derive viewer
-    try{parent.postMessage({source:'derive-deck',type:'state',i:i,total:slides.length},'*')}catch(e){}
-  }
-  function show(n){i=Math.max(0,Math.min(slides.length-1,n));
-    slides.forEach(function(s,k){s.classList.toggle('on',k===i)});
-    bar.style.width=((i+1)/slides.length*100)+'%';pos.textContent=(i+1)+' / '+slides.length;announce()}
-  function full(){if(!document.fullscreenElement){(document.documentElement.requestFullscreen||function(){})()}else{document.exitFullscreen()}}
-  addEventListener('keydown',function(e){
-    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();show(i+1)}
-    else if(e.key==='ArrowLeft'||e.key==='PageUp'){show(i-1)}
-    else if(e.key==='f'||e.key==='F'){full()}
-    else if(e.key==='Home'){show(0)} else if(e.key==='End'){show(slides.length-1)}
-  });
-  document.querySelector('.ctrl').addEventListener('click',function(e){
-    var b=e.target.closest('button'); if(!b)return;
-    var a=b.getAttribute('data-act'); if(a==='prev')show(i-1); else if(a==='next')show(i+1); else if(a==='full')full()});
-  document.querySelector('.edge.l').addEventListener('click',function(){show(i-1)});
-  document.querySelector('.edge.r').addEventListener('click',function(){show(i+1)});
-  // accept drive commands from the Derive viewer's presentation bar
-  addEventListener('message',function(e){var d=e.data;
-    if(!d||d.source!=='derive-host'||d.type!=='deck')return;
-    if(d.action==='next')show(i+1);else if(d.action==='prev')show(i-1);else if(d.action==='goto')show(d.n)});
-  show(0); announce();
-</script>
-</body>
-</html>
-`
+// The slides starter is THE canonical Derive deck, shared byte-for-byte with the MCP
+// template resource (derive://decks/template) and the library’s “Start a deck” — one
+// source (packages/core/src/deck-template.html) mirrored here by
+// scripts/gen-deck-template.mjs, because the decks skill documents exactly one pattern and
+// three surfaces that drift from it teach three. The CLI stays standalone (no
+// @derive/core dependency), hence a generated copy rather than an import.
+const starterSlides = (title) => deckTemplate(title)
 
 // Scaffolded into every project: the publish -> review -> revise loop, written
 // for an agent (or a human) to follow without prior knowledge of Derive.

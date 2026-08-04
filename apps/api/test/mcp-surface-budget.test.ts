@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { DECK_TEMPLATE } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -69,8 +70,22 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // the nine at 135, cut from 190 before the first raise. Two skills arriving at once is the thing
 // to notice here: the index is now nine lines every connected agent reads before doing anything,
 // and the next addition should have to argue that it belongs in the always-loaded set at all.
+// INSTRUCTIONS RAISED 2600 → 2750 (2026-08-03) for the `decks` skill, the tenth. It argues
+// for the always-loaded set on a different ground than the others: Derive ALREADY had a deck
+// protocol, a host deck bar, Present mode, and slide-pinned comments, and none of the nine
+// skills mentioned any of it — so agents built decks by hand-rolling navigation and silently
+// shipped pages with every one of those features dark. An index line is what makes the
+// existing capability reachable at all; the alternative is not a longer read, it is a feature
+// nobody finds. Trimmed hard first, per the rule above: the summary went in at 183 chars and
+// was cut to 128, taking its index line from 227 to 167. Measured 2684, keeping the ~2%
+// headroom the earlier raises settled on. Tool descriptions were NOT raised for this — a
+// steer would have needed 8950 → 9000 for a third pointer at the same skill (the index line,
+// the publishing-skill steer, and the unannounced-deck publish advisory already cover it), so
+// the read tool's short_id doc absorbed the deck URI by replacing its hand-maintained list of
+// skill names (already stale — it never gained `sources`) with the generated index it
+// duplicated. That freed chars rather than spending them.
 const TOOL_DESCRIPTIONS_BUDGET = 8950
-const INSTRUCTIONS_BUDGET = 2600
+const INSTRUCTIONS_BUDGET = 2750
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -182,6 +197,27 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
       expect(payload.content.length).toBeGreaterThan(0)
       expect(payload.content).toBe(skill.body)
     }
+  })
+
+  it("keeps the deck protocol discoverable, with a template to start from", () => {
+    // The whole point of this skill: the protocol is what turns Derive's deck features on,
+    // and a deck that omits it looks correct. If the body ever loses the postMessage shape
+    // or the pointer to the starter, an agent reading it still can't build a working deck.
+    const decks = CORE_SKILLS.find((skill) => skill.name === "decks")
+    expect(decks).toBeTruthy()
+    expect(decks?.body).toContain('source: "derive-deck"')
+    expect(decks?.body).toContain('"derive-host"')
+    expect(decks?.body).toContain("data-derive-slide")
+    expect(decks?.body).toContain("derive://decks/template")
+    // The two facts that only show up by being burned: a bundle can never become a deck,
+    // and a rendered read can only ever capture slide 1.
+    expect(decks?.body).toContain("Never a multi-page bundle")
+    expect(decks?.body).toContain("only ever captures slide 1")
+    // The starter must BE what the skill describes — same guard the generator applies to
+    // the canonical file, asserted here against what actually ships to agents.
+    expect(DECK_TEMPLATE).toContain('source: "derive-deck"')
+    expect(DECK_TEMPLATE).toContain('data-derive-slide="0"')
+    expect(DECK_TEMPLATE).toContain("width: 1280px")
   })
 
   it("keeps asset staging discoverable as a complete byte-safe workflow", () => {

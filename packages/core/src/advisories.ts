@@ -6,6 +6,7 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
+import { countSlideElements, isUnannouncedDeck } from "./decks"
 import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } from "./facts"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
@@ -70,6 +71,22 @@ export const publishAdvisories = (content: string, contentType: string): string[
     out.push(
       "Stored as markdown, but the content contains HTML page markup (<style>/<meta viewport>) — " +
         'if this is a styled page, republish with filename:"index.html" so it renders as HTML.',
+    )
+
+  // Slides built without the deck protocol. The page paginates perfectly on its own, so
+  // nothing looks broken — it has just silently forfeited everything the host would have
+  // added: the deck bar, Present mode, and comments that pin to the slide they were left
+  // on. Unlike the other checks here, the author cannot discover this by looking at the
+  // render, which is exactly why it has to be said at publish time. The fix is one
+  // postMessage, so the advisory names it.
+  if (contentType === "text/html" && isUnannouncedDeck(content))
+    out.push(
+      `This page has ${countSlideElements(content)} slide elements but never posts the ` +
+        "derive-deck message, so Derive serves it as an ordinary page: no deck bar, no Present " +
+        "mode, and comments can't pin to a slide. Post " +
+        "{source:'derive-deck', type:'state', i, total} on every slide change (and accept the " +
+        "host's next/prev/goto) to turn those on — read derive://skills/decks, or start from " +
+        "derive://decks/template.",
     )
 
   // A page with no viewport meta gets the mobile-reflow injection, whose media

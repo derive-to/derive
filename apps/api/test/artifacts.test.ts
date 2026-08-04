@@ -155,6 +155,26 @@ describe("publish html file", () => {
     expect((await quiet.json()).advisories).toBeUndefined()
   })
 
+  it("advises a DECK too, not just text/html (regression)", async () => {
+    // The gate here used to compare content_type to "text/html" literally, so a deck —
+    // text/x-derive-deck — came back with no advisories at all over REST, while the same
+    // bytes over MCP (gated on kind alone) got them. A deck is exactly as capable of
+    // embedding an expiring upload URL or a broken blob ref as any other page.
+    const deck =
+      '<!doctype html><html><head><meta name="viewport" content="width=device-width">' +
+      "<title>D</title></head><body>" +
+      '<section class="slide" data-derive-slide="0"><h1>One</h1>' +
+      '<img src="https://x.test/v1/assets/t/expiring-token/shot.png"></section>' +
+      '<section class="slide" data-derive-slide="1"><h2>Two</h2></section>' +
+      '<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script>' +
+      "</body></html>"
+    const res = await upload("deck.html", deck, { title: "Deck" })
+    const json = await res.json()
+    // Typed as a deck — otherwise this passes vacuously through the text/html branch.
+    expect(json.current_content_type).toBe("text/x-derive-deck")
+    expect(json.advisories?.some((a: string) => a.includes("v1/assets/t/"))).toBe(true)
+  })
+
   it("echoes the stored content's sha256 so a caller can verify byte integrity", async () => {
     const content = "<h1>Checksum me</h1>"
     const res = await upload("sum.html", content, { title: "Sum" })
@@ -480,5 +500,77 @@ describe("list rows carry my_role", () => {
     await upload("op-role.md", "x", { title: "OPROLEROW" })
     const r = await (await app.request("/v1/artifacts?query=OPROLEROW")).json()
     expect(r.artifacts[0]?.my_role).toBe("owner")
+  })
+})
+
+// Renaming is metadata: it must not mint a version. Before this route the only way
+// to rename was to republish the whole document, which left an empty-diff version in
+// the history and told every reader the document had changed.
+describe("PATCH /v1/artifacts/{shortId} — rename", () => {
+  const patchTitle = (shortId: string, body: unknown, headers: Record<string, string> = {}) =>
+    app.request(`/v1/artifacts/${shortId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    })
+
+  it("renames without adding a version, and re-derives the url name", async () => {
+    const { short_id } = await (await upload("r.md", "hello", { title: "Old name" })).json()
+    const before = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    const r = await patchTitle(short_id, { title: "  A better name  " })
+    expect(r.status).toBe(200)
+    expect(await r.json()).toEqual({ title: "A better name", slug: "a-better-name" })
+    const after = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(after.title).toBe("A better name")
+    expect(after.current_version).toBe(before.current_version)
+    expect(after.versions).toHaveLength(before.versions.length)
+  })
+
+  it("moves the url name with the title; the id still resolves", async () => {
+    const { short_id } = await (await upload("r2.md", "hello", { title: "First" })).json()
+    await patchTitle(short_id, { title: "Second" })
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.url).toContain(`second-${short_id}`)
+  })
+
+  it("refuses an empty title", async () => {
+    const { short_id } = await (await upload("r3.md", "hello", { title: "Keep" })).json()
+    expect((await patchTitle(short_id, { title: "   " })).status).toBe(400)
+    expect((await patchTitle(short_id, { title: "" })).status).toBe(400)
+    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(a.title).toBe("Keep")
+  })
+
+  it("404s an unknown artifact", async () => {
+    expect((await patchTitle("nope1234", { title: "x" })).status).toBe(404)
+  })
+
+  it("needs publish rights — a commenter can't rename", async () => {
+    const { app: a } = makeAuthedApp(
+      "rename-perm",
+      [
+        { id: "rn1", email: "rename-owner@x.test", name: "Owner" },
+        { id: "rn2", email: "rename-commenter@x.test", name: "Commenter" },
+      ],
+      "commenter",
+    )
+    const pub = await publishAs(a, "<h1>hi</h1>", { title: "Owned" }, as("rename-owner@x.test"))
+    const { short_id } = await pub.json()
+    const r = await a.request(`/v1/artifacts/${short_id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as("rename-commenter@x.test") },
+      body: JSON.stringify({ title: "Nope" }),
+    })
+    expect(r.status).toBe(403)
+  })
+
+  it("a lock does not block a rename — a lock is about content", async () => {
+    const { short_id } = await (await upload("r4.md", "hello", { title: "Locked doc" })).json()
+    await app.request(`/v1/artifacts/${short_id}/locked`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ locked: true }),
+    })
+    expect((await patchTitle(short_id, { title: "Renamed while locked" })).status).toBe(200)
   })
 })

@@ -73,6 +73,41 @@ const PAGE_CSS = `
  *  inline style/class attributes — so re-rendered content can't carry layout or JS). */
 export const sanitizeHtml = (html: string): string => sanitizer.process(html)
 
+/**
+ * The ONE place a manual edit is allowed to carry markup, and the smallest set that
+ * makes it worth having: emphasis and a link.
+ *
+ * Everywhere else, an inline edit's replacement is HTML-escaped before it goes near
+ * the source — that escaping is the only thing between typed text and a served
+ * document, because an HTML artifact is served verbatim (the sandbox CSP is the
+ * containment, not a sanitizer). So the opening is deliberately narrow: five inline
+ * tags, no attributes at all except a link's href, and every URL scheme refused
+ * except the three a reader can follow. `javascript:` is unreachable twice over —
+ * once by the scheme check here, once by xss's own filter underneath.
+ *
+ * Block tags, images, styles and classes are NOT in this list. Formatting a run of
+ * words is the feature; introducing structure is not.
+ */
+const inlineSanitizer = new FilterXSS({
+  // `br` is the one structural thing in the list, and it earns its place: pressing
+  // Enter mid-sentence is the most reflexive edit there is, and blocking it outright
+  // made the mode feel broken. A line break inside a block changes no structure the
+  // document depends on — unlike a paragraph split, which is not here.
+  whiteList: { b: [], strong: [], i: [], em: [], code: [], br: [], a: ["href"] },
+  stripIgnoreTag: true,
+  stripIgnoreTagBody: ["script", "style"],
+  onTagAttr: (tag, name, value) => {
+    if (tag !== "a" || name !== "href") return ""
+    const v = value.trim()
+    // Relative and in-page links are fine; an absolute one must be a scheme a
+    // reader can follow, spelled out rather than pattern-matched.
+    const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(v)?.[0]?.toLowerCase()
+    if (scheme && scheme !== "http:" && scheme !== "https:" && scheme !== "mailto:") return ""
+    return `href="${escapeHtml(v)}"`
+  },
+})
+export const sanitizeInline = (html: string): string => inlineSanitizer.process(html)
+
 /** Wrap clean body HTML in Derive's responsive document shell (the same mobile-safe
  *  typography the markdown renderer uses). Shared by renderMarkdown + Reader view. */
 export const renderDocShell = (bodyHtml: string, title: string | null): string => `<!doctype html>

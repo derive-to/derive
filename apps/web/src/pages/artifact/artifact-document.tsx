@@ -6,6 +6,7 @@ import type { CursorLayerHandle } from "./cursors/use-live-cursors"
 import { DiffView } from "./diff-view"
 import { DeckBar } from "./rail-deck"
 import { RenderStage } from "./render-stage"
+import type { Deck } from "./types"
 
 /**
  * The document surface: a past-version banner when off the live version, then the
@@ -36,7 +37,10 @@ export function ArtifactDocument({
   onBackToCurrent,
   onDeckPrev,
   onDeckNext,
-  onFullscreen,
+  presenting = false,
+  presentOverlay = false,
+  controlsIdle = false,
+  onPresent,
   anonView = false,
 }: {
   shown: number
@@ -52,7 +56,7 @@ export function ArtifactDocument({
   diffFailed?: boolean
   onDiffRetry?: () => void
   restoring: boolean
-  deck: { i: number; total: number } | null
+  deck: Deck | null
   frameRef: RefObject<HTMLIFrameElement | null>
   presentWrapRef: RefObject<HTMLDivElement | null>
   cursor: CursorLayerHandle
@@ -63,7 +67,15 @@ export function ArtifactDocument({
   onBackToCurrent: () => void
   onDeckPrev: () => void
   onDeckNext: () => void
-  onFullscreen: () => void
+  /** Present mode is up: the stage is the whole screen and the comment/cursor
+   *  layers step aside. */
+  presenting?: boolean
+  /** Presenting WITHOUT the Fullscreen API (iOS Safari refuses it outside video) —
+   *  the stage lays itself over the viewport instead. */
+  presentOverlay?: boolean
+  /** No input for a beat: the presentation controls fade out of the way. */
+  controlsIdle?: boolean
+  onPresent?: () => void
   /** Anonymous public viewer: the past-version strip keeps only "Back to current"
    *  (diff and restore are workbench affordances an anon caller can't use). */
   anonView?: boolean
@@ -130,20 +142,26 @@ export function ArtifactDocument({
           frameRef={frameRef}
           wrapRef={presentWrapRef}
           onFrameLoad={onFrameLoad}
+          overlay={presentOverlay}
+          presenting={presenting}
           overlays={
             <>
-              {deck && (
+              {deck && onPresent && (
                 <DeckBar
                   deck={deck}
+                  presenting={presenting}
+                  idle={controlsIdle}
                   onPrev={onDeckPrev}
                   onNext={onDeckNext}
-                  onFullscreen={onFullscreen}
+                  onPresent={onPresent}
                 />
               )}
               {/* Live peer cursors ease in here, over the framed render (the iframe is
                   a separate opaque origin — its script forwards pointer moves out via
-                  postMessage). Anon viewers too. */}
-              <CursorLayer layer={cursor} onScrollDoc={onScrollDoc} />
+                  postMessage). Anon viewers too. Not while presenting: a peer's arrow
+                  sliding across a projected slide is someone else's cursor on your
+                  screen, in front of a room. */}
+              {!presenting && <CursorLayer layer={cursor} onScrollDoc={onScrollDoc} />}
             </>
           }
         />

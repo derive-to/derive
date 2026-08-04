@@ -1,7 +1,7 @@
 ---
 name: sources
 summary: reach a connected system — list what is available, read one's tools, call it (read, call)
-order: 7
+order: 9
 ---
 # Sources: list, read the catalog, call
 

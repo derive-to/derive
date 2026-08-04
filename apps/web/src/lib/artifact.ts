@@ -7,6 +7,38 @@ export const dirOf = (path: string): string => {
   return i < 0 ? "" : path.slice(0, i)
 }
 
+/** Can this viewer publish a change straight to the artifact, or must it go through
+ *  review? Editors and owners publish; a LOCKED artifact sends even them to the
+ *  propose path. One spelling, because the page (which labels the buttons) and the
+ *  inline-edit hook (which picks the endpoint) both decide this, and the two
+ *  disagreeing means a button that says Save and files a proposal. */
+export const canPublishArtifact = (a: Artifact): boolean =>
+  (a.my_role === "editor" || a.my_role === "owner") && !a.locked
+
+/** The ONE eligibility base every manual-edit affordance shares — the inline mode,
+ *  the in-document gesture that opens it, and the raw source editor: a single file
+ *  at its current version that this viewer can at least propose against, with no
+ *  source editor already open and no GitHub sync owning the bytes. Kept here rather
+ *  than inline on the page because the page and the frame's arming decide it at
+ *  different points in the render, and a new rule must land in both. */
+export const canEditArtifactDoc = (
+  a: Artifact | undefined,
+  shownVersion: number | undefined,
+  sourceEditorOpen: boolean,
+): boolean =>
+  !!a &&
+  a.kind === "file" &&
+  shownVersion === a.current_version &&
+  (a.my_role === "editor" || a.my_role === "owner" || a.my_role === "commenter") &&
+  !sourceEditorOpen &&
+  !a.managed
+
+/** May this viewer rename the artifact? Publish rights, like editing the words —
+ *  but a LOCK doesn't stop it: a lock routes CONTENT through review, and a title
+ *  carries none. GitHub-synced artifacts are named by their repo path. */
+export const canRenameArtifact = (a: Artifact): boolean =>
+  (a.my_role === "editor" || a.my_role === "owner") && !a.managed
+
 // The short type badge for an artifact (Skill / Site / Deck / MD / HTML / Doc),
 // derived from its kind + denormalized content type without opening the bundle.
 export function artifactTypeLabel(a: Artifact): string {

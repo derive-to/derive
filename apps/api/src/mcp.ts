@@ -59,6 +59,7 @@ import {
   type ArtifactRecord,
   brandprintInstructions,
   bundleDoc,
+  DECK_TEMPLATE,
   parseFrontmatter,
   pendingRequestsPointer,
   profileState,
@@ -336,6 +337,28 @@ async function buildServer(
       },
     )
   }
+
+  // The deck starter: derive://decks/template. Registered UNCONDITIONALLY for the same
+  // reason as the Brandprint pair — it's the static thing an agent needs BEFORE it has
+  // built anything, and it's reachable through the `read` tool too. The authoring guide is
+  // the `decks` core skill; this is the working page that skill tells you to start from,
+  // kept out of the skill body so the prose stays readable and the markup stays one
+  // canonical file (packages/core/src/deck-template.html, mirrored to every surface that
+  // scaffolds a deck by scripts/gen-deck-template.mjs).
+  server.registerResource(
+    "decks:template",
+    "derive://decks/template",
+    {
+      title: "Deck starter (canonical)",
+      description:
+        "A complete working deck: the fixed stage, the derive-deck protocol, and standalone keys — restyle it and replace the slides.",
+      mimeType: "text/html",
+      annotations: { audience: ["assistant"], priority: 0.8 },
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/html", text: DECK_TEMPLATE }],
+    }),
+  )
 
   // The CORE SKILLS as resources: derive://skills/<name>. Registered UNCONDITIONALLY,
   // exactly like the Brandprint reference/template — they're the always-available

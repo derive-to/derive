@@ -26,6 +26,7 @@ current tool surface.
 | Intent | Read first | Main tools |
 |---|---|---|
 | Create, revise, upload a large doc, or propose | `derive://skills/publishing` | `publish`, `stage`, `read` |
+| Build a slide deck or presentation | `derive://skills/decks` | `publish`, `read` |
 | Upload or embed an image/font asset | `derive://skills/assets` | `stage`, `publish`, `read` |
 | Review, feedback, requests, or waiting | `derive://skills/loop` | `catch_up`, `read`, `comment`, `publish` |
 | Query a live workspace data agent | `derive://skills/contexts` | `find`, `use` |

@@ -4596,6 +4596,47 @@
           }
         }
       },
+      "patch": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Rename an artifact (metadata only — no new version).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new title and url name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "slug": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "slug"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Artifacts"

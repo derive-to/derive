@@ -1413,7 +1413,32 @@ export interface paths {
         };
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename an artifact (metadata only — no new version). */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new title and url name. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            title: string;
+                            slug: string | null;
+                        };
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/v1/artifacts/{shortId}/access": {

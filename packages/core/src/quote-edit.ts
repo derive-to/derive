@@ -18,7 +18,7 @@
 import { type PageTextSegment, pageTextParts } from "./anchor"
 import { clip, findQuoteContextUnique, findQuoteMatches } from "./anchor-shared"
 import { type DocEdit, EditError } from "./doc-text"
-import { escapeHtml } from "./md"
+import { escapeHtml, sanitizeInline } from "./md"
 
 /** A replacement located by quote — the wire shape the inline editor sends. */
 export interface QuoteEdit {
@@ -29,7 +29,19 @@ export interface QuoteEdit {
   }
   /** Replacement for the quoted span. Empty string deletes. Escaped for HTML content
    *  at apply time — callers pass the text as typed. */
-  new_text: string
+  new_text?: string
+  /**
+   * The replacement as INLINE MARKUP instead of text — how the editor sends a run
+   * the reader made bold, italic, or a link. Mutually exclusive with `new_text`.
+   *
+   * This is the one path where a manual edit can carry tags into the source, so it
+   * is sanitized to a five-tag allowlist with no attributes but `href` (see
+   * `sanitizeInline`), and it changes nothing else: the span is still located by
+   * quote, still refused if it crosses markup or splits an entity, still unique or
+   * nothing. HTML artifacts only — on a markdown document, formatting is written as
+   * markdown, and passing tags would put literal HTML in someone's prose.
+   */
+  new_html?: string
 }
 
 /** Either edit shape the edits surfaces accept. */
@@ -38,7 +50,9 @@ export type AnyDocEdit = DocEdit | QuoteEdit
 const optionalString = (v: unknown): boolean => v === undefined || typeof v === "string"
 
 /** True for a well-FORMED quote edit. Strict on every field (a numeric prefix must
- *  be a clean 400 at the routes, not a TypeError-shaped 500 mid-resolution). */
+ *  be a clean 400 at the routes, not a TypeError-shaped 500 mid-resolution), and
+ *  EXACTLY ONE replacement: text or markup, never both, never neither — "both" has
+ *  no sane meaning and picking one silently would apply the edit nobody asked for. */
 export const isQuoteEdit = (e: unknown): e is QuoteEdit => {
   const q = e as QuoteEdit
   return (
@@ -49,7 +63,9 @@ export const isQuoteEdit = (e: unknown): e is QuoteEdit => {
     typeof q.quote.exact === "string" &&
     optionalString(q.quote.prefix) &&
     optionalString(q.quote.suffix) &&
-    typeof q.new_text === "string"
+    optionalString(q.new_text) &&
+    optionalString(q.new_html) &&
+    (typeof q.new_text === "string") !== (typeof q.new_html === "string")
   )
 }
 
@@ -157,11 +173,20 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
     const raw = segments
       ? spanToRaw(segments, span.start, span.end, label)
       : { rStart: span.start, rEnd: span.end }
-    spans.push({
-      ...raw,
-      replacement: isHtml ? escapeHtml(e.new_text) : e.new_text,
-      label,
-    })
+    // Markup, only where markup is the language. On markdown the source IS what the
+    // author writes, so formatting is `**bold**` typed as text; splicing tags there
+    // would put literal HTML in someone's prose.
+    if (e.new_html !== undefined && !isHtml)
+      throw new EditError(
+        `${label} failed: this document is Markdown — write formatting as Markdown text, not HTML.`,
+      )
+    const replacement =
+      e.new_html !== undefined
+        ? sanitizeInline(e.new_html)
+        : isHtml
+          ? escapeHtml(e.new_text ?? "")
+          : (e.new_text ?? "")
+    spans.push({ ...raw, replacement, label })
   }
 
   // Overlapping spans would make the result order-dependent — refuse the batch.
