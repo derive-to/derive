@@ -26,9 +26,8 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
-import { getInstanceAutomationModel } from "./lib/instance-settings"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
-import { modelSource } from "./lib/model-library"
+import { getInstanceAutomationModel, modelSource, readLibrary } from "./lib/model-library"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -352,7 +351,7 @@ const gatewayModels = catalogFromGateway(modelGateway())
 // …and the LIVE view of it: the configured catalog widened, per turn, by the operator's model
 // library. This sender is built once at boot and outlives every settings change, so it takes
 // the source rather than the catalog — see lib/model-library.ts.
-const gatewayModelSource = modelSource(gatewayModels, modelGateway(), meta)
+const gatewayModelSource = modelSource(gatewayModels, modelGateway(), () => readLibrary(meta))
 
 const channelSenders: ChannelSenders = {
   email: emailDeliverySender(

@@ -236,7 +236,11 @@ export const answerDeriveMention =
     // EVERY RUNG, ONCE (lib/chat-gate.ts). No rate key: this arrival rides the comment route's
     // own limiter, so a second one here would charge the same person twice for one action.
     const gate = await chatArrival(
-      { meta, models: (await deps.models()) ?? undefined, chatAllowlist: deps.chatAllowlist },
+      {
+        meta,
+        models: (await deps.models()).catalog ?? undefined,
+        chatAllowlist: deps.chatAllowlist,
+      },
       { org: artifact.org_id, userId: asker.id },
     )
     // Silence (logged), not a message: unlike Slack, nobody is waiting on a reply that never

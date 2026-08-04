@@ -7,10 +7,12 @@ import { fail, readJson } from "../lib/http"
 import {
   getInstanceAutomationModel,
   getInstanceChatModel,
+  probeModel,
+  readLibrary,
   setInstanceAutomationModel,
   setInstanceChatModel,
-} from "../lib/instance-settings"
-import { probeModel, readLibrary, writeLibrary } from "../lib/model-library"
+  writeLibrary,
+} from "../lib/model-library"
 import { openAiCompatModel } from "../lib/model-openai"
 import { foldTimings } from "../lib/model-timing"
 import { reindexSearchBatch } from "../lib/search"
@@ -135,7 +137,7 @@ export const systemRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     // Validated against the catalog, so a typo is refused HERE where somebody is looking at the
     // response rather than silently costing every turn on the deploy.
-    if (b.model && !(await ctx.modelsFor())?.resolve(b.model))
+    if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
       return fail(c, 400, `unknown model "${b.model}"`)
     await setInstanceChatModel(meta, b.model)
     return c.json({ model: await getInstanceChatModel(meta) })
@@ -154,7 +156,7 @@ export const systemRoutes = (ctx: AppContext) => {
     const denied = await operatorOnly(c)
     if (denied) return denied
     const [catalog, lib, sample] = await Promise.all([
-      ctx.modelsFor(),
+      ctx.modelsFor(c),
       readLibrary(meta),
       // A bounded sample of recent answers, folded into per-model timings in memory. Bounded
       // rather than windowed: a quiet deploy still gets numbers, and a busy one pays a constant.
@@ -172,7 +174,7 @@ export const systemRoutes = (ctx: AppContext) => {
       // library can still relabel and pin, and the UI has to say so rather than offer an input
       // whose every submission would be refused.
       can_add: !!ctx.modelGateway,
-      models: (catalog?.options ?? []).map((m) => {
+      models: (catalog.catalog?.options ?? []).map((m) => {
         const t = timings.get(m.id)
         const probe = probes.get(m.id)
         return {
@@ -233,7 +235,7 @@ export const systemRoutes = (ctx: AppContext) => {
     // stuck script cannot grow the instance settings row without bound.
     if (lib.models.length >= MAX_LIBRARY_MODELS)
       return fail(c, 400, `the library is full (${MAX_LIBRARY_MODELS} models); remove one first`)
-    if ((await ctx.modelsFor())?.resolve(id) && !lib.models.some((m) => m.id === id))
+    if ((await ctx.modelsFor(c)).catalog?.resolve(id) && !lib.models.some((m) => m.id === id))
       return fail(c, 409, `"${id}" is already configured on this deploy`)
 
     // PROBED BEFORE IT IS SAVED, and refused if it cannot answer. An id is a free-text string
@@ -291,7 +293,7 @@ export const systemRoutes = (ctx: AppContext) => {
     if (denied) return denied
     const id = decodeParam(c.req.param("id"))
     if (id === null) return fail(c, 400, "malformed model id")
-    const resolved = (await ctx.modelsFor())?.resolve(id)
+    const resolved = (await ctx.modelsFor(c)).catalog?.resolve(id)
     if (!resolved) return fail(c, 404, `unknown model "${id}"`)
     const probe = await probeModel(resolved)
     const lib = await readLibrary(meta)
@@ -318,7 +320,7 @@ export const systemRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return b
     // Same validation as the chat pin, for the same reason — and it matters MORE here: an
     // automation run is unattended, so a pin naming nothing would fail runs with nobody watching.
-    if (b.model && !(await ctx.modelsFor())?.resolve(b.model))
+    if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
       return fail(c, 400, `unknown model "${b.model}"`)
     if (lane === "chat") await setInstanceChatModel(meta, b.model)
     else await setInstanceAutomationModel(meta, b.model)

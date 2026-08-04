@@ -43,7 +43,7 @@ import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { INSTANCE_SETTINGS_ID } from "./lib/instance-settings"
 import { catalogOf, type GatewayConfig, type ModelCatalog } from "./lib/model-catalog"
-import { modelSource } from "./lib/model-library"
+import { type ModelLibrary, modelSource, readLibrary } from "./lib/model-library"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
   clientIp,
@@ -1039,8 +1039,33 @@ export function buildContext(deps: AppDeps) {
         ])
       : undefined)
 
+  /**
+   * The instance row, read ONCE PER REQUEST.
+   *
+   * Not a cache with a TTL — a WeakMap on the Hono context, exactly as `currentUser`,
+   * `activeWorkspace` and `membership` are memoized here, so a new request always re-reads and
+   * an operator's pin still lands on the very next turn. What it removes is re-reading the SAME
+   * row several times inside ONE turn: the gate asks whether any model can serve, the turn asks
+   * which one is pinned, and the route validates a named id — three questions, one row, and on
+   * the hosted tier three Hyperdrive round trips on the path with a person waiting on it.
+   *
+   * Detached lanes (a comment mention, a Slack mention) have no request to hang this on and
+   * pass nothing, which reads once — which is what they did anyway.
+   */
+  const libCache = new WeakMap<object, Promise<ModelLibrary>>()
+  const libraryFor = (c?: object): Promise<ModelLibrary> => {
+    if (!c) return readLibrary(meta)
+    const hit = libCache.get(c)
+    if (hit) return hit
+    // The PROMISE is memoized, not the result: two lanes in one request can ask concurrently,
+    // and caching only on resolve would let both start their own read.
+    const pending = readLibrary(meta)
+    libCache.set(c, pending)
+    return pending
+  }
+
   // See the doc on the returned property below.
-  const modelsFor = modelSource(configuredModels, deps.modelGateway, meta)
+  const modelsFor = modelSource(configuredModels, deps.modelGateway, libraryFor)
 
   /**
    * A cookie's workspace id, unless it is the RESERVED instance-settings row.

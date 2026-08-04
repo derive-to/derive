@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
-import { setInstanceChatModel } from "../src/lib/instance-settings"
+import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
 import { catalogOf } from "../src/lib/model-catalog"
+import { setInstanceChatModel } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp, publishAs } from "./helpers"
 
@@ -88,6 +89,38 @@ const ask = async (
   }
   return { res, session, msgs: await meta.listSessionMessages(session.id) }
 }
+
+describe("what a workspace turn costs to route", () => {
+  /**
+   * A REGRESSION TEST WITH A NUMBER IN IT. The model library's first cut quietly TRIPLED this:
+   * the gate asked the library whether anything could answer, the turn asked which model was
+   * pinned, and the turn asked again for the catalog — three reads of ONE settings row on the
+   * attended path, where each is a Hyperdrive round trip on the hosted tier and somebody is
+   * waiting on all of them.
+   *
+   * Counted end to end through the real route, because the mechanism that keeps it at one (a
+   * per-turn memo, and a gate that deliberately reads the CONFIGURED catalog since the library
+   * can only add to it) lives in two files and a unit test of either would miss the other.
+   */
+  it("reads the instance settings row ONCE for a whole turn", async () => {
+    const { app, meta } = await setup("ws-read-count", async () => ({
+      text: "hi",
+      toolUses: [],
+      costUsd: null,
+      done: true,
+    }))
+    let reads = 0
+    const real = meta.getOrgSettings.bind(meta)
+    meta.getOrgSettings = async (orgId: string) => {
+      if (orgId === INSTANCE_SETTINGS_ID) reads += 1
+      return real(orgId)
+    }
+    const { msgs } = await ask(app, meta, "hello")
+    // The turn really ran — a count of zero on a turn that never happened proves nothing.
+    expect(msgs.at(-1)?.author_kind).toBe("agent")
+    expect(reads).toBe(1)
+  })
+})
 
 describe("the workspace chat", () => {
   it("answers using the real find tool, over the asker's own artifacts", async () => {

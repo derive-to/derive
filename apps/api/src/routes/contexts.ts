@@ -36,7 +36,6 @@ import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
-import { getInstanceChatModel } from "../lib/instance-settings"
 import {
   manifestDescription,
   parseManifestRepos,
@@ -157,9 +156,12 @@ export const contextRoutes = (ctx: AppContext) => {
     const gate = await chatArrival(
       {
         meta,
-        // The LIVE catalog (configured + the operator's library), so a deploy whose only
-        // usable model was added without a redeploy still passes the no_model rung.
-        models: (await ctx.modelsFor()) ?? undefined,
+        // The CONFIGURED catalog, and deliberately not the live one. This gate's only use of it
+        // is the `no_model` rung — "can anything answer here at all" — and the library can only
+        // ADD to the configured ids, never remove one (see lib/model-library.ts), so the floor
+        // always answers whenever the library would. Reading the library here would put a second
+        // fetch of the same settings row on the attended path for an answer it cannot change.
+        models: ctx.models,
         chatAllowlist: ctx.callModel ? ctx.chatAllowlist : [],
       },
       { org: orgId, userId },
@@ -224,6 +226,10 @@ export const contextRoutes = (ctx: AppContext) => {
     reply: (body: string, state: SessionState, payload?: unknown) => Promise<void>,
     stream: DeltaStream,
     askedModelId: string | null,
+    /** The caller's per-turn memo identity for reads of the instance settings row (see
+     *  ctx.modelsFor). Passed in rather than made here so a turn that arrived through
+     *  serveAttended reads that row once for the whole turn, not once per lane. */
+    scope: object,
   ) => {
     // The seat is re-read PER TURN, never trusted from session creation: someone removed from
     // the workspace still holds the session id, and their tools would otherwise keep working.
@@ -248,11 +254,10 @@ export const contextRoutes = (ctx: AppContext) => {
     //    sticks without a column).
     // 4. The deploy's default.
     const previous = lastModelId(transcript)
-    const operatorPick = await getInstanceChatModel(meta).catch(() => null)
-    // The configured catalog WIDENED by the operator's live library, so a model added without a
-    // deploy is selectable here — including as the pin above, which is validated against this
-    // same catalog when it is set.
-    const catalog = await ctx.modelsFor()
+    // ONE read: the catalog a turn may choose from, and the operator's pin, are the same row.
+    // Fetching them separately read it twice on the path where somebody is waiting.
+    const { catalog, slots } = await ctx.modelsFor(scope)
+    const operatorPick = slots.chat ?? null
     const override = operatorPick && catalog?.resolve(operatorPick)
     const model = askedModelId
       ? catalog?.resolve(askedModelId)
@@ -372,22 +377,15 @@ export const contextRoutes = (ctx: AppContext) => {
       if (state !== "open") settleWake(s, state)
     }
     const flags = await meta.getOrgSettings(s.org_id).catch(() => null)
-    // WHICH MODEL ANSWERS THE DOCUMENT RAIL. Resolved through the catalog with the operator's
-    // pin, exactly as the workspace lane does — this used to take `ctx.callModel` (the
-    // deploy's configured default) directly, so the deploy-wide switch that exists to move
-    // everyone off a failing provider moved every surface EXCEPT this one, while its own
-    // settings copy promised "across this whole deployment". A lever with a hole in it is
-    // worse than no lever, because it is trusted.
-    //
-    // No per-turn pick here: the rail has no picker, so there is nothing to honor beyond the
-    // operator's choice and the deploy default behind it.
-    const railCatalog = await ctx.modelsFor()
-    const operatorPin = await getInstanceChatModel(meta).catch(() => null)
-    const railModel =
-      (operatorPin ? railCatalog?.resolve(operatorPin) : null) ?? railCatalog?.resolve(null)
-    // No model wired (the common self-host case) — say so in the transcript rather than leaving
-    // the session `open` forever waiting on a runner that will never come.
-    if (!railModel) {
+    // ONE memo identity for this turn's reads of the instance settings row (see
+    // ctx.modelsFor). Made HERE and threaded into whichever lane serves, so a turn that
+    // delegates to the workspace chat still reads that row once rather than once per lane.
+    const scope = {}
+    // A cheap "could anything answer at all", off the CONFIGURED catalog and therefore off no
+    // datastore read. The library can only ADD to those ids, never remove one, so a deploy with
+    // no configured model has none either way — and this runs before the claim, on both lanes,
+    // where the honest answer is worth more than the specific model.
+    if (!ctx.models) {
       await reply(
         "No model is configured on this deploy, so I cannot answer. Set DERIVE_MODEL_BASE_URL, DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME.",
         "failed",
@@ -413,7 +411,28 @@ export const contextRoutes = (ctx: AppContext) => {
       // writer, the settle wake — is shared with the document lane and deliberately not
       // duplicated; what differs is only what the turn is given and what it may do.
       if (!subject) {
-        await serveWorkspaceChat(s, me, reply, stream, opts?.modelId ?? null)
+        await serveWorkspaceChat(s, me, reply, stream, opts?.modelId ?? null, scope)
+        return
+      }
+      // WHICH MODEL ANSWERS THE DOCUMENT RAIL. Resolved through the catalog with the operator's
+      // pin, exactly as the workspace lane does — this used to take `ctx.callModel` (the
+      // deploy's configured default) directly, so the deploy-wide switch that exists to move
+      // everyone off a failing provider moved every surface EXCEPT this one, while its own
+      // settings copy promised "across this whole deployment". A lever with a hole in it is
+      // worse than no lever, because it is trusted.
+      //
+      // Resolved HERE, on the branch that uses it, and not in the prologue above: the workspace
+      // lane resolves its own (it has a per-turn model pick to honor), so doing it for both
+      // read the instance row twice per turn and threw one answer away.
+      //
+      // No per-turn pick on this lane: the rail has no picker, so there is nothing to honor
+      // beyond the operator's choice and the deploy default behind it.
+      const { catalog: railCatalog, slots: railSlots } = await ctx.modelsFor(scope)
+      const operatorPin = railSlots.chat ?? null
+      const railModel =
+        (operatorPin ? railCatalog?.resolve(operatorPin) : null) ?? railCatalog?.resolve(null)
+      if (!railModel) {
+        await reply("No model is configured on this deploy, so I cannot answer.", "failed")
         return
       }
       const artifact = await meta.getByShortId(subject.id)
@@ -1954,7 +1973,7 @@ export const contextRoutes = (ctx: AppContext) => {
       // capability, and it carries no workspace data. A signed-in person asking what models
       // exist learns nothing about who may use them.
       return c.json({
-        models: ((await ctx.modelsFor())?.options ?? []).map((m) => ({
+        models: ((await ctx.modelsFor(c)).catalog?.options ?? []).map((m) => ({
           id: m.id,
           label: m.label,
           is_default: m.isDefault,
@@ -2001,7 +2020,7 @@ export const contextRoutes = (ctx: AppContext) => {
       if (gate) return bail(gate)
       // A model named here must exist NOW — better a 400 the person can act on than a session
       // that opens and then answers with something they did not choose.
-      if (b.model && !(await ctx.modelsFor())?.resolve(b.model))
+      if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
       const created = await meta.createSessionWithMessage(
         {
@@ -2332,7 +2351,7 @@ export const contextRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
-      if (b.model && !(await ctx.modelsFor())?.resolve(b.model))
+      if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
       // THE MONTHLY BUDGET, for the same reason. Dispatch enforces it on every hosted run and
       // every queued session; an attended follow-up bypassed dispatch entirely, so the one lane

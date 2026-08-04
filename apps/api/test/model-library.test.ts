@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
 import { catalogOf, type GatewayConfig } from "../src/lib/model-catalog"
-import { effectiveCatalog, parseLibrary, probeModel } from "../src/lib/model-library"
+import { effectiveCatalog, modelSource, parseLibrary, probeModel } from "../src/lib/model-library"
 import { foldTimings, meterModel } from "../src/lib/model-timing"
+import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp } from "./helpers"
 
 // THE MODEL LIBRARY — an operator adds a model, pins a lane to it, probes it, and reads how it
@@ -16,6 +17,13 @@ import { as, makeAuthedApp } from "./helpers"
 const turn = (text: string): ModelTurn => ({ text, toolUses: [], costUsd: null, done: true })
 
 const GATEWAY: GatewayConfig = { baseUrl: "https://gw.test/v1", apiKey: "k", model: "configured" }
+
+const ONLY = {
+  id: "configured",
+  label: "Configured",
+  isDefault: true,
+  build: () => async () => turn("hi"),
+}
 
 const setup = (name: string, opts?: { operators?: string[]; gateway?: GatewayConfig | null }) =>
   makeAuthedApp(
@@ -37,6 +45,7 @@ const setup = (name: string, opts?: { operators?: string[]; gateway?: GatewayCon
         ]),
         ...(opts?.gateway === null ? {} : { modelGateway: opts?.gateway ?? GATEWAY }),
         superAdmins: opts?.operators ?? ["op@x.com"],
+        rateLimiters: inMemoryRateLimiters(),
       },
     },
   )
@@ -418,6 +427,63 @@ describe("probing", () => {
       headers: as("op@x.com"),
     })
     expect(res.status).toBe(404)
+  })
+})
+
+describe("what a turn costs to route", () => {
+  /**
+   * A REGRESSION TEST WITH A NUMBER IN IT, because the first version of this feature quietly
+   * tripled it: the gate asked the library whether anything could answer, the turn asked which
+   * model was pinned, and the turn asked again for the catalog — three reads of ONE settings row
+   * on the attended path, where on the hosted tier each is a Hyperdrive round trip and somebody
+   * is waiting on all of them.
+   *
+   * The fix is that a source hands back the catalog AND the slots from one read, memoized on a
+   * per-turn scope. Both halves are pinned here; the end-to-end count is pinned in
+   * chat-workspace.test.ts, on a harness that drives a real turn.
+   */
+  const lib = () => ({ models: [], slots: { chat: "configured" } })
+
+  it("answers both questions — catalog and pin — from a single read", async () => {
+    let reads = 0
+    const src = modelSource(catalogOf([ONLY]), GATEWAY, async () => {
+      reads += 1
+      return lib()
+    })
+    const { catalog, slots } = await src()
+    expect(reads).toBe(1)
+    expect(catalog?.resolve("configured")?.id).toBe("configured")
+    expect(slots.chat).toBe("configured")
+  })
+
+  it("memoizes on the scope, and a new scope reads fresh", async () => {
+    let reads = 0
+    const src = modelSource(
+      catalogOf([ONLY]),
+      GATEWAY,
+      (() => {
+        const cache = new WeakMap<object, Promise<ReturnType<typeof lib>>>()
+        return (scope?: object) => {
+          if (!scope) {
+            reads += 1
+            return Promise.resolve(lib())
+          }
+          const hit = cache.get(scope)
+          if (hit) return hit
+          reads += 1
+          const p = Promise.resolve(lib())
+          cache.set(scope, p)
+          return p
+        }
+      })(),
+    )
+    const turn = {}
+    // Everything one turn asks costs one read...
+    await Promise.all([src(turn), src(turn), src(turn)])
+    expect(reads).toBe(1)
+    // ...and the NEXT turn re-reads, which is the property the live lever depends on.
+    await src({})
+    expect(reads).toBe(2)
   })
 })
 

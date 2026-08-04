@@ -316,7 +316,7 @@ export const handleSlackMention = async (
   const gate = await chatArrival(
     {
       meta,
-      models: (await deps.models()) ?? undefined,
+      models: (await deps.models()).catalog ?? undefined,
       chatAllowlist: deps.chatAllowlist,
       askLimiter: deps.askLimiter,
     },

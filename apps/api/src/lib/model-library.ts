@@ -1,5 +1,5 @@
 import type { InstanceModel, InstanceSlots, MetaStore, ModelProbe } from "@derive/core"
-import { getInstanceSettings, setInstanceSettings } from "./instance-settings"
+import { getInstanceSettings, INSTANCE_SETTINGS_ID, setInstanceSettings } from "./instance-settings"
 import type { GatewayConfig, ModelCatalog, ResolvedChatModel } from "./model-catalog"
 import { labelFor } from "./model-catalog"
 import { openAiCompatModel } from "./model-openai"
@@ -60,6 +60,11 @@ const trimmed = (s: unknown): string => (typeof s === "string" ? s.trim() : "")
 export const parseLibrary = (raw: {
   models?: InstanceModel[]
   slots?: InstanceSlots
+  /** The pre-lanes flat field. Read here so the whole migration lives in ONE place and so a
+   *  single read of the row answers both "which models exist" and "which one is pinned" — those
+   *  are asked together on every attended turn, and answering them separately meant reading the
+   *  same row twice on the path where somebody is waiting. */
+  chatModel?: string
 }): ModelLibrary => {
   const seen = new Set<string>()
   const models: InstanceModel[] = []
@@ -70,7 +75,9 @@ export const parseLibrary = (raw: {
     const label = trimmed(m?.label)
     models.push({ id, ...(label ? { label } : {}), ...(m?.probe ? { probe: m.probe } : {}) })
   }
-  const chat = trimmed(raw.slots?.chat)
+  // A deploy that pinned a model before lanes existed keeps that pin, and the next write moves
+  // it into the slot. Nothing has to run, and nothing is rewritten on read.
+  const chat = trimmed(raw.slots?.chat) || trimmed(raw.chatModel)
   const automation = trimmed(raw.slots?.automation)
   return { models, slots: { ...(chat ? { chat } : {}), ...(automation ? { automation } : {}) } }
 }
@@ -153,18 +160,38 @@ export const effectiveCatalog = (
  * added by an operator is reachable from the web rail, an @derive comment mention and an
  * @Derive Slack mention without any of them knowing the library exists.
  */
-export type ModelSource = () => Promise<ModelCatalog | null>
-
-export const modelSource = (
-  base: ModelCatalog | null | undefined,
-  gw: GatewayConfig | null | undefined,
-  meta: MetaStore,
-): ModelSource => {
-  // A deploy with no configured catalog has nothing to widen: the library cannot BE the whole
-  // catalog, because its entries are ids on a gateway that, in that state, does not exist.
-  if (!base) return async () => null
-  return async () => effectiveCatalog(base, gw, await readLibrary(meta))
+export interface InstanceModels {
+  /** Every model a turn may choose from, or null when this deploy has none configured. */
+  catalog: ModelCatalog | null
+  /** Which model the operator pinned to each lane. */
+  slots: InstanceSlots
 }
+
+/**
+ * `scope` is an opaque per-request key — the Hono context, in every real caller — used only to
+ * memoize the underlying read. Typed as a bare object so this module stays free of the HTTP
+ * layer; passing nothing reads fresh, which is what the detached lanes do.
+ */
+export type ModelSource = (scope?: object) => Promise<InstanceModels>
+
+/**
+ * BOTH ANSWERS FROM ONE READ, because both are needed on the same turn. Resolving which model
+ * answers takes the catalog AND the operator's pin, and fetching them separately read the same
+ * settings row twice per attended turn — on the hosted tier that is two Hyperdrive round trips
+ * on the path with a person waiting on it, for one row.
+ */
+export const modelSource =
+  (
+    base: ModelCatalog | null | undefined,
+    gw: GatewayConfig | null | undefined,
+    read: (scope?: object) => Promise<ModelLibrary>,
+  ): ModelSource =>
+  async (scope) => {
+    const lib = await read(scope)
+    // A deploy with no configured catalog has nothing to widen: the library cannot BE the whole
+    // catalog, because its entries are ids on a gateway that, in that state, does not exist.
+    return { catalog: base ? effectiveCatalog(base, gw, lib) : null, slots: lib.slots }
+  }
 
 /** An added id, reached exactly as a configured one is: same gateway, same key, same body knobs.
  *  Kept in step with catalogFromGateway by taking the same GatewayConfig — an added model that
@@ -248,3 +275,53 @@ const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
     const t = setTimeout(() => reject(new Error(`no reply within ${Math.round(ms / 1000)}s`)), ms)
     p.then(resolve, reject).finally(() => clearTimeout(t))
   })
+
+/**
+ * The deploy-wide model for ATTENDED CHAT, or null when the operator has not pinned one (⇒ the
+ * model configured for the deploy answers, exactly as before this existed).
+ *
+ * Reads `slots.chat`, falling back to the legacy flat `chatModel`. The fallback is the whole
+ * migration: a deploy that pinned a model before lanes existed keeps that pin, and the next
+ * write moves it into the slot. Nothing has to run, and nothing is rewritten on read.
+ */
+export const getInstanceChatModel = async (meta: MetaStore): Promise<string | null> => {
+  const { slots } = await readLibrary(meta)
+  return slots.chat ?? null
+}
+
+/** Set it, or clear it with null. Read fresh on every turn, so it takes effect on the next
+ *  message rather than the next deploy.
+ *
+ *  Clears the legacy flat field on every write, INCLUDING when setting a new model: leaving a
+ *  stale `chatModel` behind a live `slots.chat` means the fallback above resurrects a model the
+ *  operator already moved off, the moment anyone clears the slot. */
+export const setInstanceChatModel = async (
+  meta: MetaStore,
+  model: string | null,
+): Promise<void> => {
+  const cur = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
+  await setInstanceSettings(meta, {
+    chatModel: undefined,
+    slots: { ...cur.slots, chat: model?.trim() || undefined },
+  })
+}
+
+/** The deploy-wide model for UNATTENDED AUTOMATION RUNS, or null for the configured default
+ *  (`DERIVE_LOOP_MODEL`, then model-anthropic's DEFAULT_ANTHROPIC_MODEL).
+ *
+ *  🚨 Names the MODEL, not the payer. Runs still resolve a credential per run through the payer
+ *  chain unless the operator configured a gateway; pinning here moves nobody onto anyone's key. */
+export const getInstanceAutomationModel = async (meta: MetaStore): Promise<string | null> => {
+  const { slots } = await readLibrary(meta)
+  return slots.automation ?? null
+}
+
+export const setInstanceAutomationModel = async (
+  meta: MetaStore,
+  model: string | null,
+): Promise<void> => {
+  const cur = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
+  await setInstanceSettings(meta, {
+    slots: { ...cur.slots, automation: model?.trim() || undefined },
+  })
+}

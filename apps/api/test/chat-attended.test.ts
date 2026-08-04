@@ -1,8 +1,8 @@
 import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
-import { setInstanceChatModel } from "../src/lib/instance-settings"
 import { catalogOf } from "../src/lib/model-catalog"
+import { setInstanceChatModel } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp } from "./helpers"
 
