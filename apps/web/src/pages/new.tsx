@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useBlocker, useNavigate } from "@tanstack/react-router"
-import { useRef, useState } from "react"
+import { useBlocker, useNavigate, useSearch } from "@tanstack/react-router"
+import { useEffect, useRef, useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
@@ -33,10 +33,35 @@ const detectFormat = (t: string): "md" | "html" => {
 export function NewArtifact() {
   useDocumentTitle("New artifact")
   const nav = useNavigate()
+  const { start } = useSearch({ from: "/new" })
   const [src, setSrc] = useState("")
   const [title, setTitle] = useState("")
   const [message, setMessage] = useState("")
   const format = detectFormat(src)
+
+  // `?start=deck` (the library's "Start a deck") opens the editor on the canonical deck
+  // starter instead of a blank page — the same file the CLI scaffolds and the MCP serves.
+  // Imported lazily: it's ~12KB of HTML that only this one entry path ever needs, so it
+  // stays out of the main bundle. It deliberately does NOT set the title — naming the deck
+  // is the author's first act.
+  //
+  // The `cur || …` IS the idempotence guard, and it has to be the only one. An earlier
+  // version also carried a `started` ref, which deadlocked with the cancel flag whenever
+  // the effect was invoked twice (mount → cleanup → mount): the ref refused the second
+  // import while the cleanup had already cancelled the first, so the editor stayed empty
+  // forever. A production build never double-invokes, so it worked in the deploy preview
+  // and only failed locally — the e2e caught it.
+  useEffect(() => {
+    if (start !== "deck") return
+    let cancelled = false
+    import("@/lib/deck-template.gen").then(({ DECK_TEMPLATE }) => {
+      // Functional update: never clobber anything already typed or pasted.
+      if (!cancelled) setSrc((cur) => cur || DECK_TEMPLATE)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [start])
 
   // A draft is dirty once anything's been typed. Publishing must bypass the guard for its
   // own nav to the artifact — via a REF, not state: publish() sets it and calls nav() in the

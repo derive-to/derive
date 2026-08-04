@@ -1,7 +1,7 @@
 ---
 name: helping
 summary: questions about Derive itself: where a thing lives, what a word means, and who may change it
-order: 8
+order: 10
 ---
 # Helping someone use Derive
 

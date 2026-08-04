@@ -1,7 +1,7 @@
 ---
 name: contexts
 summary: read a packaged context to load what it knows, or give it an instruction (find, read, use)
-order: 4
+order: 6
 ---
 # Contexts: load the package, or give it work
 

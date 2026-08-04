@@ -88,6 +88,7 @@ import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
+  isTextType,
   searchArtifactVersion,
   searchMatcher,
   searchReport,
@@ -965,10 +966,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       // refs) — computed server-side so every client relays the same guidance; the
       // boundary rules keep @derive/core out of the clients.
       let advisories: string[] = []
-      if (
-        artifact.kind === "file" &&
-        (version.content_type === "text/html" || version.content_type === "text/markdown")
-      ) {
+      // isTextType, not a local text/html check: a DECK is text/x-derive-deck, and the
+      // literal comparison here meant a deck published over REST came back with
+      // advisories:null while the same bytes over MCP (gated on kind alone) got them —
+      // so a deck never heard about an expiring upload URL or a broken blob ref. Caught
+      // by publishing one against a deploy preview and reading the response.
+      if (artifact.kind === "file" && isTextType(version.content_type)) {
         const text = new TextDecoder().decode(bytes)
         advisories = publishAdvisories(text, version.content_type)
         const blobAdvisory = await missingBlobAdvisory(text, blobs)
