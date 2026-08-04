@@ -305,15 +305,17 @@ export interface AppDeps {
   pokeRun?: (runId: string) => void
   /**
    * The marketing site (the front door). When set, `/` serves the marketing page
-   * to signed-out visitors (signed-in ones keep the SPA) and `/pricing` serves the
-   * pricing page. Each provider returns the page HTML — read from the web build's
-   * `site/` directory on Node, fetched from the ASSETS binding on the edge — or
-   * null when the page is missing (falls back to the shell). Set whenever the web
-   * build ships the pages; unset (a page-less build, tests) ⇒ the SPA owns `/`.
+   * to signed-out visitors (signed-in ones keep the SPA), `/pricing` serves the
+   * pricing page, and `/privacy` serves the privacy page. Each provider returns
+   * the page HTML — read from the web build's `site/` directory on Node, fetched
+   * from the ASSETS binding on the edge — or null when the page is missing (falls
+   * back to the shell). Set whenever the web build ships the pages; unset (a
+   * page-less build, tests) ⇒ the SPA owns `/`.
    */
   marketing?: {
     home: () => Promise<string | null>
     pricing: () => Promise<string | null>
+    privacy: () => Promise<string | null>
   }
 }
 

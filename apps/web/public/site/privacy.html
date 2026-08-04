@@ -4,23 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Pricing — Derive</title>
-<meta name="description" content="Free while we're in beta. This is the pricing we intend to charge, published early — so nothing about it surprises you.">
+<title>Privacy — Derive</title>
+<meta name="description" content="How Derive collects, stores, and protects your data, in plain language: what we collect, what we never do, who processes it, and how to delete it.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Pricing — Derive">
-<meta property="og:description" content="Free while we're in beta. This is the pricing we intend to charge, published early.">
-<meta property="og:url" content="https://derive.to/pricing">
+<meta property="og:title" content="Privacy — Derive">
+<meta property="og:description" content="How Derive collects, stores, and protects your data, in plain language.">
+<meta property="og:url" content="https://derive.to/privacy">
 <meta property="og:image" content="https://derive.to/site/og.png">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="canonical" href="https://derive.to/pricing">
+<link rel="canonical" href="https://derive.to/privacy">
 <!-- See index.html for why the structured data is here. -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "WebPage",
-  "name": "Pricing — Derive",
-  "url": "https://derive.to/pricing",
-  "description": "Free while we're in beta. This is the pricing we intend to charge, published early.",
+  "name": "Privacy — Derive",
+  "url": "https://derive.to/privacy",
+  "description": "How Derive collects, stores, and protects your data, in plain language.",
   "isPartOf": { "@id": "https://derive.to/#website" },
   "publisher": { "@id": "https://derive.to/#organization" }
 }
@@ -195,7 +195,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <img src="/brand/wordmark-light.svg" alt="Derive">
     </a>
     <div class="nav-links">
-      <a class="on" href="/pricing">Pricing</a>
+      <a href="/pricing">Pricing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
     </div>
     <div class="nav-cta">
@@ -205,97 +205,36 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 </nav>
 
 <header class="head wrap">
-  <div class="eyebrow">Pricing</div>
-  <h1>Free while we're in beta.</h1>
-  <p class="lede">Every feature, no card required. Below is the pricing we intend to charge, <strong>published early so nothing about it surprises you.</strong> The short version: the link is free; teams pay for the seats that publish and approve, never for the people who read and comment.</p>
-</header>
-
-<div class="wrap">
-  <div class="tiers">
-    <div class="tier">
-      <div class="tname">Free</div>
-      <p class="tfor">For individuals, open-source projects, and small teams.</p>
-      <div class="price">$0 <small>forever</small></div>
-      <a class="btn btn-ghost" href="#join">Get beta access</a>
-      <ul>
-        <li>Up to <strong>3 editors</strong> per workspace</li>
-        <li><strong>Unlimited viewers and commenters</strong></li>
-        <li>The full review loop: comments, proposals, approvals</li>
-        <li>CLI, API, and MCP for your agents</li>
-        <li>Permanent URLs with full version history</li>
-        <li>1 GB storage, deduplicated</li>
-      </ul>
-    </div>
-    <div class="tier">
-      <div class="tname">Team <span class="tag">MOST TEAMS</span></div>
-      <p class="tfor">For teams whose agents ship work that needs review.</p>
-      <div class="price">$15 <small>per editor / month · $12 billed annually</small></div>
-      <a class="btn btn-primary" href="#join">Get beta access</a>
-      <ul>
-        <li>Everything in Free, plus</li>
-        <li><strong>Unlimited editors</strong></li>
-        <li>Custom domain</li>
-        <li>White-label shared pages</li>
-        <li>Password-protected links</li>
-        <li><strong>Brandprint</strong>: your house style, read by every agent</li>
-        <li>50 GB pooled storage, then ~$1 per extra 10 GB/month</li>
-        <li>Full analytics history</li>
-      </ul>
-    </div>
-    <div class="tier">
-      <div class="tname">Business</div>
-      <p class="tfor">For organizations that need control and accountability.</p>
-      <div class="price">$30 <small>per editor / month · $25 billed annually</small></div>
-      <a class="btn btn-ghost" href="#join">Get beta access</a>
-      <ul>
-        <li>Everything in Team, plus</li>
-        <li>250 GB pooled storage, then ~$1 per extra 10 GB/month</li>
-        <li>SSO with your identity provider (OIDC)</li>
-        <li>Audit log</li>
-        <li>Multiple custom domains</li>
-        <li>Guest editor management</li>
-        <li>Uptime SLA</li>
-        <li>Priority support</li>
-      </ul>
-    </div>
-    <div class="tier">
-      <div class="tname">Enterprise</div>
-      <p class="tfor">For isolation, residency, and procurement requirements.</p>
-      <div class="price">From ~$500/mo <small>custom annual contract</small></div>
-      <a class="btn btn-ghost" href="mailto:hello@derive.to">Talk to us</a>
-      <ul>
-        <li>Everything in Business, plus</li>
-        <li><strong>Dedicated single-tenant instance</strong></li>
-        <li>Data residency: your region, your cloud or ours</li>
-        <li>Migration and onboarding help</li>
-        <li>Support contract</li>
-        <li>Support contracts for self-hosted deployments: SLA, LTS releases, upgrade and migration help</li>
-      </ul>
-    </div>
+  <div class="eyebrow">Privacy</div>
+  <h1>Your data, plainly explained.</h1>
+  <p class="lede">Derive stores what it takes to run your workspace: an account, the content you publish, and the bare usage signals that keep the product honest with you. Nothing more, and nothing sold. <strong>Effective August 3, 2026.</strong></p>
+  <div class="beta">
+    <span class="k">NOTE</span>
+    <span>This page is a <strong>plain-language summary, not legal advice</strong>. It describes how Derive actually handles data, written in the same spirit as our pricing page: published early, so nothing here surprises you.</span>
   </div>
-</div>
+</header>
 
 <section class="wrap">
   <div class="section-head">
-    <div class="eyebrow">Principles</div>
-    <h2>Four things that will stay true.</h2>
+    <div class="eyebrow">Data</div>
+    <h2>What we collect.</h2>
   </div>
   <div class="principles">
     <div class="principle">
-      <h3>Reviewers are never seats.</h3>
-      <p>Viewers and commenters are free at every tier, in any number. Feedback is the point of the product. We won’t tax it.</p>
+      <h3>Account</h3>
+      <p>Your email, name, and the handle you choose. That's what it takes to sign you in and show your name on what you publish.</p>
     </div>
     <div class="principle">
-      <h3>A published URL never breaks.</h3>
-      <p>Going over a limit or lapsing a plan makes a workspace read-only. Nothing is deleted, and no link you’ve shared goes dark.</p>
+      <h3>Content</h3>
+      <p>The artifacts you publish, their full version history, and the comments your team leaves on them. This is the product; it's what a workspace is made of.</p>
     </div>
     <div class="principle">
-      <h3>Agents don’t consume seats.</h3>
-      <p>Your agents publish and propose through your workspace. We charge for the people who approve work, not for the bots that draft it.</p>
+      <h3>Usage</h3>
+      <p>First-party view analytics on what you publish (who's reading, roughly from where) and one signup-attribution stamp noting which link brought you here.</p>
     </div>
     <div class="principle">
-      <h3>Self-hosting is free, forever.</h3>
-      <p>The whole product is open source and runs as one container. The hosted tier pays for the service, not the software.</p>
+      <h3>What we never do</h3>
+      <p>No ad trackers. No third-party analytics scripts. We never sell your data, to anyone, for any reason.</p>
     </div>
   </div>
 </section>
@@ -303,45 +242,31 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 <section class="wrap">
   <div class="section-head">
     <div class="eyebrow">Questions</div>
-    <h2>The fine print, said plainly.</h2>
+    <h2>The details, said plainly.</h2>
   </div>
   <div class="faq">
     <details>
-      <summary>What counts as an editor?</summary>
-      <p class="a">Anyone who <strong>publishes or approves work</strong> during a billing period. Viewers and commenters are never counted, no matter how many. <strong>Guests can propose changes for free</strong>: a guest only becomes a billable editor when a workspace owner explicitly grants them an editor seat. For example, 10 people read a workspace, 2 leave comments, and 1 approves and publishes: you pay for 1 editor.</p>
+      <summary>Who processes data on our behalf?</summary>
+      <p class="a">A short, named list, nothing hidden behind "and our partners." <strong>Cloudflare</strong> hosts the app and serves its static pages, storage, and edge database. <strong>Neon</strong> runs the Postgres database that holds your workspace's metadata. <strong>Stripe</strong> processes billing once billing exists. <strong>Resend</strong> delivers transactional email like password resets and notifications. <strong>Slack and GitHub</strong> only see anything once a workspace owner explicitly connects that integration, and only for that workspace. <strong>Model providers</strong> only see a request when you turn on an opt-in AI feature like chat or an automation; nothing is sent to a model without that switch being on.</p>
     </details>
     <details>
-      <summary>What happens if we stop paying?</summary>
-      <p class="a">Your workspace becomes <strong>read-only</strong> above the free limits. Every artifact stays live at its URL, with its full version history and comments. Publishing resumes when the plan does.</p>
+      <summary>What happens when I delete my account or a workspace?</summary>
+      <p class="a">Deleting your account <strong>purges the content you own</strong>. If you're the last owner of a workspace, deleting it removes the workspace and everything in it. One honest exception: a URL you already published and shared stays live at that link until you (or a remaining owner) take it down yourself, the same way a link you emailed someone doesn't un-send when you delete the file on your end. We won't pretend a link that's already out in the world quietly disappears.</p>
     </details>
     <details>
-      <summary>Can we self-host instead?</summary>
-      <p class="a">Yes. <strong>One container is the whole product</strong>: SQLite and local disk by default, Postgres and S3 at scale. The hosted tier exists for teams who would rather not run it themselves.</p>
+      <summary>Can I avoid all of this by self-hosting?</summary>
+      <p class="a">Yes. Derive is fair source and runs as one container: SQLite and local disk by default, Postgres and S3 at scale, entirely on your own infrastructure. Run it yourself, and none of the infrastructure listed above ever sees your data, because none of it is in the request path.</p>
     </details>
     <details>
-      <summary>Is Derive open source?</summary>
-      <p class="a">Derive is fair source (<strong>FSL-1.1-ALv2</strong>): use, modify, and self-host it freely for anything except selling Derive itself as a service. Every release converts to <strong>Apache-2.0</strong> two years after it ships.</p>
-    </details>
-    <details>
-      <summary>When does billing start?</summary>
-      <p class="a">Not before we’ve told you. We’ll announce dates well ahead, existing workspaces will get a grace period, and <strong>the free tier stays</strong>.</p>
+      <summary>How do I reach you about this?</summary>
+      <p class="a">Email <strong>hello@derive.to</strong>. We read everything ourselves, and we'd rather explain something than have you guess.</p>
     </details>
   </div>
 </section>
 
-<section class="final wrap" id="join">
+<section class="final wrap">
   <h2>Nothing here should surprise you.</h2>
-  <p class="body">That's the point of publishing pricing before billing exists. Sign up for the beta and hold us to it.</p>
-  <div class="waitlist">
-    <form data-waitlist action="/v1/beta/signup" method="post" novalidate>
-      <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
-      <button class="btn btn-primary" type="submit">Get beta access</button>
-    </form>
-    <div class="waitlist-done" role="status">
-      <span class="tick">✓</span>
-      <span>Check your email. Your access link is on the way.</span>
-    </div>
-  </div>
+  <p class="body">That's the point of publishing this before you have to go looking for it. Questions go to hello@derive.to.</p>
 </section>
 
 <footer>
@@ -368,28 +293,6 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 <script>
 const nav = document.getElementById('nav');
 addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
-document.querySelectorAll('[data-waitlist]').forEach(form => {
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    const email = form.email.value.trim();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { form.email.focus(); return; }
-    const btn = form.querySelector('button');
-    const label = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Sending…';
-    let ok = false;
-    try {
-      const res = await fetch(form.action, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email})});
-      ok = res.ok;
-    } catch {}
-    if (!ok) {
-      btn.disabled = false; btn.textContent = 'Try again';
-      setTimeout(() => { btn.textContent = label; }, 2400);
-      return;
-    }
-    form.style.display = 'none';
-    form.parentElement.querySelector('.waitlist-done').style.display = 'inline-flex';
-  });
-});
 </script>
 </body>
 </html>

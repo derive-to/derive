@@ -234,7 +234,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/readyz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/readyz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing", "/privacy"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
