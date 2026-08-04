@@ -15,6 +15,16 @@ export function registerCommentTool(tc: ToolContext): void {
     {
       description:
         "Leave feedback on an artifact, reply in a thread, react, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`; reply by passing the thread id as `reply_to`; `react` (with `reply_to`) is the lightweight ack. Pass `set_state` (with the thread's id in `reply_to`) to RESOLVE that thread, or reopen it. Thread ids come from catch_up. For quoting, the ack, and review-round etiquette, read derive://skills/loop.",
+      // Writes (comments, reactions, thread state) but nothing here deletes: a comment
+      // once posted stays, and set_state's resolve/reopen is explicitly reversible either
+      // way. The Slack/webhook/email fan-out is a best-effort side notification, not the
+      // tool's own domain (Derive's comment threads).
+      annotations: {
+        title: "Comment and review",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         short_id: z.string(),
         body: z

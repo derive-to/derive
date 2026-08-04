@@ -40,6 +40,17 @@ export function registerUseTool(tc: ToolContext): void {
         "with no instruction PULLS queued work; " +
         "`use({session_id, answer})` reports back (+ `progress` / `state` / `result_artifact_id`). " +
         "For the modes and the runner loop, read derive://skills/contexts.",
+      // Opens/advances a session (a write — messages accumulate, budget is spent) but
+      // deletes nothing; a session can be followed up or checked, never destroyed from
+      // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
+      // the opt-in exception, not the norm). This call's own execution only creates rows
+      // and waits on Derive's internal bus; it doesn't itself reach outside Derive.
+      annotations: {
+        title: "Work a workspace context",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         context: z
           .string()

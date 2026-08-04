@@ -53,6 +53,17 @@ export function registerStageTool(tc: ToolContext): void {
     {
       description:
         "Work out-of-band from your shell — mint a SHORT-LIVED capability, then curl with it (zero bytes through context). target:'doc' for a whole big document or bundle more than ~a page (returns a no-bearer publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target; read derive://skills/publishing). target:'asset' for an image or font a document EMBEDS (returns a permanent url + an asset:<hash> ref; raster images and WOFF/WOFF2 only, max 25MB; read derive://skills/assets). target:'api' mints a REAL BEARER TOKEN for REST from your shell — 15 min, one workspace, capped at your role (narrow with `access`); a live credential in this transcript, so treat it like one. Staging alone does not publish an artifact. NEVER base64 a binary through a tool call — a pasted image is already a file on disk.",
+      // Mints a short-lived credential (upload URL or bearer token) — a write in the
+      // sense that it CAN be spent to publish later, but this call itself never touches
+      // artifact content, so not destructive. Not idempotent: every call mints a distinct
+      // token. The minted URLs all point back at this same Derive server's own API.
+      annotations: {
+        title: "Stage an upload",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         // A STRING, not an enum, on purpose: this discriminator grows (api was added
         // after doc/asset), and a cached client validates an enum locally — so a new

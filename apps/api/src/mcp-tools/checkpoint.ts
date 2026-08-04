@@ -46,6 +46,17 @@ export function registerCheckpointTool(tc: ToolContext): void {
     {
       description:
         "Commit a compact LAYER of working state to this work's lineage — a one-page, human-readable checkpoint (state / decisions / open threads / next steps / refs) that lets ANY later session continue the work cold, on any machine. Call it at task boundaries: a task just completed, before a risky step, when wrapping up a session. FIRST call for a piece of work: pass `work` (a short name); the result names a short_id — record it (e.g. in a .derive/lineage file) and pass it as `short_id` on every checkpoint after. Each checkpoint REPLACES the page (versions keep the history), so restate what still matters and prefer refs over restated detail — the tool rejects more than a page. See derive://skills/checkpoint.",
+      // A live publish under the hood (same path as `publish`), so it writes — but each
+      // layer REPLACES the page as a NEW version, never deleting the prior ones (they
+      // stay reachable in history), so it isn't destructive. Not idempotent: two calls
+      // record two layers. Derive's own backend only.
+      annotations: {
+        title: "Save a checkpoint",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         work: z
           .string()

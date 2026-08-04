@@ -129,8 +129,10 @@ describe("remote MCP endpoint (/mcp)", () => {
     ])
     // The read path advertises readOnlyHint — annotation-honoring clients (Claude Code
     // plan mode gates on exactly this) run it without an approval prompt. Every mutating
-    // tool stays unannotated. catch_up carries the hint although its `ack` parameter
-    // clears handled requests off the queue: it is otherwise pure state-reading.
+    // tool carries an explicit readOnlyHint:false instead (see the annotations test
+    // below), so a client never has to guess. catch_up carries the true hint although
+    // its `ack` parameter clears handled requests off the queue: it is otherwise pure
+    // state-reading, and re-acking is itself idempotent.
     type ListedTool = { name: string; annotations?: { readOnlyHint?: boolean } }
     const listed = (list.parsed?.result as { tools?: ListedTool[] } | undefined)?.tools ?? []
     const readOnly = listed.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name)
@@ -162,6 +164,26 @@ describe("remote MCP endpoint (/mcp)", () => {
       "ask",
     ])
       expect(names).not.toContain(gone)
+  })
+
+  it("every tool carries directory annotations — a title and an explicit readOnlyHint", async () => {
+    // MCP directory reviewers (and clients' auto-approval UX) read `annotations` per
+    // tool: a missing title reads as an unpolished server, and a missing readOnlyHint
+    // forces a client to assume the risky default (not read-only) rather than trust an
+    // honest answer. Guards against a future tool shipping unannotated — this test fails
+    // the moment mcp.ts registers one more `register<Name>Tool` without it.
+    const { app, token } = appWithGrant(dir, "annotations", "openid derive:read derive:publish")
+    const list = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "tools/list" })
+    type ListedTool = { name: string; annotations?: { title?: string; readOnlyHint?: boolean } }
+    const listed = (list.parsed?.result as { tools?: ListedTool[] } | undefined)?.tools ?? []
+    expect(listed.length).toBeGreaterThan(0)
+    for (const t of listed) {
+      expect(t.annotations?.title, `${t.name} is missing annotations.title`).toBeTruthy()
+      expect(
+        typeof t.annotations?.readOnlyHint,
+        `${t.name} is missing an explicit annotations.readOnlyHint`,
+      ).toBe("boolean")
+    }
   })
 
   it("stage target:'asset' mints an upload URL an anonymous shell can spend (the pasted-screenshot path)", async () => {

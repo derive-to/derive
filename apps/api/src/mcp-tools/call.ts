@@ -37,6 +37,16 @@ export function registerCallTool(tc: ToolContext): void {
         "Only sources an admin has declared for chat are reachable; a connection existing is " +
         "not the same as a conversation being allowed to spend it. Cite what you used in your " +
         "answer, the same as you would a document.",
+      // Dispatches to an arbitrary tool on an EXTERNAL connected source (Stripe, a
+      // Postgres, another MCP server) — genuinely open-world, and this call has no way
+      // to know whether the invoked tool reads or irreversibly writes, so destructive is
+      // the honest (worst-case) default rather than a guess that it's safe.
+      annotations: {
+        title: "Call a connected source",
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: true,
+      },
       inputSchema: {
         source: z.string().describe("Connection id, from read('derive://sources')."),
         tool: z.string().describe("Tool name, from that source's catalog."),

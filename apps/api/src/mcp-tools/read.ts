@@ -150,7 +150,12 @@ export function registerReadTool(tc: ToolContext): void {
     {
       description:
         "Read an artifact's CONTENT by short_id — or a CONTEXT's package by its ctx_ id/name (manifest inline, skills as pointers; `use` gives it work instead). A small doc returns whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug (or a `lines` range) for just that part. Markdown by default; a styled HTML page is FLATTENED to text here, so pass render:'top' or 'full' to SEE it as a viewer does (do this after publishing a designed page to catch visual breakage). Bundle: omit `section` for the page list, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required BEFORE publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead.",
-      annotations: { readOnlyHint: true },
+      annotations: {
+        title: "Read an artifact",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         short_id: z
           .string()

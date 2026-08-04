@@ -17,7 +17,12 @@ export function registerListWorkspacesTool(
     {
       description:
         "WHO AM I and WHERE can I act — this connection's identity (principal, acting-for human, the access it holds) plus every workspace the grant reaches: id, name, your role, the default, and what that role can't do. Pass a workspace's id or name as the `workspace` argument to find / read / catch_up / comment / publish to act there. No reconnect — read/catch_up/comment even find a short_id across these workspaces automatically.",
-      annotations: { readOnlyHint: true },
+      annotations: {
+        title: "List workspaces",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {},
     },
     async () => {
