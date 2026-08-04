@@ -98,6 +98,20 @@ export interface GatewayConfig {
    * routes however it likes, which is right for every gateway that does not route at all.
    */
   providers?: string
+  /**
+   * How much the model may THINK before answering: "off", or an effort level the host
+   * understands ("low" | "medium" | "high").
+   *
+   * A reasoning model spends most of a short answer's tokens on reasoning — measured on
+   * deepseek-v4-flash-0731 via DeepInfra, "say hi in three words" burned 137 reasoning tokens
+   * against 152 total and took 4.0s; with reasoning off it was 6 tokens and 0.54s. On a turn
+   * that makes several model calls that is the difference between an interactive answer and a
+   * wait. `effort:"low"` did NOT help (6.6s, more reasoning than the default), so this is
+   * deliberately off-or-on rather than a dial pretending to be finer than it is.
+   *
+   * Unset ⇒ nothing is sent and the model reasons however it likes.
+   */
+  reasoning?: string
 }
 
 /**
@@ -141,7 +155,11 @@ const entriesFor = (gw: GatewayConfig): CatalogEntry[] => {
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean)
-  const extraBody = order.length ? { provider: { order, allow_fallbacks: true } } : undefined
+  const think = gw.reasoning?.trim().toLowerCase()
+  const extraBody = {
+    ...(order.length ? { provider: { order, allow_fallbacks: true } } : {}),
+    ...(think ? { reasoning: think === "off" ? { enabled: false } : { effort: think } } : {}),
+  }
   return models.map((model) => ({
     // Namespaced per gateway, EXCEPT the unnamed legacy one — see GatewayConfig.name.
     id: gw.name ? `${gw.name}:${model}` : model,
@@ -228,6 +246,7 @@ export const parseGatewaysJson = (raw: string | undefined): GatewayConfig[] => {
             .filter(Boolean)
             .join(","),
           ...(g.providers ? { providers: String(g.providers) } : {}),
+          ...(g.reasoning ? { reasoning: String(g.reasoning) } : {}),
         },
       ]
     })

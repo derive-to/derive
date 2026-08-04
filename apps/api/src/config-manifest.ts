@@ -394,6 +394,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "DeepInfra,GMICloud",
   },
   {
+    name: "DERIVE_MODEL_REASONING",
+    group: "advanced",
+    doc: 'How much the model may THINK before answering: "off", or an effort level the host\nunderstands ("low" | "medium" | "high").\n\nA reasoning model spends most of a short answer\'s tokens reasoning. Measured on\ndeepseek-v4-flash-0731 via DeepInfra, "say hi in three words" burned 137 reasoning tokens of\n152 total and took 4.0s; with reasoning off it was 6 tokens and 0.54s. A chat turn makes\nseveral model calls, so that is the difference between an interactive answer and a wait.\n\n"low" did NOT help on that model (6.6s, MORE reasoning than the default), which is why this\nis off-or-on rather than a dial pretending to be finer than it is. Unset = nothing is sent\nand the model reasons however it likes.',
+    example: "off",
+  },
+  {
     name: "DERIVE_MODEL_GATEWAYS",
     group: "advanced",
     doc: 'ADDITIONAL model providers, as a JSON array — the way to run several at once and switch\nbetween them, rather than swapping one set of variables for another.\n\nEach entry carries its own credential, its own model list and its own backend routing:\n[{"name":"openrouter","baseUrl":"https://openrouter.ai/api/v1","apiKeyEnv":"OPENROUTER_API_KEY",\n  "models":["deepseek/deepseek-v4-flash-0731"],"providers":"DeepInfra,GMICloud,Fireworks"}]\n\nJSON rather than numbered variables so a fourth provider is a list entry, not four more\nnames every entry point has to learn. Model ids are namespaced by the gateway\'s name\n(openrouter:deepseek/...), which is what keeps two providers serving the same model apart;\nthe DERIVE_MODEL_BASE_URL gateway stays unnamed so ids already in transcripts still resolve.\n\nPrefer `apiKeyEnv` (the NAME of a variable holding the key) over inlining `apiKey`: the key\nthen stays its own secret, rotatable on its own, and this variable carries none. A gateway\nwhose named key is unset is dropped rather than advertised. Malformed JSON is ignored\nrather than fatal.',

@@ -153,6 +153,18 @@ describe("declaring extra providers as configuration", () => {
     expect(gws).toEqual([])
   })
 
+  it("carries the reasoning setting through to the request", () => {
+    // A reasoning model spends most of a short answer's budget thinking — 137 reasoning tokens
+    // of 152 for "say hi in three words", 4.0s, against 0.54s with it off. Off-or-on rather
+    // than a dial: "low" measured SLOWER than the default on that model.
+    const gws = parseGatewaysJson(
+      JSON.stringify([
+        { name: "or", baseUrl: "https://x/v1", apiKey: "k", models: ["m"], reasoning: "off" },
+      ]),
+    )
+    expect(gws[0]?.reasoning).toBe("off")
+  })
+
   it("drops a half-configured gateway instead of half-breaking the catalog", () => {
     const gws = parseGatewaysJson(
       JSON.stringify([

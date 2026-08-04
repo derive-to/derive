@@ -40,55 +40,6 @@ export const systemRoutes = (ctx: AppContext) => {
     }
   })
 
-  // TEMPORARY DIAGNOSTIC — remove before merge. Times the model gateway with a RAW fetch,
-  // no AI SDK in the path, so "is the provider slow" can be answered without inferring it
-  // from a turn that also builds tools, reads the store and streams deltas. Reports timing
-  // and status only; never the key, and it writes nothing.
-  app.get("/v1/system/model-probe", async (c) => {
-    // Any signed-in user, deliberately: this is a short-lived diagnostic on a PREVIEW, and the
-    // operator gate needs a secret nobody debugging this has to hand. It goes out with the route.
-    if (!isToken(c) && !(await isSuperAdmin(c)) && !(await ctx.currentUser(c)))
-      return fail(c, 403, "sign in to run the probe")
-    const base = process.env.DERIVE_MODEL_BASE_URL?.replace(/\/+$/, "")
-    const key = process.env.DERIVE_MODEL_API_KEY
-    const model = process.env.DERIVE_MODEL_NAME
-    if (!base || !key || !model) return c.json({ configured: false, base: !!base, model })
-    const stream = c.req.query("stream") === "1"
-    const started = Date.now()
-    try {
-      const r = await fetch(`${base}/chat/completions`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: c.req.query("q") || "say hi in three words" }],
-          max_tokens: Number(c.req.query("max") ?? 16),
-          ...(stream ? { stream: true } : {}),
-        }),
-        signal: AbortSignal.timeout(60_000),
-      })
-      const headersAt = Date.now() - started
-      const body = await r.text()
-      return c.json({
-        configured: true,
-        model,
-        stream,
-        status: r.status,
-        ms_to_headers: headersAt,
-        ms_total: Date.now() - started,
-        body: body.slice(0, 400),
-      })
-    } catch (e) {
-      return c.json({
-        configured: true,
-        model,
-        stream,
-        ms_total: Date.now() - started,
-        error: e instanceof Error ? `${e.name}: ${e.message}` : String(e),
-      })
-    }
-  })
-
   // THE DEPLOY-WIDE MODEL, read and set by the operator.
   //
   // Not a workspace setting: the operator holds the model credential and pays for every turn on

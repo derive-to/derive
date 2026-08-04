@@ -145,6 +145,8 @@ export interface Env {
    *  id is served by many backends at very different speeds, so the id alone does not decide
    *  what you get. Unset ⇒ the gateway routes however it likes. */
   DERIVE_MODEL_PROVIDERS?: string
+  /** "off", or an effort level — how much the model may think before answering. */
+  DERIVE_MODEL_REASONING?: string
   /** Additional providers as JSON — see parseGatewaysJson. Each carries its own key, models and
    *  backend routing, so a fourth provider is a list entry rather than four more variables. */
   DERIVE_MODEL_GATEWAYS?: string
@@ -526,6 +528,7 @@ function workerGateway(env: Env): GatewayConfig | undefined {
     // Preferred upstream backends on a gateway that routes (OpenRouter). Unset on one that
     // does not, where the field would be meaningless.
     DERIVE_MODEL_PROVIDERS: providers,
+    DERIVE_MODEL_REASONING: reasoning,
   } = env
   return baseUrl && apiKey && model ? { baseUrl, apiKey, model, alsoModels, providers } : undefined
 }
