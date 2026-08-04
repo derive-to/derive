@@ -40,6 +40,18 @@ export const collectionsQuery = () =>
     queryFn: () => api.listCollections().then((r) => r.collections),
   })
 
+// The picker's semantic Suggested tier (see CollectionsDialog). Neighbors only move
+// when something similar is published, so a short staleTime just stops a close/reopen
+// from re-running the vector lookup. No retry: the tier is best-effort garnish, and
+// the picker reads a missing or failed answer as "no suggestions", never as an error.
+export const collectionSuggestionsQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["collection-suggestions", shortId] as const,
+    queryFn: () => api.collectionSuggestions(shortId).then((r) => r.suggestions.map((s) => s.id)),
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+
 // A collection's folders (name order) + its artifact→folder assignment map — drives the
 // collection view's folder grouping and management. Keyed by collection.
 export const collectionFoldersQuery = (collectionId: string) =>

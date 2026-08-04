@@ -1,7 +1,7 @@
 ---
 name: checkpoint
 summary: save your working state to a resumable lineage so a later session continues cold, on any machine (checkpoint)
-order: 5
+order: 7
 ---
 # Checkpointing working state
 

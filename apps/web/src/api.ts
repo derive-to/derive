@@ -85,6 +85,8 @@ export type Report = components["schemas"]["Report"]
  *  (kind = manual / repo / pr). Generated from the OpenAPI spec (apps/api/openapi.json)
  *  — a backend shape change surfaces here at `tsc`. */
 export type Collection = components["schemas"]["Collection"]
+/** A picker suggestion: a collection id plus its neighbor-vote score (ordering only). */
+export type CollectionSuggestion = components["schemas"]["CollectionSuggestion"]
 export type Folder = components["schemas"]["Folder"]
 /** The result of a /v1/bulk/* op: counts per artifact (skipped = not yours to touch). */
 export type BulkSummary = components["schemas"]["BulkSummary"]
@@ -1174,6 +1176,10 @@ export const api = {
   // Collections (shareable groups; sharing grants the role on every item)
   listCollections: (): Promise<{ collections: Collection[] }> =>
     f("/v1/collections", opts()).then(j),
+  /** Collections where semantically-similar artifacts already live — the picker's
+   *  Suggested tier. Best-effort by contract: empty whenever there's no signal. */
+  collectionSuggestions: (shortId: string): Promise<{ suggestions: CollectionSuggestion[] }> =>
+    f(`/v1/artifacts/${shortId}/collection-suggestions`, opts()).then(j),
   createCollection: (title: string): Promise<Collection> =>
     f("/v1/collections", opts({ title })).then(j),
   renameCollection: (id: string, title: string): Promise<Collection> =>

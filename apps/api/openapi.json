@@ -1523,6 +1523,23 @@
           "count"
         ]
       },
+      "CollectionSuggestion": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The suggested collection's id."
+          },
+          "score": {
+            "type": "number",
+            "description": "Summed neighbor-similarity votes — an ordering signal, not a probability."
+          }
+        },
+        "required": [
+          "id",
+          "score"
+        ]
+      },
       "Folder": {
         "type": "object",
         "properties": {
@@ -5613,6 +5630,47 @@
         "responses": {
           "204": {
             "description": "The artifact was removed."
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/collection-suggestions": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Collections where work similar to this artifact already lives (members only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suggested collections, best first. Empty whenever there's no signal.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "suggestions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/CollectionSuggestion"
+                      }
+                    }
+                  },
+                  "required": [
+                    "suggestions"
+                  ]
+                }
+              }
+            }
           }
         }
       }

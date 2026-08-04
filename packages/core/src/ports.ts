@@ -56,6 +56,18 @@ export interface SearchIndex {
     query: string,
     limit: number,
   ): Promise<{ id: string; score: number; chunk: string }[]>
+  /** The most semantically-similar OTHER artifacts to one already-indexed artifact,
+   *  ranked like {@link search} and with the same NO-visibility-filter contract. Reads
+   *  the artifact's stored lead vector — no embed call at query time — so it's cheap
+   *  enough for interactive surfaces (the collection picker's "filed with similar
+   *  work" suggestions). Empty when the artifact has no vector yet (never indexed, or
+   *  the dense arm was down at publish). Optional: a lexical-only install has no
+   *  vectors to compare. */
+  similar?(
+    orgId: string,
+    artifactId: string,
+    limit: number,
+  ): Promise<{ id: string; score: number; chunk: string }[]>
 }
 
 /**

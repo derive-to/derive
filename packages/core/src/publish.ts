@@ -1,4 +1,5 @@
 import { unzipSync } from "fflate"
+import { isDeckDocument } from "./decks"
 import { newId, newShortId, refFor, slugify } from "./ids"
 import { mimeFor } from "./mime"
 import type { LinkRole, Listed, WorkspaceAccess } from "./permissions"
@@ -224,12 +225,21 @@ async function storeContent(
     // self-contained reports synced from a repo). Without this it's tagged
     // text/markdown and the markdown renderer strips its <head>/<style>/scripts —
     // i.e. it renders blank. Checked before the extension so the body wins.
-    contentType = "text/html"
+    //
+    // A deck IS a full HTML document, so this branch — not the fragment one below —
+    // is where nearly every real deck lands. Until this check was here, every deck
+    // written the documented way (doctype, head, the works) typed as plain text/html:
+    // the viewer still showed the deck bar (that rides the runtime postMessage), but
+    // the library badge and kind label said "Page", so the one visible confirmation
+    // that the protocol had worked was missing on exactly the decks that got it right.
+    contentType = isDeckDocument(text) ? "text/x-derive-deck" : "text/html"
   } else if (/\.(md|markdown)$/i.test(filename)) {
+    // Markdown stays markdown even when it talks about decks at length — the decks
+    // skill and this repo's own docs quote the protocol and slide markup verbatim.
     contentType = "text/markdown"
-  } else if (text.includes("derive-deck")) {
-    // Speaks the derive-deck protocol → it's a slide deck. Match the bare protocol
-    // name so either quote style (source:'derive-deck' / "derive-deck") is detected.
+  } else if (isDeckDocument(text)) {
+    // An HTML FRAGMENT deck (no doctype). Both halves of isDeckDocument matter here:
+    // the protocol name alone shows up in any prose about decks.
     contentType = "text/x-derive-deck"
   } else if (/\.html?$/i.test(filename)) {
     // An HTML fragment (no doctype, so the sniff above missed it) saved with an
