@@ -124,6 +124,21 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
   // `fields` is REQUIRED — omitting it fails the whole payload with "missing required field:
   // fields", which surfaces as a format error that looks like a wrapper problem. Only the five
   // names content_item knows may go here; everything else belongs in custom_fields below.
+  //
+  // THE HEADLINE, and it deliberately REPEATS what the chips below say.
+  //
+  // I removed that repetition once, on the reasoning that `Review` and `Waiting on` already
+  // carry it and a card has room for one rendering, not three. That was wrong, and the payload
+  // it produced showed why: the description fell back to "Markdown · 3 versions · 7 comments ·
+  // on Derive" — the inventory line this whole feature exists to stop leading with. It answers
+  // "what is this?" when the question a shared link needs answered is "does this want something
+  // from me?".
+  //
+  // The two slots are not peers. `description` is the prominent line; `custom_fields` are
+  // secondary labelled pairs. They serve skimming and scanning respectively, so the same fact
+  // in both is not waste — and de-duplicating cost the headline its meaning to buy tidiness
+  // nobody asked for. (The duplication is not even removable in principle: `display_type`
+  // repeats the kind, and `Version` repeats the version count, in the very same line.)
   const fields: Record<string, unknown> = {
     description: {
       value: statusPhrase(status)?.text
@@ -133,6 +148,24 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
       format: "markdown",
     },
   }
+  // The THUMBNAIL on the card itself — the picture people see without clicking, as distinct from
+  // `full_size_preview`, which is the expanded view. `alt_text` is required: omitting it fails
+  // the payload with a pointer straight at this field.
+  //
+  // Both surfaces take the same URL. It is one already-rendered, already-cached image, and
+  // Slack scales it.
+  if (a.previewUrl)
+    fields.preview = {
+      type: "slack#/types/image",
+      alt_text: `Preview of ${info.title}`.slice(0, 200),
+      image_url: a.previewUrl,
+    }
+  // A typed field Slack renders itself, and the question a document card most owes an answer to.
+  if (status.lastModifiedBy)
+    fields.last_modified_by = {
+      type: "slack#/types/user",
+      user: { text: status.lastModifiedBy },
+    }
   if (status.updatedAt) {
     const ms = Date.parse(status.updatedAt)
     // A typed date, so Slack renders it in the reader's own locale and timezone.
@@ -215,6 +248,11 @@ export const artifactDetails = (
   previewUrl?: string | null,
 ): Record<string, unknown> => {
   const phrase = statusPhrase(status, viewerId)
+  // Both surfaces lead with the status, but this sentence is not the card's: `statusPhrase`
+  // takes the viewer here, so the panel says "Awaiting YOUR review" to the person actually being
+  // waited on. No chip can say that — a chip is the same for everybody, and this surface is not.
+  // It also keeps the description BELOW the status rather than replacing it, because a panel
+  // opened deliberately has the room a broadcast card does not.
   const fields: Record<string, unknown> = {
     description: {
       value: phrase
@@ -223,6 +261,17 @@ export const artifactDetails = (
       format: "markdown",
     },
   }
+  if (previewUrl)
+    fields.preview = {
+      type: "slack#/types/image",
+      alt_text: `Preview of ${info.title}`.slice(0, 200),
+      image_url: previewUrl,
+    }
+  if (status.lastModifiedBy)
+    fields.last_modified_by = {
+      type: "slack#/types/user",
+      user: { text: status.lastModifiedBy },
+    }
   const ago = agoLabel(status.updatedAt)
   return {
     // `url` and `external_ref` are REQUIRED here, not optional identity decoration:

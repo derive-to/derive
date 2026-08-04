@@ -37,6 +37,8 @@ const status = (over: Partial<ArtifactStatus> = {}): ArtifactStatus => ({
   review: null,
   openThreads: 0,
   updatedAt: "2026-08-01T10:00:00.000Z",
+  lastModifiedBy: "Dana",
+  previewReady: true,
   ...over,
 })
 
@@ -92,11 +94,19 @@ describe("artifactEntity", () => {
       withActions: true,
     })
     const p = e.entity_payload as { fields: Record<string, never>; custom_fields: unknown[] }
-    // content_item accepts exactly five typed fields and silently DROPS the rest — `status` and
-    // `assignee` belong to `task`. Measured against the live API: sending them returns
-    // "The field status will be omitted due to an invalid type". So the review state rides
-    // custom_fields, and only `description` / `date_updated` go in `fields`.
-    expect(Object.keys(p.fields).sort()).toEqual(["date_updated", "description"])
+    // content_item accepts SIX typed fields — preview, description, created_by,
+    // last_modified_by, date_created, date_updated — and silently drops the rest. `status` and
+    // `assignee` belong to `task`, so there is no colour-tagged status field to be had here.
+    //
+    // Established against the live API by a discriminator, because acceptance proves nothing on
+    // this endpoint: Slack SHAPE-CHECKS a field it recognises and ignores one it does not. A
+    // malformed `preview` answers with a pointer naming it; a malformed `assignee` answers
+    // `ok: true` and vanishes. So the review state rides custom_fields.
+    expect(Object.keys(p.fields).sort()).toEqual([
+      "date_updated",
+      "description",
+      "last_modified_by",
+    ])
     expect(p.fields.description).toMatchObject({ format: "markdown" })
     expect(JSON.stringify(p.fields)).not.toContain("tag_color")
     const cf = JSON.stringify(p.custom_fields)
@@ -202,7 +212,7 @@ describe("artifactDetails (the flexpane)", () => {
     const f = (d.entity_payload as { fields: Record<string, never> }).fields
     // Only content_item's own field names, and markdown — "plain_text" is not in the enum and
     // rejects the entire payload.
-    expect(Object.keys(f)).toEqual(["description"])
+    expect(Object.keys(f).sort()).toEqual(["description", "last_modified_by"])
     expect(f.description).toMatchObject({ format: "markdown" })
     expect(JSON.stringify(f.description)).toContain("Awaiting your review")
   })
@@ -274,5 +284,133 @@ describe("review buttons target the artifact from any surface", () => {
     const acts = (e.entity_payload as { actions: { primary_actions: { value?: string }[] } })
       .actions
     for (const a of acts.primary_actions) expect(decodeReviewAction(a.value ?? "")).toBe("a1")
+  })
+})
+
+/** The bits of an entity payload these assertions reach into. */
+interface Payload {
+  fields: Record<string, Record<string, unknown> | undefined>
+  attributes: Record<string, Record<string, unknown> | undefined>
+  custom_fields: Record<string, unknown>[]
+}
+
+// THE PICTURE, AND WHO TOUCHED IT LAST.
+//
+// `content_item` recognises exactly six typed fields, established against the live API rather
+// than from the docs alone — the discriminator being that Slack SHAPE-CHECKS a field it knows
+// and silently swallows one it does not. A malformed `preview` names itself in the error; a
+// malformed `assignee` (which belongs to `task`) produces nothing at all.
+
+describe("the card's own image", () => {
+  it("carries the thumbnail as a typed field, with the alt_text Slack demands", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: status(),
+      previewUrl: "https://d/p.png",
+    })
+    const preview = (e.entity_payload as { fields: Record<string, Record<string, unknown>> }).fields
+      .preview
+    expect(preview?.type).toBe("slack#/types/image")
+    expect(preview?.image_url).toBe("https://d/p.png")
+    // Omitting alt_text fails the whole payload with a pointer at this field — verified.
+    expect(preview?.alt_text).toBeTruthy()
+  })
+
+  it("is the thumbnail AND the expanded view — two surfaces, one rendered image", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: status(),
+      previewUrl: "https://d/p.png",
+    })
+    const p = e.entity_payload as Payload
+    expect(p.fields.preview?.image_url).toBe("https://d/p.png")
+    expect(p.attributes.full_size_preview?.preview_url).toBe("https://d/p.png")
+  })
+
+  it("offers neither when there is no image to offer", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: status(),
+      previewUrl: null,
+    })
+    expect(JSON.stringify(e)).not.toContain("preview")
+  })
+})
+
+describe("what the description leads with", () => {
+  // REGRESSION GUARD. This was once "de-duplicated" on the reasoning that the Review and
+  // Waiting-on chips already say it. The result was a headline reading "Markdown · 3 versions ·
+  // 7 comments · on Derive" — the inventory line the typed card exists to stop leading with.
+  //
+  // The two slots are not peers: `description` is the prominent line, `custom_fields` are
+  // secondary labelled pairs. Repetition between them is the point, not an accident.
+  it("leads with what the doc wants from you, not with what it is", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: status({
+        review: { state: "pending", reviewerId: "u1", reviewerName: "Mert" },
+      }),
+    })
+    const p = e.entity_payload as Payload
+    expect(String(p.fields.description?.value)).toContain("Awaiting review")
+    expect(String(p.fields.description?.value)).toContain("Mert")
+    expect(String(p.fields.description?.value)).not.toContain("versions")
+    // ...and the chips still carry it too. Both, deliberately.
+    expect(JSON.stringify(p.custom_fields)).toContain("Awaiting review")
+  })
+
+  it("falls back to the inventory line only when nothing is pending", () => {
+    const e = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
+    const p = e.entity_payload as Payload
+    expect(String(p.fields.description?.value)).toContain("3 versions")
+  })
+
+  it("leads with the data summary when a version carries facts", () => {
+    // `dataSummary` leads `unfurlDescription` for a reason of its own — the numbers are what a
+    // reader scanning a shared link wants. It has a `Data` chip as well; same non-peer logic.
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info: { ...info, dataSummary: "pass 48 · fail 0" },
+      status: status(),
+    })
+    const p = e.entity_payload as Payload
+    expect(String(p.fields.description?.value)).toContain("pass 48")
+    expect(JSON.stringify(p.custom_fields)).toContain("pass 48")
+  })
+
+  it("names who published the current version, typed so Slack renders it", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: status({ lastModifiedBy: "Dana" }),
+    })
+    const f = (e.entity_payload as Payload).fields
+    expect(f.last_modified_by).toEqual({
+      type: "slack#/types/user",
+      // A display name only. A slack_user_id, an avatar url, or either beside the name are all
+      // rejected with "failed to match exactly one allowed schema" — verified against the API,
+      // so there is no @-link or avatar available here however much one would suit the card.
+      user: { text: "Dana" },
+    })
+  })
+
+  it("omits the author rather than inventing one", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info,
+      status: status({ lastModifiedBy: null }),
+    })
+    expect(JSON.stringify(e)).not.toContain("last_modified_by")
   })
 })

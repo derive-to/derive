@@ -35,6 +35,21 @@ export interface ArtifactStatus {
    *  "2 open threads" is an invitation. */
   openThreads: number
   updatedAt: string | null
+  /** Who published the current version, as a display name — the author string the version
+   *  carries, which is a person for a hand publish and an agent's name for a generated one.
+   *  Null when the artifact has no version row yet.
+   *
+   *  `content_item` has a TYPED `last_modified_by` field, so Slack renders this itself rather
+   *  than us formatting a sentence. Verified against the API: the shape takes a display name
+   *  only — a slack_user_id, an avatar url, or either alongside the name are all rejected with
+   *  "failed to match exactly one allowed schema" — so there is no @-link or avatar to be had. */
+  lastModifiedBy: string | null
+  /** Whether the current version's OG render has finished, so a card may promise a picture.
+   *
+   *  Here rather than re-read where it is needed: this resolver already reads the version row
+   *  for `lastModifiedBy`, and the Slack card was fetching the identical row a second time in
+   *  the same request to answer this one question. */
+  previewReady: boolean
 }
 
 export const artifactStatus = async (
@@ -47,6 +62,7 @@ export const artifactStatus = async (
   const round = await meta.getPendingRound(artifact.id)
   const signals = await meta.commentSignals([artifact.id], null)
   const [reviewer] = round ? await meta.getUsers([round.requested_for]) : []
+  const current = await meta.getVersion(artifact.id, artifact.current_version)
   return {
     review: round
       ? {
@@ -57,6 +73,8 @@ export const artifactStatus = async (
       : null,
     openThreads: signals[artifact.id]?.open_threads ?? 0,
     updatedAt: artifact.updated_at,
+    lastModifiedBy: current?.author ?? null,
+    previewReady: current?.preview_status === "ready" && !!current.preview_key,
   }
 }
 

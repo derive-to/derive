@@ -418,3 +418,50 @@ describe("/v1/og/:ref — the signed preview token", () => {
     expect(body).not.toContain("Unrendered Secret")
   })
 })
+
+// THE HEADER WITHOUT WHICH NONE OF THIS RENDERS.
+//
+// Slack's implementation guide: "For security reasons, these public URLs must include the CORS
+// response header set to access-control-allow-origin:https://app.slack.com."
+//
+// Worth stating what that implies, because it is not in the docs and it changes the threat
+// model: CORS is a BROWSER mechanism, so the Slack client loads the preview from the viewer's
+// own browser rather than proxying it server-side. The token in the URL is spent by the reader.
+
+describe("/v1/og/:ref — the header Slack requires on a preview image", () => {
+  it("is on the PNG a card actually displays", async () => {
+    const { app, meta, blobs } = makeApp("og-cors-png")
+    const { short_id, current_version } = await publish(app, "<h1>Hi</h1>", {
+      visibility: "public",
+      title: "Corsy",
+    })
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact not found after publish")
+    await meta.setVersionPreview(artifact.id, current_version, {
+      preview_key: await blobs.put(TINY_PNG),
+      preview_status: "ready",
+    })
+    const res = await app.request(`/v1/og/${short_id}`)
+    expect(res.headers.get("content-type")).toBe("image/png")
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.slack.com")
+  })
+
+  it("is on the SVG fallback too — that is what an unrendered doc's card points at", async () => {
+    const { app } = makeApp("og-cors-svg")
+    const { short_id } = await publish(app, "<h1>Hi</h1>", { visibility: "public", title: "S" })
+    const res = await app.request(`/v1/og/${short_id}`)
+    expect(res.headers.get("content-type")).toContain("image/svg+xml")
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.slack.com")
+  })
+
+  it("is a constant, not an echo — so the response stays cacheable on one key", async () => {
+    // Echoing the caller's Origin would make the bytes vary by requester and force a Vary that
+    // defeats the shared caching this endpoint depends on.
+    const { app } = makeApp("og-cors-constant")
+    const { short_id } = await publish(app, "<h1>Hi</h1>", { visibility: "public", title: "S" })
+    const res = await app.request(`/v1/og/${short_id}`, {
+      headers: { origin: "https://evil.example" },
+    })
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.slack.com")
+  })
+})
