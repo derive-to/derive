@@ -100,7 +100,12 @@ export const lockedUnfurlBlocks = (baseUrl: string, shortId: string): unknown[] 
  *  before — but the flexpane is per-viewer, so a reader entitled to the artifact can be shown the
  *  real thing there. Keeping the distinction in the type is what lets the caller honour both. */
 export type UnfurlDecision =
-  | { kind: "skip" }
+  /** Nothing to show, and WHICH rung decided that. The reason is not decoration: five different
+   *  states all end here and look identical from the channel, and from outside the server they
+   *  are indistinguishable — a workspace-listed artifact answers an anonymous probe exactly as a
+   *  non-existent one does, so "I pasted a link and got no card" cannot be diagnosed by trying
+   *  the URL. The caller logs this. */
+  | { kind: "skip"; why: string }
   | { kind: "auth" }
   | { kind: "card"; url: string; blocks: unknown[]; artifact: ArtifactRecord; info: UnfurlInfo }
   | { kind: "locked"; url: string; blocks: unknown[]; artifact: ArtifactRecord }
@@ -136,15 +141,20 @@ export const decideUnfurl = async (
 ): Promise<UnfurlDecision> => {
   if (!viewerId) return { kind: "auth" }
   const ref = artifactRefFromUrl(deps.baseUrl, url)
-  if (!ref) return { kind: "skip" }
+  if (!ref) return { kind: "skip", why: "url is not an artifact link on this instance" }
   let artifact: ArtifactRecord | null = null
   for (const id of candidateShortIds(ref)) {
     artifact = await deps.meta.getByShortId(id)
     if (artifact) break
   }
-  if (!artifact || artifact.removed_at) return { kind: "skip" }
-  if (artifact.org_id !== deps.orgId) return { kind: "skip" }
-  if (!(await deps.canRead(viewerId, artifact))) return { kind: "skip" }
+  if (!artifact) return { kind: "skip", why: "no artifact with that short id" }
+  if (artifact.removed_at) return { kind: "skip", why: "artifact is removed" }
+  // The likeliest cause of a silent miss in a team with more than one Derive workspace, and
+  // the one hardest to guess at: the link works for the sharer and the channel shows nothing.
+  if (artifact.org_id !== deps.orgId)
+    return { kind: "skip", why: "artifact belongs to a different Derive workspace" }
+  if (!(await deps.canRead(viewerId, artifact)))
+    return { kind: "skip", why: "sharer has no read standing on it" }
 
   // Build the locked card BEFORE unfurlInfoFor: it needs none of that, and the whole point is
   // to touch as little of the artifact as possible.
