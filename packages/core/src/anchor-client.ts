@@ -14,7 +14,8 @@
  *                  open-external / esc / present / edit-state / edit-edits /
  *                  edit-save / edit-blocked / edit-request / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
- *                  edit-mode / edit-collect / edit-restore / edit-armed / deck-drive
+ *                  edit-mode / edit-collect / edit-restore / edit-armed /
+ *                  edit-undo / edit-redo / edit-format / deck-drive
  *
  * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
  * bundles into one small self-contained script.
@@ -190,7 +191,15 @@ interface ElReg {
     emitT = window.setTimeout(emitSelection, 120)
   }
   document.addEventListener("selectionchange", () => {
-    if (editOn) return
+    // While editing, a selection means something different: not "comment on this"
+    // but "format this". The bar's B / I / link enable on it, so the state goes up
+    // through the same debounce the dirty count uses.
+    if (editOn) {
+      const r = formattableRange()
+      if (r) pendingRange = r.cloneRange()
+      scheduleDirty()
+      return
+    }
     const s = window.getSelection()
     if (s && !s.isCollapsed) {
       scheduleEmit()
@@ -372,6 +381,17 @@ interface ElReg {
       // these keys did nothing at all in a mode that looks like a text editor.
       if (focused && (e.metaKey || e.ctrlKey) && !e.altKey) {
         const k = e.key.toLowerCase()
+        // ⌘Z / ⇧⌘Z drive OUR stack, not the browser's. The native one only sees
+        // typing in the block it happened in — it cannot undo a bold, a link, a
+        // break, or a block put back — and two stacks that disagree about what
+        // happened last are worse than one that is a little coarse.
+        if (k === "z") {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          if (e.shiftKey) redo()
+          else undo()
+          return
+        }
         if (k === "b" || k === "i") {
           e.preventDefault()
           e.stopImmediatePropagation()
@@ -1599,6 +1619,10 @@ interface ElReg {
   // every tag. A bare concat ("high.Set") could never context-match "high. Set".
   let editBase: { text: string; starts: Map<Text, number> } | null = null
   let lastDirty = -1
+  /** Everything the edit bar reads, as one comparable string — so a mode where four
+   *  things can change (dirty count, undo, redo, a live selection) still posts only
+   *  when something a control would show actually moved. */
+  let lastState = ""
 
   const structSigOf = (el: Element): string => {
     const list = el.querySelectorAll("*")
@@ -1627,11 +1651,91 @@ interface ElReg {
     }
     return n
   }
+  /* ── Undo, for the whole session ──────────────────────────────────────────────
+     The browser's own undo only knows typing, and only inside the one block it
+     happened in: it cannot see a bold, a link, a line break, or a block someone
+     put back. Two stacks that disagree is worse than one that is a little coarse,
+     so the client owns ⌘Z and keeps the only stack.
+
+     A checkpoint is the block's HTML before a discrete action. Typing checkpoints
+     once per BURST (a new block, or a pause) rather than per keystroke — "undo the
+     last thing you did" is what a button implies, and per-character undo through a
+     round trip to the host would be neither. */
+  const UNDO_LIMIT = 60
+  const TYPING_BURST_MS = 900
+  let undoStack: { el: HTMLElement; html: string }[] = []
+  let redoStack: { el: HTMLElement; html: string }[] = []
+  let lastBurst: { el: HTMLElement; at: number } | null = null
+  const checkpoint = (el: HTMLElement) => {
+    undoStack.push({ el, html: el.innerHTML })
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift()
+    // A new action forks the timeline: whatever was undone is no longer ahead of us.
+    redoStack = []
+  }
+  /** Checkpoint at the start of a typing burst, never mid-word. */
+  const checkpointTyping = (el: HTMLElement) => {
+    const now = Date.now()
+    if (lastBurst && lastBurst.el === el && now - lastBurst.at < TYPING_BURST_MS) {
+      lastBurst.at = now
+      return
+    }
+    lastBurst = { el, at: now }
+    checkpoint(el)
+  }
+  /* Restoring a block's HTML replaces its text nodes with new objects. A block that
+     is ALREADY an edit target is fine (activation only consults the snapshot map when
+     it arms a block for the first time), but re-registering when the shape matches
+     keeps the aligned per-node diff available instead of falling back to a whole-block
+     span — the same care restoreEdits takes for Discard. */
+  const reregister = (t: EditTarget | null, el: HTMLElement) => {
+    if (!t || !editBase) return
+    const fresh = textNodes(el)
+    if (fresh.length !== t.origValues.length) return
+    for (let i = 0; i < fresh.length; i++)
+      editBase.starts.set(fresh[i] as Text, t.origStarts[i] as number)
+  }
+  const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
+    const entry = from.pop()
+    if (!entry || !document.contains(entry.el)) return
+    to.push({ el: entry.el, html: entry.el.innerHTML })
+    entry.el.innerHTML = entry.html
+    reregister(targetFor(entry.el), entry.el)
+    lastBurst = null
+    postDirty()
+  }
+  const undo = () => stepHistory(undoStack, redoStack)
+  const redo = () => stepHistory(redoStack, undoStack)
+
+  /** Is there a selection the format verbs could act on — one run, inside one
+   *  editable block? The bar's B / I / link enable on exactly this. */
+  const formattableRange = (): Range | null => {
+    if (!editOn) return null
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount || sel.isCollapsed) return null
+    const r = sel.getRangeAt(0)
+    const n = r.commonAncestorContainer
+    const el = n.nodeType === 1 ? (n as Element) : n.parentElement
+    return el?.closest("[data-derive-editable]") ? r : null
+  }
+  /* The range the format verbs will use. Kept because clicking a button in the HOST
+     moves focus out of this frame, and the link flow then asks for a URL up there —
+     by the time the answer comes back the live selection may be gone. */
+  let pendingRange: Range | null = null
+
   const postDirty = () => {
     const n = countDirty()
-    if (n !== lastDirty) {
+    const canFormat = !!formattableRange()
+    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}`
+    if (state !== lastState) {
+      lastState = state
       lastDirty = n
-      post({ type: "edit-state", dirty: n })
+      post({
+        type: "edit-state",
+        dirty: n,
+        canUndo: undoStack.length > 0,
+        canRedo: redoStack.length > 0,
+        canFormat,
+      })
     }
   }
   let dirtyT = 0
@@ -1704,6 +1808,13 @@ interface ElReg {
       editBase = null
       setEditHover(null)
       unmaskSlides()
+      // History belongs to the session that made it. Carrying it across would offer
+      // to undo into a document that has already been saved and reloaded.
+      undoStack = []
+      redoStack = []
+      lastBurst = null
+      pendingRange = null
+      lastState = ""
     }
   }
   const disableTarget = (t: EditTarget) => {
@@ -2055,6 +2166,9 @@ interface ElReg {
       const t = asEl(e.target)?.closest("[data-derive-editable]")
       if (!t) return
       const it = e.inputType || ""
+      // Before the mutation, not after: this is the only place we can capture what
+      // the block looked like a keystroke ago.
+      if (t instanceof HTMLElement) checkpointTyping(t)
       // Enter breaks the line. Blocking it outright made the mode feel broken —
       // pressing Enter mid-sentence is reflexive — while a real paragraph SPLIT
       // stays out: that changes the document's structure, and this editor only ever
@@ -2113,21 +2227,25 @@ interface ElReg {
   const FMT_ATTR = "data-derive-fmt"
   const HREF_ATTR = "data-derive-href"
   const applyFmt = (kind: "b" | "i" | "a", href?: string): void => {
-    const sel = window.getSelection()
-    if (!sel || !sel.rangeCount || sel.isCollapsed) {
+    // The live selection, or the one stashed when the bar's button took focus out of
+    // this frame (the link flow asks for a URL up in the host, and the answer arrives
+    // after the selection here has gone).
+    const live = formattableRange()
+    const range =
+      live ?? (pendingRange && pendingRange.startContainer.isConnected ? pendingRange : null)
+    pendingRange = null
+    if (!range) {
       post({ type: "edit-blocked", reason: "format-empty" })
       return
     }
-    const range = sel.getRangeAt(0)
-    // A selection inside one text run has a TEXT NODE as its common ancestor — which
-    // is the normal case here, and `closest` only exists on elements. Step up first.
     const anchor = range.commonAncestorContainer
     const el = anchor.nodeType === 1 ? (anchor as Element) : anchor.parentElement
     const block = el?.closest("[data-derive-editable]")
-    if (!block) {
+    if (!(block instanceof HTMLElement)) {
       post({ type: "edit-blocked", reason: "format-outside" })
       return
     }
+    checkpoint(block)
     const span = document.createElement("span")
     span.setAttribute(FMT_ATTR, kind)
     if (href) span.setAttribute(HREF_ATTR, href)
@@ -2136,10 +2254,13 @@ interface ElReg {
       // we can't express as one inline run, so the refusal is the right answer.
       range.surroundContents(span)
     } catch (_e) {
+      // The checkpoint was for an action that didn't happen — drop it, or Undo would
+      // have a step that changes nothing.
+      undoStack.pop()
       post({ type: "edit-blocked", reason: "format-range" })
       return
     }
-    sel.removeAllRanges()
+    window.getSelection()?.removeAllRanges()
     scheduleDirty()
   }
   /** Enter: a line break at the caret, carried by the same editor span the other
@@ -2153,7 +2274,8 @@ interface ElReg {
     const block = (el.nodeType === 1 ? (el as Element) : el.parentElement)?.closest(
       "[data-derive-editable]",
     )
-    if (!block) return
+    if (!(block instanceof HTMLElement)) return
+    checkpoint(block)
     const span = document.createElement("span")
     span.setAttribute(FMT_ATTR, "br")
     span.appendChild(document.createElement("br"))
@@ -2366,6 +2488,15 @@ interface ElReg {
           : undefined,
       )
     else if (d.type === "edit-armed") editArmed = !!d.on
+    // The edit bar's controls, driven from the host. Same functions the keyboard
+    // chords call, so a button and its shortcut can never mean different things.
+    else if (d.type === "edit-undo") undo()
+    else if (d.type === "edit-redo") redo()
+    else if (d.type === "edit-format")
+      applyFmt(
+        d.kind === "i" ? "i" : d.kind === "a" ? "a" : "b",
+        typeof d.href === "string" ? d.href : undefined,
+      )
     // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
     // `deck` message, which it answers itself.
     else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)

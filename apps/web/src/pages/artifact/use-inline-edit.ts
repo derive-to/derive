@@ -81,6 +81,8 @@ export function useInlineEdit(p: {
   // updates metadata without reloading the iframe out from under typed text.
   const [frozenVersion, setFrozenVersion] = useState<number | null>(null)
   const [dirty, setDirty] = useState(0)
+  /** What the bar's controls can do at this instant, as the document reports it. */
+  const [tools, setTools] = useState({ canUndo: false, canRedo: false, canFormat: false })
   // Escape (or Done) pressed with unsaved edits: the confirm the page renders.
   const [exitPrompt, setExitPrompt] = useState(false)
   const active = frozenVersion !== null
@@ -117,6 +119,7 @@ export function useInlineEdit(p: {
   const exit = (frame: "restore" | "settle" | "none") => {
     setFrozenVersion(null)
     setDirty(0)
+    setTools({ canUndo: false, canRedo: false, canFormat: false })
     setExitPrompt(false)
     if (frame === "restore") p.post({ type: "edit-mode", on: false })
     else if (frame === "settle") p.post({ type: "edit-mode", on: false, keep: true })
@@ -153,6 +156,14 @@ export function useInlineEdit(p: {
       if (d?.source !== "derive") return
       if (d.type === "edit-state") {
         setDirty(typeof d.dirty === "number" ? d.dirty : 0)
+        // What the bar's controls can offer right now. A client cached from before
+        // these existed reports none of them, and the controls stay quiet rather
+        // than promising something the document can't do.
+        setTools({
+          canUndo: !!d.canUndo,
+          canRedo: !!d.canRedo,
+          canFormat: !!d.canFormat,
+        })
       } else if (d.type === "edit-edits") {
         const w = collectWait.current
         // The nonce pins the reply to THIS collect: a slow page can answer a
@@ -250,6 +261,13 @@ export function useInlineEdit(p: {
   const confirmExit = () => exit("restore")
   const cancelExit = () => setExitPrompt(false)
   const discard = () => p.post({ type: "edit-restore" })
+  /** The bar's controls. Each one is the same call the keyboard chord makes inside
+   *  the document, so a button and its shortcut can never drift apart. A link needs
+   *  a URL, which the bar asks for before sending it. */
+  const undo = () => p.post({ type: "edit-undo" })
+  const redo = () => p.post({ type: "edit-redo" })
+  const format = (kind: "b" | "i" | "a", href?: string) =>
+    p.post({ type: "edit-format", kind, href })
   /** The frame reloaded (version swap, retry, source editor) — the edit session
    *  died with it. Exit and say so if anything was pending. */
   const onFrameGone = () => {
@@ -412,6 +430,11 @@ export function useInlineEdit(p: {
      *  whether the mode is available, rather than re-deriving eligibility. */
     canEdit: p.canEdit,
     dirty,
+    /** Live capability of the bar's controls (undo / redo / format). */
+    tools,
+    undo,
+    redo,
+    format,
     frozenVersion,
     saving: save.isPending,
     /** Unsaved edits exist — drives the navigation blocker and the exit confirm. */

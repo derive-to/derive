@@ -1032,6 +1032,12 @@ export function Artifact() {
                 canPublish={effectiveCanPublish}
                 saving={inlineEdit.saving}
                 touch={coarsePointer}
+                canUndo={inlineEdit.tools.canUndo}
+                canRedo={inlineEdit.tools.canRedo}
+                canFormat={inlineEdit.tools.canFormat}
+                onUndo={inlineEdit.undo}
+                onRedo={inlineEdit.redo}
+                onFormat={inlineEdit.format}
                 onSave={inlineEdit.save}
                 onDiscard={inlineEdit.discard}
                 onDone={inlineEdit.done}
