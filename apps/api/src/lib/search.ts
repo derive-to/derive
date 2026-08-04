@@ -59,8 +59,13 @@ export interface WorkspaceSearchDeps extends SearchDeps {
 
 export type ReadFormat = "markdown" | "html" | "text"
 export const baseType = (t: string): string => t.split(";")[0]?.trim() ?? t
-export const isTextType = (t: string): boolean =>
-  baseType(t) === "text/html" || baseType(t) === "text/markdown"
+/** Types whose bytes are indexable/greppable text. Defers to `isHtmlLike` for the HTML
+ *  side rather than comparing to "text/html" here — that is the drift isHtmlLike's own doc
+ *  warns about, and it bit exactly here: a DECK is text/x-derive-deck, so a local
+ *  text/html check made `versionIndexText` contribute nothing and decks silently dropped
+ *  out of workspace search. (Bundle call sites pass per-file types derived from the path
+ *  extension, which are never the deck type, so they are unaffected either way.) */
+export const isTextType = (t: string): boolean => isHtmlLike(t) || baseType(t) === "text/markdown"
 // Only the `markdown` format elides data: URIs (never `html`, which `edits` matches
 // byte-for-byte against, or `text`, the comment-anchor source) — see elideDataUris.
 export const present = (source: string, contentType: string, format: ReadFormat): string => {

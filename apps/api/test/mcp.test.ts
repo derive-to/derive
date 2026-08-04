@@ -2730,6 +2730,29 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(section).toContain("…[truncated")
   })
 
+  it("find (workspace mode): a DECK's content is searchable like any other page (regression)", async () => {
+    // Typing a deck as text/x-derive-deck must not drop it out of the search index. Before
+    // the sniff fix, nearly every real deck was typed text/html and so was indexed by
+    // accident; making the type correct moved them onto a code path whose text/html-only
+    // gate contributed NOTHING, silently making decks unsearchable. doc-text.ts warns about
+    // exactly this drift ("a local === text/html check would silently drift on decks"),
+    // which is why the shared predicate — not a local comparison — has to own the answer.
+    const { app, token } = appWithGrant(dir, "deckindex", "openid derive:read derive:publish")
+    const deck =
+      "<!doctype html><html><head><title>Q3</title></head><body>" +
+      '<section class="slide" data-derive-slide="0"><h1>deck-needle-omega</h1></section>' +
+      '<section class="slide" data-derive-slide="1"><h2>Second</h2></section>' +
+      '<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script>' +
+      "</body></html>"
+    const published = await (await publishRaw(app, token, deck, "deck.html", "Q3 Deck")).json()
+    // It really is typed as a deck — otherwise this test would pass vacuously via text/html.
+    expect(published.current_content_type).toBe("text/x-derive-deck")
+    const found = JSON.parse(
+      toolText(await call(app, token, "find", { query: "deck-needle-omega" })),
+    )
+    expect(matchRows(found).map((h) => h.short_id)).toEqual([published.short_id])
+  })
+
   it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
     const { app, token } = appWithGrant(dir, "readdeck", "openid derive:read derive:publish")
     // A deck fragment: the protocol name AND real slide elements. Both are required to
