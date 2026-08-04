@@ -18,7 +18,7 @@ import {
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail, toBody } from "../lib/http"
-import { verifyOgToken } from "../lib/og-token"
+import { SLACK_PREVIEW_ORIGIN, verifyOgToken } from "../lib/og-token"
 import { unfurlInfoFor } from "../lib/unfurl-info"
 
 /**
@@ -146,6 +146,9 @@ export const embedRoutes = (ctx: AppContext) => {
               ? "public, max-age=86400, stale-while-revalidate=604800"
               : cacheFor(artifact, "public, max-age=86400, stale-while-revalidate=604800", 3600),
             "X-Content-Type-Options": "nosniff",
+            // Slack REQUIRES this on anything it is handed as a preview image; without it the
+            // card's picture simply does not appear. See SLACK_PREVIEW_ORIGIN.
+            "Access-Control-Allow-Origin": SLACK_PREVIEW_ORIGIN,
           })
       }
     }
@@ -180,6 +183,9 @@ export const embedRoutes = (ctx: AppContext) => {
         3600,
       ),
       "X-Content-Type-Options": "nosniff",
+      // Same header on the fallback: this URL is what a public artifact's card points at, and it
+      // lands here whenever that artifact's render is still pending.
+      "Access-Control-Allow-Origin": SLACK_PREVIEW_ORIGIN,
     })
   })
 

@@ -124,15 +124,42 @@ export const artifactEntity = (a: WorkObjectArgs): Record<string, unknown> => {
   // `fields` is REQUIRED — omitting it fails the whole payload with "missing required field:
   // fields", which surfaces as a format error that looks like a wrapper problem. Only the five
   // names content_item knows may go here; everything else belongs in custom_fields below.
+  //
+  // ONE FACT, ONE PLACE. The description used to lead with the review sentence, which
+  // `custom_fields` below states again as `Review` and `Waiting on` — three renderings of the
+  // same thing on a card with room for none of them. The labelled fields win that tie: they are
+  // what Slack draws as scannable chips where the eye goes, which is the whole reason for
+  // adopting a typed entity over a block card. So `description` stops repeating them, and stops
+  // leading with `dataSummary` too — that has its own `Data` chip.
+  //
+  // What is left is the inventory line. Thin, but it is genuinely all the prose there is: an
+  // artifact carries no summary or excerpt anywhere in `UnfurlInfo`, so there is nothing better
+  // to put here and nothing lost by not trying.
   const fields: Record<string, unknown> = {
     description: {
-      value: statusPhrase(status)?.text
-        ? `${statusPhrase(status)?.text}${status.review?.reviewerName ? ` — ${status.review.reviewerName}` : ""}`
-        : unfurlDescription(info),
+      value: unfurlDescription({ ...info, dataSummary: null }),
       // "markdown", never "plain_text": the latter is not in the enum and rejects the payload.
       format: "markdown",
     },
   }
+  // The THUMBNAIL on the card itself — the picture people see without clicking, as distinct from
+  // `full_size_preview`, which is the expanded view. `alt_text` is required: omitting it fails
+  // the payload with a pointer straight at this field.
+  //
+  // Both surfaces take the same URL. It is one already-rendered, already-cached image, and
+  // Slack scales it.
+  if (a.previewUrl)
+    fields.preview = {
+      type: "slack#/types/image",
+      alt_text: `Preview of ${info.title}`.slice(0, 200),
+      image_url: a.previewUrl,
+    }
+  // A typed field Slack renders itself, and the question a document card most owes an answer to.
+  if (status.lastModifiedBy)
+    fields.last_modified_by = {
+      type: "slack#/types/user",
+      user: { text: status.lastModifiedBy },
+    }
   if (status.updatedAt) {
     const ms = Date.parse(status.updatedAt)
     // A typed date, so Slack renders it in the reader's own locale and timezone.
@@ -215,6 +242,10 @@ export const artifactDetails = (
   previewUrl?: string | null,
 ): Record<string, unknown> => {
   const phrase = statusPhrase(status, viewerId)
+  // Unlike the card, this one KEEPS the status sentence alongside the description. It is not the
+  // same sentence: `statusPhrase` takes the viewer, so this panel says "Awaiting YOUR review" to
+  // the person actually being waited on — which no labelled chip can express, because a chip is
+  // the same for everybody and this surface is not.
   const fields: Record<string, unknown> = {
     description: {
       value: phrase
@@ -223,6 +254,17 @@ export const artifactDetails = (
       format: "markdown",
     },
   }
+  if (previewUrl)
+    fields.preview = {
+      type: "slack#/types/image",
+      alt_text: `Preview of ${info.title}`.slice(0, 200),
+      image_url: previewUrl,
+    }
+  if (status.lastModifiedBy)
+    fields.last_modified_by = {
+      type: "slack#/types/user",
+      user: { text: status.lastModifiedBy },
+    }
   const ago = agoLabel(status.updatedAt)
   return {
     // `url` and `external_ref` are REQUIRED here, not optional identity decoration:
