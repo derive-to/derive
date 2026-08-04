@@ -219,14 +219,19 @@ export const contextRoutes = (ctx: AppContext) => {
    * thing, and this is what makes the next round of work aimable.
    */
   const timedModel = (call: AgentLoopInput["callModel"]) => {
-    const stat = { calls: 0, ms: 0 }
+    // Each call's own duration, not just the sum: three calls of 1.5s and one of 4.5s are the
+    // same total and completely different problems — the first is per-call latency to fix, the
+    // second is one pathological step to find.
+    const stat = { calls: 0, ms: 0, each: [] as number[] }
     const wrapped: AgentLoopInput["callModel"] = async (req) => {
       stat.calls++
       const t0 = Date.now()
       try {
         return await call(req)
       } finally {
-        stat.ms += Date.now() - t0
+        const took = Date.now() - t0
+        stat.ms += took
+        stat.each.push(took)
       }
     }
     return { stat, wrapped }
@@ -318,6 +323,7 @@ export const contextRoutes = (ctx: AppContext) => {
       // we can actually do something about.
       other_ms: Date.now() - startedAt - timed.stat.ms,
       model_calls: timed.stat.calls,
+      model_each_ms: timed.stat.each.join(","),
       outcome: res.outcome,
     })
     await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
