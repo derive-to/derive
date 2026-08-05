@@ -169,3 +169,34 @@ describe("read map / node", () => {
     expect(json.nodes.map((n) => n.ref)).toContain("slide:2")
   })
 })
+
+describe("read: map/node exclusivity with the whole-version views", () => {
+  it("refuses render alongside map or node instead of silently rendering", async () => {
+    // Found by heavy preview testing: the render branch runs BEFORE the map rung, so the
+    // map rung's own guard never fired and read(map, render) answered with a SCREENSHOT —
+    // a different question than the one asked.
+    const { app, token, short_id } = await setup("map-render")
+    for (const args of [
+      { short_id, map: true, render: "top" },
+      { short_id, node: "slide:1", render: "top" },
+    ]) {
+      const r = await readTool(app, token, args)
+      expect(r.isError, `${JSON.stringify(args)} should refuse`).toBe(true)
+      expect(r.text).toContain("pass it alone")
+    }
+  })
+})
+
+describe("a deck carries its derived facts", () => {
+  it("persists $map for a DECK, not just for pages", async () => {
+    // Found on the preview: a freshly published deck carried no facts at all. Its type is
+    // `text/x-derive-deck`, and the facts pipeline gated on a literal text/html check —
+    // right while every fact was author-embedded, wrong once $map shipped, since a deck's
+    // structure is the thing a map is most useful for.
+    const { app, token, short_id } = await setup("deck-facts")
+    const one = await readJson(app, token, { short_id, data: "$map" })
+    expect(one.fact).toBe("$map")
+    expect(one.data.kind).toBe("deck")
+    expect((one.data.nodes as { ref: string }[]).map((n) => n.ref)).toContain("slide:1")
+  })
+})

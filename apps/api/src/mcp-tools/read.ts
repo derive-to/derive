@@ -6,6 +6,7 @@ import {
   deriveFacts,
   docMap,
   isDerivedFactName,
+  isHtmlLike,
   landmarkSlice,
   landmarksOf,
   mapJson,
@@ -57,7 +58,10 @@ import { CORE_SKILLS } from "../skills-reference.gen"
  *  them to do the thing that was just silently ignored. Found by dogfooding: a bundle
  *  whose index.html DID carry a valid block still read back as "embed a block to add one". */
 const kindCarriesFacts = (v: VersionRecord | null): boolean =>
-  v?.content_type === "text/html" || v?.content_type === "text/markdown"
+  v?.content_type === "text/html" ||
+  v?.content_type === "text/markdown" ||
+  // A deck carries DERIVED rows ($map above all) though it can embed none of its own.
+  isHtmlLike(v?.content_type ?? "")
 
 /** Why a fact is absent, said accurately — the cases the old single message merged.
  *  A `$name` can never be embedded (the author grammar rejects `$`), so "embed a block"
@@ -399,7 +403,10 @@ export function registerReadTool(tc: ToolContext): void {
       // key/status/error triple, so "full"/"marked" failing never blocks "top" (the
       // OG crop og:image unfurls depend on) and vice versa.
       if (render) {
-        if (section || lines)
+        // `map`/`node` belong here too: this branch runs BEFORE the map rung below, so its
+        // own guard against `render` never fires. Found on the preview — read(map, render)
+        // silently returned a screenshot to a caller who asked for the structure.
+        if (section || lines || wantMap || node)
           return err(
             "`render` is a view of the whole version — pass it alone (with `version` for history).",
           )
