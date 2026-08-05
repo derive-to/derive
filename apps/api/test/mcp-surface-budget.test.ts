@@ -293,13 +293,19 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
   })
 })
 
-describe("the surface is sized to the CONNECTION", () => {
-  // PARAM-level, not tool-level. A param carries no promise anywhere else on the surface,
-  // so omitting one a grant could never make take effect costs a reader nothing. Hiding
-  // whole TOOLS was tried and reverted: the instructions advertise all ten core skills to
-  // every connection, so a read-only grant would be promised checkpoint's procedure with no
-  // checkpoint tool, and an unknown-tool error teaches less than the refusal it replaced.
-  const publishParamsFor = async (name: string, scopes: string) => {
+describe("the surface does NOT vary by scope", () => {
+  // Built, measured and reverted, pinned here so the next attempt confronts the reason.
+  //
+  // Hiding publish's live-only params (workspace_access, link_role, listed, request_review)
+  // from a grant that can only propose saved 197 tokens — 4.1% of the tool surface, and ONLY
+  // for read-only connections, which are the ones doing the least work. A publishing agent,
+  // the connection that matters, saw every param either way.
+  //
+  // Against that: derive://skills/publishing names all four outright, and skills are static
+  // markdown that cannot vary per connection. A gated agent reads a procedure naming params
+  // its schema does not contain — the same contradiction that stopped tool-level gating.
+  // Vary the surface only if the skills can vary with it.
+  const paramsFor = async (name: string, scopes: string) => {
     const { app, token } = appWithGrant(name, scopes)
     await rpc(app, token, initBody)
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
@@ -307,26 +313,19 @@ describe("the surface is sized to the CONNECTION", () => {
       name: string
       inputSchema?: { properties?: Record<string, unknown> }
     }[]
-    const pub = tools.find((t) => t.name === "publish")
-    return Object.keys(pub?.inputSchema?.properties ?? {})
+    return Object.keys(
+      tools.find((t) => t.name === "publish")?.inputSchema?.properties ?? {},
+    ).sort()
   }
 
-  it("shows publish's live-only access params to a grant that can publish", async () => {
-    const params = await publishParamsFor("scope-rw", "openid derive:read derive:publish")
-    expect(params).toEqual(
-      expect.arrayContaining(["workspace_access", "link_role", "listed", "request_review"]),
-    )
-    // …and the payload params every grant needs either way.
-    expect(params).toEqual(expect.arrayContaining(["content", "edits", "slide_ops", "short_id"]))
-  })
-
-  it("hides them from a read-only grant, which could never make them take effect", async () => {
-    // Access is stamped when a NEW artifact goes live; this grant's ceiling only ever files
-    // proposals, so these four were pure context rent for it.
-    const params = await publishParamsFor("scope-ro", "openid derive:read")
-    for (const gone of ["workspace_access", "link_role", "listed", "request_review"])
-      expect(params, `${gone} should be absent`).not.toContain(gone)
-    // The tool itself STAYS: a commenter files proposals through it.
-    expect(params).toEqual(expect.arrayContaining(["content", "edits", "short_id"]))
+  it("gives a read-only grant the same publish schema as a publishing one", async () => {
+    const ro = await paramsFor("same-ro", "openid derive:read")
+    const rw = await paramsFor("same-rw", "openid derive:read derive:publish")
+    expect(ro).toEqual(rw)
+    for (const named of ["workspace_access", "link_role", "listed", "request_review"])
+      expect(
+        ro,
+        `${named} is named by the publishing skill, so it must be in the schema`,
+      ).toContain(named)
   })
 })

@@ -54,9 +54,13 @@ import {
 import { enqueueChannelDelivery } from "../webhooks"
 
 export function registerPublishTool(tc: ToolContext): void {
-  // The ceiling this GRANT allows in every workspace (capRole clamps each per-workspace role
-  // by it), so a false here can never hide a param that would have worked somewhere else.
-  const canPublishLive = roleAllows(tc.scopeForCap, "publish")
+  // NOTE: the surface deliberately does NOT vary by scope. Hiding publish's live-only access
+  // params from a grant that can only propose was built, measured (197 tokens, 4.1%) and
+  // REVERTED: derive://skills/publishing names `workspace_access`, `link_role`, `listed` and
+  // `request_review` outright, and skills are static, so a gated connection reads a procedure
+  // naming params its schema does not contain. That is the same contradiction that stopped
+  // tool-level gating one commit earlier. It also bought nothing where it matters — a
+  // publishing agent, the connection doing real work, saw every param either way.
   const {
     server,
     ctx,
@@ -175,32 +179,24 @@ export function registerPublishTool(tc: ToolContext): void {
           ),
         title: z.string().optional(),
         short_id: z.string().optional(),
-        // LIVE-PUBLISH-ONLY, and therefore CONNECTION-CONDITIONAL. Access is stamped when a
-        // NEW artifact goes live; a connection whose scope ceiling cannot publish only ever
-        // files proposals (see `review` below), so these three could never take effect for
-        // it — they would be pure context rent, described in every turn to be ignored.
-        ...(canPublishLive
-          ? {
-              workspace_access: z
-                .enum(["none", "member"])
-                .optional()
-                .describe(
-                  "Do this workspace's members reach a NEW artifact, each at their seat role: member (default) or none (invite-only). Ignored on republish.",
-                ),
-              link_role: z
-                .enum(["none", "viewer", "commenter", "editor"])
-                .optional()
-                .describe(
-                  "What merely holding a NEW artifact's URL confers on ANYONE, including outside the workspace: none (default) | viewer | commenter | editor. Anonymous holders clamp to viewer. Ignored on republish.",
-                ),
-              listed: z
-                .enum(["none", "workspace", "public"])
-                .optional()
-                .describe(
-                  "Where a NEW artifact surfaces for discovery (no access of its own): none (default) | workspace (needs workspace_access=member) | public (needs a link_role). Ignored on republish.",
-                ),
-            }
-          : {}),
+        workspace_access: z
+          .enum(["none", "member"])
+          .optional()
+          .describe(
+            "Do this workspace's members reach a NEW artifact, each at their seat role: member (default) or none (invite-only). Ignored on republish.",
+          ),
+        link_role: z
+          .enum(["none", "viewer", "commenter", "editor"])
+          .optional()
+          .describe(
+            "What merely holding a NEW artifact's URL confers on ANYONE, including outside the workspace: none (default) | viewer | commenter | editor. Anonymous holders clamp to viewer. Ignored on republish.",
+          ),
+        listed: z
+          .enum(["none", "workspace", "public"])
+          .optional()
+          .describe(
+            "Where a NEW artifact surfaces for discovery (no access of its own): none (default) | workspace (needs workspace_access=member) | public (needs a link_role). Ignored on republish.",
+          ),
         spa: z
           .boolean()
           .optional()
@@ -229,16 +225,12 @@ export function registerPublishTool(tc: ToolContext): void {
           .array(z.string())
           .optional()
           .describe("Thread ids (from catch_up) this revision resolves."),
-        ...(canPublishLive
-          ? {
-              request_review: z
-                .boolean()
-                .optional()
-                .describe(
-                  "After a LIVE publish, ask your human to review this version — the /derive loop.",
-                ),
-            }
-          : {}),
+        request_review: z
+          .boolean()
+          .optional()
+          .describe(
+            "After a LIVE publish, ask your human to review this version — the /derive loop.",
+          ),
         // SEE IT in the same call. Optional and off by default, so an existing caller's
         // response shape never changes.
         render: z
