@@ -5,11 +5,6 @@ import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 import { getInstanceChatModel, setInstanceChatModel } from "../lib/instance-settings"
 import { reindexSearchBatch } from "../lib/search"
-import {
-  BACKFILL_DEFAULT_LIMIT,
-  BACKFILL_MAX_LIMIT,
-  backfillSummaryBatch,
-} from "../lib/summary-backfill"
 import { log } from "../log"
 
 /** Operational endpoints: liveness (/healthz), readiness (/readyz — proves the datastore
@@ -143,45 +138,6 @@ export const systemRoutes = (ctx: AppContext) => {
       { orgId: body.orgId, cursor: body.cursor ?? undefined, limit },
     )
     return c.json(result)
-  })
-
-  // Backfill the one-line summary every unfurl surface describes an artifact with, over the
-  // EXISTING corpus. Publishing keeps it current going forward (lib/after-publish.ts); this
-  // closes the gap for artifacts published before that wiring. Same operator loop as
-  // search-reindex above — re-POST with `nextCursor` until it comes back null:
-  //   curl -XPOST -H "authorization: Bearer $DERIVE_TOKEN" .../v1/system/summary-backfill
-  //   # then repeat, passing {"cursor": <nextCursor>} until nextCursor is null
-  //
-  // Pages are far smaller than the reindex sweep's (25 vs 100) because the per-artifact work is
-  // a MODEL CALL rather than a blob read, so wall time — not the subrequest ceiling — is what
-  // bounds a page. Idempotent: an artifact that already has a summary costs one read, so a
-  // partial sweep can be resumed from cursor 0 rather than tracked.
-  //
-  // 404 rather than a no-op when no model is bound: on a deploy without one there is nothing
-  // this could ever do, and a silent 200 reporting "0 attempted" reads like an empty corpus.
-  app.post("/v1/system/summary-backfill", async (c) => {
-    if (!isToken(c) && !(await isSuperAdmin(c)))
-      return fail(c, 403, "operator access required (DERIVE_TOKEN or a super-admin account)")
-    if (!deps.summarize)
-      return fail(c, 404, "no summarizer is configured on this deployment (needs the AI binding)")
-    const body = await readJson(
-      c,
-      z.object({
-        orgId: z.string().optional(),
-        // `.nullish()` for the same reason as search-reindex: the natural resume loop echoes back
-        // the previous `nextCursor`, which is literally null on the final page.
-        cursor: z.object({ key: z.string(), id: z.string() }).nullish(),
-        limit: z.number().int().optional(),
-      }),
-    )
-    if (body instanceof Response) return body
-    const limit = Math.min(Math.max(body.limit ?? BACKFILL_DEFAULT_LIMIT, 1), BACKFILL_MAX_LIMIT)
-    return c.json(
-      await backfillSummaryBatch(
-        { meta, blobs, summarize: deps.summarize },
-        { orgId: body.orgId, cursor: body.cursor ?? undefined, limit },
-      ),
-    )
   })
 
   // A minimal API-origin landing, ONLY for deployments with no SPA at all. Skipped
