@@ -120,13 +120,8 @@ const srcHash = async (text: string): Promise<string> => {
  *
  * Every exit logs its reason. "The card says nothing and I cannot tell why" is exactly the shape
  * of bug that cost a day on the unfurl ladder, and one line naming the rung is what prevents it.
- *
- * Exported for the one-time backfill (lib/summary-backfill.ts) so an artifact published before
- * this existed is described by exactly the same code as one published after — same input
- * shaping, same gate, same sanitizer, same skip reasons. Two paths producing different summaries
- * for the same bytes is the drift this file's header exists to prevent.
  */
-export const summarizeVersion = async (
+const summarizeVersion = async (
   meta: Pick<MetaStore, "setVersionSummary" | "getVersion">,
   blobs: BlobStore,
   summarizer: Summarizer,
