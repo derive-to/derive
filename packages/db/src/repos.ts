@@ -18,6 +18,7 @@ import type {
   ConnectionScope,
   ConnectionStatus,
   ContextAskerRecord,
+  ContextOutput,
   ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
@@ -3005,19 +3006,45 @@ export function makeRepos(db: SqliteDb) {
     (await db.select().from(contextSession).where(eq(contextSession.id, id)).get()) ?? null
   const listSessions = async (
     contextId: string,
-    opts?: { askerId?: string; limit?: number },
+    opts?: { askerId?: string; limit?: number; cursor?: { key: string; id: string } },
   ): Promise<SessionRecord[]> => {
-    const where = opts?.askerId
-      ? and(eq(contextSession.context_id, contextId), eq(contextSession.asker_id, opts.askerId))
-      : eq(contextSession.context_id, contextId)
+    const clauses = [eq(contextSession.context_id, contextId)]
+    if (opts?.askerId) clauses.push(eq(contextSession.asker_id, opts.askerId))
+    // Keyset, not offset (a session opened mid-paging would shift every offset and
+    // repeat a row), and the id tiebreak is required, not belt-and-braces: several
+    // sessions really do share a created_at, and `created_at < key` alone would skip
+    // every one of them at the page boundary.
+    const cur = opts?.cursor
+    if (cur)
+      clauses.push(
+        or(
+          lt(contextSession.created_at, cur.key),
+          and(eq(contextSession.created_at, cur.key), lt(contextSession.id, cur.id)),
+        ) as SQL,
+      )
     return db
       .select()
       .from(contextSession)
-      .where(where)
-      .orderBy(desc(contextSession.created_at))
+      .where(and(...clauses))
+      .orderBy(desc(contextSession.created_at), desc(contextSession.id))
       .limit(opts?.limit ?? 50)
       .all()
   }
+  const contextOutputs = async (contextId: string, limit?: number): Promise<ContextOutput[]> =>
+    db
+      .select({
+        short_id: contextSession.result_artifact_id,
+        runs: count(),
+        last_run_at: sql<string>`max(coalesce(${contextSession.updated_at}, ${contextSession.created_at}))`,
+      })
+      .from(contextSession)
+      .where(
+        and(eq(contextSession.context_id, contextId), isNotNull(contextSession.result_artifact_id)),
+      )
+      .groupBy(contextSession.result_artifact_id)
+      .orderBy(desc(sql`max(coalesce(${contextSession.updated_at}, ${contextSession.created_at}))`))
+      .limit(limit ?? 50)
+      .all() as Promise<ContextOutput[]>
   const listChatSessions = async (
     orgId: string,
     askerId: string,
@@ -4553,6 +4580,7 @@ export function makeRepos(db: SqliteDb) {
     createSessionWithMessage,
     getSession,
     listSessions,
+    contextOutputs,
     listChatSessions,
     pendingSessions,
     claimPendingSessions,

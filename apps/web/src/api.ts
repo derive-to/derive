@@ -313,6 +313,10 @@ export type ContextInfo = components["schemas"]["ContextInfo"]
 export type ContextDetail =
   paths["/v1/contexts/{id}"]["get"]["responses"][200]["content"]["application/json"]
 export type ManifestSkillInfo = components["schemas"]["ManifestSkillInfo"]
+/** One artifact a context produced, grouped across every run that bound it. Generated
+ *  from the OpenAPI spec. */
+export type ContextOutput =
+  paths["/v1/contexts/{id}/outputs"]["get"]["responses"][200]["content"]["application/json"]["outputs"][number]
 /** The runner's structured payload on an agent message. Generated from the spec. */
 export type SessionMeta = components["schemas"]["SessionMeta"]
 export type SessionMessage = components["schemas"]["SessionMessage"]
@@ -1040,8 +1044,21 @@ export const api = {
     f(`/v1/contexts/${id}/askers`, opts({ email })).then(j),
   removeContextAsker: (id: string, userId: string): Promise<void> =>
     f(`/v1/contexts/${id}/askers/${userId}`, { ...opts(), method: "DELETE" }).then(() => undefined),
-  listContextSessions: (id: string): Promise<{ sessions: Session[] }> =>
-    f(`/v1/contexts/${id}/sessions`, opts()).then(j),
+  // `cursor` comes from the previous page's `next_cursor` (a `created_at|id` keyset);
+  // null there means the list is exhausted.
+  listContextSessions: (
+    id: string,
+    cursor?: string,
+  ): Promise<{ sessions: Session[]; next_cursor: string | null }> =>
+    f(
+      `/v1/contexts/${id}/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      opts(),
+    ).then(j),
+  // What the context has PRODUCED — result bindings grouped by artifact, so a report
+  // republished nightly is one row carrying a run count. `title`/`version` are null when
+  // the viewer can't read that artifact (the run isn't a secret; the document is).
+  listContextOutputs: (id: string): Promise<{ outputs: ContextOutput[] }> =>
+    f(`/v1/contexts/${id}/outputs`, opts()).then(j),
   getSession: (
     id: string,
   ): Promise<{

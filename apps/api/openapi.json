@@ -8175,6 +8175,24 @@
             "required": true,
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Keyset cursor (`created_at|id`, from `next_cursor`) — return sessions strictly older than it. An offset would repeat rows as new sessions open; the id half keeps sessions that share a created_at from being skipped at the boundary."
+            },
+            "required": false,
+            "description": "Keyset cursor (`created_at|id`, from `next_cursor`) — return sessions strictly older than it. An offset would repeat rows as new sessions open; the id half keeps sessions that share a created_at from being skipped at the boundary.",
+            "name": "cursor",
+            "in": "query"
           }
         ],
         "responses": {
@@ -8190,10 +8208,16 @@
                       "items": {
                         "$ref": "#/components/schemas/Session"
                       }
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Pass as `cursor` for the next page; null when this page reached the end."
                     }
                   },
                   "required": [
-                    "sessions"
+                    "sessions",
+                    "next_cursor"
                   ]
                 }
               }
@@ -8396,6 +8420,75 @@
                   },
                   "required": [
                     "sessions"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/outputs": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "The artifacts a context has produced, grouped by artifact with a run count.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The context's outputs, most recently produced first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outputs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "short_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Null when this viewer cannot read the artifact, or it is gone."
+                          },
+                          "version": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "runs": {
+                            "type": "number",
+                            "description": "How many of this context's sessions bound it."
+                          },
+                          "last_run_at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "short_id",
+                          "title",
+                          "version",
+                          "runs",
+                          "last_run_at"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "outputs"
                   ]
                 }
               }
