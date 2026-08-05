@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { Copy as CopyIcon, Cpu, Plug, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
@@ -32,7 +32,13 @@ import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
-import { artifactQuery, contextQuery, contextSessionsQuery, sessionQuery } from "@/lib/queries"
+import {
+  artifactQuery,
+  contextOutputsQuery,
+  contextQuery,
+  contextSessionsQuery,
+  sessionQuery,
+} from "@/lib/queries"
 import { applyDelta, type DeltaState, EMPTY_DELTA } from "@/lib/session-delta"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -41,7 +47,7 @@ import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
-import { ConsolePending } from "./context-skeleton"
+import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 
 // The context console: a context's HOME, not a bare chat widget — what it is (the
@@ -102,10 +108,16 @@ function Console({ id }: { id: string }) {
     refetchInterval: 60_000,
   })
   const {
-    data: sessions,
+    data: sessionPages,
     isError: sessionsFailed,
     refetch: refetchSessions,
-  } = useQuery(contextSessionsQuery(id))
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery(contextSessionsQuery(id))
+  // One flat list off the pages — the picker and Activity both read it, and neither
+  // cares where a page boundary fell.
+  const sessions = sessionPages?.pages.flatMap((p) => p.sessions)
   // The tab names the context; base title while it loads (or on no-access).
   useDocumentTitle(context?.name ?? null)
 
@@ -193,6 +205,9 @@ function Console({ id }: { id: string }) {
           </TabsTrigger>
           <TabsTrigger value="manifest" data-testid="console-tab-manifest">
             Manifest
+          </TabsTrigger>
+          <TabsTrigger value="output" data-testid="console-tab-output">
+            Output
           </TabsTrigger>
           {isOwner && (
             <TabsTrigger value="activity" data-testid="console-tab-activity">
@@ -308,6 +323,10 @@ function Console({ id }: { id: string }) {
           <ManifestTab context={context} />
         </TabsContent>
 
+        <TabsContent value="output" className="pt-4">
+          <OutputList contextId={id} />
+        </TabsContent>
+
         {isOwner && (
           <TabsContent value="activity" className="pt-4">
             <ActivityList
@@ -316,6 +335,8 @@ function Console({ id }: { id: string }) {
                 setPicked(sid)
                 setTab("chat")
               }}
+              onLoadMore={hasNextPage ? () => fetchNextPage() : undefined}
+              loadingMore={isFetchingNextPage}
             />
           </TabsContent>
         )}
@@ -562,7 +583,16 @@ function RunnerCard({
         <div className="flex flex-col gap-2 border-t border-border-soft pt-2.5">
           <div>
             <p className="text-2xs text-muted-foreground">
-              Serve it from your own session — no token:
+              Give it work — from Chat above, or any coding session:
+            </p>
+            <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
+              use({"{"} context: "{context.name}", instruction: "…" {"}"})
+            </code>
+          </div>
+          <div>
+            <p className="text-2xs text-muted-foreground">
+              Then serve it from your own session — no token. This only claims what's already been
+              given; it does nothing on an empty queue:
             </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               use({"{"} context: "{context.name}" {"}"})
@@ -932,11 +962,14 @@ function SessionThread({
   const [text, setText] = useState("")
   // The picker pills read the sessions LIST; the transcript polls its own key.
   // Sync the list whenever this session's state settles, so a pill never keeps
-  // saying "open" after the answer has already rendered below it.
+  // saying "open" after the answer has already rendered below it. Output goes with
+  // it: the turn that settles is the turn that may have bound a result artifact.
   const state = data?.session.state
   useEffect(() => {
-    if (state && state !== "open")
+    if (state && state !== "open") {
       qc.invalidateQueries({ queryKey: contextSessionsQuery(contextId).queryKey })
+      qc.invalidateQueries({ queryKey: contextOutputsQuery(contextId).queryKey })
+    }
   }, [state, contextId, qc])
   const refresh = () => qc.invalidateQueries({ queryKey: sessionQuery(sessionId).queryKey })
   // The server already publishes these on the same per-user SSE stream the notification
@@ -1297,19 +1330,39 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
   )
 }
 
-// The owner's view: every session on this context, most recent first.
-function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: string) => void }) {
+// The owner's view: every session on this context, most recent first. Paged rather than
+// capped — a context that has been running for months has a record longer than one page,
+// and "the last 50" is not the record.
+function ActivityList({
+  sessions,
+  onOpen,
+  onLoadMore,
+  loadingMore,
+}: {
+  sessions: Session[]
+  onOpen: (id: string) => void
+  /** Undefined once the list is exhausted — the button disappears rather than no-ops. */
+  onLoadMore?: () => void
+  loadingMore?: boolean
+}) {
   if (sessions.length === 0)
     return <EmptyState title="No sessions yet" description="The first message starts the record." />
   return (
     <ul className="flex flex-col">
       {sessions.map((s) => (
-        <li key={s.id} className="border-b last:border-0">
+        <li
+          key={s.id}
+          className="flex items-center gap-3 border-b px-1 py-2.5 text-sm last:border-0 hover:bg-accent"
+        >
+          {/* A Link can't nest inside a button (invalid HTML, and the result link needs its
+              own navigation) — the row's open-chat click zone and the result link are siblings,
+              not parent/child; the result link stops propagation so it navigates instead of
+              also opening the thread underneath it. */}
           <button
             type="button"
             data-testid="console-activity-row"
             onClick={() => onOpen(s.id)}
-            className="flex w-full items-center gap-3 px-1 py-2.5 text-left text-sm hover:bg-accent"
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
           >
             <span className="text-foreground">{ago(s.created_at)}</span>
             {s.asker_username && <span className="text-muted-foreground">@{s.asker_username}</span>}
@@ -1319,15 +1372,116 @@ function ActivityList({ sessions, onOpen }: { sessions: Session[]; onOpen: (id: 
                 local
               </Badge>
             )}
-            <span className="ml-auto flex items-center gap-2.5">
-              <span className="font-mono text-xs text-muted-foreground">v{s.context_version}</span>
-              {s.result_artifact_id && (
-                <span className="font-mono text-xs text-muted-foreground">▤ result</span>
-              )}
-            </span>
           </button>
+          <span className="font-mono text-xs text-muted-foreground">v{s.context_version}</span>
+          {s.result_artifact_id && (
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: s.result_artifact_id }}
+              data-testid="console-activity-result"
+              onClick={(e) => e.stopPropagation()}
+              className="flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              <Icon name="all" size={12} />
+              result
+            </Link>
+          )}
         </li>
       ))}
+      {onLoadMore && (
+        <li className="pt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="console-activity-more"
+            onClick={onLoadMore}
+            loading={loadingMore}
+            disabled={loadingMore}
+          >
+            Load more
+          </Button>
+        </li>
+      )}
+    </ul>
+  )
+}
+
+// WHAT THIS CONTEXT HAS PRODUCED — its body of work, not its conversation log. One row
+// per artifact however many runs bound it, so a report republished nightly reads as one
+// living document with a run count rather than fifty identical rows.
+function OutputList({ contextId }: { contextId: string }) {
+  const { data: outputs, isPending, isError, refetch } = useQuery(contextOutputsQuery(contextId))
+  if (isPending) return <ContextRowsSkeleton />
+  if (isError)
+    return (
+      <StatusPanel
+        layout="inline"
+        tone="danger"
+        title="Couldn't load this context's output"
+        description="Try again in a moment."
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="console-output-retry"
+            onClick={() => refetch()}
+          >
+            Try again
+          </Button>
+        }
+      />
+    )
+  if (!outputs || outputs.length === 0)
+    return (
+      <EmptyState
+        icon={<Icon name="all" strokeWidth={1.75} />}
+        title="Nothing published yet"
+        description="When a run binds a result artifact, it shows up here — one row per document, however many runs it took."
+      />
+    )
+  return (
+    <ul className="flex flex-col">
+      {outputs.map((o) => {
+        // A run this viewer can see, on a document they can't: the row stays (the run
+        // is already in Activity) but it never becomes a link to something unreadable.
+        const unreadable = o.title === null
+        const body = (
+          <>
+            <Icon name="all" size={14} className="text-muted-foreground" />
+            <span className={cn("truncate", unreadable && "text-muted-foreground")}>
+              {o.title ?? o.short_id}
+            </span>
+            {unreadable && (
+              <Badge variant="outline" className="text-2xs">
+                unavailable
+              </Badge>
+            )}
+            <span className="ml-auto flex shrink-0 items-center gap-2.5 font-mono text-xs text-muted-foreground">
+              {o.version != null && <span>v{o.version}</span>}
+              <span>
+                {o.runs} {o.runs === 1 ? "run" : "runs"}
+              </span>
+              <span>{ago(o.last_run_at)}</span>
+            </span>
+          </>
+        )
+        return (
+          <li key={o.short_id} className="border-b last:border-0">
+            {unreadable ? (
+              <div className="flex items-center gap-3 px-1 py-2.5 text-sm">{body}</div>
+            ) : (
+              <Link
+                to="/artifacts/$ref"
+                params={{ ref: o.short_id }}
+                data-testid="console-output-row"
+                className="flex items-center gap-3 px-1 py-2.5 text-sm hover:bg-accent"
+              >
+                {body}
+              </Link>
+            )}
+          </li>
+        )
+      })}
     </ul>
   )
 }

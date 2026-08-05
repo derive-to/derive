@@ -3,7 +3,9 @@ import { refRouter } from "@derive/broker"
 import {
   type ContextAskerRecord,
   type ContextRecord,
+  decodeCursor,
   effectiveRole,
+  encodeCursor,
   newId,
   normalizeSelector,
   parseSubject,
@@ -2103,11 +2105,34 @@ export const contextRoutes = (ctx: AppContext) => {
       path: "/v1/contexts/{id}/sessions",
       tags: ["Contexts"],
       summary: "A context's sessions (owner sees all; others only their own).",
-      request: { params: z.object({ id: z.string() }) },
+      request: {
+        params: z.object({ id: z.string() }),
+        query: z.object({
+          limit: z.string().optional(),
+          cursor: z
+            .string()
+            .optional()
+            .describe(
+              "Keyset cursor (`created_at|id`, from `next_cursor`) — return sessions strictly older than it. An offset would repeat rows as new sessions open; the id half keeps sessions that share a created_at from being skipped at the boundary.",
+            ),
+        }),
+      },
       responses: {
         200: {
           description: "The sessions.",
-          content: { "application/json": { schema: z.object({ sessions: z.array(Session) }) } },
+          content: {
+            "application/json": {
+              schema: z.object({
+                sessions: z.array(Session),
+                next_cursor: z
+                  .string()
+                  .nullable()
+                  .describe(
+                    "Pass as `cursor` for the next page; null when this page reached the end.",
+                  ),
+              }),
+            },
+          },
         },
       },
     }),
@@ -2118,17 +2143,23 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
       const isOwner = x.created_by === me.id
       const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 50))
+      const cursor = decodeCursor(c.req.query("cursor"))
       const sessions = await meta.listSessions(x.id, {
         askerId: isOwner ? undefined : me.id,
         limit,
+        ...(cursor ? { cursor } : {}),
       })
+      // A full page MIGHT have more behind it; a short one is provably the end.
+      const last = sessions.at(-1)
+      const nextCursor =
+        sessions.length === limit && last ? encodeCursor(last.created_at, last.id) : null
       // The extra columns (who asked, whether the answer was recorded rather than
       // served) cost two more queries — worth it only on the OWNER's view: a non-owner
       // sees exclusively their own sessions, where "who asked" is a question with one
       // answer. Batched exactly like the runner queue's own transcript join (one
       // `listSessionMessagesFor` over every returned id, grouped after), not a
       // per-session round trip.
-      if (!isOwner) return c.json({ sessions: sessions.map(sessionJson) })
+      if (!isOwner) return c.json({ sessions: sessions.map(sessionJson), next_cursor: nextCursor })
       const users = new Map(
         (await meta.getUsers([...new Set(sessions.map((s) => s.asker_id))])).map((u) => [u.id, u]),
       )
@@ -2158,6 +2189,87 @@ export const contextRoutes = (ctx: AppContext) => {
           asker_username: users.get(s.asker_id)?.username ?? null,
           lane: laneOf(s),
         })),
+        next_cursor: nextCursor,
+      })
+    },
+  )
+
+  // WHAT THIS CONTEXT HAS PRODUCED — its body of work, not its conversation log.
+  //
+  // Derived entirely from result bindings that already exist (session.result_artifact_id);
+  // nothing new is written and nothing is inferred. Grouped by artifact, so a report
+  // republished nightly is ONE row carrying a run count rather than N identical rows —
+  // which is the whole reason this isn't just Activity with a filter.
+  //
+  // VISIBILITY: the store returns short ids only, and they are resolved here through
+  // `listArtifacts({ ids })` — the same gate the library uses. A viewer who can ask this
+  // context but cannot read one of its outputs gets that row back as `title: null`
+  // (unavailable) rather than the document: the RUN is not a secret (it is already in
+  // Activity), the document is.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/contexts/{id}/outputs",
+      tags: ["Contexts"],
+      summary: "The artifacts a context has produced, grouped by artifact with a run count.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The context's outputs, most recently produced first.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                outputs: z.array(
+                  z.object({
+                    short_id: z.string(),
+                    title: z
+                      .string()
+                      .nullable()
+                      .describe("Null when this viewer cannot read the artifact, or it is gone."),
+                    version: z.number().nullable(),
+                    runs: z.number().describe("How many of this context's sessions bound it."),
+                    last_run_at: z.string(),
+                  }),
+                ),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const x = await meta.getContext(c.req.param("id"))
+      if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
+      const rows = await meta.contextOutputs(x.id)
+      if (rows.length === 0) return c.json({ outputs: [] })
+      // ONE batched resolve for every short id (not a fetch per row), then the SANCTIONED
+      // per-artifact gate — `getByShortIds` is a raw resolve with no visibility knowledge,
+      // exactly like getByShortId, so authorize() is what keeps this honest. Same pairing
+      // the bulk routes use (see bulkArtifactOp in routes/favorites.ts).
+      const resolved = await meta.getByShortIds(rows.map((r) => r.short_id))
+      const byShortId = new Map(resolved.map((a) => [a.short_id, a]))
+      const readable = new Map(
+        (
+          await Promise.all(
+            resolved.map(async (a) => ((await authorize(c, "read", a)) ? a.short_id : null)),
+          )
+        )
+          .filter((s): s is string => !!s)
+          .map((s) => [s, true]),
+      )
+      return c.json({
+        outputs: rows.map((r) => {
+          const a = readable.has(r.short_id) ? byShortId.get(r.short_id) : undefined
+          return {
+            short_id: r.short_id,
+            title: a?.title ?? null,
+            version: a?.current_version ?? null,
+            runs: r.runs,
+            last_run_at: r.last_run_at,
+          }
+        }),
       })
     },
   )

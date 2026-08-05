@@ -13,7 +13,9 @@ export const Route = createFileRoute("/contexts/$id")({
   loader: ({ context, params }) =>
     Promise.all([
       context.queryClient.prefetchQuery(contextQuery(params.id)),
-      context.queryClient.prefetchQuery(contextSessionsQuery(params.id)),
+      // Sessions are paged (Activity is the full record, not the last 50), so the
+      // warm-up is the infinite variant — prefetchQuery cannot seed a paged cache.
+      context.queryClient.prefetchInfiniteQuery(contextSessionsQuery(params.id)),
     ]),
   pendingComponent: ConsolePending,
   component: ContextConsole,

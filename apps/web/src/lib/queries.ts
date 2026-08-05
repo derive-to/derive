@@ -589,10 +589,23 @@ export const contextQuery = (id: string) =>
 
 // The caller's sessions on a context (the owner sees everyone's). Invalidated
 // when a new session opens.
+// Infinite: a context that has been run for months has more sessions than one page,
+// and Activity is the record of ALL of them. Keyset cursor (`created_at|id`), so a
+// session opening mid-scroll never repeats or hides a row the way an offset would.
 export const contextSessionsQuery = (id: string) =>
-  queryOptions({
+  infiniteQueryOptions({
     queryKey: ["context-sessions", id] as const,
-    queryFn: () => api.listContextSessions(id).then((r) => r.sessions),
+    queryFn: ({ pageParam }) => api.listContextSessions(id, pageParam || undefined),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  })
+
+// What a context has PRODUCED — one row per artifact with a run count, newest first.
+// Invalidated alongside the sessions list: a run that binds a result changes both.
+export const contextOutputsQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context-outputs", id] as const,
+    queryFn: () => api.listContextOutputs(id).then((r) => r.outputs),
   })
 
 // One session + transcript, polled the activeSyncsQuery way: fast while the

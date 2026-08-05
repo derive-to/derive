@@ -3166,6 +3166,62 @@ export function runStoreContract(
       expect(await store.pendingSessions(ctx.id, 1)).toHaveLength(1)
     })
 
+    it("pages sessions on a (created_at, id) keyset, surviving rows that share a timestamp", async () => {
+      const ctx = await newContext()
+      // Written in a tight loop, so several of these DO share a created_at at
+      // millisecond resolution — exactly the case a timestamp-only cursor drops
+      // at the page boundary.
+      for (let i = 0; i < 5; i++)
+        await store.createSession({
+          id: uuid(),
+          context_id: ctx.id,
+          org_id: ORG,
+          asker_id: "daniel",
+          context_version: 1,
+        })
+      const all = await store.listSessions(ctx.id)
+      expect(all).toHaveLength(5)
+      // Walk the whole list one row at a time: every session appears exactly once,
+      // in the same order the unpaged read returns.
+      const seen: string[] = []
+      let cursor: { key: string; id: string } | undefined
+      for (let guard = 0; guard < 10; guard++) {
+        const row = (await store.listSessions(ctx.id, { limit: 1, cursor }))[0]
+        if (!row) break
+        seen.push(row.id)
+        cursor = { key: row.created_at, id: row.id }
+      }
+      expect(seen).toEqual(all.map((s) => s.id))
+      expect(new Set(seen).size).toBe(5)
+    })
+
+    it("contextOutputs groups result bindings by artifact and counts the runs", async () => {
+      const ctx = await newContext()
+      const bind = async (artifact: string | null) => {
+        const s = await store.createSession({
+          id: uuid(),
+          context_id: ctx.id,
+          org_id: ORG,
+          asker_id: "daniel",
+          context_version: 1,
+        })
+        if (artifact) await store.setResultArtifact(s.id, artifact)
+        return s
+      }
+      await bind("rep0rt01")
+      await bind("rep0rt01") // the same report, a second run
+      await bind("other001")
+      await bind(null) // a plain question binds nothing and must not appear
+
+      const outputs = await store.contextOutputs(ctx.id)
+      expect(outputs).toHaveLength(2)
+      expect(outputs.find((o) => o.short_id === "rep0rt01")?.runs).toBe(2)
+      expect(outputs.find((o) => o.short_id === "other001")?.runs).toBe(1)
+      expect(typeof outputs[0]?.last_run_at).toBe("string")
+      // Another context's bindings are never mixed in.
+      expect(await store.contextOutputs((await newContext()).id)).toEqual([])
+    })
+
     it("lists a person's contextless chat sessions, newest first, and nobody else's", async () => {
       const ctx = await newContext()
       // A session WITH a context must never appear here: the chat history is the sessions

@@ -1431,11 +1431,25 @@ export interface ContextStore {
     state: SessionState,
   ): Promise<{ session: SessionRecord; message: SessionMessageRecord }>
   getSession(id: string): Promise<SessionRecord | null>
-  /** Sessions on a context, newest first; `askerId` narrows to one person's. */
+  /** Sessions on a context, newest first; `askerId` narrows to one person's.
+   *  `cursor` pages further back: a `(created_at, id)` keyset, exclusive. The id
+   *  tiebreak is load-bearing, not defensive — sessions ARE created in the same
+   *  millisecond (a script recording a batch of local runs), and a cursor on the
+   *  timestamp alone would silently drop every row sharing the boundary. Encode
+   *  and decode it with `encodeCursor`/`decodeCursor`, like `listArtifacts`. */
   listSessions(
     contextId: string,
-    opts?: { askerId?: string; limit?: number },
+    opts?: { askerId?: string; limit?: number; cursor?: { key: string; id: string } },
   ): Promise<SessionRecord[]>
+  /** What this context has PRODUCED: its sessions' bound result artifacts, GROUPED —
+   *  one row per artifact however many runs bound it, so a report republished nightly is
+   *  one output carrying a run count, not fifty rows of the same short id. Newest run
+   *  first. Sessions that bound nothing (a plain question) are simply absent.
+   *
+   *  Returns short ids only, deliberately: the caller resolves them through
+   *  `listArtifacts({ ids })`, so the visibility gate is the same one the library uses
+   *  and this can never widen what a viewer sees. */
+  contextOutputs(contextId: string, limit?: number): Promise<ContextOutput[]>
   /** One person's CONTEXTLESS sessions in a workspace, newest first — the chat history
    *  picker. Contextless IS the filter: a session with no context is one nobody packaged,
    *  which is exactly what the chat surfaces open. `listSessions` cannot answer this (it
@@ -2802,6 +2816,19 @@ export interface SessionRecord {
    *  opened before this column existed. */
   subject_ref: string | null
 }
+
+/** One artifact a context has produced, grouped across every session that bound it —
+ *  the row behind the console's Output tab. Carries no title or version on purpose:
+ *  those come from resolving `short_id` through the normal visibility-gated artifact
+ *  read, so an output can never show a viewer a document they cannot open. */
+export interface ContextOutput {
+  short_id: string
+  /** How many of this context's sessions bound this artifact as their result. */
+  runs: number
+  /** The most recent of those sessions' last activity (its `updated_at`). */
+  last_run_at: string
+}
+
 export interface NewSession {
   id: string
   context_id?: string | null
