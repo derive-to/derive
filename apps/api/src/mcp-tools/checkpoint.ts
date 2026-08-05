@@ -179,6 +179,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
             notifyRender: ctx.notifyRender,
             background: ctx.background,
             search: ctx.search,
+            summarize: ctx.summarize,
           },
           artifact,
           version,

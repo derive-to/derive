@@ -117,6 +117,11 @@ export const version = pgTable(
     preview_marked_key: text("preview_marked_key"),
     preview_marked_status: text("preview_marked_status").$type<PreviewStatus>(),
     preview_marked_error: text("preview_marked_error"),
+    // The generated one-line description of this version, and a hash of the text it was
+    // generated from so an unchanged republish copies it forward instead of regenerating.
+    // See the matching comment in schema.ts. Mirrors schema.ts.
+    summary: text("summary"),
+    summary_src_hash: text("summary_src_hash"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent

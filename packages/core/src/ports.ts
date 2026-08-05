@@ -371,6 +371,21 @@ export interface VersionRecord {
   preview_marked_key: string | null
   preview_marked_status: PreviewStatus | null
   preview_marked_error: string | null
+  /** What this version SAYS, in a sentence or two, generated at publish. Every unfurl
+   *  surface otherwise describes an artifact as "Markdown · 3 versions · 7 comments" —
+   *  which answers "what is this?" rather than "what is it about?".
+   *
+   *  Null is the normal resting state, not an error: no model bound (self-host), a
+   *  non-text version, or a failed generation all leave it null and every consumer falls
+   *  back to that inventory line. UNTRUSTED — it is derived from document content, so it
+   *  is sanitized at write and must still be escaped by any surface that interpolates it
+   *  into markup. */
+  summary: string | null
+  /** Hash of the exact text `summary` was generated from. Exists to make the common case
+   *  free: agents republish constantly and most publishes do not change what a document is
+   *  about, so an unchanged hash copies the previous summary forward rather than paying a
+   *  model for an identical one. */
+  summary_src_hash: string | null
   created_at: string
 }
 
@@ -620,6 +635,15 @@ export interface ArtifactStore {
       preview_status?: PreviewStatus | null
       preview_error?: string | null
     },
+  ): Promise<void>
+  /** Set a version's generated summary and the hash of the text it came from. Partial;
+   *  only given fields are written. Separate from `setVersionPreview` for the same reason
+   *  the render variants are: both are best-effort derived content on the same row, and
+   *  one failing must never overwrite the other. */
+  setVersionSummary(
+    artifactId: string,
+    n: number,
+    fields: { summary?: string | null; summary_src_hash?: string | null },
   ): Promise<void>
   /** Set the full-page or marked-render variant's result (blob key + status + error).
    *  Partial; only given fields are written. Separate from `setVersionPreview` (the

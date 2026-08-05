@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS version (
   preview_marked_key TEXT,
   preview_marked_status TEXT,
   preview_marked_error TEXT,
+  summary TEXT,
+  summary_src_hash TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (artifact_id, n),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)

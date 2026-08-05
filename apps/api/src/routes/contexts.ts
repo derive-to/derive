@@ -513,6 +513,7 @@ export const contextRoutes = (ctx: AppContext) => {
             notifyRender: ctx.notifyRender,
             background: ctx.background,
             search: ctx.search,
+            summarize: ctx.summarize,
             // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
             // `callModel` along exactly as before, and the streaming decision stays here, where
             // the transport (this asker's channel) is actually known.
