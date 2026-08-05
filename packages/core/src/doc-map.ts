@@ -261,6 +261,7 @@ export const mapJson = (
 ): {
   version: number
   kind: string
+  bytes: number
   nodes: Record<string, unknown>[]
   truncated?: boolean
   total?: number
@@ -269,6 +270,9 @@ export const mapJson = (
   return {
     version,
     kind: map.kind,
+    // The whole document's size, so "how big is this part of it" is answerable from the
+    // map alone. Free, and exact, because the nodes tile the file: their spans sum to it.
+    bytes: map.nodes.reduce((n, x) => n + (x.end - x.start), 0),
     nodes: shown.map((n) => ({
       ref: n.ref,
       type: n.type,

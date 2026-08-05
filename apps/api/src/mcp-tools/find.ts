@@ -125,7 +125,7 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things; what you pass picks the MODE. `short_id`+`query` GREPs one artifact, `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a question; empty means try another word, never that nothing exists. See derive://skills/finding.",
+        "Find things; what you pass picks the MODE. `short_id`+`query` GREPs one artifact (in:'source' by default, the exact bytes; in:'text' the visible words), `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a phrase or question; empty means try another word, never that nothing exists. See derive://skills/finding.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         query: z

@@ -227,6 +227,16 @@ describe("mapJson", () => {
     expect(JSON.stringify(json)).not.toContain('"start"')
   })
 
+  it("reports the whole document's size, so a part is comparable to it", () => {
+    // A blind probe asked "how big is this slide next to the deck" and had to sum the
+    // nodes itself. Free to answer here: tiling means the spans sum to the document.
+    const src = deck([sl(0, "a"), sl(1, "b")])
+    const json = mapJson(docMap(src, HTML), 1)
+    expect(json.bytes).toBe(src.length)
+    const nodeBytes = json.nodes.reduce((n, x) => n + (x.bytes as number), 0)
+    expect(nodeBytes).toBe(src.length)
+  })
+
   it("caps the serialized node list but keeps every node resolvable", () => {
     const many = Array.from({ length: MAX_MAP_NODES + 20 }, (_, i) => `## H${i}\n\nbody ${i}\n`)
     const map = docMap(many.join("\n"), MD)
