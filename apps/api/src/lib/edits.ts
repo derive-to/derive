@@ -198,7 +198,18 @@ export async function materializeSlideOps(
   // The routes JSON.parse the field without shape-checking it — a non-array must be a
   // clean 400, not a TypeError-shaped 500.
   if (!Array.isArray(ops)) throw new EditError("`slide_ops` must be a JSON array of ops.")
-  return { content: applySlideOps(src, ops), filename: preservingFilename(contentType) }
+  const content = applySlideOps(src, ops)
+  // A batch that changes nothing must not become a version. `{op:"move", from:2, to:2}` is
+  // a no-op by construction, and so is any sequence that cancels out — but a publish is
+  // never free: it bumps the version, fires webhooks, re-queues three screenshot renders and
+  // re-derives every fact. An agent looping with an off-by-one would mint history forever.
+  // Saying so is also more useful than silently doing nothing, which reads as success.
+  // (Identity stamping DOES change bytes, so a class-only deck's first arrange still lands.)
+  if (content === src)
+    throw new EditError(
+      "Those slide_ops leave the deck exactly as it is, so there is nothing to publish. Check the positions against `read(short_id, map:true)`.",
+    )
+  return { content, filename: preservingFilename(contentType) }
 }
 
 export async function materializeEdits(

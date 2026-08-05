@@ -361,3 +361,42 @@ describe("materializeSlideOps", () => {
     ).rejects.toBeInstanceOf(EditError)
   })
 })
+
+describe("slide_ops that change nothing", () => {
+  const deck = (n: number) =>
+    `<html><body>${Array.from({ length: n }, (_, i) => `<section class="slide" data-derive-slide="${i}"><h2>s${i}</h2></section>`).join("\n")}<script>"derive-deck"</script></body></html>`
+  const deps = (text: string) => mkDeps({ 1: { text, contentType: "text/html" } })
+
+  it("refuses a no-op batch instead of minting an empty version", async () => {
+    // Found by chaos-testing the preview: {move, from:2, to:2} published a byte-identical
+    // version. A publish is never free — webhooks, three re-renders, re-derived facts — and
+    // an agent looping with an off-by-one would mint history forever.
+    await expect(
+      materializeSlideOps(deps(deck(4)), fileArtifact(1), [{ op: "move", from: 2, to: 2 }], 1),
+    ).rejects.toThrow(/nothing to publish/i)
+    // …including a sequence that cancels itself out.
+    await expect(
+      materializeSlideOps(
+        deps(deck(4)),
+        fileArtifact(1),
+        [
+          { op: "move", from: 1, to: 3 },
+          { op: "move", from: 3, to: 1 },
+        ],
+        1,
+      ),
+    ).rejects.toThrow(/nothing to publish/i)
+  })
+
+  it("still lands a first arrange that only stamps identities", async () => {
+    // A class-only deck gains data-derive-slide values, so the bytes DO change.
+    const classOnly = `<html><body><section class="slide"><h2>a</h2></section>\n<section class="slide"><h2>b</h2></section><script>"derive-deck"</script></body></html>`
+    const out = await materializeSlideOps(
+      deps(classOnly),
+      fileArtifact(1),
+      [{ op: "move", from: 1, to: 1 }],
+      1,
+    )
+    expect(out.content).toContain('data-derive-slide="0"')
+  })
+})
