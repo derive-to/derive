@@ -21,6 +21,7 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { isAbandoned } from "../lib/abandoned-turn"
+import type { AgentLoopInput } from "../lib/agent-loop"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -284,12 +285,17 @@ export const contextRoutes = (ctx: AppContext) => {
       // the next write, not merely the next session.
       flags: { agentKillswitch: settings?.agentKillswitch ?? false },
     })
+    // ONE METER, serving both readers of it: the per-turn log line (#640) and the timings
+    // persisted on the answer for the operator's model page. They were written four hours apart
+    // as two wrappers doing the same counting in the same file; a second one is not a second
+    // measurement, it is a second thing to keep in step.
+    //
     // METERED INSIDE THE STREAM WRAPPER, not around it. `stream.wrap` builds its own `onDelta`
     // and hands THAT to the adapter, so a meter on the outside is never called back and reports
-    // time-to-first-token as null on every turn — the number silently missing from every row of
-    // the operator's page. Innermost is also the honest place to measure a MODEL: it excludes
-    // the wrapper's own coalescing, and it still excludes tool execution either way.
+    // time-to-first-token as null on every turn. That is also why this is the honest place to
+    // measure a MODEL: outside, the number includes the wrapper's own coalescing.
     const meter = meterModel(model.callModel)
+    const startedAt = Date.now()
     const res = await withinTurnBudget(
       runChatTurn(
         { model: { ...model, callModel: stream.wrap(meter.call) } },
@@ -303,6 +309,21 @@ export const contextRoutes = (ctx: AppContext) => {
         },
       ),
     )
+    const t = meter.timing()
+    log.info("attended turn", {
+      session: s.id,
+      org: s.org_id,
+      total_ms: Date.now() - startedAt,
+      model_ms: t.modelMs,
+      // Everything that was NOT the model: store round trips, tool work, our own code. The half
+      // we can actually do something about.
+      other_ms: Date.now() - startedAt - t.modelMs,
+      model_calls: t.calls,
+      // The number a person actually waits through, which the log line never had.
+      ttft_ms: t.ttftMs,
+      model_each_ms: t.each.join(","),
+      outcome: res.outcome,
+    })
     await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
       outcome: res.outcome,
       // Absent on a turn that ran out of budget — it never got a cost or a model back, and
@@ -313,7 +334,7 @@ export const contextRoutes = (ctx: AppContext) => {
       // UNCONDITIONAL, unlike the fields above: a turn that was cut short still waited on the
       // model for however long it waited, and a slow model is the likeliest reason it was cut.
       // This is the one measurement whose failures matter as much as its successes.
-      ...timingMeta(meter.timing()),
+      ...timingMeta(t),
     })
   }
 

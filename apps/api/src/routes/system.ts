@@ -5,12 +5,10 @@ import { capabilityReport } from "../config-manifest"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 import {
-  getInstanceAutomationModel,
-  getInstanceChatModel,
+  getInstanceSlot,
   probeModel,
   readLibrary,
-  setInstanceAutomationModel,
-  setInstanceChatModel,
+  setInstanceSlot,
   writeLibrary,
 } from "../lib/model-library"
 import { openAiCompatModel } from "../lib/model-openai"
@@ -74,6 +72,14 @@ export const systemRoutes = (ctx: AppContext) => {
     })
   }
 
+  /** Every lane and what serves it — the shape both the library view and a pin's response
+   *  return. One read of the instance row for both lanes, and one definition, so a third lane
+   *  cannot appear in one response and be forgotten in the other. */
+  const slotsJson = async () => {
+    const { slots } = await readLibrary(meta)
+    return { chat: slots.chat ?? null, automation: slots.automation ?? null }
+  }
+
   const probeJson = (p: ModelProbe) => ({
     at: p.at,
     ok: p.ok,
@@ -119,7 +125,7 @@ export const systemRoutes = (ctx: AppContext) => {
     const denied = await operatorOnly(c)
     if (denied) return denied
     return c.json({
-      model: await getInstanceChatModel(meta),
+      model: await getInstanceSlot(meta, "chat"),
       // The catalog travels with it so the picker needs one call, and so "what is set" and "what
       // could be set" can never disagree about which ids exist.
       options: (ctx.models?.options ?? []).map((m) => ({
@@ -139,8 +145,8 @@ export const systemRoutes = (ctx: AppContext) => {
     // response rather than silently costing every turn on the deploy.
     if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
       return fail(c, 400, `unknown model "${b.model}"`)
-    await setInstanceChatModel(meta, b.model)
-    return c.json({ model: await getInstanceChatModel(meta) })
+    await setInstanceSlot(meta, "chat", b.model)
+    return c.json({ model: await getInstanceSlot(meta, "chat") })
   })
 
   /**
@@ -172,10 +178,7 @@ export const systemRoutes = (ctx: AppContext) => {
     const configured = new Set(ctx.models?.options.map((o) => o.id) ?? [])
     const probes = new Map(lib.models.map((m) => [m.id, m.probe]))
     return c.json({
-      slots: {
-        chat: await getInstanceChatModel(meta),
-        automation: await getInstanceAutomationModel(meta),
-      },
+      slots: await slotsJson(),
       // Whether this deploy can ADD a model at all. False (no gateway configured) means the
       // library can still relabel and pin, and the UI has to say so rather than offer an input
       // whose every submission would be refused.
@@ -328,13 +331,10 @@ export const systemRoutes = (ctx: AppContext) => {
     // automation run is unattended, so a pin naming nothing would fail runs with nobody watching.
     if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
       return fail(c, 400, `unknown model "${b.model}"`)
-    if (lane === "chat") await setInstanceChatModel(meta, b.model)
-    else await setInstanceAutomationModel(meta, b.model)
+    if (lane === "chat") await setInstanceSlot(meta, "chat", b.model)
+    else await setInstanceSlot(meta, "automation", b.model)
     return c.json({
-      slots: {
-        chat: await getInstanceChatModel(meta),
-        automation: await getInstanceAutomationModel(meta),
-      },
+      slots: await slotsJson(),
     })
   })
 

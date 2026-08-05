@@ -13,6 +13,7 @@ import {
   type BlobStore,
   deriveFacts,
   FACT_GEN,
+  isHtmlLike,
   type MetaStore,
   newId,
   parseFacts,
@@ -87,11 +88,20 @@ const extractVersionData = async (
   background?: (work: Promise<unknown>) => Promise<void>,
 ): Promise<void> => {
   const ct = version.content_type
-  if (ct !== "text/html" && ct !== "text/markdown") return
+  // AUTHORED facts stay HTML/markdown only. DERIVED facts also cover decks.
+  //
+  // A deck types as `text/x-derive-deck`, so this literal check excluded it from the whole
+  // facts pipeline — correct while every fact was author-embedded (a deck is a deck, not a
+  // place to park numbers), and wrong the moment `$map` shipped, because a deck's structure
+  // is exactly what a map is for. Found on the preview: a freshly published deck carried no
+  // $map at all. Same second-order blast radius the sniff fix documented — typing decks
+  // correctly moves them off every path that asks `content_type === "text/html"`.
+  const authored = ct === "text/html" || ct === "text/markdown"
+  if (!authored && !isHtmlLike(ct)) return
   const bytes = await blobs.get(version.blob_key)
   if (!bytes) return
   const source = new TextDecoder().decode(bytes)
-  const { facts } = parseFacts(source, ct)
+  const { facts } = authored ? parseFacts(source, ct) : { facts: [] }
   // Derived facts ($outline/$links/$stats) ride the same pass over bytes already decoded:
   // the host's mechanical reading, in the namespace the author grammar can't reach. They
   // are cache entries with names — recomputable, never counted, never rewarded — so each
@@ -172,7 +182,7 @@ const backfillNewSlots = async (
       const old = await meta.getVersion(version.artifact_id, n)
       if (!old) continue
       const ct = old.content_type
-      if (ct !== "text/html" && ct !== "text/markdown") continue
+      if (ct !== "text/html" && ct !== "text/markdown" && !isHtmlLike(ct)) continue
       const bytes = await blobs.get(old.blob_key)
       if (!bytes) continue
       const found = parseFacts(new TextDecoder().decode(bytes), ct).facts.filter((s) =>

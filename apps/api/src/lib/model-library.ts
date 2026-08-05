@@ -153,7 +153,7 @@ export const effectiveCatalog = (
  * THE ONE WAY A LANE GETS A CATALOG: read the library, widen the configured catalog, hand it
  * over. Async because the library lives in the datastore, and it is read PER TURN rather than
  * cached for exactly the reason the live default switch exists — a lever that takes effect in an
- * hour is not a lever during an outage. It rides the same instance row `getInstanceChatModel`
+ * hour is not a lever during an outage. It rides the same instance row `getInstanceSlot`
  * already reads on that path, so a chat turn gains no round trip.
  *
  * Every surface that answers a turn takes one of these rather than a fixed catalog, so a model
@@ -277,51 +277,38 @@ const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
   })
 
 /**
- * The deploy-wide model for ATTENDED CHAT, or null when the operator has not pinned one (⇒ the
- * model configured for the deploy answers, exactly as before this existed).
+ * WHICH MODEL SERVES A LANE, read and written by lane rather than by four near-identical
+ * functions.
  *
- * Reads `slots.chat`, falling back to the legacy flat `chatModel`. The fallback is the whole
- * migration: a deploy that pinned a model before lanes existed keeps that pin, and the next
- * write moves it into the slot. Nothing has to run, and nothing is rewritten on read.
+ * The two lanes differ in what they MEAN, not in how they are stored, and the meaning lives on
+ * {@link InstanceSlots} where a reader of the type finds it. Four accessors put the same
+ * read-modify-write in four places and made adding a third lane a copy-paste — which is exactly
+ * the shape a lane list wants to grow out of.
+ *
+ * Reading falls back to the legacy flat `chatModel` for the chat lane (see parseLibrary), so a
+ * deploy that pinned a model before lanes existed keeps that pin with nothing to run.
  */
-export const getInstanceChatModel = async (meta: MetaStore): Promise<string | null> => {
-  const { slots } = await readLibrary(meta)
-  return slots.chat ?? null
-}
-
-/** Set it, or clear it with null. Read fresh on every turn, so it takes effect on the next
- *  message rather than the next deploy.
- *
- *  Clears the legacy flat field on every write, INCLUDING when setting a new model: leaving a
- *  stale `chatModel` behind a live `slots.chat` means the fallback above resurrects a model the
- *  operator already moved off, the moment anyone clears the slot. */
-export const setInstanceChatModel = async (
+export const getInstanceSlot = async (
   meta: MetaStore,
+  lane: keyof InstanceSlots,
+): Promise<string | null> => (await readLibrary(meta)).slots[lane] ?? null
+
+/**
+ * Pin a lane, or clear it with null. Read fresh on every turn, so it lands on the next message
+ * rather than the next deploy.
+ *
+ * Clears the legacy flat `chatModel` on EVERY write, including when setting a new model: leaving
+ * a stale one behind a live `slots.chat` means the read fallback resurrects a model the operator
+ * already moved off, the moment anyone clears the slot.
+ */
+export const setInstanceSlot = async (
+  meta: MetaStore,
+  lane: keyof InstanceSlots,
   model: string | null,
 ): Promise<void> => {
   const cur = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
   await setInstanceSettings(meta, {
     chatModel: undefined,
-    slots: { ...cur.slots, chat: model?.trim() || undefined },
-  })
-}
-
-/** The deploy-wide model for UNATTENDED AUTOMATION RUNS, or null for the configured default
- *  (`DERIVE_LOOP_MODEL`, then model-anthropic's DEFAULT_ANTHROPIC_MODEL).
- *
- *  🚨 Names the MODEL, not the payer. Runs still resolve a credential per run through the payer
- *  chain unless the operator configured a gateway; pinning here moves nobody onto anyone's key. */
-export const getInstanceAutomationModel = async (meta: MetaStore): Promise<string | null> => {
-  const { slots } = await readLibrary(meta)
-  return slots.automation ?? null
-}
-
-export const setInstanceAutomationModel = async (
-  meta: MetaStore,
-  model: string | null,
-): Promise<void> => {
-  const cur = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
-  await setInstanceSettings(meta, {
-    slots: { ...cur.slots, automation: model?.trim() || undefined },
+    slots: { ...cur.slots, [lane]: model?.trim() || undefined },
   })
 }

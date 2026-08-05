@@ -84,8 +84,36 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // the read tool's short_id doc absorbed the deck URI by replacing its hand-maintained list of
 // skill names (already stale — it never gained `sources`) with the generated index it
 // duplicated. That freed chars rather than spending them.
-const TOOL_DESCRIPTIONS_BUDGET = 8950
-const INSTRUCTIONS_BUDGET = 2750
+// DOC MAP (read `map`/`node`, the addressing surface): added at ~196 chars against the
+// SAME ceiling, by keeping both params to one line each and putting the steering in the
+// map's own RESPONSE instead ("read one part with read(node:...)"), plus a paragraph in
+// the finding skill that is fetched only when a session needs it. The surface teaches
+// itself at the moment of use rather than in every session's preamble.
+//
+// 🚨 That leaves ~14 chars of headroom at 8936/8950. The next param to land here CANNOT
+// simply be added: reclaim first (a stale clause, a list a generated index already
+// covers), or make the case for raising the ceiling on its own merits.
+// 🚨 THE BUDGET USED TO MEASURE A THIRD OF THE SURFACE. Tool descriptions were capped;
+// PARAM descriptions — the bigger half by far — were not counted at all, so the tool text
+// stayed disciplined while schemas grew unwatched to roughly twice its size. Both are in
+// the same always-loaded payload. All three numbers below are measured together now, and
+// the one that matters is SURFACE_BUDGET.
+//
+// The rule that keeps them small, applied when these were cut: a description says WHAT to
+// pass and WHAT SILENTLY BREAKS if you get it wrong. Rationale, comparisons with sibling
+// params, worked examples and edge-case history go to the skill body, which is fetched only
+// by a session that needs it, or to the tool's own RESPONSE, which teaches at the moment of
+// use and costs nothing to sessions that never call it.
+const TOOL_DESCRIPTIONS_BUDGET = 3_200
+const PARAM_DESCRIPTIONS_BUDGET = 8_000
+const SURFACE_BUDGET = 11_000
+const INSTRUCTIONS_BUDGET = 2_400
+
+/** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
+ *  and a pointer to its skill. */
+const MAX_TOOL_DESCRIPTION = 420
+/** No single param may sprawl: what to pass, and what silently breaks. */
+const MAX_PARAM_DESCRIPTION = 250
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -169,11 +197,42 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     for (const t of tools) expect(t.description, `tool ${t.name} has no description`).toBeTruthy()
 
     const summed = tools.reduce((n, t) => n + (t.description?.length ?? 0), 0)
+    // PARAM descriptions are part of the same always-loaded payload, and for years they
+    // were not counted here: the surface was budgeted at its tool descriptions (~8.9k)
+    // while its schemas quietly carried ~16k more. Every char of both is re-sent to the
+    // model on every turn, so the honest number is the sum.
+    const paramChars = tools.reduce((n, t) => {
+      const props = (t as { inputSchema?: { properties?: Record<string, unknown> } }).inputSchema
+        ?.properties
+      return (
+        n +
+        Object.values(props ?? {}).reduce(
+          (m: number, p) => m + ((p as { description?: string })?.description?.length ?? 0),
+          0,
+        )
+      )
+    }, 0)
     console.log(
-      `MCP surface: ${tools.length} tools, descriptions ${summed} chars, instructions ${instructions.length} chars`,
+      `MCP surface: ${tools.length} tools, descriptions ${summed} chars, params ${paramChars} chars, total ${summed + paramChars} chars, instructions ${instructions.length} chars`,
     )
     expect(summed).toBeLessThan(TOOL_DESCRIPTIONS_BUDGET)
+    expect(paramChars).toBeLessThan(PARAM_DESCRIPTIONS_BUDGET)
+    expect(summed + paramChars).toBeLessThan(SURFACE_BUDGET)
     expect(instructions.length).toBeLessThan(INSTRUCTIONS_BUDGET)
+
+    // PER-ITEM caps. A total alone lets one description balloon while its neighbours shrink
+    // to pay for it — which is precisely how this surface grew to 25k while looking budgeted.
+    for (const t of tools) {
+      expect(t.description?.length ?? 0, `${t.name}'s description sprawls`).toBeLessThanOrEqual(
+        MAX_TOOL_DESCRIPTION,
+      )
+      const props = (t as { inputSchema?: { properties?: Record<string, unknown> } }).inputSchema
+        ?.properties
+      for (const [param, schema] of Object.entries(props ?? {})) {
+        const len = (schema as { description?: string })?.description?.length ?? 0
+        expect(len, `${t.name}.${param} sprawls`).toBeLessThanOrEqual(MAX_PARAM_DESCRIPTION)
+      }
+    }
   })
 
   it("resolves every core skill through read('derive://skills/<name>')", async () => {
@@ -231,5 +290,42 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     expect(assets?.body).toContain("`ref`")
     expect(assets?.body).toContain("public capability URL")
     expect(assets?.body).toContain('render: "top"')
+  })
+})
+
+describe("the surface does NOT vary by scope", () => {
+  // Built, measured and reverted, pinned here so the next attempt confronts the reason.
+  //
+  // Hiding publish's live-only params (workspace_access, link_role, listed, request_review)
+  // from a grant that can only propose saved 197 tokens — 4.1% of the tool surface, and ONLY
+  // for read-only connections, which are the ones doing the least work. A publishing agent,
+  // the connection that matters, saw every param either way.
+  //
+  // Against that: derive://skills/publishing names all four outright, and skills are static
+  // markdown that cannot vary per connection. A gated agent reads a procedure naming params
+  // its schema does not contain — the same contradiction that stopped tool-level gating.
+  // Vary the surface only if the skills can vary with it.
+  const paramsFor = async (name: string, scopes: string) => {
+    const { app, token } = appWithGrant(name, scopes)
+    await rpc(app, token, initBody)
+    const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
+    const tools = (list?.result?.tools ?? []) as {
+      name: string
+      inputSchema?: { properties?: Record<string, unknown> }
+    }[]
+    return Object.keys(
+      tools.find((t) => t.name === "publish")?.inputSchema?.properties ?? {},
+    ).sort()
+  }
+
+  it("gives a read-only grant the same publish schema as a publishing one", async () => {
+    const ro = await paramsFor("same-ro", "openid derive:read")
+    const rw = await paramsFor("same-rw", "openid derive:read derive:publish")
+    expect(ro).toEqual(rw)
+    for (const named of ["workspace_access", "link_role", "listed", "request_review"])
+      expect(
+        ro,
+        `${named} is named by the publishing skill, so it must be in the schema`,
+      ).toContain(named)
   })
 })

@@ -27,7 +27,7 @@ import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
-import { getInstanceAutomationModel, modelSource, readLibrary } from "./lib/model-library"
+import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { mountWeb } from "./lib/serve-web"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -449,7 +449,7 @@ const hostedDispatch = cfg.hostedRuns
               // The operator's live pin for this lane, read per run. `meta` is module-scope and
               // always valid on this tier, so there is nothing to capture at dispatch time (the
               // Worker twin does have to — see withHostedDispatch).
-              gatewayModel: async () => (await getInstanceAutomationModel(meta)) ?? undefined,
+              gatewayModel: async () => (await getInstanceSlot(meta, "automation")) ?? undefined,
             })
           : nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,

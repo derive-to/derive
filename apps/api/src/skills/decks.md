@@ -76,6 +76,44 @@ the comments drawer with a "Slide 3" badge otherwise; clicking it flips the deck
 - Keep commented phrasing stable. The anchor re-matches on surrounding text, so small
   wording changes are fine, but rewriting a sentence orphans its thread.
 
+## Reading one slide
+
+`read(short_id, map:true)` lists the deck's slides with the `ref` that names each one, its
+identity and its title; `read(short_id, node:"slide:4", format:"html")` returns that slide's
+exact source. A slide is typically well under 1% of its deck, so this is how you work on one
+without carrying the rest.
+
+## Rearranging: `slide_ops`, not find-and-replace
+
+To move, remove, or copy whole slides, pass `slide_ops` to `publish` — never `edits`.
+
+```
+publish(short_id, slide_ops: [{op: "move", from: 5, to: 2}, {op: "delete", at: 7}])
+```
+
+Ops are `{op:"move", from, to}`, `{op:"delete", at}` and `{op:"duplicate", at}`, applied in
+order, each seeing the last one's result. Positions are 1-based — the numbers the deck bar
+shows a person, not the protocol's 0-based `i`.
+
+Reach for it because every alternative is bad in its own way. A quote edit cannot do it at
+all: it refuses any span that crosses an element boundary. An `old_str` edit can only do it
+by carrying two byte-perfect copies of the slide through your reply — thousands of tokens
+for an intent worth twenty, brittle against a single differing space, and worse the richer
+the slide is. And `content` resends the whole deck. `slide_ops` sends positions: the slide's
+markup never travels, so a move costs the same whether the slide holds one sentence or a
+full-page SVG.
+
+It is also the safe option. The server reads the real source, so `data-derive-slide` values
+ride along untouched and comment threads stay with their slides. Ambiguous structure — a
+slide nested inside another, content stranded between two slides, two slides claiming one
+identity — refuses the WHOLE batch and says which, rather than half-applying. Pass
+`base_version` and a concurrent publish errors instead of clobbering. A deck whose slides
+carry no `data-derive-slide` at all gets stamped on its first rearrange, so threads left
+afterwards have something stable to hold.
+
+Everything else about a slide — its words, its styling, a swapped image — stays an ordinary
+`edits` change. `slide_ops` is for which slides exist and what order they play in.
+
 ## Every slide carries a visual AND words
 
 The most common way a finished deck goes flat is slides that are all text or all picture.

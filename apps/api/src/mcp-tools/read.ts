@@ -1,14 +1,20 @@
 import {
   artifactUrl,
   DECK_TEMPLATE,
+  type DocMap,
   derivedGen,
   deriveFacts,
+  docMap,
   isDerivedFactName,
+  isHtmlLike,
   landmarkSlice,
   landmarksOf,
+  mapJson,
   newId,
   type OutlineSection,
   outlineOf,
+  refsOf,
+  resolveNode,
   sectionOf,
   toMarkdown,
   type VersionDataRecord,
@@ -52,7 +58,10 @@ import { CORE_SKILLS } from "../skills-reference.gen"
  *  them to do the thing that was just silently ignored. Found by dogfooding: a bundle
  *  whose index.html DID carry a valid block still read back as "embed a block to add one". */
 const kindCarriesFacts = (v: VersionRecord | null): boolean =>
-  v?.content_type === "text/html" || v?.content_type === "text/markdown"
+  v?.content_type === "text/html" ||
+  v?.content_type === "text/markdown" ||
+  // A deck carries DERIVED rows ($map above all) though it can embed none of its own.
+  isHtmlLike(v?.content_type ?? "")
 
 /** Why a fact is absent, said accurately — the cases the old single message merged.
  *  A `$name` can never be embedded (the author grammar rejects `$`), so "embed a block"
@@ -150,55 +159,63 @@ export function registerReadTool(tc: ToolContext): void {
     "read",
     {
       description:
-        "Read an artifact's CONTENT by short_id — or a CONTEXT's package by its ctx_ id/name (manifest inline, skills as pointers; `use` gives it work instead). A small doc returns whole; a LARGE doc returns its heading OUTLINE first — call again with a `section` slug (or a `lines` range) for just that part. Markdown by default; a styled HTML page is FLATTENED to text here, so pass render:'top' or 'full' to SEE it as a viewer does (do this after publishing a designed page to catch visual breakage). Bundle: omit `section` for the page list, then pass a page path (optionally `page.html#slug`). Pass format:'html' for the exact source (required BEFORE publish `edits`), or a past `version` for history. For what CHANGED or the comment threads, use catch_up instead.",
+        "Read an artifact by short_id. Small docs return whole; large ones return an OUTLINE — then pass `section`, or `map:true` then `node` to work on one part. format:'html' gives the exact source, required before publish `edits`. Also reads contexts and derive:// URIs. See derive://skills/finding.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         short_id: z
           .string()
           .describe(
-            "The artifact's short id, e.g. nk0dsral. Also a CONTEXT id (ctx_…) or name — loads that package, not a document. Also a Brandprint URI — derive://brandprint/reference or /template (the static build guide), /profile (this workspace's live brand profile), or /<short_id> (a source doc) — a CORE SKILL URI (derive://skills/<name>, as the instructions index lists them), or derive://decks/template (the deck starter), so the strings the instructions name are readable here even where MCP resources aren't.",
+            "An artifact short id. Also a ctx_ id/name, or a derive:// URI (skills, brandprint, decks/template, sources).",
           ),
         section: z
           .string()
           .optional()
           .describe(
-            'What to read. Single-file doc: a heading slug from the outline (e.g. rollout-plan), or a region ref like "@2" from a headless page\'s map. Bundle: a page path (agentic-loop.html), optionally with a slug (agentic-loop.html#risks). Pass "*" (or "page.html#*" for a bundle page) to force the full (clipped) document/page. Omit it: small docs/pages return whole, large ones return their outline or region map.',
+            'A heading slug, or "@2" for a region. Bundle: a page path, optionally page.html#slug. "*" forces the whole (clipped) doc. Omitted: small returns whole, large returns an outline.',
           ),
         format: z
           .enum(["markdown", "html", "text"])
           .optional()
           .describe(
-            "markdown (default): HTML converted to structured Markdown — headings, lists, tables, code fences; Markdown sources return as-is. html: the exact stored source — read this BEFORE publish `edits` on an HTML artifact (edits match raw source). text: flat visible text, exactly what comment `quote`s anchor against.",
+            "markdown (default) | html: the exact stored source, required BEFORE publish `edits` | text: flat visible text, what comment `quote`s anchor against.",
           ),
         lines: z
           .string()
           .optional()
           .describe(
-            'Windowed read: a 1-indexed inclusive line range of the body in the chosen format — "40-120", "40" (one line), or "40-" (to the end). Windows a single-file doc, or one bundle page named by a bare `section` path. Pair with format:"html" to window the exact source before an edit. Skips the outline; still capped.',
+            '1-indexed inclusive line range of the body in the chosen format: "40-120", "40", "40-".',
           ),
         render: z
           .enum(["top", "full", "marked"])
           .optional()
           .describe(
-            'SEE the published page instead of reading its text — what a viewer actually sees, catching visual breakage (a failed font, a broken layout) no text read can. "top": the 1200x630 crop (fastest, what an og:image unfurl shows). "full": the whole page, fullPage screenshot — catches below-the-fold breakage "top" misses. "marked": "full" again with the region map\'s @N refs drawn on it — pairs with a no-heading page\'s region map so what you SEE lines up with what you READ. All three computed a few seconds after each publish; pass alone (optionally with `version`).',
+            'SEE the page as a viewer does, catching visual breakage no text read can. "top" is the 1200x630 crop, "full" the whole page, "marked" adds @N region refs.',
           ),
         wait: num("wait", { int: true, min: 1, max: 30 })
           .optional()
           .describe(
-            "With `render`: when the screenshot isn't computed yet (a publish is seconds old), block up to this many seconds (max 30) for it to land instead of returning the not-ready message. Returns at once when it's already ready or has failed.",
+            "With `render`: block up to this many seconds (max 30) for a screenshot that is still computing.",
           ),
-        version: num("version").optional().describe("Defaults to the current version."),
+        map: z
+          .boolean()
+          .optional()
+          .describe(
+            "The document's addressable parts: one line per node with the `ref` that names it. Read this first to work on part of a big doc.",
+          ),
+        node: z
+          .string()
+          .optional()
+          .describe("Read ONE part, by a `ref` from `map` (slide:2, sec:pricing, style:1)."),
+        version: num("version").optional(),
         data: z
           .string()
           .optional()
-          .describe(
-            'A version\'s structured DATA slot: the JSON a `derive-data` block on the page stored under this name (see the publishing skill), so you can read back data you published instead of re-parsing old markup. Pass "*" to list the facts this version carries. Reads the current version unless `version` is set.',
-          ),
+          .describe('A version\'s stored fact slot, by name. "*" lists what this version carries.'),
         versions: z
           .string()
           .optional()
           .describe(
-            'With `data`: read that slot across a RANGE of versions in ONE call — the trend read. "1-30", "12" (one), "20-" (to the current version), or "all". Versions are the time axis, so this answers "how did this change over time" without fetching each version. Returns oldest first; versions that carry no such slot are simply absent, and the response says how many.',
+            'With `data`: that slot across a version RANGE in one call — "1-30", "12", "20-", "all". Oldest first.',
           ),
         workspace: wsArg,
       },
@@ -209,6 +226,8 @@ export function registerReadTool(tc: ToolContext): void {
       format,
       version,
       lines,
+      map: wantMap,
+      node,
       render,
       wait,
       data,
@@ -384,7 +403,10 @@ export function registerReadTool(tc: ToolContext): void {
       // key/status/error triple, so "full"/"marked" failing never blocks "top" (the
       // OG crop og:image unfurls depend on) and vice versa.
       if (render) {
-        if (section || lines)
+        // `map`/`node` belong here too: this branch runs BEFORE the map rung below, so its
+        // own guard against `render` never fires. Found on the preview — read(map, render)
+        // silently returned a screenshot to a caller who asked for the structure.
+        if (section || lines || wantMap || node)
           return err(
             "`render` is a view of the whole version — pass it alone (with `version` for history).",
           )
@@ -617,6 +639,44 @@ export function registerReadTool(tc: ToolContext): void {
           format: formatLabel(ct, fmt),
           url,
         }
+        // The map rung: the document's addressable parts. Read before working on part of
+        // a big doc — it is the cheap structural view the full-document read is not, and
+        // every ref it hands back is what `node` (and, next, a scoped edit) takes.
+        if (wantMap || node) {
+          if (wantMap && node) return err("Pass `map` OR `node`, not both.")
+          if (section || lines || render)
+            return err("`map`/`node` address the document's parts — pass with `version` only.")
+          let structure: DocMap
+          try {
+            structure = docMap(src, ct ?? "text/html")
+          } catch (e) {
+            return err(e instanceof Error ? e.message : "This document's structure can't be read.")
+          }
+          if (wantMap)
+            return json({
+              ...meta,
+              ...mapJson(structure, n),
+              // Steering lives in the RESPONSE, not in the tool description: the surface
+              // teaches itself at the moment it is used, and costs nothing to sessions
+              // that never ask for it.
+              note: "Read one part with read(node:\"<ref>\"), format:'html' for its exact source. Same JSON at /raw/<short_id>/data/$map.json.",
+            })
+          const target = resolveNode(structure, node as string)
+          if (!target)
+            return err(
+              `No node "${node}" in "${short_id}" v${n}. Refs here: ${refsOf(structure).join(", ")}.`,
+            )
+          const slice = src.slice(target.start, target.end)
+          return json({
+            ...meta,
+            node: target.ref,
+            type: target.type,
+            bytes: target.end - target.start,
+            ...(target.title ? { title: target.title } : {}),
+            body: clip(present(slice, ct, fmt)),
+          })
+        }
+
         if (lines) {
           if (section && section !== "*")
             return err("Pass `lines` OR `section`, not both — windowing applies to the whole doc.")

@@ -14,13 +14,10 @@ export function registerCommentTool(tc: ToolContext): void {
     "comment",
     {
       description:
-        "Leave feedback on an artifact, reply in a thread, react, and/or resolve or reopen a thread — all in one tool. Anchor a NEW comment to a quoted span of the rendered text with `quote`; reply by passing the thread id as `reply_to`; `react` (with `reply_to`) is the lightweight ack. Pass `set_state` (with the thread's id in `reply_to`) to RESOLVE that thread, or reopen it. Thread ids come from catch_up. For quoting, the ack, and review-round etiquette, read derive://skills/loop.",
+        "Give or resolve feedback on an artifact. `quote` anchors a NEW thread to exact rendered text; `reply_to` replies, reacts, or resolves an existing one. See derive://skills/loop.",
       inputSchema: {
         short_id: z.string(),
-        body: z
-          .string()
-          .optional()
-          .describe("The comment text (Markdown). Omit when just reacting or changing state."),
+        body: z.string().optional(),
         reply_to: z
           .string()
           .optional()
@@ -34,9 +31,7 @@ export function registerCommentTool(tc: ToolContext): void {
         react: z
           .enum(REACTIONS as [string, ...string[]])
           .optional()
-          .describe(
-            "React to the thread's latest comment by someone else (with `reply_to`) — the lightweight ack. 👍 is the loop's default.",
-          ),
+          .describe("React to the thread's latest comment by someone else (with `reply_to`)."),
         set_state: z
           .enum(["resolved", "open"])
           .optional()

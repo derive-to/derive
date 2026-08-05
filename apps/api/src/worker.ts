@@ -30,7 +30,7 @@ import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
-import { getInstanceAutomationModel } from "./lib/model-library"
+import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
@@ -619,7 +619,7 @@ async function withHostedDispatch(
     // Read here, inside the live datastore context, for the loop to use after this returns.
     // Best-effort: a failed lookup leaves the configured default in place rather than stopping
     // dispatch, because "we could not read a preference" must never mean "nothing runs".
-    pin.automation = (await getInstanceAutomationModel(meta).catch(() => null)) ?? undefined
+    pin.automation = (await getInstanceSlot(meta, "automation").catch(() => null)) ?? undefined
     return fn({
       meta,
       substrate,

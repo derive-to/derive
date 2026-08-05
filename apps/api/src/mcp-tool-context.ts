@@ -46,12 +46,7 @@ export interface ToolContextBase {
 }
 
 // The `workspace` argument shared by every workspace-scoped tool.
-const wsArg = z
-  .string()
-  .optional()
-  .describe(
-    "Workspace to act in — its id or name from list_workspaces. Omit for your default workspace; read/catch_up/comment also find a short_id in ANY of your workspaces automatically.",
-  )
+const wsArg = z.string().optional().describe("Workspace id or name. Omit for your default.")
 
 export interface ToolContext extends ToolContextBase {
   grantedWorkspaces: () => Promise<{ id: string; name: string; role: Role }[]>

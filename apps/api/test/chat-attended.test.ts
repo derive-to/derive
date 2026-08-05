@@ -2,7 +2,7 @@ import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
 import { catalogOf } from "../src/lib/model-catalog"
-import { setInstanceChatModel } from "../src/lib/model-library"
+import { setInstanceSlot } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp } from "./helpers"
 
@@ -173,7 +173,7 @@ describe("the document rail obeys the operator's deploy-wide model", () => {
 
   const askRail = async (name: string, pin: string | null) => {
     const { app, meta, artifact, cx } = await railSetup(name)
-    if (pin) await setInstanceChatModel(meta, pin)
+    if (pin) await setInstanceSlot(meta, "chat", pin)
     const { msgs } = await chat(
       app,
       meta,

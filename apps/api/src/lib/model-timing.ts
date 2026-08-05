@@ -23,6 +23,10 @@ import type { AgentLoopInput } from "./agent-loop"
 
 /** What one turn spent on the model. */
 export interface TurnTiming {
+  /** Each call's own duration, in order. Not just the sum: three calls of 1.5s and one of 4.5s
+   *  are the same total and completely different problems — the first is per-call latency to
+   *  fix, the second is one pathological step to find. */
+  each: number[]
   /** Time to the FIRST token of the FIRST model call, ms — what the person actually waited
    *  through before anything appeared. Null when nothing streamed. */
   ttftMs: number | null
@@ -43,6 +47,7 @@ export const meterModel = (
   let ttftMs: number | null = null
   let modelMs = 0
   let calls = 0
+  const each: number[] = []
   const call: AgentLoopInput["callModel"] = async (input) => {
     const started = now()
     calls += 1
@@ -60,10 +65,12 @@ export const meterModel = (
       // In `finally`, so a turn that threw still reports what it burned. A failing provider that
       // takes 30s to fail is the single most useful measurement on this page, and it is exactly
       // the one a success-only meter would drop.
-      modelMs += now() - started
+      const took = now() - started
+      modelMs += took
+      each.push(took)
     }
   }
-  return { call, timing: () => ({ ttftMs, modelMs, calls }) }
+  return { call, timing: () => ({ ttftMs, modelMs, calls, each: [...each] }) }
 }
 
 /** The timing fields as they are stored on an answer's meta — snake_case, alongside `model` and

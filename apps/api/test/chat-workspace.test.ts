@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
 import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
 import { catalogOf } from "../src/lib/model-catalog"
-import { setInstanceChatModel } from "../src/lib/model-library"
+import { setInstanceSlot } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, countingStore, makeAuthedApp, publishAs } from "./helpers"
 
@@ -478,7 +478,7 @@ describe("the workspace chat", () => {
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
 
     // The OPERATOR flips it, deploy-wide. No redeploy, no restart.
-    await setInstanceChatModel(meta, "model-b")
+    await setInstanceSlot(meta, "chat", "model-b")
     await app.request(`/v1/sessions/${session?.id}/messages`, {
       method: "POST",
       headers: { ...as("ws@x.com"), "content-type": "application/json" },
@@ -507,7 +507,7 @@ describe("the workspace chat", () => {
       costUsd: null,
       done: true,
     }))
-    await setInstanceChatModel(meta, "model-b")
+    await setInstanceSlot(meta, "chat", "model-b")
     const { msgs } = await ask(app, meta, "hi", { model: "model-a" })
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
   })
@@ -520,7 +520,7 @@ describe("the workspace chat", () => {
       costUsd: null,
       done: true,
     }))
-    await setInstanceChatModel(meta, "not-a-real-model")
+    await setInstanceSlot(meta, "chat", "not-a-real-model")
     const { msgs } = await ask(app, meta, "hi")
     expect(msgs.at(-1)?.author_kind).toBe("agent")
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })

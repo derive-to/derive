@@ -60,6 +60,18 @@ If the question is about content — what it decided, what changed, what the pol
 - `format:"text"` is what a reader sees; `format:"html"` is the exact source (what you would
   edit against). Default markdown is the readable structured view.
 
+## Working on PART of a document
+
+`read(short_id, map:true)` returns the document's addressable parts, one line each, with the
+`ref` that names it: `slide:2`, `sec:pricing`, `style:1`. Then `read(short_id, node:"<ref>")`
+returns just that part, and `format:"html"` gives its exact source.
+
+Reach for it whenever the job is one part of something big. A slide is typically under 1% of
+its deck, and a section a similar fraction of a long page, so the map plus the one part you
+need costs a fraction of the whole document and leaves you reading exact source rather than a
+truncated view. The refs come from the map: read it first rather than guessing at `slide:9`.
+The same JSON is at `/raw/<short_id>/data/$map.json` for anything outside this tool surface.
+
 ## Cite what you used
 
 Every document you name is a link to its path: `[Q3 Roadmap](/artifacts/ab12cd34)` — the title as
