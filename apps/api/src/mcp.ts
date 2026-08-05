@@ -64,6 +64,7 @@ import {
   pendingRequestsPointer,
   profileState,
   type Role,
+  roleAllows,
   SKILL_CONTENT_TYPE,
 } from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -469,6 +470,18 @@ export function registerToolSurface(
   }) as typeof server.registerTool
 
   const wanted = (name: string) => !only || only.has(name)
+  /**
+   * PER-CONNECTION SIZING happens at the PARAM level (see publish's access fields), not by
+   * hiding whole tools. Hiding was tried and reverted: the instructions advertise all ten
+   * core skills to EVERY connection, so dropping `checkpoint` from a read-only grant leaves
+   * the surface promising a procedure whose tool is absent — and an unknown-tool error
+   * teaches nothing, where the existing refusal ("needs publish rights") is actionable and
+   * is what mcp.test.ts pins. Gating tools would first require gating the skills index with
+   * it, in the same change.
+   *
+   * A PARAM carries no such promise: nothing else advertises `link_role`, so omitting it
+   * from a grant that could never make it take effect costs a reader nothing.
+   */
   // Read at CALL time (every tool has registered by then), never at registration time.
   if (wanted("list_workspaces")) registerListWorkspacesTool(tc, () => [...names].sort())
   if (wanted("find")) registerFindTool(tc)

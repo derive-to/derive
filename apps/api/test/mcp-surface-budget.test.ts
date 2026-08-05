@@ -292,3 +292,41 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     expect(assets?.body).toContain('render: "top"')
   })
 })
+
+describe("the surface is sized to the CONNECTION", () => {
+  // PARAM-level, not tool-level. A param carries no promise anywhere else on the surface,
+  // so omitting one a grant could never make take effect costs a reader nothing. Hiding
+  // whole TOOLS was tried and reverted: the instructions advertise all ten core skills to
+  // every connection, so a read-only grant would be promised checkpoint's procedure with no
+  // checkpoint tool, and an unknown-tool error teaches less than the refusal it replaced.
+  const publishParamsFor = async (name: string, scopes: string) => {
+    const { app, token } = appWithGrant(name, scopes)
+    await rpc(app, token, initBody)
+    const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
+    const tools = (list?.result?.tools ?? []) as {
+      name: string
+      inputSchema?: { properties?: Record<string, unknown> }
+    }[]
+    const pub = tools.find((t) => t.name === "publish")
+    return Object.keys(pub?.inputSchema?.properties ?? {})
+  }
+
+  it("shows publish's live-only access params to a grant that can publish", async () => {
+    const params = await publishParamsFor("scope-rw", "openid derive:read derive:publish")
+    expect(params).toEqual(
+      expect.arrayContaining(["workspace_access", "link_role", "listed", "request_review"]),
+    )
+    // …and the payload params every grant needs either way.
+    expect(params).toEqual(expect.arrayContaining(["content", "edits", "slide_ops", "short_id"]))
+  })
+
+  it("hides them from a read-only grant, which could never make them take effect", async () => {
+    // Access is stamped when a NEW artifact goes live; this grant's ceiling only ever files
+    // proposals, so these four were pure context rent for it.
+    const params = await publishParamsFor("scope-ro", "openid derive:read")
+    for (const gone of ["workspace_access", "link_role", "listed", "request_review"])
+      expect(params, `${gone} should be absent`).not.toContain(gone)
+    // The tool itself STAYS: a commenter files proposals through it.
+    expect(params).toEqual(expect.arrayContaining(["content", "edits", "short_id"]))
+  })
+})
