@@ -87,12 +87,42 @@ export const sanitizeSummary = (raw: string): string | null => {
   return `${(lastSpace > SUMMARY_MAX_CHARS * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`
 }
 
+/**
+ * Remove what `elideDataUris` leaves behind, and any tag fragment stranded beside it.
+ *
+ * A page built around a screenshot reads, after elision, as
+ * `data:image/png;base64,[elided — 146KB inline image. Re-upload via POST /v1/assets …]` — 140
+ * characters of instructions the HOST wrote for an agent, containing not one word about the
+ * document. It clears the minimum-length floor comfortably, so without this a screenshot-heavy
+ * page would spend a model call to have its own elision notice summarized back at it.
+ *
+ * The `<img src="` fragment goes with it: an inlined image sitting across the source cap leaves
+ * its opening tag unterminated, and `toMarkdown` reasonably keeps an unclosed tag as literal
+ * text rather than guessing where it ended.
+ *
+ * Stripping this BEFORE the length check is what makes the floor mean "enough prose" rather than
+ * "enough characters" — such a page now falls under it and is skipped, which is the right answer.
+ */
+const stripHostChatter = (s: string): string =>
+  s
+    .replace(/data:[a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+;base64,\[elided[^\]]*\]/g, " ")
+    .replace(/<img[^>]*$/g, " ")
+    .replace(/\s+/g, " ")
+
+/** How much SOURCE is converted at all. Uploads are capped at 100MB, and converting a document
+ *  of that size to markdown to keep 6000 characters measured ~5.5s of CPU — spent on every
+ *  publish, in a runtime that meters it. Converting a 200KB head costs ~12ms and cannot yield
+ *  less than SUMMARY_INPUT_CHARS of markdown for any document with prose near the top, which is
+ *  the only kind a summary can describe anyway. */
+export const SUMMARY_SOURCE_CHARS = 200_000
+
 /** The text a version contributes to its summary: the READABLE form, not the stored source.
  *  `versionIndexText` (lib/search.ts) deliberately indexes raw source so search can match tag and
  *  attribute content — feeding that to a model would summarize tag soup. Returns null when there
  *  is not enough prose to be worth a call. */
 export const summaryInput = (source: string, contentType: string): string | null => {
-  const text = elideDataUris(toMarkdown(source, contentType)).trim()
+  const head = source.length > SUMMARY_SOURCE_CHARS ? source.slice(0, SUMMARY_SOURCE_CHARS) : source
+  const text = stripHostChatter(elideDataUris(toMarkdown(head, contentType))).trim()
   if (text.length < SUMMARY_MIN_CHARS) return null
   return text.slice(0, SUMMARY_INPUT_CHARS)
 }

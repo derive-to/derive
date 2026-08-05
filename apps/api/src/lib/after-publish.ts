@@ -108,10 +108,14 @@ const srcHash = async (text: string): Promise<string> => {
  *
  * The hash gate is what makes this affordable rather than merely possible. Agents republish
  * constantly and most publishes do not change what a document is ABOUT — a typo fix, a
- * re-render, a restore. Comparing the model input against the previous version's stored hash
- * turns those into a copy-forward, so the model is paid for a change in meaning rather than for
- * a change in bytes. A restore is the clearest case: it republishes an OLD version's content, so
- * its text usually matches the version it was restored from.
+ * re-render, a formatting pass. Comparing the model input against the previous version's stored
+ * hash turns those into a copy-forward, so the model is paid for a change in meaning rather than
+ * for a change in bytes.
+ *
+ * It compares against n-1 ONLY, which is deliberate and does have a hole: restoring an older
+ * version republishes content that matched some version further back, and that misses. Closing
+ * it would mean either a walk or an index on the hash, and a restore is rare enough that one
+ * model call is the cheaper answer than either.
  *
  * Every exit logs its reason. "The card says nothing and I cannot tell why" is exactly the shape
  * of bug that cost a day on the unfurl ladder, and one line naming the rung is what prevents it.

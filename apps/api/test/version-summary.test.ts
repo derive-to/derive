@@ -17,7 +17,7 @@ import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it, vi } from "vitest"
 import { createApp } from "../src/app"
-import type { Summarizer } from "../src/summarizer"
+import { SUMMARY_SOURCE_CHARS, type Summarizer, summaryInput } from "../src/summarizer"
 
 const dir = mkdtempSync(join(tmpdir(), "derive-version-summary-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
@@ -239,5 +239,66 @@ describe("what the surfaces then show", () => {
     expect(svg).toContain("<svg")
     expect(svg).not.toContain("Moves the billing migration")
     expect(svg).toContain("version")
+  })
+})
+
+// WHAT THE MODEL IS ACTUALLY SHOWN. Measured rather than assumed: converting a document to
+// markdown costs CPU proportional to its PROSE, and uploads are capped at 100MB — 2MB of prose
+// measured ~111ms, so an uncapped conversion spends seconds of metered background CPU on every
+// publish of a large document to keep 6000 characters of it.
+
+describe("the text handed to the model", () => {
+  it("converts only the head, so cost cannot scale with document size", () => {
+    // Asserted by CONTENT, not by a stopwatch: prose placed entirely past the cap must be
+    // invisible. A timing threshold would pass with the cap removed on any fast machine and
+    // flake on a slow one, which is a test that reports the CI box rather than the code.
+    const filler = "<!-- padding -->".repeat(Math.ceil((SUMMARY_SOURCE_CHARS + 5_000) / 16))
+    // Long enough to clear the length floor on its OWN, or both paths return null for
+    // different reasons and the assertion proves nothing about the cap.
+    const prose =
+      "<p>The billing migration moves to November so the team can finish the invoicing work first and rehearse a rollback.</p>"
+    const beyond = `<html><body>${filler}${prose}</body></html>`
+    expect(summaryInput(`<html><body>${prose}</body></html>`, "text/html")).not.toBeNull()
+    expect(summaryInput(beyond, "text/html")).toBeNull()
+    // ...and the same prose within the cap is found, so this is a bound and not a blanket refusal.
+    expect(
+      summaryInput(
+        `<p>The billing migration moves to November so the team can finish the invoicing work first.</p>`,
+        "text/html",
+      ),
+    ).toContain("billing migration")
+  })
+
+  it("still returns a full window for a document far larger than the cap", () => {
+    const para = "<p>The billing migration moves to November so the team finishes invoicing.</p>\n"
+    const big = `<html><body>${para.repeat(60_000)}</body></html>`
+    expect(big.length).toBeGreaterThan(SUMMARY_SOURCE_CHARS * 20)
+    expect(summaryInput(big, "text/html")?.length).toBe(6000)
+  })
+
+  it("skips a page that is a screenshot rather than a document", () => {
+    // After elision such a page reads as "[elided — 146KB inline image. Re-upload via …]":
+    // 140 characters of instructions the HOST wrote for an agent, with not one word about the
+    // document. It clears the length floor, so without stripping it first a screenshot page
+    // would spend a model call having its own elision notice summarized back at it.
+    const img = `<p><img src="data:image/png;base64,${"A".repeat(400)}"></p>`
+    expect(summaryInput(img, "text/html")).toBeNull()
+  })
+
+  it("keeps the prose when a page has both an image and something to say", () => {
+    const doc =
+      `<p><img src="data:image/png;base64,${"A".repeat(400)}"></p>` +
+      "<p>We are moving the billing migration to November so the team can finish invoicing.</p>"
+    const out = summaryInput(doc, "text/html")
+    expect(out).toContain("billing migration")
+    expect(out).not.toContain("elided")
+    expect(out).not.toContain("/v1/assets")
+  })
+
+  it("skips an image that straddles the source cap rather than summarizing its own tag", () => {
+    // An inlined image larger than the cap leaves its opening tag unterminated, and toMarkdown
+    // reasonably keeps an unclosed tag as literal text rather than guessing where it ended.
+    const doc = `<html><body><img src="data:image/png;base64,${"A".repeat(SUMMARY_SOURCE_CHARS + 1000)}"><p>Prose.</p></body></html>`
+    expect(summaryInput(doc, "text/html")).toBeNull()
   })
 })
