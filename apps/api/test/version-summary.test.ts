@@ -228,6 +228,22 @@ describe("what the surfaces then show", () => {
     expect(html).not.toMatch(/og:description[^>]*1 version/)
   })
 
+  it("never reaches an anonymous crawler for a doc it may not read", async () => {
+    // The summary carries DOCUMENT CONTENT — a live model output named a person in testing —
+    // onto surfaces the title alone used to occupy. It must inherit the title's gate exactly:
+    // the SSR route injects meta only for an artifact `readable()` cleared, so an anonymous
+    // request for a workspace-only doc gets the bare shell. Pinned because this field makes the
+    // consequence of getting that wrong much larger than a leaked title.
+    const { summarizer } = fakeSummarizer("Delays the Android build and assigns the copy to Priya.")
+    const { app, meta } = makeApp("vs-anon", summarizer)
+    const { short_id } = await publish(app, DOC, { title: "Internal", visibility: "org" })
+    // It was generated and stored — this is about who may READ it, not whether it exists.
+    expect((await summaryOf(meta, short_id)).summary).toContain("Priya")
+    const html = await (await app.request(`/artifacts/${short_id}`)).text()
+    expect(html).not.toContain("Priya")
+    expect(html).not.toContain("og:description")
+  })
+
   it("the OG card image keeps the inventory line, which is what it has room for", async () => {
     // The card draws its description as one unwrapped 28px line sized for ~50 characters; a
     // 200-character summary would run off the canvas. The reader gets it via og:description.
