@@ -29,17 +29,7 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Give a context WORK on your user's behalf (rate-limited): an INSTRUCTION it serves in one " +
-        "session. A context is a PACKAGE — `read` loads what it knows, `use` has it act; find " +
-        "discovers them. GIVE: " +
-        "`context` (id or name) + `instruction` — 'with this context, do this' (a question OR a " +
-        "task; always name the target, e.g. 'for Acme'). FOLLOW UP: `session_id` + `instruction`. " +
-        "CHECK/RESUME: `session_id` alone. The call waits up to `wait` seconds (default 25) for the " +
-        "result; real runs take minutes and STREAM, so a still-working response is NORMAL — re-call " +
-        "with the returned session_id until it settles. RUN a context you serve: `use({context})` " +
-        "with no instruction PULLS queued work; " +
-        "`use({session_id, answer})` reports back (+ `progress` / `state` / `result_artifact_id`). " +
-        "For the modes and the runner loop, read derive://skills/contexts.",
+        "Give a context WORK (rate-limited): `context`+`instruction` opens a session, `session_id`+`instruction` follows up, `session_id` alone checks. Real runs take minutes, so a still-working response is NORMAL — re-call until it settles. See derive://skills/contexts.",
       inputSchema: {
         context: z
           .string()
@@ -54,7 +44,7 @@ export function registerUseTool(tc: ToolContext): void {
           .max(20_000)
           .optional()
           .describe(
-            "'With this context, do this' (Markdown) — a question OR a task, always naming the target (e.g. 'for Acme'). With `context` it opens a session; with `session_id` it is a follow-up turn. Omit it to just check a session (or, if you RUN the context, to pull your queued work).",
+            "'With this context, do this' (Markdown) — a question or a task, always naming the target.",
           ),
         session_id: z
           .string()
@@ -68,9 +58,7 @@ export function registerUseTool(tc: ToolContext): void {
           .min(0)
           .max(50)
           .optional()
-          .describe(
-            "Seconds to wait for a progress tick or the answer before returning (default 25; 0 = return at once). A long job streams — re-call with the returned session_id to keep watching; a still-working reply is normal.",
-          ),
+          .describe("Seconds to wait for a tick or the answer (default 25; 0 returns at once)."),
         dedupe_key: z
           .string()
           .trim()
@@ -78,7 +66,7 @@ export function registerUseTool(tc: ToolContext): void {
           .max(200)
           .optional()
           .describe(
-            "OPEN mode only: an idempotency key. A second use with the same key while one is still in flight JOINS the existing session instead of opening a new one — so a double 'run for X' never runs the job twice.",
+            "OPEN mode: an idempotency key — a second use with the same key JOINS the in-flight session.",
           ),
         answer: z
           .string()
@@ -86,33 +74,27 @@ export function registerUseTool(tc: ToolContext): void {
           .min(1)
           .max(20_000)
           .optional()
-          .describe(
-            "RUN mode only: your reply on a session you run — the result, or a note. Pass with `session_id` (the context must be one you are the agent for). Add `progress`/`state`/`result_artifact_id` to shape the turn.",
-          ),
+          .describe("RUN mode: your reply on a session you run."),
         progress: z
           .boolean()
           .optional()
           .describe(
-            "RUN mode only: a non-settling progress tick — keep the session working and stream this `answer` to the requester. Ignored when `state` is also set.",
+            "RUN mode: a non-settling progress tick; streams `answer` without ending the session.",
           ),
         state: z
           .enum(["answered", "escalated", "failed"])
           .optional()
-          .describe(
-            "RUN mode only: the terminal state. Omit for a plain result (answered) or with progress:true. escalated = you sent a draft to human review; failed = the run crashed.",
-          ),
+          .describe("RUN mode: the terminal state. Omit for a plain answered result."),
         result_artifact_id: z
           .string()
           .optional()
           .describe(
-            "RUN mode only: bind/refresh the session's result artifact (its short_id) — the stable link the requester sees. Publish a 'building…' page early, update it as stages land.",
+            "RUN mode: the session's result artifact short_id — the stable link the requester sees.",
           ),
         answers: z
           .string()
           .optional()
-          .describe(
-            "RUN mode only: the requester-message id (from your pull snapshot) this addresses — the guard against settling over a follow-up that landed mid-run.",
-          ),
+          .describe("RUN mode: the requester-message id this addresses."),
         workspace: wsArg,
       },
     },

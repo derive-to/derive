@@ -30,18 +30,15 @@ export function registerOrganizeTool(tc: ToolContext): void {
     "organize",
     {
       description:
-        "Tags, collections, and shelving in one tool — the library layer. READ (no `short_ids`) returns the workspace's tag vocabulary + collections; READ with `short_ids` returns their tags/collections plus suggested tags. WRITE (`add`/`remove`/`set` tags, `collection`, and/or `state`) changes them — each artifact is authorized on its own, so ones you can't touch come back skipped, never failing the batch. `state:'removed'` retires an artifact from the library and `state:'live'` puts it back, so cleaning up after yourself is safe; `state:'deleted'` is the permanent one (manage-level, no undo). For the read-vs-write modes and the tags-vs-collections call, read derive://skills/organize.",
+        "Tags, collections and shelving. No `short_ids` reads the workspace vocabulary; with them, writes tags/`collection`/`state`. Each artifact authorizes on its own, so untouchable ones come back skipped. state:'deleted' is permanent. See derive://skills/organize.",
       inputSchema: {
         short_ids: z
           .array(z.string())
           .optional()
           .describe("Artifacts to inspect or organize. Omit for the workspace overview."),
-        add: z.array(z.string()).optional().describe("Tags to add (union; never drops existing)."),
-        remove: z.array(z.string()).optional().describe("Tags to remove."),
-        set: z
-          .array(z.string())
-          .optional()
-          .describe("Replace the whole tag set (overrides add/remove)."),
+        add: z.array(z.string()).optional(),
+        remove: z.array(z.string()).optional(),
+        set: z.array(z.string()).optional(),
         collection: z
           .string()
           .optional()

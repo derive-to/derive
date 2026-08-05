@@ -3,12 +3,15 @@ import {
   type ArtifactRecord,
   applyEdits,
   applyQuoteEdits,
+  applySlideOps,
   type DiffOp,
   type DocEdit,
   diffLines,
   EditError,
+  isHtmlLike,
   isQuoteEdit,
   type QuoteEdit,
+  type SlideOp,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
@@ -146,15 +149,15 @@ const conflictDiffNote = async (
  * to their own error shape (MCP `err()`, REST `fail(c, status, …)`); check
  * `instanceof EditConflictError` BEFORE `instanceof EditError` (it's a subclass).
  */
-export async function materializeEdits(
+async function currentSource(
   deps: MaterializeEditsDeps,
   artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
-  edits: AnyDocEdit[],
   baseVersion: number | undefined,
-): Promise<MaterializedEdits> {
+  field: string,
+): Promise<{ src: string; contentType: string | null }> {
   if (artifact.kind !== "file")
     throw new EditConflictError(
-      `"${artifact.short_id}" is a multi-page bundle — \`edits\` applies to single-file artifacts; republish the changed page via \`files\` (+ \`merge\`).`,
+      `"${artifact.short_id}" is a multi-page bundle — \`${field}\` applies to single-file artifacts; republish the changed page via \`files\` (+ \`merge\`).`,
     )
   if (baseVersion !== undefined && baseVersion !== artifact.current_version) {
     const head = `"${artifact.short_id}" moved to v${artifact.current_version} while you were editing (you read v${baseVersion}).`
@@ -168,6 +171,54 @@ export async function materializeEdits(
   const src = cur ? await deps.sourceText(cur) : null
   if (!cur || src === null)
     throw new EditError(`Couldn't load the current source of "${artifact.short_id}".`)
+  return { src, contentType: cur.content_type }
+}
+
+/**
+ * Turn a `slide_ops` request into stored-revision bytes: the structural sibling of
+ * `materializeEdits`, sharing its kind check, `base_version` staleness check and source
+ * load so the two can't drift apart.
+ *
+ * Structural intent (move / delete / duplicate a slide) exists as its own payload because
+ * the text pipelines cannot express it: a quote edit refuses any span crossing an element
+ * boundary, and `old_str` can only move a slide by carrying two byte-perfect copies of it
+ * through a model's output. Position in, position out — the whole slide never travels.
+ */
+export async function materializeSlideOps(
+  deps: MaterializeEditsDeps,
+  artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
+  ops: SlideOp[],
+  baseVersion: number | undefined,
+): Promise<MaterializedEdits> {
+  const { src, contentType } = await currentSource(deps, artifact, baseVersion, "slide_ops")
+  if (!isHtmlLike(contentType ?? "text/html"))
+    throw new EditError(
+      `"${artifact.short_id}" isn't an HTML document, so it has no slides to arrange.`,
+    )
+  // The routes JSON.parse the field without shape-checking it — a non-array must be a
+  // clean 400, not a TypeError-shaped 500.
+  if (!Array.isArray(ops)) throw new EditError("`slide_ops` must be a JSON array of ops.")
+  const content = applySlideOps(src, ops)
+  // A batch that changes nothing must not become a version. `{op:"move", from:2, to:2}` is
+  // a no-op by construction, and so is any sequence that cancels out — but a publish is
+  // never free: it bumps the version, fires webhooks, re-queues three screenshot renders and
+  // re-derives every fact. An agent looping with an off-by-one would mint history forever.
+  // Saying so is also more useful than silently doing nothing, which reads as success.
+  // (Identity stamping DOES change bytes, so a class-only deck's first arrange still lands.)
+  if (content === src)
+    throw new EditError(
+      "Those slide_ops leave the deck exactly as it is, so there is nothing to publish. Check the positions against `read(short_id, map:true)`.",
+    )
+  return { content, filename: preservingFilename(contentType) }
+}
+
+export async function materializeEdits(
+  deps: MaterializeEditsDeps,
+  artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
+  edits: AnyDocEdit[],
+  baseVersion: number | undefined,
+): Promise<MaterializedEdits> {
+  const { src, contentType } = await currentSource(deps, artifact, baseVersion, "edits")
   // Two edit shapes share the batch: quote-scoped edits (the inline editor — located
   // by {exact, prefix, suffix} against the RENDERED text) and exact-source edits
   // (agents — {old_str, new_str}). Quote edits resolve against the stored version's
@@ -201,11 +252,11 @@ export async function materializeEdits(
       "`edits` mixes quote edits and old_str edits — send the two shapes as separate requests.",
     )
   const content = quoteEdits.length
-    ? applyQuoteEdits(src, cur.content_type ?? "", quoteEdits)
+    ? applyQuoteEdits(src, contentType ?? "", quoteEdits)
     : applyEdits(src, strEdits)
   // Keep the artifact's content type: the sniffer types by filename first, and the
   // default index.html would silently re-type an edited markdown doc as HTML.
-  return { content, filename: preservingFilename(cur.content_type) }
+  return { content, filename: preservingFilename(contentType) }
 }
 
 /** Parse a `base_version` value from an untyped form field: `undefined` when absent,

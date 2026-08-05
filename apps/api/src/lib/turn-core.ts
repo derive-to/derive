@@ -6,11 +6,13 @@ import {
   type AutonomyLevel,
   applyEdits,
   decideWrite,
+  docMap,
   EDITS_CONTRACT,
   EDITS_THRESHOLD_CHARS,
   EditError,
   editsNudge,
   type GateDecision,
+  mapJson,
   NO_EDITS_BLOCK,
   parseAsk,
   parseEdits,
@@ -202,6 +204,50 @@ export const documentBlock = (source: string, filename: string): string =>
 --- BEGIN DOCUMENT ---
 ${source}
 --- END DOCUMENT ---`
+
+/** Above this many characters, a lane that can READ PARTS is given the document's map
+ *  instead of the document.
+ *
+ *  The paste is not free: it is re-sent on every model call of the turn (up to twelve), so
+ *  a 300KB deck costs 75-100k input tokens PER CALL and reliably exceeds the hosted turn
+ *  budget before it can answer. The map is a few hundred tokens and names every part, and
+ *  the lane then reads the one part it is changing at its exact source. Below the
+ *  threshold the paste is cheaper than the round trip, so it stays. */
+export const MAP_INSTEAD_OF_SOURCE_CHARS = 32_000
+
+/** The document's STRUCTURE, for a document too big to paste. Same refs `read` takes. */
+const documentMapBlock = (source: string, filename: string, contentType: string): string => {
+  const json = JSON.stringify(mapJson(docMap(source, contentType), 0).nodes)
+  return `This document is ${source.length} characters — too large to include whole, so here is its MAP instead. Its filename is ${filename}.
+
+--- BEGIN DOCUMENT MAP ---
+${json}
+--- END DOCUMENT MAP ---
+
+Each entry's \`ref\` names one part. Read the part you need with read(short_id, node:"<ref>"), and pass format:"html" to get the exact source an edit must match. Do not guess at text you have not read.`
+}
+
+/**
+ * The document for the system prompt: the whole source, or its map when the source is too
+ * big AND the lane can read parts back. A lane with no tools always gets the source, because
+ * a map it cannot follow is strictly worse than a document it can at least see.
+ */
+export const documentContext = (
+  source: string,
+  filename: string,
+  contentType: string,
+  canReadParts: boolean,
+): string => {
+  if (canReadParts && source.length > MAP_INSTEAD_OF_SOURCE_CHARS) {
+    try {
+      return documentMapBlock(source, filename, contentType)
+    } catch {
+      // An unmappable document (ambiguous deck structure) falls back to the paste rather
+      // than losing the document: a big prompt beats a blind model.
+    }
+  }
+  return documentBlock(source, filename)
+}
 
 /**
  * The name to SHOW the model for a document it is about to revise.
