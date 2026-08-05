@@ -1123,6 +1123,17 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
   }
 
+  async setVersionSummary(
+    artifactId: string,
+    n: number,
+    fields: { summary?: string | null; summary_src_hash?: string | null },
+  ): Promise<void> {
+    await this.db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+  }
+
   async setVersionPreviewVariant(
     artifactId: string,
     n: number,

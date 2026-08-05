@@ -343,6 +343,48 @@ describe("the card's own image", () => {
   })
 })
 
+describe("the generated summary on the card", () => {
+  // The whole reason the summary exists: the card's own line says what the doc is about rather
+  // than what file type it is. But it must not displace the thing a card is FOR.
+  it("replaces the inventory line when nothing is pending", () => {
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info: { ...info, summary: "Moves the billing migration to November." },
+      status: status(),
+    })
+    const d = String((e.entity_payload as Payload).fields.description?.value)
+    expect(d).toContain("Moves the billing migration to November.")
+    expect(d).not.toContain("versions")
+  })
+
+  it("still yields to a pending review — status is what a card is FOR", () => {
+    // Pinned by the #642 audit: de-duplicating the headline once cost it its meaning. A summary
+    // is more useful than the inventory line and less useful than "someone is waiting on you".
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info: { ...info, summary: "Moves the billing migration to November." },
+      status: status({ review: { state: "pending", reviewerId: "u1", reviewerName: "Mert" } }),
+    })
+    const d = String((e.entity_payload as Payload).fields.description?.value)
+    expect(d).toContain("Awaiting review")
+    expect(d).not.toContain("Moves the billing migration")
+  })
+
+  it("lets an author's own numbers lead it", () => {
+    // dataSummary outranks both — it is the reward for publishing a fact at all.
+    const e = artifactEntity({
+      ...base,
+      artifact: artifact(),
+      info: { ...info, summary: "A rollout plan.", dataSummary: "pass 48 · fail 0" },
+      status: status(),
+    })
+    const d = String((e.entity_payload as Payload).fields.description?.value)
+    expect(d.indexOf("pass 48")).toBeLessThan(d.indexOf("A rollout plan."))
+  })
+})
+
 describe("what the description leads with", () => {
   // REGRESSION GUARD. This was once "de-duplicated" on the reasoning that the Review and
   // Waiting-on chips already say it. The result was a headline reading "Markdown · 3 versions ·

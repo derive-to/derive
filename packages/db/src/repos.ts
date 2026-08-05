@@ -945,6 +945,18 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setVersionSummary = async (
+    artifactId: string,
+    n: number,
+    fields: { summary?: string | null; summary_src_hash?: string | null },
+  ): Promise<void> => {
+    await db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      .run()
+  }
+
   const setVersionPreviewVariant = async (
     artifactId: string,
     n: number,
@@ -4371,6 +4383,7 @@ export function makeRepos(db: SqliteDb) {
     listFactAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
+    setVersionSummary,
     setVersionPreviewVariant,
     listArtifacts,
     indexArtifact,

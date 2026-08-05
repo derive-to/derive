@@ -44,6 +44,9 @@ export const unfurlInfoFor = async (
     // the Slack unfurl — is a reward surface, and a card leading with $stats word-counts
     // instead of the author's numbers would spend the incentive on congratulating the host.
     dataSummary: factSummary(assertedOnly(facts)),
+    // Generated at publish and stored on the version row, so it rides the same single round
+    // trip the counts do — no added query on the most-trafficked anonymous surface there is.
+    summary: version?.summary ?? null,
     pageUrl: artifactUrl(baseUrl, artifact),
     imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
     oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
