@@ -172,8 +172,8 @@ export function EditBar({
       >
         {dirty === 0
           ? touch
-            ? "tap any text to change it, or an image to replace it"
-            : "click any text to change it, or an image to replace it"
+            ? "tap text to edit; tap an image to resize or replace it"
+            : "click text to edit; drag a media or box corner to resize"
           : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
       </span>
       {/* …and on a phone the count still has to be visible, so it appears alone. */}
