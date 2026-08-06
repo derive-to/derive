@@ -70,7 +70,9 @@ describe("chat turn purpose", () => {
       baseInput("context_builder"),
     )
     expect(system).toContain("You are helping Pat set up a context")
-    expect(system).not.toContain("manifest") // the user-facing interview never says it
+    // The prompt necessarily names the draft_manifest tool; the jargon ban applies to
+    // what the model SAYS, so assert the ban instruction itself is in the voice.
+    expect(system).toContain('Never use the words "manifest"')
   })
 
   it("absent purpose keeps the workspace prompt", async () => {
