@@ -4918,7 +4918,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "Copy this artifact into your workspace (or an anonymous claimable draft).",
+        "summary": "Copy this artifact into your workspace (use it as a template).",
         "parameters": [
           {
             "schema": {
@@ -4931,66 +4931,32 @@
         ],
         "responses": {
           "201": {
-            "description": "The new copy: its workspace home (signed-in) or its draft + claim URLs (anonymous).",
+            "description": "The new copy's identity and workspace home.",
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "short_id": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string",
-                          "nullable": true
-                        },
-                        "url": {
-                          "type": "string",
-                          "description": "The copy's permanent URL in your workspace."
-                        },
-                        "org_id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "short_id",
-                        "title",
-                        "url",
-                        "org_id"
-                      ]
+                  "type": "object",
+                  "properties": {
+                    "short_id": {
+                      "type": "string"
                     },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "short_id": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string",
-                          "nullable": true
-                        },
-                        "draft_url": {
-                          "type": "string",
-                          "description": "The live expiring page on the draft host."
-                        },
-                        "claim_url": {
-                          "type": "string",
-                          "description": "Sign in here to keep it."
-                        },
-                        "expires_at": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "short_id",
-                        "title",
-                        "draft_url",
-                        "claim_url",
-                        "expires_at"
-                      ]
+                    "title": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "The copy's permanent URL in your workspace."
+                    },
+                    "org_id": {
+                      "type": "string"
                     }
+                  },
+                  "required": [
+                    "short_id",
+                    "title",
+                    "url",
+                    "org_id"
                   ]
                 }
               }

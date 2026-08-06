@@ -2042,10 +2042,12 @@ export const artifactRoutes = (ctx: AppContext) => {
   // Use an artifact as a template: copy its current version into the caller's own
   // space. The copy re-points at the source version's stored blob (content-addressed
   // and org-agnostic, so no bytes move — the `restore` recipe, one createArtifact
-  // earlier) and records lineage in `derived_from`. Two branches by principal:
-  // a signed-in caller lands it in their active workspace at the workspace's own
-  // access defaults; an anonymous caller gets an expiring draft on the usercontent
-  // host plus a claim URL (the POST /v1/drafts shape) — value first, signup after.
+  // earlier) and records lineage in `derived_from`. Signed-in only: the copy lands
+  // in the caller's active workspace at the workspace's own access defaults. An
+  // anonymous clicker is sent through login instead (`?use=1` on the viewer), and
+  // the page completes the copy the moment they can actually edit it — a draft
+  // copy an anonymous holder can't edit would deliver nothing the source page
+  // doesn't already show, so no copy is minted before auth.
   // Anyone who can READ the source can use it — the same standing that lets them
   // select-all-copy the rendered page; `requireArtifact(read)` folds in the world
   // link, membership, and the password unlock cookie.
@@ -2053,37 +2055,24 @@ export const artifactRoutes = (ctx: AppContext) => {
   // Embedded assets are NOT copied: /blob/:hash is org-blind with the (globally
   // unique, hash-keyed) asset row as allowlist, so images keep serving from the
   // copy. Same accepted semantics as the draft-claim move.
-  // authz-exempt: the anonymous branch is the point (mirrors /v1/drafts — the
-  // ANON_WRITE_ALLOW entry in app.ts + the ip-keyed publish limiter bound it), and
-  // the source's read gate still applies via requireArtifact.
   app.openapi(
     createRoute({
       method: "post",
       path: "/v1/artifacts/{shortId}/use",
       tags: ["Artifacts"],
-      summary: "Copy this artifact into your workspace (or an anonymous claimable draft).",
+      summary: "Copy this artifact into your workspace (use it as a template).",
       request: { params: z.object({ shortId: z.string() }) },
       responses: {
         201: {
-          description:
-            "The new copy: its workspace home (signed-in) or its draft + claim URLs (anonymous).",
+          description: "The new copy's identity and workspace home.",
           content: {
             "application/json": {
-              schema: z.union([
-                z.object({
-                  short_id: z.string(),
-                  title: z.string().nullable(),
-                  url: z.string().describe("The copy's permanent URL in your workspace."),
-                  org_id: z.string(),
-                }),
-                z.object({
-                  short_id: z.string(),
-                  title: z.string().nullable(),
-                  draft_url: z.string().describe("The live expiring page on the draft host."),
-                  claim_url: z.string().describe("Sign in here to keep it."),
-                  expires_at: z.string(),
-                }),
-              ]),
+              schema: z.object({
+                short_id: z.string(),
+                title: z.string().nullable(),
+                url: z.string().describe("The copy's permanent URL in your workspace."),
+                org_id: z.string(),
+              }),
             },
           },
         },
@@ -2101,74 +2090,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       const srcVersion = await meta.getVersion(src.id, src.current_version)
       if (!srcVersion) return bail(fail(c, 404, "nothing published yet"))
       const me = await currentUser(c)
+      // The global anonymous-write gate refuses this route before it runs; this 401
+      // is defense in depth. The viewer routes a signed-out clicker through login
+      // with `?use=1` and completes the copy right after auth (deferred use).
+      if (!me) return bail(fail(c, 401, "sign in to use this artifact"))
 
-      if (!me) {
-        // ---- Anonymous: an expiring draft + claim URL (mirrors POST /v1/drafts). ----
-        if (!deps.subdomainBase || !deps.encryptionKey)
-          return bail(
-            fail(c, 501, "anonymous use needs DERIVE_SUBDOMAIN_BASE and DERIVE_AUTH_SECRET"),
-          )
-        await meta.setWorkspace(DRAFTS_ORG_ID, "Anonymous drafts")
-        const expiresAt = new Date(Date.now() + DRAFT_TTL_MS).toISOString()
-        const draft = await meta.createArtifact({
-          id: newId("a"),
-          short_id: newShortId(),
-          org_id: DRAFTS_ORG_ID,
-          slug: src.slug,
-          title: src.title,
-          // The fixed draft access shape (see /v1/drafts): the secret URL is the grant.
-          workspace_access: "none",
-          link_role: "viewer",
-          listed: "none",
-          kind: src.kind,
-          spa: src.spa,
-          expires_at: expiresAt,
-          derived_from: src.id,
-        })
-        const v = await meta.addVersion(draft.id, {
-          id: newId("v"),
-          blob_key: srcVersion.blob_key,
-          content_type: srcVersion.content_type,
-          size_bytes: srcVersion.size_bytes,
-          author: "anonymous",
-          author_id: null,
-          source: "api",
-          message: `Derived from ${src.short_id}`,
-          name: null,
-        })
-        const host = `${draft.short_id}.${deps.subdomainBase}`.toLowerCase()
-        const bound = await meta.setDomain({
-          host,
-          artifact_id: draft.id,
-          org_id: DRAFTS_ORG_ID,
-          kind: "subdomain",
-          status: "active",
-        })
-        const draftUrl = bound
-          ? `https://${host}/`
-          : `${deps.sandboxOrigin ?? deps.baseUrl}/raw/${draft.short_id}/v/1/index.html`
-        const claimToken = await signClaimToken(deps.encryptionKey, draft.id, Date.parse(expiresAt))
-        await afterPublish(
-          { meta, blobs, bus, notify, notifyRender, background, search, summarize },
-          draft,
-          v,
-          { isNew: true, onBehalf: null, actorId: null },
-        )
-        // The OAuth-reaper pattern: each mint reaps earlier expired drafts.
-        await background(sweepExpiredDrafts(meta, search))
-        return c.json(
-          {
-            short_id: draft.short_id,
-            title: draft.title,
-            draft_url: draftUrl,
-            claim_url: `${deps.baseUrl}/claim/${claimToken}`,
-            expires_at: expiresAt,
-          },
-          201,
-        )
-      }
-
-      // ---- Signed-in: land the copy in the active workspace at its own defaults. ----
+      // ---- Land the copy in the caller's active workspace at its own defaults. ----
       if (!(await workspaceCan(c, "publish")))
         return bail(fail(c, 403, "you need publish rights in this workspace"))
       const org = await activeWorkspace(c)

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// POST /v1/artifacts/:shortId/use — "use this as a template". Anyone who can READ
-// the source gets a copy: signed-in callers land it in their active workspace at
-// the workspace's own defaults; anonymous callers get an expiring claimable draft
-// (the /v1/drafts shape). The copy re-points at the source blob (no bytes move)
-// and records lineage in `derived_from`.
+// POST /v1/artifacts/:shortId/use — "use this as a template". Signed-in only: any
+// caller who can READ the source lands a copy in their active workspace at the
+// workspace's own defaults. Anonymous clickers are deferred through login by the
+// viewer (`?use=1`) instead of minting anything pre-auth. The copy re-points at
+// the source blob (no bytes move) and records lineage in `derived_from`.
 
 const ana: TestUser = { id: "u_use_ana", email: "ana@use.test", name: "Ana" }
 const ben: TestUser = { id: "u_use_ben", email: "ben@use.test", name: "Ben" }
@@ -75,8 +75,11 @@ describe("signed-in use", () => {
   })
 })
 
-describe("anonymous use", () => {
-  it("mints an expiring claimable draft copy of a link-viewable source", async () => {
+describe("anonymous callers", () => {
+  it("is refused at the door even for a link-viewable source — no pre-auth copies", async () => {
+    // A draft copy an anonymous holder can't edit delivers nothing the source page
+    // doesn't already show, so the flow is deferred use (`?use=1` through login),
+    // and the global anonymous-write gate refuses the bare POST outright.
     const src = await (
       await publishAs(
         app,
@@ -85,35 +88,10 @@ describe("anonymous use", () => {
         as(ana.email),
       )
     ).json()
-
     const res = await use(src.short_id) // no auth headers at all
-    expect(res.status).toBe(201)
-    const draft = await res.json()
-    expect(draft.short_id).not.toBe(src.short_id)
-    expect(draft.draft_url).toBe(`https://${draft.short_id}.${BASE}/`)
-    expect(draft.claim_url).toContain("/claim/")
-    expect(Date.parse(draft.expires_at)).toBeGreaterThan(Date.now())
-
-    // The draft shape: held in the drafts org, link-viewer only, ownerless, lineage kept.
-    const row = await meta.getByShortId(draft.short_id)
-    const srcRow = await meta.getByShortId(src.short_id)
-    expect(row?.org_id).toBe("ws_sys_drafts")
-    expect(row?.workspace_access).toBe("none")
-    expect(row?.link_role).toBe("viewer")
-    expect(row?.listed).toBe("none")
-    expect(row?.expires_at).toBeTruthy()
-    expect(row?.derived_from).toBe(srcRow?.id)
-
-    // Live on its own draft host, same bytes as the source.
-    const served = await app.request(`http://${draft.short_id}.${BASE}/`)
-    expect(served.status).toBe(200)
-    expect(await served.text()).toContain("Public template")
-  })
-
-  it("cannot use a source that grants the world nothing (404)", async () => {
-    const teamOnly = await (await publishAs(app, "<p>team</p>", {}, as(ana.email))).json()
-    const res = await use(teamOnly.short_id)
-    expect(res.status).toBe(404)
+    expect(res.status).toBe(403)
+    // Nothing was minted anywhere for the click.
+    expect(await meta.countArtifacts("ws_sys_drafts")).toBe(0)
   })
 })
 

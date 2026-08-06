@@ -132,6 +132,42 @@ export function Artifact() {
     error,
     refetch,
   } = useQuery(artifactQuery(shortId, qc))
+
+  // Deferred use-as-template (`?use=1`): the public viewer's "Make your own" sends a
+  // signed-out clicker through login with this flag, and the copy fires HERE — the
+  // first moment the visitor can actually edit what they asked for. One-shot: fired
+  // at most once per mount; success replaces the URL with the copy's, and any
+  // refusal (still anonymous, no publish seat, source gone) strips the flag and
+  // shows the page normally.
+  const useFired = useRef(false)
+  useEffect(() => {
+    if (!search.use || loading || useFired.current) return
+    useFired.current = true
+    const strip = () =>
+      nav({
+        to: "/artifacts/$ref",
+        params: { ref },
+        search: (s) => ({ ...s, use: undefined }),
+        replace: true,
+      })
+    if (!me) {
+      strip()
+      return
+    }
+    api
+      .deriveArtifact(shortId)
+      .then((r) =>
+        nav({
+          to: "/artifacts/$ref",
+          params: { ref: refFor({ short_id: r.short_id, title: r.title }) },
+          replace: true,
+        }),
+      )
+      .catch(() => {
+        toast.error("Couldn't copy this artifact into your workspace")
+        strip()
+      })
+  }, [search.use, loading, me, shortId, ref, nav])
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
   // Comments are signed-in-only (the API 404s anon by design) — don't fire the

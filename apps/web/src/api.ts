@@ -848,21 +848,12 @@ export const api = {
     f(`/v1/drafts/claim/${encodeURIComponent(token)}`, opts()).then(j),
   claimDraft: (token: string): Promise<{ short_id: string; url: string; org_id: string }> =>
     f("/v1/drafts/claim", opts({ token })).then(j),
-  // "Use this as a template": copy the artifact. Signed-in → into the active
-  // workspace (`url` = its new home); anonymous → an expiring claimable draft
-  // (`claim_url` = sign in to keep it). The response shape says which happened.
+  // "Use this as a template": copy the artifact into the active workspace (signed-in
+  // only — the viewer defers a signed-out clicker through login with `?use=1`).
   deriveArtifact: (
     id: string,
-  ): Promise<
-    | { short_id: string; title: string | null; url: string; org_id: string }
-    | {
-        short_id: string
-        title: string | null
-        draft_url: string
-        claim_url: string
-        expires_at: string
-      }
-  > => f(`/v1/artifacts/${encodeURIComponent(id)}/use`, opts({})).then(j),
+  ): Promise<{ short_id: string; title: string | null; url: string; org_id: string }> =>
+    f(`/v1/artifacts/${encodeURIComponent(id)}/use`, opts({})).then(j),
 
   // Per-artifact vanity subdomains (`base` null when off) + the workspace's custom
   // domains shown read-only as the artifact's URL on each.

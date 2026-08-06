@@ -15,13 +15,23 @@ export const Route = createFileRoute("/artifacts/$ref")({
   // context and falls back to the artifact's sole collection, if any).
   // `present=1` opens a deck straight into present mode, which is what you want from
   // the link you paste into the calendar invite for the meeting you're presenting in.
+  // `use=1` is deferred use-as-template: the public viewer's "Make your own" sends a
+  // signed-out clicker through login with it, and the page fires the copy once the
+  // visitor is authenticated (one-shot; stripped after firing either way).
   validateSearch: (
     s: Record<string, unknown>,
-  ): { comment?: string; review?: string; collection?: string; present?: boolean } => ({
+  ): {
+    comment?: string
+    review?: string
+    collection?: string
+    present?: boolean
+    use?: boolean
+  } => ({
     ...(typeof s.comment === "string" && s.comment ? { comment: s.comment } : {}),
     ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
     ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
     ...(s.present === true || s.present === "1" || s.present === "true" ? { present: true } : {}),
+    ...(s.use === true || s.use === "1" || s.use === "true" ? { use: true } : {}),
   }),
   // Warm the artifact + its comments so an intent-preloaded link opens instantly.
   // NOT the rendered HTML: a rel=prefetch of the viewer URL is never reused by the

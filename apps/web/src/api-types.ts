@@ -1705,7 +1705,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Copy this artifact into your workspace (or an anonymous claimable draft). */
+        /** Copy this artifact into your workspace (use it as a template). */
         post: {
             parameters: {
                 query?: never;
@@ -1717,7 +1717,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The new copy: its workspace home (signed-in) or its draft + claim URLs (anonymous). */
+                /** @description The new copy's identity and workspace home. */
                 201: {
                     headers: {
                         [name: string]: unknown;
@@ -1729,14 +1729,6 @@ export interface paths {
                             /** @description The copy's permanent URL in your workspace. */
                             url: string;
                             org_id: string;
-                        } | {
-                            short_id: string;
-                            title: string | null;
-                            /** @description The live expiring page on the draft host. */
-                            draft_url: string;
-                            /** @description Sign in here to keep it. */
-                            claim_url: string;
-                            expires_at: string;
                         };
                     };
                 };
