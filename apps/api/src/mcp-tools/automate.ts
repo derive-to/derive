@@ -1,6 +1,7 @@
 import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { connectionBindError } from "../lib/broker"
+import { createContextCore } from "../lib/create-context"
 import { mintToken, sha256 } from "../lib/crypto"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
@@ -191,43 +192,28 @@ export function registerAutomateTool(tc: ToolContext): void {
           return json({ error: "no such manifest artifact in this workspace" })
         if (!roleAllows(reached.role, "share"))
           return json({ error: "creating a context needs share standing on the manifest" })
-        const mint = (name: string) =>
-          meta.createAgent({
-            id: newId("ag"),
-            org_id: org,
-            name,
-            token: sha256(mintToken("dk_agt")),
-            role: "editor",
-            created_by: tc.ownerId,
-            managed: 1,
-          })
-        const minted = await mint(input.name).catch(() =>
-          mint(`${input.name} ${newId("x").slice(-4)}`),
-        )
         try {
-          const created = await meta.createContext({
-            id: newId("ctx"),
-            org_id: org,
+          const made = await createContextCore(meta, {
+            orgId: org,
+            userId: tc.ownerId,
             name: input.name,
-            agent_id: minted.id,
-            manifest_artifact_id: reached.a.id,
-            created_by: tc.ownerId,
-            max_run_ms: input.max_run_ms ?? null,
-            ...(input.max_concurrency ? { max_concurrency: input.max_concurrency } : {}),
+            manifestArtifactId: reached.a.id,
+            maxRunMs: input.max_run_ms,
+            maxConcurrency: input.max_concurrency,
           })
           return json({
-            context_id: created.id,
-            name: created.name,
-            agent_id: minted.id,
-            ask_policy: created.ask_policy,
+            context_id: made.context.id,
+            name: made.context.name,
+            agent_id: made.agentId,
+            ask_policy: made.context.ask_policy,
             note:
               "No token is returned over MCP. You (an owner) run this context directly: " +
               "use({context}) pulls its queued work. A dedicated runner's token comes from " +
               "REST agent rotate.",
           })
         } catch {
-          // A name-collision after the auto-mint must not strand an orphaned managed agent.
-          await meta.deleteAgent(minted.id, org).catch(() => {})
+          // A name-collision after the auto-mint must not strand an orphaned managed agent
+          // — createContextCore already unwinds the mint before rethrowing.
           return json({ error: "a context with that name already exists" })
         }
       }
