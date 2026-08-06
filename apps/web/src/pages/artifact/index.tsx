@@ -547,6 +547,12 @@ export function Artifact() {
     // differ only while the mode is open (it freezes the view), and an open mode
     // is un-armed anyway.
     canEdit: canEditArtifactDoc(art, version ?? art?.current_version, editing),
+    // The frame always contains rendered HTML, including for Markdown. Only an
+    // HTML/deck source supports the opening-tag operation; Markdown keeps image
+    // replacement but gets no resize handle.
+    allowElementEdits:
+      art?.current_content_type?.startsWith("text/html") === true ||
+      art?.current_content_type === "text/x-derive-deck",
     onOpenSourceEditor: startEdit,
     onEnter: () => {
       setSel(null)
@@ -1035,6 +1041,7 @@ export function Artifact() {
                 canUndo={inlineEdit.tools.canUndo}
                 canRedo={inlineEdit.tools.canRedo}
                 canFormat={inlineEdit.tools.canFormat}
+                allowElementEdits={inlineEdit.allowElementEdits}
                 onUndo={inlineEdit.undo}
                 onRedo={inlineEdit.redo}
                 onFormat={inlineEdit.format}

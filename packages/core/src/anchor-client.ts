@@ -510,6 +510,7 @@ interface ElReg {
     ".derive-resize-size:before{content:attr(data-size)}" +
     ".derive-resize-replace{position:absolute;top:6px;left:6px;height:25px;padding:0 8px;border:1px solid rgba(100,116,139,.55);border-radius:5px;background:rgba(248,250,252,.96);color:#334155;font:600 11px/23px system-ui,sans-serif;cursor:pointer;pointer-events:auto;white-space:nowrap}" +
     ".derive-resize-box:not(.derive-resize-image) .derive-resize-replace{display:none}" +
+    ".derive-resize-box:not(.derive-resize-enabled) :is(.derive-resize-handle,.derive-resize-size){display:none}" +
     ".derive-resize-handle:focus-visible,.derive-resize-replace:focus-visible{outline:2px solid rgba(100,116,139,.95);outline-offset:2px}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
@@ -1660,6 +1661,10 @@ interface ElReg {
     ratio: boolean
   }
   let editOn = false
+  // The frame is HTML even when the stored document is Markdown. Element selectors
+  // are only a supported write against HTML/deck SOURCE, so the host explicitly
+  // enables opening-tag operations. Image replacement remains available either way.
+  let elementEditsOn = false
   /* The host says this viewer may edit (permission, current version, not already in
      the mode). It arms the in-document entry gestures — a double-click on text asks
      the host to open edit mode there — so a reader who could never save never fires
@@ -1849,6 +1854,12 @@ interface ElReg {
   const resizableAt = (target: EventTarget | null): ResizableElement | null => {
     const el = asEl(target)
     if (!el?.closest || el.closest(".derive-edit-ui")) return null
+    // A Markdown image still gets the selection box's explicit Replace action, but
+    // no resize controls: element operations are not defined for Markdown source.
+    if (!elementEditsOn) {
+      const image = el.closest("img")
+      return image instanceof HTMLImageElement ? image : null
+    }
     const direct = el.closest(DIRECT_RESIZABLE)
     if (isResizableElement(direct) && !direct.hasAttribute("data-derive-slide")) return direct
     const box = el.closest("div,section,article,aside")
@@ -1921,6 +1932,7 @@ interface ElReg {
     resizeBox.style.width = `${r.width}px`
     resizeBox.style.height = `${r.height}px`
     resizeBox.classList.toggle("derive-resize-image", el.tagName.toLowerCase() === "img")
+    resizeBox.classList.toggle("derive-resize-enabled", elementEditsOn)
     resizeSize.setAttribute("data-size", `${Math.round(r.width)} × ${Math.round(r.height)}`)
   }
   refreshResizeUi = paintResizeUi
@@ -1958,6 +1970,7 @@ interface ElReg {
   })
 
   resizeHandle.addEventListener("pointerdown", (e) => {
+    if (!elementEditsOn) return
     const el = resizeUiEl()
     if (!el || !document.contains(el)) return
     e.preventDefault()
@@ -1979,6 +1992,7 @@ interface ElReg {
     resizeHandle.setPointerCapture?.(e.pointerId)
   })
   resizeHandle.addEventListener("keydown", (e) => {
+    if (!elementEditsOn) return
     if (!/^Arrow(?:Left|Right|Up|Down)$/.test(e.key)) return
     const el = resizeUiEl()
     if (!el || !document.contains(el)) return
@@ -2046,9 +2060,15 @@ interface ElReg {
   /** Which gesture asked the mode to open: the double-click whose target this client
    *  already captured, or the host's Edit verb on the live selection. */
   type EditEntry = { fromPointer?: boolean; fromSelection?: boolean }
-  const setEditMode = (on: boolean, keep?: boolean, entry?: EditEntry) => {
+  const setEditMode = (
+    on: boolean,
+    keep?: boolean,
+    entry?: EditEntry,
+    allowElementEdits = false,
+  ) => {
     if (on === editOn) return
     editOn = on
+    elementEditsOn = on && allowElementEdits
     if (on) {
       clearResizeUi()
       // The pre-edit snapshot every quote is built from. normalize() first so the
@@ -2815,6 +2835,7 @@ interface ElReg {
         d.fromPointer || d.fromSelection
           ? { fromPointer: !!d.fromPointer, fromSelection: !!d.fromSelection }
           : undefined,
+        !!d.elementEdits,
       )
     else if (d.type === "edit-armed") editArmed = !!d.on
     // The edit bar's controls, driven from the host. Same functions the keyboard

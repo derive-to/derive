@@ -32,6 +32,7 @@ export function EditBar({
   canUndo = false,
   canRedo = false,
   canFormat = false,
+  allowElementEdits = false,
   onUndo,
   onRedo,
   onFormat,
@@ -48,6 +49,8 @@ export function EditBar({
   canUndo?: boolean
   canRedo?: boolean
   canFormat?: boolean
+  /** HTML/deck sources can persist resize operations; rendered Markdown cannot. */
+  allowElementEdits?: boolean
   onUndo: () => void
   onRedo: () => void
   /** A link needs a URL; the bar asks for it (below) before it sends one. */
@@ -171,9 +174,13 @@ export function EditBar({
         )}
       >
         {dirty === 0
-          ? touch
-            ? "tap text to edit; tap an image to resize or replace it"
-            : "click text to edit; drag a media or box corner to resize"
+          ? allowElementEdits
+            ? touch
+              ? "tap text to edit; tap an image to resize or replace it"
+              : "click text to edit; drag a media or box corner to resize"
+            : touch
+              ? "tap text to edit; select an image to replace it"
+              : "click text to edit; select an image to replace it"
           : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
       </span>
       {/* …and on a phone the count still has to be visible, so it appears alone. */}

@@ -76,6 +76,9 @@ export function useInlineEdit(p: {
    *  bundle, not GitHub-managed). Arms the document's own entry gesture: a
    *  double-click asks to edit there. A reader who can't save never fires one. */
   canEdit: boolean
+  /** The stored source can carry selector-scoped element operations. Markdown is
+   *  rendered as HTML in the frame, but does not support that source operation. */
+  allowElementEdits: boolean
 }) {
   // The version the rendered frame is pinned to while editing — the mode flag AND
   // the freeze in one value (active ⇔ non-null), so no exit path can ever leave
@@ -238,7 +241,7 @@ export function useInlineEdit(p: {
     p.onEnter?.()
     setDirty(0)
     setFrozenVersion(p.art.current_version)
-    p.post({ type: "edit-mode", on: true, ...entry })
+    p.post({ type: "edit-mode", on: true, elementEdits: p.allowElementEdits, ...entry })
   }
   startRef.current = start
   // Tell the frame whether the document's own entry gesture is live. Re-posted on
@@ -434,6 +437,8 @@ export function useInlineEdit(p: {
     dirty,
     /** Live capability of the bar's controls (undo / redo / format). */
     tools,
+    /** Whether this source format can persist selector-scoped element operations. */
+    allowElementEdits: p.allowElementEdits,
     undo,
     redo,
     format,

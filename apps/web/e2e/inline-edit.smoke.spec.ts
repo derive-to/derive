@@ -283,3 +283,21 @@ test("resize an image and box, then undo/redo and save", async ({ owner }) => {
     '<div id="summary-box" data-derive-resizable style="width: 228px; height: 118px">',
   )
 })
+
+test("Markdown keeps image replacement without offering an unsaveable resize", async ({
+  owner,
+}) => {
+  const markdown = "# Layout\n\n![Hero](/brand/favicon.svg)"
+  const shortId = await publishArtifact(owner, "layout.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("select an image to replace it")
+  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("resize")
+
+  await doc(owner).getByRole("img", { name: "Hero" }).hover()
+  // The existing image-swap flow works for Markdown because it replaces the literal
+  // URL. Resize is different: it needs an HTML opening tag, so promising it here
+  // would make Save fail after the user had already done the work.
+  await expect(doc(owner).getByRole("button", { name: "Replace image" })).toBeVisible()
+  await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeHidden()
+})
