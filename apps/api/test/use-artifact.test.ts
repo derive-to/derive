@@ -76,10 +76,9 @@ describe("signed-in use", () => {
 })
 
 describe("anonymous callers", () => {
-  it("is refused at the door even for a link-viewable source — no pre-auth copies", async () => {
-    // A draft copy an anonymous holder can't edit delivers nothing the source page
-    // doesn't already show, so the flow is deferred use (`?use=1` through login),
-    // and the global anonymous-write gate refuses the bare POST outright.
+  it("is refused at the door even for a link-viewable source — nothing minted pre-auth", async () => {
+    // The viewer defers signed-out clickers through login (`?use=1`); the bare
+    // POST is refused by the global anonymous-write gate.
     const src = await (
       await publishAs(
         app,
@@ -88,10 +87,10 @@ describe("anonymous callers", () => {
         as(ana.email),
       )
     ).json()
+    const draftsBefore = await meta.countArtifacts("ws_sys_drafts")
     const res = await use(src.short_id) // no auth headers at all
     expect(res.status).toBe(403)
-    // Nothing was minted anywhere for the click.
-    expect(await meta.countArtifacts("ws_sys_drafts")).toBe(0)
+    expect(await meta.countArtifacts("ws_sys_drafts")).toBe(draftsBefore)
   })
 })
 

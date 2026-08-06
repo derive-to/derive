@@ -39,6 +39,7 @@ import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { useArtifactChat } from "./lib/use-artifact-chat"
+import { takeUseIntent } from "./lib/use-intent"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -133,12 +134,12 @@ export function Artifact() {
     refetch,
   } = useQuery(artifactQuery(shortId, qc))
 
-  // Deferred use-as-template (`?use=1`): the public viewer's "Make your own" sends a
-  // signed-out clicker through login with this flag, and the copy fires HERE — the
-  // first moment the visitor can actually edit what they asked for. One-shot: fired
-  // at most once per mount; success replaces the URL with the copy's, and any
-  // refusal (still anonymous, no publish seat, source gone) strips the flag and
-  // shows the page normally.
+  // Deferred use-as-template: the public viewer's "Make your own" sends a signed-out
+  // clicker through login with `?use=1`, and the copy fires here, right after auth.
+  // The same-tab marker gates it — `?use=1` alone is a shareable URL, and a pasted
+  // link must not write into the clicker's workspace (see lib/use-intent.ts). Fired
+  // at most once per mount; success replaces the URL with the copy's, anything else
+  // (no marker, still anonymous, refused) strips the flag and shows the page as-is.
   const useFired = useRef(false)
   useEffect(() => {
     if (!search.use || loading || useFired.current) return
@@ -150,7 +151,7 @@ export function Artifact() {
         search: (s) => ({ ...s, use: undefined }),
         replace: true,
       })
-    if (!me) {
+    if (!me || !takeUseIntent(shortId)) {
       strip()
       return
     }

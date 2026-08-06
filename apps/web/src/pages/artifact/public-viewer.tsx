@@ -17,6 +17,7 @@ import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { FloatingControl } from "./floating-control"
 import { commentNudgeCopy, shouldPromptSignInToComment } from "./lib/comment-access"
+import { markUseIntent } from "./lib/use-intent"
 import { refFor } from "./parse-ref"
 import { Presence } from "./rail-deck"
 
@@ -168,15 +169,19 @@ export function PublicViewer({
 
         {/* The growth verb (the page's one filled primary) + a quiet sign-in. Clicks
             refine the d_src stamp so the funnel knows WHICH surface converted.
-            "Make your own" means THIS artifact: `?use=1` rides return_to through
-            login, and the artifact page completes the copy the moment the visitor
-            can actually edit it (deferred use) — never a blank editor, never an
-            inert pre-auth copy. */}
+            "Make your own" copies THIS artifact, deferred through login: `?use=1`
+            carries the intent across the auth redirect, the same-tab marker proves
+            it originated from this click (a pasted ?use=1 link must not write —
+            see lib/use-intent.ts), and the artifact page fires the copy once the
+            visitor is signed in. */}
         <Button asChild variant="default" size="sm" data-testid="public-make-your-own">
           <Link
             to="/login"
             search={{ signup: true, return_to: `${returnTo}?use=1` }}
-            onClick={() => stampSrc("make_your_own", art.short_id)}
+            onClick={() => {
+              stampSrc("make_your_own", art.short_id)
+              markUseIntent(art.short_id)
+            }}
           >
             {isMobile ? "Make yours" : "Make your own"}
           </Link>

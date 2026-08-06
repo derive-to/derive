@@ -2043,11 +2043,10 @@ export const artifactRoutes = (ctx: AppContext) => {
   // space. The copy re-points at the source version's stored blob (content-addressed
   // and org-agnostic, so no bytes move — the `restore` recipe, one createArtifact
   // earlier) and records lineage in `derived_from`. Signed-in only: the copy lands
-  // in the caller's active workspace at the workspace's own access defaults. An
-  // anonymous clicker is sent through login instead (`?use=1` on the viewer), and
-  // the page completes the copy the moment they can actually edit it — a draft
-  // copy an anonymous holder can't edit would deliver nothing the source page
-  // doesn't already show, so no copy is minted before auth.
+  // in the caller's active workspace at the workspace's own access defaults. The
+  // viewer defers a signed-out clicker through login (`?use=1`) rather than minting
+  // anything pre-auth — an anonymous holder couldn't edit a copy, so it would add
+  // nothing over the source page they're already reading.
   // Anyone who can READ the source can use it — the same standing that lets them
   // select-all-copy the rendered page; `requireArtifact(read)` folds in the world
   // link, membership, and the password unlock cookie.
@@ -2090,12 +2089,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       const srcVersion = await meta.getVersion(src.id, src.current_version)
       if (!srcVersion) return bail(fail(c, 404, "nothing published yet"))
       const me = await currentUser(c)
-      // The global anonymous-write gate refuses this route before it runs; this 401
-      // is defense in depth. The viewer routes a signed-out clicker through login
-      // with `?use=1` and completes the copy right after auth (deferred use).
+      // The global anonymous-write gate already refused anonymous callers at the
+      // door; this 401 keeps the route safe on its own terms regardless.
       if (!me) return bail(fail(c, 401, "sign in to use this artifact"))
-
-      // ---- Land the copy in the caller's active workspace at its own defaults. ----
       if (!(await workspaceCan(c, "publish")))
         return bail(fail(c, 403, "you need publish rights in this workspace"))
       const org = await activeWorkspace(c)
@@ -2143,12 +2139,11 @@ export const artifactRoutes = (ctx: AppContext) => {
         v,
         { isNew: true, onBehalf: me.id, actorId: me.id },
       )
-      const fresh = (await meta.getByShortId(copy.short_id)) as ArtifactRecord
       return c.json(
         {
-          short_id: fresh.short_id,
-          title: fresh.title,
-          url: artifactUrl(deps.baseUrl, fresh),
+          short_id: copy.short_id,
+          title: copy.title,
+          url: artifactUrl(deps.baseUrl, copy),
           org_id: org,
         },
         201,

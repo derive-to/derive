@@ -17,7 +17,9 @@ export const Route = createFileRoute("/artifacts/$ref")({
   // the link you paste into the calendar invite for the meeting you're presenting in.
   // `use=1` is deferred use-as-template: the public viewer's "Make your own" sends a
   // signed-out clicker through login with it, and the page fires the copy once the
-  // visitor is authenticated (one-shot; stripped after firing either way).
+  // visitor is authenticated. Gated by a same-tab click marker (a pasted ?use=1
+  // link must not write — see pages/artifact/lib/use-intent.ts) and stripped after
+  // firing either way.
   validateSearch: (
     s: Record<string, unknown>,
   ): {
