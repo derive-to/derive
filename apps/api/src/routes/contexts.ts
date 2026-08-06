@@ -33,11 +33,11 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
-import { cardForWire } from "../lib/builder-card"
 import { chatArrival } from "../lib/chat-gate"
 import { buildChatTools, type ChatPrincipal, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
+import { cardForWire } from "../lib/context-builder-card"
 import { buildContextBuilderTools, latestBuilderCard } from "../lib/context-builder-tools"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
@@ -69,9 +69,8 @@ import { log } from "../log"
 
 /**
  * THE MARKER for a guided context-builder session — a plain `context_session` row (no
- * artifact, no context) whose `subject_ref` is this literal rather than null. Exported so the
- * route that creates one (`POST /v1/context-builder-session`) and the serve branch that
- * recognizes one share a single source rather than two hand-typed copies drifting apart.
+ * artifact, no context) whose `subject_ref` is this literal rather than null. One constant so
+ * the route that opens one and the serve branch that recognizes one cannot drift.
  *
  * Deliberately NOT a `Selector`: `parseSubject` (packages/core/selectors.ts) only recognizes
  * artifact/collection/tag, so this string parses to `null` there — same as a plain workspace
@@ -79,7 +78,7 @@ import { log } from "../log"
  * "no subject" as "workspace chat"); this module is the one place that reads the raw column to
  * tell the two apart, right before deciding which tool surface and prompt a turn gets.
  */
-export const BUILDER_SUBJECT = '{"kind":"context_builder"}'
+const BUILDER_SUBJECT = '{"kind":"context_builder"}'
 
 export const contextRoutes = (ctx: AppContext) => {
   const {

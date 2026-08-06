@@ -15,8 +15,8 @@ import { toast } from "@/components/ui/sonner"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
 // THE EXPERT DOOR — for someone who already has a manifest written (by hand, or by an
-// agent that published one) and just wants to register it, no interview needed. Lives
-// behind the builder page's "I already have a manifest" toggle now; the guided
+// agent that published one) and just wants to register it, no interview needed. Reached
+// only through the builder page's "I already have a manifest" toggle; the guided
 // conversation (builder.tsx) is the front door everyone else walks through.
 export function NewContextForm({
   agents,

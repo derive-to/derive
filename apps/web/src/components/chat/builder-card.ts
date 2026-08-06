@@ -6,4 +6,3 @@
 import type { SessionMeta } from "@/api"
 
 export type BuilderCardMeta = NonNullable<NonNullable<SessionMeta>["card"]>
-export type BuilderCardDraft = BuilderCardMeta["draft"]

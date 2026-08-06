@@ -18,10 +18,9 @@ import { NewContextForm } from "./new-context-form"
 // one: a guided conversation for everyone (this page's main act — Derive interviews you
 // the way a new teammate would, and the transcript itself becomes the context, turn by
 // turn, via ContextCard), and — for the one person who already has a manifest written,
-// by hand or by their own agent — a plain form one toggle away. The old page-level
-// create form (pages/context/index.tsx) lived behind a "New context" button that opened
-// straight into raw fields (name, manifest short id); that is now exclusively the
-// expert door's content, moved verbatim to new-context-form.tsx.
+// by hand or by their own agent — the raw name/short-id form one toggle away
+// (new-context-form.tsx). That toggle is the only way into those fields: nowhere else in
+// the app opens straight onto them.
 //
 // One-shot by design: this conversation is not meant to be revisited or picked back up
 // from history (that is what the finished context's own console is for), so unlike the

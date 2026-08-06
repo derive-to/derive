@@ -88,7 +88,7 @@ describe("builder session", () => {
       deps: { callModel: scripted() },
     })
     await app.request("/v1/me", { headers: as(owner.email) })
-    // Chat is on by default now (see chat-attended.test.ts), so the case worth gating is a
+    // Chat is on by default (see chat-attended.test.ts), so the case worth pinning is a
     // workspace that has explicitly opted OUT — the same deliberate act chatArrival gates on
     // for every other chat surface.
     await meta.setOrgSettings("default", {

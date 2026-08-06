@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { cardForWire } from "../src/lib/builder-card"
+import { cardForWire } from "../src/lib/context-builder-card"
 import {
   buildContextBuilderTools,
   latestBuilderCard,

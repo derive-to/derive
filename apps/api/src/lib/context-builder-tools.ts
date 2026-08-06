@@ -2,8 +2,8 @@ import { publish, roleAllows, type SessionMessageRecord } from "@derive/core"
 import { z } from "zod"
 import type { AppContext } from "../context"
 import type { LoopTool } from "./agent-loop"
-import { cardForWire } from "./builder-card"
 import { buildChatTools, type ChatPrincipal, type ChatToolSurface } from "./chat-tools"
+import { cardForWire } from "./context-builder-card"
 import { ContextConflictError, createContextCore } from "./create-context"
 
 /**

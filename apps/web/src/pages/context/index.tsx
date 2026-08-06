@@ -14,9 +14,9 @@ import { ContextRowsSkeleton } from "./context-skeleton"
 
 // The contexts directory: the workspace's askable agent setups. Each one pairs a
 // registered agent with a manifest — the versioned document that defines what it
-// knows and what it can do. Sharing the manifest is sharing the context. Creating one
-// is a conversation now (/contexts/new), not a page-level form — see pages/context/
-// builder.tsx.
+// knows and what it can do. Sharing the manifest is sharing the context. Creating one is
+// a conversation of its own (/contexts/new, see builder.tsx), so this page only lists and
+// points at it.
 export function Contexts() {
   useDocumentTitle("Contexts")
   const nav = useNavigate()

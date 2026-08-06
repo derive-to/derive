@@ -212,11 +212,10 @@ export function registerAutomateTool(tc: ToolContext): void {
               "REST agent rotate.",
           })
         } catch (err) {
-          // Only a context-name collision (after the mint already succeeded) gets the
-          // friendly message — createContextCore unwinds the mint and tags this case as
-          // ContextConflictError. Anything else (e.g. the mint itself failing) is NOT a
-          // "name already exists" and must surface as the generic/opaque error it always
-          // did, back when the mint call sat outside this branch's try/catch.
+          // Only a context-name collision earns the friendly message, and only
+          // ContextConflictError means that: createContextCore tags the case where the mint
+          // already succeeded and the context insert did not. Anything else — the mint itself
+          // failing, say — is not a naming problem and must not be reported as one.
           if (!(err instanceof ContextConflictError)) throw err
           return json({ error: "a context with that name already exists" })
         }

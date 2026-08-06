@@ -18,9 +18,11 @@ describe("createContextCore", () => {
       manifestArtifactId: artifactId,
     })
     expect(made.context.name).toBe("Pricing Helper")
-    expect(made.agentToken).toMatch(/^dk_agt_/)
     const agent = await meta.getAgent(made.agentId)
     expect(agent?.managed).toBeTruthy()
+    // The minted token never leaves this function — only its hash is stored, and no caller
+    // has anywhere safe to put the plaintext.
+    expect(made).not.toHaveProperty("agentToken")
   })
 
   it("second create with the same name conflicts", async () => {
@@ -38,12 +40,10 @@ describe("createContextCore", () => {
     await expect(createContextCore(meta, input)).rejects.toBeInstanceOf(ContextConflictError)
   })
 
-  // Regression for a review finding on the extraction: the mint step used to sit
-  // OUTSIDE automate.ts's try/catch, so a mint failure (unrelated to naming — a
-  // transient DB error, say) propagated as a generic/opaque error rather than
-  // getting relabeled "a context with that name already exists". Folding mint into
-  // this one shared function must not blur that distinction: only a failure of the
-  // CONTEXT insert (after the mint already succeeded) may become ContextConflictError.
+  // The two failures this function must keep apart. Only a CONTEXT insert that fails after
+  // the mint already succeeded is a naming problem; a mint that fails outright is a store
+  // problem, and callers turn ContextConflictError into "that name is already taken". Wrapping
+  // both would tell someone to rename their way out of a dead database.
   it("a mint failure is not mistaken for a name collision", async () => {
     const { app, meta } = makeAuthedApp("ctx-core-mint-fail", [owner])
     await app.request("/v1/me", { headers: as(owner.email) })

@@ -543,8 +543,8 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
 // messenger grammar on purpose: a context runs wherever its owner runs it, and offline is its
 // normal resting state, not an outage.
 //
-// WORDED FOR SOMEONE WHO ARRIVED FROM THE GUIDED BUILDER, which is now most first-timers. They
-// never met a runner, a token or a queue, so every line here answers one of two questions —
+// WORDED FOR SOMEONE WHO ARRIVED FROM THE GUIDED BUILDER, where most first-timers come from.
+// They never met a runner, a token or a queue, so every line here answers one of two questions —
 // what does this state MEAN for me, and why would I need this — before it shows a command. The
 // commands themselves stay verbatim: those are things to paste, not things to read, and
 // rewriting them into prose would leave nothing that works.

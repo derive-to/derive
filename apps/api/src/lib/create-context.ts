@@ -2,13 +2,13 @@ import type { ContextRecord, MetaStore } from "@derive/core"
 import { newId } from "@derive/core"
 import { mintToken, sha256 } from "./crypto"
 
-// The one place that mints a managed agent and wires it to a manifest as a context —
-// the create_context branch of the automate tool (mcp-tools/automate.ts) and the
-// guided context builder both call this. The REST create route (routes/contexts.ts)
-// has its own inline copy (it also supports agent_id and connection_ids, and returns
-// the token over the wire) and is not refactored onto this helper in this change; the
-// recipe below must stay byte-identical to both so a workspace can't tell which door a
-// context came through.
+// Mint a managed agent, wire it to a manifest as a context: the recipe the automate tool's
+// create_context action (mcp-tools/automate.ts) and the guided context builder share.
+//
+// The REST create route (routes/contexts.ts) keeps its own inline copy — it also takes an
+// existing agent_id and connection_ids, and hands the minted token back over the wire, so it is
+// a superset rather than a caller. That makes this recipe a thing kept in step by hand: a
+// workspace must not be able to tell which door a context came through.
 
 export interface CreateContextCoreInput {
   orgId: string
@@ -23,18 +23,13 @@ export interface CreateContextCoreInput {
 export interface CreateContextCoreResult {
   context: ContextRecord
   agentId: string
-  /** Present so the HTTP route can keep returning it once; the builder and automate
-   *  discard it — an MCP transcript / builder transcript is a bad place for a
-   *  standing secret. */
-  agentToken: string
 }
 
 /** Thrown ONLY when the CONTEXT row insert fails (both mint attempts already
  *  succeeded) — the original DB error rides `cause`. This is the one failure a
- *  caller may recast as a friendly "a context with that name already exists":
- *  a mint failure (both attempts) is NOT wrapped and propagates as whatever the
- *  store threw, same as before this was a shared helper, so a transient/opaque
- *  minting failure is never mislabeled as a name collision. */
+ *  caller may recast as a friendly "a context with that name already exists".
+ *  A mint failure is NOT wrapped and propagates as whatever the store threw, so
+ *  a transient or opaque minting failure is never mislabeled as a name collision. */
 export class ContextConflictError extends Error {
   constructor(cause: unknown) {
     super("context insert failed", { cause })
@@ -45,16 +40,17 @@ export class ContextConflictError extends Error {
 /** Mint a managed agent for `name` and wire it to `manifestArtifactId` as a new
  *  context. Agent names are unique per workspace, so a name collision with an
  *  existing agent suffixes a 4-char id and retries once — mirroring the REST
- *  create route (routes/contexts.ts) and automate.ts's `create_context` action.
- *  A name collision on the CONTEXT itself (after the agent is already minted)
- *  unwinds the mint and rethrows as `ContextConflictError`, so a failed create
- *  never strands an orphaned managed agent with a live token — and a caller can
- *  tell "the context name collided" apart from "minting the agent itself blew up"
- *  (see ContextConflictError). */
+ *  create route (routes/contexts.ts). A name collision on the CONTEXT itself
+ *  (after the agent is already minted) unwinds the mint and rethrows as
+ *  `ContextConflictError`, so a failed create never strands an orphaned managed
+ *  agent with a live token. */
 export const createContextCore = async (
   meta: MetaStore,
   input: CreateContextCoreInput,
 ): Promise<CreateContextCoreResult> => {
+  // Minted once and only ever hashed: neither caller has anywhere safe to put a standing
+  // secret (an MCP tool result, a chat transcript), so it is never handed back. A dedicated
+  // runner's token comes from REST agent rotate instead.
   const agentToken = mintToken("dk_agt")
   const mint = (name: string) =>
     meta.createAgent({
@@ -66,9 +62,9 @@ export const createContextCore = async (
       created_by: input.userId,
       managed: 1,
     })
-  // A mint failure (both attempts) is deliberately NOT caught here — it propagates
-  // raw, uncaught, exactly as it did when this lived inline in automate.ts (the
-  // mint call sat outside that branch's try/catch).
+  // OUTSIDE the try on purpose: a mint failure that survives the retry is not a naming
+  // problem, and the catch below exists to recast naming problems. It propagates raw so a
+  // caller cannot relabel a dead store as "that name is taken".
   const minted = await mint(input.name).catch(() => mint(`${input.name} ${newId("x").slice(-4)}`))
   try {
     const context = await meta.createContext({
@@ -81,7 +77,7 @@ export const createContextCore = async (
       max_run_ms: input.maxRunMs ?? null,
       ...(input.maxConcurrency ? { max_concurrency: input.maxConcurrency } : {}),
     })
-    return { context, agentId: minted.id, agentToken }
+    return { context, agentId: minted.id }
   } catch (err) {
     // A name-collision after the auto-mint must not strand an orphaned managed agent.
     await meta.deleteAgent(minted.id, input.orgId).catch(() => {})
