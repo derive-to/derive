@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS artifact (
   author_login TEXT,
   author_avatar TEXT,
   author_gh_id TEXT,
-  author_id TEXT
+  author_id TEXT,
+  derived_from TEXT
 );
 
 CREATE TABLE IF NOT EXISTS version (

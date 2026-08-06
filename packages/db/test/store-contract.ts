@@ -129,6 +129,10 @@ export function runStoreContract(
       const list = await store.listArtifacts({ orgId: ORG })
       expect(list.some((x) => x.id === a.id)).toBe(true)
       expect(await store.countArtifacts(ORG)).toBeGreaterThan(0)
+      // Remix lineage: null unless stamped at create, and round-trips when it is.
+      expect(created.derived_from).toBeNull()
+      const derived = await store.createArtifact({ ...newArtifact(), derived_from: a.id })
+      expect((await store.getArtifactById(derived.id))?.derived_from).toBe(a.id)
     })
 
     it("sets source_path (the synced-file location) independently of the title", async () => {

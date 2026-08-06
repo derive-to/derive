@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router"
 import { X } from "lucide-react"
 import { type ReactNode, useState } from "react"
-import type { Artifact, Viewer } from "@/api"
+import { type Artifact, api, type Viewer } from "@/api"
 import { Icon } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
@@ -75,6 +75,8 @@ export function PublicViewer({
   const nudge = shouldPromptSignInToComment(art.link_role, !!art.removed)
   const copy = commentNudgeCopy(art.open_comment_count)
   const [nudgeOpen, setNudgeOpen] = useState(false)
+  // "Make your own" in flight — the click mints a copy server-side, then leaves the page.
+  const [making, setMaking] = useState(false)
   // Base ref for the version menu's links (current = bare, past = @vN).
   const baseRef = refFor({ short_id: art.short_id, title: art.title })
 
@@ -167,15 +169,30 @@ export function PublicViewer({
         <Presence viewers={viewers} selfId={selfId} compact={isMobile} />
 
         {/* The growth verb (the page's one filled primary) + a quiet sign-in. Clicks
-            refine the d_src stamp so the funnel knows WHICH surface converted. */}
-        <Button asChild variant="default" size="sm" data-testid="public-make-your-own">
-          <Link
-            to="/login"
-            search={{ signup: true, return_to: "/new" }}
-            onClick={() => stampSrc("make_your_own", art.short_id)}
-          >
-            {isMobile ? "Make yours" : "Make your own"}
-          </Link>
+            refine the d_src stamp so the funnel knows WHICH surface converted.
+            "Make your own" now means it: POST /use copies THIS artifact — an anon
+            visitor gets a claimable draft (value first, signup after), a signed-in
+            non-member gets it in their workspace. A source that refuses (nothing
+            published, read gate) falls back to the plain signup path. */}
+        <Button
+          variant="default"
+          size="sm"
+          data-testid="public-make-your-own"
+          disabled={making}
+          onClick={() => {
+            if (making) return
+            setMaking(true)
+            stampSrc("make_your_own", art.short_id)
+            api
+              .deriveArtifact(art.short_id)
+              // Leaves this page for the copy's home (the claim page, or the caller's
+              // ACTIVE workspace) — never a workspace switch, and the anonymous viewer
+              // has no persisted cache to restore.
+              .then((r) => window.location.assign("claim_url" in r ? r.claim_url : r.url)) // reload-ignore: not a workspace switch
+              .catch(() => window.location.assign("/login?signup=true&return_to=%2Fnew")) // reload-ignore: off-app auth page
+          }}
+        >
+          {isMobile ? "Make yours" : "Make your own"}
         </Button>
         <Button
           asChild

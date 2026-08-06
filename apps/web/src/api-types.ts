@@ -1696,6 +1696,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/use": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copy this artifact into your workspace (or an anonymous claimable draft). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new copy: its workspace home (signed-in) or its draft + claim URLs (anonymous). */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            short_id: string;
+                            title: string | null;
+                            /** @description The copy's permanent URL in your workspace. */
+                            url: string;
+                            org_id: string;
+                        } | {
+                            short_id: string;
+                            title: string | null;
+                            /** @description The live expiring page on the draft host. */
+                            draft_url: string;
+                            /** @description Sign in here to keep it. */
+                            claim_url: string;
+                            expires_at: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/preview": {
         parameters: {
             query?: never;
