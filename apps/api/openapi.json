@@ -2885,6 +2885,82 @@
               "local"
             ],
             "description": "Stamped on a recorded answer: work that already ran on the owner's own machine, filed here rather than served through the queue. Mirrors automate record's run.meta.lane. Absent on every normally-served turn."
+          },
+          "card": {
+            "type": "object",
+            "properties": {
+              "draft": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "knowledge",
+                      "worker"
+                    ]
+                  },
+                  "knows": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Plain-language scope bullets — what it knows."
+                  },
+                  "answers": {
+                    "type": "string",
+                    "description": "How it answers."
+                  },
+                  "wont": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Honest limits."
+                  },
+                  "source_short_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "description",
+                  "kind",
+                  "knows",
+                  "answers",
+                  "wont",
+                  "source_short_ids"
+                ]
+              },
+              "created": {
+                "type": "object",
+                "properties": {
+                  "context_id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "context_id",
+                  "name"
+                ],
+                "description": "Present once create_context_from_draft has actually minted the context."
+              }
+            },
+            "required": [
+              "draft"
+            ],
+            "description": "The builder's draft card from the last draft_manifest / create_context_from_draft call this turn — mirrors BuilderCard in lib/context-builder-tools.ts, manifest_md deliberately omitted (never shown to the person). Only ever set on context-builder session turns."
           }
         },
         "description": "Structured answer payload on agent messages; null on asker messages."

@@ -7114,6 +7114,27 @@ export interface components {
              * @enum {string}
              */
             lane?: "local";
+            /** @description The builder's draft card from the last draft_manifest / create_context_from_draft call this turn — mirrors BuilderCard in lib/context-builder-tools.ts, manifest_md deliberately omitted (never shown to the person). Only ever set on context-builder session turns. */
+            card?: {
+                draft: {
+                    name: string;
+                    description: string;
+                    /** @enum {string} */
+                    kind: "knowledge" | "worker";
+                    /** @description Plain-language scope bullets — what it knows. */
+                    knows: string[];
+                    /** @description How it answers. */
+                    answers: string;
+                    /** @description Honest limits. */
+                    wont: string[];
+                    source_short_ids: string[];
+                };
+                /** @description Present once create_context_from_draft has actually minted the context. */
+                created?: {
+                    context_id: string;
+                    name: string;
+                };
+            };
         } | null;
         ChatModel: {
             /** @description The provider's model id — what to send back to pick it. */

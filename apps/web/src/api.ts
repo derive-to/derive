@@ -1013,6 +1013,14 @@ export const api = {
     agent_id?: string
     manifest_short_id: string
   }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
+  // Opens the guided context-builder conversation (routes/contexts.ts's
+  // POST /v1/context-builder-session) — same envelope as askContext, but the session carries
+  // BUILDER_SUBJECT so the server swaps in the draft/create tool surface and interview prompt.
+  createBuilderSession: (input: { workspace: string; body_md: string; model?: string }) =>
+    f("/v1/context-builder-session", opts(input)).then(j) as Promise<{
+      session: { id: string }
+      messages: unknown[]
+    }>,
   askContext: (
     id: string,
     body_md: string,

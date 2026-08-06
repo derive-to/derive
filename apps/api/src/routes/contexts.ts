@@ -768,6 +768,26 @@ export const contextRoutes = (ctx: AppContext) => {
         .describe(
           "Stamped on a recorded answer: work that already ran on the owner's own machine, filed here rather than served through the queue. Mirrors automate record's run.meta.lane. Absent on every normally-served turn.",
         ),
+      card: z
+        .object({
+          draft: z.object({
+            name: z.string(),
+            description: z.string(),
+            kind: z.enum(["knowledge", "worker"]),
+            knows: z.array(z.string()).describe("Plain-language scope bullets — what it knows."),
+            answers: z.string().describe("How it answers."),
+            wont: z.array(z.string()).describe("Honest limits."),
+            source_short_ids: z.array(z.string()),
+          }),
+          created: z
+            .object({ context_id: z.string(), name: z.string() })
+            .optional()
+            .describe("Present once create_context_from_draft has actually minted the context."),
+        })
+        .optional()
+        .describe(
+          "The builder's draft card from the last draft_manifest / create_context_from_draft call this turn — mirrors BuilderCard in lib/context-builder-tools.ts, manifest_md deliberately omitted (never shown to the person). Only ever set on context-builder session turns.",
+        ),
     })
     .openapi("SessionMeta")
 
