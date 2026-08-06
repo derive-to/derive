@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useState } from "react"
-import { api } from "@/api"
+import { ApiError, api } from "@/api"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatThread } from "@/components/chat/chat-thread"
 import { useChatSession } from "@/components/chat/use-chat-session"
@@ -40,16 +40,30 @@ export function ContextBuilderPage() {
   } = useQuery({ ...workspaceQuery(), staleTime: 60_000 })
   const org = ws?.id ?? ""
 
-  // Whether this DEPLOY has any model configured at all — the one thing that makes the
-  // guided conversation itself unusable (chatArrival's `no_model` refusal). A workspace
-  // with chat merely turned off, over budget, rate-limited, etc. still gets a working
-  // composer; those refusals surface through the ordinary chat.error path the same way
-  // any other chat turn's refusal does — this page adds no gate semantics of its own.
+  // Whether this DEPLOY has any model configured at all — one of two things that can make
+  // the guided conversation itself unusable (chatArrival's `no_model` refusal). Checked
+  // up front so the page never even offers a composer that can't work.
   const { data: modelsData, isError: modelsFailed } = useQuery(chatModelsQuery())
-  const degraded = modelsFailed || (modelsData ? modelsData.models.length === 0 : false)
+  // The other: a workspace-level refusal (chatBeta off, not a member — see chatGates in
+  // routes/contexts.ts) can't be seen from the deploy-wide models list above, only from
+  // actually trying to open. Every one of those refusals answers 404, so a 404 from THIS
+  // call — and only this call, not a network blip or a 5xx — is treated as "this door
+  // doesn't work here" rather than a transient send failure. over_budget/rate_limited/
+  // no_model (503) stay on the ordinary chat.error path: they're real refusals, but not
+  // reasons to hide the composer altogether.
+  const [openRefused, setOpenRefused] = useState(false)
+  const degraded =
+    modelsFailed || (modelsData ? modelsData.models.length === 0 : false) || openRefused
 
   const open = useCallback(
-    (body: string) => api.createBuilderSession({ workspace: org, body_md: body }),
+    async (body: string) => {
+      try {
+        return await api.createBuilderSession({ workspace: org, body_md: body })
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) setOpenRefused(true)
+        throw e
+      }
+    },
     [org],
   )
   // No custom follow-up: the builder carries no model choice to thread through a turn
@@ -67,11 +81,11 @@ export function ContextBuilderPage() {
       <PageShell className="flex justify-center pt-16">
         <StatusPanel
           tone="danger"
-          title="Couldn't load your workspace"
-          description="Derive needs to know which workspace this context belongs to."
+          title={BUILDER_COPY.wsErrorTitle}
+          description={BUILDER_COPY.wsErrorBody}
           action={
             <Button size="sm" onClick={() => void retryWs()} data-testid="builder-ws-retry">
-              Try again
+              {BUILDER_COPY.retryButton}
             </Button>
           }
         />
@@ -102,7 +116,7 @@ export function ContextBuilderPage() {
             toast.success("Prompt copied")
           }}
         >
-          Copy
+          {BUILDER_COPY.copyButton}
         </Button>
       </div>
     </div>

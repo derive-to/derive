@@ -21,6 +21,10 @@ export const BUILDER_COPY = {
     "with its short id. When you're done, give me the link to the new context.",
   ].join(" "),
   expertDoor: "I already have a manifest",
+  wsErrorTitle: "Couldn't load your workspace",
+  wsErrorBody: "Derive needs to know which workspace this context belongs to.",
+  retryButton: "Try again",
+  copyButton: "Copy",
   kindKnowledge: "Your team's agents can consult this as soon as it's created.",
   kindWorker:
     "This one will also take on work itself. Answers come from whoever runs it — you can do that from your own agent session, or set up a dedicated helper later on the context's page.",
