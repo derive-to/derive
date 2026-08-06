@@ -18,6 +18,7 @@
 import { type PageTextSegment, pageTextParts } from "./anchor"
 import { clip, findQuoteContextUnique, findQuoteMatches } from "./anchor-shared"
 import { type DocEdit, EditError } from "./doc-text"
+import type { ElementEdit } from "./element-edit"
 import { escapeHtml, sanitizeInline } from "./md"
 
 /** A replacement located by quote — the wire shape the inline editor sends. */
@@ -45,7 +46,7 @@ export interface QuoteEdit {
 }
 
 /** Either edit shape the edits surfaces accept. */
-export type AnyDocEdit = DocEdit | QuoteEdit
+export type AnyDocEdit = DocEdit | QuoteEdit | ElementEdit
 
 const optionalString = (v: unknown): boolean => v === undefined || typeof v === "string"
 

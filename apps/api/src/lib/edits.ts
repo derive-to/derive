@@ -2,12 +2,15 @@ import {
   type AnyDocEdit,
   type ArtifactRecord,
   applyEdits,
+  applyElementEdits,
   applyQuoteEdits,
   applySlideOps,
   type DiffOp,
   type DocEdit,
   diffLines,
   EditError,
+  type ElementEdit,
+  isElementEdit,
   isHtmlLike,
   isQuoteEdit,
   type QuoteEdit,
@@ -219,11 +222,10 @@ export async function materializeEdits(
   baseVersion: number | undefined,
 ): Promise<MaterializedEdits> {
   const { src, contentType } = await currentSource(deps, artifact, baseVersion, "edits")
-  // Two edit shapes share the batch: quote-scoped edits (the inline editor — located
-  // by {exact, prefix, suffix} against the RENDERED text) and exact-source edits
-  // (agents — {old_str, new_str}). Quote edits resolve against the stored version's
-  // source first, atomically; old_str edits then run on the result. Both halves are
-  // all-or-nothing, so a failure in either applies nothing.
+  // Three edit shapes share the field: quote-scoped text edits, element-scoped
+  // operations from the rendered editor, and exact-source {old_str,new_str} edits.
+  // Quote + element edits may be one atomic inline-editor save; exact-source edits
+  // use different ordering semantics and therefore cannot mix with either shape.
   // The routes JSON.parse the field without shape-checking it — a non-array here
   // must be a clean 400 (EditError), not a TypeError-shaped 500.
   if (!Array.isArray(edits)) throw new EditError("`edits` must be a JSON array of edits.")
@@ -235,25 +237,41 @@ export async function materializeEdits(
       `\`edits\` has ${edits.length} entries — the maximum per request is ${MAX_EDITS_PER_BATCH}. Split the batch.`,
     )
   const quoteEdits: QuoteEdit[] = []
+  const elementEdits: ElementEdit[] = []
   const strEdits: DocEdit[] = []
   for (const e of edits) {
     if (isQuoteEdit(e)) quoteEdits.push(e)
+    else if (isElementEdit(e)) elementEdits.push(e)
     else strEdits.push(e as DocEdit)
   }
-  if (!quoteEdits.length && !strEdits.length)
+  if (!quoteEdits.length && !elementEdits.length && !strEdits.length)
     throw new EditError("`edits` is empty — provide at least one edit.")
   // The two shapes resolve against DIFFERENT baselines (quotes against the stored
   // source all-at-once; old_str edits sequentially, each seeing the previous
   // result). A mixed batch would silently reorder — a caller's old_str targeting
   // text a quote edit rewrote would miss, or worse, match elsewhere — so mixing is
   // refused outright rather than given order-dependent semantics.
-  if (quoteEdits.length && strEdits.length)
+  if (strEdits.length && quoteEdits.length)
     throw new EditError(
       "`edits` mixes quote edits and old_str edits — send the two shapes as separate requests.",
     )
-  const content = quoteEdits.length
-    ? applyQuoteEdits(src, contentType ?? "", quoteEdits)
-    : applyEdits(src, strEdits)
+  if (strEdits.length && elementEdits.length)
+    throw new EditError(
+      "`edits` mixes element edits and old_str edits — send the two shapes as separate requests.",
+    )
+  let content = src
+  if (strEdits.length) content = applyEdits(src, strEdits)
+  else {
+    // Element operations resolve against the untouched base first. A resize changes
+    // attributes only, so the visible-text projection quote edits use is identical.
+    // This lets one Save carry typed text and resized media atomically.
+    if (elementEdits.length) {
+      if (!isHtmlLike(contentType ?? "text/html"))
+        throw new EditError("Element edits apply to HTML documents, not Markdown.")
+      content = applyElementEdits(content, elementEdits)
+    }
+    if (quoteEdits.length) content = applyQuoteEdits(content, contentType ?? "", quoteEdits)
+  }
   // Keep the artifact's content type: the sniffer types by filename first, and the
   // default index.html would silently re-type an edited markdown doc as HTML.
   return { content, filename: preservingFilename(contentType) }

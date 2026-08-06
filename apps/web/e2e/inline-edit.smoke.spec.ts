@@ -17,6 +17,9 @@ import { expect, openArtifact, publishArtifact, test } from "./fixtures"
  */
 
 const DOC = "<h1>Runbook</h1><p id=one>First paragraph.</p><p id=two>Second paragraph.</p>"
+const RESIZE_DOC = `<h1>Layout</h1>
+<img id="hero" alt="Hero" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='90'%3E%3Crect width='160' height='90' fill='%2364748b'/%3E%3C/svg%3E" style="display:block;width:160px;height:90px">
+<div id="summary-box" data-derive-resizable style="width:220px;height:110px"><p>Summary box.</p></div>`
 
 /** Publish an HTML artifact and open it with the workbench interactive. */
 async function seed(page: Page) {
@@ -84,7 +87,7 @@ test("discard reverts the text and publishes nothing", async ({ owner }) => {
 
   await owner.getByTestId("inline-edit-discard").click()
   // Back to the invitation, and the document reads as it did before.
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("any text to change it")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
   expect(await versionOf(owner, shortId)).toBe(1)
 })
@@ -230,4 +233,53 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   expect(src.replace(/<\/?b>/g, "")).toContain("<p id=two>Second paragraph.</p>")
   // The editor's own markers never reach the document.
   expect(src).not.toContain("data-derive-fmt")
+})
+
+test("resize an image and box, then undo/redo and save", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "layout.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const image = doc(owner).locator("#hero")
+  await image.hover()
+  const handle = doc(owner).getByRole("button", { name: "Resize element" })
+  await expect(handle).toBeVisible()
+  const grip = await handle.boundingBox()
+  expect(grip).not.toBeNull()
+  if (!grip) return
+
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(grip.x + grip.width / 2 + 40, grip.y + grip.height / 2 + 20)
+  await owner.mouse.up()
+
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(image).toHaveCSS("width", "200px")
+  // Images keep their natural ratio instead of stretching to follow the pointer.
+  expect(await image.evaluate((el) => el.style.height)).toBe("auto")
+
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(image).toHaveCSS("width", "160px")
+  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(image).toHaveCSS("width", "200px")
+
+  const box = doc(owner).locator("#summary-box")
+  // Select the box's padding rather than activating the editable paragraph inside it.
+  await box.click({ position: { x: 210, y: 100 } })
+  const boxHandle = doc(owner).getByRole("button", { name: "Resize element" })
+  await boxHandle.focus()
+  await boxHandle.press("ArrowRight")
+  await boxHandle.press("ArrowDown")
+  await expect(box).toHaveCSS("width", "228px")
+  await expect(box).toHaveCSS("height", "118px")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const src = await contentOf(owner, shortId)
+  expect(src).toContain("display:block; width: 200px; height: auto")
+  expect(src).toContain(
+    '<div id="summary-box" data-derive-resizable style="width: 228px; height: 118px">',
+  )
 })
