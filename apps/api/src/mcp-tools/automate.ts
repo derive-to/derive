@@ -1,7 +1,7 @@
 import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { connectionBindError } from "../lib/broker"
-import { createContextCore } from "../lib/create-context"
+import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { mintToken, sha256 } from "../lib/crypto"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
@@ -211,9 +211,13 @@ export function registerAutomateTool(tc: ToolContext): void {
               "use({context}) pulls its queued work. A dedicated runner's token comes from " +
               "REST agent rotate.",
           })
-        } catch {
-          // A name-collision after the auto-mint must not strand an orphaned managed agent
-          // — createContextCore already unwinds the mint before rethrowing.
+        } catch (err) {
+          // Only a context-name collision (after the mint already succeeded) gets the
+          // friendly message — createContextCore unwinds the mint and tags this case as
+          // ContextConflictError. Anything else (e.g. the mint itself failing) is NOT a
+          // "name already exists" and must surface as the generic/opaque error it always
+          // did, back when the mint call sat outside this branch's try/catch.
+          if (!(err instanceof ContextConflictError)) throw err
           return json({ error: "a context with that name already exists" })
         }
       }

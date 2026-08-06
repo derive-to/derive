@@ -29,13 +29,28 @@ export interface CreateContextCoreResult {
   agentToken: string
 }
 
+/** Thrown ONLY when the CONTEXT row insert fails (both mint attempts already
+ *  succeeded) — the original DB error rides `cause`. This is the one failure a
+ *  caller may recast as a friendly "a context with that name already exists":
+ *  a mint failure (both attempts) is NOT wrapped and propagates as whatever the
+ *  store threw, same as before this was a shared helper, so a transient/opaque
+ *  minting failure is never mislabeled as a name collision. */
+export class ContextConflictError extends Error {
+  constructor(cause: unknown) {
+    super("context insert failed", { cause })
+    this.name = "ContextConflictError"
+  }
+}
+
 /** Mint a managed agent for `name` and wire it to `manifestArtifactId` as a new
  *  context. Agent names are unique per workspace, so a name collision with an
  *  existing agent suffixes a 4-char id and retries once — mirroring the REST
  *  create route (routes/contexts.ts) and automate.ts's `create_context` action.
  *  A name collision on the CONTEXT itself (after the agent is already minted)
- *  unwinds the mint before rethrowing, so a failed create never strands an
- *  orphaned managed agent with a live token. */
+ *  unwinds the mint and rethrows as `ContextConflictError`, so a failed create
+ *  never strands an orphaned managed agent with a live token — and a caller can
+ *  tell "the context name collided" apart from "minting the agent itself blew up"
+ *  (see ContextConflictError). */
 export const createContextCore = async (
   meta: MetaStore,
   input: CreateContextCoreInput,
@@ -51,6 +66,9 @@ export const createContextCore = async (
       created_by: input.userId,
       managed: 1,
     })
+  // A mint failure (both attempts) is deliberately NOT caught here — it propagates
+  // raw, uncaught, exactly as it did when this lived inline in automate.ts (the
+  // mint call sat outside that branch's try/catch).
   const minted = await mint(input.name).catch(() => mint(`${input.name} ${newId("x").slice(-4)}`))
   try {
     const context = await meta.createContext({
@@ -67,6 +85,6 @@ export const createContextCore = async (
   } catch (err) {
     // A name-collision after the auto-mint must not strand an orphaned managed agent.
     await meta.deleteAgent(minted.id, input.orgId).catch(() => {})
-    throw err
+    throw new ContextConflictError(err)
   }
 }
