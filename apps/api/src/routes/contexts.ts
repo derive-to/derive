@@ -325,12 +325,9 @@ export const contextRoutes = (ctx: AppContext) => {
     // recognize, so it never reaches `s.subject`/`subject` above — it reads here as "no subject",
     // same as a plain workspace chat, until this one check tells them apart.
     //
-    // SEEDED FROM THE TRANSCRIPT, because the surface is rebuilt every turn and the draft is
-    // not: the ordinary rhythm is "here is what I would build" on one turn and "yes, do it" on
-    // the next, so without the seed the model would have to write the manifest again from
-    // memory and the created context could differ from the card the person approved. The seed
-    // is the newest stored card (latestBuilderCard), which is by construction the last one they
-    // were shown.
+    // Seeded with the newest stored card off this transcript, so a confirmation on a LATER turn
+    // creates from the draft the person was actually shown rather than one the model writes
+    // again from memory (see StoredBuilderCard).
     const builderTools =
       s.subject_ref === BUILDER_SUBJECT
         ? buildContextBuilderTools(ctx, who, latestBuilderCard(transcript))

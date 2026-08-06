@@ -263,7 +263,8 @@ describe("builder tool surface", () => {
         // win over the real newest.
         row("4", carded("Impostor"), "asker"),
         row("5", { card: { draft: { ...draft, manifest_md: undefined } } }),
-        row("6", "{not json"),
+        // Meta that is not JSON at all: a hand-edited row must not take the turn down with it.
+        { ...row("6", null), meta: "{not json" },
       ])?.draft.name,
     ).toBe("Second")
     expect(latestBuilderCard([])).toBeNull()
