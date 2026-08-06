@@ -14,6 +14,7 @@ import { type Role, type SessionMessageRecord, type SessionRecord, toMicroUsd } 
 import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
 import type { ChatToolSurface } from "./chat-tools"
+import { CONTEXT_BUILDER_PROMPT } from "./context-builder-prompt"
 import type { ResolvedChatModel } from "./model-catalog"
 import { asTurns, proseContract, runTurn } from "./turn-core"
 
@@ -78,6 +79,9 @@ export interface ChatTurnInput {
   /** The skill index for the tools this turn holds — one line each in the prompt, bodies read
    *  on demand. Empty when the turn has no tools with separate procedure. */
   skills: { name: string; summary: string }[]
+  /** Which system prompt this turn speaks with. Absent = the workspace chat
+   *  voice. "context_builder" = the guided create-a-context interview. */
+  purpose?: "context_builder"
 }
 
 /** The transcript as plain chat turns, oldest first. */
@@ -115,6 +119,11 @@ const roleWord = (role: Role): string =>
   role === "owner" ? "an Admin" : role === "editor" ? "a Creator" : "a Viewer"
 
 const systemPrompt = (input: ChatTurnInput): string => {
+  if (input.purpose === "context_builder")
+    return CONTEXT_BUILDER_PROMPT({
+      workspaceName: input.workspaceName,
+      askerName: input.asker.name,
+    })
   const names = input.tools.tools.map((t) => t.name)
   // Only the skills whose tools this turn actually holds: an index that points at procedure for
   // a tool the agent cannot call is a way to waste its one lazy read.
