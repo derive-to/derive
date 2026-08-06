@@ -5086,6 +5086,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/context-builder-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a guided conversation that ends in a new context. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new session and its first message. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            session: components["schemas"]["Session"];
+                            messages: components["schemas"]["SessionMessage"][];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/chat-sessions": {
         parameters: {
             query?: never;

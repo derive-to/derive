@@ -8372,6 +8372,41 @@
         }
       }
     },
+    "/v1/context-builder-session": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Open a guided conversation that ends in a new context.",
+        "responses": {
+          "201": {
+            "description": "The new session and its first message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "$ref": "#/components/schemas/Session"
+                    },
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionMessage"
+                      }
+                    }
+                  },
+                  "required": [
+                    "session",
+                    "messages"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/chat-sessions": {
       "get": {
         "tags": [

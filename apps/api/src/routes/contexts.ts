@@ -34,9 +34,10 @@ import {
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
 import { chatArrival } from "../lib/chat-gate"
-import { buildChatTools, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
+import { buildChatTools, type ChatPrincipal, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
+import { buildContextBuilderTools } from "../lib/context-builder-tools"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { getInstanceChatModel } from "../lib/instance-settings"
@@ -64,6 +65,21 @@ import { log } from "../log"
  * with the agent's own bearer and answers through the messages endpoint. The
  * ContextInfo / Session / SessionMessage schemas are the single source for the web types.
  */
+
+/**
+ * THE MARKER for a guided context-builder session — a plain `context_session` row (no
+ * artifact, no context) whose `subject_ref` is this literal rather than null. Exported so the
+ * route that creates one (`POST /v1/context-builder-session`) and the serve branch that
+ * recognizes one share a single source rather than two hand-typed copies drifting apart.
+ *
+ * Deliberately NOT a `Selector`: `parseSubject` (packages/core/selectors.ts) only recognizes
+ * artifact/collection/tag, so this string parses to `null` there — same as a plain workspace
+ * chat's `subject_ref: null`. That is fine for every existing subject-kind check (they all read
+ * "no subject" as "workspace chat"); this module is the one place that reads the raw column to
+ * tell the two apart, right before deciding which tool surface and prompt a turn gets.
+ */
+export const BUILDER_SUBJECT = '{"kind":"context_builder"}'
+
 export const contextRoutes = (ctx: AppContext) => {
   const {
     meta,
@@ -293,14 +309,24 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       return
     }
-    const tools = buildChatTools(ctx, {
+    const who: ChatPrincipal = {
       org: s.org_id,
       user: { id: me.id, name: me.name ?? me.username ?? null },
       seatRole: seat.role,
       // Read fresh for THIS turn: an operator who flips the killswitch mid-conversation stops
       // the next write, not merely the next session.
       flags: { agentKillswitch: settings?.agentKillswitch ?? false },
-    })
+    }
+    // A GUIDED CONTEXT-BUILDER SESSION rides this exact lane — same claim, same stream, same
+    // reply writer — with two differences: the two-tool draft/create surface
+    // (context-builder-tools.ts) instead of ordinary chat tools, and the interview voice instead
+    // of the workspace-chat prompt (chat-turn.ts's systemPrompt keys off `purpose`). Detected off
+    // the raw subject_ref (see BUILDER_SUBJECT) because it is not a Selector `parseSubject` would
+    // recognize, so it never reaches `s.subject`/`subject` above — it reads here as "no subject",
+    // same as a plain workspace chat, until this one check tells them apart.
+    const builderTools =
+      s.subject_ref === BUILDER_SUBJECT ? buildContextBuilderTools(ctx, who) : null
+    const tools = builderTools ?? buildChatTools(ctx, who)
     const timed = timedModel(stream.wrap(model.callModel))
     const startedAt = Date.now()
     const res = await withinTurnBudget(
@@ -313,6 +339,7 @@ export const contextRoutes = (ctx: AppContext) => {
           workspaceName: ws?.name ?? "this workspace",
           asker: { name: me.name ?? me.username ?? null, role: seat.role },
           skills: tools.skills,
+          ...(builderTools ? { purpose: "context_builder" as const } : {}),
         },
       ),
     )
@@ -328,6 +355,11 @@ export const contextRoutes = (ctx: AppContext) => {
       model_each_ms: timed.stat.each.join(","),
       outcome: res.outcome,
     })
+    // The card from the LAST draft_manifest / create_context_from_draft call this turn, when
+    // this was a builder turn — already stripped of manifest_md by context-builder-tools.ts's
+    // own `cardFrom` (the `draft` object it hands back never carries the field in the first
+    // place, not merely typed without it), so nothing further needs stripping here.
+    const card = builderTools?.card() ?? null
     await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
       outcome: res.outcome,
       // Absent on a turn that ran out of budget — it never got a cost or a model back, and
@@ -335,6 +367,7 @@ export const contextRoutes = (ctx: AppContext) => {
       ...("costMicroUsd" in res ? { cost_micro_usd: res.costMicroUsd } : {}),
       ...("model" in res ? { model: res.model } : {}),
       ...("tools" in res ? { tools: res.tools } : {}),
+      ...(card ? { card } : {}),
     })
   }
 
@@ -2031,6 +2064,76 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       // Detached, exactly like the document lane: the transcript is what the surface follows,
       // so closing the tab mid-turn loses nothing.
+      await ctx.background(serveAttended(created.session, me, null, { modelId: b.model ?? null }))
+      return c.json(
+        { session: sessionJson(created.session), messages: [messageJson(created.message)] },
+        201,
+      )
+    },
+  )
+
+  // ── THE GUIDED CONTEXT-BUILDER CONVERSATION ─────────────────────────────────────────────
+  //
+  // A minimal sibling of the workspace chat route above: same gates, same envelope, same
+  // detached serve. The one difference lives entirely in what gets opened — `subject_ref:
+  // BUILDER_SUBJECT` rather than null — which `serveWorkspaceChat` reads to swap in the
+  // draft/create tool surface and the interview prompt for this one conversation. Follow-ups
+  // arrive through the ordinary `POST /v1/sessions/{id}/messages`, untouched: that route keys
+  // off the session row, never off which route opened it.
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/context-builder-session",
+      tags: ["Contexts"],
+      summary: "Open a guided conversation that ends in a new context.",
+      responses: {
+        201: {
+          description: "The new session and its first message.",
+          content: {
+            "application/json": {
+              schema: z.object({ session: Session, messages: z.array(SessionMessage) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const b = await readJson(
+        c,
+        z.object({
+          workspace: z.string().describe("The workspace id this context is being built in."),
+          body_md: z.string().trim().min(1).max(20_000),
+          model: z
+            .string()
+            .max(200)
+            .optional()
+            .describe("A model id from /v1/chat/models; omitted = this deploy's default."),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      // EVERY rung, in one call: opt-in, allowlist, membership, rate limit, budget. The exact
+      // gate the workspace chat walks — a builder conversation spends the same operator key.
+      const gate = await chatGates(c, b.workspace, me.id)
+      if (gate) return bail(gate)
+      if (b.model && !ctx.models?.resolve(b.model))
+        return bail(fail(c, 400, `unknown model "${b.model}"`))
+      const created = await meta.createSessionWithMessage(
+        {
+          id: newId("ses"),
+          // No context (nothing packaged yet — that is what this conversation is building) and
+          // no artifact subject: BUILDER_SUBJECT marks it instead, for the serve branch alone.
+          context_id: null,
+          context_version: null,
+          org_id: b.workspace,
+          asker_id: me.id,
+          subject_ref: BUILDER_SUBJECT,
+        },
+        { id: newId("sm"), author_kind: "asker", author_id: me.id, body_md: b.body_md },
+        "open",
+      )
       await ctx.background(serveAttended(created.session, me, null, { modelId: b.model ?? null }))
       return c.json(
         { session: sessionJson(created.session), messages: [messageJson(created.message)] },
