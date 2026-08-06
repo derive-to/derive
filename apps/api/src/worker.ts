@@ -412,14 +412,16 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           return shellCache
         },
         // The marketing front door, always on: `/` for signed-out visitors +
-        // `/pricing`, from the web build's site/ pages. Fetched at the CANONICAL asset
-        // URLs — html_handling serves site/index.html at /site/ and site/pricing.html
-        // at /site/pricing, and redirects the literal filenames, which ASSETS.fetch
-        // would surface as a non-2xx. A build without the pages resolves null and
-        // the routes fall back to the SPA shell.
+        // `/pricing` + `/privacy`, from the web build's site/ pages. Fetched at the
+        // CANONICAL asset URLs — html_handling serves site/index.html at /site/ and
+        // site/pricing.html at /site/pricing (site/privacy.html at /site/privacy,
+        // same rule), and redirects the literal filenames, which ASSETS.fetch would
+        // surface as a non-2xx. A build without the pages resolves null and the
+        // routes fall back to the SPA shell.
         marketing: {
           home: siteFetch(env, baseUrl, "/site/"),
           pricing: siteFetch(env, baseUrl, "/site/pricing"),
+          privacy: siteFetch(env, baseUrl, "/site/privacy"),
         },
       })
     }

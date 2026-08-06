@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Privacy — Derive</title>
+<meta name="description" content="How Derive collects, stores, and protects your data, in plain language: what we collect, what we never do, who processes it, and how to delete it.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Privacy — Derive">
+<meta property="og:description" content="How Derive collects, stores, and protects your data, in plain language.">
+<meta property="og:url" content="https://derive.to/privacy">
+<meta property="og:image" content="https://derive.to/site/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://derive.to/privacy">
+<!-- See index.html for why the structured data is here. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "Privacy — Derive",
+  "url": "https://derive.to/privacy",
+  "description": "How Derive collects, stores, and protects your data, in plain language.",
+  "isPartOf": { "@id": "https://derive.to/#website" },
+  "publisher": { "@id": "https://derive.to/#organization" }
+}
+</script>
+<link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/brand/favicon.png" type="image/png">
+<style>
+@font-face {
+  font-family: "Geist";
+  src: url("/site/geist.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/site/geist-mono.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+:root {
+  --bg:#0a0b0d; --fg:#f3f4f6; --card:#101216; --secondary:#16181d;
+  --muted-fg:#969aa2; --accent:#1b1d23; --border:#23252b; --border-soft:#191b1f;
+  --primary:#f3f4f6; --primary-fg:#0a0b0d;
+  --success:#74b085; --warning:#fb923c;
+  --radius:4px;
+  --font-sans:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;
+  --maxw:1060px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--font-sans);font-size:16px;line-height:1.6;letter-spacing:-0.011em;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+}
+::selection{background:rgba(243,244,246,.18)}
+a{color:inherit;text-decoration:none;cursor:default}
+button{cursor:default;font:inherit}
+body::after{
+  content:"";position:fixed;inset:0;z-index:200;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:screen;opacity:.05;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+.eyebrow{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
+h1,h2,h3{font-weight:500;letter-spacing:-0.022em;text-wrap:balance;margin:0}
+p{text-wrap:pretty;margin:0}
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  background:color-mix(in srgb,var(--bg) 82%,transparent);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border-bottom:1px solid transparent;
+}
+nav.scrolled{border-bottom-color:var(--border-soft)}
+.nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;gap:28px}
+.wordmark{display:flex;align-items:center}
+.wordmark img{height:24px;width:auto;display:block}
+.nav-links{display:flex;gap:22px;font-size:14px;color:var(--muted-fg);margin-left:8px}
+.nav-links a:hover{color:var(--fg)}
+.nav-links a.on{color:var(--fg)}
+.nav-cta{margin-left:auto;display:flex;align-items:center}
+.nav-cta .nav-signin{font-size:14px;color:var(--fg)}
+.nav-cta .nav-signin .arr{display:inline-block;transition:transform .18s ease}
+.nav-cta .nav-signin:hover .arr{transform:translateX(3px)}
+.nav-cta .btn{height:32px;padding:0 14px;border-radius:6px;font-size:13px}
+@media(max-width:720px){.nav-links{display:none}}
+
+header.head.wrap{padding:150px 24px 0;text-align:center}
+.head h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:18px auto 0;max-width:20ch}
+.head .lede{margin:22px auto 0;max-width:56ch;font-size:16px;color:var(--muted-fg)}
+.head .lede strong{color:var(--fg);font-weight:500}
+.beta{
+  margin:30px auto 0;display:inline-flex;align-items:baseline;gap:10px;
+  border:1px solid var(--border);border-radius:8px;padding:12px 18px;background:var(--card);
+  font-size:14px;color:var(--muted-fg);max-width:62ch;text-align:left;
+}
+.beta .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--warning);white-space:nowrap;position:relative;top:-1px}
+.beta strong{color:var(--fg);font-weight:500}
+
+section.wrap{padding:120px 24px 0}
+.section-head{max-width:640px}
+.section-head h2{font-size:clamp(26px,3.6vw,36px);line-height:1.15;margin-top:14px}
+.principles{margin-top:48px;display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border-soft);border:1px solid var(--border-soft);border-radius:12px;overflow:hidden}
+@media(max-width:720px){.principles{grid-template-columns:1fr}}
+.principle{background:var(--bg);padding:28px 30px}
+.principle h3{font-size:16px}
+.principle p{margin-top:10px;font-size:14px;color:var(--muted-fg);line-height:1.65}
+
+.faq{margin-top:48px;border-top:1px solid var(--border-soft)}
+.faq details{border-bottom:1px solid var(--border-soft)}
+.faq summary{
+  list-style:none;display:flex;align-items:center;justify-content:space-between;gap:20px;
+  padding:22px 4px;font-size:16px;font-weight:500;
+}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font-family:var(--font-mono);color:var(--muted-fg);font-size:16px}
+.faq details[open] summary::after{content:"–"}
+.faq .a{padding:0 4px 24px;font-size:15px;color:var(--muted-fg);max-width:64ch;line-height:1.7}
+.faq .a strong{color:var(--fg);font-weight:500}
+
+section.wrap.final{padding:130px 24px 0;text-align:center}
+.final h2{font-size:clamp(28px,4vw,40px)}
+.final .body{margin:16px auto 0;max-width:50ch;font-size:15px;color:var(--muted-fg)}
+
+footer{margin-top:130px;border-top:1px solid var(--border-soft)}
+.foot-inner{max-width:var(--maxw);margin:0 auto;padding:34px 24px 44px;display:flex;align-items:center;gap:16px 28px;flex-wrap:wrap}
+.foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
+.foot-links{display:flex;gap:20px;font-size:13px;color:var(--muted-fg)}
+.foot-links a:hover{color:var(--fg)}
+.foot-inner .license{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.02em}
+@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
+@media(max-width:640px){
+  header.head.wrap{padding-top:124px}
+  section.wrap{padding-top:92px}
+  section.wrap.final{padding-top:100px}
+  .principle{padding:22px 20px}
+  footer{margin-top:96px}
+}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <div class="nav-inner">
+    <a class="wordmark" href="/">
+      <img src="/brand/wordmark-light.svg" alt="Derive">
+    </a>
+    <div class="nav-links">
+      <a href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+    </div>
+    <div class="nav-cta">
+      <a class="nav-signin" href="/login">Sign in to Beta <span class="arr">→</span></a>
+    </div>
+  </div>
+</nav>
+
+<header class="head wrap">
+  <div class="eyebrow">Privacy</div>
+  <h1>Your data, in simple terms.</h1>
+  <p class="lede">Derive stores what it takes to run your workspace: an account, the content you publish, and the bare usage signals that keep the product honest with you. Nothing more, and nothing sold. <strong>Effective August 3, 2026.</strong></p>
+  <div class="beta">
+    <span class="k">NOTE</span>
+    <span>This page is a <strong>plain-language summary, not legal advice</strong>. It describes how Derive actually handles data. Full transparency, no surprises here.</span>
+  </div>
+</header>
+
+<section class="wrap">
+  <div class="section-head">
+    <div class="eyebrow">Data</div>
+    <h2>What we collect.</h2>
+  </div>
+  <div class="principles">
+    <div class="principle">
+      <h3>Account</h3>
+      <p>Your email, name, and the handle you choose. That's what it takes to sign you in and show your name on what you publish.</p>
+    </div>
+    <div class="principle">
+      <h3>Content</h3>
+      <p>The artifacts you publish, their full version history, and the comments your team leaves on them. This is the product; it's what a workspace is made of.</p>
+    </div>
+    <div class="principle">
+      <h3>Usage</h3>
+      <p>First-party view analytics on what you publish (who's reading and when) and one signup-attribution stamp noting which link brought you here.</p>
+    </div>
+    <div class="principle">
+      <h3>What we never do</h3>
+      <p>No ad trackers. No third-party analytics scripts. We never sell your data, to anyone, for any reason.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="section-head">
+    <div class="eyebrow">Questions</div>
+    <h2>The details, said plainly.</h2>
+  </div>
+  <div class="faq">
+    <details>
+      <summary>Who processes data on our behalf?</summary>
+      <p class="a">A short, named list, nothing hidden behind "and our partners." <strong>Cloudflare</strong> hosts the app and serves its static pages. <strong>Neon</strong> runs the database behind your workspace: artifact records, comments, and the search index; artifact files themselves live in Cloudflare storage. <strong>Stripe</strong> processes billing events. <strong>Resend</strong> delivers transactional email like password resets and notifications. <strong>Slack and GitHub</strong> only see anything once a workspace owner explicitly connects that integration, and only for that workspace. No third-party model provider sees your content unless an opt-in feature like chat or an automation is turned on; search indexing runs on models inside Cloudflare's own infrastructure, the same host that already stores your content.</p>
+    </details>
+    <details>
+      <summary>What happens when I delete my account or a workspace?</summary>
+      <p class="a">Deleting your account removes your sign-in data, your memberships, and your personal workspace container, and it permanently disconnects your name from everything you authored. It does not delete the artifacts themselves: that's a separate, explicit step. Delete an artifact and its versions and search entries go with it; do that first, then delete your account. A workspace works the same way: it has to be empty before it can be deleted, so remove or move its artifacts before you delete the workspace itself. One honest exception either way: a URL you already published and shared stays live at that link until you (or a remaining owner) take it down yourself, the same way a link you emailed someone doesn't un-send when you delete the file on your end. We won't pretend a link that's already out in the world quietly disappears.</p>
+    </details>
+    <details>
+      <summary>Can I avoid all of this by self-hosting?</summary>
+      <p class="a">Yes. Derive is fair source and runs as one container: SQLite and local disk by default, Postgres and S3 at scale, entirely on your own infrastructure. Run it yourself, and none of the infrastructure listed above ever sees your data, because none of it is in the request path.</p>
+    </details>
+    <details>
+      <summary>How do I reach you about this?</summary>
+      <p class="a">Email <strong>hello@derive.to</strong>. We read everything ourselves, and we'd rather explain something than have you guess.</p>
+    </details>
+  </div>
+</section>
+
+<section class="final wrap">
+  <h2>Nothing here should surprise you.</h2>
+  <p class="body">That's the point of publishing this before you have to go looking for it. Questions go to hello@derive.to.</p>
+</section>
+
+<footer>
+  <div class="foot-inner">
+    <span class="fm">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Derive
+    </span>
+    <div class="foot-links">
+      <a href="/">Home</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/security">Security</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <a href="/login">Log in</a>
+    </div>
+    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0</span>
+  </div>
+</footer>
+
+<script>
+const nav = document.getElementById('nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
+</script>
+</body>
+</html>

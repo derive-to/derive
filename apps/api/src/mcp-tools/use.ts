@@ -31,6 +31,17 @@ export function registerUseTool(tc: ToolContext): void {
     {
       description:
         "Give a context WORK (rate-limited): `context`+`instruction` opens a session, `session_id`+`instruction` follows up, `session_id` alone checks. Real runs take minutes, so a still-working response is NORMAL — re-call until it settles. See derive://skills/contexts.",
+      // Opens/advances a session (a write — messages accumulate, budget is spent) but
+      // deletes nothing; a session can be followed up or checked, never destroyed from
+      // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
+      // the opt-in exception, not the norm). This call's own execution only creates rows
+      // and waits on Derive's internal bus; it doesn't itself reach outside Derive.
+      annotations: {
+        title: "Work a workspace context",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         context: z
           .string()

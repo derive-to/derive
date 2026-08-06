@@ -54,6 +54,18 @@ export function registerCodeTool(
         `Example: const found = []; for (const a of (await tools.find({ query: "roadmap" })).results) ` +
         `{ const doc = await tools.read({ short_id: a.short_id }); if (doc.markdown.includes("Q3")) found.push(a.short_id) } ` +
         `return found`,
+      // EVERY registered tool is reachable from inside the sandbox (see the file header),
+      // including organize's `state:'deleted'` permanent-delete path — so this can do
+      // anything any other tool here can do, including the one irreversible action on
+      // the whole surface. destructive is the honest reflection of that, not of what any
+      // one script happens to do. The tools it reaches are Derive's own (never `call`,
+      // which the registry excludes unless opted in — see mcp.ts registerToolSurface).
+      annotations: {
+        title: "Run code across Derive's tools",
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         code: z
           .string()

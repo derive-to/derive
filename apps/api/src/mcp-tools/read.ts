@@ -160,7 +160,16 @@ export function registerReadTool(tc: ToolContext): void {
     {
       description:
         "Read an artifact by short_id. Small docs return whole; large ones return an OUTLINE — then pass `section`, or `map:true` then `node` to work on one part. format:'html' gives the exact source, required before publish `edits`. Also reads contexts and derive:// URIs. See derive://skills/finding.",
-      annotations: { readOnlyHint: true },
+      // readOnlyHint stays true despite two incidental write paths below (the lazy
+      // derived-fact backfill and the render self-heal re-queue): both are deterministic
+      // recomputations/cache-fills of already-published bytes — the class of side effect
+      // an HTTP GET tolerates — never a mutation of anything a user authored.
+      annotations: {
+        title: "Read an artifact",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         short_id: z
           .string()

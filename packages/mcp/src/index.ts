@@ -197,7 +197,12 @@ server.registerTool(
   {
     description:
       "List every workspace signed in on this machine you can act in — id, name, your role, local description, and which is active. One login reaches them all; pass a workspace's id or name as the `workspace` argument to list_artifacts / read / catch_up / comment / publish to act there for that call.",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      title: "List workspaces",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {},
   },
   async () => json(buildRoster()),
@@ -209,7 +214,12 @@ server.registerTool(
   {
     description:
       "List the artifacts in your workspace — short id, title, kind, current version, access, and browse `tags`. Defaults to this session's workspace; pass `workspace` (id or name from list_workspaces) to list another. Pass `tag` to list only artifacts carrying that tag (organize shows the vocabulary). Start here to find what to work on, then catch_up or read it.",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      title: "List artifacts",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       query: z.string().optional().describe("Optional title search filter."),
       tag: z
@@ -231,7 +241,12 @@ server.registerTool(
   {
     description:
       "Find text within ONE artifact, or across a WORKSPACE — same tool, same behavior as the remote MCP server's `search`. Pass short_id to grep one artifact: matching lines with line numbers (and optional context), ripgrep-style, so you can then `read` a narrow `lines` range or `edit` that spot. Omit short_id to search across the workspace — the artifacts you can see, ranked by relevance and grouped by artifact — find WHICH doc has something before opening it. Searches the exact source by default (in:'text' searches the visible text instead). The query is matched literally (metacharacters are not special).",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      title: "Search artifacts",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       short_id: z
         .string()
@@ -295,7 +310,12 @@ server.registerTool(
   {
     description:
       "Read an artifact's CONTENT by short id, as Markdown by default (HTML is converted). Omit `section` to see the outline first (heading slugs for a single-file doc, page paths for a bundle) — call again with a `section` (or \"*\" for the full document) once you know what you want. Pass `format:'html'` for the exact source (needed before publish `edits`), or a past `version` for history. Also accepts derive://guide, /connect, or /compatibility so the onboarding strings in server instructions work even when MCP resources do not. For what CHANGED or the comment threads, use catch_up instead.",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      title: "Read an artifact",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       short_id: z.string(),
       section: z
@@ -387,7 +407,12 @@ server.registerTool(
       "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback queue. " +
       "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in a line diff between two versions — of their readable Markdown form, not raw HTML. " +
       "WAITING ON A REVIEW? Pass `wait` (seconds, max 50) to block until the human sends back or approves — chain these instead of sleeping between polls.",
-    annotations: { readOnlyHint: true },
+    annotations: {
+      title: "Catch up on changes",
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: {
       short_id: z.string(),
       since_version: z
@@ -563,6 +588,12 @@ server.registerTool(
   {
     description:
       "Leave feedback, reply in a thread, react, and/or resolve or reopen a thread. Anchor a NEW comment to a quoted span with `quote`. Reply by passing the thread id as `reply_to`. Pass `react` with a `comment_id` (or `reply_to` to hit the thread's latest comment) to acknowledge feedback without the noise of a reply — the loop's minimum ack. Resolve/reopen by passing `set_state` with a `comment_id` from the thread (or the comment you just left).",
+    annotations: {
+      title: "Comment and review",
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
     inputSchema: {
       short_id: z.string(),
       body: z
@@ -662,6 +693,15 @@ server.registerTool(
       "• READ (with `short_ids`): those artifacts' current tags + collections, plus `suggested` tags drawn from the most semantically-similar docs (when one id is given).\n" +
       "• WRITE: pass `add`/`remove`/`set` to change tags (add never drops existing; set replaces the whole set), and/or `collection` (an id, or a name — created if new) to fold the artifacts into a collection. Each artifact is authorized on its own; ones you can't touch are skipped.\n" +
       "Tag freely and reuse the vocabulary — a well-tagged library is findable. Collections are heavier: a tag for plain findability, a collection when a set is a real unit.",
+    annotations: {
+      title: "Organize the library",
+      readOnlyHint: false,
+      // Unlike the remote organize (whose destructive hint is earned by its
+      // state:'deleted' cascade), this tool only tags and collects; `set` replaces a
+      // tag list but the read mode recovers the prior set, so nothing is irreversible.
+      destructiveHint: false,
+      openWorldHint: false,
+    },
     inputSchema: {
       short_ids: z
         .array(z.string())
@@ -727,6 +767,13 @@ server.registerTool(
   {
     description:
       "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). Provide the body as `content_path` (a local file this server reads and uploads — preferred, zero tokens) or `content` (inline text). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — declare your own <meta name=\"viewport\"> to skip the mobile-reflow injection, and self-host binaries via POST /v1/assets (images and woff2 fonts) instead of inlining base64.",
+    annotations: {
+      title: "Publish an artifact",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
     inputSchema: {
       content: z
         .string()

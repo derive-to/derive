@@ -46,6 +46,17 @@ export function registerCheckpointTool(tc: ToolContext): void {
     {
       description:
         "Commit a one-page checkpoint (state / decisions / open / next / refs) so any later session continues cold. FIRST call passes `work` and returns a short_id; pass that every time after. Each one REPLACES the page. See derive://skills/checkpoint.",
+      // A live publish under the hood (same path as `publish`), so it writes — but each
+      // layer REPLACES the page as a NEW version, never deleting the prior ones (they
+      // stay reachable in history), so it isn't destructive. Not idempotent: two calls
+      // record two layers. Derive's own backend only.
+      annotations: {
+        title: "Save a checkpoint",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         work: z
           .string()

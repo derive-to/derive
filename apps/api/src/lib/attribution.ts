@@ -61,6 +61,8 @@ const stamp = (c: Context): void => {
   if (c.req.method !== "GET") return
   const path = c.req.path
   // Only the HTML entry points stamp — never API, raw-viewer, or asset paths.
+  // /privacy is deliberately absent: it's a policy reference, not a campaign
+  // landing page, so arrivals there carry no attribution worth stamping.
   const ref = path.startsWith("/artifacts/") ? path.slice("/artifacts/".length) : null
   if (ref === null && path !== "/" && path !== "/pricing") return
   // A signed-in visitor can't sign up again; skip the write (presence-only check,
