@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import { ContextConflictError, createContextCore } from "../src/lib/create-context"
 import { as, makeAuthedApp, publishAs } from "./helpers"
 
@@ -49,14 +49,20 @@ describe("createContextCore", () => {
     await app.request("/v1/me", { headers: as(owner.email) })
     const pub = await (await publishAs(app, "# Mint fail", {}, as(owner.email))).json()
     const artifactId = (await meta.getByShortId(pub.short_id))?.id as string
-    vi.spyOn(meta, "createAgent").mockRejectedValue(new Error("db unavailable"))
-    const err: unknown = await createContextCore(meta, {
+    // A get-level wrapper, not vi.spyOn: the pg test store is a Proxy over an empty
+    // object, so spyOn finds no property to patch there (see countingStore in helpers).
+    const failing = new Proxy(meta, {
+      get: (target, prop, recv) =>
+        prop === "createAgent"
+          ? () => Promise.reject(new Error("db unavailable"))
+          : Reflect.get(target, prop, recv),
+    }) as typeof meta
+    const err: unknown = await createContextCore(failing, {
       orgId: "default",
       userId: owner.id,
       name: "Mint Fail",
       manifestArtifactId: artifactId,
     }).catch((e) => e)
-    vi.restoreAllMocks()
     expect(err).not.toBeInstanceOf(ContextConflictError)
     expect((err as Error).message).toBe("db unavailable")
   })
