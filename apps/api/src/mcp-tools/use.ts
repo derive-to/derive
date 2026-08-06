@@ -1,5 +1,6 @@
 import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
 import { z } from "zod"
+import { cardForWire } from "../lib/builder-card"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
@@ -189,7 +190,13 @@ export function registerUseTool(tc: ToolContext): void {
         const parseMeta = (row?: { meta: string | null }): unknown => {
           if (!row?.meta) return null
           try {
-            return JSON.parse(row.meta)
+            const parsed = JSON.parse(row.meta) as { card?: unknown }
+            // A builder card is stored WHOLE — the manifest source, the document already
+            // published for it — and stripped wherever it reaches a caller (lib/builder-card.ts,
+            // the same call messageJson in routes/contexts.ts makes). A builder session names no
+            // context, so it cannot be reached through `use` today; this holds the rule at the
+            // boundary rather than on that argument staying true.
+            return parsed?.card ? { ...parsed, card: cardForWire(parsed.card) } : parsed
           } catch {
             return null
           }

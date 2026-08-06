@@ -55,6 +55,12 @@ export function ContextBuilderPage() {
   const degraded =
     modelsFailed || (modelsData ? modelsData.models.length === 0 : false) || openRefused
 
+  // A 403 is the OTHER refusal, and deliberately not a degraded flip: it means this person's
+  // access here is read-only, so the conversation would work fine for a colleague — hiding it
+  // and pushing the agent door would only send them at a second path that refuses for the same
+  // reason. The server answers it with a sentence naming the fix (routes/contexts.ts), which
+  // ApiError carries as its message, `useChatSession` puts on `chat.error`, and the composer
+  // renders as its notice. So the whole handling of this case is: let it through.
   const open = useCallback(
     async (body: string) => {
       try {

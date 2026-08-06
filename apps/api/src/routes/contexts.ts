@@ -33,11 +33,12 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
+import { cardForWire } from "../lib/builder-card"
 import { chatArrival } from "../lib/chat-gate"
 import { buildChatTools, type ChatPrincipal, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
-import { buildContextBuilderTools } from "../lib/context-builder-tools"
+import { buildContextBuilderTools, latestBuilderCard } from "../lib/context-builder-tools"
 import { sha256 } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { getInstanceChatModel } from "../lib/instance-settings"
@@ -324,8 +325,17 @@ export const contextRoutes = (ctx: AppContext) => {
     // the raw subject_ref (see BUILDER_SUBJECT) because it is not a Selector `parseSubject` would
     // recognize, so it never reaches `s.subject`/`subject` above — it reads here as "no subject",
     // same as a plain workspace chat, until this one check tells them apart.
+    //
+    // SEEDED FROM THE TRANSCRIPT, because the surface is rebuilt every turn and the draft is
+    // not: the ordinary rhythm is "here is what I would build" on one turn and "yes, do it" on
+    // the next, so without the seed the model would have to write the manifest again from
+    // memory and the created context could differ from the card the person approved. The seed
+    // is the newest stored card (latestBuilderCard), which is by construction the last one they
+    // were shown.
     const builderTools =
-      s.subject_ref === BUILDER_SUBJECT ? buildContextBuilderTools(ctx, who) : null
+      s.subject_ref === BUILDER_SUBJECT
+        ? buildContextBuilderTools(ctx, who, latestBuilderCard(transcript))
+        : null
     const tools = builderTools ?? buildChatTools(ctx, who)
     const timed = timedModel(stream.wrap(model.callModel))
     const startedAt = Date.now()
@@ -356,9 +366,10 @@ export const contextRoutes = (ctx: AppContext) => {
       outcome: res.outcome,
     })
     // The card from the LAST draft_manifest / create_context_from_draft call this turn, when
-    // this was a builder turn — already stripped of manifest_md by context-builder-tools.ts's
-    // own `cardFrom` (the `draft` object it hands back never carries the field in the first
-    // place, not merely typed without it), so nothing further needs stripping here.
+    // this was a builder turn. Stored WHOLE — manifest source and all — because the transcript
+    // is where the next turn reads the approved draft back from (see StoredBuilderCard). The
+    // stripping happens on the way OUT instead, in `messageJson`, so there is one place a
+    // client's view of a card is decided rather than one per writer.
     const card = builderTools?.card() ?? null
     await reply(res.reply, res.outcome === "failed" ? "failed" : "answered", {
       outcome: res.outcome,
@@ -908,6 +919,14 @@ export const contextRoutes = (ctx: AppContext) => {
         meta = null
       }
     }
+    // THE ONE PLACE A BUILDER CARD BECOMES CLIENT-VISIBLE.
+    //
+    // The stored card carries what the NEXT turn needs — the manifest source the person
+    // approved, and the document already published for it (see StoredBuilderCard). Neither is
+    // anything a client has ever been offered, and the manifest source in particular is the one
+    // thing this whole flow exists to keep out of sight. `c.json` does not validate against
+    // SessionMeta, so the declared schema is documentation, not a filter: the filter is here.
+    if (meta?.card) meta = { ...meta, card: cardForWire(meta.card) as typeof meta.card }
     return {
       id: m.id,
       author_kind: m.author_kind,
@@ -2138,6 +2157,25 @@ export const contextRoutes = (ctx: AppContext) => {
       // gate the workspace chat walks — a builder conversation spends the same operator key.
       const gate = await chatGates(c, b.workspace, me.id)
       if (gate) return bail(gate)
+      // AND THE ONE RUNG CHAT DOES NOT HAVE: this conversation ends in a context, which the
+      // REST create route requires `publish` standing for (`requireWorkspace(c, "publish")`).
+      // Checked HERE, before a single question is asked, because the alternative is what the
+      // spec set out to avoid — interviewing someone for two minutes and refusing on the last
+      // step. The tool refuses too (context-builder-tools.ts), since a seat can be lowered
+      // mid-conversation; this is the up-front half, in plain language rather than a code.
+      //
+      // Read from the NAMED workspace rather than `requireWorkspace`, which resolves the
+      // caller's active one — this route takes the workspace in the body, and the two can
+      // differ for someone with several.
+      const seat = await meta.getMembership(b.workspace, me.id).catch(() => null)
+      if (!seat || !roleAllows(seat.role, "publish"))
+        return bail(
+          fail(
+            c,
+            403,
+            "You need permission to create things in this workspace before you can set up a context here. An Admin can change your access under Settings › Members.",
+          ),
+        )
       if (b.model && !ctx.models?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
       const created = await meta.createSessionWithMessage(

@@ -25,6 +25,13 @@ export const BUILDER_COPY = {
   wsErrorBody: "Derive needs to know which workspace this context belongs to.",
   retryButton: "Try again",
   copyButton: "Copy",
+  // The card's own headings. Here rather than inline in context-card.tsx for the reason the
+  // rest of this file exists: a heading is copy a person reads, so it has to face the same
+  // sweep — inline JSX text is exactly where the vocabulary this flow bans would slip back in.
+  cardUntitled: "Untitled context",
+  cardKnows: "What it knows",
+  cardAnswers: "How it answers",
+  cardWont: "What it won’t do",
   kindKnowledge: "Your team's agents can consult this as soon as it's created.",
   kindWorker:
     "This one will also take on work itself. Answers come from whoever runs it — you can do that from your own agent session, or set up a dedicated helper later on the context's page.",

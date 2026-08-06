@@ -137,7 +137,7 @@ function Console({ id }: { id: string }) {
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
   const rotateToken = useApiMutation({
     mutationFn: () => api.rotateAgent(context?.agent_id ?? ""),
-    success: "Runner token rotated — the old one is dead",
+    success: "New key issued — the old one has stopped working",
     onSuccess: (a) => setRotatedToken(a.token),
   })
 
@@ -303,7 +303,7 @@ function Console({ id }: { id: string }) {
               onCopy={() => {
                 if (!rotatedToken) return
                 navigator.clipboard?.writeText(rotatedToken)
-                toast.success("Token copied")
+                toast.success("Key copied")
               }}
               onDoneRotate={() => setRotatedToken(null)}
             />
@@ -511,11 +511,13 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
   }, [])
   const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
   const online = !!seenAt && age < 90_000
+  // Same words as the card below it (RunnerCard): one state should not have two names on one
+  // page, and "runner online" names our machinery rather than what it means for the reader.
   const [dot, label] = online
-    ? ["bg-success", "runner online"]
+    ? ["bg-success", "taking on work"]
     : seenAt && age < 600_000
-      ? ["bg-warning", `seen ${ago(seenAt)}`]
-      : ["bg-muted-foreground", `runner offline — ${seenAt ? `seen ${ago(seenAt)}` : "never seen"}`]
+      ? ["bg-warning", `last here ${ago(seenAt)}`]
+      : ["bg-muted-foreground", `not taking on work${seenAt ? ` — last here ${ago(seenAt)}` : ""}`]
   // Same three-way read as the directory's dot (index.tsx): a hover explains what the
   // state actually means for asking this context something, not just what the runner
   // is doing.
@@ -536,10 +538,16 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
   )
 }
 
-// The rail's Runner card — the "runs from your own machine" story, everyone reads it;
-// the serve instructions and rotate live below a hairline, owner-only. Presence and
-// last-seen read as messenger grammar on purpose: a context runs wherever its owner
-// runs it, and offline is its normal resting state, not an outage.
+// The rail's "Doing work" card — the "runs from your own machine" story, everyone reads it;
+// the commands and the key live below a hairline, owner-only. Presence and last-seen read as
+// messenger grammar on purpose: a context runs wherever its owner runs it, and offline is its
+// normal resting state, not an outage.
+//
+// WORDED FOR SOMEONE WHO ARRIVED FROM THE GUIDED BUILDER, which is now most first-timers. They
+// never met a runner, a token or a queue, so every line here answers one of two questions —
+// what does this state MEAN for me, and why would I need this — before it shows a command. The
+// commands themselves stay verbatim: those are things to paste, not things to read, and
+// rewriting them into prose would leave nothing that works.
 function RunnerCard({
   context,
   isOwner,
@@ -562,12 +570,12 @@ function RunnerCard({
   const online = age < 90_000
   const away = !online && age < 600_000
   const [dot, status] = online
-    ? ["bg-success", `online — last poll ${ago(seenAt as string)}`]
+    ? ["bg-success", `taking on work now — checked ${ago(seenAt as string)}`]
     : away
-      ? ["bg-warning", `away — seen ${ago(seenAt as string)}`]
+      ? ["bg-warning", `quiet just now — last here ${ago(seenAt as string)}`]
       : [
           "bg-muted-foreground",
-          seenAt ? `offline — seen ${ago(seenAt)}` : "offline — never connected",
+          seenAt ? `not taking on work — last here ${ago(seenAt)}` : "not set up to take on work",
         ]
 
   return (
@@ -575,22 +583,23 @@ function RunnerCard({
       className="flex flex-col gap-2.5 rounded-xl border bg-card p-3.5"
       data-testid="rail-runner"
     >
-      <SectionEyebrow icon={<Cpu className="size-3" />}>Runner</SectionEyebrow>
+      <SectionEyebrow icon={<Cpu className="size-3" />}>Doing work</SectionEyebrow>
       <div className="flex items-center gap-1.5 text-xs text-foreground">
         <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
         {status}
       </div>
       <p className="text-xs text-muted-foreground">
-        Runs on its owner's machine — a coding session that polls for work.{" "}
+        Reading what this context knows always works. Taking on a task is different: that happens on
+        a real machine someone keeps connected.{" "}
         {online
-          ? "Answers usually land in minutes."
-          : "Messages queue while it's away and run when it returns."}
+          ? "One is connected, so tasks usually come back within minutes."
+          : "None is connected right now, so tasks wait in line and run once one is."}
       </p>
       {isOwner && (
         <div className="flex flex-col gap-2 border-t border-border-soft pt-2.5">
           <div>
             <p className="text-2xs text-muted-foreground">
-              Give it work — from Chat above, or any coding session:
+              Ask it to do something — from Chat above, or from your own coding session:
             </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               use({"{"} context: "{context.name}", instruction: "…" {"}"})
@@ -598,24 +607,27 @@ function RunnerCard({
           </div>
           <div>
             <p className="text-2xs text-muted-foreground">
-              Then serve it from your own session — no token. This only claims what's already been
-              given; it does nothing on an empty queue:
+              Then do the waiting work yourself, from that same session — nothing to install and no
+              key needed. It picks up whatever has been asked and stops when there is nothing left:
             </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               use({"{"} context: "{context.name}" {"}"})
             </code>
           </div>
           <div>
-            <p className="text-2xs text-muted-foreground">Or a dedicated runner, with its token:</p>
+            <p className="text-2xs text-muted-foreground">
+              Or leave a machine connected all the time, so tasks are picked up while you are away.
+              That one needs the key below:
+            </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               derive runner serve {context.id}
             </code>
           </div>
           {context.max_run_ms != null && (
-            <p className="font-mono text-2xs text-muted-foreground">
-              budget {Math.round(context.max_run_ms / 60_000)}m per run ·{" "}
-              {context.max_concurrency ?? 1} {context.max_concurrency === 1 ? "run" : "runs"} at a
-              time
+            <p className="text-2xs text-muted-foreground">
+              One task gets up to {Math.round(context.max_run_ms / 60_000)} minutes, and{" "}
+              {context.max_concurrency ?? 1}{" "}
+              {context.max_concurrency === 1 ? "task runs" : "tasks run"} at a time.
             </p>
           )}
           <div className="flex flex-col gap-1.5 pt-1">
@@ -628,10 +640,11 @@ function RunnerCard({
               disabled={rotating}
               className="self-start"
             >
-              Rotate token
+              Replace the key
             </Button>
             <p className="text-2xs text-muted-foreground">
-              Kills the old token immediately. Owner-run keeps working.
+              Use this if the key was shared by mistake. The old one stops working straight away;
+              anything you run from your own session is unaffected.
             </p>
           </div>
           {rotatedToken && (
@@ -639,16 +652,15 @@ function RunnerCard({
               <StatusPanel
                 tone="warning"
                 layout="inline"
-                title="New runner token — copy it now, it won't be shown again. The old one is dead."
+                title="Here is the new key — copy it now, it is not shown again. The old one has already stopped working."
                 description={
                   <div className="flex flex-col gap-1.5">
                     <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
                       {rotatedToken}
                     </code>
                     <span className="text-2xs text-muted-foreground">
-                      Update it where the runner reads it (e.g.{" "}
-                      <code className="font-mono">.derive/agent-token</code>) and restart the
-                      runner.
+                      Put it wherever the always-on machine reads it from (usually{" "}
+                      <code className="font-mono">.derive/agent-token</code>) and start it again.
                     </span>
                   </div>
                 }

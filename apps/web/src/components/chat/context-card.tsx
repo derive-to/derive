@@ -23,7 +23,9 @@ export function ContextCard({ card }: { card: BuilderCardMeta }) {
       data-testid="builder-context-card"
     >
       <div>
-        <p className="text-sm font-medium text-foreground">{draft.name || "Untitled context"}</p>
+        <p className="text-sm font-medium text-foreground">
+          {draft.name || BUILDER_COPY.cardUntitled}
+        </p>
         {draft.description && (
           <p className="mt-0.5 text-sm text-muted-foreground">{draft.description}</p>
         )}
@@ -33,7 +35,7 @@ export function ContextCard({ card }: { card: BuilderCardMeta }) {
           the section simply doesn't render rather than showing a heading over nothing. */}
       {(draft.knows.length > 0 || draft.source_short_ids.length > 0) && (
         <div className="flex flex-col gap-1.5">
-          <Eyebrow>What it knows</Eyebrow>
+          <Eyebrow>{BUILDER_COPY.cardKnows}</Eyebrow>
           {draft.knows.length > 0 && (
             <ul className="flex flex-col gap-1 text-sm text-foreground">
               {draft.knows.map((k) => (
@@ -65,14 +67,14 @@ export function ContextCard({ card }: { card: BuilderCardMeta }) {
 
       {draft.answers && (
         <div className="flex flex-col gap-1.5">
-          <Eyebrow>How it answers</Eyebrow>
+          <Eyebrow>{BUILDER_COPY.cardAnswers}</Eyebrow>
           <p className="text-sm text-foreground">{draft.answers}</p>
         </div>
       )}
 
       {draft.wont.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <Eyebrow>What it won&rsquo;t do</Eyebrow>
+          <Eyebrow>{BUILDER_COPY.cardWont}</Eyebrow>
           <ul className="flex flex-col gap-1 text-sm text-foreground">
             {draft.wont.map((w) => (
               <li key={w} className="flex gap-1.5">
