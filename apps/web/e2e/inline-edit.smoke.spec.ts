@@ -284,6 +284,74 @@ test("resize an image and box, then undo/redo and save", async ({ owner }) => {
   )
 })
 
+test("set exact dimensions, constrain a box, and reset to the authored size", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "precision.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const image = doc(owner).locator("#hero")
+  await image.hover()
+  const size = doc(owner).getByRole("button", { name: "Set element size" })
+  await expect(size).toHaveText("160 × 90")
+  await size.click()
+  const panel = doc(owner).getByRole("form", { name: "Element size" })
+  const width = panel.getByLabel("Width in pixels")
+  const height = panel.getByLabel("Height in pixels")
+  const lock = panel.getByRole("checkbox", { name: "Proportions locked" })
+  await expect(panel).toBeVisible()
+  await expect(width).toHaveValue("160")
+  await expect(height).toHaveValue("90")
+  await expect(lock).toBeChecked()
+  await expect(lock).toBeDisabled()
+
+  // Escape dismisses the small editor, not the entire inline-edit session.
+  await owner.keyboard.press("Escape")
+  await expect(panel).toBeHidden()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  await expect(size).toBeFocused()
+
+  await size.click()
+  await panel.getByLabel("Width in pixels").fill("320")
+  await expect(panel.getByLabel("Height in pixels")).toHaveValue("180")
+  await panel.getByRole("button", { name: "Apply" }).click()
+  await expect(image).toHaveCSS("width", "320px")
+  await expect(image).toHaveCSS("height", "180px")
+  expect(await image.evaluate((el) => el.style.height)).toBe("auto")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+
+  await size.click()
+  await panel.getByRole("button", { name: "Reset to authored size" }).click()
+  await expect(image).toHaveCSS("width", "160px")
+  await expect(image).toHaveCSS("height", "90px")
+  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
+
+  const box = doc(owner).locator("#summary-box")
+  await box.click({ position: { x: 210, y: 100 } })
+  await size.click()
+  await expect(panel.getByRole("checkbox", { name: "Lock proportions" })).not.toBeChecked()
+  await panel.getByLabel("Width in pixels").fill("280")
+  await panel.getByLabel("Height in pixels").fill("150")
+  await panel.getByRole("button", { name: "Apply" }).click()
+  await expect(box).toHaveCSS("width", "280px")
+  await expect(box).toHaveCSS("height", "150px")
+
+  await size.click()
+  const boxLock = panel.getByRole("checkbox", { name: "Lock proportions" })
+  await boxLock.check()
+  await panel.getByLabel("Width in pixels").fill("308")
+  await expect(panel.getByLabel("Height in pixels")).toHaveValue("165")
+  // The editor's global save chord commits a still-open precision form first, so
+  // values typed here cannot disappear when Save closes the session.
+  await panel.getByLabel("Width in pixels").press("Control+s")
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const src = await contentOf(owner, shortId)
+  expect(src).toContain(
+    '<div id="summary-box" data-derive-resizable style="width: 308px; height: 165px">',
+  )
+  // Reset removed the temporary image edit rather than publishing a redundant size.
+  expect(src).toContain('style="display:block;width:160px;height:90px"')
+})
+
 test("Markdown keeps image replacement without offering an unsaveable resize", async ({
   owner,
 }) => {

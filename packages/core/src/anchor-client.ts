@@ -344,6 +344,12 @@ interface ElReg {
     const el = asEl(document.activeElement)?.closest("[data-derive-editable]")
     return el instanceof HTMLElement ? el : null
   }
+  // Reassigned by edit controls mounted later in the file. Escape must dismiss a
+  // focused in-frame control before it asks the host to leave the entire edit mode.
+  let dismissEditUi = (): boolean => false
+  // Same late-bound seam for Save: a small in-frame editor gets one chance to commit
+  // its pending value before the host snapshots the document.
+  let commitEditUi = (): boolean => true
 
   /* THE KEYBOARD, and who owns it.
    *
@@ -385,17 +391,24 @@ interface ElReg {
   }
   /** Our own chords, as a table: what the handler does is readable in one place,
    *  and every one of them is a modifier chord — never a bare key. */
-  const chordFor = (e: KeyboardEvent, focused: HTMLElement | null): (() => void) | null => {
+  const chordFor = (
+    e: KeyboardEvent,
+    focused: HTMLElement | null,
+    precisionFocused: boolean,
+  ): (() => void) | null => {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return null
     const k = e.key.toLowerCase()
     // Save works with the mode open even when no block holds the caret: the host's
     // own window listener cannot see keys typed in here, and ⌘S would otherwise
     // open the browser's Save-page dialog over the document.
-    if (editOn && (k === "s" || k === "enter")) return () => post({ type: "edit-save" })
+    if (editOn && (k === "s" || k === "enter"))
+      return () => {
+        if (commitEditUi()) post({ type: "edit-save" })
+      }
     // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
     // happened in — it cannot undo a bold, a link, a break, or an element resize.
     // Keep it live with no text caret because a resize grip never owns one.
-    if (editOn && k === "z") return e.shiftKey ? redo : undo
+    if (editOn && k === "z" && !precisionFocused) return e.shiftKey ? redo : undo
     if (!focused) return null
     // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
     // format command, so these keys did nothing in a mode that looks like an editor.
@@ -413,13 +426,16 @@ interface ElReg {
   const ownKeys = (e: KeyboardEvent) =>
     guard(() => {
       const focused = editingCaret()
+      const active = asEl(document.activeElement)
+      const editControlFocused = !!active?.closest(".derive-edit-ui")
+      const precisionFocused = !!active?.closest(".derive-resize-panel")
       // An IME is mid-word. Not ours to interpret, and not the page's to act on.
       if (e.isComposing || e.keyCode === 229) {
         if (focused) e.stopImmediatePropagation()
         return
       }
       if (e.type === "keydown") {
-        const run = chordFor(e, focused)
+        const run = chordFor(e, focused, precisionFocused)
         if (run) {
           e.preventDefault()
           e.stopImmediatePropagation()
@@ -427,6 +443,11 @@ interface ElReg {
           return
         }
         if (e.key === "Escape") {
+          if (!focused && dismissEditUi()) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            return
+          }
           // Two steps, deliberately. With the caret in a block, Escape drops the
           // caret and stops there — the typed text and the session both survive,
           // which is what "get this cursor out of the way" should mean. Only an
@@ -444,7 +465,14 @@ interface ElReg {
         // `p` presents, for the same reason: one click into a document moves
         // keyboard focus in here and the host goes deaf. Forwarded, not swallowed,
         // so a deck that binds `p` itself still gets it.
-        if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey && !e.altKey && !focused)
+        if (
+          e.key.toLowerCase() === "p" &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !focused &&
+          !editControlFocused
+        )
           post({ type: "present" })
       }
       if (focused) e.stopImmediatePropagation()
@@ -506,12 +534,28 @@ interface ElReg {
        containers. It lives in our overlay layer, never in the target's layout. */
     ".derive-resize-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:1.5px solid rgba(100,116,139,.82);border-radius:3px;box-shadow:0 0 0 3px rgba(100,116,139,.12);z-index:2147483642}" +
     ".derive-resize-handle{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;padding:0;border:2px solid rgba(100,116,139,.95);border-radius:3px;background:rgb(248,250,252);box-shadow:0 1px 4px rgba(0,0,0,.28);cursor:nwse-resize;pointer-events:auto;touch-action:none}" +
-    ".derive-resize-size{position:absolute;right:-1px;bottom:-27px;padding:3px 6px;border-radius:4px;background:rgba(30,41,59,.92);color:#fff;font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
-    ".derive-resize-size:before{content:attr(data-size)}" +
+    ".derive-resize-size{position:absolute;right:-1px;bottom:-27px;min-height:21px;padding:3px 7px;border:0;border-radius:4px;background:rgba(30,41,59,.94);color:#fff;font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;cursor:pointer;pointer-events:auto}" +
+    /* The readout is the progressive-disclosure trigger: one quiet number at rest,
+       then an exact-size form only when someone asks for it. */
+    ".derive-resize-panel{position:absolute;top:calc(100% + 31px);right:-1px;display:none;width:224px;box-sizing:border-box;padding:10px;border:1px solid rgba(100,116,139,.45);border-radius:7px;background:rgb(248,250,252);color:#1e293b;box-shadow:0 8px 24px rgba(15,23,42,.22);font:500 12px/1.25 system-ui,sans-serif;pointer-events:auto}" +
+    ".derive-resize-box.derive-resize-precision .derive-resize-panel{display:grid;gap:9px}" +
+    ".derive-resize-box.derive-resize-panel-above .derive-resize-panel{top:auto;bottom:calc(100% + 10px)}" +
+    ".derive-resize-box.derive-resize-panel-left .derive-resize-panel{right:auto;left:-1px}" +
+    ".derive-resize-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}" +
+    ".derive-resize-field{display:grid;gap:4px;color:#475569;font-size:11px}" +
+    ".derive-resize-input{width:100%;height:30px;box-sizing:border-box;padding:4px 7px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}" +
+    ".derive-resize-lock{display:flex;align-items:center;gap:7px;min-height:20px;color:#334155;cursor:pointer}" +
+    ".derive-resize-lock input{width:14px;height:14px;margin:0;accent-color:#475569}" +
+    ".derive-resize-lock:has(input:disabled){cursor:default;color:#64748b}" +
+    ".derive-resize-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}" +
+    ".derive-resize-button{height:29px;padding:0 9px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#334155;font:600 11px/27px system-ui,sans-serif;cursor:pointer}" +
+    ".derive-resize-apply{margin-left:auto;border-color:#334155;background:#334155;color:#fff}" +
+    ".derive-resize-button:disabled{opacity:.45;cursor:default}" +
     ".derive-resize-replace{position:absolute;top:6px;left:6px;height:25px;padding:0 8px;border:1px solid rgba(100,116,139,.55);border-radius:5px;background:rgba(248,250,252,.96);color:#334155;font:600 11px/23px system-ui,sans-serif;cursor:pointer;pointer-events:auto;white-space:nowrap}" +
     ".derive-resize-box:not(.derive-resize-image) .derive-resize-replace{display:none}" +
-    ".derive-resize-box:not(.derive-resize-enabled) :is(.derive-resize-handle,.derive-resize-size){display:none}" +
-    ".derive-resize-handle:focus-visible,.derive-resize-replace:focus-visible{outline:2px solid rgba(100,116,139,.95);outline-offset:2px}" +
+    ".derive-resize-box:not(.derive-resize-enabled) :is(.derive-resize-handle,.derive-resize-size,.derive-resize-panel){display:none}" +
+    ".derive-resize-handle:focus-visible,.derive-resize-size:focus-visible,.derive-resize-replace:focus-visible,.derive-resize-button:focus-visible{outline:2px solid rgba(100,116,139,.95);outline-offset:2px}" +
+    ".derive-resize-input:focus-visible{border-color:#475569;outline:2px solid rgba(100,116,139,.34);outline-offset:1px}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
        composites to ~1:1 on a dark page — invisible exactly where the invitation
@@ -1657,8 +1701,12 @@ interface ElReg {
     origStyle: string | null
     /** Captured before the live style changes, so the server resolves the base element. */
     selector: Record<string, unknown>
-    /** Media keeps its natural aspect ratio; containers carry both dimensions. */
-    ratio: boolean
+    /** Media persists height:auto; containers persist an explicit pixel height. */
+    autoHeight: boolean
+    /** Media is always constrained. A box may opt into the same direct manipulation. */
+    lockRatio: boolean
+    /** The rendered proportion to preserve while lockRatio is on. */
+    aspect: number
   }
   let editOn = false
   // The frame is HTML even when the stored document is Markdown. Element selectors
@@ -1877,19 +1925,68 @@ interface ElReg {
   resizeReplace.className = "derive-resize-replace"
   resizeReplace.textContent = "Replace"
   resizeReplace.setAttribute("aria-label", "Replace image")
-  const resizeSize = document.createElement("span")
+  const resizeSize = document.createElement("button")
+  resizeSize.type = "button"
   resizeSize.className = "derive-resize-size"
-  resizeSize.setAttribute("aria-hidden", "true")
+  resizeSize.setAttribute("aria-label", "Set element size")
   const resizeHandle = document.createElement("button")
   resizeHandle.type = "button"
   resizeHandle.className = "derive-resize-handle"
   resizeHandle.setAttribute("aria-label", "Resize element")
   resizeHandle.title = "Drag to resize"
-  resizeBox.append(resizeReplace, resizeSize, resizeHandle)
+
+  const resizePanel = document.createElement("form")
+  resizePanel.className = "derive-resize-panel"
+  resizePanel.setAttribute("aria-label", "Element size")
+  resizePanel.noValidate = true
+  const resizeFields = document.createElement("div")
+  resizeFields.className = "derive-resize-fields"
+  const precisionInput = (name: "Width" | "Height") => {
+    const label = document.createElement("label")
+    label.className = "derive-resize-field"
+    label.append(name)
+    const input = document.createElement("input")
+    input.className = "derive-resize-input"
+    input.type = "number"
+    input.name = name.toLowerCase()
+    input.min = "24"
+    input.max = "8192"
+    input.step = "1"
+    input.required = true
+    input.inputMode = "numeric"
+    input.setAttribute("aria-label", `${name} in pixels`)
+    label.append(input)
+    resizeFields.append(label)
+    return input
+  }
+  const resizeWidth = precisionInput("Width")
+  const resizeHeight = precisionInput("Height")
+  const resizeLockLabel = document.createElement("label")
+  resizeLockLabel.className = "derive-resize-lock"
+  const resizeLock = document.createElement("input")
+  resizeLock.type = "checkbox"
+  const resizeLockText = document.createElement("span")
+  resizeLockLabel.append(resizeLock, resizeLockText)
+  const resizeActions = document.createElement("div")
+  resizeActions.className = "derive-resize-actions"
+  const resizeReset = document.createElement("button")
+  resizeReset.type = "button"
+  resizeReset.className = "derive-resize-button"
+  resizeReset.textContent = "Reset"
+  resizeReset.setAttribute("aria-label", "Reset to authored size")
+  const resizeApply = document.createElement("button")
+  resizeApply.type = "submit"
+  resizeApply.className = "derive-resize-button derive-resize-apply"
+  resizeApply.textContent = "Apply"
+  resizeActions.append(resizeReset, resizeApply)
+  resizePanel.append(resizeFields, resizeLockLabel, resizeActions)
+  resizeBox.append(resizeReplace, resizeSize, resizeHandle, resizePanel)
   ;(document.body || document.documentElement).appendChild(resizeBox)
 
   let resizeHoverEl: ResizableElement | null = null
   let resizeSelectedEl: ResizableElement | null = null
+  let precisionOn = false
+  let precisionAxis: "width" | "height" = "width"
   interface ResizeDrag {
     el: ResizableElement
     pointerId: number
@@ -1897,20 +1994,44 @@ interface ElReg {
     startY: number
     startWidth: number
     startHeight: number
-    ratio: boolean
+    autoHeight: boolean
+    lockRatio: boolean
+    aspect: number
     moved: boolean
   }
   let resizeDrag: ResizeDrag | null = null
 
+  const closePrecision = (focusTrigger: boolean) => {
+    if (!precisionOn) return
+    precisionOn = false
+    resizeBox.classList.remove("derive-resize-precision")
+    resizeWidth.setCustomValidity("")
+    resizeHeight.setCustomValidity("")
+    if (focusTrigger && resizeSize.offsetParent) resizeSize.focus()
+  }
+  dismissEditUi = () => {
+    if (!precisionOn) return false
+    closePrecision(true)
+    return true
+  }
   const resizeUiEl = (): ResizableElement | null => resizeSelectedEl ?? resizeHoverEl
+  const aspectOf = (rect: DOMRect): number => {
+    const aspect = rect.height > 0 ? rect.width / rect.height : 1
+    return Number.isFinite(aspect) && aspect > 0 ? aspect : 1
+  }
+  const clampSize = (value: number): number => Math.min(8192, Math.max(24, Math.round(value)))
   const ensureResizeTarget = (el: ResizableElement): ResizeTarget => {
     const existing = resizeTargetFor(el)
     if (existing) return existing
+    const rect = el.getBoundingClientRect()
+    const autoHeight = keepsRatio(el)
     const target: ResizeTarget = {
       el,
       origStyle: rawStyle(el),
       selector: buildElSelector(el),
-      ratio: keepsRatio(el),
+      autoHeight,
+      lockRatio: autoHeight,
+      aspect: aspectOf(rect),
     }
     resizeTargets.push(target)
     return target
@@ -1918,11 +2039,13 @@ interface ElReg {
   const paintResizeUi = () => {
     const el = resizeUiEl()
     if (!editOn || !el || !document.contains(el)) {
+      closePrecision(false)
       resizeBox.style.display = "none"
       return
     }
     const r = el.getBoundingClientRect()
     if (!(r.width || r.height)) {
+      closePrecision(false)
       resizeBox.style.display = "none"
       return
     }
@@ -1933,26 +2056,163 @@ interface ElReg {
     resizeBox.style.height = `${r.height}px`
     resizeBox.classList.toggle("derive-resize-image", el.tagName.toLowerCase() === "img")
     resizeBox.classList.toggle("derive-resize-enabled", elementEditsOn)
-    resizeSize.setAttribute("data-size", `${Math.round(r.width)} × ${Math.round(r.height)}`)
+    resizeBox.classList.toggle(
+      "derive-resize-panel-above",
+      r.bottom + 160 > (window.innerHeight || document.documentElement.clientHeight),
+    )
+    resizeBox.classList.toggle("derive-resize-panel-left", r.right < 232)
+    resizeSize.textContent = `${Math.round(r.width)} × ${Math.round(r.height)}`
   }
   refreshResizeUi = paintResizeUi
   const setResizeHover = (el: ResizableElement | null) => {
-    if (resizeDrag || el === resizeHoverEl) return
+    if (precisionOn || resizeDrag || el === resizeHoverEl) return
     resizeHoverEl = el
     paintResizeUi()
   }
   const selectResize = (el: ResizableElement | null) => {
+    if (el !== resizeSelectedEl) closePrecision(false)
     resizeSelectedEl = el
     if (el) resizeHoverEl = el
     setEditHover(null)
     paintResizeUi()
   }
   const clearResizeUi = () => {
+    closePrecision(false)
     resizeHoverEl = null
     resizeSelectedEl = null
     resizeDrag = null
     resizeBox.style.display = "none"
   }
+
+  const openPrecision = () => {
+    const el = resizeUiEl()
+    if (!elementEditsOn || !el || !document.contains(el)) return
+    selectResize(el)
+    const target = ensureResizeTarget(el)
+    const rect = el.getBoundingClientRect()
+    target.aspect = aspectOf(rect)
+    resizeWidth.value = String(Math.round(rect.width))
+    resizeHeight.value = String(Math.round(rect.height))
+    resizeLock.checked = target.lockRatio
+    resizeLock.disabled = target.autoHeight
+    resizeLockText.textContent = target.autoHeight ? "Proportions locked" : "Lock proportions"
+    resizeReset.disabled = rawStyle(el) === target.origStyle
+    precisionAxis = "width"
+    precisionOn = true
+    resizeBox.classList.add("derive-resize-precision")
+    paintResizeUi()
+    requestAnimationFrame(() => {
+      if (!precisionOn) return
+      resizeWidth.focus()
+      resizeWidth.select()
+    })
+  }
+  const precisionValue = (input: HTMLInputElement): number | null => {
+    input.setCustomValidity("")
+    const value = input.valueAsNumber
+    if (!Number.isInteger(value) || value < 24 || value > 8192) {
+      input.setCustomValidity("Use a whole number from 24 to 8192 pixels.")
+      input.reportValidity()
+      return null
+    }
+    return value
+  }
+  const syncPrecisionRatio = (axis: "width" | "height") => {
+    precisionAxis = axis
+    resizeWidth.setCustomValidity("")
+    resizeHeight.setCustomValidity("")
+    if (!resizeLock.checked) return
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!target) return
+    const value = axis === "width" ? resizeWidth.valueAsNumber : resizeHeight.valueAsNumber
+    if (!Number.isFinite(value) || value <= 0) return
+    if (axis === "width") resizeHeight.value = String(clampSize(value / target.aspect))
+    else resizeWidth.value = String(clampSize(value * target.aspect))
+  }
+  resizeWidth.addEventListener("input", () => syncPrecisionRatio("width"))
+  resizeHeight.addEventListener("input", () => syncPrecisionRatio("height"))
+  resizeLock.addEventListener("change", () => {
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!target || target.autoHeight) return
+    if (!resizeLock.checked) return
+    const width = resizeWidth.valueAsNumber
+    const height = resizeHeight.valueAsNumber
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)
+      target.aspect = width / height
+    syncPrecisionRatio(precisionAxis)
+  })
+  resizePanel.addEventListener("submit", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!el || !target || !document.contains(el)) return
+    const rawWidth = precisionValue(resizeWidth)
+    if (rawWidth === null) return
+    const rawHeight = precisionValue(resizeHeight)
+    if (rawHeight === null) return
+    let width = rawWidth
+    let height = rawHeight
+    target.lockRatio = target.autoHeight || resizeLock.checked
+    if (target.lockRatio) {
+      if (precisionAxis === "height") width = clampSize(height * target.aspect)
+      else height = clampSize(width / target.aspect)
+      resizeWidth.value = String(width)
+      resizeHeight.value = String(height)
+    }
+    const before = rawStyle(el)
+    checkpointStyle(el)
+    el.style.width = `${width}px`
+    el.style.height = target.autoHeight ? "auto" : `${height}px`
+    if (rawStyle(el) === before) undoStack.pop()
+    else target.aspect = width / height
+    closePrecision(true)
+    paintResizeUi()
+    postDirty()
+  })
+  commitEditUi = () => {
+    if (!precisionOn) return true
+    resizePanel.requestSubmit()
+    return !precisionOn
+  }
+  resizeReset.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!el || !target || !document.contains(el)) return
+    if (rawStyle(el) !== target.origStyle) {
+      checkpointStyle(el)
+      restoreStyle(el, target.origStyle)
+      target.lockRatio = target.autoHeight
+      target.aspect = aspectOf(el.getBoundingClientRect())
+    }
+    closePrecision(true)
+    paintResizeUi()
+    postDirty()
+  })
+  resizeSize.addEventListener("pointerdown", (e) => e.stopPropagation())
+  resizeSize.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (precisionOn) closePrecision(true)
+    else openPrecision()
+  })
+  resizePanel.addEventListener("pointerdown", (e) => e.stopPropagation())
+  for (const type of ["keydown", "keypress", "keyup"])
+    resizePanel.addEventListener(type, (e) => e.stopPropagation())
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (!precisionOn) return
+      const target = asEl(e.target)
+      if (target?.closest(".derive-resize-panel,.derive-resize-size")) return
+      closePrecision(false)
+    },
+    true,
+  )
 
   resizeReplace.addEventListener("pointerdown", (e) => {
     e.preventDefault()
@@ -1978,6 +2238,7 @@ interface ElReg {
     const target = ensureResizeTarget(el)
     checkpointStyle(el)
     const r = el.getBoundingClientRect()
+    target.aspect = aspectOf(r)
     resizeSelectedEl = el
     resizeDrag = {
       el,
@@ -1986,7 +2247,9 @@ interface ElReg {
       startY: e.clientY,
       startWidth: r.width,
       startHeight: r.height,
-      ratio: target.ratio,
+      autoHeight: target.autoHeight,
+      lockRatio: target.lockRatio,
+      aspect: target.aspect,
       moved: false,
     }
     resizeHandle.setPointerCapture?.(e.pointerId)
@@ -1999,18 +2262,29 @@ interface ElReg {
     e.preventDefault()
     e.stopPropagation()
     const target = ensureResizeTarget(el)
+    const before = rawStyle(el)
     checkpointStyle(el)
     const r = el.getBoundingClientRect()
+    target.aspect = aspectOf(r)
     const step = e.shiftKey ? 1 : 8
     const grow = e.key === "ArrowRight" || e.key === "ArrowDown" ? step : -step
-    if (target.ratio || e.key === "ArrowLeft" || e.key === "ArrowRight") {
-      const width = Math.min(8192, Math.max(24, Math.round(r.width + grow)))
+    let width = Math.round(r.width)
+    let height = Math.round(r.height)
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      width = clampSize(width + grow)
+      if (target.lockRatio) height = clampSize(width / target.aspect)
       el.style.width = `${width}px`
-      if (target.ratio) el.style.height = "auto"
     } else {
-      const height = Math.min(8192, Math.max(24, Math.round(r.height + grow)))
-      el.style.height = `${height}px`
+      height = clampSize(height + grow)
+      if (target.lockRatio) {
+        width = clampSize(height * target.aspect)
+        el.style.width = `${width}px`
+      }
     }
+    if (target.autoHeight) el.style.height = "auto"
+    else if (target.lockRatio || e.key === "ArrowUp" || e.key === "ArrowDown")
+      el.style.height = `${height}px`
+    if (rawStyle(el) === before) undoStack.pop()
     paintResizeUi()
     postDirty()
   })
@@ -2025,11 +2299,11 @@ interface ElReg {
       const dy = e.clientY - drag.startY
       if (!drag.moved && Math.abs(dx) < 1 && Math.abs(dy) < 1) return
       drag.moved = true
-      const width = Math.min(8192, Math.max(24, Math.round(drag.startWidth + dx)))
+      const width = clampSize(drag.startWidth + dx)
       drag.el.style.width = `${width}px`
-      drag.el.style.height = drag.ratio
+      drag.el.style.height = drag.autoHeight
         ? "auto"
-        : `${Math.min(8192, Math.max(24, Math.round(drag.startHeight + dy)))}px`
+        : `${drag.lockRatio ? clampSize(width / drag.aspect) : clampSize(drag.startHeight + dy)}px`
       // Arm the unsaved-work guard on the first movement, before the settled count.
       if (lastDirty <= 0) {
         lastDirty = 1
@@ -2807,7 +3081,7 @@ interface ElReg {
       dirty++
       const width = Math.round(Number.parseFloat(t.el.style.width))
       const rawHeight = t.el.style.height
-      const height = t.ratio ? "auto" : Math.round(Number.parseFloat(rawHeight))
+      const height = t.autoHeight ? "auto" : Math.round(Number.parseFloat(rawHeight))
       if (
         !Number.isFinite(width) ||
         width < 24 ||
