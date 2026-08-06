@@ -197,6 +197,18 @@ const CONFIG_VARS: ConfigVar[] = [
     doc: "Passkeys (WebAuthn) turn on wherever the relying-party ID resolves — always for a\nsingle-origin self-host. For a split SPA+API on different registrable domains, set the\nshared parent domain here to keep passkeys enabled.",
     example: "example.com",
   },
+  {
+    name: "DERIVE_IOS_APP_ID",
+    group: "auth",
+    doc: "Team ID + bundle id of the iOS app allowed to open this domain's links natively. Set it\nand /.well-known/apple-app-site-association is served, so a link to this instance opens\nthe app instead of a browser tab. Leave unset if you have no iOS app: publishing an\nassociation for someone else's bundle hands that app your links.",
+    example: "ABCDE12345.to.derive.app",
+  },
+  {
+    name: "DERIVE_ANDROID_CERT_FINGERPRINTS",
+    group: "auth",
+    doc: "SHA-256 signing-certificate fingerprints of the Android release keystore, comma\nseparated. The Android half of the same opt-in: set it and /.well-known/assetlinks.json\nis served so App Links open the app.",
+    example: "AA:BB:CC:DD:EE:FF",
+  },
 
   // -- hosting isolation & custom domains --
   {

@@ -116,6 +116,20 @@ jobs:
       # failure as non-fatal (a warning) while STILL failing on a real high advisory, so the
       # gate keeps working the moment pnpm/npm restore it. gitleaks below is the other gate.
       # Durable fix: migrate this to OSV-Scanner (no npm-endpoint dependency).
+      # apps/mobile is NOT a pnpm workspace member (React Native wants a hoisted
+      # node_modules; see apps/mobile/README.md), so `pnpm -r` never reaches it and its
+      # tests would sit there passing locally and running nowhere. Its own npm install +
+      # suite, on the lane that is already up: deep-link resolution, the auth nonce
+      # binding, and the injected background probe — the shell's security-relevant and
+      # twice-regressed logic. Everything device-shaped stays out of reach of CI and is
+      # covered by running it on a phone.
+      - name: Mobile shell (own lockfile, outside the workspace)
+        working-directory: apps/mobile
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npm test
+
       - name: Audit production dependencies
         run: |
           set +e

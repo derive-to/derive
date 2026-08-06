@@ -1,3 +1,4 @@
+import { randomId } from "./random-id"
 import { STORAGE_KEYS } from "./storage-keys"
 
 // A stable, per-browser anonymous identity for realtime presence — generated once, kept in
@@ -16,10 +17,7 @@ export function getGuestId(): string {
   if (cached) return cached
   // Prerender/SSR has no browser identity and never opens a realtime connection.
   if (typeof window === "undefined") return ""
-  const fresh = () =>
-    typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `g_${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`
+  const fresh = () => `g_${randomId()}`
   try {
     // `||` not `??`: a stored empty string is corrupt, not an identity — regenerate it,
     // else we'd send `?g=` empty forever and fall back into the very cookie race this fixes.

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/input-otp"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
+import { nativeCallbackUrl, nativeState } from "@/lib/native-handoff"
 import { needsOnboarding } from "@/lib/route-guards"
 import { useDocumentTitle } from "@/lib/use-document-title"
 
@@ -51,7 +52,10 @@ export function Login() {
   // resume (agent consent bounced us here to sign in), else the return_to, else home.
   const oauthCallbackURL = () => {
     const search = typeof window !== "undefined" ? window.location.search : ""
-    return new URLSearchParams(search).has("client_id")
+    // The native shell's nonce has to survive the provider round-trip, or afterAuth
+    // comes back with no way to tell this was the app's sign-in. Same reasoning as the
+    // client_id case below: land back on /login with the query intact.
+    return new URLSearchParams(search).has("client_id") || nativeState(search)
       ? `/login${search}`
       : typeof returnTo === "string"
         ? returnTo
@@ -81,7 +85,27 @@ export function Login() {
     if (redirected.current) return
     redirected.current = true
     const search = typeof window !== "undefined" ? window.location.search : ""
-    if (new URLSearchParams(search).has("client_id")) {
+    const native = nativeState(search)
+    if (native) {
+      // The native shell opened this page in a REAL browser, because Google refuses
+      // OAuth from an embedded web view. The session now lives in THIS browser's cookie
+      // jar, which is not the one the app's web view reads — so hand it over: mint a
+      // single-use token and bounce to the app's callback, echoing the app's nonce so it
+      // can tell its own flow from a crafted link.
+      //
+      // If minting fails there is nothing useful to fall back to (the app is waiting on
+      // the callback, and landing on the web home inside an auth browser is a dead end),
+      // so surface it and let the person retry rather than stranding them silently.
+      api
+        .nativeHandoffToken()
+        .then(({ token }) => {
+          window.location.href = nativeCallbackUrl(token, native)
+        })
+        .catch((e) => {
+          redirected.current = false
+          setErr((e as Error).message)
+        })
+    } else if (new URLSearchParams(search).has("client_id")) {
       window.location.href = `/api/auth/oauth2/authorize${search}`
     } else if (typeof returnTo === "string") {
       // Back to where sign-in was prompted (e.g. a shared artifact's "sign in to

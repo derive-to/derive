@@ -2,7 +2,9 @@ import { useQueryClient } from "@tanstack/react-query"
 import type { Dispatch, SetStateAction } from "react"
 import { type Artifact, api, type Comment, type Mention } from "@/api"
 import { toast } from "@/components/ui/sonner"
+import { copyText } from "@/lib/copy-text"
 import { commentsQuery } from "@/lib/queries"
+import { randomId } from "@/lib/random-id"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
@@ -163,7 +165,11 @@ export function useArtifactActions(p: {
     opts?: { threadId?: string; anchor?: Sel | null; mentions?: Mention[] },
   ) => {
     if (!text.trim() || !p.art) return
-    const tempId = `temp-${crypto.randomUUID()}`
+    // randomId, not crypto.randomUUID: the latter is secure-context only, so on a
+    // plain-http origin (a self-host on an internal network, a phone pointed at a dev
+    // server) it is undefined and this line THREW — after the composer had already
+    // closed, so the comment vanished with no request and no error. See lib/random-id.
+    const tempId = `temp-${randomId()}`
     const optimistic: Comment = {
       id: tempId,
       thread_id: opts?.threadId ?? tempId,
@@ -263,10 +269,11 @@ export function useArtifactActions(p: {
     remove: (commentId) => removeComment.mutate(commentId),
     copyLink: (threadId) => {
       const url = `${window.location.origin}${window.location.pathname}?comment=${threadId}`
-      navigator.clipboard
-        ?.writeText(url)
-        .then(() => toast.success("Link copied"))
-        .catch(() => toast(url))
+      // Was `navigator.clipboard?.writeText(url).then(...).catch(...)`, which reads as
+      // graceful but is not: optional chaining short-circuits the WHOLE chain, so with no
+      // clipboard the .catch fallback never ran and the tap did nothing at all. copyText
+      // also succeeds on a non-secure origin instead of only reporting failure.
+      void copyText(url).then((ok) => (ok ? toast.success("Link copied") : toast(url)))
     },
     openReview: p.onOpenReview,
   }

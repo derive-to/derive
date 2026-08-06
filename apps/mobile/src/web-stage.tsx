@@ -1,0 +1,217 @@
+import * as WebBrowser from "expo-web-browser"
+import { useEffect, useRef, useState } from "react"
+import { ActivityIndicator, Pressable, StyleSheet, Text, useColorScheme, View } from "react-native"
+import { WebView, type WebViewNavigation } from "react-native-webview"
+import {
+  AUTH_RETURN_URL,
+  claimScript,
+  isAuthNavigation,
+  newAuthState,
+  signInUrl,
+  tokenFromCallback,
+} from "./auth"
+import { isInternal, WEB_ORIGIN } from "./config"
+import { BACKGROUND_MESSAGE, BACKGROUND_PROBE, tokens } from "./theme"
+
+// How long to wait for first paint before calling the load failed. Mirrors the web
+// viewer's own BOOT_TIMEOUT_MS: a stuck frame must be legible as stuck, never
+// indistinguishable from "still loading".
+const BOOT_TIMEOUT_MS = 15_000
+
+/** The shell's one content surface: the existing web app, hosted.
+ *
+ *  Everything a person sees inside this is `apps/web`, which is why a web deploy reaches
+ *  phones with no app release. The shell's job is the things a browser tab cannot do:
+ *  keep external links out of the frame, and make failure and offline legible rather
+ *  than a white screen. */
+export function WebStage({
+  uri,
+  onNavigate,
+  onBackground,
+  runRef,
+}: {
+  uri: string
+  onNavigate?: (url: string) => void
+  /** The page's REAL background colour, so the shell's safe-area strip can match what is
+   *  actually on screen rather than what the OS appearance implies. */
+  onBackground?: (color: string) => void
+  /** Receives a function that injects script into the page. The tab bar uses it to drive
+   *  the SPA's router; passing a handle rather than a prop keeps a tab press from
+   *  re-rendering the web view, which would reload it. */
+  runRef?: { current: ((js: string) => void) | null }
+}) {
+  const scheme = useColorScheme() === "dark" ? "dark" : "light"
+  const t = tokens[scheme]
+  const ref = useRef<WebView>(null)
+  const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
+  const [attempt, setAttempt] = useState(0)
+
+  // Hand the caller a way to inject, and take it back on unmount so a late tab press
+  // cannot reach a dead frame.
+  useEffect(() => {
+    if (!runRef) return
+    runRef.current = (js: string) => ref.current?.injectJavaScript(js)
+    return () => {
+      runRef.current = null
+    }
+  }, [runRef])
+
+  // Per-source: a new uri or an explicit retry starts the clock again.
+  useEffect(() => {
+    setPhase("booting")
+    const timer = setTimeout(() => {
+      setPhase((p) => (p === "booting" ? "failed" : p))
+    }, BOOT_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [])
+
+  /**
+   * Sign-in, start to finish.
+   *
+   * Runs in a REAL browser because Google refuses OAuth from an embedded web view. The
+   * nonce lives only for this attempt and never leaves the closure: the callback must
+   * echo it back or the token is ignored, which is what stops a crafted deep link from
+   * signing the app into someone else's account.
+   *
+   * `openAuthSessionAsync` hands the callback url straight back, so the token arrives
+   * here rather than through the app's general deep-link listener — one flow, one place.
+   */
+  const startSignIn = async () => {
+    const state = newAuthState()
+    const result = await WebBrowser.openAuthSessionAsync(
+      signInUrl(WEB_ORIGIN, state),
+      AUTH_RETURN_URL,
+    )
+    if (result.type !== "success") return // dismissed or cancelled: nothing to clean up
+    const token = tokenFromCallback(result.url, state)
+    if (!token) return // not our flow, or a mismatched nonce
+    // Spend it from INSIDE the web view, so the Set-Cookie lands in this jar. The script
+    // navigates on success; a failure posts a message rather than leaving a blank frame.
+    ref.current?.injectJavaScript(claimScript(token, WEB_ORIGIN))
+  }
+
+  // Which navigations the web view may follow. Fires for top-level navigations only, so
+  // an artifact's own sandboxed iframe is unaffected. Three outcomes, in order:
+  //
+  //   1. Sign-in goes to a REAL browser, because Google rejects OAuth from an embedded
+  //      web view (see ./auth). The auth session closes itself on AUTH_RETURN_URL.
+  //   2. Anything else off-origin opens in the system browser, so a link can never take
+  //      over the app frame.
+  //   3. Our own pages load in place.
+  const onShouldStart = (req: WebViewNavigation) => {
+    const own = isInternal(req.url)
+    if (isAuthNavigation(req.url, own)) {
+      void startSignIn()
+      return false
+    }
+    if (own) return true
+    void WebBrowser.openBrowserAsync(req.url)
+    return false
+  }
+
+  return (
+    <View style={[styles.fill, { backgroundColor: t.background }]}>
+      <WebView
+        key={attempt}
+        ref={ref}
+        source={{ uri }}
+        style={[styles.fill, { backgroundColor: t.background }]}
+        // Pull to refresh, and the rubber-band it rides on. These were off because I
+        // guessed a bounce would fight the artifact viewer's locked scroll regions; on a
+        // real phone the absence just reads as a page that ignores you. WebKit only fires
+        // the refresh when the document is already at its top, so a scrolled list is
+        // unaffected.
+        bounces
+        pullToRefreshEnabled
+        // Android's equivalent: let the nested scrollers inside the page (the comments
+        // list, the artifact frame) take the gesture instead of the outer view eating it.
+        overScrollMode="always"
+        nestedScrollEnabled
+        // The composer must be able to take focus and raise the keyboard on its own,
+        // rather than only after a separate tap.
+        keyboardDisplayRequiresUserAction={false}
+        // Safari's inspector can attach to this frame in dev, which is the only way to
+        // debug the hosted app from a device. Never in a release build.
+        webviewDebuggingEnabled={__DEV__}
+        // One frame, one origin. Popups would open a chromeless window with no address
+        // bar, which is exactly the shape a phishing page wants.
+        setSupportMultipleWindows={false}
+        onShouldStartLoadWithRequest={onShouldStart}
+        // Ask the page what colour it is painting, on every load. The strip above this
+        // view has to match the CONTENT, and the OS appearance is not that (see
+        // BACKGROUND_PROBE).
+        injectedJavaScript={BACKGROUND_PROBE}
+        onMessage={(e) => {
+          try {
+            const msg = JSON.parse(e.nativeEvent.data) as { type?: string; color?: string }
+            if (msg.type === BACKGROUND_MESSAGE && msg.color) onBackground?.(msg.color)
+          } catch {
+            // Not ours. The hosted app is free to postMessage for its own reasons.
+          }
+        }}
+        onLoadEnd={() => setPhase("ready")}
+        onError={() => setPhase("failed")}
+        onHttpError={(e) => {
+          // A 4xx/5xx on the MAIN document is a failure; sub-resource errors are the
+          // page's own business and must not blank the app.
+          if (e.nativeEvent.url === uri) setPhase("failed")
+        }}
+        onNavigationStateChange={(nav) => nav.url && onNavigate?.(nav.url)}
+        // Keeps the session cookie across launches, so signing in is not a per-launch chore.
+        sharedCookiesEnabled
+        thirdPartyCookiesEnabled
+        allowsBackForwardNavigationGestures
+      />
+
+      {phase === "booting" && (
+        <View style={[styles.overlay, { backgroundColor: t.background }]}>
+          <ActivityIndicator color={t.muted} />
+        </View>
+      )}
+
+      {phase === "failed" && (
+        <View style={[styles.overlay, { backgroundColor: t.background }]}>
+          <Text style={[styles.title, { color: t.foreground }]}>Couldn&rsquo;t load Derive</Text>
+          <Text style={[styles.body, { color: t.muted }]}>
+            Check your connection and try again.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setPhase("booting")
+              setAttempt((n) => n + 1)
+            }}
+            style={[styles.retry, { borderColor: t.border, backgroundColor: t.card }]}
+          >
+            <Text style={[styles.retryLabel, { color: t.foreground }]}>Try again</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
+  overlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    padding: 24,
+  },
+  title: { fontSize: 17, fontWeight: "600" },
+  body: { fontSize: 14, textAlign: "center" },
+  retry: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+  },
+  retryLabel: { fontSize: 14, fontWeight: "500" },
+})

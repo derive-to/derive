@@ -499,6 +499,9 @@ const app = createApp({
   auth,
   webOrigins: cfg.webOrigins,
   analytics: cfg.analytics,
+  // Opt-in app-association files, so a derive link can open the native app.
+  appleAppId: cfg.iosAppId,
+  androidFingerprints: cfg.androidCertFingerprints,
   // Gate the mail-dependent capabilities (password reset, email verification) so the SPA
   // surfaces them only when a real transport can actually deliver.
   emailEnabled,

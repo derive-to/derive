@@ -53,6 +53,16 @@ const BOOT_FRAME = `(function(){try{var p=location.pathname;var authed=localStor
   CHROMELESS_PREFIX,
 )};var b=!authed||e.indexOf(p)>=0||f.some(function(x){return p.indexOf(x)===0});document.documentElement.setAttribute("data-boot",b?"bare":"rail")}catch(_){}})()`
 
+// The colour the BROWSER and OS paint around the app: Safari's toolbars, the Android
+// status bar, and the title bar of an installed PWA. A meta tag cannot resolve a CSS
+// custom property, so these mirror the two --background canvases in globals.css by
+// hand; they are the most stable tokens we have, and the manifest carries the dark one
+// for the install splash.
+const THEME_COLOR = {
+  light: "#f7f8fa", // tokens-ignore: mirrors --background (light) in globals.css
+  dark: "#0a0b0d", // tokens-ignore: mirrors --background (.dark) in globals.css
+}
+
 /** The two requests a signed-in cold boot always makes, as the EXACT URLs the api client
  *  would build. Shared with `f()` in api.ts through `artifactsListPath`, so the head-start
  *  and the real call cannot disagree; boot-fetch.test.ts pins the pairing end to end. */
@@ -108,13 +118,26 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           "width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content",
       },
       { title: "Derive" },
+      // Installed-app metadata. `mobile-web-app-capable` is the standard spelling
+      // (Apple's own `apple-mobile-web-app-capable` is deprecated in favour of it, and
+      // iOS 26 opens Home Screen sites as web apps regardless); the status-bar style is
+      // still Apple-only, and `black-translucent` is what lets the app paint under the
+      // notch, which the viewport's `viewport-fit=cover` above already asks for.
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
+      { name: "apple-mobile-web-app-title", content: "Derive" },
+      // NOTE: theme-color is deliberately NOT here — see THEME_COLOR in RootDocument.
     ],
     links: [
       // Theme-aware: dark glyph on light browser chrome, light on dark
       // (prefers-color-scheme media query inside the SVG).
       { rel: "icon", type: "image/svg+xml", href: "/brand/favicon.svg" },
       { rel: "icon", type: "image/png", href: "/brand/favicon.png" },
-      { rel: "apple-touch-icon", href: "/brand/favicon.png" },
+      // Home Screen icon. favicon.png is a transparent white glyph, which vanishes
+      // against the light tile iOS composites it onto — icon-192 is the opaque brand
+      // tile meant for this, and it is what the manifest points at too.
+      { rel: "apple-touch-icon", href: "/brand/icon-192.png" },
+      { rel: "manifest", href: "/manifest.webmanifest" },
       // Fonts are self-hosted via @fontsource-variable imports in globals.css —
       // Geist Sans + Geist Mono (both weight-only), so no third-party request.
       // Preloaded so the fetch is not discovered late through the stylesheet:
@@ -207,6 +230,16 @@ function RootDocument({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
+        {/* One theme-color per scheme, rendered HERE rather than through the route's
+            `head()`: head management DEDUPES meta by `name`, so two theme-color entries
+            collapse to the last one and the light variant is dropped (verified against
+            the served HTML). As raw tags both survive. */}
+        <meta
+          name="theme-color"
+          content={THEME_COLOR.light}
+          media="(prefers-color-scheme: light)"
+        />
+        <meta name="theme-color" content={THEME_COLOR.dark} media="(prefers-color-scheme: dark)" />
         <script
           // biome-ignore lint/security/noDangerouslySetInnerHtml: static boot string built from a constant storage key, no user input.
           dangerouslySetInnerHTML={{ __html: THEME_BOOT }}

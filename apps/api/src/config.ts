@@ -75,6 +75,10 @@ export interface Config {
   /** ISO instant after which the free-tier boundaries enforce. Unset = beta grace. */
   billingEnforceAt?: string
   webOrigins: string[]
+  /** `<TeamID>.<bundle id>`; set ⇒ the iOS app-association file is served. */
+  iosAppId?: string
+  /** Comma-separated SHA-256 signing-cert fingerprints; set ⇒ assetlinks.json is served. */
+  androidCertFingerprints?: string
   retentionDays: number
   objectStoreUrl?: string
   webDir: string
@@ -219,6 +223,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       365,
     ),
     objectStoreUrl: urlOr("OBJECT_STORE_URL", env.OBJECT_STORE_URL),
+    iosAppId: env.DERIVE_IOS_APP_ID,
+    androidCertFingerprints: env.DERIVE_ANDROID_CERT_FINGERPRINTS,
     emailFrom: env.EMAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
     slack: slackFromEnv(env),
