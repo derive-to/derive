@@ -8,6 +8,8 @@ import { REVEAL } from "@/lib/interaction"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
 import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
+import type { BuilderCardMeta } from "./builder-card"
+import { ContextCard } from "./context-card"
 
 // THE TRANSCRIPT, shared by every chat surface: the rail on a document and the workspace chat
 // page render the same rows, the same thinking state and the same streaming bubble, because
@@ -19,8 +21,14 @@ export interface ChatMessage {
   body_md: string
   created_at: string
   /** The turn's structured payload on an agent message. Carries which MODEL answered, which is
-   *  how a surface can show what a conversation is running on without a second request. */
-  meta?: { model?: { id: string; label: string }; tools?: string[] } | null
+   *  how a surface can show what a conversation is running on without a second request. `card`
+   *  is only ever set on a context-builder session's agent turns — the draft (or, once minted,
+   *  the created context) that turn's tool call produced. */
+  meta?: {
+    model?: { id: string; label: string }
+    tools?: string[]
+    card?: BuilderCardMeta | null
+  } | null
 }
 
 /** Poll while a turn is in flight, stop when it settles. Cheap, and it survives a reload —
@@ -235,6 +243,10 @@ function Bubble({ msg }: { msg: ChatMessage }) {
             __html: mine ? mdToHtml(msg.body_md) : answerMdToHtml(msg.body_md),
           }}
         />
+        {/* THE DRAFT MADE VISIBLE — a context-builder turn's structured card, shown as its own
+            block under the turn's prose rather than folded into the markdown, so it reads as
+            the object being built rather than as something the agent said. */}
+        {msg.meta?.card && <ContextCard card={msg.meta.card} />}
       </div>
       {/* ON THE ANSWER ONLY, and only on hover. A person's own message is already in their head;
           an answer is the thing they came to take away. Kept out of the flow until pointed at, so
