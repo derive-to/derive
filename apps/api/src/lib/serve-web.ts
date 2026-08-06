@@ -74,11 +74,11 @@ const SERVER_PAGE_PREFIXES = [
 
 // Marketing pages (the hosted front door, routes/marketing.ts). The Worker must run
 // first on these EXACT paths so a signed-out visitor gets the marketing page instead
-// of the SPA shell ("/" branches on the session cookie; "/pricing" is always
-// marketing). Deliberately NOT in `isApiPath` or the dev proxy: with marketing off
-// (self-host, dev, tests) both paths fall back to the SPA shell exactly as before,
-// and an unmatched one must serve the shell, never a JSON 404.
-const MARKETING_EXACT = ["/", "/pricing"] as const
+// of the SPA shell ("/" branches on the session cookie; "/pricing" and "/privacy" are
+// always marketing). Deliberately NOT in `isApiPath` or the dev proxy: with marketing
+// off (self-host, dev, tests) every path falls back to the SPA shell exactly as
+// before, and an unmatched one must serve the shell, never a JSON 404.
+const MARKETING_EXACT = ["/", "/pricing", "/privacy"] as const
 
 /** Server-owned path tokens in declaration order (as the dev proxy lists them). */
 export const API_PATHS: readonly string[] = [...API_PREFIXES, ...API_EXACT]

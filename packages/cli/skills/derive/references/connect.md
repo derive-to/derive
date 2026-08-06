@@ -16,6 +16,12 @@ claude mcp add --transport http --scope project derive https://derive.to/mcp
 Then run `/mcp` once to complete OAuth. A checked-in `.mcp.json` with this server removes
 the add step; Claude still asks before trusting a new project MCP configuration.
 
+Omit `--scope project` for a user-level install instead:
+
+```bash
+claude mcp add --transport http derive https://derive.to/mcp
+```
+
 ## Codex
 
 User-scoped setup:
@@ -27,6 +33,13 @@ codex mcp add derive --url https://derive.to/mcp
 Or add the same URL under `[mcp_servers.derive]` in a trusted project's
 `.codex/config.toml`. Complete OAuth when Codex prompts, then start a fresh task if the
 server was added after the current task began.
+
+## Cursor
+
+[![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://cursor.com/install-mcp?name=derive&config=eyJ1cmwiOiJodHRwczovL2Rlcml2ZS50by9tY3AifQ%3D%3D)
+
+Or add it by hand: name `derive`, URL `https://derive.to/mcp`, no headers. Cursor completes
+OAuth on first use.
 
 ## Verify
 

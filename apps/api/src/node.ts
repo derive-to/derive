@@ -300,9 +300,14 @@ const readSitePage = (name: string): string | null => {
 }
 const marketingHome = cfg.serveWeb ? readSitePage("index.html") : null
 const marketingPricing = cfg.serveWeb ? readSitePage("pricing.html") : null
+const marketingPrivacy = cfg.serveWeb ? readSitePage("privacy.html") : null
 const marketing =
-  marketingHome || marketingPricing
-    ? { home: async () => marketingHome, pricing: async () => marketingPricing }
+  marketingHome || marketingPricing || marketingPrivacy
+    ? {
+        home: async () => marketingHome,
+        pricing: async () => marketingPricing,
+        privacy: async () => marketingPrivacy,
+      }
     : undefined
 
 // The webhook outbox drainer: an interval delivers queued events with retries +
@@ -478,8 +483,8 @@ const app = createApp({
   search,
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
-  // The marketing front door (`/` for signed-out visitors + `/pricing`); unset
-  // only when the web build ships no site/ pages, leaving the SPA both paths.
+  // The marketing front door (`/` for signed-out visitors + `/pricing` + `/privacy`);
+  // unset only when the web build ships no site/ pages, leaving the SPA all paths.
   marketing,
   token: cfg.token,
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.

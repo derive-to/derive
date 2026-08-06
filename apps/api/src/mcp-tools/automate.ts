@@ -39,6 +39,16 @@ export function registerAutomateTool(tc: ToolContext): void {
     {
       description:
         "Scheduled and triggered work: create/list/run_now an automation, record an outcome, or create_context. See derive://skills/loop.",
+      // Not read-only (create/run_now/record/create_context all write); no action here
+      // deletes or disables an existing automation or context — there is no such action
+      // in this tool — so it isn't destructive. Every effect (rows in the automations/
+      // runs/contexts tables, a minted managed agent) is Derive's own backend.
+      annotations: {
+        title: "Manage automations",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         // A STRING, not an enum, on purpose: this discriminator grows (create_context is
         // itself the fifth value, and it shipped unreachable to every already-connected

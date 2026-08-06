@@ -17,7 +17,7 @@ const a = createApp({
   baseUrl: "http://derive.test",
   token: TEST_TOKEN,
   shellFetch: async () => SHELL,
-  marketing: { home: async () => HOME, pricing: async () => HOME },
+  marketing: { home: async () => HOME, pricing: async () => HOME, privacy: async () => HOME },
 })
 
 const BEARER = { authorization: `Bearer ${TEST_TOKEN}` }
