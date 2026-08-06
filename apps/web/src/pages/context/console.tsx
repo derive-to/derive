@@ -47,6 +47,7 @@ import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
+import { BUILDER_COPY } from "./builder-copy"
 import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 
@@ -509,19 +510,25 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
     return () => clearInterval(t)
   }, [])
   const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
-  const [dot, label] =
-    seenAt && age < 90_000
-      ? ["bg-success", "runner online"]
-      : seenAt && age < 600_000
-        ? ["bg-warning", `seen ${ago(seenAt)}`]
-        : [
-            "bg-muted-foreground",
-            `runner offline — ${seenAt ? `seen ${ago(seenAt)}` : "never seen"}`,
-          ]
+  const online = !!seenAt && age < 90_000
+  const [dot, label] = online
+    ? ["bg-success", "runner online"]
+    : seenAt && age < 600_000
+      ? ["bg-warning", `seen ${ago(seenAt)}`]
+      : ["bg-muted-foreground", `runner offline — ${seenAt ? `seen ${ago(seenAt)}` : "never seen"}`]
+  // Same three-way read as the directory's dot (index.tsx): a hover explains what the
+  // state actually means for asking this context something, not just what the runner
+  // is doing.
+  const title = online
+    ? BUILDER_COPY.statusOnline
+    : seenAt
+      ? BUILDER_COPY.statusOffline
+      : BUILDER_COPY.statusNever
   return (
     <span
       data-testid="console-runner-liveness"
       className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      title={title}
     >
       <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
       {label}

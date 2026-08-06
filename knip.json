@@ -12,11 +12,7 @@
       "ignoreDependencies": ["express"]
     },
     "apps/web": {
-      "entry": [
-        "src/components/ui/**",
-        "e2e/**/*.screens.ts",
-        "src/components/chat/builder-card.ts"
-      ]
+      "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
     },
     "packages/cli": {
       "ignore": ["src/runner.d.ts"]
