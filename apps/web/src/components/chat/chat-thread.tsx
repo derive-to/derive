@@ -161,8 +161,9 @@ export function ChatThread(props: {
 /**
  * WHAT THE ANSWER ACTUALLY DID, in the words a reader thinks in.
  *
- * The empty state promises "Derive searches and reads with your own permissions, and links what
- * it used", and until the turn recorded its tools that was an assertion with nothing behind it:
+ * The empty state promises "Derive searches, reads and writes with your own permissions, and
+ * links what it used", and until the turn recorded its tools that was an assertion with nothing
+ * behind it:
  * an answer and a claim about how it was reached, indistinguishable from an answer made up.
  * Shown only when tools ran, so a turn that simply answered from the conversation does not
  * pretend otherwise.
