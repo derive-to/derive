@@ -932,3 +932,151 @@ describe("contexts: record a run that already happened locally", () => {
     expect((await res.json()).session.state).toBe("failed")
   })
 })
+
+// A context's OUTPUTS: what it produced, grouped by artifact — the console's Output tab.
+// Derived from result bindings that already exist; the interesting edges are the grouping
+// (a report republished nightly is one row with a run count) and the visibility gate (an
+// output you cannot read comes back titleless, never as the document).
+describe("contexts: outputs — what a context produced", () => {
+  const owner: TestUser = { id: "u_out_own", email: "outown@derive.test", name: "Owner" }
+  const asker: TestUser = { id: "u_out_ask", email: "outask@derive.test", name: "Asker" }
+  // A workspace member who is NOT on the asker roster — the 404 case.
+  const outsider: TestUser = { id: "u_out_no", email: "outno@derive.test", name: "Outsider" }
+  const { app } = makeAuthedApp("contexts-outputs", [owner, asker, outsider], "commenter")
+
+  let contextId: string
+  let dailyRun: string
+  let secret: string
+
+  const record = (headers: Record<string, string>, body: Record<string, unknown>) =>
+    app.request(`/v1/contexts/${contextId}/sessions/record`, jsonAs(headers, body))
+
+  it("setup: two runs bind the same report, one binds a private artifact", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(asker.email) })
+    const manifestShortId = (
+      await (await publishAs(app, "# Staging QA", {}, as(owner.email))).json()
+    ).short_id
+    const ag = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "QA Agent" }))
+    ).json()
+    contextId = (
+      await (
+        await app.request(
+          "/v1/contexts",
+          jsonAs(as(owner.email), {
+            name: "Staging QA",
+            agent_id: ag.id,
+            manifest_short_id: manifestShortId,
+          }),
+        )
+      ).json()
+    ).id
+    await app.request(
+      `/v1/contexts/${contextId}/askers`,
+      jsonAs(as(owner.email), { email: asker.email }),
+    )
+
+    dailyRun = (
+      await (await publishAs(app, "# Daily Run", { title: "Daily Run" }, as(owner.email))).json()
+    ).short_id
+    // Private to the owner: the asker can ask this context but must not read this doc.
+    secret = (
+      await (
+        await publishAs(
+          app,
+          "# Internal only",
+          { title: "Internal only", visibility: "private", link_role: "none" },
+          as(owner.email),
+        )
+      ).json()
+    ).short_id
+
+    // Two runs bind the SAME report — the grouping case.
+    for (const answer of ["run 1 done", "run 2 done"]) {
+      const res = await record(as(owner.email), {
+        instruction: "run smoke",
+        answer,
+        result_artifact_id: dailyRun,
+      })
+      expect(res.status).toBe(201)
+    }
+    // One run binds the private artifact, and one binds nothing at all.
+    expect(
+      (
+        await record(as(owner.email), {
+          instruction: "run internals",
+          answer: "done",
+          result_artifact_id: secret,
+        })
+      ).status,
+    ).toBe(201)
+    expect(
+      (await record(as(owner.email), { instruction: "just a question", answer: "no artifact" }))
+        .status,
+    ).toBe(201)
+  })
+
+  it("groups by artifact with a run count; a session that bound nothing is absent", async () => {
+    const res = await app.request(`/v1/contexts/${contextId}/outputs`, { headers: as(owner.email) })
+    expect(res.status).toBe(200)
+    const { outputs } = await res.json()
+    // Two distinct artifacts, NOT three rows — the report's two runs collapse into one.
+    expect(outputs).toHaveLength(2)
+    const report = outputs.find((o: { short_id: string }) => o.short_id === dailyRun)
+    expect(report).toMatchObject({ runs: 2, title: "Daily Run" })
+    expect(report.version).toBe(1)
+    expect(typeof report.last_run_at).toBe("string")
+    // Most recently produced first.
+    expect(outputs[0].short_id).toBe(secret)
+  })
+
+  it("an output the viewer cannot read comes back titleless, never as the document", async () => {
+    const { outputs } = await (
+      await app.request(`/v1/contexts/${contextId}/outputs`, { headers: as(asker.email) })
+    ).json()
+    // The RUN is not a secret — it is already in the transcript this asker can see — but
+    // the private document behind it is.
+    const hidden = outputs.find((o: { short_id: string }) => o.short_id === secret)
+    expect(hidden).toMatchObject({ title: null, version: null, runs: 1 })
+    // The readable one still resolves fully in the same response.
+    expect(outputs.find((o: { short_id: string }) => o.short_id === dailyRun)).toMatchObject({
+      title: "Daily Run",
+    })
+  })
+
+  it("a workspace member who may not ask gets 404 — outputs never leak the context's existence", async () => {
+    await app.request("/v1/me", { headers: as(outsider.email) })
+    expect(
+      (await app.request(`/v1/contexts/${contextId}/outputs`, { headers: as(outsider.email) }))
+        .status,
+    ).toBe(404)
+  })
+
+  // These four sessions were opened in a tight loop, so several genuinely SHARE a
+  // created_at — which is the case a timestamp-only cursor silently drops. Paging the
+  // whole list one row at a time is the assertion: every session must appear exactly
+  // once, in the same order the unpaged list returns.
+  it("pages the whole list with the keyset cursor — no row skipped, none repeated", async () => {
+    const all = await (
+      await app.request(`/v1/contexts/${contextId}/sessions`, { headers: as(owner.email) })
+    ).json()
+    expect(all.sessions).toHaveLength(4)
+    expect(all.next_cursor).toBeNull() // a short page is provably the end
+
+    const seen: string[] = []
+    let cursor: string | null = null
+    for (let guard = 0; guard < 10; guard++) {
+      const url: string = `/v1/contexts/${contextId}/sessions?limit=1${
+        cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""
+      }`
+      const page = await (await app.request(url, { headers: as(owner.email) })).json()
+      if (page.sessions.length === 0) break
+      seen.push(...page.sessions.map((s: { id: string }) => s.id))
+      cursor = page.next_cursor
+      if (!cursor) break
+    }
+    expect(seen).toEqual(all.sessions.map((s: { id: string }) => s.id))
+    expect(new Set(seen).size).toBe(seen.length)
+  })
+})

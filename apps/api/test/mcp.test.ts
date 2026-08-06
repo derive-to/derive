@@ -728,6 +728,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(derivedCatalog.derived).toBe(true)
     expect(derivedCatalog.facts.map((f: { fact: string }) => f.fact).sort()).toEqual([
       "$links",
+      "$map",
       "$outline",
       "$stats",
     ])
@@ -775,7 +776,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const rec = await meta.getByShortId(pub.short_id)
     if (!rec) throw new Error("gone")
     const live = await meta.getVersionData(rec.id, 1)
-    expect(live.map((r) => r.slot).sort()).toEqual(["$links", "$outline", "$stats"])
+    expect(live.map((r) => r.slot).sort()).toEqual(["$links", "$map", "$outline", "$stats"])
     // Seed a row from a deriver that no longer exists, at the generation it shipped with.
     await meta.setDerivedVersionData(rec.id, 1, [
       ...live.map((r) => ({
@@ -796,7 +797,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(miss).not.toContain("old")
     // The re-derivation swept the orphan and left the live rows intact.
     const after = (await meta.getVersionData(rec.id, 1)).map((r) => r.slot).sort()
-    expect(after).toEqual(["$links", "$outline", "$stats"])
+    expect(after).toEqual(["$links", "$map", "$outline", "$stats"])
   })
 
   it("a derived write can never delete an asserted row, whatever the interleaving", async () => {

@@ -56,6 +56,7 @@ import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
+import type { Summarizer } from "./summarizer"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
 /** The refusal copy for blocked billing actions, keyed by reason. Built from baseUrl
@@ -125,6 +126,10 @@ export interface AppDeps {
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
   search?: SearchIndex
+  /** Writes the one-line summary each new version is described by on unfurl surfaces
+   *  (summarizer.ts). Absent ⇒ no summaries and every card keeps its inventory line, which is
+   *  the resting state for self-host and for any deploy without a model binding. */
+  summarize?: Summarizer
   /** Realtime relay + presence. In-process when unset (self-host); the Cloudflare
    *  edge entry injects a Durable Object backplane. */
   backplane?: Backplane
@@ -1391,6 +1396,7 @@ export function buildContext(deps: AppDeps) {
     models: deps.models,
     chatAllowlist: deps.chatAllowlist,
     search: deps.search,
+    summarize: deps.summarize,
     bus,
     presence,
     backplane,

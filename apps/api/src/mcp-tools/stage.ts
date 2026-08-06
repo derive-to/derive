@@ -52,7 +52,7 @@ export function registerStageTool(tc: ToolContext): void {
     "stage",
     {
       description:
-        "Work out-of-band from your shell — mint a SHORT-LIVED capability, then curl with it (zero bytes through context). target:'doc' for a whole big document or bundle more than ~a page (returns a no-bearer publish URL — curl the file, or a zipped dir which becomes a bundle; omit short_id to CREATE, pass it to REVISE that exact target; read derive://skills/publishing). target:'asset' for an image or font a document EMBEDS (returns a permanent url + an asset:<hash> ref; raster images and WOFF/WOFF2 only, max 25MB; read derive://skills/assets). target:'api' mints a REAL BEARER TOKEN for REST from your shell — 15 min, one workspace, capped at your role (narrow with `access`); a live credential in this transcript, so treat it like one. Staging alone does not publish an artifact. NEVER base64 a binary through a tool call — a pasted image is already a file on disk.",
+        "Mint a SHORT-LIVED capability and curl with it — zero bytes through context. target:'doc' a document/bundle past ~a page, 'asset' an image or font (max 25MB), 'api' a REAL bearer for REST (15 min, capped at your role, live in this transcript). NEVER base64 a binary through a tool call. See derive://skills/publishing.",
       // Mints a short-lived credential (upload URL or bearer token) — a write in the
       // sense that it CAN be spent to publish later, but this call itself never touches
       // artifact content, so not destructive. Not idempotent: every call mints a distinct
@@ -72,19 +72,17 @@ export function registerStageTool(tc: ToolContext): void {
         target: z
           .string()
           .describe(
-            "doc: a whole document/bundle too big to inline (returns a publish URL). asset: an image or font a doc embeds (returns a permanent asset url + ref). api: a short-lived BEARER TOKEN for calling REST from your shell at the access this connection already holds. One of: doc, asset, api.",
+            "doc: a document/bundle too big to inline. asset: an image or font a doc embeds. api: a short-lived bearer for REST from your shell.",
           ),
         short_id: z
           .string()
           .optional()
-          .describe(
-            "target:'doc' ONLY — revise THIS artifact; omit to create a new one (the token is scoped to it). Rejected with target:'asset' and target:'api'.",
-          ),
+          .describe("target:'doc': revise THIS artifact; omit to create a new one."),
         access: z
           .enum(API_TOKEN_ACCESS)
           .optional()
           .describe(
-            "target:'api' ONLY — narrow the minted token below what this connection holds (least privilege). Omit to mint at your current role. Asking for MORE than the grant holds is refused, naming the scope that would fix it.",
+            "target:'api': narrow the minted token below what this connection holds (least privilege).",
           ),
         workspace: wsArg,
       },

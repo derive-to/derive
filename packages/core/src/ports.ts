@@ -371,6 +371,21 @@ export interface VersionRecord {
   preview_marked_key: string | null
   preview_marked_status: PreviewStatus | null
   preview_marked_error: string | null
+  /** What this version SAYS, in a sentence or two, generated at publish. Every unfurl
+   *  surface otherwise describes an artifact as "Markdown · 3 versions · 7 comments" —
+   *  which answers "what is this?" rather than "what is it about?".
+   *
+   *  Null is the normal resting state, not an error: no model bound (self-host), a
+   *  non-text version, or a failed generation all leave it null and every consumer falls
+   *  back to that inventory line. UNTRUSTED — it is derived from document content, so it
+   *  is sanitized at write and must still be escaped by any surface that interpolates it
+   *  into markup. */
+  summary: string | null
+  /** Hash of the exact text `summary` was generated from. Exists to make the common case
+   *  free: agents republish constantly and most publishes do not change what a document is
+   *  about, so an unchanged hash copies the previous summary forward rather than paying a
+   *  model for an identical one. */
+  summary_src_hash: string | null
   created_at: string
 }
 
@@ -620,6 +635,15 @@ export interface ArtifactStore {
       preview_status?: PreviewStatus | null
       preview_error?: string | null
     },
+  ): Promise<void>
+  /** Set a version's generated summary and the hash of the text it came from. Partial;
+   *  only given fields are written. Separate from `setVersionPreview` for the same reason
+   *  the render variants are: both are best-effort derived content on the same row, and
+   *  one failing must never overwrite the other. */
+  setVersionSummary(
+    artifactId: string,
+    n: number,
+    fields: { summary?: string | null; summary_src_hash?: string | null },
   ): Promise<void>
   /** Set the full-page or marked-render variant's result (blob key + status + error).
    *  Partial; only given fields are written. Separate from `setVersionPreview` (the
@@ -1431,11 +1455,25 @@ export interface ContextStore {
     state: SessionState,
   ): Promise<{ session: SessionRecord; message: SessionMessageRecord }>
   getSession(id: string): Promise<SessionRecord | null>
-  /** Sessions on a context, newest first; `askerId` narrows to one person's. */
+  /** Sessions on a context, newest first; `askerId` narrows to one person's.
+   *  `cursor` pages further back: a `(created_at, id)` keyset, exclusive. The id
+   *  tiebreak is load-bearing, not defensive — sessions ARE created in the same
+   *  millisecond (a script recording a batch of local runs), and a cursor on the
+   *  timestamp alone would silently drop every row sharing the boundary. Encode
+   *  and decode it with `encodeCursor`/`decodeCursor`, like `listArtifacts`. */
   listSessions(
     contextId: string,
-    opts?: { askerId?: string; limit?: number },
+    opts?: { askerId?: string; limit?: number; cursor?: { key: string; id: string } },
   ): Promise<SessionRecord[]>
+  /** What this context has PRODUCED: its sessions' bound result artifacts, GROUPED —
+   *  one row per artifact however many runs bound it, so a report republished nightly is
+   *  one output carrying a run count, not fifty rows of the same short id. Newest run
+   *  first. Sessions that bound nothing (a plain question) are simply absent.
+   *
+   *  Returns short ids only, deliberately: the caller resolves them through
+   *  `listArtifacts({ ids })`, so the visibility gate is the same one the library uses
+   *  and this can never widen what a viewer sees. */
+  contextOutputs(contextId: string, limit?: number): Promise<ContextOutput[]>
   /** One person's CONTEXTLESS sessions in a workspace, newest first — the chat history
    *  picker. Contextless IS the filter: a session with no context is one nobody packaged,
    *  which is exactly what the chat surfaces open. `listSessions` cannot answer this (it
@@ -2788,6 +2826,19 @@ export interface SessionRecord {
    *  opened before this column existed. */
   subject_ref: string | null
 }
+
+/** One artifact a context has produced, grouped across every session that bound it —
+ *  the row behind the console's Output tab. Carries no title or version on purpose:
+ *  those come from resolving `short_id` through the normal visibility-gated artifact
+ *  read, so an output can never show a viewer a document they cannot open. */
+export interface ContextOutput {
+  short_id: string
+  /** How many of this context's sessions bound this artifact as their result. */
+  runs: number
+  /** The most recent of those sessions' last activity (its `updated_at`). */
+  last_run_at: string
+}
+
 export interface NewSession {
   id: string
   context_id?: string | null

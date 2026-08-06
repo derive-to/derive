@@ -45,7 +45,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
     "checkpoint",
     {
       description:
-        "Commit a compact LAYER of working state to this work's lineage — a one-page, human-readable checkpoint (state / decisions / open threads / next steps / refs) that lets ANY later session continue the work cold, on any machine. Call it at task boundaries: a task just completed, before a risky step, when wrapping up a session. FIRST call for a piece of work: pass `work` (a short name); the result names a short_id — record it (e.g. in a .derive/lineage file) and pass it as `short_id` on every checkpoint after. Each checkpoint REPLACES the page (versions keep the history), so restate what still matters and prefer refs over restated detail — the tool rejects more than a page. See derive://skills/checkpoint.",
+        "Commit a one-page checkpoint (state / decisions / open / next / refs) so any later session continues cold. FIRST call passes `work` and returns a short_id; pass that every time after. Each one REPLACES the page. See derive://skills/checkpoint.",
       // A live publish under the hood (same path as `publish`), so it writes — but each
       // layer REPLACES the page as a NEW version, never deleting the prior ones (they
       // stay reachable in history), so it isn't destructive. Not idempotent: two calls
@@ -61,9 +61,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
         work: z
           .string()
           .optional()
-          .describe(
-            "Short name for the work (becomes the lineage's title), e.g. the feature or branch name. Required on the FIRST checkpoint; ignored after.",
-          ),
+          .describe("Short name for the work. Required on the FIRST checkpoint of a lineage."),
         short_id: z
           .string()
           .optional()
@@ -83,9 +81,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
         refs: z
           .array(z.string())
           .optional()
-          .describe(
-            "Pointers a continuing session should follow — artifact short_ids, PR/issue URLs, key file paths.",
-          ),
+          .describe("Pointers to follow: artifact short_ids, PR/issue URLs, key file paths."),
         workspace: wsArg,
       },
     },
@@ -194,6 +190,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
             notifyRender: ctx.notifyRender,
             background: ctx.background,
             search: ctx.search,
+            summarize: ctx.summarize,
           },
           artifact,
           version,

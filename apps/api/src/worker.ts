@@ -37,6 +37,7 @@ import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { loopSubstrate } from "./lib/substrate-loop"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
+import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
 import { enqueueChannelDelivery } from "./webhooks"
 
 export { PreviewRenderer } from "./preview-do"
@@ -95,7 +96,10 @@ export interface Env {
   // Optional semantic search: Workers AI embeddings (bge-m3) for the dense arm, stored in pgvector
   // in the Hyperdrive Postgres. Bind AI (+ HYPERDRIVE) to add the dense/hybrid arm; omit ⇒ search
   // stays lexical-only, exactly as self-host. Structurally typed (see embedder.ts).
-  AI?: WorkersAiLike
+  // Widened to the text-generation slice as well: the same binding also writes the one-line
+  // version summary every unfurl surface describes an artifact with (summarizer.ts). Unbound ⇒
+  // no summaries, exactly as self-host, and every card falls back to its inventory line.
+  AI?: WorkersAiLike & TextGenAiLike
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
   WEBHOOK_OUTBOX: DurableObjectNamespace
@@ -330,6 +334,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
                 new PgVectorStore(livePgPool, EMBED_DIMENSIONS),
               )
             : undefined,
+        // Bound on env.AI ALONE, unlike `search` above: a summary is a text call with nowhere to
+        // store a vector, so it needs no Hyperdrive and works on a D1 edge that has no pgvector.
+        summarize: env.AI ? bindingSummarizer(env.AI) : undefined,
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,

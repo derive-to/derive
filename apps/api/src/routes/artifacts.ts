@@ -30,6 +30,7 @@ import {
   type Role,
   renderMarkdown,
   roleAllows,
+  type SlideOp,
   sectionOf,
   slotShapeDriftAdvisories,
   slugify,
@@ -67,6 +68,7 @@ import {
   EditConflictError,
   type MaterializedEdits,
   materializeEdits,
+  materializeSlideOps,
   parseBaseVersion,
 } from "../lib/edits"
 import { buildReviewEmail } from "../lib/email"
@@ -132,6 +134,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     meta,
     blobs,
     search,
+    summarize,
     deps,
     analyticsOn,
     versionWindowMs,
@@ -598,27 +601,45 @@ export const artifactRoutes = (ctx: AppContext) => {
     // source instead of a re-uploaded `file`. Materialize the full content, then
     // fall through to the same publish path everything else uses.
     const editsField = body["edits"]
+    // `slide_ops` — structural intent on a deck (move/delete/duplicate a slide by
+    // position), materialized against the stored source the same way `edits` is. Its own
+    // field because a slide move is not a text replacement: the text pipelines refuse
+    // spans that cross element boundaries, and expressing it as search/replace means
+    // shipping two byte-perfect copies of the slide.
+    const slideOpsField = body["slide_ops"]
     let bytes: Uint8Array
     let filename: string
     let isBundle: boolean
-    if (typeof editsField === "string") {
+    if (typeof editsField === "string" || typeof slideOpsField === "string") {
+      if (typeof editsField === "string" && typeof slideOpsField === "string")
+        return fail(c, 400, "Provide `edits` OR `slide_ops`, not both")
+      const structural = typeof slideOpsField === "string"
+      const field = structural ? "slide_ops" : "edits"
       if (!shortId || !existing)
-        return fail(c, 400, "edits revises an EXISTING artifact — POST to its /versions endpoint")
-      let edits: AnyDocEdit[]
+        return fail(
+          c,
+          400,
+          `${field} revises an EXISTING artifact — POST to its /versions endpoint`,
+        )
+      let parsed: AnyDocEdit[] | SlideOp[]
       try {
-        edits = JSON.parse(editsField)
+        parsed = JSON.parse((structural ? slideOpsField : editsField) as string)
       } catch {
-        return fail(c, 400, "edits must be a JSON array of {old_str,new_str}")
+        return fail(
+          c,
+          400,
+          structural
+            ? "slide_ops must be a JSON array of {op,...}"
+            : "edits must be a JSON array of {old_str,new_str}",
+        )
       }
       let materialized: MaterializedEdits
       try {
         const baseVersion = parseBaseVersion(str(body["base_version"]))
-        materialized = await materializeEdits(
-          { getVersion: meta.getVersion.bind(meta), sourceText },
-          existing,
-          edits,
-          baseVersion,
-        )
+        const deps = { getVersion: meta.getVersion.bind(meta), sourceText }
+        materialized = structural
+          ? await materializeSlideOps(deps, existing, parsed as SlideOp[], baseVersion)
+          : await materializeEdits(deps, existing, parsed as AnyDocEdit[], baseVersion)
       } catch (e) {
         if (e instanceof EditConflictError) return fail(c, 409, e.message)
         return fail(
@@ -812,7 +833,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
       await afterPublish(
-        { meta, blobs, bus, notify, notifyRender, background, search },
+        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
         artifact,
         version,
         {
@@ -1995,7 +2016,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A restore is a version bump too: same webhook + realtime + re-anchor as a publish,
       // but never a new artifact, so no follower fan-out and no thread resolves.
       await afterPublish(
-        { meta, blobs, bus, notify, notifyRender, background, search },
+        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
         artifact,
         version,
         {

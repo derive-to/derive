@@ -224,11 +224,17 @@ export const slackRoutes = (ctx: AppContext) => {
         l.url,
         userLink.user_id,
       )
-      // `skip` is the ladder's catch-all — not ours, gone, another workspace, or not readable by
-      // this viewer — and it is the rung that most often surprises someone. Naming the URL is
-      // what makes it actionable.
+      // `skip` has five rungs behind it — not an artifact link, no such short id, removed,
+      // another workspace, or not readable by this sharer — and from the channel they are one
+      // silent nothing. Naming the URL was not enough: a workspace-listed artifact answers an
+      // anonymous probe exactly as a non-existent one does, so the rung cannot be recovered
+      // afterwards by trying the URL. It has to be said here, at the moment it is known.
       if (d.kind === "skip" || d.kind === "auth") {
-        why(`decision: ${d.kind}`, { url: l.url, viewer: userLink.user_id })
+        why(`decision: ${d.kind}`, {
+          url: l.url,
+          viewer: userLink.user_id,
+          ...(d.kind === "skip" ? { rung: d.why, org: install.org_id } : {}),
+        })
         continue
       }
       unfurls[d.url] = { blocks: d.blocks }

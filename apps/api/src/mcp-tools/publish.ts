@@ -1,4 +1,5 @@
 import {
+  type AnyDocEdit,
   artifactUrl,
   assertedOnly,
   bundleFactsAdvisory,
@@ -26,7 +27,12 @@ import {
   RENDER_WAIT_MAX,
   type RenderVariant,
 } from "../lib/collect-render"
-import { type MaterializedEdits, materializeEdits, preservingFilename } from "../lib/edits"
+import {
+  type MaterializedEdits,
+  materializeEdits,
+  materializeSlideOps,
+  preservingFilename,
+} from "../lib/edits"
 import { buildReviewEmail } from "../lib/email"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { badChoice, choiceDescription } from "../lib/open-choice"
@@ -48,6 +54,13 @@ import {
 import { enqueueChannelDelivery } from "../webhooks"
 
 export function registerPublishTool(tc: ToolContext): void {
+  // NOTE: the surface deliberately does NOT vary by scope. Hiding publish's live-only access
+  // params from a grant that can only propose was built, measured (197 tokens, 4.1%) and
+  // REVERTED: derive://skills/publishing names `workspace_access`, `link_role`, `listed` and
+  // `request_review` outright, and skills are static, so a gated connection reads a procedure
+  // naming params its schema does not contain. That is the same contradiction that stopped
+  // tool-level gating one commit earlier. It also bought nothing where it matters — a
+  // publishing agent, the connection doing real work, saw every param either way.
   const {
     server,
     ctx,
@@ -150,7 +163,7 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Publish a document: pass `short_id` to UPDATE an existing one, omit it to CREATE a new one (`title` required). Choose ONE payload by what you're changing. DEFAULT to `edits` for any change to an existing doc — it is the safe, precise option: exact find/replace against the stored source, so read format:'html' FIRST or it won't match, and it fails unless each search string hits exactly once (add surrounding text to make it unique). Use `content` to write or fully replace a single file, or `files` for a multi-page bundle. Do NOT inline anything past ~a page or any image/font — use stage (target:'doc' for a whole big doc/bundle, target:'asset' for an image/font) instead; oversized inline payloads are rejected. Publishes go LIVE at your role; pass for_review:true to file a PROPOSAL a human approves instead (nothing changes until they do). Pass `addresses` (thread ids from catch_up) to resolve the feedback this revision answers. As a short_id you may pass derive://brandprint/profile to file this workspace's brand profile (an Admin's first publish there scaffolds the fact). Pass `render` (with `wait`) to get the screenshot back here instead of a second call. Read derive://skills/publishing before bundles or edits, and derive://skills/assets before embedding images or fonts.",
+        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Goes LIVE at your role unless for_review. See derive://skills/publishing.",
       // Additive versioning: a republish creates a new current version and the prior ones
       // stay in history (read short_id, version:N) — nothing is overwritten irreversibly,
       // so not destructive. Not idempotent: calling twice with the same content still
@@ -168,84 +181,67 @@ export function registerPublishTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe(
-            "The complete content for a SINGLE-FILE artifact (HTML or Markdown). Use this OR `files`, not both. Stage images and fonts, then embed the upload response's permanent url (never upload_url or a base64 data: URI here) — see derive://skills/assets. Push a large document via stage target:'doc' rather than inlining it — see derive://skills/publishing.",
+            "The complete content for a SINGLE-FILE artifact. Embed images/fonts by their staged permanent url, never a base64 data: URI. Stage anything large instead of inlining it.",
           ),
         files: z
           .record(z.string(), z.string())
           .optional()
           .describe(
-            "A MULTI-PAGE bundle as a map of path → content — the whole site. Each value is a text page (plain string), a base64 data: URI for a small inline binary, or — PREFERRED for real images/fonts — the exact \"asset:<hash>\" ref returned after uploading through stage target:'asset'. The root index.html (else the shallowest .html) becomes the entry page; a plain republish REPLACES the bundle, so include every page and asset (or use `merge`). See derive://skills/assets for staged refs and derive://skills/publishing for bundle semantics.",
+            "A MULTI-PAGE bundle: path → content. Values are text pages, or an \"asset:<hash>\" ref from stage target:'asset' for images/fonts. Root index.html is the entry page. A plain republish REPLACES the bundle — include every file, or use `merge`.",
           ),
-        title: z
-          .string()
-          .optional()
-          .describe(
-            "Title for a NEW artifact (required when creating). On republish, renames only if provided.",
-          ),
-        short_id: z
-          .string()
-          .optional()
-          .describe("Omit to create a new artifact; pass it to revise one you own."),
+        title: z.string().optional(),
+        short_id: z.string().optional(),
         workspace_access: z
           .enum(["none", "member"])
           .optional()
           .describe(
-            "Do THIS workspace's members reach a NEW artifact (each at their seat role — admin/editor/commenter)? member (the usual default — a pasted link opens for a teammate) or none (invite-only, even for the workspace). Omit to use the workspace's default. Ignored on republish.",
+            "Do this workspace's members reach a NEW artifact, each at their seat role: member (default) or none (invite-only). Ignored on republish.",
           ),
         link_role: z
           .enum(["none", "viewer", "commenter", "editor"])
           .optional()
           .describe(
-            "What merely holding a NEW artifact's URL confers on ANYONE (incl. people outside the workspace): none (no world link — the usual default), viewer, commenter, or editor. Anonymous holders are always clamped to viewer. Omit to use the workspace's default. Ignored on republish.",
+            "What merely holding a NEW artifact's URL confers on ANYONE, including outside the workspace: none (default) | viewer | commenter | editor. Anonymous holders clamp to viewer. Ignored on republish.",
           ),
         listed: z
           .enum(["none", "workspace", "public"])
           .optional()
           .describe(
-            "Where a NEW artifact SURFACES for discovery (no access of its own): none (no feeds/libraries — the usual default; a human promotes it when ready), workspace (the team library — needs workspace_access=member), or public (the public directory — needs a link_role). Omit to use the workspace's default. Ignored on republish — the human promotes via the share dialog.",
+            "Where a NEW artifact surfaces for discovery (no access of its own): none (default) | workspace (needs workspace_access=member) | public (needs a link_role). Ignored on republish.",
           ),
         spa: z
           .boolean()
           .optional()
-          .describe(
-            "For a NEW bundle only: serve unknown paths from the entry page (single-page-app routing). Default false.",
-          ),
+          .describe("NEW bundle only: serve unknown paths from the entry page (SPA routing)."),
         merge: z
           .boolean()
           .optional()
           .describe(
-            "Add/overwrite the given `files` INTO the existing bundle instead of replacing it (default false). Requires `short_id` of a bundle; same-path files overwrite, the rest are kept. See derive://skills/publishing.",
+            "Add/overwrite `files` INTO the existing bundle instead of replacing it. Requires `short_id`.",
           ),
-        message: z.string().optional().describe("What changed — recorded as the version message."),
+        message: z.string().optional(),
         tags: z
           .array(z.string())
           .optional()
           .describe(
-            "Browse tags to set on the artifact — workspace-wide labels that make it findable (organize shows the vocabulary and proposes tags from similar docs). Reuse an existing tag over a near-duplicate. Given ⇒ REPLACES the set (normalized: trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves existing tags untouched on a republish.",
+            "Workspace-wide labels that make it findable; reuse an existing tag over a near-duplicate. REPLACES the set (trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves them untouched.",
           ),
-        filename: z
-          .string()
-          .optional()
-          .describe(
-            "Filename hint for the content type of a single file, e.g. index.html or notes.md.",
-          ),
+        filename: z.string().optional(),
         for_review: z
           .boolean()
           .optional()
           .describe(
-            "File this as a PROPOSAL for a human to approve instead of publishing live (single-file only). Forced on when your role can't publish directly.",
+            "File this as a PROPOSAL a human approves, instead of publishing live (single-file only).",
           ),
         addresses: z
           .array(z.string())
           .optional()
-          .describe(
-            "Thread ids (from catch_up) this revision resolves. On a live publish they resolve; on a proposal they flip to `addressed` and resolve on approval.",
-          ),
+          .describe("Thread ids (from catch_up) this revision resolves."),
         request_review: z
           .boolean()
           .optional()
           .describe(
-            "After a LIVE publish, open a review round asking your human to review this version — the /derive loop. They answer inline and hit Send back (or Approve); poll catch_up's `review` for the state. No effect on a proposal (that already IS a review).",
+            "After a LIVE publish, ask your human to review this version — the /derive loop.",
           ),
         // SEE IT in the same call. Optional and off by default, so an existing caller's
         // response shape never changes.
@@ -255,7 +251,7 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             choiceDescription(
               RENDER_VARIANTS,
-              "Return a screenshot of the published page with this response, instead of a second read.",
+              "Return a screenshot with this response instead of a second read.",
             ),
           ),
         // COERCED, not bare `z.number()`. A client caches the tool schema at connect, so a
@@ -278,14 +274,14 @@ export function registerPublishTool(tc: ToolContext): void {
                 old_str: z
                   .string()
                   .describe(
-                    "Exact text from the STORED SOURCE (read format:'html' first on an HTML artifact — the markdown view will not match). Must occur exactly once, unless `occurrence` picks one of several.",
+                    "Exact text from the STORED SOURCE (read format:'html' first). Must occur exactly once unless `occurrence` picks one.",
                   ),
                 new_str: z.string().describe("Replacement text. Empty string deletes."),
                 occurrence: z.coerce
                   .number()
                   .optional()
                   .describe(
-                    "1-based index of WHICH match to replace, when old_str is intentionally non-unique (a phrase repeated verbatim). Omit when old_str already matches once.",
+                    "1-based index of which match to replace, when old_str is intentionally non-unique.",
                   ),
               }),
               z.object({
@@ -296,7 +292,7 @@ export function registerPublishTool(tc: ToolContext): void {
                     suffix: z.string().optional().describe("Visible text just after it."),
                   })
                   .describe(
-                    "Locates the edit by RENDERED text (the selector comment anchors use) instead of raw source — no format:'html' read needed. Strict resolution: the context must pin exactly one spot (or the exact be globally unique), the span may not cross markup, and a miss applies nothing.",
+                    "Locates the edit by RENDERED text instead of raw source. The context must pin exactly one spot, and the span may not cross markup.",
                   ),
                 new_text: z
                   .string()
@@ -306,13 +302,35 @@ export function registerPublishTool(tc: ToolContext): void {
           )
           .optional()
           .describe(
-            "Surgical revision of a SINGLE-FILE artifact without resending it. Two shapes, not mixable in one batch: {old_str, new_str} — exact-match against the current stored source, applied in order (read format:'html' first so old_str matches the raw source); or {quote: {exact, prefix, suffix}, new_text} — located by VISIBLE text and resolved server-side, no raw read needed. Requires `short_id`; use INSTEAD of `content`. See derive://skills/publishing. A miss applies nothing and returns why.",
+            "Revise a single-file artifact without resending it. Two shapes, not mixable: {old_str, new_str} against the stored source, or {quote:{exact,prefix,suffix}, new_text} against visible text. A miss applies nothing and says why.",
+          ),
+        slide_ops: z
+          .array(
+            z.union([
+              z.object({
+                op: z.literal("move"),
+                from: z.coerce.number().describe("1-based position of the slide to move."),
+                to: z.coerce.number().describe("1-based position it should end up at."),
+              }),
+              z.object({
+                op: z.literal("delete"),
+                at: z.coerce.number().describe("1-based position of the slide to remove."),
+              }),
+              z.object({
+                op: z.literal("duplicate"),
+                at: z.coerce.number().describe("1-based position of the slide to copy."),
+              }),
+            ]),
+          )
+          .optional()
+          .describe(
+            "Rearrange a DECK: move / delete / duplicate whole slides by 1-based position, applied in order. Use instead of `edits` for structural changes. Ambiguous structure refuses the whole batch.",
           ),
         base_version: z.coerce
           .number()
           .optional()
           .describe(
-            "Safety check for `edits`: pass the version you read; the publish errors instead of applying when the artifact has moved past it.",
+            "Pass the version you read; the publish errors instead of applying if the artifact moved past it.",
           ),
       },
     },
@@ -336,6 +354,7 @@ export function registerPublishTool(tc: ToolContext): void {
       wait,
       workspace,
       edits,
+      slide_ops,
       base_version,
     }) => {
       // BEFORE anything is written. Validating this after the publish committed meant a
@@ -436,21 +455,29 @@ export function registerPublishTool(tc: ToolContext): void {
         actRole = t.role
       }
 
-      // `edits` — materialize the full new content up front, then fall through to the
-      // untouched publish/proposal pipeline (sweep, addresses, receipts all inherit).
+      // `edits` / `slide_ops` — materialize the full new content up front, then fall
+      // through to the untouched publish/proposal pipeline (sweep, addresses, receipts
+      // all inherit). Text and structure are separate fields because they are separate
+      // kinds of intent, and a batch mixing them would have no honest ordering.
       let editsApplied = 0
-      if (edits !== undefined) {
+      let slideOpsApplied = 0
+      if (edits !== undefined || slide_ops !== undefined) {
+        const field = slide_ops !== undefined ? "slide_ops" : "edits"
+        if (edits !== undefined && slide_ops !== undefined)
+          return err("Provide `edits` OR `slide_ops`, not both.")
         if (content !== undefined || files)
-          return err("Provide `edits` OR `content`/`files`, not both.")
-        if (!existing) return err("`edits` revises an EXISTING artifact — pass its `short_id`.")
+          return err(`Provide \`${field}\` OR \`content\`/\`files\`, not both.`)
+        if (!existing)
+          return err(`\`${field}\` revises an EXISTING artifact — pass its \`short_id\`.`)
+        const deps = {
+          getVersion: ctx.meta.getVersion.bind(ctx.meta),
+          sourceText: ctx.sourceText,
+        }
         let materialized: MaterializedEdits
         try {
-          materialized = await materializeEdits(
-            { getVersion: ctx.meta.getVersion.bind(ctx.meta), sourceText: ctx.sourceText },
-            existing,
-            edits,
-            base_version,
-          )
+          materialized = slide_ops
+            ? await materializeSlideOps(deps, existing, slide_ops, base_version)
+            : await materializeEdits(deps, existing, edits as AnyDocEdit[], base_version)
         } catch (e) {
           if (e instanceof EditError) return err(e.message)
           throw e
@@ -462,7 +489,8 @@ export function registerPublishTool(tc: ToolContext): void {
         if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
         if (await ctx.overStorage(targetOrg, editedBytes)) return err(ctx.blockCopy.storage.message)
         content = materialized.content
-        editsApplied = edits.length
+        if (slide_ops) slideOpsApplied = slide_ops.length
+        else editsApplied = (edits as AnyDocEdit[]).length
         if (!filename) filename = materialized.filename
       }
 
@@ -530,6 +558,7 @@ export function registerPublishTool(tc: ToolContext): void {
             base_version: proposal.base_version,
             addressed,
             ...(editsApplied ? { edits_applied: editsApplied } : {}),
+            ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
             note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
           })
         } catch (e) {
@@ -649,6 +678,9 @@ export function registerPublishTool(tc: ToolContext): void {
             // Thread the dense arm too — agents publish primarily through this tool, so omitting
             // `search` here would leave the bulk of new content lexically-indexed but never embedded.
             search: ctx.search,
+            // And the summarizer, for the same reason: this is where most content is written, so
+            // an omission here would mean the cards that most need a description never get one.
+            summarize: ctx.summarize,
           },
           artifact,
           version,
@@ -834,6 +866,7 @@ export function registerPublishTool(tc: ToolContext): void {
           link_role: artifact.link_role,
           listed: artifact.listed,
           ...(editsApplied ? { edits_applied: editsApplied } : {}),
+          ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),
           note:

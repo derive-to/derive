@@ -6,6 +6,7 @@ import {
   type ProposalRecord,
   PublishError,
   propose,
+  type SlideOp,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -16,6 +17,7 @@ import {
   EditConflictError,
   type MaterializedEdits,
   materializeEdits,
+  materializeSlideOps,
   parseBaseVersion,
 } from "../lib/edits"
 import { bail, fail, MAX_UPLOAD_BYTES, readJson, str } from "../lib/http"
@@ -194,25 +196,37 @@ export const proposalRoutes = (ctx: AppContext) => {
       // the MCP publish tool). Materializes full content, then flows into the same
       // propose() call as a `file` upload would.
       const editsField = body.edits
+      // `slide_ops` — the structural sibling, so a rearrange by someone at commenter
+      // rank files for review like any other proposed revision.
+      const slideOpsField = body.slide_ops
       let bytes: Uint8Array
       let filename: string
       let isBundle: boolean
-      if (typeof editsField === "string") {
-        let edits: AnyDocEdit[]
+      if (typeof editsField === "string" || typeof slideOpsField === "string") {
+        if (typeof editsField === "string" && typeof slideOpsField === "string")
+          return bail(fail(c, 400, "Provide `edits` OR `slide_ops`, not both"))
+        const structural = typeof slideOpsField === "string"
+        let parsed: AnyDocEdit[] | SlideOp[]
         try {
-          edits = JSON.parse(editsField)
+          parsed = JSON.parse((structural ? slideOpsField : editsField) as string)
         } catch {
-          return bail(fail(c, 400, "edits must be a JSON array of {old_str,new_str}"))
+          return bail(
+            fail(
+              c,
+              400,
+              structural
+                ? "slide_ops must be a JSON array of {op,...}"
+                : "edits must be a JSON array of {old_str,new_str}",
+            ),
+          )
         }
         let materialized: MaterializedEdits
         try {
           const baseVersion = parseBaseVersion(str(body.base_version))
-          materialized = await materializeEdits(
-            { getVersion: meta.getVersion.bind(meta), sourceText },
-            artifact,
-            edits,
-            baseVersion,
-          )
+          const deps = { getVersion: meta.getVersion.bind(meta), sourceText }
+          materialized = structural
+            ? await materializeSlideOps(deps, artifact, parsed as SlideOp[], baseVersion)
+            : await materializeEdits(deps, artifact, parsed as AnyDocEdit[], baseVersion)
         } catch (e) {
           if (e instanceof EditConflictError) return bail(fail(c, 409, e.message))
           return bail(

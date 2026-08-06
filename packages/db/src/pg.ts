@@ -23,6 +23,7 @@ import type {
   ConnectionScope,
   ConnectionStatus,
   ContextAskerRecord,
+  ContextOutput,
   ContextRecord,
   DeliveryRecord,
   DeliveryStatus,
@@ -151,6 +152,7 @@ import {
   ne,
   notExists,
   or,
+  type SQL,
   sql,
 } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
@@ -1116,6 +1118,17 @@ export class PgMetaStore implements MetaStore {
       preview_status?: PreviewStatus | null
       preview_error?: string | null
     },
+  ): Promise<void> {
+    await this.db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+  }
+
+  async setVersionSummary(
+    artifactId: string,
+    n: number,
+    fields: { summary?: string | null; summary_src_hash?: string | null },
   ): Promise<void> {
     await this.db
       .update(version)
@@ -3803,17 +3816,44 @@ export class PgMetaStore implements MetaStore {
   }
   listSessions(
     contextId: string,
-    opts?: { askerId?: string; limit?: number },
+    opts?: { askerId?: string; limit?: number; cursor?: { key: string; id: string } },
   ): Promise<SessionRecord[]> {
-    const where = opts?.askerId
-      ? and(eq(contextSession.context_id, contextId), eq(contextSession.asker_id, opts.askerId))
-      : eq(contextSession.context_id, contextId)
+    const clauses = [eq(contextSession.context_id, contextId)]
+    if (opts?.askerId) clauses.push(eq(contextSession.asker_id, opts.askerId))
+    // Keyset, not offset (a session opened mid-paging would shift every offset and
+    // repeat a row), and the id tiebreak is required, not belt-and-braces: several
+    // sessions really do share a created_at, and `created_at < key` alone would skip
+    // every one of them at the page boundary.
+    const cur = opts?.cursor
+    if (cur)
+      clauses.push(
+        or(
+          lt(contextSession.created_at, cur.key),
+          and(eq(contextSession.created_at, cur.key), lt(contextSession.id, cur.id)),
+        ) as SQL,
+      )
     return this.db
       .select()
       .from(contextSession)
-      .where(where)
-      .orderBy(desc(contextSession.created_at))
+      .where(and(...clauses))
+      .orderBy(desc(contextSession.created_at), desc(contextSession.id))
       .limit(opts?.limit ?? 50)
+  }
+  contextOutputs(contextId: string, limit?: number): Promise<ContextOutput[]> {
+    const lastRun = sql<string>`max(coalesce(${contextSession.updated_at}, ${contextSession.created_at}))`
+    return this.db
+      .select({
+        short_id: sql<string>`${contextSession.result_artifact_id}`,
+        runs: count(),
+        last_run_at: lastRun,
+      })
+      .from(contextSession)
+      .where(
+        and(eq(contextSession.context_id, contextId), isNotNull(contextSession.result_artifact_id)),
+      )
+      .groupBy(contextSession.result_artifact_id)
+      .orderBy(desc(lastRun))
+      .limit(limit ?? 50)
   }
   listChatSessions(orgId: string, askerId: string, limit?: number): Promise<SessionRecord[]> {
     return this.db

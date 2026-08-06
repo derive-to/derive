@@ -18,6 +18,7 @@
 
 import { isDerivedFactName, MAX_FACT_BYTES } from "@derive/facts"
 import { pageText } from "./anchor"
+import { docMap, mapJson } from "./doc-map"
 import { type SectionMarker, sectionMarkers } from "./doc-text"
 import { parseRef } from "./ids"
 
@@ -156,6 +157,29 @@ const deriveStats = (source: string, contentType: string, markers: SectionMarker
 //
 // `gen` lives HERE, in the same line as the function it governs, so bumping it is part of
 // changing the deriver rather than a second edit somewhere else that has to be remembered.
+/** The document's addressable structure: one entry per node, with the ref that names it.
+ *
+ *  Derived rather than authored for the same reason every row here is: it is a mechanical
+ *  reading of the bytes, so it cannot drift from them. Shipping it as a FACT (rather than
+ *  only as a tool response) is what makes structure a plain URL —
+ *  `/raw/<id>/data/$map.json`, per version — so a script, a pipeline, or another host can
+ *  read a document's shape with a GET and no session at all.
+ *
+ *  Null for a document with nothing to address: a single-node map is the read path's own
+ *  fallback, and a row saying "this document is one node" tells a reader nothing. */
+const deriveMap = (source: string, contentType: string): unknown => {
+  let map: ReturnType<typeof docMap>
+  try {
+    map = docMap(source, contentType)
+  } catch {
+    return null // ambiguous structure (a slide nested in a slide): no row, never a failure
+  }
+  if (map.nodes.length < 2) return null
+  // `version` belongs to the reader's response, not to a row stored per version.
+  const { version: _version, ...rest } = mapJson(map, 0)
+  return rest
+}
+
 const DERIVERS: {
   slot: string
   gen: number
@@ -164,6 +188,7 @@ const DERIVERS: {
   { slot: "$outline", gen: 1, derive: (_s, _ct, markers) => deriveOutline(markers) },
   { slot: LINKS_FACT, gen: 2, derive: (source) => deriveLinks(source) },
   { slot: "$stats", gen: 1, derive: deriveStats },
+  { slot: "$map", gen: 1, derive: (source, contentType) => deriveMap(source, contentType) },
 ]
 
 /**

@@ -38,7 +38,7 @@ export function registerAutomateTool(tc: ToolContext): void {
     "automate",
     {
       description:
-        "Standing automations — a scheduled use(context, instruction). `create`: trigger ({kind: manual|schedule|event, cron?, tz?, on:'webhook'?}) + instruction; optional refs (targets, mode publish|propose), context_id (the run acts as that context's agent), connection_ids (bound sources; binding any forces propose, whatever mode says). Webhook triggers return fire_url + fire_secret ONCE. `run_now` enqueues now. `record` files a run you executed LOCALLY (automation_id, wrote:[short_ids], outcome, note) into the same ledger. `list` shows them. `create_context` (name + manifest_short_id, + max_run_ms?/max_concurrency?) wires a context — no token returned; owners run it via use. Owner grants only.",
+        "Scheduled and triggered work: create/list/run_now an automation, record an outcome, or create_context. See derive://skills/loop.",
       // Not read-only (create/run_now/record/create_context all write); no action here
       // deletes or disables an existing automation or context — there is no such action
       // in this tool — so it isn't destructive. Every effect (rows in the automations/

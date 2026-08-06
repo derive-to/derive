@@ -1094,15 +1094,19 @@ interface ElReg {
     const n = r.startContainer
     return n.nodeType === 1 ? (n as Element) : n.parentElement
   }
-  /* deck slides, ordered: explicit [data-derive-slide] (sorted) else .slide in document
-     order. Empty on a non-deck artifact — then anchors resolve against the whole doc. */
+  /* deck slides in DOCUMENT ORDER: explicit [data-derive-slide] if the deck stamps them,
+     else .slide. Empty on a non-deck artifact — then anchors resolve against the whole doc.
+
+     Document order, NOT attribute order. `data-derive-slide` is IDENTITY — it stays with a
+     slide for life so a comment thread has something stable to hold, and a reorder
+     deliberately leaves it alone. A deck's own script reveals slides in DOM order, so once
+     a deck can be rearranged, an attribute sort disagrees with the page about which slide
+     is which: the host would drive to "slide 3" and land elsewhere, and a comment left on
+     screen would pin to a different slide than the one it was made on. Sorting was only
+     ever safe while nothing could reorder a deck. */
   const slideEls = (): Element[] => {
     const ex = document.querySelectorAll("[data-derive-slide]")
-    if (ex.length)
-      return Array.from(ex).sort(
-        (a, b) =>
-          Number(a.getAttribute("data-derive-slide")) - Number(b.getAttribute("data-derive-slide")),
-      )
+    if (ex.length) return Array.from(ex)
     return Array.from(document.querySelectorAll(".slide"))
   }
   /* ── Decks that never said so ──────────────────────────────────────────────────

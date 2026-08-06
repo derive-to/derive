@@ -13,6 +13,7 @@ import {
   type BlobStore,
   deriveFacts,
   FACT_GEN,
+  isHtmlLike,
   type MetaStore,
   newId,
   parseFacts,
@@ -22,8 +23,9 @@ import {
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
 import { log } from "../log"
+import { type Summarizer, sanitizeSummary, summaryInput } from "../summarizer"
 import { publishSweepEvents } from "./anchor-sweep"
-import { indexArtifactVersion } from "./search"
+import { indexArtifactVersion, isTextType } from "./search"
 
 /** The realtime + render + re-anchor core shared by every version bump (publish, restore,
  *  proposal-approve): announce the new version so open tabs live-reload, enqueue its preview
@@ -44,6 +46,10 @@ export interface VersionBumpDeps {
    *  history backfill — the one bump-time job that can cost dozens of blob reads. Optional
    *  because restore and proposal-approve reach this without one; they just pay it inline. */
   background?: (work: Promise<unknown>) => Promise<void>
+  /** Generates the one-line summary every unfurl surface describes this version with. Optional
+   *  and normally ABSENT: only the edge binds a model here, so self-host publishes exactly as
+   *  before and every consumer falls back to the inventory line. */
+  summarize?: Summarizer
 }
 
 export const emitVersionBump = async (
@@ -74,6 +80,90 @@ export const emitVersionBump = async (
   } catch (err) {
     log.error("data-slot extraction failed", { artifact: artifact.id, err: String(err) })
   }
+  // What this version SAYS, for the cards that describe it to someone who has not opened it.
+  // Third sibling of the two above and the same contract in every respect: a failure logs and
+  // the publish stands, because a link preview is never worth failing a write that already
+  // succeeded. Off the hot path via `background` — on Workers that is waitUntil; on Node it
+  // awaits, which costs nothing there because Node binds no summarizer.
+  if (deps.summarize) {
+    const work = summarizeVersion(meta, blobs, deps.summarize, artifact, version).catch((err) =>
+      log.error("version summary failed", {
+        artifact: artifact.id,
+        n: version.n,
+        err: String(err),
+      }),
+    )
+    await (deps.background ? deps.background(work) : work)
+  }
+}
+
+/** sha256 of the exact text handed to the model, hex. Web Crypto only — this runs on Workers
+ *  (see lib/capability-token.ts for the same constraint). */
+const srcHash = async (text: string): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("")
+}
+
+/**
+ * Generate and store this version's summary, or record why not.
+ *
+ * The hash gate is what makes this affordable rather than merely possible. Agents republish
+ * constantly and most publishes do not change what a document is ABOUT — a typo fix, a
+ * re-render, a formatting pass. Comparing the model input against the previous version's stored
+ * hash turns those into a copy-forward, so the model is paid for a change in meaning rather than
+ * for a change in bytes.
+ *
+ * It compares against n-1 ONLY, which is deliberate and does have a hole: restoring an older
+ * version republishes content that matched some version further back, and that misses. Closing
+ * it would mean either a walk or an index on the hash, and a restore is rare enough that one
+ * model call is the cheaper answer than either.
+ *
+ * Every exit logs its reason. "The card says nothing and I cannot tell why" is exactly the shape
+ * of bug that cost a day on the unfurl ladder, and one line naming the rung is what prevents it.
+ */
+const summarizeVersion = async (
+  meta: Pick<MetaStore, "setVersionSummary" | "getVersion">,
+  blobs: BlobStore,
+  summarizer: Summarizer,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+): Promise<void> => {
+  const skip = (reason: string) =>
+    log.info("version summary skipped", { artifact: artifact.id, n: version.n, reason })
+  // Bundles and binary uploads have no prose to summarize. `isTextType` is the same predicate
+  // search indexing uses, so a new text-ish kind (the deck type was one) is handled in one place.
+  if (!isTextType(version.content_type)) return skip("not a text version")
+  const bytes = await blobs.get(version.blob_key)
+  if (!bytes) return skip("blob missing")
+  const text = summaryInput(new TextDecoder().decode(bytes), version.content_type)
+  if (!text) return skip("too little prose to summarize")
+
+  const hash = await srcHash(text)
+  // Only the immediately previous version is consulted. Walking further back would catch a
+  // revert-to-two-ago, at the cost of a read per version on every publish forever; one read
+  // covers the case this exists for (a republish that changes nothing that matters).
+  const prev = version.n > 1 ? await meta.getVersion(artifact.id, version.n - 1) : null
+  if (prev?.summary && prev.summary_src_hash === hash) {
+    await meta.setVersionSummary(artifact.id, version.n, {
+      summary: prev.summary,
+      summary_src_hash: hash,
+    })
+    return skip("unchanged since previous version, copied forward")
+  }
+
+  const raw = await summarizer.summarize({ title: artifact.title, text })
+  // Sanitized HERE rather than inside the summarizer: this is where every implementation of that
+  // port converges on one column, so it is the only place the invariant can actually be held.
+  // The value is derived from document content and reaches SVG markup, an HTML attribute and
+  // Slack mrkdwn downstream.
+  const summary = raw ? sanitizeSummary(raw) : null
+  if (!summary) return skip("model returned nothing usable")
+  await meta.setVersionSummary(artifact.id, version.n, { summary, summary_src_hash: hash })
+  log.info("version summary generated", {
+    artifact: artifact.id,
+    n: version.n,
+    chars: summary.length,
+  })
 }
 
 /** Extract a single-file HTML/markdown version's facts and persist them (see
@@ -87,11 +177,20 @@ const extractVersionData = async (
   background?: (work: Promise<unknown>) => Promise<void>,
 ): Promise<void> => {
   const ct = version.content_type
-  if (ct !== "text/html" && ct !== "text/markdown") return
+  // AUTHORED facts stay HTML/markdown only. DERIVED facts also cover decks.
+  //
+  // A deck types as `text/x-derive-deck`, so this literal check excluded it from the whole
+  // facts pipeline — correct while every fact was author-embedded (a deck is a deck, not a
+  // place to park numbers), and wrong the moment `$map` shipped, because a deck's structure
+  // is exactly what a map is for. Found on the preview: a freshly published deck carried no
+  // $map at all. Same second-order blast radius the sniff fix documented — typing decks
+  // correctly moves them off every path that asks `content_type === "text/html"`.
+  const authored = ct === "text/html" || ct === "text/markdown"
+  if (!authored && !isHtmlLike(ct)) return
   const bytes = await blobs.get(version.blob_key)
   if (!bytes) return
   const source = new TextDecoder().decode(bytes)
-  const { facts } = parseFacts(source, ct)
+  const { facts } = authored ? parseFacts(source, ct) : { facts: [] }
   // Derived facts ($outline/$links/$stats) ride the same pass over bytes already decoded:
   // the host's mechanical reading, in the namespace the author grammar can't reach. They
   // are cache entries with names — recomputable, never counted, never rewarded — so each
@@ -172,7 +271,7 @@ const backfillNewSlots = async (
       const old = await meta.getVersion(version.artifact_id, n)
       if (!old) continue
       const ct = old.content_type
-      if (ct !== "text/html" && ct !== "text/markdown") continue
+      if (ct !== "text/html" && ct !== "text/markdown" && !isHtmlLike(ct)) continue
       const bytes = await blobs.get(old.blob_key)
       if (!bytes) continue
       const found = parseFacts(new TextDecoder().decode(bytes), ct).facts.filter((s) =>

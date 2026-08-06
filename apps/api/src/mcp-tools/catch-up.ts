@@ -20,7 +20,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
     "catch_up",
     {
       description:
-        "With a `short_id`: START HERE on an artifact — its state in one call: a one-line summary, the versions that landed since `since_version`, which pages changed, the open (and outdated) comment threads, the review round you're waiting on, and the full version history. Pass `comments` (open/addressed/resolved/outdated) for that filtered thread list instead — your feedback to-do queue. Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) for a line-by-line diff of the two versions' readable Markdown form. WITHOUT a short_id: your WORK QUEUE — pending requests teammates handed you by @mentioning you in a comment (the ask-agent and Rework buttons); pass `ack:[id,…]` to clear the ones you finished. WAITING ON SOMETHING? Pass `wait` (seconds, max 50) to block until the human acts (or, in queue mode, until new work lands), then return the fresh state — chain waits instead of sleeping between polls. For the diff, review states, working a request, and the wait loop, read derive://skills/loop.",
+        "START HERE on an artifact: its state in one call (versions since `since_version`, open comment threads, the review round). WITHOUT a short_id, your WORK QUEUE; `ack` clears finished items. `wait` long-polls instead of sleeping. See derive://skills/loop.",
       // Read-only except `ack`, which clears handled requests off the queue. The hint
       // stays true so planning-mode clients don't gate the start-here call on approval.
       // `ack` is itself idempotent (an unknown or already-acked id is skipped, never an
@@ -39,17 +39,9 @@ export function registerCatchUpTool(tc: ToolContext): void {
         ack: z
           .array(z.string())
           .optional()
-          .describe(
-            "Work-queue mode (no short_id): request ids you have HANDLED — acknowledges them off the queue. Ack after the work lands (a publish or a reply), not on read; an unknown or already-acked id is skipped, never an error.",
-          ),
-        since_version: z.coerce
-          .number()
-          .optional()
-          .describe("The version you last saw (the diff base). Defaults to to_version − 1."),
-        to_version: z.coerce
-          .number()
-          .optional()
-          .describe("Compare up to this version instead of the current one (for an exact diff)."),
+          .describe("Work-queue mode: request ids you have HANDLED, to clear them off the queue."),
+        since_version: z.coerce.number().optional(),
+        to_version: z.coerce.number().optional(),
         comments: z
           .enum(["open", "addressed", "resolved", "outdated"])
           .optional()
@@ -69,7 +61,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
           .max(50)
           .optional()
           .describe(
-            "Long-poll: block up to this many seconds for the human's next action (send back, approve, a new comment, or a new published version — e.g. co-editing the artifact live) before returning. Returns immediately when something is already actionable.",
+            "Long-poll: block up to this many seconds (max 50) for the human's next action, instead of sleeping between polls.",
           ),
         workspace: wsArg,
       },

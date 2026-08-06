@@ -5,6 +5,7 @@ import {
   EditConflictError,
   MAX_EDITS_PER_BATCH,
   materializeEdits,
+  materializeSlideOps,
   parseBaseVersion,
   preservingFilename,
 } from "../src/lib/edits"
@@ -305,5 +306,97 @@ describe("image swap (old_str on a src attribute)", () => {
     await expect(
       materializeEdits(deps, fileArtifact(1), [{ old_str: src, new_str: "x" }], 1),
     ).rejects.toThrow(EditError)
+  })
+})
+
+describe("materializeSlideOps", () => {
+  const deck = (order: number[]) =>
+    `<!doctype html><html><body>\n${order
+      .map((id) => `<section class="slide" data-derive-slide="${id}"><h2>s${id}</h2></section>`)
+      .join(
+        "\n",
+      )}\n<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:${order.length}},"*")</script></body></html>`
+
+  const htmlDeps = (text: string) => mkDeps({ 1: { text, contentType: "text/html" } })
+
+  it("applies a move and preserves the artifact's content type", async () => {
+    const out = await materializeSlideOps(
+      htmlDeps(deck([0, 1, 2])),
+      fileArtifact(1),
+      [{ op: "move", from: 3, to: 1 }],
+      1,
+    )
+    expect(out.filename).toBe("index.html")
+    // Identity travels with the slide; the attribute is never renumbered.
+    expect([...out.content.matchAll(/data-derive-slide="(\d+)"/g)].map((m) => m[1])).toEqual([
+      "2",
+      "0",
+      "1",
+    ])
+  })
+
+  it("shares the base_version staleness check with edits (409-shaped)", async () => {
+    await expect(
+      materializeSlideOps(htmlDeps(deck([0, 1])), fileArtifact(3), [{ op: "delete", at: 1 }], 2),
+    ).rejects.toBeInstanceOf(EditConflictError)
+  })
+
+  it("refuses a bundle, naming the field the caller used", async () => {
+    const bundle = { ...fileArtifact(1), kind: "bundle" as const }
+    await expect(
+      materializeSlideOps(htmlDeps(deck([0, 1])), bundle, [{ op: "delete", at: 1 }], 1),
+    ).rejects.toThrow(/slide_ops/)
+  })
+
+  it("refuses a document that isn't HTML", async () => {
+    const md = mkDeps({ 1: { text: "# not a deck", contentType: "text/markdown" } })
+    await expect(
+      materializeSlideOps(md, fileArtifact(1), [{ op: "delete", at: 1 }], 1),
+    ).rejects.toThrow(/no slides to arrange/i)
+  })
+
+  it("refuses a non-array payload as a clean edit error, not a 500", async () => {
+    await expect(
+      materializeSlideOps(htmlDeps(deck([0, 1])), fileArtifact(1), { op: "move" } as never, 1),
+    ).rejects.toBeInstanceOf(EditError)
+  })
+})
+
+describe("slide_ops that change nothing", () => {
+  const deck = (n: number) =>
+    `<html><body>${Array.from({ length: n }, (_, i) => `<section class="slide" data-derive-slide="${i}"><h2>s${i}</h2></section>`).join("\n")}<script>"derive-deck"</script></body></html>`
+  const deps = (text: string) => mkDeps({ 1: { text, contentType: "text/html" } })
+
+  it("refuses a no-op batch instead of minting an empty version", async () => {
+    // Found by chaos-testing the preview: {move, from:2, to:2} published a byte-identical
+    // version. A publish is never free — webhooks, three re-renders, re-derived facts — and
+    // an agent looping with an off-by-one would mint history forever.
+    await expect(
+      materializeSlideOps(deps(deck(4)), fileArtifact(1), [{ op: "move", from: 2, to: 2 }], 1),
+    ).rejects.toThrow(/nothing to publish/i)
+    // …including a sequence that cancels itself out.
+    await expect(
+      materializeSlideOps(
+        deps(deck(4)),
+        fileArtifact(1),
+        [
+          { op: "move", from: 1, to: 3 },
+          { op: "move", from: 3, to: 1 },
+        ],
+        1,
+      ),
+    ).rejects.toThrow(/nothing to publish/i)
+  })
+
+  it("still lands a first arrange that only stamps identities", async () => {
+    // A class-only deck gains data-derive-slide values, so the bytes DO change.
+    const classOnly = `<html><body><section class="slide"><h2>a</h2></section>\n<section class="slide"><h2>b</h2></section><script>"derive-deck"</script></body></html>`
+    const out = await materializeSlideOps(
+      deps(classOnly),
+      fileArtifact(1),
+      [{ op: "move", from: 1, to: 1 }],
+      1,
+    )
+    expect(out.content).toContain('data-derive-slide="0"')
   })
 })
