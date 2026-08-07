@@ -34,6 +34,7 @@ import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
+import { DerivedFromBanner } from "./derived-from-banner"
 import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
@@ -1060,6 +1061,11 @@ export function Artifact() {
                 : undefined
             }
           >
+            {/* Remix provenance on a fresh copy: v1 only (the first publish makes the
+                document its own), editors only, and never over the editing surfaces. */}
+            {art.current_version === 1 && canEditDoc && !editing && !inlineEdit.active && (
+              <DerivedFromBanner art={art} />
+            )}
             {art.bundle && !editing && (
               <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
             )}

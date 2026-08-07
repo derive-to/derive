@@ -442,6 +442,24 @@
             "nullable": true,
             "description": "Source path (e.g. the repo path of a synced artifact); null when none."
           },
+          "derived_from": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "short_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "short_id",
+              "title"
+            ],
+            "description": "The artifact this one was copied from (\"use as template\"). Detail responses only; null when the source no longer resolves, absent when not derived."
+          },
           "created_at": {
             "type": "string"
           },
@@ -7559,6 +7577,130 @@
         "responses": {
           "201": {
             "description": "The build request was posted and landed in the agent's pull inbox. 400 when the artifact is not the workspace's brand profile; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request still waits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "description": "The request comment's thread id."
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/fill": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "The fill-with-your-work prompt for a derived copy (the copy-paste variant).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 500,
+              "description": "Optional requester intent, appended to the prompt verbatim."
+            },
+            "required": false,
+            "description": "Optional requester intent, appended to the prompt verbatim.",
+            "name": "note",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The prompt and the resolved template. 409 notDerived when the artifact has no template lineage; 409 sourceGone when the template no longer resolves.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "short_id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "short_id",
+                        "title"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "prompt",
+                    "source"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Ask a registered agent to fill this derived copy with the workspace's real work.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string",
+                    "description": "Which agent to ask; omit to use the sole registered agent."
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "Optional requester intent, appended to the prompt verbatim."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The fill request landed in the agent's pull inbox. 409 notDerived when the artifact has no template lineage; 409 sourceGone when the template no longer resolves; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request for this artifact still waits.",
             "content": {
               "application/json": {
                 "schema": {
