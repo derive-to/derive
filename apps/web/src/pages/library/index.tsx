@@ -6,7 +6,6 @@ import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
-import { AskButton } from "@/components/shared/ask-button"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ConnectAgentButton } from "@/components/shared/connect-agent"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -476,7 +475,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
             tools={
               <>
                 {filterField}
-                <AskButton text={query} testId="library-ask" />
                 <DisplayMenu
                   layout={layout}
                   onLayout={setLayout}
@@ -552,7 +550,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
               </>
             )}
             {filterField}
-            <AskButton text={query} testId="library-ask" />
             {/* Feeds have no view row, so Display stays up here for them; home's moves
                 down beside Filter — the two are one kind of control and sit together. */}
             {view !== "all" && (
