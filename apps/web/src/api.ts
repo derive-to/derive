@@ -1386,9 +1386,8 @@ export const api = {
   // instruction lives server-side; omit agentId when exactly one agent is registered.
   reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
     f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
-  // The fill-with-your-work pair, for a derived copy. GET returns the copyable
-  // prompt; POST delivers the identical instruction to an agent's inbox. Both are
-  // composed server-side (fillInstruction), so the two channels can't drift.
+  // The fill-with-your-work pair, for a derived copy: GET returns the copyable
+  // prompt, POST delivers the same instruction to an agent's inbox.
   fillPrompt: (
     shortId: string,
     note?: string,

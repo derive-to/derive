@@ -8,9 +8,8 @@
  * variant is self-sufficient in an agent session with no comment context.
  *
  * Deliberately absent: source lists, required inputs, provider names. The template's
- * own example content shows the agent what the document wants, and the instruction
- * licenses reshaping it — a template is a starting point, and the workspace's real
- * sources are whatever they are.
+ * own example content shows the agent what the document wants; the instruction's job
+ * is to license reshaping it and to forbid invented data.
  */
 export const fillInstruction = (
   copyShortId: string,

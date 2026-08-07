@@ -18,13 +18,14 @@ import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
 
-/** The canned agent-request endpoints — Rework and generate-profile. Thin wrappers
- *  over the existing @mention-to-inbox path: each composes its instruction server-side
- *  (the single source of truth; the client never carries a prompt) and posts it as a
- *  whole-document comment @mentioning the chosen agent, which drops into that agent's
- *  MCP pull inbox. The agent does the work and publishes per its grant: a
- *  publish-capable agent posts directly, a lower grant files a proposal — no special
- *  case here. */
+/** The canned agent-request endpoints — Rework, generate-profile, and the fill pair
+ *  (the GET returns fill's instruction for copy-paste; the POST delivers it). Thin
+ *  wrappers over the existing @mention-to-inbox path: each composes its instruction
+ *  server-side (the single source of truth; the client never carries a prompt) and
+ *  posts it as a whole-document comment @mentioning the chosen agent, which drops
+ *  into that agent's MCP pull inbox. The agent does the work and publishes per its
+ *  grant: a publish-capable agent posts directly, a lower grant files a proposal —
+ *  no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
   const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -57,10 +58,11 @@ export const reworkRoutes = (ctx: AppContext) => {
     },
   })
 
-  // The guard chain both endpoints share: the artifact, comment authz, a signed-in
-  // requester (the request is authored and attributed — no anonymous firing), the
-  // comment rate limit, and the optional { agentId } body (readJson tolerates a
-  // missing body, so a bare POST means "use the sole registered agent"). Returns a
+  // The guard chain the POST endpoints share: the artifact, comment authz, a
+  // signed-in requester (the request is authored and attributed — no anonymous
+  // firing), the comment rate limit, and the optional body (readJson tolerates a
+  // missing one, so a bare POST means "use the sole registered agent"). `note` is
+  // consumed by fill only; Rework and generate-profile ignore it. Returns a
   // ready-to-bail Response on any failed gate.
   const requestContext = async (c: Context, shortId: string) => {
     const artifact = await meta.getByShortId(shortId)
@@ -272,10 +274,8 @@ export const reworkRoutes = (ctx: AppContext) => {
   )
 
   // The copyable fill prompt — the sheet's "paste this into whatever agent you
-  // already have" path. Identical text to what the POST below posts to an inbox
-  // (fillInstruction is the single source), so the copied prompt and the asked
-  // prompt can never drift. ?note= is appended verbatim, composed server-side for
-  // the same reason.
+  // already have" path. Same fillInstruction the POST below delivers to an inbox,
+  // ?note= included, so the client never assembles any part of the prompt.
   app.openapi(
     createRoute({
       method: "get",
