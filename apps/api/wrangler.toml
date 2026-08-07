@@ -46,6 +46,11 @@ id = "00000000000000000000000000000000"
 binding = "BUCKET"
 bucket_name = "derive-blobs"
 
+# Upload-time screenshot/photo optimization. The app stores the transformed bytes in
+# R2 once; full_size=true bypasses this binding and preserves the source exactly.
+[images]
+binding = "IMAGES"
+
 # Semantic search (the dense/hybrid arm of workspace search) embeds with Workers AI (bge-m3) and
 # stores the vectors in pgvector in the SAME Hyperdrive Postgres as the metadata — no separate
 # vector store. Bind AI (with HYPERDRIVE) to enable it; omit AI to stay lexical-only (self-host

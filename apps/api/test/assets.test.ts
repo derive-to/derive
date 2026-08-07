@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { signUploadToken } from "../src/lib/upload-token"
 import { PNG_BYTES } from "./fixtures"
-import { anonApp, app, dir } from "./helpers"
+import { anonApp, app, dir, ownerApp } from "./helpers"
 
 // POST /v1/assets is the "images without base64" path: an agent streams the raw bytes
 // of a screenshot up as binary (no transcription), gets back a content-addressed
@@ -27,6 +27,11 @@ describe("POST /v1/assets", () => {
     const body = await res.json()
     expect(body.type).toBe("image/png")
     expect(body.size).toBe(PNG_BYTES.byteLength)
+    expect(body.original_size).toBe(PNG_BYTES.byteLength)
+    expect(body.optimization_available).toBe(false)
+    expect(body.mode).toBe("full_size")
+    expect(body.optimized).toBe(false)
+    expect(body.cost).toContain("full size")
     expect(body.key).toMatch(/^[0-9a-f]{64}$/)
     expect(body.ref).toBe(`asset:${body.key}`)
     expect(body.url).toBe(`http://derive.test/blob/${body.key}.png`)
@@ -88,6 +93,79 @@ describe("POST /v1/assets", () => {
       body: PNG_BYTES,
     })
     expect(res.status).toBe(403)
+  })
+})
+
+describe("asset optimization", () => {
+  const optimizeMeta = new SqliteMetaStore(join(dir, "asset-optimize.db"))
+  let calls = 0
+  const optimizeApp = ownerApp({
+    meta: optimizeMeta,
+    blobs: new FsBlobStore(join(dir, "asset-optimize-blobs")),
+    baseUrl: "http://derive.test",
+    optimizeImage: async () => {
+      calls++
+      return PNG_BYTES
+    },
+  })
+  afterAll(() => optimizeMeta.close())
+
+  // Header-valid enough for the route's byte sniff + dimension reader, deliberately
+  // padded so the fake optimizer has a smaller same-format candidate to select.
+  const largePng = new Uint8Array(PNG_BYTES.byteLength + 1024)
+  largePng.set(PNG_BYTES)
+  new DataView(largePng.buffer).setUint32(16, 2400)
+  new DataView(largePng.buffer).setUint32(20, 1200)
+
+  it("stores the smaller optimized image by default and reports the savings", async () => {
+    const res = await optimizeApp.request("/v1/assets", {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: largePng,
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({
+      type: "image/png",
+      optimization_available: true,
+      mode: "optimized",
+      optimized: true,
+      size: PNG_BYTES.byteLength,
+      original_size: largePng.byteLength,
+      width: 1,
+      height: 1,
+      original_width: 2400,
+      original_height: 1200,
+    })
+    expect(body.cost).toContain("smaller")
+
+    const served = await optimizeApp.request(new URL(body.url).pathname)
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(PNG_BYTES)
+  })
+
+  it("full_size=true bypasses optimization and preserves the exact upload", async () => {
+    const before = calls
+    const res = await optimizeApp.request("/v1/assets?full_size=true", {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: largePng,
+    })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body).toMatchObject({
+      optimization_available: true,
+      mode: "full_size",
+      optimized: false,
+      size: largePng.byteLength,
+      original_size: largePng.byteLength,
+      width: 2400,
+      height: 1200,
+    })
+    expect(body.cost).toContain("full size")
+    expect(calls).toBe(before)
+
+    const served = await optimizeApp.request(new URL(body.url).pathname)
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(largePng)
   })
 })
 

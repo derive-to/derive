@@ -15,6 +15,11 @@ reference the result in `publish`.
 - Raster images: PNG, JPEG, GIF, and WebP.
 - Web fonts: WOFF and WOFF2.
 - Maximum size: 25 MB per file.
+- On the hosted Cloudflare tier, images are optimized by default: Derive keeps the source
+  format, scales down to fit a 1920×1920 box without upscaling, and stores a smaller
+  re-encode. Use `stage({ target: "asset", full_size: true })` there when exact original
+  pixels/bytes matter. Self-hosted Node always stores original bytes. Fonts are unchanged
+  on every tier.
 - Do not stage SVG, HTML, CSS, JavaScript, PDFs, or arbitrary binaries as assets. Keep
   inline SVG/CSS/JS in the page source; use `stage({ target: "doc" })` for a large
   document or zip bundle.
@@ -26,8 +31,11 @@ reference the result in `publish`.
    into a tool argument. If no byte-capable path exists, ask the user to attach or expose
    the file.
 2. Call `stage({ target: "asset", workspace? })`. Do not pass `short_id`: assets are
-   content-addressed, not versioned. The response gives `upload_url`, expiry, size limit,
-   and accepted MIME types.
+   content-addressed, not versioned. The response gives `optimization_available`, the
+   active `mode`, an `upload_url`, expiry, size limit, and accepted MIME types. On hosted
+   Derive, pass `full_size:true` when the original is itself the deliverable (for example,
+   pixel-level image review). Self-hosted Node reports `optimization_available:false` and
+   `mode:"full_size"` because it always preserves originals.
 3. Treat `upload_url` as a short-lived credential. From the shell, POST the file's raw
    bytes with no bearer token:
 
@@ -37,12 +45,14 @@ reference the result in `publish`.
 
    Use the matching MIME type for fonts or other image formats. One minted upload URL may
    accept multiple files until it expires; each POST returns its own asset result.
-4. Capture the upload response: `{ key, url, ref, type, size, width, height, cost }`.
-   - `cost` names what this asset costs every viewer on every load, with its pixel
-     dimensions. READ IT. Nothing is re-encoded (they are your bytes), but a screenshot
-     exported at twice the density it displays at is the common, invisible way a page
-     gets slow — and halving the density is the lever (~78% smaller, where re-encoding
-     buys ~15%). A publish whose page references more than ~1MB of assets says so too.
+4. Capture the upload response: `{ key, url, ref, type, size, width, height,
+   original_size, original_width, original_height, optimization_available, optimized,
+   mode, cost }`.
+   - `optimized:true` means Derive stored the smaller result; `original_size` and the
+     original dimensions make the savings explicit. If an already-efficient small image
+     would not get smaller, Derive keeps it unchanged and reports `optimized:false`.
+   - `cost` names what this asset costs every viewer on every load. READ IT. A publish
+     whose page references more than ~1MB of assets says so too.
    - Use permanent `url` in single-file HTML `<img src>`, CSS `url()`, Markdown
      `![]()`, or anywhere a URL is required.
    - Use `ref` (the exact `asset:<hash>` value) as a binary entry in a bundle's

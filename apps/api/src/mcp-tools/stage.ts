@@ -84,12 +84,20 @@ export function registerStageTool(tc: ToolContext): void {
           .describe(
             "target:'api': narrow the minted token below what this connection holds (least privilege).",
           ),
+        full_size: z
+          .boolean()
+          .optional()
+          .describe(
+            "target:'asset' only, hosted Cloudflare tier: preserve exact image bytes instead of optimizing. Self-hosted Node always stores originals; fonts are always unchanged.",
+          ),
         workspace: wsArg,
       },
     },
-    async ({ target, short_id, access, workspace }) => {
+    async ({ target, short_id, access, full_size, workspace }) => {
       const wrong = badChoice("target", target, STAGE_TARGETS)
       if (wrong) return err(wrong)
+      if (full_size !== undefined && target !== "asset")
+        return err(`\`full_size\` applies only to target:'asset'. Omit it for target:'${target}'.`)
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       // `access` shapes a minted token and nothing else. Silently ignoring it on the
@@ -188,10 +196,19 @@ export function registerStageTool(tc: ToolContext): void {
         // An ownerless legacy agent has no user to bind; it mints an unbound token.
         const expiresAt = Date.now() + UPLOAD_TOKEN_TTL_MS
         const tok = await signUploadToken(secret, t.org, ownerId ?? "", expiresAt)
-        const uploadUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/v1/assets/t/${tok}`
+        const optimizationAvailable = ctx.deps.optimizeImage !== undefined
+        const optimizationRequested = optimizationAvailable && !full_size
+        const uploadUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/v1/assets/t/${tok}${optimizationAvailable && full_size ? "?full_size=true" : ""}`
+        const imageBehavior = !optimizationAvailable
+          ? "This self-hosted server stores exact original image bytes; hosted optimization is unavailable"
+          : full_size
+            ? "Images keep their exact original bytes"
+            : "Images are optimized by default (max 1920px, smaller re-encode)"
         return json({
           target: "asset",
           upload_url: uploadUrl,
+          optimization_available: optimizationAvailable,
+          mode: optimizationRequested ? "optimized" : "full_size",
           workspace: t.org,
           expires_in_minutes: Math.round(UPLOAD_TOKEN_TTL_MS / 60_000),
           max_bytes: MAX_ASSET_BYTES,
@@ -203,7 +220,7 @@ export function registerStageTool(tc: ToolContext): void {
             "font/woff",
             "font/woff2",
           ],
-          how: `curl -sS -X POST --data-binary @<file> "${uploadUrl}" → {url, ref, ...}. Paste \`url\` into content, or use \`ref\` ("asset:<hash>") as a bundle files value. Repeat for each file until expiry.`,
+          how: `curl -sS -X POST --data-binary @<file> "${uploadUrl}" → {url, ref, optimized, original_size, size, ...}. ${imageBehavior}; fonts are unchanged. Paste \`url\` into content, or use \`ref\` ("asset:<hash>") as a bundle files value. Repeat for each file until expiry.`,
         })
       }
 

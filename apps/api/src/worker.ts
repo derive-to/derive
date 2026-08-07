@@ -29,6 +29,7 @@ import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import { cloudflareImageOptimizer, type ImagesBindingLike } from "./lib/image-optimizer-cf"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
@@ -93,6 +94,9 @@ export interface Env {
    *  a hand-run deploy, which then reports "dev" — honest rather than wrong. */
   BUILD_SHA?: string
   BUCKET: R2Bucket
+  // Raw-byte image resizing/compression. Assets use this by default; callers can
+  // explicitly retain original bytes with full_size=true.
+  IMAGES: ImagesBindingLike
   // Optional semantic search: Workers AI embeddings (bge-m3) for the dense arm, stored in pgvector
   // in the Hyperdrive Postgres. Bind AI (+ HYPERDRIVE) to add the dense/hybrid arm; omit ⇒ search
   // stays lexical-only, exactly as self-host. Structurally typed (see embedder.ts).
@@ -295,6 +299,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
         meta,
+        optimizeImage: cloudflareImageOptimizer(env.IMAGES),
         // The static operator/CI bearer (isToken). The Node entry wires this via
         // loadConfig(process.env); the edge builds deps by hand from the CF binding and
         // had omitted it, so operator-token auth (reindex, and any DERIVE_TOKEN automation)

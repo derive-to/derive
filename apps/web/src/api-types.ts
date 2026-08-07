@@ -1746,7 +1746,10 @@ export interface paths {
         /** Stage a binary asset (image or web font) and get a permanent URL + its asset:<hash> handle. */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Hosted tier only: set true to preserve exact image bytes. Self-hosted Node always preserves originals. */
+                    full_size?: "true" | "false";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -1782,7 +1785,10 @@ export interface paths {
         /** Stage a binary asset with a short-lived upload token (minted over MCP). */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Hosted tier only: set true to preserve exact image bytes. Self-hosted Node always preserves originals. */
+                    full_size?: "true" | "false";
+                };
                 header?: never;
                 path: {
                     token: string;
@@ -6479,8 +6485,29 @@ export interface components {
              * @enum {string}
              */
             type: "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "font/woff2" | "font/woff";
-            /** @description The asset's size in bytes */
+            /** @description The stored asset size in bytes */
             size: number;
+            /** @description The stored image width in pixels */
+            width?: number;
+            /** @description The stored image height in pixels */
+            height?: number;
+            /** @description The uploaded asset size before optimization, in bytes */
+            original_size: number;
+            /** @description The uploaded image width in pixels */
+            original_width?: number;
+            /** @description The uploaded image height in pixels */
+            original_height?: number;
+            /** @description Whether this deployment supports hosted upload-time image optimization */
+            optimization_available: boolean;
+            /** @description Whether Derive stored a smaller optimized image */
+            optimized: boolean;
+            /**
+             * @description The active storage mode; self-hosted Node always reports full_size
+             * @enum {string}
+             */
+            mode: "optimized" | "full_size";
+            /** @description A readable summary of the stored transfer cost and savings */
+            cost: string;
         };
         ArtifactInvite: {
             id: string;

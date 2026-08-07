@@ -132,21 +132,28 @@ export const imageDimensions = (b: Uint8Array): ImageSize | null => {
   return null
 }
 
-/** What a stored asset costs, and the one lever that would change it. Pixel count, not
- *  re-encoding: measured on Derive's own renders, re-encoding bought 15% and halving
- *  density bought 78%. */
-export const assetCostNote = (bytes: number, size: ImageSize | null): string => {
+export interface AssetCostOptions {
+  /** The uploaded image before optimization, present only when different bytes were stored. */
+  source?: { bytes: number; size: ImageSize | null }
+  /** Original bytes were intentionally stored (explicitly, or because this is Node). */
+  fullSize?: boolean
+}
+
+/** A human-readable receipt for the bytes every artifact viewer will download. */
+export const assetCostNote = (
+  bytes: number,
+  size: ImageSize | null,
+  options: AssetCostOptions = {},
+): string => {
   const mb = (n: number) => `${(n / (1024 * 1024)).toFixed(1)}MB`
   const kb = (n: number) => `${Math.round(n / 1024)}KB`
   const show = (n: number) => (n >= 1024 * 1024 ? mb(n) : kb(n))
-  if (!size) return `Stored ${show(bytes)}. Every viewer downloads this on every load.`
-  const half = Math.round(bytes * 0.22) // ~78% smaller at half density, measured
-  return (
-    `Stored ${show(bytes)} at ${size.width}×${size.height}. Every viewer downloads this on every load` +
-    (bytes > 512 * 1024
-      ? `, and at half density (${Math.round(size.width / 2)}×${Math.round(size.height / 2)}) it would be roughly ${show(half)}.`
-      : ".")
-  )
+  const dimensions = (s: ImageSize | null) => (s ? ` at ${s.width}×${s.height}` : "")
+  if (options.source) {
+    const saved = Math.max(0, Math.round((1 - bytes / options.source.bytes) * 100))
+    return `Optimized ${show(options.source.bytes)}${dimensions(options.source.size)} to ${show(bytes)}${dimensions(size)} (${saved}% smaller). Every viewer downloads the optimized asset on every load.`
+  }
+  return `Stored${options.fullSize ? " full size" : ""} ${show(bytes)}${dimensions(size)}. Every viewer downloads this on every load.`
 }
 
 export type AssetType = ImageType | "font/woff2" | "font/woff"
