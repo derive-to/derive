@@ -1386,6 +1386,20 @@ export const api = {
   // instruction lives server-side; omit agentId when exactly one agent is registered.
   reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
     f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
+  // The fill-with-your-work pair, for a derived copy: GET returns the copyable
+  // prompt, POST delivers the same instruction to an agent's inbox.
+  fillPrompt: (
+    shortId: string,
+    note?: string,
+  ): Promise<{ prompt: string; source: { short_id: string; title: string | null } }> =>
+    f(
+      `/v1/artifacts/${shortId}/fill${note ? `?note=${encodeURIComponent(note)}` : ""}`,
+      opts(),
+    ).then(j),
+  fillArtifact: (
+    shortId: string,
+    body: { agentId?: string; note?: string },
+  ): Promise<{ requestId: string }> => f(`/v1/artifacts/${shortId}/fill`, opts(body)).then(j),
   // Ask a registered agent to build the workspace's brand profile (shortId must be the
   // profile artifact). Same queue mechanics as reworkArtifact, different canned brief.
   generateProfile: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>

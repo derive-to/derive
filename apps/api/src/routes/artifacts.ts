@@ -1547,6 +1547,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       // used to be its own resolveUserBylines call, sequential after resolveHandles —
       // ~80ms on the edge, on the request that gates the document's rendered bytes.
       const bylineByUserId = bylinesFrom(detail.bylines)
+      // Remix provenance for the derived-from banner: resolve the source to its public
+      // identity. Detail-only (the list would N+1), and only for derived rows.
+      const derivedFrom = artifact.derived_from
+        ? await meta.getArtifactById(artifact.derived_from)
+        : null
       const base = toJson(deps.baseUrl, artifact, versions)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -1597,6 +1602,14 @@ export const artifactRoutes = (ctx: AppContext) => {
         // The artifact's current workspace — the move dialog needs this to exclude
         // it from the destination picker.
         org_id: artifact.org_id,
+        ...(artifact.derived_from
+          ? {
+              derived_from:
+                derivedFrom && !derivedFrom.removed_at
+                  ? { short_id: derivedFrom.short_id, title: derivedFrom.title }
+                  : null,
+            }
+          : {}),
         tags,
         favorite,
         collections,
