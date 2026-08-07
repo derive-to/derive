@@ -38,6 +38,7 @@ import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
+import { artifactLoginSearch } from "./lib/login-return"
 import { useArtifactChat } from "./lib/use-artifact-chat"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
@@ -478,7 +479,7 @@ export function Artifact() {
     error,
     onCanonical: (canonical) =>
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
-    onLoginBounce: () => nav({ to: "/login" }),
+    onLoginBounce: () => nav({ to: "/login", search: artifactLoginSearch(window.location) }),
     onOpenReview: (proposalId: string) => setReviewing({ proposalId }),
     post,
     setPanel,
