@@ -17,6 +17,9 @@ import { expect, openArtifact, publishArtifact, test } from "./fixtures"
  */
 
 const DOC = "<h1>Runbook</h1><p id=one>First paragraph.</p><p id=two>Second paragraph.</p>"
+const RESIZE_DOC = `<h1>Layout</h1>
+<img id="hero" alt="Hero" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='90'%3E%3Crect width='160' height='90' fill='%2364748b'/%3E%3C/svg%3E" style="display:block;width:160px;height:90px">
+<div id="summary-box" data-derive-resizable style="width:220px;height:110px"><p>Summary box.</p></div>`
 
 /** Publish an HTML artifact and open it with the workbench interactive. */
 async function seed(page: Page) {
@@ -84,7 +87,7 @@ test("discard reverts the text and publishes nothing", async ({ owner }) => {
 
   await owner.getByTestId("inline-edit-discard").click()
   // Back to the invitation, and the document reads as it did before.
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("any text to change it")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
   expect(await versionOf(owner, shortId)).toBe(1)
 })
@@ -230,4 +233,163 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   expect(src.replace(/<\/?b>/g, "")).toContain("<p id=two>Second paragraph.</p>")
   // The editor's own markers never reach the document.
   expect(src).not.toContain("data-derive-fmt")
+})
+
+test("resize an image and box, then undo/redo and save", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "layout.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const image = doc(owner).locator("#hero")
+  await image.hover()
+  const handle = doc(owner).getByRole("button", { name: "Resize element" })
+  await expect(handle).toBeVisible()
+  const grip = await handle.boundingBox()
+  expect(grip).not.toBeNull()
+  if (!grip) return
+
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(grip.x + grip.width / 2 + 40, grip.y + grip.height / 2 + 20)
+  await owner.mouse.up()
+
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await expect(image).toHaveCSS("width", "200px")
+  // Images keep their natural ratio instead of stretching to follow the pointer.
+  expect(await image.evaluate((el) => el.style.height)).toBe("auto")
+
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(image).toHaveCSS("width", "160px")
+  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(image).toHaveCSS("width", "200px")
+
+  const box = doc(owner).locator("#summary-box")
+  // Select the box's padding rather than activating the editable paragraph inside it.
+  await box.click({ position: { x: 210, y: 100 } })
+  const boxHandle = doc(owner).getByRole("button", { name: "Resize element" })
+  await boxHandle.focus()
+  await boxHandle.press("ArrowRight")
+  await boxHandle.press("ArrowDown")
+  await expect(box).toHaveCSS("width", "228px")
+  await expect(box).toHaveCSS("height", "118px")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("2 unsaved changes")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const src = await contentOf(owner, shortId)
+  expect(src).toContain("display:block; width: 200px; height: auto")
+  expect(src).toContain(
+    '<div id="summary-box" data-derive-resizable style="width: 228px; height: 118px">',
+  )
+})
+
+test("set exact dimensions, constrain a box, and reset to the authored size", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "precision.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const image = doc(owner).locator("#hero")
+  await image.hover()
+  const size = doc(owner).getByRole("button", { name: "Set element size" })
+  await expect(size).toHaveText("160 × 90")
+  await size.click()
+  const panel = doc(owner).getByRole("form", { name: "Element size" })
+  const width = panel.getByLabel("Width in pixels")
+  const height = panel.getByLabel("Height in pixels")
+  const lock = panel.getByRole("checkbox", { name: "Proportions locked" })
+  await expect(panel).toBeVisible()
+  await expect(width).toHaveValue("160")
+  await expect(height).toHaveValue("90")
+  await expect(lock).toBeChecked()
+  await expect(lock).toBeDisabled()
+
+  // Escape dismisses the small editor, not the entire inline-edit session.
+  await owner.keyboard.press("Escape")
+  await expect(panel).toBeHidden()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  await expect(size).toBeFocused()
+
+  await size.click()
+  await panel.getByLabel("Width in pixels").fill("320")
+  await expect(panel.getByLabel("Height in pixels")).toHaveValue("180")
+  await panel.getByRole("button", { name: "Apply" }).click()
+  await expect(image).toHaveCSS("width", "320px")
+  await expect(image).toHaveCSS("height", "180px")
+  expect(await image.evaluate((el) => el.style.height)).toBe("auto")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+
+  await size.click()
+  await panel.getByRole("button", { name: "Reset to authored size" }).click()
+  await expect(image).toHaveCSS("width", "160px")
+  await expect(image).toHaveCSS("height", "90px")
+  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
+
+  const box = doc(owner).locator("#summary-box")
+  await box.click({ position: { x: 210, y: 100 } })
+  await size.click()
+  await expect(panel.getByRole("checkbox", { name: "Lock proportions" })).not.toBeChecked()
+  await panel.getByLabel("Width in pixels").fill("280")
+  await panel.getByLabel("Height in pixels").fill("150")
+  await panel.getByRole("button", { name: "Apply" }).click()
+  await expect(box).toHaveCSS("width", "280px")
+  await expect(box).toHaveCSS("height", "150px")
+
+  await size.click()
+  const boxLock = panel.getByRole("checkbox", { name: "Lock proportions" })
+  await boxLock.check()
+  await panel.getByLabel("Width in pixels").fill("308")
+  await expect(panel.getByLabel("Height in pixels")).toHaveValue("165")
+  // The editor's global save chord commits a still-open precision form first, so
+  // values typed here cannot disappear when Save closes the session.
+  await panel.getByLabel("Width in pixels").press("Control+s")
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const src = await contentOf(owner, shortId)
+  expect(src).toContain(
+    '<div id="summary-box" data-derive-resizable style="width: 308px; height: 165px">',
+  )
+  // Reset removed the temporary image edit rather than publishing a redundant size.
+  expect(src).toContain('style="display:block;width:160px;height:90px"')
+})
+
+test("keyboard users can discover resize controls and open exact sizing", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "keyboard-resize.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const image = doc(owner).locator("#hero")
+  // Done is the last control in the edit bar. The next Tab enters the artifact and
+  // lands on the first supported resizable element instead of skipping the frame.
+  await owner.getByTestId("inline-edit-done").focus()
+  await owner.keyboard.press("Tab")
+  await expect(image).toBeFocused()
+  await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeVisible()
+
+  await owner.keyboard.press("Enter")
+  const panel = doc(owner).getByRole("form", { name: "Element size" })
+  await expect(panel).toBeVisible()
+  await expect(panel.getByLabel("Width in pixels")).toBeFocused()
+  await expect(panel.getByLabel("Width in pixels")).toHaveValue("160")
+
+  await owner.keyboard.press("Escape")
+  await owner.getByTestId("inline-edit-done").click()
+  await expect(image).not.toHaveAttribute("tabindex")
+})
+
+test("Markdown keeps image replacement without offering an unsaveable resize", async ({
+  owner,
+}) => {
+  const markdown = "# Layout\n\n![Hero](/brand/favicon.svg)"
+  const shortId = await publishArtifact(owner, "layout.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("select an image to replace it")
+  await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("resize")
+
+  await doc(owner).getByRole("img", { name: "Hero" }).hover()
+  // The existing image-swap flow works for Markdown because it replaces the literal
+  // URL. Resize is different: it needs an HTML opening tag, so promising it here
+  // would make Save fail after the user had already done the work.
+  await expect(doc(owner).getByRole("button", { name: "Replace image" })).toBeVisible()
+  await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeHidden()
 })

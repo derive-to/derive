@@ -1,5 +1,11 @@
-import type { ArtifactRecord, VersionRecord } from "@derive/core"
-import { EditError } from "@derive/core"
+import {
+  type ArtifactRecord,
+  EditError,
+  fingerprintOf,
+  roleOf,
+  scanElements,
+  type VersionRecord,
+} from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   EditConflictError,
@@ -178,6 +184,44 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     )
     expect(out.content).toBe("<p>The quick brown fox jumps over the sleepy dog.</p>")
     expect(out.filename).toBe("index.html")
+  })
+
+  it("applies resized media and typed text in one atomic inline-edit batch", async () => {
+    const html = '<img id="hero" src="hero.png" alt="Hero"><p>Old caption.</p>'
+    const descriptor = scanElements(html).find((d) => d.tag === "img")
+    expect(descriptor).toBeDefined()
+    if (!descriptor) return
+    const role = roleOf(descriptor)
+    const deps = mkDeps({ 1: { text: html, contentType: "text/html" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        {
+          op: "resize",
+          target: {
+            type: "ElementSelector",
+            tag: "img",
+            role,
+            id: descriptor.id,
+            fingerprint: fingerprintOf(descriptor),
+            ordinal: descriptor.ordinal,
+            docFraction: descriptor.srcFraction,
+            snapshot: { tag: "img", label: "Image — Hero" },
+          },
+          width: 360,
+          height: "auto",
+        },
+        {
+          quote: { exact: "Old", suffix: " caption" },
+          new_text: "New",
+        },
+      ],
+      1,
+    )
+    expect(out.content).toBe(
+      '<img id="hero" src="hero.png" alt="Hero" style="width: 360px; height: auto"><p>New caption.</p>',
+    )
   })
 
   it("refuses a batch that mixes quote edits with old_str edits", async () => {

@@ -118,6 +118,10 @@ export interface ElementDescriptor {
   parent: number
   /** Start offset in the HTML source / total length (0..1) — geometry proxy. */
   srcFraction: number
+  /** Exact opening-tag span in the stored source. Element edits use this to change
+   *  attributes without serializing (and therefore rewriting) the rest of the page. */
+  sourceStart: number
+  sourceEnd: number
 }
 
 export type ConfidenceBand = "high" | "medium" | "low"
@@ -428,6 +432,8 @@ export function scanElements(html: string): ElementDescriptor[] {
       index: order++,
       parent: stack.length ? (stack[stack.length - 1]?.d.index ?? -1) : -1,
       srcFraction: lt / total,
+      sourceStart: lt,
+      sourceEnd: end + 1,
     }
     out.push(d)
     if (selfClose || VOID_TAGS.has(tag)) continue

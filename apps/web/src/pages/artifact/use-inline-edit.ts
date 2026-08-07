@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useRef, useState } from "react"
-import { ApiError, type Artifact, api, type QuoteEditInput } from "@/api"
+import { ApiError, type Artifact, api, type InlineEditInput } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { canPublishArtifact } from "@/lib/artifact"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -19,9 +19,11 @@ export const unsavedEditsCopy = (n: number) => ({
 // the history than quoting tags at someone. (Reading `new_text` unconditionally used
 // to throw here — the save died before it reached the network, and the failure
 // surfaced as a bare "couldn't save".)
-const editMessage = (edits: QuoteEditInput[]): string => {
+const editMessage = (edits: InlineEditInput[]): string => {
   const first = edits[0]
   if (edits.length !== 1 || !first) return `Inline edits (${edits.length})`
+  if ("op" in first)
+    return `Resized ${first.target.snapshot?.label ?? first.target.tag} to ${first.width}px`
   if (first.new_text === undefined) return `Inline formatting: "${clip(first.quote.exact.trim())}"`
   return `Inline edit: "${clip(first.quote.exact.trim())}" → "${clip(first.new_text.trim())}"`
 }
@@ -74,6 +76,9 @@ export function useInlineEdit(p: {
    *  bundle, not GitHub-managed). Arms the document's own entry gesture: a
    *  double-click asks to edit there. A reader who can't save never fires one. */
   canEdit: boolean
+  /** The stored source can carry selector-scoped element operations. Markdown is
+   *  rendered as HTML in the frame, but does not support that source operation. */
+  allowElementEdits: boolean
 }) {
   // The version the rendered frame is pinned to while editing — the mode flag AND
   // the freeze in one value (active ⇔ non-null), so no exit path can ever leave
@@ -92,7 +97,7 @@ export function useInlineEdit(p: {
   dirtyRef.current = dirty
   const collectWait = useRef<{
     nonce: number
-    resolve: (e: QuoteEditInput[] | { desync: true }) => void
+    resolve: (e: InlineEditInput[] | { desync: true }) => void
     timer: number
   } | null>(null)
   const nonceSeq = useRef(0)
@@ -143,8 +148,8 @@ export function useInlineEdit(p: {
   // that check cannot do is distinguish the injected client from the artifact's OWN
   // scripts (they share the window), which is the protocol's standing model for
   // every message (select, anchor-click, deck…). The blast radius of a forged
-  // edit-edits is bounded: it can only alter TEXT of the artifact the author
-  // already controls (replacements are escaped / re-sanitized at render), the save
+  // edit-edits is bounded: it can alter escaped/sanitized text or the size of one
+  // confidently-matched element in the artifact the author already controls; the save
   // still requires this signed-in user's deliberate Save click, and the version
   // history records the exact spans changed.
   // biome-ignore lint/correctness/useExhaustiveDependencies: frameRef is a stable ref object; reading .current at event time is the point.
@@ -175,7 +180,7 @@ export function useInlineEdit(p: {
         if (!w || (d.nonce !== undefined && d.nonce !== w.nonce)) return
         collectWait.current = null
         clearTimeout(w.timer)
-        const edits = Array.isArray(d.edits) ? (d.edits as QuoteEditInput[]) : []
+        const edits = Array.isArray(d.edits) ? (d.edits as InlineEditInput[]) : []
         // Blocks the frame changed but could NOT express as an edit. Saving the rest
         // would publish some of the user's work and let the post-save reload wipe
         // the remainder — data loss presented as success. `uncaptured` is reported
@@ -213,7 +218,7 @@ export function useInlineEdit(p: {
     return () => window.removeEventListener("message", onMsg)
   }, [])
 
-  const collect = (): Promise<QuoteEditInput[] | { desync: true }> =>
+  const collect = (): Promise<InlineEditInput[] | { desync: true }> =>
     new Promise((resolve, reject) => {
       const nonce = ++nonceSeq.current
       const timer = window.setTimeout(() => {
@@ -236,7 +241,7 @@ export function useInlineEdit(p: {
     p.onEnter?.()
     setDirty(0)
     setFrozenVersion(p.art.current_version)
-    p.post({ type: "edit-mode", on: true, ...entry })
+    p.post({ type: "edit-mode", on: true, elementEdits: p.allowElementEdits, ...entry })
   }
   startRef.current = start
   // Tell the frame whether the document's own entry gesture is live. Re-posted on
@@ -432,6 +437,8 @@ export function useInlineEdit(p: {
     dirty,
     /** Live capability of the bar's controls (undo / redo / format). */
     tools,
+    /** Whether this source format can persist selector-scoped element operations. */
+    allowElementEdits: p.allowElementEdits,
     undo,
     redo,
     format,

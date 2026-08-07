@@ -1,4 +1,11 @@
-import type { LinkRole, Listed, Role, SortMode, WorkspaceAccess } from "@derive/core"
+import type {
+  ElementSelector,
+  LinkRole,
+  Listed,
+  Role,
+  SortMode,
+  WorkspaceAccess,
+} from "@derive/core"
 import type { components, paths } from "./api-types"
 import { takeBootResponse } from "./lib/boot-fetch"
 import { guestQuery } from "./lib/guest-id"
@@ -113,6 +120,15 @@ export interface QuoteEditInput {
    *  link. Sanitized server-side down to a five-tag allowlist. */
   new_html?: string
 }
+/** A source-safe resize emitted by the rendered editor. The element selector is
+ *  resolved against the base version; only that opening tag's size is changed. */
+export interface ElementResizeEditInput {
+  op: "resize"
+  target: ElementSelector
+  width: number
+  height: number | "auto"
+}
+export type InlineEditInput = QuoteEditInput | ElementResizeEditInput
 /** The other edit shape the server accepts: a literal string swap against the raw
  *  source. The inline editor uses it for exactly one thing — replacing an image's
  *  URL, which lives in an attribute and so has no visible text to quote. The two
@@ -1405,7 +1421,7 @@ export const api = {
   // silently mis-placed splice.
   publishEdits(
     id: string,
-    edits: (QuoteEditInput | StrEditInput)[],
+    edits: (InlineEditInput | StrEditInput)[],
     baseVersion: number,
     message: string,
   ): Promise<Artifact> {
@@ -1423,7 +1439,7 @@ export const api = {
   // The commenter path: the same quote edits, filed as a proposal for review.
   proposeEdits(
     id: string,
-    edits: QuoteEditInput[],
+    edits: InlineEditInput[],
     baseVersion: number,
     message: string,
   ): Promise<Proposal> {
