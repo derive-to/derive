@@ -89,7 +89,10 @@ export interface Renderer {
  * missing), and a screenshot of the result cannot tell them apart. The status code in the
  * error is the first evidence anyone will have about which.
  *
- * `null` is not an error: a same-document navigation legitimately yields no response.
+ * `null` carries no status, so the renderer also probes the loaded document before it
+ * screenshots. Cloudflare Browser Rendering can occasionally return null for an HTTP
+ * navigation; treating that alone as success is how a bare raw-route error page escaped
+ * this status guard.
  *
  * The URL carries a short-lived `pv` capability token, and this message reaches both the
  * log and a stored DB column, so the token is redacted rather than persisted.
@@ -99,6 +102,23 @@ export const assertNavigationOk = (res: { status(): number } | null, url: string
   if (status === undefined || status < 400) return
   throw new Error(
     `navigation returned HTTP ${status}; refusing to screenshot an error page (${url.replace(/\/pv\/[^/]+\//, "/pv/<redacted>/")})`,
+  )
+}
+
+/**
+ * Refuse the raw route's tiny service-error documents even when browser navigation did
+ * not expose an HTTP response. Legitimate HTML/markdown artifacts are served as
+ * `text/html`; this targets only the exact `text/plain` bodies emitted by raw.ts.
+ */
+export const assertRenderedDocumentOk = (
+  doc: { contentType: string; bodyText: string },
+  url: string,
+): void => {
+  const contentType = doc.contentType.split(";", 1)[0]?.trim().toLowerCase()
+  const body = doc.bodyText.trim().toLowerCase()
+  if (contentType !== "text/plain" || !["not found", "blob missing"].includes(body)) return
+  throw new Error(
+    `navigation rendered a ${body} service response; refusing to screenshot an error page (${url.replace(/\/pv\/[^/]+\//, "/pv/<redacted>/")})`,
   )
 }
 
