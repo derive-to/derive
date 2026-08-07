@@ -31,6 +31,7 @@ import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
+import { Route as ContextsNewRouteImport } from './routes/contexts.new'
 import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
 import { Route as ClaimTokenRouteImport } from './routes/claim.$token'
 import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
@@ -146,6 +147,11 @@ const InviteTokenRoute = InviteTokenRouteImport.update({
   path: '/invite/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ContextsNewRoute = ContextsNewRouteImport.update({
+  id: '/contexts/new',
+  path: '/contexts/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ContextsIdRoute = ContextsIdRouteImport.update({
   id: '/contexts/$id',
   path: '/contexts/$id',
@@ -188,6 +194,7 @@ export interface FileRoutesByFullPath {
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/contexts/$id': typeof ContextsIdRoute
+  '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
@@ -215,6 +222,7 @@ export interface FileRoutesByTo {
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/contexts/$id': typeof ContextsIdRoute
+  '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
@@ -244,6 +252,7 @@ export interface FileRoutesById {
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/contexts/$id': typeof ContextsIdRoute
+  '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/users/$handle': typeof UsersHandleRoute
@@ -274,6 +283,7 @@ export interface FileRouteTypes {
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/contexts/$id'
+    | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
@@ -301,6 +311,7 @@ export interface FileRouteTypes {
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/contexts/$id'
+    | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
@@ -329,6 +340,7 @@ export interface FileRouteTypes {
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/contexts/$id'
+    | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
     | '/users/$handle'
@@ -358,6 +370,7 @@ export interface RootRouteChildren {
   ArtifactsRefRoute: typeof ArtifactsRefRoute
   ClaimTokenRoute: typeof ClaimTokenRoute
   ContextsIdRoute: typeof ContextsIdRoute
+  ContextsNewRoute: typeof ContextsNewRoute
   InviteTokenRoute: typeof InviteTokenRoute
   UsersHandleRoute: typeof UsersHandleRoute
   ContextsIndexRoute: typeof ContextsIndexRoute
@@ -520,6 +533,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InviteTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/contexts/new': {
+      id: '/contexts/new'
+      path: '/contexts/new'
+      fullPath: '/contexts/new'
+      preLoaderRoute: typeof ContextsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/contexts/$id': {
       id: '/contexts/$id'
       path: '/contexts/$id'
@@ -586,6 +606,7 @@ const rootRouteChildren: RootRouteChildren = {
   ArtifactsRefRoute: ArtifactsRefRoute,
   ClaimTokenRoute: ClaimTokenRoute,
   ContextsIdRoute: ContextsIdRoute,
+  ContextsNewRoute: ContextsNewRoute,
   InviteTokenRoute: InviteTokenRoute,
   UsersHandleRoute: UsersHandleRoute,
   ContextsIndexRoute: ContextsIndexRoute,

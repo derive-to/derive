@@ -165,9 +165,9 @@ const unwrap = (result: unknown): unknown => {
  * "any"` keeps a `z.unknown()` parameter as an open value instead of throwing — refusing to
  * describe a tool because one field is untyped would drop the tool entirely.
  */
-const jsonSchemaOf = (inputSchema: Record<string, unknown>): Record<string, unknown> => {
+export const jsonSchemaOf = (schema: z.ZodType): Record<string, unknown> => {
   try {
-    return z.toJSONSchema(z.object(inputSchema as Record<string, z.ZodType>), {
+    return z.toJSONSchema(schema, {
       io: "input",
       unrepresentable: "any",
     }) as Record<string, unknown>
@@ -250,7 +250,7 @@ export const buildChatTools = (
     .map(([name, def]) => ({
       name,
       description: def.description,
-      params: jsonSchemaOf(def.inputSchema),
+      params: jsonSchemaOf(z.object(def.inputSchema as Record<string, z.ZodType>)),
     }))
   return {
     tools,

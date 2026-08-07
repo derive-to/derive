@@ -5100,7 +5100,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Open a chat session about the workspace (no context, no document). */
+        /** Open an attended workspace chat session. */
         post: {
             parameters: {
                 query?: never;
@@ -7119,6 +7119,23 @@ export interface components {
              * @enum {string}
              */
             lane?: "local";
+            /** @description The public context draft from the last builder tool call on this turn. */
+            card?: {
+                draft: {
+                    name: string;
+                    description: string;
+                    /** @enum {string} */
+                    kind: "knowledge" | "worker";
+                    knows: string[];
+                    answers: string;
+                    wont: string[];
+                    source_short_ids: string[];
+                };
+                created?: {
+                    context_id: string;
+                    name: string;
+                };
+            };
         } | null;
         ChatModel: {
             /** @description The provider's model id — what to send back to pick it. */
