@@ -41,7 +41,9 @@ import type { Sandbox } from "./lib/code-sandbox"
 import { answerDeriveMention } from "./lib/comment-turn"
 import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
-import type { ModelCatalog } from "./lib/model-catalog"
+import { INSTANCE_SETTINGS_ID } from "./lib/instance-settings"
+import { catalogOf, type GatewayConfig, type ModelCatalog } from "./lib/model-catalog"
+import { type ModelLibrary, modelSource, readLibrary } from "./lib/model-library"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
   clientIp,
@@ -175,8 +177,20 @@ export interface AppDeps {
    *  answers is a choice a person makes mid-conversation, not a property of the process: the
    *  workspace chat resolves the asker's pick through it, and records what answered.
    *
-   *  Unset ⇒ no model configured (the same state as `callModel` unset). See lib/model-catalog. */
+   *  Unset ⇒ no model configured (the same state as `callModel` unset). See lib/model-catalog.
+   *
+   *  This is the CONFIGURED catalog — the environment's, fixed for the life of the process.
+   *  Prefer `ctx.modelsFor()` on any path that answers a turn or offers a choice: it widens this
+   *  with the operator's live library, which is the whole point of the library existing. */
   models?: ModelCatalog
+  /** The operator's OpenAI-compatible gateway, when one is configured — the SAME value
+   *  `models` was built from.
+   *
+   *  Carried separately because the catalog interface deliberately exposes no way to build an
+   *  entry it does not already have, and reaching a model the environment never named is exactly
+   *  what the library does. Unset ⇒ the library can relabel and pin, but cannot ADD: an id with
+   *  no credential behind it would be offered as a choice that 401s on every turn. */
+  modelGateway?: GatewayConfig
   /** Workspace ids allowed to enable chat when `callModel` is set (an operator-paid gateway).
    *  Empty/undefined = no restriction, which is correct for a single-tenant box where the
    *  operator IS the user. On a shared host this is what stops any workspace owner from
@@ -1001,6 +1015,83 @@ export function buildContext(deps: AppDeps) {
     provisionPersonal,
   })
 
+  /**
+   * `callModel` and `models` are TWO VIEWS OF ONE CONFIGURATION, made so here rather than
+   * promised in a comment.
+   *
+   * Both entry points already build them from one construction — `callModel` is literally
+   * `models.resolve(null).callModel` in node.ts and worker.ts — but the invariant lived in those
+   * two files, so any deps object that set only `callModel` produced an app where half the lanes
+   * could answer and half reported "no model is configured". That is not hypothetical: it is
+   * exactly what every lane reading the catalog sees the moment it stops reading `callModel`.
+   *
+   * So a lone `callModel` becomes a one-entry catalog, and every lane can read the catalog
+   * unconditionally. A deploy that configures a gateway is unaffected — it passes `models` and
+   * this does nothing.
+   */
+  const configuredModels =
+    deps.models ??
+    (deps.callModel
+      ? catalogOf([
+          {
+            // Named, because an answer records which model wrote it and a transcript is read by
+            // people. There is no provider id to use: this branch exists precisely because the
+            // deploy named no catalog, so "default" is the honest answer rather than a fiction
+            // about which model it was.
+            id: "default",
+            label: "Default",
+            isDefault: true,
+            build: () => deps.callModel as NonNullable<typeof deps.callModel>,
+          },
+        ])
+      : undefined)
+
+  /**
+   * The instance row, read ONCE PER REQUEST.
+   *
+   * Not a cache with a TTL — a WeakMap on the Hono context, exactly as `currentUser`,
+   * `activeWorkspace` and `membership` are memoized here, so a new request always re-reads and
+   * an operator's pin still lands on the very next turn. What it removes is re-reading the SAME
+   * row several times inside ONE turn: the gate asks whether any model can serve, the turn asks
+   * which one is pinned, and the route validates a named id — three questions, one row, and on
+   * the hosted tier three Hyperdrive round trips on the path with a person waiting on it.
+   *
+   * Detached lanes (a comment mention, a Slack mention) have no request to hang this on and
+   * pass nothing, which reads once — which is what they did anyway.
+   */
+  const libCache = new WeakMap<object, Promise<ModelLibrary>>()
+  const libraryFor = (c?: object): Promise<ModelLibrary> => {
+    if (!c) return readLibrary(meta)
+    const hit = libCache.get(c)
+    if (hit) return hit
+    // The PROMISE is memoized, not the result: two lanes in one request can ask concurrently,
+    // and caching only on resolve would let both start their own read.
+    const pending = readLibrary(meta)
+    libCache.set(c, pending)
+    return pending
+  }
+
+  // See the doc on the returned property below.
+  const modelsFor = modelSource(configuredModels, deps.modelGateway, libraryFor)
+
+  /**
+   * A cookie's workspace id, unless it is the RESERVED instance-settings row.
+   *
+   * That row holds the deploy's model library and is operator-owned; it is not a tenant and
+   * must never resolve as one. Nothing today can point a signed-in caller at it — the cookie is
+   * only honored when a membership row already exists, and neither switch nor create can mint
+   * one for a non-`ws_` id — but "nothing today" is a conjunction of three separate checks in
+   * two files, and `ensureMembership` PROVISIONS OWNER on a workspace with no members. So one
+   * of those checks weakening turns a settings row into an escalation. This is the guardrail
+   * that does not depend on the others, at the one choke point every workspace-scoped route
+   * resolves through.
+   *
+   * An anonymous caller is filtered for the same reason and by the same rule: on an open
+   * instance the bootstrap org is trusted, and the reserved id is not that org.
+   */
+  const reserved = (id: string | undefined): string | undefined =>
+    id === INSTANCE_SETTINGS_ID ? undefined : id
+
   // The caller's active workspace for this request (memoized). Single mode: always
   // the bootstrap org. Multi mode: the derive_ws cookie (validated against
   // membership), else the user's first workspace, provisioning one if they have none.
@@ -1018,9 +1109,9 @@ export function buildContext(deps: AppDeps) {
       // can never disagree on the workspace.
       ws = ag.org_id
     } else if (!me) {
-      ws = getCookie(c, WS_COOKIE) || defaultOrg
+      ws = reserved(getCookie(c, WS_COOKIE)) || defaultOrg
     } else {
-      const ck = getCookie(c, WS_COOKIE)
+      const ck = reserved(getCookie(c, WS_COOKIE))
       if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
       else {
         const mine = await cachedWorkspaces(c, me.id)
@@ -1393,7 +1484,19 @@ export function buildContext(deps: AppDeps) {
     meta,
     blobs,
     callModel: deps.callModel,
-    models: deps.models,
+    models: configuredModels,
+    modelGateway: deps.modelGateway,
+    /**
+     * THE CATALOG A TURN CHOOSES FROM: the configured one, widened by the operator's live
+     * library. Every path that answers a turn or offers a choice goes through here rather than
+     * reading `models` — a model an operator added is otherwise invisible to the surface that
+     * would have used it, which is the whole feature not working.
+     *
+     * Not memoized per request on purpose. It is a single settings read, the same row the chat
+     * lane already reads for the pinned model, and the one property it must have is that the
+     * NEXT turn sees the change.
+     */
+    modelsFor,
     chatAllowlist: deps.chatAllowlist,
     search: deps.search,
     summarize: deps.summarize,
@@ -1421,13 +1524,13 @@ export function buildContext(deps: AppDeps) {
      * typed in the web app, over MCP, or in a synced Slack thread all reach the same turn.
      * Undefined when this deploy has no model, which is the honest "nothing answers" state.
      */
-    answerDeriveMention: deps.models
+    answerDeriveMention: configuredModels
       ? answerDeriveMention({
           meta,
           blobs,
           bus,
           baseUrl: deps.baseUrl,
-          models: deps.models,
+          models: modelsFor,
           notify,
           chatAllowlist: deps.chatAllowlist,
         })

@@ -503,12 +503,16 @@ export const pub = (
  */
 export const countingStore = (inner: MetaStore) => {
   const calls: string[] = []
+  /** The same calls WITH their arguments. A second array rather than a richer `calls`, because
+   *  `calls` is a string list two round-trip-budget suites already snapshot and compare. */
+  const withArgs: { method: string; args: unknown[] }[] = []
   const proxy = new Proxy(inner, {
     get(target, prop, recv) {
       const value = Reflect.get(target, prop, recv)
       if (typeof value !== "function" || typeof prop !== "string") return value
       return (...args: unknown[]) => {
         calls.push(prop)
+        withArgs.push({ method: prop, args })
         return (value as (...a: unknown[]) => unknown).apply(target, args)
       }
     },
@@ -519,8 +523,20 @@ export const countingStore = (inner: MetaStore) => {
     calls,
     reset: () => {
       calls.length = 0
+      withArgs.length = 0
     },
     /** How many times one method was called. */
     countOf: (method: string) => calls.filter((c) => c === method).length,
+    /**
+     * How many times one method was called WITH PARTICULAR ARGUMENTS.
+     *
+     * Some budgets are per-ROW rather than per-method: `getOrgSettings` is called for a
+     * workspace several times in a turn quite legitimately, while a second read of the reserved
+     * instance row in the same turn is the regression. Counting by name alone cannot tell those
+     * apart, and the alternative — a bespoke proxy in one test file — is the thing this helper
+     * exists to prevent (see above; patching methods measures nothing on Postgres).
+     */
+    countWhere: (method: string, match: (args: unknown[]) => boolean) =>
+      withArgs.filter((c) => c.method === method && match(c.args)).length,
   }
 }

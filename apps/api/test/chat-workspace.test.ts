@@ -1,9 +1,11 @@
+import type { MetaStore } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
-import { setInstanceChatModel } from "../src/lib/instance-settings"
+import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
 import { catalogOf } from "../src/lib/model-catalog"
+import { setInstanceSlot } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
-import { as, makeAuthedApp, publishAs } from "./helpers"
+import { as, countingStore, makeAuthedApp, publishAs } from "./helpers"
 
 // THE WORKSPACE CHAT, end to end through the real routes: open a session about no document at
 // all, and the model answers using Derive's own tools against the asker's real permissions.
@@ -19,6 +21,9 @@ const setup = async (
     system: string
     messages: { role: string; content: unknown }[]
     tools: { name: string }[]
+    /** The real contract carries this, and a scripted model that STREAMS is the only way to
+     *  exercise time-to-first-token. Optional, exactly as the adapters treat it. */
+    onDelta?: (text: string) => void
   }) => Promise<ModelTurn>,
   opts?: { chatBeta?: boolean; extraUsers?: { id: string; email: string; name: string }[] },
 ) => {
@@ -88,6 +93,97 @@ const ask = async (
   }
   return { res, session, msgs: await meta.listSessionMessages(session.id) }
 }
+
+describe("a streamed turn records time to first token", () => {
+  /**
+   * TTFT WAS SILENTLY NULL ON EVERY REAL TURN. `session-stream`'s `wrap` spreads the caller's
+   * input and then REPLACES `onDelta` with its own publisher, so the turn meter — composed
+   * around it — was never called back. Nothing failed: the answer arrived, `model_ms` was
+   * recorded, and the one number that predicts how chat FEELS was absent from every row of the
+   * operator's page. A missing measurement does not announce itself, which is exactly why this
+   * test exists and why it asserts a VALUE rather than a shape.
+   *
+   * Two things have to hold, and they are independent: the meter must sit inside the wrapper,
+   * and the wrapper must pass a caller's callback through. Either alone fixes today's bug; both
+   * together mean the next person to compose here cannot reintroduce it by choosing an order.
+   */
+  it("stores ttft_ms from the deltas the model actually streamed", async () => {
+    const { app, meta } = await setup("ws-ttft", async ({ onDelta }) => {
+      // A real stream: something arrives, then the rest of the turn happens.
+      onDelta?.("Hel")
+      await new Promise((r) => setTimeout(r, 30))
+      onDelta?.("lo")
+      return { text: "Hello", toolUses: [], costUsd: null, done: true }
+    })
+    const { msgs } = await ask(app, meta, "hi")
+    const answer = msgs.at(-1)
+    expect(answer?.author_kind).toBe("agent")
+    const stored = JSON.parse(answer?.meta ?? "{}") as {
+      ttft_ms?: number | null
+      model_ms?: number
+      model?: { id: string }
+    }
+    // A NUMBER, not merely a key: `null` is precisely what the bug produced.
+    expect(typeof stored.ttft_ms).toBe("number")
+    expect(stored.ttft_ms).toBeGreaterThanOrEqual(0)
+    // First token before the turn finished — the whole point of measuring the two separately.
+    expect(stored.ttft_ms as number).toBeLessThanOrEqual(stored.model_ms as number)
+    expect(stored.model?.id).toBe("model-a")
+  })
+})
+
+describe("what a workspace turn costs to route", () => {
+  /**
+   * A REGRESSION TEST WITH A NUMBER IN IT. The model library's first cut quietly TRIPLED this:
+   * the gate asked the library whether anything could answer, the turn asked which model was
+   * pinned, and the turn asked again for the catalog — three reads of ONE settings row on the
+   * attended path, where each is a Hyperdrive round trip on the hosted tier and somebody is
+   * waiting on all of them.
+   *
+   * Counted end to end through the real route, because the mechanism that holds it at one (a
+   * per-turn memo, and a gate that reads the CONFIGURED catalog since the library can only add
+   * to it) lives in two files and a unit test of either would miss the other. It found the third
+   * read the first time it ran.
+   *
+   * At the STORE BOUNDARY through the shared `countingStore`, and specifically NOT by assigning
+   * over `meta.getOrgSettings`: the pg store is itself a Proxy, so patching a method counts
+   * nothing there. This test made exactly that mistake first and passed on SQLite while
+   * measuring zero on Postgres — which is what the helper's own comment warns about.
+   */
+  // The same user `setup` seeds: the probe app's own store is discarded, so a user seeded
+  // only there is a member of nothing in the store the requests actually reach.
+  const owner = { id: "u-ws", email: "ws@x.com", name: "Wes" }
+  const answer = async () => ({ text: "hi", toolUses: [], costUsd: null, done: true })
+
+  it("reads the instance settings row ONCE for a whole turn", async () => {
+    const base = await setup("ws-read-count", answer)
+    const { proxy, countWhere, reset } = countingStore(base.meta as MetaStore)
+    // Its OWN name: two apps sharing one share a Postgres schema and race to create it. The
+    // probe's own store is built and never used — `deps.meta` overrides it with the wrapper.
+    const { app } = makeAuthedApp("ws-read-count-probe", [owner], undefined, {
+      deps: {
+        meta: proxy,
+        models: catalogOf([{ id: "model-a", label: "A", isDefault: true, build: () => answer }]),
+        rateLimiters: inMemoryRateLimiters(),
+      },
+    })
+    reset()
+    const { session } = await ask(app, base.meta, "hello", undefined, owner.email)
+    // WAIT LONGER THAN `ask` DOES, on purpose. Its 2s budget is generous on embedded SQLite and
+    // marginal on the Postgres lane, where the turn settles through a container — the surrounding
+    // suite's occasional reds there are that window, not the turn, which logs its outcome either
+    // way. A budget test that flakes gets deleted rather than read, so this one waits.
+    let msgs = await base.meta.listSessionMessages(session?.id ?? "")
+    for (let i = 0; i < 400 && !msgs.some((m) => m.author_kind === "agent"); i++) {
+      await new Promise((r) => setTimeout(r, 25))
+      msgs = await base.meta.listSessionMessages(session?.id ?? "")
+    }
+    // The turn really ran — a count of zero on a turn that never happened proves nothing, which
+    // is the OTHER way this assertion could pass while measuring nothing.
+    expect(msgs.at(-1)?.author_kind).toBe("agent")
+    expect(countWhere("getOrgSettings", (a) => a[0] === INSTANCE_SETTINGS_ID)).toBe(1)
+  })
+})
 
 describe("the workspace chat", () => {
   it("answers using the real find tool, over the asker's own artifacts", async () => {
@@ -382,7 +478,7 @@ describe("the workspace chat", () => {
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
 
     // The OPERATOR flips it, deploy-wide. No redeploy, no restart.
-    await setInstanceChatModel(meta, "model-b")
+    await setInstanceSlot(meta, "chat", "model-b")
     await app.request(`/v1/sessions/${session?.id}/messages`, {
       method: "POST",
       headers: { ...as("ws@x.com"), "content-type": "application/json" },
@@ -411,7 +507,7 @@ describe("the workspace chat", () => {
       costUsd: null,
       done: true,
     }))
-    await setInstanceChatModel(meta, "model-b")
+    await setInstanceSlot(meta, "chat", "model-b")
     const { msgs } = await ask(app, meta, "hi", { model: "model-a" })
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })
   })
@@ -424,7 +520,7 @@ describe("the workspace chat", () => {
       costUsd: null,
       done: true,
     }))
-    await setInstanceChatModel(meta, "not-a-real-model")
+    await setInstanceSlot(meta, "chat", "not-a-real-model")
     const { msgs } = await ask(app, meta, "hi")
     expect(msgs.at(-1)?.author_kind).toBe("agent")
     expect(JSON.parse(msgs.at(-1)?.meta ?? "{}").model).toMatchObject({ id: "model-a" })

@@ -99,7 +99,7 @@ const NO_THINKING = { reasoning: { enabled: false } } as const
  * mapping table of pretty names would be one more thing to keep in step with a provider's
  * catalog, and would be wrong the first time a model was renamed upstream.
  */
-const labelFor = (id: string): string => id.split("/").filter(Boolean).pop() ?? id
+export const labelFor = (id: string): string => id.split("/").filter(Boolean).pop() ?? id
 
 const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
   const seen = new Set([defaultModel])

@@ -1,6 +1,8 @@
 import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
+import { catalogOf } from "../src/lib/model-catalog"
+import { setInstanceSlot } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, makeAuthedApp } from "./helpers"
 
@@ -96,6 +98,109 @@ const chat = async (
   }
   return { session, msgs: await meta.listSessionMessages(session.id) }
 }
+
+describe("the document rail obeys the operator's deploy-wide model", () => {
+  /**
+   * This lane took `ctx.callModel` — the deploy's CONFIGURED default — directly, so the
+   * operator's live switch moved the workspace chat, the comment mention and Slack, and left
+   * the document rail answering on the old model while its own settings copy promised "across
+   * this whole deployment". A lever with a hole in it is worse than no lever, because it is
+   * trusted; these two tests are the hole.
+   */
+  const railSetup = async (name: string) => {
+    const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
+    const { app, meta } = makeAuthedApp(name, users, undefined, {
+      deps: {
+        models: catalogOf([
+          {
+            id: "old",
+            label: "Old",
+            isDefault: true,
+            build: () => async () => ({
+              text: "answered by old",
+              toolUses: [],
+              costUsd: null,
+              done: true,
+            }),
+          },
+          {
+            id: "new",
+            label: "New",
+            isDefault: false,
+            build: () => async () => ({
+              text: "answered by new",
+              toolUses: [],
+              costUsd: null,
+              done: true,
+            }),
+          },
+        ]),
+      },
+    })
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    const res = await app.request("/v1/artifacts", {
+      method: "POST",
+      headers: as("ed@x.com"),
+      body: (() => {
+        const f = new FormData()
+        f.set("file", new Blob(["# Original"], { type: "text/markdown" }), "doc.md")
+        f.set("title", "Doc")
+        return f
+      })(),
+    })
+    const artifact = (await res.json()) as { short_id: string }
+    const agent = await meta.createAgent({
+      id: newId("ag"),
+      org_id: "default",
+      name: `rail-${name}`,
+      created_by: "u-ed",
+      token: `tok-${name}`,
+      role: "editor",
+    })
+    const cx = await meta.createContext({
+      id: newId("cx"),
+      org_id: "default",
+      agent_id: agent.id,
+      name: `rail-${name}`,
+      manifest_artifact_id: (await meta.getByShortId(artifact.short_id))?.id ?? "",
+      created_by: "u-ed",
+    })
+    return { app, meta, artifact, cx }
+  }
+
+  const askRail = async (name: string, pin: string | null) => {
+    const { app, meta, artifact, cx } = await railSetup(name)
+    if (pin) await setInstanceSlot(meta, "chat", pin)
+    const { msgs } = await chat(
+      app,
+      meta,
+      cx.id,
+      { kind: "artifact", id: artifact.short_id },
+      "how long is it?",
+    )
+    return msgs.at(-1)
+  }
+
+  it("answers with the configured default when the operator has pinned nothing", async () => {
+    expect((await askRail("rail-default", null))?.body_md).toContain("answered by old")
+  })
+
+  it("answers with the operator's pin, and records WHICH model wrote it", async () => {
+    const last = await askRail("rail-pinned", "new")
+    expect(last?.body_md).toContain("answered by new")
+    // The rail never recorded a model, so a rail answer could not be attributed and its latency
+    // counted for nobody — which is the other half of this lane being invisible.
+    const meta = JSON.parse(last?.meta ?? "{}") as {
+      model?: { id: string }
+      model_ms?: number
+    }
+    expect(meta.model?.id).toBe("new")
+    expect(typeof meta.model_ms).toBe("number")
+  })
+})
 
 describe("chatting with a document", () => {
   it("edits it, and the agent replies in the transcript", async () => {

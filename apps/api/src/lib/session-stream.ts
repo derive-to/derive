@@ -206,6 +206,12 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
       return inner({
         ...input,
         onDelta: (text) => {
+          // PASS THE CALLER'S OWN onDelta THROUGH FIRST. This wrapper used to spread `...input`
+          // and then quietly replace the callback with its own, so anything else composed around
+          // it — the turn meter, most concretely — was never called back and silently reported
+          // nothing. A publisher is not the only thing that can want deltas, and swallowing a
+          // documented-optional callback is a trap for whoever composes next.
+          input.onDelta?.(text)
           // Once nobody is listening, stop even ACCUMULATING: the returned ModelTurn is the
           // answer, so buffering text no one will receive just holds memory for the turn.
           if (!text || !streaming || suppressed) return
