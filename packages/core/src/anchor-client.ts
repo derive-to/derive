@@ -1720,6 +1720,15 @@ interface ElReg {
   let editArmed = false
   let editTargets: EditTarget[] = []
   let resizeTargets: ResizeTarget[] = []
+  interface ResizeFocusable {
+    el: ResizableElement
+    tabindex: string | null
+  }
+  let resizeFocusables: ResizeFocusable[] = []
+  // Assigned by the resize controller below. Edit mode can only be entered after
+  // this client has finished evaluating, so both are live before either runs.
+  let enableResizeFocus = () => {}
+  let restoreResizeFocus = () => {}
   // The pre-edit snapshot. Nodes are joined with "\n" separators (and starts offsets
   // account for them) so a prefix/suffix window crossing a node seam carries
   // whitespace there — matching the server projection, which renders a space for
@@ -1918,6 +1927,33 @@ interface ElReg {
   }
   const keepsRatio = (el: Element): boolean => /^(img|video|canvas|svg)$/i.test(el.tagName)
 
+  /* Resize is direct manipulation, but it must not be pointer-only. During edit
+   * mode, supported elements join the document's tab order without changing the
+   * stored source. Focus selects the same overlay as hover/click, and Enter opens
+   * exact sizing. Every authored tabindex is restored byte-for-byte. */
+  enableResizeFocus = () => {
+    restoreResizeFocus()
+    if (!elementEditsOn) return
+    const candidates = document.querySelectorAll(`${DIRECT_RESIZABLE},div,section,article,aside`)
+    const seen = new Set<Element>()
+    for (let i = 0; i < candidates.length; i++) {
+      const el = candidates[i] as Element
+      const target = resizableAt(el)
+      if (target !== el || seen.has(el)) continue
+      seen.add(el)
+      resizeFocusables.push({ el: target, tabindex: target.getAttribute("tabindex") })
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "0")
+    }
+  }
+  restoreResizeFocus = () => {
+    for (const target of resizeFocusables) {
+      if (!document.contains(target.el)) continue
+      if (target.tabindex === null) target.el.removeAttribute("tabindex")
+      else target.el.setAttribute("tabindex", target.tabindex)
+    }
+    resizeFocusables = []
+  }
+
   const resizeBox = document.createElement("div")
   resizeBox.className = "derive-edit-ui derive-resize-box"
   const resizeReplace = document.createElement("button")
@@ -1933,7 +1969,7 @@ interface ElReg {
   resizeHandle.type = "button"
   resizeHandle.className = "derive-resize-handle"
   resizeHandle.setAttribute("aria-label", "Resize element")
-  resizeHandle.title = "Drag to resize"
+  resizeHandle.title = "Drag or use arrow keys to resize"
 
   const resizePanel = document.createElement("form")
   resizePanel.className = "derive-resize-panel"
@@ -2107,6 +2143,27 @@ interface ElReg {
       resizeWidth.select()
     })
   }
+  document.addEventListener("focusin", (e) => {
+    if (!editOn || !elementEditsOn) return
+    const active = asEl(e.target)
+    const target = resizableAt(active)
+    if (active && target === active) selectResize(target)
+  })
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (!editOn || !elementEditsOn || e.defaultPrevented || e.isComposing) return
+      if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return
+      const active = asEl(document.activeElement)
+      const target = resizableAt(active)
+      if (!active || target !== active) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      selectResize(target)
+      openPrecision()
+    },
+    true,
+  )
   const precisionValue = (input: HTMLInputElement): number | null => {
     input.setCustomValidity("")
     const value = input.valueAsNumber
@@ -2345,6 +2402,7 @@ interface ElReg {
     elementEditsOn = on && allowElementEdits
     if (on) {
       clearResizeUi()
+      enableResizeFocus()
       // The pre-edit snapshot every quote is built from. normalize() first so the
       // per-node offsets recorded at enable time can't be split later by typing.
       // "\n" between nodes: every node seam is a tag boundary in the source, which
@@ -2412,6 +2470,7 @@ interface ElReg {
     for (const t of editTargets) if (document.contains(t.el)) disableTarget(t)
     editTargets = []
     resizeTargets = []
+    restoreResizeFocus()
     clearResizeUi()
     if (lastDirty !== 0) {
       lastDirty = 0
@@ -2439,6 +2498,7 @@ interface ElReg {
     for (const t of resizeTargets) if (document.contains(t.el)) restoreStyle(t.el, t.origStyle)
     editTargets = []
     resizeTargets = []
+    restoreResizeFocus()
     clearResizeUi()
     if (lastDirty !== 0) {
       lastDirty = 0

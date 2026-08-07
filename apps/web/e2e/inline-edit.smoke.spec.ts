@@ -352,6 +352,30 @@ test("set exact dimensions, constrain a box, and reset to the authored size", as
   expect(src).toContain('style="display:block;width:160px;height:90px"')
 })
 
+test("keyboard users can discover resize controls and open exact sizing", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "keyboard-resize.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const image = doc(owner).locator("#hero")
+  // Done is the last control in the edit bar. The next Tab enters the artifact and
+  // lands on the first supported resizable element instead of skipping the frame.
+  await owner.getByTestId("inline-edit-done").focus()
+  await owner.keyboard.press("Tab")
+  await expect(image).toBeFocused()
+  await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeVisible()
+
+  await owner.keyboard.press("Enter")
+  const panel = doc(owner).getByRole("form", { name: "Element size" })
+  await expect(panel).toBeVisible()
+  await expect(panel.getByLabel("Width in pixels")).toBeFocused()
+  await expect(panel.getByLabel("Width in pixels")).toHaveValue("160")
+
+  await owner.keyboard.press("Escape")
+  await owner.getByTestId("inline-edit-done").click()
+  await expect(image).not.toHaveAttribute("tabindex")
+})
+
 test("Markdown keeps image replacement without offering an unsaveable resize", async ({
   owner,
 }) => {
