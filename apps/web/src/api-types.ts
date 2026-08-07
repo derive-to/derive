@@ -5056,46 +5056,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Open a chat session about the workspace (no context, no document). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The new session and its first message. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            session: components["schemas"]["Session"];
-                            messages: components["schemas"]["SessionMessage"][];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/context-builder-session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Open a guided conversation that ends in a new context. */
+        /** Open an attended workspace chat session. */
         post: {
             parameters: {
                 query?: never;
@@ -7114,22 +7075,18 @@ export interface components {
              * @enum {string}
              */
             lane?: "local";
-            /** @description The builder's draft card from the last draft_manifest / create_context_from_draft call this turn — mirrors BuilderCard in lib/context-builder-tools.ts, manifest_md deliberately omitted (never shown to the person). Only ever set on context-builder session turns. */
+            /** @description The public context draft from the last builder tool call on this turn. */
             card?: {
                 draft: {
                     name: string;
                     description: string;
                     /** @enum {string} */
                     kind: "knowledge" | "worker";
-                    /** @description Plain-language scope bullets — what it knows. */
                     knows: string[];
-                    /** @description How it answers. */
                     answers: string;
-                    /** @description Honest limits. */
                     wont: string[];
                     source_short_ids: string[];
                 };
-                /** @description Present once create_context_from_draft has actually minted the context. */
                 created?: {
                     context_id: string;
                     name: string;

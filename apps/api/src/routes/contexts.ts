@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto"
 import { refRouter } from "@derive/broker"
 import {
   type ContextAskerRecord,
@@ -37,9 +36,9 @@ import { chatArrival } from "../lib/chat-gate"
 import { buildChatTools, type ChatPrincipal, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
-import { cardForWire } from "../lib/context-builder-card"
+import { BuilderCardSchema, metaForWire } from "../lib/context-builder-card"
 import { buildContextBuilderTools, latestBuilderCard } from "../lib/context-builder-tools"
-import { sha256 } from "../lib/crypto"
+import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { bail, fail, readJson } from "../lib/http"
 import { getInstanceChatModel } from "../lib/instance-settings"
 import {
@@ -775,26 +774,9 @@ export const contextRoutes = (ctx: AppContext) => {
         .describe(
           "Stamped on a recorded answer: work that already ran on the owner's own machine, filed here rather than served through the queue. Mirrors automate record's run.meta.lane. Absent on every normally-served turn.",
         ),
-      card: z
-        .object({
-          draft: z.object({
-            name: z.string(),
-            description: z.string(),
-            kind: z.enum(["knowledge", "worker"]),
-            knows: z.array(z.string()).describe("Plain-language scope bullets — what it knows."),
-            answers: z.string().describe("How it answers."),
-            wont: z.array(z.string()).describe("Honest limits."),
-            source_short_ids: z.array(z.string()),
-          }),
-          created: z
-            .object({ context_id: z.string(), name: z.string() })
-            .optional()
-            .describe("Present once create_context_from_draft has actually minted the context."),
-        })
-        .optional()
-        .describe(
-          "The builder's draft card from the last draft_manifest / create_context_from_draft call this turn — mirrors BuilderCard in lib/context-builder-tools.ts, manifest_md deliberately omitted (never shown to the person). Only ever set on context-builder session turns.",
-        ),
+      card: BuilderCardSchema.optional().describe(
+        "The public context draft from the last builder tool call on this turn.",
+      ),
     })
     .openapi("SessionMeta")
 
@@ -904,25 +886,7 @@ export const contextRoutes = (ctx: AppContext) => {
   })
 
   const messageJson = (m: SessionMessageRecord) => {
-    // Stored as TEXT (see ports); parsed here so clients never re-parse. Only
-    // this route ever writes it (JSON.stringify), but a hand-edited row
-    // shouldn't 500 a whole transcript — treat unparseable meta as absent.
-    let meta: z.infer<typeof SessionMeta> | null = null
-    if (m.meta) {
-      try {
-        meta = JSON.parse(m.meta) as z.infer<typeof SessionMeta>
-      } catch {
-        meta = null
-      }
-    }
-    // THE ONE PLACE A BUILDER CARD BECOMES CLIENT-VISIBLE.
-    //
-    // The stored card carries what the NEXT turn needs — the manifest source the person
-    // approved, and the document already published for it (see StoredBuilderCard). Neither is
-    // anything a client has ever been offered, and the manifest source in particular is the one
-    // thing this whole flow exists to keep out of sight. `c.json` does not validate against
-    // SessionMeta, so the declared schema is documentation, not a filter: the filter is here.
-    if (meta?.card) meta = { ...meta, card: cardForWire(meta.card) as typeof meta.card }
+    const meta = metaForWire(m.meta) as z.infer<typeof SessionMeta> | null
     return {
       id: m.id,
       author_kind: m.author_kind,
@@ -1166,54 +1130,27 @@ export const contextRoutes = (ctx: AppContext) => {
       const manifest = await meta.getByShortId(b.manifest_short_id)
       if (!manifest || manifest.org_id !== org || !(await authorize(c, "share", manifest)))
         return bail(fail(c, 404, "no such artifact"))
-      // Auto-mint under the context-create gate (publish), deliberately below the
-      // roster's manage gate: the minted agent is managed:1, caps at editor, and
-      // acts on behalf of the CREATOR (created_by = owner) — the derived-cap rule
-      // (min of registrant standing and agent role) means it can never exceed what
-      // the creator already holds, so no privilege is conferred that `publish`
-      // didn't already carry. This is what kills the "pick an agent" step.
-      let agentId = b.agent_id ?? null
-      let agentToken: string | null = null
-      if (!agentId) {
-        agentToken = `dk_agt_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
-        const mint = (name: string) =>
-          meta.createAgent({
-            id: newId("ag"),
-            org_id: org,
-            name,
-            token: sha256(agentToken as string),
-            role: "editor",
-            created_by: owner,
-            managed: 1,
-          })
-        // Agent names are unique per workspace; a context named like an existing
-        // agent ("Analytics") must not 409 the whole create — suffix and move on.
-        const minted = await mint(b.name).catch(() => mint(`${b.name} ${randomUUID().slice(0, 4)}`))
-        agentId = minted.id
-      }
       try {
-        const created = await meta.createContext({
-          id: newId("ctx"),
-          org_id: org,
+        const made = await createContextCore(meta, {
+          orgId: org,
+          userId: owner,
           name: b.name,
-          agent_id: agentId,
-          manifest_artifact_id: manifest.id,
-          created_by: owner,
-          max_run_ms: b.max_run_ms ?? null,
-          ...(b.max_concurrency ? { max_concurrency: b.max_concurrency } : {}),
-          connection_ids: b.connection_ids?.length ? JSON.stringify(b.connection_ids) : null,
+          manifestArtifactId: manifest.id,
+          ...(b.agent_id ? { agentId: b.agent_id } : {}),
+          maxRunMs: b.max_run_ms,
+          maxConcurrency: b.max_concurrency,
+          connectionIds: b.connection_ids,
+          returnAgentToken: true,
         })
         return c.json(
           {
-            ...contextJson(created, manifest.short_id),
-            ...(agentToken ? { agent_token: agentToken } : {}),
+            ...contextJson(made.context, manifest.short_id),
+            ...(made.agentToken ? { agent_token: made.agentToken } : {}),
           },
           201,
         )
-      } catch {
-        // A name-collision 409 after an auto-mint must not strand an orphaned
-        // managed agent (and its live token) — unwind the mint with the create.
-        if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
+      } catch (error) {
+        if (!(error instanceof ContextConflictError)) throw error
         return bail(fail(c, 409, "a context with that name already exists"))
       }
     },
@@ -2049,7 +1986,7 @@ export const contextRoutes = (ctx: AppContext) => {
       method: "post",
       path: "/v1/chat-session",
       tags: ["Contexts"],
-      summary: "Open a chat session about the workspace (no context, no document).",
+      summary: "Open an attended workspace chat session.",
       responses: {
         201: {
           description: "The new session and its first message.",
@@ -2074,12 +2011,24 @@ export const contextRoutes = (ctx: AppContext) => {
             .max(200)
             .optional()
             .describe("A model id from /v1/chat/models; omitted = this deploy's default."),
+          purpose: z.enum(["context_builder"]).optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
       // EVERY rung, in one call: opt-in, allowlist, membership, rate limit, budget.
       const gate = await chatGates(c, b.workspace, me.id)
       if (gate) return bail(gate)
+      if (b.purpose === "context_builder") {
+        const seat = await meta.getMembership(b.workspace, me.id).catch(() => null)
+        if (!seat || !roleAllows(seat.role, "publish"))
+          return bail(
+            fail(
+              c,
+              403,
+              "You need permission to create things in this workspace before you can set up a context here. An Admin can change your access under Settings › Members.",
+            ),
+          )
+      }
       // A model named here must exist NOW — better a 400 the person can act on than a session
       // that opens and then answers with something they did not choose.
       if (b.model && !ctx.models?.resolve(b.model))
@@ -2087,107 +2036,18 @@ export const contextRoutes = (ctx: AppContext) => {
       const created = await meta.createSessionWithMessage(
         {
           id: newId("ses"),
-          // No context (nobody packaged this) and no subject (it is about the workspace).
+          // Builder sessions use a private marker; ordinary workspace chat has no subject.
           context_id: null,
           context_version: null,
           org_id: b.workspace,
           asker_id: me.id,
-          subject_ref: null,
+          subject_ref: b.purpose === "context_builder" ? BUILDER_SUBJECT : null,
         },
         { id: newId("sm"), author_kind: "asker", author_id: me.id, body_md: b.body_md },
         "open",
       )
       // Detached, exactly like the document lane: the transcript is what the surface follows,
       // so closing the tab mid-turn loses nothing.
-      await ctx.background(serveAttended(created.session, me, null, { modelId: b.model ?? null }))
-      return c.json(
-        { session: sessionJson(created.session), messages: [messageJson(created.message)] },
-        201,
-      )
-    },
-  )
-
-  // ── THE GUIDED CONTEXT-BUILDER CONVERSATION ─────────────────────────────────────────────
-  //
-  // A minimal sibling of the workspace chat route above: same gates, same envelope, same
-  // detached serve. The one difference lives entirely in what gets opened — `subject_ref:
-  // BUILDER_SUBJECT` rather than null — which `serveWorkspaceChat` reads to swap in the
-  // draft/create tool surface and the interview prompt for this one conversation. Follow-ups
-  // arrive through the ordinary `POST /v1/sessions/{id}/messages`, untouched: that route keys
-  // off the session row, never off which route opened it.
-
-  app.openapi(
-    createRoute({
-      method: "post",
-      path: "/v1/context-builder-session",
-      tags: ["Contexts"],
-      summary: "Open a guided conversation that ends in a new context.",
-      responses: {
-        201: {
-          description: "The new session and its first message.",
-          content: {
-            "application/json": {
-              schema: z.object({ session: Session, messages: z.array(SessionMessage) }),
-            },
-          },
-        },
-      },
-    }),
-    async (c) => {
-      const me = await requireUser(c)
-      if (me instanceof Response) return bail(me)
-      const b = await readJson(
-        c,
-        z.object({
-          workspace: z.string().describe("The workspace id this context is being built in."),
-          body_md: z.string().trim().min(1).max(20_000),
-          model: z
-            .string()
-            .max(200)
-            .optional()
-            .describe("A model id from /v1/chat/models; omitted = this deploy's default."),
-        }),
-      )
-      if (b instanceof Response) return bail(b)
-      // EVERY rung, in one call: opt-in, allowlist, membership, rate limit, budget. The exact
-      // gate the workspace chat walks — a builder conversation spends the same operator key.
-      const gate = await chatGates(c, b.workspace, me.id)
-      if (gate) return bail(gate)
-      // AND THE ONE RUNG CHAT DOES NOT HAVE: this conversation ends in a context, which the
-      // REST create route requires `publish` standing for (`requireWorkspace(c, "publish")`).
-      // Checked HERE, before a single question is asked, because the alternative is what the
-      // spec set out to avoid — interviewing someone for two minutes and refusing on the last
-      // step. The tool refuses too (context-builder-tools.ts), since a seat can be lowered
-      // mid-conversation; this is the up-front half, in plain language rather than a code.
-      //
-      // Read from the NAMED workspace rather than `requireWorkspace`, which resolves the
-      // caller's active one — this route takes the workspace in the body, and the two can
-      // differ for someone with several.
-      const seat = await meta.getMembership(b.workspace, me.id).catch(() => null)
-      if (!seat || !roleAllows(seat.role, "publish"))
-        return bail(
-          fail(
-            c,
-            403,
-            "You need permission to create things in this workspace before you can set up a context here. An Admin can change your access under Settings › Members.",
-          ),
-        )
-      if (b.model && !ctx.models?.resolve(b.model))
-        return bail(fail(c, 400, `unknown model "${b.model}"`))
-      const created = await meta.createSessionWithMessage(
-        {
-          id: newId("ses"),
-          // No context (nothing packaged yet — that is what this conversation is building) and
-          // no artifact subject: BUILDER_SUBJECT marks it instead, for the serve branch alone.
-          context_id: null,
-          context_version: null,
-          org_id: b.workspace,
-          asker_id: me.id,
-          subject_ref: BUILDER_SUBJECT,
-        },
-        { id: newId("sm"), author_kind: "asker", author_id: me.id, body_md: b.body_md },
-        "open",
-      )
       await ctx.background(serveAttended(created.session, me, null, { modelId: b.model ?? null }))
       return c.json(
         { session: sessionJson(created.session), messages: [messageJson(created.message)] },

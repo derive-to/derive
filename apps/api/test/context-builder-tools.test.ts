@@ -19,17 +19,24 @@ const draft = {
   manifest_md: "# Pricing Helper\n...",
   source_short_ids: [],
 }
+const ownerWho = {
+  org: "default",
+  user: { id: owner.id, name: owner.name },
+  seatRole: "owner" as const,
+}
+
+const setupOwner = async (name: string) => {
+  const made = makeAuthedApp(name, [owner])
+  await made.app.request("/v1/me", { headers: as(owner.email) })
+  return { ...made, surface: buildContextBuilderTools(made.ctx, ownerWho) }
+}
+
+const instructionArtifacts = (meta: ReturnType<typeof makeAuthedApp>["meta"]) =>
+  meta.listArtifacts({ orgId: "default", q: "context instructions" })
 
 describe("builder tool surface", () => {
   it("draft then create publishes the doc and creates the context", async () => {
-    const made = makeAuthedApp("builder-tools", [owner])
-    await made.app.request("/v1/me", { headers: as(owner.email) })
-    const { ctx: appCtx, meta } = made
-    const surface = buildContextBuilderTools(appCtx, {
-      org: "default",
-      user: { id: owner.id, name: owner.name },
-      seatRole: "owner",
-    })
+    const { meta, surface } = await setupOwner("builder-tools")
     expect(surface.tools.map((t) => t.name)).toEqual(
       expect.arrayContaining(["draft_manifest", "create_context_from_draft", "find", "read"]),
     )
@@ -61,35 +68,20 @@ describe("builder tool surface", () => {
   })
 
   it("create without a draft is a plain error, not a throw", async () => {
-    const made = makeAuthedApp("builder-tools-2", [owner])
-    await made.app.request("/v1/me", { headers: as(owner.email) })
-    const surface = buildContextBuilderTools(made.ctx, {
-      org: "default",
-      user: { id: owner.id, name: owner.name },
-      seatRole: "owner",
-    })
+    const { surface } = await setupOwner("builder-tools-2")
     const out = await surface.execute("create_context_from_draft", {})
     expect(out).toEqual({ error: "call draft_manifest first" })
   })
 
   it("a duplicate context name is a plain error result, not a throw", async () => {
-    const made = makeAuthedApp("builder-tools-3", [owner])
-    await made.app.request("/v1/me", { headers: as(owner.email) })
-    const surface = buildContextBuilderTools(made.ctx, {
-      org: "default",
-      user: { id: owner.id, name: owner.name },
-      seatRole: "owner",
-    })
+    const made = await setupOwner("builder-tools-3")
+    const { surface } = made
     await surface.execute("draft_manifest", draft)
     const first = (await surface.execute("create_context_from_draft", {})) as { ok: boolean }
     expect(first.ok).toBe(true)
 
     // Same draft (same name) again in a fresh surface sharing the same workspace.
-    const surface2 = buildContextBuilderTools(made.ctx, {
-      org: "default",
-      user: { id: owner.id, name: owner.name },
-      seatRole: "owner",
-    })
+    const surface2 = buildContextBuilderTools(made.ctx, ownerWho)
     await surface2.execute("draft_manifest", draft)
     const second = (await surface2.execute("create_context_from_draft", {})) as {
       error: string
@@ -128,9 +120,7 @@ describe("builder tool surface", () => {
     expect(out.error).not.toMatch(/manifest|short id|403|forbidden/i)
     // REFUSED BEFORE THE PUBLISH, which is the part that matters: a refusal that fires after
     // the document is written leaves an orphan behind every time somebody tries.
-    expect(await made.meta.listArtifacts({ orgId: "default", q: "context instructions" })).toEqual(
-      [],
-    )
+    expect(await instructionArtifacts(made.meta)).toEqual([])
   })
 
   it("under the killswitch nothing lands, and the draft still works", async () => {
@@ -147,58 +137,38 @@ describe("builder tool surface", () => {
     const out = (await surface.execute("create_context_from_draft", {})) as { error?: string }
     expect(out.error).toMatch(/paused/i)
     expect(out.error).not.toMatch(/manifest|short id|killswitch/i)
-    expect(await made.meta.listArtifacts({ orgId: "default", q: "context instructions" })).toEqual(
-      [],
-    )
+    expect(await instructionArtifacts(made.meta)).toEqual([])
   })
 
   it("a retry wires up the document it already published instead of a second copy", async () => {
-    const made = makeAuthedApp("builder-tools-retry", [owner])
-    await made.app.request("/v1/me", { headers: as(owner.email) })
-    const who = {
-      org: "default",
-      user: { id: owner.id, name: owner.name },
-      seatRole: "owner" as const,
-    }
+    const made = await setupOwner("builder-tools-retry")
     // Take the name first, so the create below fails AFTER the document is published.
-    const taken = buildContextBuilderTools(made.ctx, who)
+    const taken = buildContextBuilderTools(made.ctx, ownerWho)
     await taken.execute("draft_manifest", draft)
     await taken.execute("create_context_from_draft", {})
 
-    const surface = buildContextBuilderTools(made.ctx, who)
+    const surface = buildContextBuilderTools(made.ctx, ownerWho)
     await surface.execute("draft_manifest", draft)
     expect(await surface.execute("create_context_from_draft", {})).toMatchObject({
       error: "a context with that name already exists",
     })
-    const afterFirst = await made.meta.listArtifacts({
-      orgId: "default",
-      q: "context instructions",
-    })
+    const afterFirst = await instructionArtifacts(made.meta)
     // The failed attempt's document is REMEMBERED on the card, so the transcript can hand it to
     // the next attempt rather than leaving it orphaned.
     expect(surface.card()?.published_artifact_id).toBeTruthy()
 
     await surface.execute("create_context_from_draft", {})
-    const afterRetry = await made.meta.listArtifacts({
-      orgId: "default",
-      q: "context instructions",
-    })
+    const afterRetry = await instructionArtifacts(made.meta)
     expect(afterRetry.map((a) => a.id)).toEqual(afterFirst.map((a) => a.id))
   })
 
   it("a revision publishes its own document — the remembered one is not this text", async () => {
-    const made = makeAuthedApp("builder-tools-revise", [owner])
-    await made.app.request("/v1/me", { headers: as(owner.email) })
-    const who = {
-      org: "default",
-      user: { id: owner.id, name: owner.name },
-      seatRole: "owner" as const,
-    }
-    const taken = buildContextBuilderTools(made.ctx, who)
+    const made = await setupOwner("builder-tools-revise")
+    const taken = buildContextBuilderTools(made.ctx, ownerWho)
     await taken.execute("draft_manifest", draft)
     await taken.execute("create_context_from_draft", {})
 
-    const surface = buildContextBuilderTools(made.ctx, who)
+    const surface = buildContextBuilderTools(made.ctx, ownerWho)
     await surface.execute("draft_manifest", draft)
     await surface.execute("create_context_from_draft", {}) // collides, publishes + remembers
     const firstDoc = surface.card()?.published_artifact_id
@@ -211,32 +181,19 @@ describe("builder tool surface", () => {
     expect(made2?.name).toBe("Pricing Guide")
     // Wired to a document of ITS OWN, not to the one written for the name they abandoned.
     expect(made2?.manifest_artifact_id).not.toBe(firstDoc)
-    expect(
-      (await made.meta.listArtifacts({ orgId: "default", q: "context instructions" })).map(
-        (a) => a.id,
-      ),
-    ).toContain(firstDoc)
+    expect((await instructionArtifacts(made.meta)).map((a) => a.id)).toContain(firstDoc)
   })
 
   // ── THE DRAFT OUTLIVING ITS TURN ─────────────────────────────────────────────────────────
 
   it("seeds from the stored card, so a confirmation next turn needs no re-draft", async () => {
-    const made = makeAuthedApp("builder-tools-seed", [owner])
-    await made.app.request("/v1/me", { headers: as(owner.email) })
-    const first = buildContextBuilderTools(made.ctx, {
-      org: "default",
-      user: { id: owner.id, name: owner.name },
-      seatRole: "owner",
-    })
+    const made = await setupOwner("builder-tools-seed")
+    const first = made.surface
     await first.execute("draft_manifest", draft)
     const stored = first.card() as StoredBuilderCard
 
     // A NEW surface, as the next turn builds one — and no draft_manifest call on it at all.
-    const next = buildContextBuilderTools(
-      made.ctx,
-      { org: "default", user: { id: owner.id, name: owner.name }, seatRole: "owner" },
-      stored,
-    )
+    const next = buildContextBuilderTools(made.ctx, ownerWho, stored)
     const out = (await next.execute("create_context_from_draft", {})) as { context_id: string }
     expect((await made.meta.getContext(out.context_id))?.name).toBe("Pricing Helper")
   })
@@ -282,8 +239,8 @@ describe("builder tool surface", () => {
     // Everything a person sees survives, unchanged.
     expect(wire.draft).toMatchObject({ name: "Pricing Helper", knows: draft.knows })
     expect(wire.created).toEqual({ context_id: "ctx_1", name: "Pricing Helper" })
-    // A row of an unexpected shape is passed through rather than crashing a whole transcript.
+    // Unexpected shapes fail closed rather than leaking unknown stored fields.
     expect(cardForWire(null)).toBeNull()
-    expect(cardForWire({ draft: "nonsense" })).toEqual({ draft: "nonsense" })
+    expect(cardForWire({ draft: "nonsense" })).toBeNull()
   })
 })

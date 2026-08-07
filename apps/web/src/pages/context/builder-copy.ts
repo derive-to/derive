@@ -28,7 +28,6 @@ export const BUILDER_COPY = {
   // The card's own headings. Here rather than inline in context-card.tsx for the reason the
   // rest of this file exists: a heading is copy a person reads, so it has to face the same
   // sweep — inline JSX text is exactly where the vocabulary this flow bans would slip back in.
-  cardUntitled: "Untitled context",
   cardKnows: "What it knows",
   cardAnswers: "How it answers",
   cardWont: "What it won’t do",

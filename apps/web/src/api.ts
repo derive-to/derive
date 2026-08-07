@@ -319,6 +319,7 @@ export type ContextOutput =
   paths["/v1/contexts/{id}/outputs"]["get"]["responses"][200]["content"]["application/json"]["outputs"][number]
 /** The runner's structured payload on an agent message. Generated from the spec. */
 export type SessionMeta = components["schemas"]["SessionMeta"]
+export type BuilderCard = NonNullable<NonNullable<SessionMeta>["card"]>
 export type SessionMessage = components["schemas"]["SessionMessage"]
 /** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
 export type Session = components["schemas"]["Session"]
@@ -1013,14 +1014,13 @@ export const api = {
     agent_id?: string
     manifest_short_id: string
   }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
-  // Opens the guided context-builder conversation — an ordinary attended session the server
-  // marks as a builder, so it serves the turn with the draft/create tool surface and the
-  // interview voice. Follow-ups then go through postSessionMessage like any other session.
-  createBuilderSession: (input: {
+  createChatSession: (input: {
     workspace: string
     body_md: string
+    model?: string
+    purpose?: "context_builder"
   }): Promise<{ session: Session; messages: SessionMessage[] }> =>
-    f("/v1/context-builder-session", opts(input)).then(j),
+    f("/v1/chat-session", opts(input)).then(j),
   askContext: (
     id: string,
     body_md: string,
@@ -1074,8 +1074,12 @@ export const api = {
     context: { id: string; name: string }
     messages: SessionMessage[]
   }> => f(`/v1/sessions/${id}`, opts()).then(j),
-  postSessionMessage: (id: string, body_md: string): Promise<{ message: SessionMessage }> =>
-    f(`/v1/sessions/${id}/messages`, opts({ body_md })).then(j),
+  postSessionMessage: (
+    id: string,
+    body_md: string,
+    model?: string,
+  ): Promise<{ message: SessionMessage }> =>
+    f(`/v1/sessions/${id}/messages`, opts({ body_md, ...(model ? { model } : {}) })).then(j),
   closeSession: (id: string): Promise<{ session: Session }> =>
     f(`/v1/sessions/${id}`, { ...opts({ state: "closed" }), method: "PATCH" }).then(j),
 

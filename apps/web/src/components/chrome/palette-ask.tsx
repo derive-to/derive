@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useCallback, useEffect, useRef } from "react"
+import { api } from "@/api"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatThread } from "@/components/chat/chat-thread"
-import { json, useChatSession } from "@/components/chat/use-chat-session"
+import { useChatSession } from "@/components/chat/use-chat-session"
 import { Icon } from "@/components/icons"
 import { Kbd } from "@/components/ui/kbd"
 import { isInAppPath } from "@/lib/in-app-path"
@@ -64,11 +65,7 @@ export function PaletteAsk(props: {
   const org = ws?.id ?? ""
 
   const open = useCallback(
-    (body: string) =>
-      json<{ session: { id: string } }>("/v1/chat-session", {
-        method: "POST",
-        body: JSON.stringify({ workspace: org, body_md: body }),
-      }),
+    (body: string) => api.createChatSession({ workspace: org, body_md: body }),
     [org],
   )
   const chat = useChatSession({ open, resetKey: org })

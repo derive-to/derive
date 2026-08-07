@@ -1,6 +1,6 @@
 import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
 import { z } from "zod"
-import { cardForWire } from "../lib/context-builder-card"
+import { metaForWire } from "../lib/context-builder-card"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
@@ -198,20 +198,7 @@ export function registerUseTool(tc: ToolContext): void {
         // The last agent message is the ANSWER once settled, or the latest PROGRESS
         // tick while `working`. Stored as TEXT (see ports); a hand-edited row must not
         // 500 the tool — unparseable meta reads as absent.
-        const parseMeta = (row?: { meta: string | null }): unknown => {
-          if (!row?.meta) return null
-          try {
-            const parsed = JSON.parse(row.meta) as { card?: unknown }
-            // A builder card is stored WHOLE — the manifest source, the document already
-            // published for it — and stripped wherever it reaches a caller (the same
-            // `cardForWire` call messageJson in routes/contexts.ts makes). A builder session
-            // names no context, so it cannot be reached through `use` today; this holds the rule
-            // at the boundary rather than on that argument staying true.
-            return parsed?.card ? { ...parsed, card: cardForWire(parsed.card) } : parsed
-          } catch {
-            return null
-          }
-        }
+        const parseMeta = (row?: { meta: string | null }): unknown => metaForWire(row?.meta ?? null)
         const answerRow = isSettled(s.state) ? lastAgent : undefined
         const progressRow = s.state === "working" ? lastAgent : undefined
         const base = ctx.deps.baseUrl.replace(/\/$/, "")

@@ -1,21 +1,36 @@
 import { Link } from "@tanstack/react-router"
+import type { ReactNode } from "react"
+import type { BuilderCard } from "@/api"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { BUILDER_COPY } from "@/pages/context/builder-copy"
-import type { BuilderCardMeta } from "./builder-card"
 
-// THE CARD THE BUILDER CONVERSATION PRODUCES. The guided flow never shows the raw
-// manifest it is assembling — that document is jargon a first-timer has no reason to
-// read — so this is the one thing standing in for it: a live, human-facing preview of
-// the draft that updates turn over turn, rendered straight into the transcript so
-// answering a few questions visibly becomes a context rather than vanishing into a
-// tool call. Mirrors BuilderCard server-side (lib/context-builder-tools.ts); the
-// server deliberately never sends manifest_md down, so this only ever has the
-// human-facing scope fields to draw from. Matches the console rail card chrome
-// (`rounded-xl border bg-card p-3.5`) so it reads as the same object once the context
-// exists and the reader lands on its actual console.
-export function ContextCard({ card }: { card: BuilderCardMeta }) {
+function CardSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Eyebrow>{title}</Eyebrow>
+      {children}
+    </div>
+  )
+}
+
+function BulletList({ items }: { items: string[] }) {
+  return (
+    <ul className="flex flex-col gap-1 text-sm text-foreground">
+      {[...new Set(items)].map((item) => (
+        <li key={item} className="flex gap-1.5">
+          <span className="text-muted-foreground" aria-hidden>
+            •
+          </span>
+          {item}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+export function ContextCard({ card }: { card: BuilderCard }) {
   const { draft, created } = card
-  const kindLine = draft.kind === "knowledge" ? BUILDER_COPY.kindKnowledge : BUILDER_COPY.kindWorker
+  const hasKnowledge = draft.knows.length > 0 || draft.source_short_ids.length > 0
 
   return (
     <div
@@ -23,31 +38,13 @@ export function ContextCard({ card }: { card: BuilderCardMeta }) {
       data-testid="builder-context-card"
     >
       <div>
-        <p className="text-sm font-medium text-foreground">
-          {draft.name || BUILDER_COPY.cardUntitled}
-        </p>
-        {draft.description && (
-          <p className="mt-0.5 text-sm text-muted-foreground">{draft.description}</p>
-        )}
+        <p className="text-sm font-medium text-foreground">{draft.name}</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">{draft.description}</p>
       </div>
 
-      {/* Empty knows/sources on an early turn (the interview has not covered scope yet) —
-          the section simply doesn't render rather than showing a heading over nothing. */}
-      {(draft.knows.length > 0 || draft.source_short_ids.length > 0) && (
-        <div className="flex flex-col gap-1.5">
-          <Eyebrow>{BUILDER_COPY.cardKnows}</Eyebrow>
-          {draft.knows.length > 0 && (
-            <ul className="flex flex-col gap-1 text-sm text-foreground">
-              {draft.knows.map((k) => (
-                <li key={k} className="flex gap-1.5">
-                  <span className="text-muted-foreground" aria-hidden>
-                    •
-                  </span>
-                  {k}
-                </li>
-              ))}
-            </ul>
-          )}
+      {hasKnowledge && (
+        <CardSection title={BUILDER_COPY.cardKnows}>
+          {draft.knows.length > 0 && <BulletList items={draft.knows} />}
           {draft.source_short_ids.length > 0 && (
             <div className="flex flex-wrap gap-x-2.5 gap-y-1">
               {draft.source_short_ids.map((shortId) => (
@@ -62,36 +59,23 @@ export function ContextCard({ card }: { card: BuilderCardMeta }) {
               ))}
             </div>
           )}
-        </div>
+        </CardSection>
       )}
 
-      {draft.answers && (
-        <div className="flex flex-col gap-1.5">
-          <Eyebrow>{BUILDER_COPY.cardAnswers}</Eyebrow>
-          <p className="text-sm text-foreground">{draft.answers}</p>
-        </div>
-      )}
+      <CardSection title={BUILDER_COPY.cardAnswers}>
+        <p className="text-sm text-foreground">{draft.answers}</p>
+      </CardSection>
 
       {draft.wont.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <Eyebrow>{BUILDER_COPY.cardWont}</Eyebrow>
-          <ul className="flex flex-col gap-1 text-sm text-foreground">
-            {draft.wont.map((w) => (
-              <li key={w} className="flex gap-1.5">
-                <span className="text-muted-foreground" aria-hidden>
-                  •
-                </span>
-                {w}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <CardSection title={BUILDER_COPY.cardWont}>
+          <BulletList items={draft.wont} />
+        </CardSection>
       )}
 
-      <p className="text-xs text-muted-foreground">{kindLine}</p>
+      <p className="text-xs text-muted-foreground">
+        {draft.kind === "knowledge" ? BUILDER_COPY.kindKnowledge : BUILDER_COPY.kindWorker}
+      </p>
 
-      {/* Only the created state gets a footer — a still-drafting card has nowhere to
-          send anyone yet, so it simply ends at the kind line above. */}
       {created && (
         <Link
           to="/contexts/$id"

@@ -2893,10 +2893,14 @@
                 "type": "object",
                 "properties": {
                   "name": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
                   },
                   "description": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 280
                   },
                   "kind": {
                     "type": "string",
@@ -2908,26 +2912,33 @@
                   "knows": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
                     },
-                    "description": "Plain-language scope bullets — what it knows."
+                    "maxItems": 20
                   },
                   "answers": {
                     "type": "string",
-                    "description": "How it answers."
+                    "minLength": 1,
+                    "maxLength": 280
                   },
                   "wont": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
                     },
-                    "description": "Honest limits."
+                    "maxItems": 20
                   },
                   "source_short_ids": {
                     "type": "array",
                     "items": {
-                      "type": "string"
-                    }
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "maxItems": 50
                   }
                 },
                 "required": [
@@ -2953,14 +2964,13 @@
                 "required": [
                   "context_id",
                   "name"
-                ],
-                "description": "Present once create_context_from_draft has actually minted the context."
+                ]
               }
             },
             "required": [
               "draft"
             ],
-            "description": "The builder's draft card from the last draft_manifest / create_context_from_draft call this turn — mirrors BuilderCard in lib/context-builder-tools.ts, manifest_md deliberately omitted (never shown to the person). Only ever set on context-builder session turns."
+            "description": "The public context draft from the last builder tool call on this turn."
           }
         },
         "description": "Structured answer payload on agent messages; null on asker messages."
@@ -8418,42 +8428,7 @@
         "tags": [
           "Contexts"
         ],
-        "summary": "Open a chat session about the workspace (no context, no document).",
-        "responses": {
-          "201": {
-            "description": "The new session and its first message.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "session": {
-                      "$ref": "#/components/schemas/Session"
-                    },
-                    "messages": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/SessionMessage"
-                      }
-                    }
-                  },
-                  "required": [
-                    "session",
-                    "messages"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/context-builder-session": {
-      "post": {
-        "tags": [
-          "Contexts"
-        ],
-        "summary": "Open a guided conversation that ends in a new context.",
+        "summary": "Open an attended workspace chat session.",
         "responses": {
           "201": {
             "description": "The new session and its first message.",

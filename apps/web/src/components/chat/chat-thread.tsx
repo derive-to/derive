@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { SessionMeta } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { isInAppPath } from "@/lib/in-app-path"
@@ -8,7 +9,6 @@ import { REVEAL } from "@/lib/interaction"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
 import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
-import type { BuilderCardMeta } from "./builder-card"
 import { ContextCard } from "./context-card"
 
 // THE TRANSCRIPT, shared by every chat surface: the rail on a document and the workspace chat
@@ -20,15 +20,7 @@ export interface ChatMessage {
   author_kind: "asker" | "agent"
   body_md: string
   created_at: string
-  /** The turn's structured payload on an agent message. Carries which MODEL answered, which is
-   *  how a surface can show what a conversation is running on without a second request. `card`
-   *  is only ever set on a context-builder session's agent turns — the draft (or, once minted,
-   *  the created context) that turn's tool call produced. */
-  meta?: {
-    model?: { id: string; label: string }
-    tools?: string[]
-    card?: BuilderCardMeta | null
-  } | null
+  meta?: SessionMeta
 }
 
 /** Poll while a turn is in flight, stop when it settles. Cheap, and it survives a reload —

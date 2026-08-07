@@ -1,28 +1,64 @@
-/**
- * THE WIRE VIEW of a guided-builder card — the strip that every read-out path shares.
- *
- * The card is STORED whole on the agent message (see `StoredBuilderCard` in
- * context-builder-tools.ts) because the NEXT turn needs the manifest source the person approved
- * and the document already published for it. Neither has ever been part of the client contract,
- * and the manifest source in particular is the one thing the whole guided flow exists to keep
- * out of sight.
- *
- * Its own module, importing nothing, because both ends need it: the builder that writes cards
- * and the readers that serve them (routes/contexts.ts's `messageJson`, the `use` tool's answer
- * payload). Beside the builder it would drag that module's imports into the MCP tool tree and
- * close a dependency cycle — and the one thing this must not be is inconvenient to reach,
- * because a reader that skips it leaks.
- *
- * Deliberately untyped in and out, and defensive about shape: this runs on rows read back out of
- * the store, which a migration, a hand edit or an older writer could have shaped differently.
- * Dropping unknown internals is the safe failure; passing a manifest through because the row
- * looked odd is not.
- */
-export const cardForWire = (card: unknown): unknown => {
-  if (!card || typeof card !== "object" || Array.isArray(card)) return card
-  const { published_artifact_id: _published, ...rest } = card as Record<string, unknown>
-  const draft = rest.draft
-  if (!draft || typeof draft !== "object" || Array.isArray(draft)) return rest
-  const { manifest_md: _manifest, ...publicDraft } = draft as Record<string, unknown>
-  return { ...rest, draft: publicDraft }
+import { z } from "zod"
+
+const shortText = z.string().trim().min(1).max(200)
+
+export const PublicContextDraftSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().min(1).max(280),
+  kind: z.enum(["knowledge", "worker"]),
+  knows: z.array(shortText).max(20),
+  answers: z.string().trim().min(1).max(280),
+  wont: z.array(shortText).max(20),
+  source_short_ids: z.array(z.string().max(64)).max(50),
+})
+
+export const ContextDraftSchema = PublicContextDraftSchema.extend({
+  manifest_md: z.string().min(1).max(200_000),
+})
+
+const CreatedContextSchema = z.object({ context_id: z.string(), name: z.string() })
+
+export const BuilderCardSchema = z.object({
+  draft: PublicContextDraftSchema,
+  created: CreatedContextSchema.optional(),
+})
+
+export const StoredBuilderCardSchema = BuilderCardSchema.extend({
+  draft: ContextDraftSchema,
+  published_artifact_id: z.string().optional(),
+})
+
+export type ContextDraft = z.infer<typeof ContextDraftSchema>
+export type BuilderCard = z.infer<typeof BuilderCardSchema>
+export type StoredBuilderCard = z.infer<typeof StoredBuilderCardSchema>
+
+const jsonObject = (raw: string | null): Record<string, unknown> | null => {
+  if (!raw) return null
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Return only the schema-approved public card fields. Unknown stored fields are dropped. */
+export const cardForWire = (card: unknown): BuilderCard | null =>
+  BuilderCardSchema.safeParse(card).data ?? null
+
+/** Read the latest usable draft state from one stored message payload. */
+export const storedCardFromMeta = (raw: string | null): StoredBuilderCard | null => {
+  const meta = jsonObject(raw)
+  return StoredBuilderCardSchema.safeParse(meta?.card).data ?? null
+}
+
+/** Parse message metadata and replace any stored builder card with its public projection. */
+export const metaForWire = (raw: string | null): Record<string, unknown> | null => {
+  const meta = jsonObject(raw)
+  if (!meta || !("card" in meta)) return meta
+  const { card, ...rest } = meta
+  const publicCard = cardForWire(card)
+  return publicCard ? { ...rest, card: publicCard } : rest
 }

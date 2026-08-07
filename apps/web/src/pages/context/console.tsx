@@ -47,9 +47,9 @@ import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
-import { BUILDER_COPY } from "./builder-copy"
 import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
+import { runnerStatus } from "./runner-status"
 
 // The context console: a context's HOME, not a bare chat widget — what it is (the
 // manifest), what it can do (the skills it pins), where it runs (its owner's own
@@ -509,28 +509,19 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
     const t = setInterval(() => setTick((n) => n + 1), 30_000)
     return () => clearInterval(t)
   }, [])
-  const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
-  const online = !!seenAt && age < 90_000
+  const status = runnerStatus(seenAt)
   // Same words as the card below it (RunnerCard): one state should not have two names on one
   // page, and "runner online" names our machinery rather than what it means for the reader.
-  const [dot, label] = online
+  const [dot, label] = status.online
     ? ["bg-success", "taking on work"]
-    : seenAt && age < 600_000
-      ? ["bg-warning", `last here ${ago(seenAt)}`]
+    : status.away
+      ? ["bg-warning", `last here ${ago(seenAt as string)}`]
       : ["bg-muted-foreground", `not taking on work${seenAt ? ` — last here ${ago(seenAt)}` : ""}`]
-  // Same three-way read as the directory's dot (index.tsx): a hover explains what the
-  // state actually means for asking this context something, not just what the runner
-  // is doing.
-  const title = online
-    ? BUILDER_COPY.statusOnline
-    : seenAt
-      ? BUILDER_COPY.statusOffline
-      : BUILDER_COPY.statusNever
   return (
     <span
       data-testid="console-runner-liveness"
       className="flex items-center gap-1.5 text-xs text-muted-foreground"
-      title={title}
+      title={status.title}
     >
       <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
       {label}
@@ -566,12 +557,10 @@ function RunnerCard({
   onDoneRotate: () => void
 }) {
   const seenAt = context.runner_seen_at
-  const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
-  const online = age < 90_000
-  const away = !online && age < 600_000
-  const [dot, status] = online
+  const state = runnerStatus(seenAt)
+  const [dot, status] = state.online
     ? ["bg-success", `taking on work now — checked ${ago(seenAt as string)}`]
-    : away
+    : state.away
       ? ["bg-warning", `quiet just now — last here ${ago(seenAt as string)}`]
       : [
           "bg-muted-foreground",
@@ -591,7 +580,7 @@ function RunnerCard({
       <p className="text-xs text-muted-foreground">
         Reading what this context knows always works. Taking on a task is different: that happens on
         a real machine someone keeps connected.{" "}
-        {online
+        {state.online
           ? "One is connected, so tasks usually come back within minutes."
           : "None is connected right now, so tasks wait in line and run once one is."}
       </p>

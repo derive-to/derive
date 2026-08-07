@@ -1,7 +1,7 @@
 # Contexts: guided, conversational creation — design
 
 **Date:** 2026-08-05
-**Status:** approved by Connor (chat brainstorm), pending spec review
+**Status:** implemented by PR #650
 **Problem:** Building a first context today requires knowing the whole concept stack up front. The create form asks for a "manifest short id" (you must have authored and published a manifest artifact elsewhere, with no guidance on what it should contain), and success hands you a one-time runner token plus `derive runner serve` CLI instructions. A non-technical user hits two walls — "what is a manifest" and "what do I do with this token" — before any win.
 
 **Goal / success test:** Someone who does not use LLMs regularly, on hosted Derive, has a conversation with Derive in the browser, approves a summary, and owns a working context their team's agents can read. Under two minutes, zero terminal, zero jargon. It should feel like briefing a teammate, not filling in a form.
