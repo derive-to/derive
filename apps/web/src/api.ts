@@ -864,6 +864,12 @@ export const api = {
     f(`/v1/drafts/claim/${encodeURIComponent(token)}`, opts()).then(j),
   claimDraft: (token: string): Promise<{ short_id: string; url: string; org_id: string }> =>
     f("/v1/drafts/claim", opts({ token })).then(j),
+  // "Use this as a template": copy the artifact into the active workspace (signed-in
+  // only — the viewer defers a signed-out clicker through login with `?use=1`).
+  deriveArtifact: (
+    id: string,
+  ): Promise<{ short_id: string; title: string | null; url: string; org_id: string }> =>
+    f(`/v1/artifacts/${encodeURIComponent(id)}/use`, opts({})).then(j),
 
   // Per-artifact vanity subdomains (`base` null when off) + the workspace's custom
   // domains shown read-only as the artifact's URL on each.

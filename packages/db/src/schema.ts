@@ -106,6 +106,10 @@ export const artifact = sqliteTable("artifact", {
   // GitHub-synced versions (attributed via author_gh_id), static-token, and legacy rows.
   // Drives the profile work-list + people-follow. Nullable so it ALTER ADDs cleanly.
   author_id: text("author_id"),
+  // Remix lineage: the artifact id this one was derived from ("Use this as a
+  // template"). Deliberately not an FK — the source may be deleted later and the
+  // copy must survive it. Nullable, no default, so it ALTER ADDs cleanly.
+  derived_from: text("derived_from"),
 })
 
 export const version = sqliteTable(

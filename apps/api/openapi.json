@@ -4913,6 +4913,58 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/use": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Copy this artifact into your workspace (use it as a template).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new copy's identity and workspace home.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "short_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "The copy's permanent URL in your workspace."
+                    },
+                    "org_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "short_id",
+                    "title",
+                    "url",
+                    "org_id"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/preview": {
       "post": {
         "tags": [

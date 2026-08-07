@@ -171,6 +171,9 @@ export interface ArtifactRecord {
    *  static-token publishes, and legacy rows. Lets a person's profile + people-follow
    *  surface their hand-published work. */
   author_id: string | null
+  /** Remix lineage: the artifact id this one was derived from ("use as template").
+   *  Null for ordinary artifacts. Not an FK — the copy outlives a deleted source. */
+  derived_from: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -411,6 +414,9 @@ export interface NewArtifact {
   spa: 0 | 1
   /** Expiring anonymous draft: ISO expiry instant. Omit for ordinary artifacts. */
   expires_at?: string | null
+  /** Remix lineage: the artifact id this one was derived from ("use as template").
+   *  Omit for ordinary artifacts; never an FK — the copy outlives its source. */
+  derived_from?: string | null
 }
 
 /** Which surface created a version: the web app, the MCP publish tool, the HTTP API

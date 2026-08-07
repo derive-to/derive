@@ -40,6 +40,7 @@ import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
 import { useArtifactChat } from "./lib/use-artifact-chat"
+import { takeUseIntent } from "./lib/use-intent"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -133,6 +134,42 @@ export function Artifact() {
     error,
     refetch,
   } = useQuery(artifactQuery(shortId, qc))
+
+  // Deferred use-as-template: the public viewer's "Make your own" sends a signed-out
+  // clicker through login with `?use=1`, and the copy fires here, right after auth.
+  // The same-tab marker gates it — `?use=1` alone is a shareable URL, and a pasted
+  // link must not write into the clicker's workspace (see lib/use-intent.ts). Fired
+  // at most once per mount; success replaces the URL with the copy's, anything else
+  // (no marker, still anonymous, refused) strips the flag and shows the page as-is.
+  const useFired = useRef(false)
+  useEffect(() => {
+    if (!search.use || loading || useFired.current) return
+    useFired.current = true
+    const strip = () =>
+      nav({
+        to: "/artifacts/$ref",
+        params: { ref },
+        search: (s) => ({ ...s, use: undefined }),
+        replace: true,
+      })
+    if (!me || !takeUseIntent(shortId)) {
+      strip()
+      return
+    }
+    api
+      .deriveArtifact(shortId)
+      .then((r) =>
+        nav({
+          to: "/artifacts/$ref",
+          params: { ref: refFor({ short_id: r.short_id, title: r.title }) },
+          replace: true,
+        }),
+      )
+      .catch(() => {
+        toast.error("Couldn't copy this artifact into your workspace")
+        strip()
+      })
+  }, [search.use, loading, me, shortId, ref, nav])
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
   // Comments are signed-in-only (the API 404s anon by design) — don't fire the

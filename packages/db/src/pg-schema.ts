@@ -78,6 +78,9 @@ export const artifact = pgTable("artifact", {
   // The Derive user who last published this by hand; null for sync/token/legacy. Mirrors
   // schema.ts — drives the profile work-list + people-follow.
   author_id: text("author_id"),
+  // Remix lineage: the artifact id this was derived from. Not an FK (the source may be
+  // deleted; the copy survives). Nullable, no default — ADD COLUMN IF NOT EXISTS clean.
+  derived_from: text("derived_from"),
 })
 
 export const version = pgTable(
