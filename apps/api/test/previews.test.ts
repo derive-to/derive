@@ -13,6 +13,7 @@ import { sha256Hex } from "@derive/core"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   assertNavigationOk,
+  assertRenderedDocumentOk,
   enqueueRender,
   MAX_ATTEMPTS,
   runRenderTick,
@@ -347,6 +348,45 @@ describe("previews: refusing to screenshot an error page", () => {
     // Still names WHICH artifact and version, which is the part that makes it diagnosable.
     expect(msg).toContain("ab12cd34")
     expect(msg).toContain("/v/7/")
+  })
+
+  it("rejects the raw route's service-error document when navigation has no status", () => {
+    const url = "https://x.test/raw/ab12cd34/v/7/pv/eyJhbGciOi.SECRETSIG/index.html"
+    expect(() =>
+      assertRenderedDocumentOk(
+        { contentType: "text/plain; charset=UTF-8", bodyText: "not found" },
+        url,
+      ),
+    ).toThrow(/navigation rendered a not found service response/)
+    expect(() =>
+      assertRenderedDocumentOk({ contentType: "text/plain", bodyText: "  BLOB MISSING\n" }, url),
+    ).toThrow(/navigation rendered a blob missing service response/)
+  })
+
+  it("does not confuse legitimate artifact content with a raw-route service error", () => {
+    const url = "https://x.test/raw/ab12cd34/v/7/pv/SIGNED.TOKEN/index.html"
+    expect(() =>
+      assertRenderedDocumentOk({ contentType: "text/html", bodyText: "not found" }, url),
+    ).not.toThrow()
+    expect(() =>
+      assertRenderedDocumentOk(
+        { contentType: "text/plain", bodyText: "The customer says not found" },
+        url,
+      ),
+    ).not.toThrow()
+  })
+
+  it("redacts the preview capability token from document-probe failures", () => {
+    const url = "https://x.test/raw/ab12cd34/v/7/pv/eyJhbGciOi.SECRETSIG/index.html"
+    let msg = ""
+    try {
+      assertRenderedDocumentOk({ contentType: "text/plain", bodyText: "not found" }, url)
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    expect(msg).toContain("/pv/<redacted>/")
+    expect(msg).not.toContain("SECRETSIG")
+    expect(msg).not.toContain("eyJhbGciOi")
   })
 })
 
