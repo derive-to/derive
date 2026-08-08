@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/api"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { instanceChatModelQuery } from "@/lib/queries"
@@ -46,15 +46,11 @@ export function ModelsSection() {
       {/* Without the catalog there is nothing to choose BETWEEN, and guessing at it would offer a
           switch that cannot be trusted — say so and let them retry. */}
       {isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load the models"
+        <LoadError
+          title="Couldn’t load the models"
           description="The list of models this deployment can answer with didn't load, so there is nothing to choose between."
-          action={
-            <Button size="sm" onClick={() => void refetch()} data-testid="chat-models-retry">
-              Try again
-            </Button>
-          }
+          testId="chat-models-retry"
+          onRetry={() => void refetch()}
         />
       ) : (
         <SettingsGroup>

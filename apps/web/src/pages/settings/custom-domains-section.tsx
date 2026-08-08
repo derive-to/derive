@@ -3,8 +3,8 @@ import { useState } from "react"
 import { api, type WorkspaceDomain } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,20 +31,10 @@ export function CustomDomainsSection() {
   if (isError)
     return (
       <SettingsSection title="Domains" description={description}>
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load domains"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="custom-domains-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load domains"
+          testId="custom-domains-retry"
+          onRetry={() => refetch()}
         />
       </SettingsSection>
     )

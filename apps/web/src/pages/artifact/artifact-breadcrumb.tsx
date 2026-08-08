@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { canRenameArtifact } from "@/lib/artifact"
+import { bareHotkey } from "@/lib/hotkey"
 import {
   artifactQuery,
   collectionFoldersQuery,
@@ -167,16 +168,12 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
 
   // `[` / `]` page prev/next — free keys (arrows are taken for slide decks). Off in focus
   // mode (the header is hidden — silent paging would eject you from a presented deck).
-  // Ignore while typing or with a dialog / menu / listbox open, and don't fight modified
-  // chords.
+  // bareHotkey owns the "may a bare key act" guard (typing, dialogs, open menus).
   useEffect(() => {
     if (focusMode || !contextId || (!prev && !next)) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key !== "[" && e.key !== "]") return
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return
-      if (document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) return
+      if (!bareHotkey(e)) return
       e.preventDefault()
       goto(e.key === "[" ? prev : next)
     }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { SessionMeta } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { useCopy } from "@/lib/clipboard"
 import { isInAppPath } from "@/lib/in-app-path"
 import { REVEAL } from "@/lib/interaction"
 import { cn } from "@/lib/utils"
@@ -187,17 +188,12 @@ const traceOf = (tools: string[] | undefined): string | null => {
 
 function Bubble({ msg }: { msg: ChatMessage }) {
   const mine = msg.author_kind === "asker"
-  const [copied, setCopied] = useState(false)
+  const { copied, copy: copyToClipboard } = useCopy(1200)
   const trace = mine ? null : traceOf(msg.meta?.tools)
   // The MARKDOWN, not the rendered text. What people paste an answer into is usually another
   // markdown surface (a document, a comment, an issue), so handing over the rendered form would
   // strip exactly the links and structure that made the answer worth keeping.
-  const copy = () => {
-    void navigator.clipboard?.writeText(msg.body_md).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    })
-  }
+  const copy = () => void copyToClipboard(msg.body_md)
   return (
     <div className={cn("group flex items-start gap-1", mine ? "justify-end" : "justify-start")}>
       <div className={cn("flex max-w-[85%] flex-col gap-1", mine ? "items-end" : "items-start")}>

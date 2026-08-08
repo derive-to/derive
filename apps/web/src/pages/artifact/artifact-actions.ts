@@ -2,6 +2,8 @@ import { useQueryClient } from "@tanstack/react-query"
 import type { Dispatch, SetStateAction } from "react"
 import { type Artifact, api, type Comment, type Mention } from "@/api"
 import { toast } from "@/components/ui/sonner"
+import { formatOf } from "@/lib/artifact"
+import { copyText } from "@/lib/clipboard"
 import { commentsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import type { CommentActions } from "./comment-actions"
@@ -9,15 +11,6 @@ import { toggleReaction } from "./lib/reactions"
 import type { ComposerState, Sel, Selection } from "./types"
 
 type Me = { name?: string | null; email?: string | null } | null
-
-// The format (md vs html) rides with the artifact's current version; publishing must
-// keep it (editing an .md artifact stays markdown). Derived here so the hook doesn't
-// depend on the page's computed `format` — which is what lets it sit ABOVE the page's
-// load guards (see below).
-const formatOf = (art: Artifact): "md" | "html" =>
-  art.versions.find((v) => v.n === art.current_version)?.content_type === "text/markdown"
-    ? "md"
-    : "html"
 
 /**
  * Every mutating action the artifact page drives: editing (publish a version / submit a
@@ -263,10 +256,10 @@ export function useArtifactActions(p: {
     remove: (commentId) => removeComment.mutate(commentId),
     copyLink: (threadId) => {
       const url = `${window.location.origin}${window.location.pathname}?comment=${threadId}`
-      navigator.clipboard
-        ?.writeText(url)
-        .then(() => toast.success("Link copied"))
-        .catch(() => toast(url))
+      // Fallback: toast the raw URL so it can still be selected and copied by hand.
+      void copyText(url, { success: "Link copied", error: null }).then((ok) => {
+        if (!ok) toast(url)
+      })
     },
     openReview: p.onOpenReview,
   }

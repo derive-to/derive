@@ -9,7 +9,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
-import { artifactTypeLabel, canEditArtifactDoc, canPublishArtifact } from "@/lib/artifact"
+import { artifactTypeLabel, canEditArtifactDoc, canPublishArtifact, formatOf } from "@/lib/artifact"
 import { guestPresenceId } from "@/lib/guest-id"
 import { bareHotkey } from "@/lib/hotkey"
 import {
@@ -740,10 +740,7 @@ export function Artifact() {
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
-  const format: "md" | "html" =
-    art.versions.find((v) => v.n === art.current_version)?.content_type === "text/markdown"
-      ? "md"
-      : "html"
+  const format = formatOf(art)
   // Lock: any editor can toggle it (advanced menu). While locked, even an editor
   // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
   const canLock = canPublish

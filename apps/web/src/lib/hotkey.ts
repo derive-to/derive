@@ -13,11 +13,15 @@
  *
  * Modifier chords (⌘S, ⌘K) are a different contract — they are meant to work while
  * typing — so they check what they need themselves rather than coming through here.
+ *
+ * An open dropdown menu or listbox blocks bare keys the same way a dialog does:
+ * Radix menus typeahead on printable characters, so a bare key pressed "into" a
+ * menu belongs to the menu, not the page.
  */
 export const bareHotkey = (e: KeyboardEvent): boolean => {
   if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return false
   const el = e.target as HTMLElement | null
   if (el && (/^(input|textarea|select)$/i.test(el.tagName) || el.isContentEditable)) return false
-  if (document.querySelector('[role="dialog"]')) return false
+  if (document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) return false
   return true
 }

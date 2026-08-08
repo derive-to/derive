@@ -4,6 +4,7 @@ import { useState } from "react"
 import { type Agent, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -17,8 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
+import { copyText } from "@/lib/clipboard"
 import { agentsQuery, modelCredentialsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ModelPlanManager } from "./model-plan-manager"
@@ -50,21 +51,7 @@ export function AgentsSection({ meId }: { meId: string }) {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load agents"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="agents-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
-        />
+        <LoadError title="Couldn’t load agents" testId="agents-retry" onRetry={() => refetch()} />
       ) : !agents || agents.filter((a) => !a.managed).length === 0 ? (
         <EmptyState>No agents yet. Add one above.</EmptyState>
       ) : (
@@ -184,10 +171,7 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
                   data-testid="agent-token-copy"
                   variant="secondary"
                   size="sm"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(created.token)
-                    toast.success("Token copied")
-                  }}
+                  onClick={() => void copyText(created.token, { success: "Token copied" })}
                 >
                   Copy
                 </Button>
@@ -319,10 +303,7 @@ function AgentRow({
                   data-testid={`agent-rotated-copy-${agent.id}`}
                   variant="secondary"
                   size="sm"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(rotated)
-                    toast.success("Token copied")
-                  }}
+                  onClick={() => void copyText(rotated, { success: "Token copied" })}
                 >
                   Copy
                 </Button>

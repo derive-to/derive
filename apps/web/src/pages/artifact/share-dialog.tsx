@@ -39,6 +39,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
+import { copyText, useCopy } from "@/lib/clipboard"
 import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -160,8 +161,8 @@ export function ShareButton({
   // nothing applies until Set password.
   const [lockDraft, setLockDraft] = useState(false)
 
-  const [copied, setCopied] = useState(false)
-  const [copiedLink, setCopiedLink] = useState(false)
+  const { copied, copy: copyToClipboard } = useCopy()
+  const { copied: copiedLink, copy: copyLinkToClipboard } = useCopy()
   // Embed + domains live behind one quiet disclosure — access is the dialog's
   // job; distribution mechanics shouldn't compete with it.
   const [more, setMore] = useState(false)
@@ -199,16 +200,7 @@ export function ShareButton({
   const origin = API_BASE || (typeof window === "undefined" ? "" : window.location.origin)
   const embedSnippet = `<iframe src="${origin}/v1/embed/${shortId}" width="100%" height="480" style="border:0;border-radius:12px" loading="lazy" title="Derive artifact" allowfullscreen></iframe>`
   const linkAccessible = (linkRole ?? "none") !== "none"
-  const copyEmbed = async () => {
-    try {
-      await navigator.clipboard.writeText(embedSnippet)
-      setCopied(true)
-      toast.success("Embed code copied")
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      toast.error("Couldn't copy to clipboard")
-    }
-  }
+  const copyEmbed = () => void copyToClipboard(embedSnippet, { success: "Embed code copied" })
 
   const nav = useNavigate()
   // Solo drives only the create-a-workspace hint, never the segment itself — the
@@ -331,11 +323,7 @@ export function ShareButton({
   }
   const setPassword = (password: string) => void applyAccess(currentTripleWithPassword(password))
   const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrl)
-      setCopiedLink(true)
-      toast.success("Link copied")
-      window.setTimeout(() => setCopiedLink(false), 1500)
+    if (await copyLinkToClipboard(shareUrl, { success: "Link copied" })) {
       // The getting-started checklist's "share a link" step completes here — the
       // one gesture that means "I sent this to someone" (see chrome/getting-started).
       try {
@@ -343,8 +331,6 @@ export function ShareButton({
       } catch {
         /* private mode — the checklist row just stays open */
       }
-    } catch {
-      toast.error("Couldn't copy to clipboard")
     }
   }
 
@@ -438,14 +424,7 @@ export function ShareButton({
     onSuccess: () => loadDomains(),
   })
   const dropDomain = (host: string) => dropMut.mutate(host)
-  const copyUrl = async (url: string) => {
-    try {
-      await navigator.clipboard.writeText(url)
-      toast.success("URL copied")
-    } catch {
-      toast.error("Couldn't copy to clipboard")
-    }
-  }
+  const copyUrl = (url: string) => void copyText(url, { success: "URL copied" })
 
   return (
     <Dialog

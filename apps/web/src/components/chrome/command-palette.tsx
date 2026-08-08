@@ -17,7 +17,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { colorForName } from "@/lib/avatar-tints"
 import { fuzzyTitles } from "@/lib/fuzzy"
 import { splitMatches } from "@/lib/highlight"
-import { getInitials } from "@/lib/initials"
+import { getMonogram } from "@/lib/initials"
 import {
   cachedArtifactRows,
   collectionsQuery,
@@ -503,7 +503,7 @@ export function CommandPalette() {
                         className="text-2xs font-medium text-scrim-foreground"
                         style={{ backgroundColor: colorForName(u.name ?? u.username) }}
                       >
-                        {getInitials(u.name ?? u.username).charAt(0)}
+                        {getMonogram(u.name ?? u.username)}
                       </AvatarFallback>
                     </Avatar>
                     <span className="flex-1 truncate">{u.name ?? u.username}</span>

@@ -3,8 +3,8 @@ import { Link, useNavigate } from "@tanstack/react-router"
 import type { ContextInfo } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { contextsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -48,20 +48,10 @@ export function Contexts() {
       {isPending ? (
         <ContextRowsSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load contexts"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="contexts-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load contexts"
+          testId="contexts-retry"
+          onRetry={() => refetch()}
         />
       ) : !contexts || contexts.length === 0 ? (
         <EmptyState

@@ -3,9 +3,9 @@ import { Link } from "@tanstack/react-router"
 import { useRef, useState } from "react"
 import { type ArtifactMember, api, type BillingInfo, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { LoadError } from "@/components/shared/load-error"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { copyText } from "@/lib/clipboard"
 import { getInitials } from "@/lib/initials"
 import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -68,9 +69,14 @@ export function MembersSection({ meId }: { meId: string }) {
         qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
       } else {
         // A pending invite — copy the accept link to the clipboard so it works even where
-        // mail isn't configured, and refresh the pending list.
-        await navigator.clipboard?.writeText(r.accept_url).catch(() => {})
-        toast.success(`Invite sent to ${r.invite.email} — link copied`)
+        // mail isn't configured, and refresh the pending list. The toast only claims the
+        // copy when it landed; the invite itself is confirmed either way.
+        const copiedLink = await copyText(r.accept_url, { error: null })
+        toast.success(
+          copiedLink
+            ? `Invite sent to ${r.invite.email} — link copied`
+            : `Invite sent to ${r.invite.email}`,
+        )
         qc.invalidateQueries({ queryKey: workspaceInvitesQuery().queryKey })
       }
     },
@@ -220,21 +226,7 @@ export function MembersSection({ meId }: { meId: string }) {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load members"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="members-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
-        />
+        <LoadError title="Couldn’t load members" testId="members-retry" onRetry={() => refetch()} />
       ) : ws ? (
         <SettingsGroup>
           {ws.members.map((m) => (

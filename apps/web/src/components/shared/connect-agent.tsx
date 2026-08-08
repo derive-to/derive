@@ -10,9 +10,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useCopy } from "@/lib/clipboard"
 
 // The one Connect-an-agent surface: the paste-into-your-agent prompt (hosted, with a
 // self-host toggle), shared by onboarding Step 2, the library's connect empty state,
@@ -248,17 +248,7 @@ export function PromptBlock({
   testid: string
   copyLabel?: string
 }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      toast.success("Copied — paste it into your agent")
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error("Couldn't copy; select the text and copy it manually")
-    }
-  }
+  const { copied, copy } = useCopy(2000)
   return (
     <div className="relative">
       {/* The machine register on a quiet well: mono text, bg-secondary, hairline edge. */}
@@ -274,7 +264,7 @@ export function PromptBlock({
         data-testid={`${testid}-copy`}
         aria-label={copyLabel}
         className="absolute right-2 top-2"
-        onClick={copy}
+        onClick={() => copy(text, { success: "Copied — paste it into your agent" })}
       >
         {copied ? <Icon name="check" className="text-success" /> : <Copy className="size-4" />}
       </Button>

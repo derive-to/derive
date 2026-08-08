@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { ApiError, type Artifact, api } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
@@ -68,9 +69,7 @@ export function DerivedFromBanner({ art }: { art: Artifact }) {
       data-testid="derived-banner"
       className="flex shrink-0 items-center gap-2.5 border-b border-border bg-muted/40 px-4 py-1.5"
     >
-      <span className="shrink-0 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
-        Derived from
-      </span>
+      <Eyebrow className="shrink-0">Derived from</Eyebrow>
       <Link
         to="/artifacts/$ref"
         params={{ ref: refFor({ short_id: source.short_id, title: source.title }) }}

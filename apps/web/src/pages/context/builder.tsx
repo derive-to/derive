@@ -8,17 +8,14 @@ import { Icon } from "@/components/icons"
 import { PageShell } from "@/components/shared/page-shell"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
-import { toast } from "@/components/ui/sonner"
+import { copyText } from "@/lib/clipboard"
 import { agentsQuery, chatModelsQuery, contextsQuery, workspaceQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { BUILDER_COPY } from "./builder-copy"
 import { NewContextForm } from "./new-context-form"
 
 function AgentDoor() {
-  const copy = () => {
-    void navigator.clipboard?.writeText(BUILDER_COPY.agentDoorPrompt)
-    toast.success("Prompt copied")
-  }
+  const copy = () => void copyText(BUILDER_COPY.agentDoorPrompt, { success: "Prompt copied" })
 
   return (
     <div

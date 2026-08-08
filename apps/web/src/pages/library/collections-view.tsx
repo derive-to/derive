@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router"
 import type { Collection } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Thumb } from "@/components/shared/thumb"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -154,13 +155,13 @@ export function CollectionsView({
           <section data-testid="collections-index">
             <SectionRule label="All collections · A–Z" />
             {/* The header names the columns; the columns hold. */}
-            <div className="flex h-6 items-center gap-3 border-b border-border px-1 font-mono text-2xs uppercase tracking-wide text-muted-foreground/80">
+            <Eyebrow as="div" className="flex h-6 items-center gap-3 border-b border-border px-1">
               <span className="min-w-0 flex-1">Name</span>
               <span className="w-20 shrink-0 max-md:hidden">Editors</span>
               <span className="w-16 shrink-0 text-right">Artifacts</span>
               <span className="w-28 shrink-0 text-right">Updated</span>
               <span className="w-7 shrink-0" />
-            </div>
+            </Eyebrow>
             <div>
               {indexed.map((c) => (
                 <IndexRow key={c.id} col={c} onStar={(next) => onStar(c.id, next)} />
@@ -176,9 +177,7 @@ export function CollectionsView({
 function SectionRule({ label }: { label: string }) {
   return (
     <div className="mb-3 flex items-center gap-3">
-      <span className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
+      <Eyebrow>{label}</Eyebrow>
       <span className="h-px flex-1 bg-border-soft" />
     </div>
   )

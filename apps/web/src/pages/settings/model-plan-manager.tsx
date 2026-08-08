@@ -3,8 +3,8 @@ import { useState } from "react"
 import { api, type ModelCredentialHint } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -95,20 +95,10 @@ export function ModelPlanManager({ scope }: { scope: Scope }) {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load plans"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid={`${prefix}-retry`}
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load plans"
+          testId={`${prefix}-retry`}
+          onRetry={() => refetch()}
         />
       ) : !creds || creds.length === 0 ? (
         <EmptyState>{empty}</EmptyState>
