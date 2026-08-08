@@ -13,7 +13,7 @@ sandboxed viewer, so publish real designed pages, not just prose.
 
 ## Key rules (read these first)
 
-- NEVER base64 a binary through a tool call. Every image/font: stage target:'asset' -> curl the raw bytes -> paste the returned url (or its asset:<hash> ref). A pasted image is already a file on disk; upload that file, don't transcribe it. publish REJECTS a single inline data: URI past ~32KB (stage the asset) and any inline content/files summing past ~64KB (stage target:'doc').
+- NEVER base64 a binary through a tool call. Every image/font: stage target:'asset' -> curl the raw bytes -> paste the returned url (or its asset:<hash> ref). Hosted Cloudflare images optimize by default (1920px maximum edge); pass full_size:true there only when exact original pixels/bytes matter. Self-hosted Node always stores originals. A pasted image is already a file on disk; upload that file, don't transcribe it. publish REJECTS a single inline data: URI past ~32KB (stage the asset) and any inline content/files summing past ~64KB (stage target:'doc').
 - Assets are raster images and web fonts ONLY: PNG/JPEG/GIF/WebP/WOFF/WOFF2, <=25MB each. Inline SVG, CSS, and JS in the page itself (SVG is rejected as an asset).
 - Anything bigger than ~a page: stage target:'doc' (curl the file/zip), never inline content/files.
 - On a styled HTML page, declare your own <meta name="viewport">, or it gets a mobile-reflow injection that can fight your layout (data-reflow-exempt is the per-element escape hatch).

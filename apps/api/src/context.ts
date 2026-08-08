@@ -41,6 +41,7 @@ import type { Sandbox } from "./lib/code-sandbox"
 import { answerDeriveMention } from "./lib/comment-turn"
 import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
+import type { ImageOptimizer } from "./lib/image-optimizer"
 import type { ModelCatalog } from "./lib/model-catalog"
 import { makeOauthAgent } from "./lib/oauth-agent"
 import {
@@ -110,6 +111,11 @@ export interface SessionUser {
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
+  /**
+   * Hosted-tier raster optimization. Workers injects the native Images binding;
+   * Node intentionally leaves this unset and always preserves original asset bytes.
+   */
+  optimizeImage?: ImageOptimizer
   /**
    * How long an ATTENDED turn may run before it must settle itself, in ms.
    *

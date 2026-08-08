@@ -195,6 +195,9 @@ describe("remote MCP endpoint (/mcp)", () => {
     const staged = JSON.parse(toolText(await call(app, token, "stage", { target: "asset" })))
     expect(staged.target).toBe("asset")
     expect(staged.upload_url).toContain("/v1/assets/t/")
+    expect(staged.optimization_available).toBe(false)
+    expect(staged.mode).toBe("full_size")
+    expect(staged.how).toContain("self-hosted server stores exact original image bytes")
     expect(staged.max_bytes).toBeGreaterThan(0)
 
     // A real 1x1 transparent PNG — what `curl --data-binary @shot.png` would send.
@@ -212,6 +215,27 @@ describe("remote MCP endpoint (/mcp)", () => {
     const served = await app.request(new URL(asset.url).pathname)
     expect(served.status).toBe(200)
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(png)
+  })
+
+  it("stage target:'asset' can mint the explicit full-size upload path", async () => {
+    const { app, token } = appWithGrant(
+      dir,
+      "stageassetfull",
+      "openid derive:read derive:publish",
+      {
+        encryptionKey: "mcp-upload-full-secret",
+        optimizeImage: async (bytes) => bytes,
+      },
+    )
+    const optimized = JSON.parse(toolText(await call(app, token, "stage", { target: "asset" })))
+    expect(optimized.optimization_available).toBe(true)
+    expect(optimized.mode).toBe("optimized")
+    const staged = JSON.parse(
+      toolText(await call(app, token, "stage", { target: "asset", full_size: true })),
+    )
+    expect(staged.optimization_available).toBe(true)
+    expect(staged.mode).toBe("full_size")
+    expect(new URL(staged.upload_url).searchParams.get("full_size")).toBe("true")
   })
 
   it("stage target:'asset' fails actionably when no signing secret is configured", async () => {

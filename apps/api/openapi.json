@@ -1171,7 +1171,47 @@
           },
           "size": {
             "type": "number",
-            "description": "The asset's size in bytes"
+            "description": "The stored asset size in bytes"
+          },
+          "width": {
+            "type": "number",
+            "description": "The stored image width in pixels"
+          },
+          "height": {
+            "type": "number",
+            "description": "The stored image height in pixels"
+          },
+          "original_size": {
+            "type": "number",
+            "description": "The uploaded asset size before optimization, in bytes"
+          },
+          "original_width": {
+            "type": "number",
+            "description": "The uploaded image width in pixels"
+          },
+          "original_height": {
+            "type": "number",
+            "description": "The uploaded image height in pixels"
+          },
+          "optimization_available": {
+            "type": "boolean",
+            "description": "Whether this deployment supports hosted upload-time image optimization"
+          },
+          "optimized": {
+            "type": "boolean",
+            "description": "Whether Derive stored a smaller optimized image"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "optimized",
+              "full_size"
+            ],
+            "description": "The active storage mode; self-hosted Node always reports full_size"
+          },
+          "cost": {
+            "type": "string",
+            "description": "A readable summary of the stored transfer cost and savings"
           }
         },
         "required": [
@@ -1179,7 +1219,12 @@
           "url",
           "ref",
           "type",
-          "size"
+          "size",
+          "original_size",
+          "optimization_available",
+          "optimized",
+          "mode",
+          "cost"
         ]
       },
       "ArtifactInvite": {
@@ -5103,6 +5148,22 @@
           "Assets"
         ],
         "summary": "Stage a binary asset (image or web font) and get a permanent URL + its asset:<hash> handle.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Hosted tier only: set true to preserve exact image bytes. Self-hosted Node always preserves originals."
+            },
+            "required": false,
+            "description": "Hosted tier only: set true to preserve exact image bytes. Self-hosted Node always preserves originals.",
+            "name": "full_size",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "description": "The stored asset's public URL and content-addressed handle.",
@@ -5131,6 +5192,20 @@
             "required": true,
             "name": "token",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Hosted tier only: set true to preserve exact image bytes. Self-hosted Node always preserves originals."
+            },
+            "required": false,
+            "description": "Hosted tier only: set true to preserve exact image bytes. Self-hosted Node always preserves originals.",
+            "name": "full_size",
+            "in": "query"
           }
         ],
         "responses": {

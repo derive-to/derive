@@ -24,6 +24,7 @@ const NON_CONFIG = new Set([
   "ROOMS",
   "HYPERDRIVE",
   "BUCKET",
+  "IMAGES",
   "ASSETS",
   "SEND_EMAIL",
   "WEBHOOK_OUTBOX",

@@ -94,18 +94,31 @@ describe("imageDimensions", () => {
 })
 
 describe("assetCostNote", () => {
-  it("names the size, the dimensions, and the lever that would change them", () => {
-    const note = assetCostNote(4.1 * 1024 * 1024, { width: 2916, height: 1834 })
+  it("names the before/after size and dimensions when an image was optimized", () => {
+    const note = assetCostNote(
+      900 * 1024,
+      { width: 1920, height: 1208 },
+      {
+        source: { bytes: 4.1 * 1024 * 1024, size: { width: 2916, height: 1834 } },
+      },
+    )
     expect(note).toContain("4.1MB")
     expect(note).toContain("2916×1834")
-    expect(note).toContain("1458×917") // half density
-    expect(note).toContain("every load")
+    expect(note).toContain("900KB")
+    expect(note).toContain("1920×1208")
+    expect(note).toContain("smaller")
   })
 
-  it("stays quiet about halving for a small image, where it would be noise", () => {
-    const note = assetCostNote(20 * 1024, { width: 100, height: 100 })
-    expect(note).toContain("20KB")
-    expect(note).not.toContain("half density")
+  it("makes an explicit full-size choice visible", () => {
+    const note = assetCostNote(
+      4.1 * 1024 * 1024,
+      { width: 2916, height: 1834 },
+      {
+        fullSize: true,
+      },
+    )
+    expect(note).toContain("full size")
+    expect(note).toContain("4.1MB")
   })
 
   it("still reports a cost when dimensions are unreadable (a font)", () => {
