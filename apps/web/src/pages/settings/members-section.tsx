@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "@/components/ui/sonner"
+import { copyText } from "@/lib/clipboard"
 import { getInitials } from "@/lib/initials"
 import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -68,9 +69,14 @@ export function MembersSection({ meId }: { meId: string }) {
         qc.invalidateQueries({ queryKey: workspaceQuery().queryKey })
       } else {
         // A pending invite — copy the accept link to the clipboard so it works even where
-        // mail isn't configured, and refresh the pending list.
-        await navigator.clipboard?.writeText(r.accept_url).catch(() => {})
-        toast.success(`Invite sent to ${r.invite.email} — link copied`)
+        // mail isn't configured, and refresh the pending list. The toast only claims the
+        // copy when it landed; the invite itself is confirmed either way.
+        const copiedLink = await copyText(r.accept_url, { error: null })
+        toast.success(
+          copiedLink
+            ? `Invite sent to ${r.invite.email} — link copied`
+            : `Invite sent to ${r.invite.email}`,
+        )
         qc.invalidateQueries({ queryKey: workspaceInvitesQuery().queryKey })
       }
     },

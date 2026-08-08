@@ -1401,7 +1401,7 @@ function OutputList({ contextId }: { contextId: string }) {
     return (
       <LoadError
         layout="inline"
-        title="Couldn’t load this context's output"
+        title="Couldn’t load this context’s output"
         description="Try again in a moment."
         testId="console-output-retry"
         onRetry={() => refetch()}

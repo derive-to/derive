@@ -2,13 +2,12 @@ import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { StatusPanel } from "./status-panel"
 
-// The query-failed recipe: StatusPanel's danger tone + an OUTLINE "Try again"
-// wired to refetch. One component so the grammar can't drift — before this
-// existed the copy-pasted versions had already forked on the button variant
-// (a filled primary on a failure, against the route-error doctrine), the
-// apostrophe, and the description string. Anything beyond a retry (a second
-// action, a custom body) composes via the props; genuinely different failure
-// surfaces keep using StatusPanel directly.
+// The query-failed panel: StatusPanel's danger tone + an outline "Try again"
+// wired to refetch. A failure never gets a filled primary — the loud button is
+// for the page's real action, not for retrying a fetch (see shared/route-error
+// for the same rule on route crashes). One component so every load failure
+// reads the same; failure surfaces that need more than a retry (an icon, a
+// navigation escape) compose StatusPanel directly.
 export function LoadError({
   title,
   testId,
@@ -18,7 +17,7 @@ export function LoadError({
   extraAction,
   className,
 }: {
-  /** "Couldn't load <the thing>." — curly apostrophe, the panel names the noun. */
+  /** "Couldn’t load <the thing>." — name the noun that failed. */
   title: ReactNode
   /** The retry button's data-testid, e.g. "agents-retry". */
   testId: string
@@ -29,6 +28,11 @@ export function LoadError({
   extraAction?: ReactNode
   className?: string
 }) {
+  const retry = (
+    <Button variant="outline" size="sm" data-testid={testId} onClick={onRetry}>
+      Try again
+    </Button>
+  )
   return (
     <StatusPanel
       tone="danger"
@@ -39,15 +43,11 @@ export function LoadError({
       action={
         extraAction ? (
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" data-testid={testId} onClick={onRetry}>
-              Try again
-            </Button>
+            {retry}
             {extraAction}
           </div>
         ) : (
-          <Button variant="outline" size="sm" data-testid={testId} onClick={onRetry}>
-            Try again
-          </Button>
+          retry
         )
       }
     />

@@ -2,12 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "@/components/ui/sonner"
 
 /**
- * THE clipboard write. Every copy affordance goes through here so the contract
- * can't drift: the write is AWAITED, and the success toast fires only after it
- * lands. (The hand-rolled copies this replaced included fire-and-forget
- * `navigator.clipboard?.writeText(x)` immediately followed by "Token copied" —
- * in an insecure context the optional chain no-ops and the toast lies about a
- * secret being on the clipboard.)
+ * The one clipboard write. The success toast fires only after the write LANDS —
+ * `navigator.clipboard` is absent off-HTTPS and the write can be refused, and
+ * several of these copies are one-time secrets, where "Token copied" without a
+ * token on the clipboard is worse than no toast at all.
  *
  * `success` is opt-in (some affordances show a ✓ tick instead of a toast).
  * `error: null` suppresses the failure toast for callers with their own
