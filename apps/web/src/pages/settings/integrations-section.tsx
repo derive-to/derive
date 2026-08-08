@@ -2,9 +2,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
@@ -75,20 +75,10 @@ export function IntegrationsSection() {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load integration settings"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="integrations-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load integration settings"
+          testId="integrations-retry"
+          onRetry={() => refetch()}
         />
       ) : settings ? (
         <SettingsGroup>

@@ -4,6 +4,7 @@ import { api, type BillingInfo } from "@/api"
 import { BillingCycleToggle } from "@/components/billing/billing-cycle-toggle"
 import { PlanCard } from "@/components/billing/plan-card"
 import { useCheckout } from "@/components/billing/use-checkout"
+import { LoadError } from "@/components/shared/load-error"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { gb } from "@/lib/bytes"
@@ -122,21 +123,7 @@ export function BillingSection() {
       {isPending ? (
         <SettingsListSkeleton rows={1} trailing={false} />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load billing"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="billing-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
-        />
+        <LoadError title="Couldn’t load billing" testId="billing-retry" onRetry={() => refetch()} />
       ) : billing ? (
         <>
           <CurrentPlanCard billing={billing} />

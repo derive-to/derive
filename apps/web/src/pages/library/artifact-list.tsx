@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import type { Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
@@ -110,7 +111,7 @@ export function ListShell({ children }: { children: ReactNode }) {
 // hack here made copied text and screen-reader order disagree with what the eye saw.
 export function ListHeader({ sort, onSort }: { sort: SortMode; onSort: (m: SortMode) => void }) {
   return (
-    <div className="flex h-7 items-center border-b border-border bg-secondary/40 pr-3 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+    <Eyebrow as="div" className="flex h-7 items-center border-b border-border bg-secondary/40 pr-3">
       <span className={COL.gutter} />
       <span className={COL.select} />
       <span className={COL.name}>
@@ -136,7 +137,7 @@ export function ListHeader({ sort, onSort }: { sort: SortMode; onSort: (m: SortM
           testId="list-sort-when"
         />
       </span>
-    </div>
+    </Eyebrow>
   )
 }
 

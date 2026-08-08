@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { colorForName } from "@/lib/avatar-tints"
-import { getInitials } from "@/lib/initials"
+import { getInitials, getMonogram } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 
 // One author, rendered as a tiny avatar + name — the "who last changed this" /
@@ -65,7 +65,7 @@ export function AuthorChip({
           className="text-2xs font-medium text-scrim-foreground"
           style={{ backgroundColor: colorForName(label) }}
         >
-          {size === "xs" ? getInitials(label).charAt(0) : getInitials(label)}
+          {size === "xs" ? getMonogram(label) : getInitials(label)}
         </AvatarFallback>
       </Avatar>
       {showName && <span className="truncate">{label}</span>}

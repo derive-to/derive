@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router"
 import { FileText, FolderOpen, Hash, Plug, Plus, X } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { type Automation, type AutomationRef, type AutomationTrigger, api } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -22,9 +23,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { copyText } from "@/lib/clipboard"
 import {
   agentsQuery,
   artifactQuery,
@@ -62,9 +63,7 @@ const seedLabel = (r: AutomationRef): string => (r.kind === "tag" ? `#${r.tag}` 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
+      <Eyebrow>{label}</Eyebrow>
       {children}
       {hint && <p className="text-2xs text-muted-foreground">{hint}</p>}
     </div>
@@ -629,10 +628,7 @@ export function AutomationForm({
                   data-testid="automation-agent-token-copy"
                   variant="secondary"
                   size="sm"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(mintedToken)
-                    toast.success("Token copied")
-                  }}
+                  onClick={() => void copyText(mintedToken, { success: "Token copied" })}
                 >
                   Copy
                 </Button>

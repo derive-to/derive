@@ -9,10 +9,10 @@ import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ConnectAgentButton } from "@/components/shared/connect-agent"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
 import { Spinner } from "@/components/shared/spinner"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
@@ -647,20 +647,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
             <LibrarySkeleton />
           ) : null
         ) : isError ? (
-          <StatusPanel
-            tone="danger"
+          <LoadError
             title="Couldn’t load the library"
-            description="This is usually temporary."
-            action={
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="library-retry"
-                onClick={() => refetch()}
-              >
-                Try again
-              </Button>
-            }
+            testId="library-retry"
+            onRetry={() => refetch()}
           />
         ) : items.length === 0 ? (
           emptyHome ? (
@@ -686,57 +676,29 @@ function LibraryBody({ view }: { view: LibraryView }) {
             onPrefetch={(a) => prefetch(a.short_id)}
             selection={selection}
           />
-        ) : isManualCollection && folders.length > 0 ? (
-          // An organized manual collection. Grouping is DECOUPLED from presentation: the
-          // Display menu's "Group by folder" flips grouping on/off, and BOTH states are the
-          // card grid — grouping never costs you the thumbnails. Default grouped.
-          foldersView ? (
-            <CollectionFolders
-              collectionId={filter.id}
-              items={items}
-              folders={folders}
-              assignments={folderAssignments}
-              canManage={!!canManageFolders}
-              hasNextPage={!!hasNextPage}
-              isFetchingNextPage={isFetchingNextPage}
-              scrollToFolderId={folderAnchor}
-              onOpen={(a) =>
-                nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-              }
-              onToggleFavorite={toggleFavorite}
-              onAddToCollection={setPendingCollections}
-              onDelete={setPendingDelete}
-              onPrefetch={(a) => prefetch(a.short_id)}
-              selection={selection}
-            />
-          ) : (
-            <>
-              <ArtifactGrid
-                layout={layout}
-                sort={search.sort ?? DEFAULT_SORT}
-                onSort={setSort}
-                onPickAuthor={pickAuthor}
-                items={items}
-                scrollRef={scrollRef}
-                hasNextPage={!!hasNextPage}
-                isFetchingNextPage={isFetchingNextPage}
-                onLoadMore={() => fetchNextPage()}
-                onOpen={(a) =>
-                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-                }
-                onToggleFavorite={toggleFavorite}
-                onAddToCollection={setPendingCollections}
-                onDelete={setPendingDelete}
-                onPrefetch={(a) => prefetch(a.short_id)}
-                selection={selection}
-              />
-              {isFetchingNextPage && (
-                <div className="flex justify-center py-2" data-testid="library-loading-more">
-                  <Spinner />
-                </div>
-              )}
-            </>
-          )
+        ) : foldersView && isManualCollection && folders.length > 0 ? (
+          // An organized manual collection, grouped. Grouping is DECOUPLED from
+          // presentation: the Display menu's "Group by folder" flips grouping on/off, and
+          // the ungrouped state is the same card grid as everywhere else — grouping never
+          // costs you the thumbnails. Default grouped.
+          <CollectionFolders
+            collectionId={filter.id}
+            items={items}
+            folders={folders}
+            assignments={folderAssignments}
+            canManage={!!canManageFolders}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            scrollToFolderId={folderAnchor}
+            onOpen={(a) =>
+              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+            }
+            onToggleFavorite={toggleFavorite}
+            onAddToCollection={setPendingCollections}
+            onDelete={setPendingDelete}
+            onPrefetch={(a) => prefetch(a.short_id)}
+            selection={selection}
+          />
         ) : (
           <>
             <ArtifactGrid

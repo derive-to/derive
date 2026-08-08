@@ -2,9 +2,8 @@ import { useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { api, type GithubSyncStatus } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
-import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import { AdvancedPat } from "./github-advanced-pat"
 import { ConnectViaApp, SetUpApp, takeInstallParams } from "./github-install-flow"
@@ -76,16 +75,11 @@ export function GithubSection() {
     >
       {status === null ? (
         loadError ? (
-          <StatusPanel
-            tone="danger"
+          <LoadError
             layout="inline"
-            title="Couldn't load your GitHub status"
-            description="This is usually temporary."
-            action={
-              <Button variant="outline" size="sm" data-testid="github-retry" onClick={load}>
-                Try again
-              </Button>
-            }
+            title="Couldn’t load your GitHub status"
+            testId="github-retry"
+            onRetry={load}
           />
         ) : (
           <SettingsListSkeleton />

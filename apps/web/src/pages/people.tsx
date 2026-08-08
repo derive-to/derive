@@ -5,16 +5,15 @@ import type { Artifact, PublicProfile } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
+import { LoadError } from "@/components/shared/load-error"
 import { SearchField } from "@/components/shared/search-field"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuth } from "@/ctx"
 import { colorForName } from "@/lib/avatar-tints"
-import { getInitials } from "@/lib/initials"
+import { getInitials, getMonogram } from "@/lib/initials"
 import {
   followingPreviewQuery,
   followsQuery,
@@ -109,21 +108,7 @@ export function PeopleDirectory() {
         ) : null
       ) : searching && isError ? (
         // A failed search is status, not emptiness — the danger tone grammar.
-        <StatusPanel
-          tone="danger"
-          title="Couldn’t load people"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="people-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
-        />
+        <LoadError title="Couldn’t load people" testId="people-retry" onRetry={() => refetch()} />
       ) : nothing ? (
         <div data-testid="people-empty">
           <EmptyState
@@ -302,7 +287,7 @@ function ActivityItem({ artifact: a }: { artifact: Artifact }) {
   const updated = a.updated_at ?? a.created_at ?? a.versions?.[0]?.created_at
   const authorName = a.author?.name ?? a.author_name ?? a.author?.handle ?? a.author_login ?? null
   const authorImage = a.author?.avatar ?? a.author_avatar ?? null
-  const initial = (authorName ?? a.title ?? "?").trim().charAt(0).toUpperCase()
+  const initial = getMonogram(authorName ?? a.title)
   return (
     <li>
       <Link

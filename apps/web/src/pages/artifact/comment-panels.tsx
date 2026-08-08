@@ -8,7 +8,7 @@ import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
-import { RailTabs } from "./artifact-chat"
+import { type RailTab, RailTabs } from "./artifact-chat"
 import { Composer } from "./comment-composer"
 import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
 import { useCommentScope } from "./lib/comment-scope"
@@ -45,6 +45,9 @@ export function MobileComments({
   rail,
   onRail,
   chatPanel,
+  inspectPanel,
+  chatEnabled,
+  inspectEnabled,
   openCount,
   editing = false,
 }: {
@@ -63,13 +66,14 @@ export function MobileComments({
    *  closed). The page reserves exactly this under the document so no black band
    *  is left below it. */
   onHeightChange?: (px: number) => void
-  /** THE RAIL on a phone. The peek bar is always docked, which makes it the natural home
-   *  for the tab strip — comments keep their entry point and chat is one tap away, with no
-   *  second sheet competing for the bottom of the screen. Undefined ⇒ chat is off (beta),
-   *  and this is the comments sheet it has always been. */
-  rail?: "comments" | "chat"
-  onRail?: (r: "comments" | "chat") => void
+  /** THE RAIL on a phone. The peek bar carries Comments → Chat while reading, then adds
+   *  Inspect only during an eligible HTML edit session — never a second competing sheet. */
+  rail?: RailTab
+  onRail?: (r: RailTab) => void
   chatPanel?: ReactNode
+  inspectPanel?: ReactNode
+  chatEnabled?: boolean
+  inspectEnabled?: boolean
   openCount?: number
 }) {
   // The sheet is ALWAYS docked on a phone (peek is the floor — there is no hidden
@@ -236,7 +240,6 @@ export function MobileComments({
       // every state, so this is an aside, not a dialog (no focus trap, no scrim).
       aria-label="Comments"
     >
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: the grip/header strip is a drag handle (pointer events) with tap-to-toggle; the real controls inside are buttons. */}
       <div
         className="shrink-0 touch-none"
         onPointerDown={dragStart}
@@ -259,7 +262,13 @@ export function MobileComments({
               is the heading it has always been. */}
           {rail && onRail ? (
             <div className="flex min-w-0 flex-1 items-center">
-              <RailTabs tab={rail} commentCount={openCount ?? openThreads.length} onTab={onRail} />
+              <RailTabs
+                tab={rail}
+                commentCount={openCount ?? openThreads.length}
+                chatEnabled={chatEnabled}
+                inspectEnabled={inspectEnabled}
+                onTab={onRail}
+              />
             </div>
           ) : (
             <CommentsHeading count={openThreads.length} />
@@ -289,7 +298,7 @@ export function MobileComments({
               </Button>
             </div>
           )}
-          {rail !== "chat" && canComment && (
+          {rail === "comments" && canComment && (
             <Button
               variant="outline"
               size="sm"
@@ -314,10 +323,12 @@ export function MobileComments({
           </Button>
         </div>
       </div>
-      {rail === "chat" ? (
+      {rail === "chat" && chatEnabled ? (
         // CHAT owns the body, and brings its own composer — so the comments composer and
         // its keyboard handling stay untouched rather than being taught a second mode.
         chatPanel
+      ) : rail === "inspect" && inspectEnabled ? (
+        inspectPanel
       ) : composer ? (
         // Composing ("half open"): just the composer, so the sheet is a compact bar
         // pinned above the keyboard with the document visible above. The list

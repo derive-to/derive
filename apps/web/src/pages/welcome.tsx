@@ -5,7 +5,7 @@ import { api } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConnectAgent } from "@/components/shared/connect-agent"
 import { AskChip, EXAMPLE_ASKS } from "@/components/shared/example-asks"
-import { StatusPanel } from "@/components/shared/status-panel"
+import { LoadError } from "@/components/shared/load-error"
 import { Button } from "@/components/ui/button"
 import { useAuth } from "@/ctx"
 import { connectedAgentsQuery, onboardingQuery } from "@/lib/queries"
@@ -53,7 +53,7 @@ export function Welcome() {
   const [showConnect, setShowConnect] = useState(false)
 
   // Live signal 1: has an agent been authorized? Poll until one appears; stop on
-  // error too (the StatusPanel's Try again restarts the loop) so a down API isn't
+  // error too (the LoadError's Try again restarts the loop) so a down API isn't
   // hammered every 2s behind a manual-retry affordance.
   const agentsQ = useQuery({
     ...connectedAgentsQuery(),
@@ -187,15 +187,11 @@ export function Welcome() {
         )}
 
         {watchFailed && (
-          <StatusPanel
-            tone="danger"
+          <LoadError
             layout="inline"
             title="Can't check your setup status right now."
-            action={
-              <Button variant="outline" size="sm" data-testid="welcome-retry" onClick={retryWatch}>
-                Try again
-              </Button>
-            }
+            testId="welcome-retry"
+            onRetry={retryWatch}
           />
         )}
 

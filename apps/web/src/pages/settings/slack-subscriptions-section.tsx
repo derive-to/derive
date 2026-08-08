@@ -2,8 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -37,20 +37,10 @@ export function SlackSubscriptionsSection() {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load Slack subscriptions"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="slack-subs-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load Slack subscriptions"
+          testId="slack-subs-retry"
+          onRetry={() => refetch()}
         />
       ) : !data || data.subscriptions.length === 0 ? (
         <EmptyState>No channels subscribed yet. Add one above.</EmptyState>

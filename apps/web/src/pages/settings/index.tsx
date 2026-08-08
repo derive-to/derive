@@ -31,27 +31,35 @@ import { WebhooksSection } from "./webhooks-section"
 // useParams/useNavigate.
 const route = getRouteApi("/settings/$section")
 
-// Tab titles per section — keep in step with the nav `groups` in Settings below.
-const SECTION_TITLES: Record<string, string> = {
-  profile: "Profile",
-  security: "Security",
-  "model-plans": "Model plans",
-  appearance: "Appearance",
-  general: "General",
-  members: "Members",
-  people: "People",
-  billing: "Billing",
-  integrations: "Integrations",
-  sources: "Sources",
-  brandprint: "Brandprint",
-  github: "GitHub",
-  webhooks: "Webhooks",
-  agents: "Agents",
-  automations: "Automations",
-  domains: "Domains",
-  reports: "Reports",
-  models: "Chat model",
-}
+// THE section list — the nav rail's groups and the document-title map are both
+// derived from it, so an id or label can't drift between the two. Order here is
+// display order. Two sections are data-gated at render (`models`, `reports`); they
+// stay in this list unconditionally so a hidden tab keeps its title.
+const GROUP_ORDER = ["Account", "Workspace", "Developer", "Moderation"] as const
+const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number] }[] = [
+  { id: "profile", label: "Profile", group: "Account" },
+  { id: "security", label: "Security", group: "Account" },
+  { id: "model-plans", label: "Model plans", group: "Account" },
+  { id: "appearance", label: "Appearance", group: "Account" },
+  { id: "general", label: "General", group: "Workspace" },
+  { id: "members", label: "Members", group: "Workspace" },
+  { id: "people", label: "People", group: "Workspace" },
+  { id: "billing", label: "Billing", group: "Workspace" },
+  { id: "integrations", label: "Integrations", group: "Workspace" },
+  { id: "sources", label: "Sources", group: "Workspace" },
+  { id: "models", label: "Chat model", group: "Workspace" },
+  { id: "brandprint", label: "Brandprint", group: "Workspace" },
+  { id: "github", label: "GitHub", group: "Developer" },
+  { id: "webhooks", label: "Webhooks", group: "Developer" },
+  { id: "agents", label: "Agents", group: "Developer" },
+  { id: "automations", label: "Automations", group: "Developer" },
+  { id: "domains", label: "Domains", group: "Developer" },
+  { id: "reports", label: "Reports", group: "Moderation" },
+]
+
+const SECTION_TITLES: Record<string, string> = Object.fromEntries(
+  SECTIONS.map((s) => [s.id, s.label]),
+)
 
 // Settings, reconceived as a scope-grouped two-pane: a sticky category rail
 // (Account · Workspace · Developer · Moderation) beside a readable detail column,
@@ -71,69 +79,40 @@ export function Settings() {
   const { section } = route.useParams()
   const nav = route.useNavigate()
 
-  // Before the early return (hooks). Labels mirror the groups below — a static
-  // map because the groups themselves are gated on data (`reports`).
+  // Before the early return (hooks). Titles come from the unconditional SECTIONS
+  // list, so a data-gated tab keeps its title while hidden from the rail.
   useDocumentTitle(SECTION_TITLES[section] ? `${SECTION_TITLES[section]} · Settings` : "Settings")
 
   if (!me) return null
 
-  // Reports are urgent + owner-only — surface the section only while open ones exist.
   const openReports = reports ?? []
   const hasReports = openReports.length > 0
 
-  const groups: SettingsNavGroup[] = [
-    {
-      label: "Account",
-      items: [
-        { id: "profile", label: "Profile", testId: "settings-tab-profile" },
-        { id: "security", label: "Security", testId: "settings-tab-security" },
-        { id: "model-plans", label: "Model plans", testId: "settings-tab-model-plans" },
-        { id: "appearance", label: "Appearance", testId: "settings-tab-appearance" },
-      ],
-    },
-    {
-      label: "Workspace",
-      items: [
-        { id: "general", label: "General", testId: "settings-tab-general" },
-        { id: "members", label: "Members", testId: "settings-tab-members" },
-        { id: "people", label: "People", testId: "settings-tab-people" },
-        { id: "billing", label: "Billing", testId: "settings-tab-billing" },
-        { id: "integrations", label: "Integrations", testId: "settings-tab-integrations" },
-        { id: "sources", label: "Sources", testId: "settings-tab-sources" },
-        ...(((instanceModel?.options.length ?? 0) > 1
-          ? [{ id: "models", label: "Chat model", testId: "settings-tab-models" }]
-          : []) as SettingsNavGroup["items"]),
-        { id: "brandprint", label: "Brandprint", testId: "settings-tab-brandprint" },
-      ],
-    },
-    {
-      label: "Developer",
-      items: [
-        { id: "github", label: "GitHub", testId: "settings-tab-github" },
-        { id: "webhooks", label: "Webhooks", testId: "settings-tab-webhooks" },
-        { id: "agents", label: "Agents", testId: "settings-tab-agents" },
-        { id: "automations", label: "Automations", testId: "settings-tab-automations" },
-        { id: "domains", label: "Domains", testId: "settings-tab-domains" },
-      ],
-    },
-  ]
-  if (hasReports) {
-    groups.push({
-      label: "Moderation",
-      items: [
-        {
-          id: "reports",
-          label: "Reports",
-          testId: "settings-tab-reports",
-          badge: (
-            <Badge variant="destructive" shape="pill">
-              {openReports.length}
-            </Badge>
-          ),
-        },
-      ],
-    })
-  }
+  // The data-gated sections: the operator model tab appears only once the deployment
+  // offers a real choice; Reports is urgent + owner-only, surfaced only while open
+  // ones exist. Everything else is always shown.
+  const shown = (id: string) =>
+    id === "models"
+      ? (instanceModel?.options.length ?? 0) > 1
+      : id === "reports"
+        ? hasReports
+        : true
+
+  const groups: SettingsNavGroup[] = GROUP_ORDER.map((label) => ({
+    label,
+    items: SECTIONS.filter((s) => s.group === label && shown(s.id)).map((s) => ({
+      id: s.id,
+      label: s.label,
+      testId: `settings-tab-${s.id}`,
+      ...(s.id === "reports" && {
+        badge: (
+          <Badge variant="destructive" shape="pill">
+            {openReports.length}
+          </Badge>
+        ),
+      }),
+    })),
+  })).filter((g) => g.items.length > 0)
 
   // Guard the `$section` against unknown/stale values (e.g. `reports` after the last
   // report clears, or a hand-typed path) — fall back to Profile so the pane never

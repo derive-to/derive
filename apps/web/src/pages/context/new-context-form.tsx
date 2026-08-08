@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
+import { copyText } from "@/lib/clipboard"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
 // THE EXPERT DOOR — for someone who already has a manifest written (by hand, or by an
@@ -132,10 +132,7 @@ export function NewContextForm({
                   data-testid="context-agent-token-copy"
                   variant="secondary"
                   size="sm"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(minted.token)
-                    toast.success("Token copied")
-                  }}
+                  onClick={() => void copyText(minted.token, { success: "Token copied" })}
                 >
                   Copy
                 </Button>

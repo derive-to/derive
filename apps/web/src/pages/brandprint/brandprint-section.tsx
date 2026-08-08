@@ -4,9 +4,9 @@ import { Upload } from "lucide-react"
 import { useRef, useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { Icon } from "@/components/icons"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -278,21 +278,11 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   if (loadError)
     return (
       <SettingsGroup title={title} description={description}>
-        <StatusPanel
+        <LoadError
           layout="inline"
-          tone="danger"
-          title="Couldn't load your Brandprint"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid={`brandprint-retry-${scope}`}
-              onClick={retry}
-            >
-              Try again
-            </Button>
-          }
+          title="Couldn’t load your Brandprint"
+          testId={`brandprint-retry-${scope}`}
+          onRetry={retry}
         />
       </SettingsGroup>
     )

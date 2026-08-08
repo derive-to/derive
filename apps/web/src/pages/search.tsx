@@ -6,11 +6,10 @@ import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { AskButton } from "@/components/shared/ask-button"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
-import { StatusPanel } from "@/components/shared/status-panel"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { splitMatches } from "@/lib/highlight"
 import { searchQuery } from "@/lib/queries"
@@ -93,20 +92,10 @@ export function SearchResults() {
           <SearchResultsSkeleton />
         ) : null
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
+        <LoadError
           title="Couldn’t run that search"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="search-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+          testId="search-retry"
+          onRetry={() => refetch()}
         />
       ) : nothing ? (
         <div data-testid="search-empty">

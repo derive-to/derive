@@ -7,11 +7,11 @@ import { Icon } from "@/components/icons"
 import { CardGrid } from "@/components/shared/card-grid"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
+import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
 import { PublicFrame } from "@/components/shared/public-frame"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { UsernameForm } from "@/components/shared/username-form"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -68,20 +68,10 @@ function ProfileInner({ handle }: { handle: string }) {
   if (isError && !(error instanceof ApiError && error.status === 404)) {
     return (
       <PageShell className="grid min-h-full place-items-center">
-        <StatusPanel
-          tone="danger"
+        <LoadError
           title="Couldn’t load this profile"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="profile-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+          testId="profile-retry"
+          onRetry={() => refetch()}
         />
       </PageShell>
     )
@@ -303,20 +293,10 @@ function ProfileWork({
           </div>
         ) : null
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
+        <LoadError
           title="Couldn’t load this work"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="profile-work-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+          testId="profile-work-retry"
+          onRetry={() => refetch()}
         />
       ) : items.length === 0 ? (
         <div data-testid="profile-work-empty">

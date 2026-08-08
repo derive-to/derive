@@ -1,25 +1,15 @@
-import { type ComponentProps, useEffect, useState } from "react"
+import type { ComponentProps } from "react"
 import type { ProposalState } from "@/api"
 import type { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
+import { useIsMobile } from "@/lib/use-is-mobile"
 
 // Re-exported so the review modules keep their local import while there's one
 // implementation (see lib/time).
 export { ago } from "@/lib/time"
 
 /** True while the viewport is phone-width; the rail collapses to a dropdown. */
-export function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(
-    typeof window !== "undefined" ? window.matchMedia("(max-width: 820px)").matches : false,
-  )
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 820px)")
-    const on = () => setNarrow(mq.matches)
-    mq.addEventListener("change", on)
-    return () => mq.removeEventListener("change", on)
-  }, [])
-  return narrow
-}
+export const useNarrow = (): boolean => useIsMobile(820)
 
 type StateMeta = {
   label: string

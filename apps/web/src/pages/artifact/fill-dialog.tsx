@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { ApiError, api, type DirUser } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -12,6 +13,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "@/components/ui/sonner"
 import { Textarea } from "@/components/ui/textarea"
+import { copyText } from "@/lib/clipboard"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AgentMenu, ALREADY_QUEUED, queuedFor } from "./ask-agent"
 import type { AgentTarget } from "./types"
@@ -58,10 +60,7 @@ export function FillDialog({
   })
   const copy = () => {
     if (!data) return
-    navigator.clipboard
-      .writeText(data.prompt)
-      .then(() => toast("Prompt copied — paste it into your agent."))
-      .catch(() => toast.error("Couldn't reach the clipboard."))
+    void copyText(data.prompt, { success: "Prompt copied — paste it into your agent." })
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -74,10 +73,10 @@ export function FillDialog({
           </DialogDescription>
         </DialogHeader>
         <label className="flex flex-col gap-1.5">
-          <span className="font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+          <Eyebrow>
             What should this be about?{" "}
             <span className="normal-case tracking-normal">(optional — your agent will ask)</span>
-          </span>
+          </Eyebrow>
           <Textarea
             data-testid="fill-note"
             value={note}
@@ -88,12 +87,15 @@ export function FillDialog({
           />
         </label>
         <div className="rounded-md border border-border">
-          <div className="flex items-center justify-between border-b border-border-soft py-1 pr-1 pl-3 font-mono text-2xs uppercase tracking-wide text-muted-foreground">
+          <Eyebrow
+            as="div"
+            className="flex items-center justify-between border-b border-border-soft py-1 pr-1 pl-3"
+          >
             Prompt for your agent
             <Button variant="ghost" size="sm" data-testid="fill-copy" onClick={copy}>
               Copy
             </Button>
-          </div>
+          </Eyebrow>
           {isError ? (
             <div className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
               Couldn't compose the prompt.
