@@ -57,10 +57,14 @@ export const containerSubstrate = (opts: ContainerSubstrateOpts): Substrate => (
     // scoped to this one run and expiring on its own. DERIVE_CONTEXT is blank because this is
     // the context-less run lane (`derive runner run`, not `serve`).
     const envVars = {
+      // Used only for non-secret container labels and lifecycle-log correlation.
+      DERIVE_RUN_ID: runId,
       DERIVE_TOKEN: token,
       DERIVE_SERVER: server,
       DERIVE_CONTEXT: "",
-      DERIVE_RUN_TIMEOUT_MS: String(opts.timeoutMs ?? RUN_TIMEOUT_MS),
+      // The CLI reads RUNNER_TIMEOUT_MS (the same contract as owner-operated runners).
+      // Keep it below the capability-token TTL and stale-run lease via RUN_TIMEOUT_MS.
+      RUNNER_TIMEOUT_MS: String(opts.timeoutMs ?? RUN_TIMEOUT_MS),
       // The coding-agent sandbox is the container itself. This lets Codex make the requested
       // workspace changes without layering a second Landlock sandbox that is unavailable in
       // the Cloudflare runtime; source credentials still never enter the container.

@@ -41,6 +41,7 @@ import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { loopSubstrate } from "./lib/substrate-loop"
 import { providerSubstrate } from "./lib/substrate-provider"
+import { log } from "./log"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
@@ -639,7 +640,13 @@ async function withHostedDispatch(
   await (env.HYPERDRIVE
     ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
     : requestD1.run(env.DB, scoped)
-  ).catch(() => undefined)
+  ).catch((error: unknown) => {
+    // Dispatch is deliberately best-effort — Postgres remains the durable queue and the next
+    // cron pass retries — but swallowing setup/context failures makes an outage invisible.
+    log.error("hosted dispatch: edge setup failed", {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
 }
 
 /** The cron sweep: materialize due schedules, reclaim dead runs, dispatch what is due. */

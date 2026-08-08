@@ -69,6 +69,11 @@ ENV RUNNER_CWD=/work
 # sandbox. Owner-operated node runners do not inherit this flag and keep Codex workspace-scoped.
 ENV DERIVE_RUNNER_ISOLATED=1
 
+# Cloudflare's local Containers runtime requires at least one declared port even for a
+# one-shot job container. This is image metadata only: RunContainer starts the process directly,
+# never waits for a port, and no route or listener exposes the job to traffic.
+EXPOSE 8080
+
 ENTRYPOINT ["runner-entrypoint.sh"]
 # `docker compose run --rm <svc> doctor` preflights the exact same image + env.
 CMD ["serve"]
