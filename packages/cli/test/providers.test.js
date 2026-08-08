@@ -5,7 +5,13 @@ import { describe, expect, it } from "vitest"
 import { claudeCode } from "../src/providers/claude-code.js"
 import { codex } from "../src/providers/codex.js"
 import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "../src/providers/index.js"
-import { loadRunnerConfig, resolveModelEnv, runAgent, stripModelTokens } from "../src/runner.js"
+import {
+  configForRun,
+  loadRunnerConfig,
+  resolveModelEnv,
+  runAgent,
+  stripModelTokens,
+} from "../src/runner.js"
 
 describe("provider registry", () => {
   it("defaults to claude-code, resolves known names, and throws on an unknown one", () => {
@@ -102,8 +108,8 @@ describe("credentialEnv", () => {
     expect(claudeCode.credentialEnv("oauth", "tok")).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "tok" })
     expect(claudeCode.credentialEnv("api_key", "sk")).toEqual({ ANTHROPIC_API_KEY: "sk" })
   })
-  it("codex maps api_key→OPENAI_API_KEY (env); other kinds have no env mapping", () => {
-    expect(codex.credentialEnv("api_key", "sk")).toEqual({ OPENAI_API_KEY: "sk" })
+  it("codex maps api_key→CODEX_API_KEY (env); other kinds have no env mapping", () => {
+    expect(codex.credentialEnv("api_key", "sk")).toEqual({ CODEX_API_KEY: "sk" })
     expect(codex.credentialEnv("login", "blob")).toBeNull()
     expect(codex.credentialEnv("oauth", "tok")).toBeNull()
   })
@@ -117,7 +123,12 @@ describe("credentialEnv", () => {
 })
 
 describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => {
-  const CRED_ENV = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]
+  const CRED_ENV = [
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "CODEX_API_KEY",
+  ]
   const clean = () => {
     for (const k of CRED_ENV) delete process.env[k]
   }
@@ -204,6 +215,7 @@ describe("resolveModelEnv — per-initiator overlay, no shared fallback", () => 
       CLAUDE_CODE_OAUTH_TOKEN: "a",
       ANTHROPIC_API_KEY: "b",
       OPENAI_API_KEY: "c",
+      CODEX_API_KEY: "d",
       CODEX_HOME: "/home/x/.codex",
     })
     expect(stripped).toEqual({ PATH: "/usr/bin" })
@@ -268,7 +280,13 @@ describe("codex provider", () => {
   }
 
   it("runs `codex exec` with the model and the combined prompt, and parses the reply", async () => {
-    const fake = fakeCodex(`echo '<answer>{"body_md":"42"}</answer>'`)
+    const fake = fakeCodex(`
+printf '%s\n' '{"type":"thread.started","thread_id":"thread_42"}'
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"DERIVE_TOKEN=dkrun_abcdefghijklmnop node derive-source.mjs lookup {}","exit_code":0}}'
+printf '%s\n' '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"<answer>{\\"body_md\\":\\"42\\"}</answer>"}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":4}}'
+`)
+    const meter = { costUsd: null, actions: [] }
     const out = await runAgent(codex, {
       bin: fake.bin,
       cwd: tmpdir(),
@@ -276,14 +294,82 @@ describe("codex provider", () => {
       timeoutMs: 30_000,
       systemPrompt: "you are a runner",
       prompt: "how many?",
+      meter,
     })
     expect(out.ok).toBe(true)
     expect(out.answer.body_md).toBe("42")
+    expect(meter).toMatchObject({
+      threadId: "thread_42",
+      actions: [{ type: "command_execution", exit_code: 0 }],
+      usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 4 },
+    })
+    expect(JSON.stringify(meter)).not.toContain("dkrun_abcdefghijklmnop")
     const args = fake.args()
     expect(args).toContain("exec")
+    expect(args).toContain("--json")
+    expect(args).toContain("--ephemeral")
+    expect(args).toContain("workspace-write")
     expect(args).toContain("gpt-5-codex")
     // System prompt (with the appended contract) and the task travel in one prompt.
     expect(args).toContain("you are a runner")
     expect(args).toContain("how many?")
+  })
+
+  it("bounds a complex action stream below the run metadata budget", async () => {
+    const events = Array.from({ length: 100 }, (_, i) =>
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: `item_${i}`,
+          type: "command_execution",
+          command: `node task-${i}.mjs ${"x".repeat(180)}`,
+          exit_code: 0,
+        },
+      }),
+    )
+      .map((line) => `printf '%s\\n' '${line}'`)
+      .join("\n")
+    const fake = fakeCodex(
+      `${events}\nprintf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"<answer>{\\"body_md\\":\\"done\\"}</answer>"}}'`,
+    )
+    const meter = { costUsd: null, actions: [] }
+    const out = await runAgent(codex, {
+      bin: fake.bin,
+      cwd: tmpdir(),
+      model: null,
+      timeoutMs: 30_000,
+      systemPrompt: "runner",
+      prompt: "complex job",
+      meter,
+    })
+
+    expect(out.ok).toBe(true)
+    expect(meter.actions.length).toBeGreaterThan(0)
+    expect(meter.actions.length).toBeLessThan(50)
+    expect(JSON.stringify(meter.actions).length).toBeLessThanOrEqual(4_000)
+  })
+
+  it("applies a run's provider snapshot without inheriting another provider's binary/model", () => {
+    const cfg = {
+      providerName: "claude-code",
+      agentBin: "/bin/claude",
+      model: "sonnet",
+    }
+    expect(
+      configForRun(
+        cfg,
+        { execution: { provider: "codex", location: "hosted", model: null } },
+        {
+          AGENT_BIN: "/wrong/generic",
+          RUNNER_MODEL: "wrong-generic-model",
+          CODEX_BIN: "/bin/codex",
+          CODEX_MODEL: "gpt-current",
+        },
+      ),
+    ).toMatchObject({
+      providerName: "codex",
+      agentBin: "/bin/codex",
+      model: "gpt-current",
+    })
   })
 })

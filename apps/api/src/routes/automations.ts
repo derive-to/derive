@@ -3,6 +3,8 @@ import { refRouter } from "@derive/broker"
 import {
   type AutomationRecord,
   type AutomationTrigger,
+  DEFAULT_EXECUTION_PROVIDER,
+  EXECUTION_PROVIDERS,
   mergeRunMeta,
   newId,
   normalizeSelectors,
@@ -12,7 +14,13 @@ import {
 import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
-import { parseRefs, parseTrigger } from "../lib/automation"
+import {
+  automationProvider,
+  executionForRun,
+  parseRefs,
+  parseTrigger,
+  runMetaForAutomation,
+} from "../lib/automation"
 import {
   brokerFor,
   callTool,
@@ -130,16 +138,16 @@ export const automationRoutes = (ctx: AppContext) => {
    *  owner-lend → workspace pool) is the same one the executor resolves later — see lib/payer.ts,
    *  which exists so the two cannot drift. */
   const canPay = async (a: AutomationRecord, initiatorId: string | null): Promise<boolean> => {
-    // An operator-configured gateway means THIS DEPLOY pays, so there is no chain to walk and
-    // no plan for anyone to connect. Without this the guard refuses every run on exactly the
-    // self-host deployments DERIVE_MODEL_BASE_URL exists to serve — the loop substrate would
-    // happily execute them, and they could never be created. Same fix, and the same reasoning,
-    // as the attended lane in routes/contexts.ts; found by running both end to end.
-    if (ctx.callModel) return true
+    // An operator-configured IN-PROCESS automation gateway means this deploy pays, so there is
+    // no chain to walk and no plan to connect. `callModel` alone does not imply that: CLI and
+    // container substrates cannot use the gateway credential. Codex also always resolves its
+    // own selected-provider plan.
+    if (ctx.deps.automationOperatorPays === true && automationProvider(a) !== "codex") return true
     return canPayForAgent(meta, {
       orgId: a.org_id,
       agentId: a.agent_id,
       initiator: initiatorId ? { userId: initiatorId, source: "initiator" } : null,
+      provider: automationProvider(a),
     })
   }
 
@@ -157,6 +165,11 @@ export const automationRoutes = (ctx: AppContext) => {
         agentId: z.string().optional(),
         trigger: TRIGGER,
         instruction: z.string().min(1).max(4000),
+        provider: z.enum(EXECUTION_PROVIDERS).default(DEFAULT_EXECUTION_PROVIDER),
+        // The artifact-local flow proves the automation immediately. Creation and enqueue are
+        // one logical operation: if the run cannot be paid for or queued, the new automation
+        // (and any managed agent minted for it) is unwound.
+        runNow: z.boolean().default(false),
         refs: REFS.optional(),
         connectionIds: z.array(z.string().max(64)).max(20).optional(),
         // Bind a context: the automation becomes a scheduled use(context, instruction) — its
@@ -166,6 +179,9 @@ export const automationRoutes = (ctx: AppContext) => {
       }),
     )
     if (b instanceof Response) return bail(b)
+    if (b.runNow && !b.enabled) return bail(fail(c, 400, "runNow needs an enabled automation"))
+    const initiator = b.runNow ? await requireUser(c) : null
+    if (initiator instanceof Response) return bail(initiator)
     // A bound context must exist in this workspace, and it decides the acting agent: the run
     // must be the context's agent or the context's skills would belong to someone else. An
     // explicit agentId is allowed only when it AGREES.
@@ -224,6 +240,7 @@ export const automationRoutes = (ctx: AppContext) => {
       fireSecret = mintToken("dfire")
       trigger.secret_hash = sha256(fireSecret)
     }
+    let createdAutomationId: string | null = null
     try {
       const rec = await meta.createAutomation({
         id: newId("auto"),
@@ -231,17 +248,62 @@ export const automationRoutes = (ctx: AppContext) => {
         agent_id: agentId,
         trigger: JSON.stringify(trigger satisfies AutomationTrigger),
         instruction: b.instruction,
+        provider: b.provider,
         // Stored CANONICAL (bare strings become artifact selectors) so readers never re-guess.
         refs: b.refs ? JSON.stringify(normalizeSelectors(b.refs)) : null,
         connection_ids: b.connectionIds?.length ? JSON.stringify(b.connectionIds) : null,
         context_id: b.contextId ?? null,
         enabled: b.enabled ? 1 : 0,
       })
+      createdAutomationId = rec.id
+      let firstRun: Awaited<ReturnType<typeof meta.createRun>> | null = null
+      if (b.runNow) {
+        if (!initiator) throw new Error("runNow initiator was not resolved")
+        const unwind = async () => {
+          await meta.deleteAutomation(rec.id, org).catch(() => {})
+          if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
+        }
+        if (await overBudget(meta, org, initiator.id)) {
+          await unwind()
+          return bail(fail(c, 429, "monthly run budget reached"))
+        }
+        if (!(await canPay(rec, initiator.id))) {
+          await unwind()
+          return bail(fail(c, 402, NO_PAYER_MESSAGE))
+        }
+        try {
+          firstRun = await meta.createRun({
+            id: newId("run"),
+            org_id: org,
+            automation_id: rec.id,
+            agent_id: rec.agent_id,
+            reason: `manual:${initiator.id}`,
+            initiated_by: initiator.id,
+            scheduled_for: isoNow(),
+            meta: runMetaForAutomation(rec),
+          })
+        } catch (e) {
+          await unwind()
+          throw e
+        }
+        // A dispatch nudge is only a latency optimization: the scheduled sweep will pick the
+        // queued run up even when the platform binding is briefly unavailable. Never unwind an
+        // otherwise valid automation + run because that best-effort signal threw synchronously.
+        try {
+          deps.pokeRun?.(firstRun.id)
+        } catch {
+          // The queued row is the durable handoff.
+        }
+      }
       // The auto-mint token + the fire secret/URL ride this create response ONCE.
       return c.json(
         {
           ...present(rec),
-          ...(agentToken ? { agent_token: agentToken } : {}),
+          // Hosted dispatch authenticates with an expiring per-run capability; exposing the
+          // standing bearer during create-and-run is unnecessary. Keep it only for the
+          // existing polling-runner creation flow.
+          ...(agentToken && !b.runNow ? { agent_token: agentToken } : {}),
+          ...(firstRun ? { run_id: firstRun.id, run_status: firstRun.status } : {}),
           ...(fireSecret
             ? { fire_secret: fireSecret, fire_url: `/v1/automations/${rec.id}/fire` }
             : {}),
@@ -249,8 +311,10 @@ export const automationRoutes = (ctx: AppContext) => {
         201,
       )
     } catch (e) {
-      // A failed create after an auto-mint must not strand an orphaned managed
-      // agent (and its live token) — unwind the mint with the create.
+      // A failed atomic create-and-run must not leave a definition that never got its promised
+      // proof run. A failed create after an auto-mint must not strand a managed agent either.
+      if (b.runNow && createdAutomationId)
+        await meta.deleteAutomation(createdAutomationId, org).catch(() => {})
       if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
       throw e
     }
@@ -271,7 +335,9 @@ export const automationRoutes = (ctx: AppContext) => {
         agentId: z.string().optional(),
         trigger: TRIGGER.optional(),
         instruction: z.string().min(1).max(4000).optional(),
+        provider: z.enum(EXECUTION_PROVIDERS).optional(),
         refs: REFS.nullable().optional(),
+        contextId: z.string().max(64).nullable().optional(),
         // Sources were bindable only at CREATE, which meant an automation could never be pointed
         // at a source connected afterwards — and connecting the source is the step a person does
         // second, having already built the automation. `null` (or []) unbinds them all.
@@ -284,6 +350,15 @@ export const automationRoutes = (ctx: AppContext) => {
       const agents = await meta.listAgents(org)
       if (!agents.some((ag) => ag.id === b.agentId))
         return bail(fail(c, 400, "agent must be in this workspace"))
+    }
+    const effectiveContextId = b.contextId === undefined ? a.context_id : b.contextId
+    let nextContext: Awaited<ReturnType<typeof meta.getContext>> | null = null
+    if (effectiveContextId) {
+      nextContext = await meta.getContext(effectiveContextId)
+      if (!nextContext || nextContext.org_id !== org)
+        return bail(fail(c, 400, "context must exist in this workspace"))
+      if (b.agentId && b.agentId !== nextContext.agent_id)
+        return bail(fail(c, 400, "a context-bound automation runs as the context's agent"))
     }
     // The SAME least-privilege check create makes, for the same reason: the ids must belong to
     // this workspace and be attachable by this caller. An edit path that skipped it would be a
@@ -298,15 +373,17 @@ export const automationRoutes = (ctx: AppContext) => {
       if (bindErr) return bail(fail(c, 400, bindErr))
     }
     const rec = await meta.updateAutomation(a.id, org, {
-      agent_id: b.agentId,
+      agent_id: nextContext?.agent_id ?? b.agentId,
       trigger: b.trigger ? JSON.stringify(b.trigger satisfies AutomationTrigger) : undefined,
       instruction: b.instruction,
+      provider: b.provider,
       refs:
         b.refs === undefined
           ? undefined
           : b.refs === null
             ? null
             : JSON.stringify(normalizeSelectors(b.refs)),
+      context_id: b.contextId === undefined ? undefined : b.contextId,
       connection_ids:
         b.connectionIds === undefined
           ? undefined
@@ -371,6 +448,7 @@ export const automationRoutes = (ctx: AppContext) => {
       // (the wallet follows the initiator). Schedule/event enqueues leave it null.
       initiated_by: me.id,
       scheduled_for: isoNow(),
+      meta: runMetaForAutomation(a),
     })
     // Hosted runs: start it NOW rather than at the next tick, so "Run now" feels immediate.
     // Fire-and-forget — the tick is the guarantee, this is only the latency (and it is a no-op
@@ -435,7 +513,7 @@ export const automationRoutes = (ctx: AppContext) => {
       agent_id: a.agent_id,
       reason: "fire",
       scheduled_for: new Date(now).toISOString(),
-      meta: JSON.stringify({ payloads: [payload] }),
+      meta: runMetaForAutomation(a, { payloads: [payload] }),
     })
     // Same immediate start for an external trigger (CI, a zap, curl): a fire URL that takes a
     // minute to visibly do anything reads as broken.
@@ -528,6 +606,7 @@ export const automationRoutes = (ctx: AppContext) => {
       : null
     const runs = await Promise.all(
       runnable.map(async ({ r, a }) => {
+        const execution = executionForRun(r.meta, a)
         const connIds = parseConnectionIds(a.connection_ids)
         // A bound source that contributes NOTHING is the interesting case: the run is about to
         // do its job without a thing its author expected it to have. Carried to the executor so
@@ -571,6 +650,9 @@ export const automationRoutes = (ctx: AppContext) => {
           // The bound context, when there is one: the executor materializes its manifest +
           // skills as the run's system prompt (the ask lane's bootHost machinery, reused).
           context_id: a.context_id,
+          // Immutable enqueue-time provider/location/model. The executor consumes this snapshot,
+          // never the automation's current setting, so an edit cannot reroute queued work.
+          execution,
           instruction: a.instruction,
           // Canonical selectors: artifact = revise it, collection = file new work there,
           // tag = the platform stamps it on every write. Each target's `mode` says how the

@@ -168,6 +168,15 @@ export interface AppDeps {
    *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
    *  rather than imported so a test can script it and so no provider choice is baked into the app. */
   callModel?: AgentLoopInput["callModel"]
+  /**
+   * Whether this deployment's operator gateway pays for unattended Claude runs.
+   *
+   * `callModel` alone is not enough: it also exists when queued work is executed by a CLI
+   * child/container, and that executor cannot use the in-process gateway credential. Entry
+   * points set this only when the model loop is the selected unattended substrate. Codex always
+   * resolves a Codex plan through the normal payer chain.
+   */
+  automationOperatorPays?: boolean
   /** EVERY model this deploy can answer an attended turn with, and how to reach each one.
    *
    *  `callModel` above is this catalog's DEFAULT entry — one is built from the other, so the two

@@ -17,6 +17,11 @@ One tick does three idempotent things, then gets out of the way:
 3. **Dispatch** — each due queued run gets a **per-run capability token** and is handed to the
    **substrate**, which boots an executor for exactly that run.
 
+The automation's coding-agent provider is snapshotted into the run when it is enqueued. Editing
+an automation later cannot reroute already-accepted work, and a selected provider never silently
+falls back to another one. The claim, executor receipt, and activity ledger all carry the same
+`execution` record (`provider`, `location`, `model`).
+
 Dispatch never claims. The *executor* claims (`queued → running`, status-guarded), so a double
 dispatch is harmless: the second one finds nothing and exits. That is the whole concurrency
 story — no locks, no leader election, no second queue.
@@ -39,13 +44,11 @@ All three live in `lib/run-lifecycle.ts`, which throws at import if the order is
 
 ### Cost and fairness
 
-- **Monthly model budget — wired at every call site, but NOT YET A CEILING.** The check runs at
-  the enqueue routes and at dispatch, and over budget *defers* the run (left queued, never
-  failed) so raising the cap or the next month releases it with nobody re-creating the work.
-  What it compares against is `run.cost_micro_usd`, and the executor never reports cost — so
-  the sum is always zero and the check always passes. Until the runner reports cost, treat
-  hosted spend as bounded by the concurrency and retry caps below, not by money, and do not
-  tell a workspace it has a monthly cap.
+- **Monthly model budget** — checked at enqueue and dispatch. When a provider reports dollar
+  cost, the executor records it and an over-budget run is deferred (left queued, never failed),
+  so raising the cap or the next month releases it without recreating work. Subscription CLIs
+  such as Codex expose usage but not dollar cost; those runs remain unknown rather than being
+  recorded as free, so the concurrency and retry caps below are their hard backstops.
 - **Per-workspace in-flight cap** (default 3) so one workspace's burst can't consume the
   deployment's capacity or fan out unbounded model spend. Also deferred, not failed.
 - A **global per-pass limit** (default 10) is the outer burst valve.
@@ -84,7 +87,9 @@ it to *its* run, so a leaked token can touch nothing else. Nothing standing is s
 
 Third-party **source** credentials never enter the executor: a pull calls back to
 `POST /v1/agent/runs/:id/tool`, and the API executes it through the broker server-side. The
-model plan is the run initiator's own, fetched at run time.
+model plan is resolved at run time for the **selected provider**. The payer chain is the
+requester's own subscription/API key first, then an explicitly lent agent-owner plan, then the
+workspace pool. A Claude credential cannot make a Codex run look payable (or vice versa).
 
 ## Substrates
 
@@ -94,6 +99,22 @@ model plan is the run initiator's own, fetched at run time.
 | `cf-container` | A scale-to-zero Cloudflare Container | Uncomment the `[[containers]]` block in `apps/api/wrangler.toml` |
 | `worker-loop` | The API process/isolate itself — a model and `fetch`, no container | `DERIVE_LOOP_RUNS=1` |
 | _(polling runner)_ | An owner's machine | The default when hosted runs are off |
+
+V1 has two verified provider adapters:
+
+- **Codex** always takes a CLI-backed machine substrate (`cf-container` on derive.to,
+  `node-child` on a Node self-host). The image pins the verified Codex CLI and executes
+  `codex exec --json --ephemeral`, so it can use a writable workspace, shell/git, repository
+  pointers, bound source tools, and context skills under `.agents/skills`. Commands, file
+  changes, MCP calls, plan updates, usage, and the Codex thread id become a size-bounded,
+  redacted run receipt; command output is never stored.
+- **Claude Code** keeps the existing behavior. When `worker-loop` is enabled, ordinary artifact
+  refreshes stay in the cheaper loop; otherwise they use the same CLI-backed substrate.
+
+That split is deliberate: a simple “read data, revise artifact” turn does not need a filesystem,
+while a complex Codex instruction does. The queue, payer chain, capability token, write gate,
+retry policy, and ledger are provider-neutral; another coding agent only needs an adapter that
+implements the same structured runner contract.
 
 The two CLI-backed substrates boot the **same image**; the loop reaches the same endpoints over
 HTTP instead. All three branch on the TOKEN, which is what lets one substrate serve both lanes: a
@@ -140,6 +161,11 @@ The end-to-end pull (real runner, real API over a socket, scripted agent) is:
 ```sh
 pnpm --filter @derive/api test agentic-pull-e2e
 ```
+
+The Codex adapter suite drives a scripted JSONL agent through a command/tool action, final
+revision, usage, receipt redaction, and receipt truncation. The adapter has also been validated
+against the pinned official Codex binary in a disposable workspace with a real command and file
+change.
 
 ### 2. The Node substrate — a real unattended run on your laptop
 

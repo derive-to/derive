@@ -286,13 +286,17 @@ const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
  * payer chain only asks whether a credential EXISTS. Keeping this dumb means a change to how
  * secrets are stored can never quietly make every fixture unpayable.
  */
-export const connectPoolPlan = async (meta: MetaStore, orgId = "default") => {
+export const connectPoolPlan = async (
+  meta: MetaStore,
+  orgId = "default",
+  provider: "claude-code" | "codex" = "claude-code",
+) => {
   const now = new Date().toISOString()
   await meta.setModelCredential({
-    id: `mc_pool_${orgId}`,
+    id: `mc_pool_${orgId}_${provider}`,
     org_id: orgId,
     user_id: POOL_USER,
-    provider: "claude-code",
+    provider,
     kind: "api_key",
     secret: "sk-test-pool",
     hint: "test",

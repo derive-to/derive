@@ -13,15 +13,10 @@ const monthStartIso = (): string => {
  * time (when a model key is actually needed), not at enqueue. `ownerUserId` is the person the
  * run bills to: the verb/automation owner (null → the workspace pool).
  *
- * ⚠️ NOT LOAD-BEARING YET — do not describe this as a spend ceiling. It sums
- * `run.cost_micro_usd`, and nothing writes that column: the executor settles a run with
- * `{status, meta}` and never reports what the model cost (grep `cost_micro_usd` under
- * packages/cli — no hits). The sum is therefore always 0 and this always returns false, at
- * every call site. The wiring is right and starts working the day the executor reports cost;
- * until then the only real limits on hosted spend are the per-org in-flight cap and the
- * retry/attempt caps, which bound CONCURRENCY and REPETITION rather than money. Reporting
- * cost from the runner is the fix, and it is the last thing standing between this and an
- * actual budget.
+ * Executors report `cost_micro_usd` when the selected provider exposes dollar cost. Some
+ * subscription-backed CLIs (including Codex) expose token usage but no dollar amount, so their
+ * rows remain unknown rather than being recorded as free. Concurrency and retry caps therefore
+ * remain the hard backstops for providers whose CLI cannot report price.
  */
 export const overBudget = async (
   meta: MetaStore,

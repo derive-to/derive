@@ -342,8 +342,14 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_HOSTED_RUNS",
     group: "advanced",
-    doc: "EXPERIMENTAL — hosted automation runs on this Node deploy: the API process materializes\ndue schedules and executes each run by spawning the derive CLI\n(`derive runner run <capability token>`) as a child process on this box. Needs the CLI\nplus a coding agent (claude/codex) installed, and a connected model plan (or an ambient\nANTHROPIC_API_KEY / OPENAI_API_KEY). Unset = off; queued runs then wait for a polling\n`derive runner`.",
+    doc: "EXPERIMENTAL — hosted automation runs on this Node deploy: the API process materializes\ndue schedules and executes each run by spawning the derive CLI\n(`derive runner run <capability token>`) as a child process on this box. Needs the CLI,\nthe selected coding agent (Claude Code or Codex), and a matching connected model plan.\nAmbient model keys are deliberately not inherited by the child. Unset = off; queued runs\nthen wait for a polling `derive runner`.",
     example: "true",
+  },
+  {
+    name: "DERIVE_HOSTED_RUNS_ALLOWLIST",
+    group: "advanced",
+    doc: "Comma-separated immutable workspace ids allowed to execute on this deployment's\nhosted substrate. It gates scheduled materialization, stale-run recovery, the minute dispatch\nsweep, Run now nudges, and hosted ask sessions. Owner-operated polling runners are unaffected.\n\nOn the multi-tenant Cloudflare Worker, unset or blank means NOBODY (fail closed). On a Node\nself-host, unset preserves the single-tenant default of no restriction; set it to restrict\nhosted execution there too, and set it to an empty string for a deployment-level stop.",
+    example: "ws_abc123,ws_def456",
   },
   {
     name: "DERIVE_LOOP_RUNS",

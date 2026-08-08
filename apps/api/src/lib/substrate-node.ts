@@ -64,6 +64,8 @@ const OS_PASSTHROUGH = [
   "AGENT_BIN",
   "CLAUDE_BIN",
   "CODEX_BIN",
+  "CLAUDE_MODEL",
+  "CODEX_MODEL",
 ]
 
 const childEnv = (pinned: Record<string, string>): NodeJS.ProcessEnv => {

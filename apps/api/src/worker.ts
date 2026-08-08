@@ -28,13 +28,19 @@ import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
-import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import {
+  slackFromEnv,
+  subdomainBaseFromEnv,
+  superAdminsFromEnv,
+  workspaceIdsFromEnv,
+} from "./lib/env"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { loopSubstrate } from "./lib/substrate-loop"
+import { providerSubstrate } from "./lib/substrate-provider"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
@@ -156,6 +162,9 @@ export interface Env {
   DERIVE_MODEL_GATEWAYS?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
+  /** Workspace ids allowed to execute on Derive's hosted substrate. Empty/unset means nobody
+   *  on the multi-tenant edge; owner-operated polling runners remain available everywhere. */
+  DERIVE_HOSTED_RUNS_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
    *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
   DERIVE_LOOP_RUNS?: string
@@ -308,6 +317,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Both from ONE construction: `callModel` is the catalog's default entry, so a lane that
         // picks a model and a lane that does not can never disagree about what "the model" is.
         callModel: models?.resolve(null)?.callModel,
+        automationOperatorPays: env.DERIVE_LOOP_RUNS === "1" && workerGateway(env) !== undefined,
         models: models ?? undefined,
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
@@ -567,7 +577,8 @@ async function withHostedDispatch(
   // the key and spending it for every workspace IS the hosted posture. `operatorPays` below
   // depends on the same fact.
   const gateway = workerGateway(env)
-  const substrate =
+  const container = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+  const loop =
     env.DERIVE_LOOP_RUNS === "1"
       ? loopSubstrate({
           model: env.DERIVE_LOOP_MODEL,
@@ -604,7 +615,12 @@ async function withHostedDispatch(
               }
             : {}),
         })
-      : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+      : null
+  // Codex is a coding-agent CLI: it needs the filesystem/shell job container even when the
+  // deployment keeps ordinary artifact refreshes on the cheaper in-Worker model loop.
+  const substrate = loop
+    ? providerSubstrate({ fallback: loop, providers: { codex: container ?? undefined } })
+    : container
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
   const scoped = () =>
@@ -613,9 +629,12 @@ async function withHostedDispatch(
       substrate,
       server: env.BASE_URL ?? "",
       secret,
-      // Same gateway the substrate just took: when the operator holds the key, the schedule
-      // materializer must not walk a payer chain that cannot exist.
-      operatorPays: !!gateway,
+      // The gateway can pay only for work that actually uses the in-Worker loop. Containerized
+      // coding agents still resolve their selected provider's plan through the payer chain.
+      operatorPays: env.DERIVE_LOOP_RUNS === "1" && !!gateway,
+      // Multi-tenant rollout is FAIL CLOSED: unlike Node self-host, the Worker always passes a
+      // set. A missing/blank binding therefore selects zero workspaces rather than every one.
+      hostedOrgIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
     })
   await (env.HYPERDRIVE
     ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)

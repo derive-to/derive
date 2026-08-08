@@ -1,4 +1,10 @@
-import type { MetaStore, RunRecord } from "@derive/core"
+import {
+  type MetaStore,
+  parseRunExecution,
+  parseRunMeta,
+  type RunExecution,
+  type RunRecord,
+} from "@derive/core"
 import { log } from "../log"
 import { overBudget } from "./budget"
 import {
@@ -39,6 +45,8 @@ export interface Substrate {
     token: string
     /** The API base URL the executor calls back on. */
     server: string
+    /** Enqueue-time execution choice. Absent for sessions and historical work. */
+    execution?: RunExecution
   }): Promise<void>
 }
 
@@ -53,12 +61,15 @@ export interface DispatchDeps {
   server: string
   /** DERIVE_AUTH_SECRET / encryptionKey — signs the capability tokens. */
   secret: string
-  /** True when this deployment has an operator gateway (DERIVE_MODEL_BASE_URL/_API_KEY/_NAME),
-   *  i.e. it holds the key and pays for every workspace on it. The schedule materializer then
-   *  skips the payer walk: there is no plan for anyone to connect, so the chain returns null and
-   *  would refuse every occurrence forever. Set from the SAME gateway helper each entry point
-   *  already uses to build the substrate, so the two can never disagree about it. */
+  /** True when this deployment has an operator gateway AND unattended work uses the in-process
+   *  model loop. The schedule materializer then skips the payer walk for Claude loop runs. A
+   *  CLI/container coding-agent run cannot use that gateway and must still resolve a plan. */
   operatorPays?: boolean
+  /** Operator-level rollout boundary for HOSTED work. Undefined means unrestricted (the
+   *  self-host default); an empty set means nobody. The hosted multi-tenant Worker always passes
+   *  a set, so a missing deployment value fails closed instead of silently enabling every
+   *  workspace. Owner-operated polling runners never touch this dispatcher and are unaffected. */
+  hostedOrgIds?: ReadonlySet<string>
   /** Max runs started per pass (the global burst valve). Default 10. */
   limit?: number
   /** Max runs one WORKSPACE may have in flight at once — fairness and cost containment, so a
@@ -84,6 +95,12 @@ export interface DispatchResult {
   sessionsStarted: number
 }
 
+const hostedOrgAllowed = (deps: DispatchDeps, orgId: string): boolean =>
+  deps.hostedOrgIds === undefined || deps.hostedOrgIds.has(orgId)
+
+const hostedOrgScope = (deps: DispatchDeps): readonly string[] | undefined =>
+  deps.hostedOrgIds === undefined ? undefined : [...deps.hostedOrgIds]
+
 /** Mint the capability token for a work item and hand it to the substrate. Runs and sessions
  *  differ only in the token's kind and the id the executor is told to serve — the substrate
  *  boots the same image either way, which is the whole point of unifying the two lanes, and the
@@ -91,11 +108,20 @@ export interface DispatchResult {
 const startOne = async (
   deps: DispatchDeps,
   kind: "run" | "session",
-  item: { id: string; agentId: string; orgId: string },
+  item: { id: string; agentId: string; orgId: string; execution?: RunExecution },
   expMs: number,
 ): Promise<void> => {
+  // Last-line rollout fence: every current caller filters earlier (so denied work is never even
+  // scanned), but a future fast path cannot start a substrate merely by forgetting that filter.
+  if (!hostedOrgAllowed(deps, item.orgId))
+    throw new Error(`hosted execution is not enabled for workspace ${item.orgId}`)
   const token = await signWorkToken(kind, deps.secret, item.id, item.agentId, item.orgId, expMs)
-  await deps.substrate.start({ runId: item.id, token, server: deps.server })
+  await deps.substrate.start({
+    runId: item.id,
+    token,
+    server: deps.server,
+    ...(item.execution ? { execution: item.execution } : {}),
+  })
 }
 
 /**
@@ -118,7 +144,14 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
 
   // 1. Materialize due schedules.
   try {
-    out.materialized = await materializeAllDueRuns(deps.meta, now, deps.operatorPays === true)
+    out.materialized = await materializeAllDueRuns(
+      deps.meta,
+      now,
+      // The operator's generic model gateway can cover the in-process lane. It cannot
+      // authenticate a Codex CLI run, which must still resolve its selected plan.
+      (automation) => deps.operatorPays === true && automation.provider !== "codex",
+      hostedOrgScope(deps),
+    )
   } catch (e) {
     log.warn("hosted dispatch: materialize failed", { error: (e as Error).message })
   }
@@ -129,7 +162,7 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
   //    before a replacement is dispatched (run-lifecycle.ts).
   try {
     const lease = new Date(now.getTime() - (deps.leaseMs ?? RUN_LEASE_MS)).toISOString()
-    const swept = await deps.meta.reclaimStaleRuns(lease, RUN_MAX_ATTEMPTS)
+    const swept = await deps.meta.reclaimStaleRuns(lease, RUN_MAX_ATTEMPTS, hostedOrgScope(deps))
     out.requeued = swept.requeued
     out.lost = swept.failed
   } catch (e) {
@@ -140,7 +173,11 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
   //    substrate that throttles (container concurrency) should push back here, not queue up.
   let due: RunRecord[] = []
   try {
-    due = await deps.meta.listDueQueuedRuns(now.toISOString(), deps.limit ?? 10)
+    due = await deps.meta.listDueQueuedRuns(
+      now.toISOString(),
+      deps.limit ?? 10,
+      hostedOrgScope(deps),
+    )
   } catch (e) {
     log.warn("hosted dispatch: due scan failed", { error: (e as Error).message })
     return out
@@ -215,7 +252,17 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
       continue
     }
     try {
-      await startOne(deps, "run", { id: r.id, agentId: r.agent_id, orgId: r.org_id }, expMs)
+      await startOne(
+        deps,
+        "run",
+        {
+          id: r.id,
+          agentId: r.agent_id,
+          orgId: r.org_id,
+          execution: parseRunExecution(parseRunMeta(r.meta)),
+        },
+        expMs,
+      )
       out.started += 1
       inFlight.set(r.org_id, (inFlight.get(r.org_id) ?? 0) + 1)
     } catch (e) {
@@ -265,7 +312,11 @@ const dispatchSessions = async (
   const perOrg = deps.perOrgLimit ?? 3
   const perContext = new Map<string, number>()
   try {
-    const due = await deps.meta.listDueOpenSessions(now.toISOString(), deps.limit ?? 10)
+    const due = await deps.meta.listDueOpenSessions(
+      now.toISOString(),
+      deps.limit ?? 10,
+      hostedOrgScope(deps),
+    )
     for (const s of due) {
       // GIVE UP on an ask that has been unsettled too long. Without this a session whose
       // executor keeps dying is re-dispatched on every lease lapse forever, each round paying
@@ -360,12 +411,15 @@ export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise
   try {
     const r = await deps.meta.getRun(runId)
     if (r?.status !== "queued") return false
+    // The queue nudge receives only a run id, so its immutable workspace scope must be checked
+    // after loading the row. This is the direct path a minute sweep cannot compensate for.
+    if (!hostedOrgAllowed(deps, r.org_id)) return false
     // The master switch applies to the fast path too, or "Run now" would bypass the one
     // control an operator reaches for to stop everything. Fail CLOSED on a settings error —
     // the tick will pick the run up if the read was a blip, so refusing costs a minute while
     // proceeding could spend money a workspace had switched off.
     const settings = await deps.meta.getOrgSettings(r.org_id).catch(() => null)
-    if (!settings || !settings.hostedAgentsEnabled) return false
+    if (!settings?.hostedAgentsEnabled) return false
     const now = deps.now?.() ?? new Date()
     // The SAME ceilings the tick applies. Without these the nudge was an unbounded spend
     // path: it is wired to every run creation (Run now, and every webhook fire), so a caller

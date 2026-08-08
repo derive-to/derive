@@ -3915,18 +3915,26 @@ export class PgMetaStore implements MetaStore {
   // Only LIVE working sessions (lease not lapsed) fill the concurrency cap — else a
   // crashed run wedges the queue (the lapsed-lease reclaim is in claimPendingSessions,
   // which only runs when there is room). Mirrors the sqlite/d1 layer.
-  async listDueOpenSessions(now: string, limit = 50): Promise<SessionRecord[]> {
+  async listDueOpenSessions(
+    now: string,
+    limit = 50,
+    orgIds?: readonly string[],
+  ): Promise<SessionRecord[]> {
+    if (orgIds?.length === 0) return []
     return this.db
       .select()
       .from(contextSession)
       .where(
-        or(
-          eq(contextSession.state, "open"),
-          // A `working` row whose lease lapsed (or never existed) is a dead executor's
-          // session — runnable again, exactly as claimPendingSessions treats it.
-          and(
-            eq(contextSession.state, "working"),
-            or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+        and(
+          orgIds ? inArray(contextSession.org_id, [...orgIds]) : undefined,
+          or(
+            eq(contextSession.state, "open"),
+            // A `working` row whose lease lapsed (or never existed) is a dead executor's
+            // session — runnable again, exactly as claimPendingSessions treats it.
+            and(
+              eq(contextSession.state, "working"),
+              or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+            ),
           ),
         ),
       )
@@ -4439,7 +4447,9 @@ export class PgMetaStore implements MetaStore {
       agent_id?: string
       trigger?: string
       instruction?: string
+      provider?: import("@derive/core").ExecutionProvider
       refs?: string | null
+      context_id?: string | null
       /** JSON array of connection ids this automation may spend; null clears them all. */
       connection_ids?: string | null
       enabled?: 0 | 1
@@ -4449,7 +4459,9 @@ export class PgMetaStore implements MetaStore {
     if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
     if (fields.trigger !== undefined) set.trigger = fields.trigger
     if (fields.instruction !== undefined) set.instruction = fields.instruction
+    if (fields.provider !== undefined) set.provider = fields.provider
     if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.context_id !== undefined) set.context_id = fields.context_id
     if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
     if (fields.enabled !== undefined) set.enabled = fields.enabled
     if (Object.keys(set).length === 0) return this.getAutomation(id)
@@ -4549,13 +4561,21 @@ export class PgMetaStore implements MetaStore {
   async reclaimStaleRuns(
     cutoffIso: string,
     maxAttempts = 3,
+    orgIds?: readonly string[],
   ): Promise<{ requeued: number; failed: number }> {
+    if (orgIds?.length === 0) return { requeued: 0, failed: 0 }
     // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
     // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
     const stale: RunRecord[] = await this.db
       .select()
       .from(run)
-      .where(and(eq(run.status, "running"), lte(run.started_at, cutoffIso)))
+      .where(
+        and(
+          orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
+          eq(run.status, "running"),
+          lte(run.started_at, cutoffIso),
+        ),
+      )
       .limit(100)
     let requeued = 0
     let failed = 0
@@ -4591,15 +4611,37 @@ export class PgMetaStore implements MetaStore {
     }
     return { requeued, failed }
   }
-  async listEnabledAutomations(limit = 500): Promise<AutomationRecord[]> {
-    return this.db.select().from(automation).where(eq(automation.enabled, 1)).limit(limit)
+  async listEnabledAutomations(
+    limit = 500,
+    orgIds?: readonly string[],
+  ): Promise<AutomationRecord[]> {
+    if (orgIds?.length === 0) return []
+    return this.db
+      .select()
+      .from(automation)
+      .where(
+        and(
+          orgIds ? inArray(automation.org_id, [...orgIds]) : undefined,
+          eq(automation.enabled, 1),
+        ),
+      )
+      .limit(limit)
   }
-  async listDueQueuedRuns(now: string, limit = 50): Promise<RunRecord[]> {
+  async listDueQueuedRuns(
+    now: string,
+    limit = 50,
+    orgIds?: readonly string[],
+  ): Promise<RunRecord[]> {
+    if (orgIds?.length === 0) return []
     return this.db
       .select()
       .from(run)
       .where(
-        and(eq(run.status, "queued"), or(isNull(run.scheduled_for), lte(run.scheduled_for, now))),
+        and(
+          orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
+          eq(run.status, "queued"),
+          or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
+        ),
       )
       .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
       .limit(limit)
