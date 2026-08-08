@@ -106,6 +106,10 @@ export const artifact = sqliteTable("artifact", {
   // GitHub-synced versions (attributed via author_gh_id), static-token, and legacy rows.
   // Drives the profile work-list + people-follow. Nullable so it ALTER ADDs cleanly.
   author_id: text("author_id"),
+  // Remix lineage: the artifact id this one was derived from ("Use this as a
+  // template"). Deliberately not an FK — the source may be deleted later and the
+  // copy must survive it. Nullable, no default, so it ALTER ADDs cleanly.
+  derived_from: text("derived_from"),
 })
 
 export const version = sqliteTable(
@@ -151,6 +155,19 @@ export const version = sqliteTable(
     preview_marked_key: text("preview_marked_key"),
     preview_marked_status: text("preview_marked_status").$type<PreviewStatus>(),
     preview_marked_error: text("preview_marked_error"),
+    // A one- or two-sentence description of what this version SAYS, generated at publish
+    // (lib/after-publish.ts). Every unfurl surface — the Slack card, og:description, oEmbed —
+    // otherwise describes an artifact as "Markdown · 3 versions · 7 comments", which answers
+    // "what is this?" and not "what is it about?". Null is the normal resting state: no model
+    // bound (self-host), a non-text version, or a generation that failed — all fall back to
+    // that inventory line, so nothing depends on this being present.
+    //
+    // `summary_src_hash` is over the exact text the model was given, and exists to make the
+    // COMMON case free: agents republish constantly, and most publishes do not change what a
+    // document is about. An unchanged hash copies the previous version's summary forward
+    // instead of paying for an identical one.
+    summary: text("summary"),
+    summary_src_hash: text("summary_src_hash"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],
@@ -227,6 +244,12 @@ export const automation = sqliteTable("automation", {
   // trigger kind adds no columns — it is a new value in this blob.
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
+  // Coding-agent runtime. Existing rows stay on the historical Claude default; new work can
+  // choose Codex explicitly and snapshots that choice onto each run.
+  provider: text("provider")
+    .$type<import("@derive/core").ExecutionProvider>()
+    .notNull()
+    .default("claude-code"),
   // Serialized inputs/targets (artifact ids, urls, arbitrary), or null.
   // How each write lands (publish vs propose) rides IN the refs blob per target —
   // policy is config, config evolves, and evolving config never gets a column.

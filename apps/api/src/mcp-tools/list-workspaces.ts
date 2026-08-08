@@ -17,7 +17,12 @@ export function registerListWorkspacesTool(
     {
       description:
         "WHO AM I and WHERE can I act: this connection's identity, plus every workspace the grant reaches with your role and what it cannot do there. Pass one as the `workspace` argument on any other tool.",
-      annotations: { readOnlyHint: true },
+      annotations: {
+        title: "List workspaces",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {},
     },
     async () => {

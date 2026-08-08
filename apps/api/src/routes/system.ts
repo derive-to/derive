@@ -1,17 +1,16 @@
-import type { ModelProbe } from "@derive/core"
+import type { InstanceSlots, ModelProbe } from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import { capabilityReport } from "../config-manifest"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
+import { callModelFromGateway } from "../lib/model-catalog"
 import {
-  getInstanceSlot,
+  effectiveCatalog,
   probeModel,
-  readLibrary,
-  setInstanceSlot,
-  writeLibrary,
+  readLibraryStrict,
+  updateLibrary,
 } from "../lib/model-library"
-import { openAiCompatModel } from "../lib/model-openai"
 import { foldTimings } from "../lib/model-timing"
 import { reindexSearchBatch } from "../lib/search"
 import { log } from "../log"
@@ -59,6 +58,20 @@ export const systemRoutes = (ctx: AppContext) => {
    *  something on a busy deploy, small enough to stay one indexed read. */
   const TIMING_SAMPLE = 500
 
+  class LibraryRouteError extends Error {
+    constructor(
+      readonly status: 400 | 404 | 409,
+      message: string,
+    ) {
+      super(message)
+    }
+  }
+
+  const libraryFailure = (c: Parameters<typeof fail>[0], err: unknown): Response => {
+    if (err instanceof LibraryRouteError) return fail(c, err.status, err.message)
+    throw err
+  }
+
   /** A probe of an id that is not in the catalog yet — built on the deploy's own gateway, which
    *  is the only endpoint the library can ever add a model on. */
   const probeAdded = async (id: string) => {
@@ -68,16 +81,29 @@ export const systemRoutes = (ctx: AppContext) => {
       id,
       label: id,
       isDefault: false,
-      callModel: openAiCompatModel({ baseUrl: gw.baseUrl, apiKey: gw.apiKey, model: id }),
+      callModel: callModelFromGateway(gw, id),
     })
   }
 
   /** Every lane and what serves it — the shape both the library view and a pin's response
    *  return. One read of the instance row for both lanes, and one definition, so a third lane
    *  cannot appear in one response and be forgotten in the other. */
-  const slotsJson = async () => {
-    const { slots } = await readLibrary(meta)
-    return { chat: slots.chat ?? null, automation: slots.automation ?? null }
+  const slotsJson = (slots: InstanceSlots) => ({
+    chat: slots.chat ?? null,
+    automation: slots.automation ?? null,
+  })
+
+  const pinSlot = async (
+    lane: keyof InstanceSlots,
+    model: string | null,
+  ): Promise<InstanceSlots> => {
+    const configured = new Set(ctx.models?.options.map((m) => m.id) ?? [])
+    const saved = await updateLibrary(meta, (lib) => {
+      if (model && !configured.has(model) && !lib.models.some((m) => m.id === model))
+        throw new LibraryRouteError(400, `unknown model "${model}"`)
+      return { ...lib, slots: { ...lib.slots, [lane]: model?.trim() || undefined } }
+    })
+    return saved.slots
   }
 
   const probeJson = (p: ModelProbe) => ({
@@ -124,11 +150,12 @@ export const systemRoutes = (ctx: AppContext) => {
   app.get("/v1/system/chat-model", async (c) => {
     const denied = await operatorOnly(c)
     if (denied) return denied
+    const { catalog, slots } = await ctx.modelsFor(c)
     return c.json({
-      model: await getInstanceSlot(meta, "chat"),
+      model: slots.chat ?? null,
       // The catalog travels with it so the picker needs one call, and so "what is set" and "what
       // could be set" can never disagree about which ids exist.
-      options: (ctx.models?.options ?? []).map((m) => ({
+      options: (catalog?.options ?? []).map((m) => ({
         id: m.id,
         label: m.label,
         is_default: m.isDefault,
@@ -141,12 +168,12 @@ export const systemRoutes = (ctx: AppContext) => {
     if (denied) return denied
     const b = await readJson(c, z.object({ model: z.string().nullable() }))
     if (b instanceof Response) return b
-    // Validated against the catalog, so a typo is refused HERE where somebody is looking at the
-    // response rather than silently costing every turn on the deploy.
-    if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
-      return fail(c, 400, `unknown model "${b.model}"`)
-    await setInstanceSlot(meta, "chat", b.model)
-    return c.json({ model: await getInstanceSlot(meta, "chat") })
+    try {
+      const slots = await pinSlot("chat", b.model)
+      return c.json({ model: slots.chat ?? null })
+    } catch (err) {
+      return libraryFailure(c, err)
+    }
   })
 
   /**
@@ -161,13 +188,13 @@ export const systemRoutes = (ctx: AppContext) => {
   app.get("/v1/system/models", async (c) => {
     const denied = await operatorOnly(c)
     if (denied) return denied
-    const [catalog, lib, sample] = await Promise.all([
-      ctx.modelsFor(c),
-      readLibrary(meta),
+    const [lib, sample] = await Promise.all([
+      readLibraryStrict(meta),
       // A bounded sample of recent answers, folded into per-model timings in memory. Bounded
       // rather than windowed: a quiet deploy still gets numbers, and a busy one pays a constant.
       meta.listRecentAgentMessages(TIMING_SAMPLE).catch(() => []),
     ])
+    const catalog = effectiveCatalog(ctx.models, ctx.modelGateway, lib)
     const timings = new Map(foldTimings(sample).map((t) => [t.modelId, t]))
     const added = new Set(lib.models.map((m) => m.id))
     // WHICH IDS THE ENVIRONMENT OWNS. Not "everything the library has no entry for": probing a
@@ -178,12 +205,12 @@ export const systemRoutes = (ctx: AppContext) => {
     const configured = new Set(ctx.models?.options.map((o) => o.id) ?? [])
     const probes = new Map(lib.models.map((m) => [m.id, m.probe]))
     return c.json({
-      slots: await slotsJson(),
+      slots: slotsJson(lib.slots),
       // Whether this deploy can ADD a model at all. False (no gateway configured) means the
       // library can still relabel and pin, and the UI has to say so rather than offer an input
       // whose every submission would be refused.
       can_add: !!ctx.modelGateway,
-      models: (catalog.catalog?.options ?? []).map((m) => {
+      models: (catalog?.options ?? []).map((m) => {
         const t = timings.get(m.id)
         const probe = probes.get(m.id)
         return {
@@ -236,7 +263,7 @@ export const systemRoutes = (ctx: AppContext) => {
         400,
         "this deploy has no model gateway configured, so there is no endpoint to reach a new model on — set DERIVE_MODEL_BASE_URL, DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME",
       )
-    const lib = await readLibrary(meta)
+    const lib = await readLibraryStrict(meta)
     if (lib.models.some((m) => m.id === id))
       return fail(c, 409, `"${id}" is already in the library`)
     // The library is ONE JSON blob on a row the chat path reads per turn, so its size is a
@@ -244,8 +271,7 @@ export const systemRoutes = (ctx: AppContext) => {
     // stuck script cannot grow the instance settings row without bound.
     if (lib.models.length >= MAX_LIBRARY_MODELS)
       return fail(c, 400, `the library is full (${MAX_LIBRARY_MODELS} models); remove one first`)
-    if ((await ctx.modelsFor(c)).catalog?.resolve(id) && !lib.models.some((m) => m.id === id))
-      return fail(c, 409, `"${id}" is already configured on this deploy`)
+    if (ctx.models?.resolve(id)) return fail(c, 409, `"${id}" is already configured on this deploy`)
 
     // PROBED BEFORE IT IS SAVED, and refused if it cannot answer. An id is a free-text string
     // that only the provider can validate, so the alternative is a library entry that looks
@@ -256,11 +282,59 @@ export const systemRoutes = (ctx: AppContext) => {
       return fail(c, 400, `"${id}" did not answer: ${probed.error ?? "no reply"}`, {
         probe: probeJson(probed),
       })
-    await writeLibrary(meta, {
-      ...lib,
-      models: [...lib.models, { id, ...(label ? { label } : {}), probe: probed }],
-    })
+    try {
+      await updateLibrary(meta, (current) => {
+        if (current.models.some((m) => m.id === id))
+          throw new LibraryRouteError(409, `"${id}" is already in the library`)
+        if (ctx.models?.resolve(id))
+          throw new LibraryRouteError(409, `"${id}" is already configured on this deploy`)
+        if (current.models.length >= MAX_LIBRARY_MODELS)
+          throw new LibraryRouteError(
+            400,
+            `the library is full (${MAX_LIBRARY_MODELS} models); remove one first`,
+          )
+        return {
+          ...current,
+          models: [...current.models, { id, ...(label ? { label } : {}), probe: probed }],
+        }
+      })
+    } catch (err) {
+      return libraryFailure(c, err)
+    }
     return c.json({ id, label: label ?? null, probe: probeJson(probed) }, 201)
+  })
+
+  /** Relabel any model without changing its stable provider id. Configured models get a small
+   * metadata-only library entry; clearing their label removes that entry again when it has no
+   * probe to retain. */
+  app.patch("/v1/system/models/:id", async (c) => {
+    const denied = await operatorOnly(c)
+    if (denied) return denied
+    const id = decodeParam(c.req.param("id"))
+    if (id === null) return fail(c, 400, "malformed model id")
+    const b = await readJson(c, z.object({ label: z.string().nullable() }))
+    if (b instanceof Response) return b
+    const label = b.label?.trim() || null
+    if (label && label.length > 80) return fail(c, 400, "label too long (max 80 chars)")
+    const configured = !!ctx.models?.resolve(id)
+    try {
+      await updateLibrary(meta, (current) => {
+        const at = current.models.findIndex((m) => m.id === id)
+        if (at < 0 && !configured) throw new LibraryRouteError(404, `unknown model "${id}"`)
+        if (at < 0)
+          return label ? { ...current, models: [...current.models, { id, label }] } : current
+        const entry = current.models[at]
+        if (!entry) return current
+        const next = { ...entry, label: label ?? undefined }
+        const models = [...current.models]
+        if (configured && !next.label && !next.probe) models.splice(at, 1)
+        else models[at] = next
+        return { ...current, models }
+      })
+    } catch (err) {
+      return libraryFailure(c, err)
+    }
+    return c.json({ id, label })
   })
 
   /**
@@ -276,16 +350,23 @@ export const systemRoutes = (ctx: AppContext) => {
     if (denied) return denied
     const id = decodeParam(c.req.param("id"))
     if (id === null) return fail(c, 400, "malformed model id")
-    const lib = await readLibrary(meta)
-    if (!lib.models.some((m) => m.id === id))
-      return fail(c, 404, `"${id}" is not in the library (configured models come from the env)`)
-    await writeLibrary(meta, {
-      models: lib.models.filter((m) => m.id !== id),
-      slots: {
-        chat: lib.slots.chat === id ? undefined : lib.slots.chat,
-        automation: lib.slots.automation === id ? undefined : lib.slots.automation,
-      },
-    })
+    if (ctx.models?.resolve(id))
+      return fail(c, 404, `"${id}" is configured by the environment and cannot be removed`)
+    try {
+      await updateLibrary(meta, (lib) => {
+        if (!lib.models.some((m) => m.id === id))
+          throw new LibraryRouteError(404, `"${id}" is not in the library`)
+        return {
+          models: lib.models.filter((m) => m.id !== id),
+          slots: {
+            chat: lib.slots.chat === id ? undefined : lib.slots.chat,
+            automation: lib.slots.automation === id ? undefined : lib.slots.automation,
+          },
+        }
+      })
+    } catch (err) {
+      return libraryFailure(c, err)
+    }
     return c.json({ removed: id })
   })
 
@@ -304,15 +385,23 @@ export const systemRoutes = (ctx: AppContext) => {
     if (id === null) return fail(c, 400, "malformed model id")
     const resolved = (await ctx.modelsFor(c)).catalog?.resolve(id)
     if (!resolved) return fail(c, 404, `unknown model "${id}"`)
+    const configured = !!ctx.models?.resolve(id)
     const probe = await probeModel(resolved)
-    const lib = await readLibrary(meta)
-    const known = lib.models.some((m) => m.id === id)
-    await writeLibrary(meta, {
-      ...lib,
-      models: known
-        ? lib.models.map((m) => (m.id === id ? { ...m, probe } : m))
-        : [...lib.models, { id, probe }],
-    })
+    try {
+      await updateLibrary(meta, (lib) => {
+        const known = lib.models.some((m) => m.id === id)
+        if (!known && !configured)
+          throw new LibraryRouteError(404, `model "${id}" was removed while it was probing`)
+        return {
+          ...lib,
+          models: known
+            ? lib.models.map((m) => (m.id === id ? { ...m, probe } : m))
+            : [...lib.models, { id, probe }],
+        }
+      })
+    } catch (err) {
+      return libraryFailure(c, err)
+    }
     // 200 EVEN WHEN THE MODEL FAILED. The probe itself succeeded — it found out. A 5xx here
     // would say Derive is broken when the finding is that a provider is, which is the opposite
     // of what this page exists to tell somebody.
@@ -327,15 +416,12 @@ export const systemRoutes = (ctx: AppContext) => {
     if (lane !== "chat" && lane !== "automation") return fail(c, 404, `unknown lane "${lane}"`)
     const b = await readJson(c, z.object({ model: z.string().nullable() }))
     if (b instanceof Response) return b
-    // Same validation as the chat pin, for the same reason — and it matters MORE here: an
-    // automation run is unattended, so a pin naming nothing would fail runs with nobody watching.
-    if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
-      return fail(c, 400, `unknown model "${b.model}"`)
-    if (lane === "chat") await setInstanceSlot(meta, "chat", b.model)
-    else await setInstanceSlot(meta, "automation", b.model)
-    return c.json({
-      slots: await slotsJson(),
-    })
+    try {
+      const slots = await pinSlot(lane, b.model)
+      return c.json({ slots: slotsJson(slots) })
+    } catch (err) {
+      return libraryFailure(c, err)
+    }
   })
 
   // Operator-only config introspection for `derive doctor`: which optional features are

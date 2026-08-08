@@ -4,9 +4,9 @@ import { api, type Webhook } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { fieldError } from "@/components/shared/field-error"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -54,20 +54,10 @@ export function WebhooksSection() {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load webhooks"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="webhooks-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load webhooks"
+          testId="webhooks-retry"
+          onRetry={() => refetch()}
         />
       ) : !hooks || hooks.length === 0 ? (
         <EmptyState>No webhooks yet. Add one above.</EmptyState>

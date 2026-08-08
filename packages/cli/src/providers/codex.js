@@ -1,20 +1,60 @@
 // The Codex provider: drives OpenAI's `codex` CLI (`codex exec`). Like Claude
 // Code, it authenticates itself from the inherited env — a ChatGPT-plan login
-// (`codex login`) or OPENAI_API_KEY — so a plan token flows through the official
+// (`codex login`) or CODEX_API_KEY — so a plan token flows through the official
 // client, never a reimplemented one.
 //
-// EXPERIMENTAL: the argv and I/O below follow Codex's documented `exec` shape but
-// have NOT been verified against a pinned binary in this tree; the flag names are
-// the one thing to confirm with `codex exec --help` before relying on it. It is
-// written conservatively on purpose:
-//   - plain stdout is the reply (no JSON-event schema to track); the runner's
-//     <answer> contract rides in the system prompt, so parsing is unchanged.
-//   - no session resume (Codex's resume semantics differ); a transient failure
-//     retries from scratch rather than resuming, which the orchestrator handles.
-// Both are safe degradations, not correctness gaps — see ./index.js for the shape.
+// The hosted image pins the CLI version this adapter is verified against. JSONL is important:
+// it gives the run a durable action receipt (commands, file changes, MCP calls, plan updates)
+// while leaving the final answer contract provider-agnostic.
 import { spawn } from "node:child_process"
 
-/** Spawn `codex exec` once and capture stdout as the reply text. */
+const ACTION_TYPES = new Set([
+  "command_execution",
+  "file_change",
+  "mcp_tool_call",
+  "web_search",
+  "plan_update",
+])
+
+const clipped = (value, max = 300) =>
+  String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max)
+
+const safeCommand = (value) =>
+  clipped(value, 200)
+    .replace(/\b(dk(?:run|sess|_agt)?_[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{12,})\b/g, "[redacted]")
+    .replace(/\b([A-Z][A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD))=\S+/g, "$1=[redacted]")
+    .replace(/(authorization\s*[:=]?\s*bearer)\s+\S+/gi, "$1 [redacted]")
+
+/** Keep evidence useful without persisting command output, absolute temp roots, or secrets. */
+function actionOf(item, cwd) {
+  if (!item || !ACTION_TYPES.has(item.type)) return null
+  if (item.type === "command_execution")
+    return {
+      type: item.type,
+      command: safeCommand(item.command),
+      exit_code: Number.isInteger(item.exit_code) ? item.exit_code : null,
+    }
+  if (item.type === "file_change")
+    return {
+      type: item.type,
+      changes: (item.changes ?? []).slice(0, 8).map((change) => ({
+        path:
+          typeof change.path === "string" && change.path.startsWith(`${cwd}/`)
+            ? change.path.slice(cwd.length + 1)
+            : clipped(change.path, 120),
+        kind: clipped(change.kind, 40),
+      })),
+    }
+  return {
+    type: item.type,
+    name: clipped(item.name ?? item.tool ?? item.query ?? item.text, 160),
+  }
+}
+
+/** Spawn `codex exec --json` once and normalize its event stream. */
 function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
   return new Promise((resolve) => {
     const child = spawn(bin, args, {
@@ -22,8 +62,14 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
       env: env ?? process.env,
       stdio: ["ignore", "pipe", "pipe"],
     })
-    let out = ""
+    let buffer = ""
+    let resultText = ""
+    let threadId = null
+    let usage = null
+    const actions = []
     let stderr = ""
+    let lastText = ""
+    let isError = false
     let timedOut = false
     let killTimer
     const timer = setTimeout(() => {
@@ -31,8 +77,48 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
       child.kill("SIGTERM")
       killTimer = setTimeout(() => child.kill("SIGKILL"), 5_000)
     }, timeoutMs)
+    const take = (line) => {
+      try {
+        const event = JSON.parse(line)
+        if (event.type === "thread.started" && typeof event.thread_id === "string")
+          threadId = event.thread_id
+        if (event.type === "item.completed") {
+          const item = event.item
+          if (item?.type === "agent_message" && typeof item.text === "string") {
+            resultText = item.text
+            lastText = clipped(item.text, 200)
+          }
+          const action = actionOf(item, cwd)
+          // The finish endpoint's complete metadata record is capped at 8 KiB. Bound by the
+          // serialized receipt size (not only count), because one file-change event can carry
+          // many paths. A truncated receipt is evidence; a rejected finish leaves work stuck.
+          if (
+            action &&
+            actions.length < 50 &&
+            JSON.stringify([...actions, action]).length <= 4_000
+          ) {
+            actions.push(action)
+            console.log(`[codex] → ${action.type}`)
+          }
+        }
+        if (event.type === "turn.completed" && event.usage) usage = event.usage
+        if (event.type === "turn.failed" || event.type === "error") {
+          isError = true
+          lastText = clipped(event.error?.message ?? event.message ?? event.error, 200) || lastText
+        }
+      } catch {
+        // A CLI diagnostic can share stdout with JSONL. Keep it out of the answer contract.
+      }
+    }
     child.stdout.on("data", (b) => {
-      out += b.toString()
+      buffer += b.toString()
+      let nl = buffer.indexOf("\n")
+      while (nl >= 0) {
+        const line = buffer.slice(0, nl).trim()
+        buffer = buffer.slice(nl + 1)
+        if (line) take(line)
+        nl = buffer.indexOf("\n")
+      }
     })
     child.stderr.on("data", (b) => {
       stderr += b.toString()
@@ -40,24 +126,25 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
     child.on("close", (code) => {
       clearTimeout(timer)
       clearTimeout(killTimer)
+      if (buffer.trim()) take(buffer.trim())
       resolve({
         timedOut,
         code,
-        // The whole reply is the result text; the runner extracts the <answer>
-        // block from it exactly as it does for any provider.
-        resultText: out,
-        // No session model here — a retry restarts rather than resumes.
+        resultText,
+        // Ephemeral runs intentionally cannot resume. Keep the thread id as receipt evidence,
+        // but make the orchestrator retry from a clean process if needed.
         sessionId: null,
+        threadId,
         stderr,
-        lastText: out.replace(/\s+/g, " ").slice(-200),
-        isError: code !== 0,
+        lastText,
+        isError: isError || code !== 0,
         // Codex plain-text mode surfaces no structured api status; the exit code
         // is the only signal, so retryable() falls back to "engine error".
         apiErrorStatus: null,
-        // Plain-text mode reports no cost either. Null = UNKNOWN, which the server stores as a
-        // null column and the budget's sum skips — a Codex run is honestly unpriced rather than
-        // silently counted as free. Structured output would be what makes this reportable.
+        // ChatGPT-plan runs do not report dollar cost. Null is unknown, never free.
         costUsd: null,
+        actions,
+        usage,
       })
     })
     child.on("error", (err) => {
@@ -68,11 +155,14 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
         code: -1,
         resultText: "",
         sessionId: null,
+        threadId: null,
         stderr: String(err),
         lastText: "",
         isError: true,
         apiErrorStatus: null,
         costUsd: null,
+        actions: [],
+        usage: null,
       })
     })
   })
@@ -80,7 +170,8 @@ function spawnCodex({ bin, cwd, args, timeoutMs, env }) {
 
 export const codex = {
   name: "codex",
-  defaultModel: "gpt-5-codex",
+  // Let the verified CLI/account choose its current default unless a deployment pins RUNNER_MODEL.
+  defaultModel: null,
   defaultBin: "codex",
 
   binFrom(flags, env) {
@@ -93,10 +184,15 @@ export const codex = {
   async run({ bin, cwd, model, systemPrompt, prompt, timeoutMs, env }) {
     const args = [
       "exec",
-      "--model",
-      model,
-      // Non-interactive: skip approvals, like the Claude provider's headless mode.
-      "--dangerously-bypass-approvals-and-sandbox",
+      "--json",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--skip-git-repo-check",
+      ...(env?.DERIVE_RUNNER_ISOLATED === "1"
+        ? ["--dangerously-bypass-approvals-and-sandbox"]
+        : ["--sandbox", "workspace-write"]),
+      ...(model ? ["--model", model] : []),
       `${systemPrompt}\n\n---\n\n${prompt}`,
     ]
     return spawnCodex({ bin, cwd, args, timeoutMs, env })
@@ -110,10 +206,10 @@ export const codex = {
     return true
   },
 
-  /** Map an owner's credential to Codex's env. An API key rides OPENAI_API_KEY. A
+  /** Map an owner's credential to Codex's automation-only env. A key rides CODEX_API_KEY. A
    *  ChatGPT-plan login is file-based (see credentialFiles), so it returns null here. */
   credentialEnv(kind, value) {
-    return kind === "api_key" ? { OPENAI_API_KEY: value } : null
+    return kind === "api_key" ? { CODEX_API_KEY: value } : null
   },
 
   /** A ChatGPT-plan login is delivered as a FILE: Codex reads `auth.json` from `$CODEX_HOME`

@@ -25,6 +25,7 @@ import { answerDeriveMention } from "./lib/comment-turn"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
+import { workspaceIdsFromEnv } from "./lib/env"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
@@ -33,6 +34,7 @@ import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { loopSubstrate } from "./lib/substrate-loop"
 import { nodeSubstrate } from "./lib/substrate-node"
+import { providerSubstrate } from "./lib/substrate-provider"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { createNodeSyncRunner } from "./node-sync"
@@ -301,9 +303,14 @@ const readSitePage = (name: string): string | null => {
 }
 const marketingHome = cfg.serveWeb ? readSitePage("index.html") : null
 const marketingPricing = cfg.serveWeb ? readSitePage("pricing.html") : null
+const marketingPrivacy = cfg.serveWeb ? readSitePage("privacy.html") : null
 const marketing =
-  marketingHome || marketingPricing
-    ? { home: async () => marketingHome, pricing: async () => marketingPricing }
+  marketingHome || marketingPricing || marketingPrivacy
+    ? {
+        home: async () => marketingHome,
+        pricing: async () => marketingPricing,
+        privacy: async () => marketingPrivacy,
+      }
     : undefined
 
 // The webhook outbox drainer: an interval delivers queued events with retries +
@@ -439,25 +446,31 @@ const hostedDispatch = cfg.hostedRuns
       // `/v1/agent/sessions/claim`, so the split is gone.
       substrate:
         process.env.DERIVE_LOOP_RUNS === "1"
-          ? loopSubstrate({
-              // DERIVE_LOOP_MODEL, not DERIVE_MODEL_NAME: this field is the ANTHROPIC model id
-              // used on the per-run resolved-credential path, while DERIVE_MODEL_NAME names the
-              // model on the GATEWAY below. Passing the gateway's id here pointed a Fireworks
-              // path at api.anthropic.com and 404'd every run that resolved a real plan.
-              model: process.env.DERIVE_LOOP_MODEL,
-              gateway: modelGateway() ?? undefined,
-              // The operator's live pin for this lane, read per run. `meta` is module-scope and
-              // always valid on this tier, so there is nothing to capture at dispatch time (the
-              // Worker twin does have to — see withHostedDispatch).
-              gatewayModel: async () => (await getInstanceSlot(meta, "automation")) ?? undefined,
+          ? providerSubstrate({
+              fallback: loopSubstrate({
+                // DERIVE_LOOP_MODEL, not DERIVE_MODEL_NAME: this field is the ANTHROPIC model id
+                // used on the per-run resolved-credential path, while DERIVE_MODEL_NAME names the
+                // model on the GATEWAY below. Passing the gateway's id here pointed a Fireworks
+                // path at api.anthropic.com and 404'd every run that resolved a real plan.
+                model: process.env.DERIVE_LOOP_MODEL,
+                gateway: modelGateway() ?? undefined,
+                // The operator's live pin for this lane, read per run. `meta` is module-scope and
+                // always valid on this tier, so there is nothing to capture at dispatch time.
+                gatewayModel: async () => (await getInstanceSlot(meta, "automation")) ?? undefined,
+              }),
+              providers: { codex: nodeSubstrate({ bin: cfg.runnerBin }) },
             })
           : nodeSubstrate({ bin: cfg.runnerBin }),
       server: cfg.baseUrl,
       secret: authSecret,
-      // Same gateway the substrate just took: when the operator holds the key, the schedule
-      // materializer must not walk a payer chain that cannot exist. The Worker twin sets this
-      // from workerGateway(env) for the same reason.
-      operatorPays: modelGateway() !== null,
+      // A generic gateway pays only when the selected unattended substrate can actually use it.
+      // The CLI child cannot, and must resolve its own Claude/Codex plan through the payer chain.
+      operatorPays: process.env.DERIVE_LOOP_RUNS === "1" && modelGateway() !== null,
+      // Self-host stays unrestricted when unset. Setting the variable (including explicitly
+      // blank) gives an operator the same precise rollout/kill boundary as the shared host.
+      ...(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST === undefined
+        ? {}
+        : { hostedOrgIds: workspaceIdsFromEnv(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST) }),
     }
   : null
 
@@ -474,6 +487,8 @@ const app = createApp({
   // Both come from ONE construction: `callModel` is the catalog's default entry, so "the model"
   // means the same thing to a lane that picks one and a lane that does not.
   callModel: gatewayModels?.resolve(null)?.callModel,
+  automationOperatorPays:
+    cfg.hostedRuns && process.env.DERIVE_LOOP_RUNS === "1" && gateway !== null,
   models: gatewayModels ?? undefined,
   // The gateway that catalog was built from, so the operator's model library can reach an id
   // the environment never named — same endpoint, same key, no new secret. Without it the
@@ -491,8 +506,8 @@ const app = createApp({
   search,
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
-  // The marketing front door (`/` for signed-out visitors + `/pricing`); unset
-  // only when the web build ships no site/ pages, leaving the SPA both paths.
+  // The marketing front door (`/` for signed-out visitors + `/pricing` + `/privacy`);
+  // unset only when the web build ships no site/ pages, leaving the SPA all paths.
   marketing,
   token: cfg.token,
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.

@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type ModelLibraryEntry, type ModelObservedView, type ModelProbeView } from "@/api"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -55,6 +55,7 @@ export function ModelsSection() {
   const configured = models.find((m) => m.is_default)
   const [newId, setNewId] = useState("")
   const [probing, setProbing] = useState<string | null>(null)
+  const [probingAll, setProbingAll] = useState(false)
 
   const invalidate = () => qc.invalidateQueries({ queryKey: modelLibraryQuery().queryKey })
 
@@ -83,6 +84,13 @@ export function ModelsSection() {
   const remove = useApiMutation({
     mutationFn: (id: string) => api.removeModel(id),
     success: (_d, id) => `Removed ${id}`,
+    onSuccess: invalidate,
+  })
+
+  const relabel = useApiMutation({
+    mutationFn: ({ id, label }: { id: string; label: string | null }) =>
+      api.setModelLabel(id, label),
+    success: (d) => (d.label ? `Renamed ${d.id} to ${d.label}` : `Reset ${d.id}'s label`),
     onSuccess: invalidate,
   })
 
@@ -115,17 +123,22 @@ export function ModelsSection() {
           <Button
             size="sm"
             variant="outline"
-            disabled={probe.isPending}
+            disabled={probingAll || probe.isPending}
             onClick={() => {
               // Sequential, not concurrent: several models behind one gateway share its rate
               // limit, and a burst measures the queue rather than the models.
               const run = async () => {
-                for (const m of models) {
-                  setProbing(m.id)
-                  await api.probeModel(m.id).catch(() => undefined)
+                setProbingAll(true)
+                try {
+                  for (const m of models) {
+                    setProbing(m.id)
+                    await api.probeModel(m.id).catch(() => undefined)
+                  }
+                } finally {
+                  setProbing(null)
+                  setProbingAll(false)
+                  invalidate()
                 }
-                setProbing(null)
-                invalidate()
               }
               void run()
             }}
@@ -139,15 +152,11 @@ export function ModelsSection() {
       {/* Without the catalog there is nothing to choose BETWEEN, and guessing at it would offer a
           switch that cannot be trusted — say so and let them retry. */}
       {isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load the models"
+        <LoadError
+          title="Couldn’t load the models"
           description="The list of models this deployment can answer with didn't load, so there is nothing to choose between."
-          action={
-            <Button size="sm" onClick={() => void refetch()} data-testid="chat-models-retry">
-              Try again
-            </Button>
-          }
+          testId="chat-models-retry"
+          onRetry={() => void refetch()}
         />
       ) : (
         <>
@@ -194,9 +203,10 @@ export function ModelsSection() {
                   slots.automation === m.id ? "Automations" : null,
                 ].filter(Boolean as unknown as (v: string | null) => v is string)}
                 probing={probing === m.id}
-                busy={probe.isPending || remove.isPending}
+                busy={probingAll || probe.isPending || remove.isPending || relabel.isPending}
                 onProbe={() => runProbe(m.id)}
                 onRemove={() => remove.mutate(m.id)}
+                onRelabel={(label) => relabel.mutate({ id: m.id, label })}
               />
             ))}
             {data?.can_add && (
@@ -297,6 +307,7 @@ function Row({
   busy,
   onProbe,
   onRemove,
+  onRelabel,
 }: {
   model: ModelLibraryEntry
   pinnedTo: string[]
@@ -304,12 +315,49 @@ function Row({
   busy: boolean
   onProbe: () => void
   onRemove: () => void
+  onRelabel: (label: string | null) => void
 }) {
+  const [editing, setEditing] = useState(false)
+  const [label, setLabel] = useState(model.label)
   return (
     <div className="flex flex-wrap items-start gap-3 py-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-foreground">
-          {model.label}
+          {editing ? (
+            <div className="flex max-w-md items-center gap-2">
+              <Input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                maxLength={80}
+                aria-label={`Label for ${model.id}`}
+                data-testid={`label-model-${model.id}`}
+              />
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  onRelabel(label.trim() || null)
+                  setEditing(false)
+                }}
+                data-testid={`save-label-model-${model.id}`}
+              >
+                Save
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid={`cancel-label-model-${model.id}`}
+                onClick={() => {
+                  setLabel(model.label)
+                  setEditing(false)
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            model.label
+          )}
           {model.is_default && (
             <Badge variant="secondary" shape="pill" className="ml-2">
               Default
@@ -327,6 +375,15 @@ function Row({
         <Timings probe={model.probe} observed={model.observed} probing={probing} />
       </div>
       <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy || editing}
+          onClick={() => setEditing(true)}
+          data-testid={`rename-model-${model.id}`}
+        >
+          Rename
+        </Button>
         <Button
           size="sm"
           variant="outline"

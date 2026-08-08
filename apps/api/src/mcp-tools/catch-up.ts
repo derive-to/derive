@@ -23,7 +23,14 @@ export function registerCatchUpTool(tc: ToolContext): void {
         "START HERE on an artifact: its state in one call (versions since `since_version`, open comment threads, the review round). WITHOUT a short_id, your WORK QUEUE; `ack` clears finished items. `wait` long-polls instead of sleeping. See derive://skills/loop.",
       // Read-only except `ack`, which clears handled requests off the queue. The hint
       // stays true so planning-mode clients don't gate the start-here call on approval.
-      annotations: { readOnlyHint: true },
+      // `ack` is itself idempotent (an unknown or already-acked id is skipped, never an
+      // error), so the tool stays idempotent overall.
+      annotations: {
+        title: "Catch up on changes",
+        readOnlyHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         short_id: z
           .string()

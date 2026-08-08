@@ -1,8 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { api, type Connection } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
@@ -76,20 +77,11 @@ export function SourcesSection() {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load your sources"
+        <LoadError
+          title="Couldn’t load your sources"
           description="This is usually temporary. Your connected sources are unaffected."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="sources-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+          testId="sources-retry"
+          onRetry={() => refetch()}
         />
       ) : sources.length === 0 ? (
         <EmptyState
@@ -228,16 +220,15 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
   // CHAT EXPOSURE lives on the source it belongs to, not in a list of ids somewhere else.
   // Connecting a server and letting a conversation spend it are two decisions, and this is
   // where somebody already comes to make the first one.
-  const qc = useQueryClient()
   const { data: settings } = useQuery(workspaceSettingsQuery())
   const declared = settings?.chatSources ?? []
   const inChat = declared.includes(conn.id)
-  const setChat = useMutation({
+  const setChat = useApiMutation({
     mutationFn: (on: boolean) =>
       api.updateWorkspaceSettings({
         chatSources: on ? [...declared, conn.id] : declared.filter((id) => id !== conn.id),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: workspaceSettingsQuery().queryKey }),
+    invalidate: [workspaceSettingsQuery().queryKey],
   })
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)

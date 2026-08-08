@@ -28,7 +28,12 @@ import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
-import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import {
+  slackFromEnv,
+  subdomainBaseFromEnv,
+  superAdminsFromEnv,
+  workspaceIdsFromEnv,
+} from "./lib/env"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
@@ -36,8 +41,11 @@ import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { loopSubstrate } from "./lib/substrate-loop"
+import { providerSubstrate } from "./lib/substrate-provider"
+import { log } from "./log"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
+import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
 import { enqueueChannelDelivery } from "./webhooks"
 
 export { PreviewRenderer } from "./preview-do"
@@ -96,7 +104,10 @@ export interface Env {
   // Optional semantic search: Workers AI embeddings (bge-m3) for the dense arm, stored in pgvector
   // in the Hyperdrive Postgres. Bind AI (+ HYPERDRIVE) to add the dense/hybrid arm; omit ⇒ search
   // stays lexical-only, exactly as self-host. Structurally typed (see embedder.ts).
-  AI?: WorkersAiLike
+  // Widened to the text-generation slice as well: the same binding also writes the one-line
+  // version summary every unfurl surface describes an artifact with (summarizer.ts). Unbound ⇒
+  // no summaries, exactly as self-host, and every card falls back to its inventory line.
+  AI?: WorkersAiLike & TextGenAiLike
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
   WEBHOOK_OUTBOX: DurableObjectNamespace
@@ -153,6 +164,9 @@ export interface Env {
   DERIVE_MODEL_GATEWAYS?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
+  /** Workspace ids allowed to execute on Derive's hosted substrate. Empty/unset means nobody
+   *  on the multi-tenant edge; owner-operated polling runners remain available everywhere. */
+  DERIVE_HOSTED_RUNS_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
    *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
   DERIVE_LOOP_RUNS?: string
@@ -305,6 +319,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Both from ONE construction: `callModel` is the catalog's default entry, so a lane that
         // picks a model and a lane that does not can never disagree about what "the model" is.
         callModel: models?.resolve(null)?.callModel,
+        automationOperatorPays: env.DERIVE_LOOP_RUNS === "1" && workerGateway(env) !== undefined,
         models: models ?? undefined,
         // The gateway that catalog was built from, so the operator's model library can reach an
         // id the environment never named — same endpoint, same key, no new secret. Without it
@@ -335,6 +350,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
                 new PgVectorStore(livePgPool, EMBED_DIMENSIONS),
               )
             : undefined,
+        // Bound on env.AI ALONE, unlike `search` above: a summary is a text call with nowhere to
+        // store a vector, so it needs no Hyperdrive and works on a D1 edge that has no pgvector.
+        summarize: env.AI ? bindingSummarizer(env.AI) : undefined,
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,
@@ -410,14 +428,16 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           return shellCache
         },
         // The marketing front door, always on: `/` for signed-out visitors +
-        // `/pricing`, from the web build's site/ pages. Fetched at the CANONICAL asset
-        // URLs — html_handling serves site/index.html at /site/ and site/pricing.html
-        // at /site/pricing, and redirects the literal filenames, which ASSETS.fetch
-        // would surface as a non-2xx. A build without the pages resolves null and
-        // the routes fall back to the SPA shell.
+        // `/pricing` + `/privacy`, from the web build's site/ pages. Fetched at the
+        // CANONICAL asset URLs — html_handling serves site/index.html at /site/ and
+        // site/pricing.html at /site/pricing (site/privacy.html at /site/privacy,
+        // same rule), and redirects the literal filenames, which ASSETS.fetch would
+        // surface as a non-2xx. A build without the pages resolves null and the
+        // routes fall back to the SPA shell.
         marketing: {
           home: siteFetch(env, baseUrl, "/site/"),
           pricing: siteFetch(env, baseUrl, "/site/pricing"),
+          privacy: siteFetch(env, baseUrl, "/site/privacy"),
         },
       })
     }
@@ -573,7 +593,8 @@ async function withHostedDispatch(
    * the pin is read there and the loop only ever reads the value that was already resolved.
    */
   const pin: { automation?: string } = {}
-  const substrate =
+  const container = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+  const loop =
     env.DERIVE_LOOP_RUNS === "1"
       ? loopSubstrate({
           model: env.DERIVE_LOOP_MODEL,
@@ -611,7 +632,12 @@ async function withHostedDispatch(
               }
             : {}),
         })
-      : containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
+      : null
+  // Codex is a coding-agent CLI: it needs the filesystem/shell job container even when the
+  // deployment keeps ordinary artifact refreshes on the cheaper in-Worker model loop.
+  const substrate = loop
+    ? providerSubstrate({ fallback: loop, providers: { codex: container ?? undefined } })
+    : container
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
   const scoped = async () => {
@@ -625,15 +651,24 @@ async function withHostedDispatch(
       substrate,
       server: env.BASE_URL ?? "",
       secret,
-      // Same gateway the substrate just took: when the operator holds the key, the schedule
-      // materializer must not walk a payer chain that cannot exist.
-      operatorPays: !!gateway,
+      // The gateway can pay only for work that actually uses the in-Worker loop. Containerized
+      // coding agents still resolve their selected provider's plan through the payer chain.
+      operatorPays: env.DERIVE_LOOP_RUNS === "1" && !!gateway,
+      // Multi-tenant rollout is FAIL CLOSED: unlike Node self-host, the Worker always passes a
+      // set. A missing/blank binding therefore selects zero workspaces rather than every one.
+      hostedOrgIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
     })
   }
   await (env.HYPERDRIVE
     ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
     : requestD1.run(env.DB, scoped)
-  ).catch(() => undefined)
+  ).catch((error: unknown) => {
+    // Dispatch is deliberately best-effort — Postgres remains the durable queue and the next
+    // cron pass retries — but swallowing setup/context failures makes an outage invisible.
+    log.error("hosted dispatch: edge setup failed", {
+      error: error instanceof Error ? error.message : String(error),
+    })
+  })
 }
 
 /** The cron sweep: materialize due schedules, reclaim dead runs, dispatch what is due. */

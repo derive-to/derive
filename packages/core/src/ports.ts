@@ -171,6 +171,9 @@ export interface ArtifactRecord {
    *  static-token publishes, and legacy rows. Lets a person's profile + people-follow
    *  surface their hand-published work. */
   author_id: string | null
+  /** Remix lineage: the artifact id this one was derived from ("use as template").
+   *  Null for ordinary artifacts. Not an FK — the copy outlives a deleted source. */
+  derived_from: string | null
 }
 
 export interface ListArtifactsOpts {
@@ -371,6 +374,21 @@ export interface VersionRecord {
   preview_marked_key: string | null
   preview_marked_status: PreviewStatus | null
   preview_marked_error: string | null
+  /** What this version SAYS, in a sentence or two, generated at publish. Every unfurl
+   *  surface otherwise describes an artifact as "Markdown · 3 versions · 7 comments" —
+   *  which answers "what is this?" rather than "what is it about?".
+   *
+   *  Null is the normal resting state, not an error: no model bound (self-host), a
+   *  non-text version, or a failed generation all leave it null and every consumer falls
+   *  back to that inventory line. UNTRUSTED — it is derived from document content, so it
+   *  is sanitized at write and must still be escaped by any surface that interpolates it
+   *  into markup. */
+  summary: string | null
+  /** Hash of the exact text `summary` was generated from. Exists to make the common case
+   *  free: agents republish constantly and most publishes do not change what a document is
+   *  about, so an unchanged hash copies the previous summary forward rather than paying a
+   *  model for an identical one. */
+  summary_src_hash: string | null
   created_at: string
 }
 
@@ -396,6 +414,9 @@ export interface NewArtifact {
   spa: 0 | 1
   /** Expiring anonymous draft: ISO expiry instant. Omit for ordinary artifacts. */
   expires_at?: string | null
+  /** Remix lineage: the artifact id this one was derived from ("use as template").
+   *  Omit for ordinary artifacts; never an FK — the copy outlives its source. */
+  derived_from?: string | null
 }
 
 /** Which surface created a version: the web app, the MCP publish tool, the HTTP API
@@ -620,6 +641,15 @@ export interface ArtifactStore {
       preview_status?: PreviewStatus | null
       preview_error?: string | null
     },
+  ): Promise<void>
+  /** Set a version's generated summary and the hash of the text it came from. Partial;
+   *  only given fields are written. Separate from `setVersionPreview` for the same reason
+   *  the render variants are: both are best-effort derived content on the same row, and
+   *  one failing must never overwrite the other. */
+  setVersionSummary(
+    artifactId: string,
+    n: number,
+    fields: { summary?: string | null; summary_src_hash?: string | null },
   ): Promise<void>
   /** Set the full-page or marked-render variant's result (blob key + status + error).
    *  Partial; only given fields are written. Separate from `setVersionPreview` (the
@@ -1207,6 +1237,14 @@ export interface IntegrationStore {
   ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** Persist settings only when the stored settings revision still matches. The compare and
+   *  write are atomic; callers retry from a fresh read when false. This is the write primitive
+   *  for deploy-wide settings whose operators may act concurrently. */
+  setOrgSettingsIfRevision(
+    orgId: string,
+    expectedRevision: number,
+    settings: OrgSettings,
+  ): Promise<boolean>
   /** The workspace's cached Stripe subscription, absent ⇒ null (free). */
   getSubscription(orgId: string): Promise<SubscriptionRecord | null>
   /** Webhook resolution fallback when metadata.org_id is missing. */
@@ -1475,11 +1513,15 @@ export interface ContextStore {
   /** How many sessions are currently `working` on a context — the per-context
    *  concurrency cap (the route claims min(limit, max_concurrency - working)). */
   countWorkingSessions(contextId: string): Promise<number>
-  /** Sessions awaiting an executor across ALL workspaces (capped, oldest first) — the hosted
-   *  tick's ask-lane scan, the twin of listDueQueuedRuns. Runnable means `open`, or `working`
-   *  with a lapsed lease (a dead executor's session self-heals). Read-only: dispatch never
-   *  claims, the booted executor does. */
-  listDueOpenSessions(now: string, limit?: number): Promise<SessionRecord[]>
+  /** Sessions awaiting an executor across the selected workspaces (all when omitted), capped
+   *  oldest first — the hosted tick's ask-lane scan, the twin of listDueQueuedRuns. Runnable
+   *  means `open`, or `working` with a lapsed lease (a dead executor's session self-heals).
+   *  Read-only: dispatch never claims, the booted executor does. */
+  listDueOpenSessions(
+    now: string,
+    limit?: number,
+    orgIds?: readonly string[],
+  ): Promise<SessionRecord[]>
   /** Claim EXACTLY one session for one agent (the capability-token path: a dispatched substrate
    *  serves its one session, never a batch). open|lapsed-working → `working` under the same
    *  lease, so a double-booted substrate loses the race and exits clean. Null when it isn't
@@ -1527,13 +1569,16 @@ export interface ContextStore {
    * DELIBERATELY UNSCOPED, and the only unscoped read of a transcript in this interface. It
    * answers a question about the DEPLOY ("how is each model performing"), not about a
    * workspace, and there is no workspace whose answer would be the right one. That makes it
-   * operator-only at the route, and it must stay that way: the rows carry `body_md`.
+   * operator-only at the route. The projection deliberately excludes `body_md`: timing a model
+   * must not transfer 500 full answers only to discard them in memory.
    *
    * Bounded by `limit` rather than by time. A quiet deploy still has a sample, a busy one does
    * not pay for a window it will never read past, and either way the cost of the query is a
    * constant the caller picked.
    */
-  listRecentAgentMessages(limit: number): Promise<SessionMessageRecord[]>
+  listRecentAgentMessages(
+    limit: number,
+  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]>
 }
 
 export interface DirectoryStore {
@@ -1713,7 +1758,9 @@ export interface AgentStore {
       agent_id?: string
       trigger?: string
       instruction?: string
+      provider?: import("./execution").ExecutionProvider
       refs?: string | null
+      context_id?: string | null
       /** JSON array of connection ids this automation may spend; null clears them all. */
       connection_ids?: string | null
       enabled?: 0 | 1
@@ -1766,13 +1813,16 @@ export interface AgentStore {
   reclaimStaleRuns(
     cutoffIso: string,
     maxAttempts?: number,
+    orgIds?: readonly string[],
   ): Promise<{ requeued: number; failed: number }>
-  /** Every enabled automation across ALL workspaces (capped) — the hosted tick scans these
-   *  to materialize due schedule runs. Fine at self-host scale; revisit if it ever shows up. */
-  listEnabledAutomations(limit?: number): Promise<AutomationRecord[]>
-  /** Queued runs due now across ALL workspaces (capped), oldest first — the hosted tick's
-   *  dispatch scan. Read-only: dispatch does NOT claim; the booted substrate claims. */
-  listDueQueuedRuns(now: string, limit?: number): Promise<RunRecord[]>
+  /** Every enabled automation across the selected workspaces (all when omitted), capped — the
+   *  hosted tick scans these to materialize due schedule runs. Fine at self-host scale; revisit
+   *  if it ever shows up. */
+  listEnabledAutomations(limit?: number, orgIds?: readonly string[]): Promise<AutomationRecord[]>
+  /** Queued runs due now across the selected workspaces (all when omitted), capped oldest first
+   *  — the hosted tick's dispatch scan. Read-only: dispatch does NOT claim; the booted substrate
+   *  claims. */
+  listDueQueuedRuns(now: string, limit?: number, orgIds?: readonly string[]): Promise<RunRecord[]>
   /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
    *  Scoped to (id, agent) so only the claiming agent settles it. `expectedStartedAt`, when
    *  given, fences it to THIS caller's own claim — see requeueRun's doc for why: without it, a
@@ -2293,6 +2343,8 @@ export interface AutomationRecord {
   trigger: string
   /** Free-form: what the agent should do. */
   instruction: string
+  /** The coding-agent runtime this automation executes with. */
+  provider: import("./execution").ExecutionProvider
   /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
   refs: string | null
   /** Serialized JSON array of bound connection ids — the SOURCES a run may read from. A run
@@ -2311,6 +2363,7 @@ export interface NewAutomation {
   agent_id: string
   trigger: string
   instruction: string
+  provider?: import("./execution").ExecutionProvider
   refs?: string | null
   connection_ids?: string | null
   context_id?: string | null
@@ -3246,6 +3299,9 @@ export interface OrgSettings {
    * costs the override, never every turn on the deploy.
    */
   slots?: InstanceSlots
+  /** Optimistic-concurrency revision for the reserved instance row. Ordinary workspace settings
+   *  do not use it. Absent is revision zero, preserving rows written before live model updates. */
+  settingsRevision?: number
 }
 
 /** One model in the library: the provider's own id, an optional display override, and what the

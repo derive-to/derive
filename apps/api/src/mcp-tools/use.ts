@@ -1,5 +1,6 @@
 import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
 import { z } from "zod"
+import { metaForWire } from "../lib/context-builder-card"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
@@ -30,6 +31,17 @@ export function registerUseTool(tc: ToolContext): void {
     {
       description:
         "Give a context WORK (rate-limited): `context`+`instruction` opens a session, `session_id`+`instruction` follows up, `session_id` alone checks. Real runs take minutes, so a still-working response is NORMAL — re-call until it settles. See derive://skills/contexts.",
+      // Opens/advances a session (a write — messages accumulate, budget is spent) but
+      // deletes nothing; a session can be followed up or checked, never destroyed from
+      // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
+      // the opt-in exception, not the norm). This call's own execution only creates rows
+      // and waits on Derive's internal bus; it doesn't itself reach outside Derive.
+      annotations: {
+        title: "Work a workspace context",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         context: z
           .string()
@@ -186,14 +198,7 @@ export function registerUseTool(tc: ToolContext): void {
         // The last agent message is the ANSWER once settled, or the latest PROGRESS
         // tick while `working`. Stored as TEXT (see ports); a hand-edited row must not
         // 500 the tool — unparseable meta reads as absent.
-        const parseMeta = (row?: { meta: string | null }): unknown => {
-          if (!row?.meta) return null
-          try {
-            return JSON.parse(row.meta)
-          } catch {
-            return null
-          }
-        }
+        const parseMeta = (row?: { meta: string | null }): unknown => metaForWire(row?.meta ?? null)
         const answerRow = isSettled(s.state) ? lastAgent : undefined
         const progressRow = s.state === "working" ? lastAgent : undefined
         const base = ctx.deps.baseUrl.replace(/\/$/, "")

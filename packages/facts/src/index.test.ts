@@ -150,7 +150,7 @@ describe("parseFacts — HTML", () => {
 })
 
 describe("parseFacts — markdown", () => {
-  const md = (name: string, body: string) => "```derive-facts " + name + "\n" + body + "\n```"
+  const md = (name: string, body: string) => `\`\`\`derive-facts ${name}\n${body}\n\`\`\``
 
   it("extracts a fenced data block", () => {
     const src = `# Report\n\n${md("checks", `{"pass":41,"fail":2}`)}\n\nprose`
@@ -286,7 +286,7 @@ describe("parseFacts — content type gating", () => {
 
   it("is total and deterministic — same input, same result twice", () => {
     const src = html(
-      slot("a", "1") + slot("a", "2") + `<script type="application/derive-facts">bad</script>`,
+      `${slot("a", "1") + slot("a", "2")}<script type="application/derive-facts">bad</script>`,
     )
     expect(parseFacts(src, "text/html")).toEqual(parseFacts(src, "text/html"))
   })

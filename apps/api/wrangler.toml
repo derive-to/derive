@@ -234,7 +234,7 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/readyz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing"]
+run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/readyz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing", "/privacy"]
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
@@ -267,8 +267,7 @@ zone_name = "derive.page"
 # Cross-instance realtime fan-out uses the ArtifactRoom Durable Object (one room
 # per channel).
 [vars]
-# Automations execute in the isolate (model + fetch), no container. Which workspaces may use
-# them is the per-workspace `automateBeta` setting, not this.
+# Ordinary automations execute in the isolate (model + fetch); Codex runs in the container.
 DERIVE_LOOP_RUNS = "1"
 #
 # THE INSTANCE OPERATORS of derive.to — the people who run and host it. On top of global
@@ -287,6 +286,12 @@ DERIVE_LOOP_RUNS = "1"
 # the addresses out of a public repo instead, move the same value to a Cloudflare
 # dashboard variable — no code change, and it overrides nothing else.
 DERIVE_SUPERADMIN_EMAILS = "anir@derive.to,rob@derive.to,mert@derive.to"
+# HOSTED EXECUTION ROLLOUT. This is an immutable workspace id, not the editable display name.
+# The Worker fails closed when this variable is absent or blank, and the dispatcher applies the
+# scope before schedule materialization, stale-run recovery, queue scans, asks, and Run now.
+# QA Lab is the only production workspace enabled for the first live proof. Its own
+# automateBeta + hostedAgentsEnabled settings remain the second, workspace-controlled gate.
+DERIVE_HOSTED_RUNS_ALLOWLIST = "ws_fas46hoo39z55zqg"
 # DERIVE_AUTH_SECRET is a secret (`wrangler secret put`). Workspaces are always multi.
 #
 # BASE_URL pins the app origin. It is REQUIRED once DERIVE_SUBDOMAIN_BASE is set:

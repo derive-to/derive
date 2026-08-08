@@ -52,6 +52,23 @@ describe("payer preflight: refusing work nothing can pay for", () => {
     expect(body.error).toMatch(/workspace/i)
   })
 
+  it("atomic create-and-run unwinds both the automation and its managed agent when no plan can pay", async () => {
+    const beforeAutos = await meta.listAutomations("default")
+    const beforeAgents = await meta.listAgents("default")
+    const res = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: { kind: "manual" },
+        instruction: "prove or leave no partial setup",
+        provider: "codex",
+        runNow: true,
+      }),
+    )
+    expect(res.status).toBe(402)
+    expect(await meta.listAutomations("default")).toHaveLength(beforeAutos.length)
+    expect(await meta.listAgents("default")).toHaveLength(beforeAgents.length)
+  })
+
   it("a webhook fire is refused, so the CALLER learns to stop retrying", async () => {
     const agent = await mintAgent("Fire")
     const a = await createAutomation(agent.id, { trigger: { kind: "event", on: "webhook" } })
@@ -106,6 +123,18 @@ describe("payer preflight: refusing work nothing can pay for", () => {
     const creds = await meta.listModelCredentials("default", POOL_USER)
     expect(creds.length).toBe(1)
   })
+
+  it("requires a plan for the selected provider instead of accepting an unrelated subscription", async () => {
+    const agent = await mintAgent("ProviderExact")
+    const a = await createAutomation(agent.id, { provider: "codex" })
+    const run = () =>
+      app.request(`/v1/automations/${a.id}/run`, { method: "POST", headers: as(owner.email) })
+
+    await connectPoolPlan(meta, "default", "claude-code")
+    expect((await run()).status).toBe(402)
+    await connectPoolPlan(meta, "default", "codex")
+    expect((await run()).status).toBe(201)
+  })
 })
 
 describe("payer preflight: recording work that already ran is NEVER refused", () => {
@@ -125,5 +154,46 @@ describe("payer preflight: recording work that already ran is NEVER refused", ()
       body: JSON.stringify({ reason: "local", status: "succeeded" }),
     })
     expect(res.status).toBe(201)
+  })
+})
+
+describe("payer preflight: the operator gateway covers only the loop it can authenticate", () => {
+  const owner: TestUser = { id: "u_pay_gateway", email: "gateway@derive.test", name: "Owner" }
+  const model = async () => ({ text: "ok", toolUses: [], costUsd: null, done: true })
+
+  const createAndRun = async (
+    app: ReturnType<typeof makeAuthedApp>["app"],
+    provider: "claude-code" | "codex" = "claude-code",
+  ) => {
+    const create = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: { kind: "manual" },
+        instruction: "keep this current",
+        provider,
+      }),
+    )
+    const automation = (await create.json()) as { id: string }
+    return app.request(`/v1/automations/${automation.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+  }
+
+  it("does not mistake an attended callModel gateway for a CLI plan", async () => {
+    const { app } = makeAuthedApp("payer-attended-only", [owner], "editor", {
+      noPlan: true,
+      deps: { callModel: model },
+    })
+    expect((await createAndRun(app)).status).toBe(402)
+  })
+
+  it("covers Claude on the in-process loop, while Codex still requires a Codex plan", async () => {
+    const { app } = makeAuthedApp("payer-loop-operator", [owner], "editor", {
+      noPlan: true,
+      deps: { callModel: model, automationOperatorPays: true },
+    })
+    expect((await createAndRun(app)).status).toBe(201)
+    expect((await createAndRun(app, "codex")).status).toBe(402)
   })
 })

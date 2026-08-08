@@ -8,13 +8,16 @@ const SHELL =
   "<!doctype html><html><head><title>Derive</title></head><body><div id=root></div></body></html>"
 const HOME = "<!doctype html><html><body>MARKETING HOME</body></html>"
 const PRICING = "<!doctype html><html><body>MARKETING PRICING</body></html>"
+const PRIVACY = "<!doctype html><html><body>MARKETING PRIVACY</body></html>"
 
 // Worker-shaped deps: no serveWeb (assets come from the platform binding), the shell
-// arrives via the async provider. `/` and `/pricing` are routed worker-first there
-// (wrangler.toml run_worker_first), so the app itself MUST answer them.
+// arrives via the async provider. `/`, `/pricing`, and `/privacy` are routed
+// worker-first there (wrangler.toml run_worker_first), so the app itself MUST
+// answer them.
 const workerApp = (marketing?: {
   home: () => Promise<string | null>
   pricing: () => Promise<string | null>
+  privacy: () => Promise<string | null>
 }) =>
   createApp({
     meta,
@@ -25,9 +28,13 @@ const workerApp = (marketing?: {
     marketing,
   })
 
-const MARKETING = { home: async () => HOME, pricing: async () => PRICING }
+const MARKETING = {
+  home: async () => HOME,
+  pricing: async () => PRICING,
+  privacy: async () => PRIVACY,
+}
 
-describe("marketing front door (worker-first `/` and `/pricing`)", () => {
+describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", () => {
   it("serves the marketing page to anonymous visitors, never shared-cacheable", async () => {
     const a = workerApp(MARKETING)
     const res = await a.request("/")
@@ -61,6 +68,16 @@ describe("marketing front door (worker-first `/` and `/pricing`)", () => {
     expect(res.headers.get("cache-control")).toContain("public")
   })
 
+  it("serves the privacy page to everyone, shared-cacheable", async () => {
+    const a = workerApp(MARKETING)
+    const res = await a.request("/privacy", {
+      headers: { cookie: "better-auth.session_token=abc" },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain("MARKETING PRIVACY")
+    expect(res.headers.get("cache-control")).toContain("public")
+  })
+
   it("never serves the API-origin placeholder when a shell exists (the launch-day bug)", async () => {
     // Regression: system.ts's placeholder `/` used to register whenever serveWeb was
     // off — which is the Worker's shape — and, mounted first, shadowed both the
@@ -77,7 +94,7 @@ describe("marketing front door (worker-first `/` and `/pricing`)", () => {
 
   it("falls back to the SPA shell when marketing is off (worker-first paths must not 404)", async () => {
     const a = workerApp(undefined)
-    for (const path of ["/", "/pricing"]) {
+    for (const path of ["/", "/pricing", "/privacy"]) {
       const res = await a.request(path)
       expect(res.status).toBe(200)
       expect(await res.text()).toContain("id=root")
@@ -97,7 +114,11 @@ describe("marketing front door (worker-first `/` and `/pricing`)", () => {
   })
 
   it("falls back to the shell when a marketing page is missing from the build", async () => {
-    const a = workerApp({ home: async () => null, pricing: async () => null })
+    const a = workerApp({
+      home: async () => null,
+      pricing: async () => null,
+      privacy: async () => null,
+    })
     const res = await a.request("/")
     expect(res.status).toBe(200)
     expect(await res.text()).toContain("id=root")

@@ -1,5 +1,3 @@
-import type { MetaStore, OrgSettings } from "@derive/core"
-
 /**
  * SETTINGS THAT BELONG TO THE DEPLOY, not to any workspace.
  *
@@ -24,23 +22,3 @@ import type { MetaStore, OrgSettings } from "@derive/core"
  * either one on the grounds that the other exists.
  */
 export const INSTANCE_SETTINGS_ID = "__instance__"
-
-/** The instance row, or null when nothing has ever been written to it. */
-export const getInstanceSettings = async (meta: MetaStore): Promise<OrgSettings | null> =>
-  await meta.getOrgSettings(INSTANCE_SETTINGS_ID).catch(() => null)
-
-/**
- * Merge a patch into the instance row.
- *
- * A SHALLOW MERGE OVER THE CURRENT ROW, and never a write of caller-supplied JSON: the row is a
- * settings blob shared with a dozen unrelated keys, so a write that replaced it wholesale would
- * let whichever surface wrote last silently drop what another had set. Every caller here passes
- * a narrow, already-validated slice.
- */
-export const setInstanceSettings = async (
-  meta: MetaStore,
-  patch: Partial<OrgSettings>,
-): Promise<void> => {
-  const cur = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
-  await meta.setOrgSettings(INSTANCE_SETTINGS_ID, { ...cur, ...patch })
-}

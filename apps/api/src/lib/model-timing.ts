@@ -110,7 +110,9 @@ export interface ModelTimings {
  * this shipped has none, and treating those as instant would report every model as faster than it
  * is for as long as the sample window reaches back.
  */
-export const foldTimings = (messages: SessionMessageRecord[]): ModelTimings[] => {
+export const foldTimings = (
+  messages: Pick<SessionMessageRecord, "meta" | "created_at">[],
+): ModelTimings[] => {
   const by = new Map<string, { ttft: number[]; total: number[]; lastAt: string | null }>()
   for (const m of messages) {
     const meta = parseMeta(m.meta)

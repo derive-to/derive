@@ -93,6 +93,28 @@ export interface GatewayConfig {
  */
 const NO_THINKING = { reasoning: { enabled: false } } as const
 
+/** The one construction path for a model on the configured gateway. Configured entries,
+ * operator-added entries, and add-time probes must share every routing/body knob. */
+export const callModelFromGateway = (
+  gw: GatewayConfig,
+  id: string,
+): AgentLoopInput["callModel"] => {
+  const order = (gw.providers ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)
+  const extraBody = {
+    ...(order.length ? { provider: { order, allow_fallbacks: true } } : {}),
+    ...NO_THINKING,
+  }
+  return openAiCompatModel({
+    baseUrl: gw.baseUrl,
+    apiKey: gw.apiKey,
+    model: id,
+    extraBody,
+  })
+}
+
 /**
  * A model id's display label: the part after the last `/`, which is what distinguishes
  * `accounts/fireworks/models/deepseek-v4-flash` from its neighbours. Kept dumb on purpose — a
@@ -123,28 +145,12 @@ const parseAlso = (raw: string | undefined, defaultModel: string): string[] => {
 export const catalogFromGateway = (gw: GatewayConfig | null | undefined): ModelCatalog | null => {
   if (!gw) return null
   const ids = [gw.model, ...parseAlso(gw.alsoModels, gw.model)]
-  // Fallbacks stay ON: pinning a list and refusing everything else turns "slower than we hoped"
-  // into "no answer at all" the moment the preferred backend is busy.
-  const order = (gw.providers ?? "")
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean)
-  const extraBody = {
-    ...(order.length ? { provider: { order, allow_fallbacks: true } } : {}),
-    ...NO_THINKING,
-  }
   return catalogOf(
     ids.map((id, i) => ({
       id,
       label: labelFor(id),
       isDefault: i === 0,
-      build: () =>
-        openAiCompatModel({
-          baseUrl: gw.baseUrl,
-          apiKey: gw.apiKey,
-          model: id,
-          ...(Object.keys(extraBody).length ? { extraBody } : {}),
-        }),
+      build: () => callModelFromGateway(gw, id),
     })),
   )
 }

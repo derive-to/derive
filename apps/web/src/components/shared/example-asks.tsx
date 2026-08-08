@@ -1,6 +1,5 @@
-import { useState } from "react"
 import { Icon } from "@/components/icons"
-import { toast } from "@/components/ui/sonner"
+import { useCopy } from "@/lib/clipboard"
 
 // The example first asks — the walkthrough IS these prompts: each teaches what
 // Derive is for in the user's own tool. Shared by /welcome's connected state and
@@ -13,22 +12,12 @@ export const EXAMPLE_ASKS = [
 
 // A copyable example ask — chip-shaped, mono-quoted, one tap to clipboard.
 export function AskChip({ text, testId }: { text: string; testId: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      toast.success("Copied — paste it into your agent")
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      toast.error("Couldn't copy; select the text and copy it manually")
-    }
-  }
+  const { copied, copy } = useCopy(2000)
   return (
     <button
       type="button"
       data-testid={testId}
-      onClick={copy}
+      onClick={() => copy(text, { success: "Copied — paste it into your agent" })}
       className="flex items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
     >
       <span className="text-pretty">"{text}"</span>

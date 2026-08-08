@@ -1,7 +1,9 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { FileText, FolderOpen, Hash, Plug, Plus, X } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { type Automation, type AutomationRef, type AutomationTrigger, api } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -21,15 +23,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { copyText } from "@/lib/clipboard"
 import {
   agentsQuery,
   artifactQuery,
   automationsQuery,
   collectionsQuery,
   connectionsQuery,
+  contextsQuery,
+  modelCredentialsQuery,
   runsQuery,
   targetPickerQuery,
 } from "@/lib/queries"
@@ -59,9 +63,7 @@ const seedLabel = (r: AutomationRef): string => (r.kind === "tag" ? `#${r.tag}` 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
+      <Eyebrow>{label}</Eyebrow>
       {children}
       {hint && <p className="text-2xs text-muted-foreground">{hint}</p>}
     </div>
@@ -78,6 +80,7 @@ export function AutomationForm({
   defaultInstruction,
   submitLabel,
   automation,
+  runOnCreate = false,
   onDone,
 }: {
   refs?: string[]
@@ -85,6 +88,8 @@ export function AutomationForm({
   submitLabel?: string
   /** Present ⇒ edit this automation in place instead of creating. */
   automation?: Automation
+  /** Artifact-local creation can enqueue its proof run atomically. */
+  runOnCreate?: boolean
   onDone: () => void
 }) {
   const { data: agents, isError: agentsError } = useQuery(agentsQuery())
@@ -97,6 +102,10 @@ export function AutomationForm({
   const [instruction, setInstruction] = useState(
     automation?.instruction ?? defaultInstruction ?? "",
   )
+  // Codex is the hosted coding-agent path this flow is designed to make obvious. Existing
+  // automations retain their provider, and API clients that omit it retain the Claude default.
+  const [provider, setProvider] = useState<Automation["provider"]>(automation?.provider ?? "codex")
+  const [contextId, setContextId] = useState(automation?.context_id ?? "")
   const [kind, setKind] = useState<AutomationTrigger["kind"]>(automation?.trigger.kind ?? "manual")
   const [cron, setCron] = useState<string>(automation?.trigger.cron ?? SCHEDULE_PRESETS[0].cron)
   const [on, setOn] = useState<string>(automation?.trigger.on ?? EVENT_KINDS[0].id)
@@ -120,6 +129,9 @@ export function AutomationForm({
   // ACTIVE only. A pending source has an unpinned ref, which every run refuses — offering it
   // here would let someone build an automation that silently reads nothing.
   const connections = useQuery(connectionsQuery())
+  const contexts = useQuery(contextsQuery())
+  const modelCredentials = useQuery(modelCredentialsQuery())
+  const personalPlan = modelCredentials.data?.find((c) => c.provider === provider)
   const sources = useMemo(
     () => (connections.data ?? []).filter((c) => c.kind === "mcp" && c.status === "active"),
     [connections.data],
@@ -182,17 +194,28 @@ export function AutomationForm({
   const save = useApiMutation({
     mutationFn: () => {
       const body = {
-        ...(agentId ? { agentId } : {}),
+        ...(!contextId && agentId ? { agentId } : {}),
+        provider,
+        ...(contextId ? { contextId } : {}),
         trigger: buildTrigger(),
         instruction: instruction.trim(),
+        ...(!automation && runOnCreate ? { runNow: true } : {}),
         refs: buildRefs(),
         connectionIds: sourceIds,
       }
       return automation
-        ? api.updateAutomation(automation.id, { agentId, ...body })
+        ? api.updateAutomation(automation.id, {
+            ...body,
+            contextId: contextId || null,
+            ...(!contextId ? { agentId } : {}),
+          })
         : api.createAutomation(body)
     },
-    success: automation ? "Automation updated" : "Automation created",
+    success: automation
+      ? "Automation updated"
+      : runOnCreate
+        ? "Automation created and queued"
+        : "Automation created",
     // Invalidate HERE, not in each caller — both the manager and the artifact dialog write
     // through this form, and a change from either must refresh both views.
     invalidate: [automationsQuery().queryKey, runsQuery().queryKey],
@@ -205,7 +228,10 @@ export function AutomationForm({
       // An auto-minted runner token arrives exactly once — hold the form open on
       // its panel; onDone fires from its Done button instead.
       const token = (a as { agent_token?: string }).agent_token
-      if (!automation && token) {
+      // A hosted first run uses a short-lived run capability, not this standing bearer. Do not
+      // interrupt the one-click flow with a token it does not need; local polling setups still
+      // receive the existing one-time token panel.
+      if (!automation && token && !runOnCreate) {
         setMintedToken(token)
         return
       }
@@ -219,7 +245,48 @@ export function AutomationForm({
 
   return (
     <div className="flex flex-col gap-4">
-      {(automation || (agents ?? []).some((a) => !a.managed)) && (
+      <Field
+        label="Run with context"
+        hint="Optional. A context packages durable instructions, repository pointers, and skills for complex work."
+      >
+        <Select
+          value={contextId || "none"}
+          onValueChange={(v) => setContextId(v === "none" ? "" : v)}
+          disabled={contexts.isPending || contexts.isError}
+        >
+          <SelectTrigger
+            data-testid="automation-context"
+            aria-label="Run with context"
+            className="w-full"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No context · use this instruction directly</SelectItem>
+            {(contexts.data ?? []).map((context) => (
+              <SelectItem key={context.id} value={context.id}>
+                {context.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {!contexts.isPending && !contexts.isError && (contexts.data ?? []).length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            Need a reusable method for this job?{" "}
+            <Link
+              to="/contexts/new"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-foreground underline underline-offset-2"
+            >
+              Create a context in a new tab
+            </Link>
+            .
+          </p>
+        )}
+      </Field>
+
+      {!contextId && (automation || (agents ?? []).some((a) => !a.managed)) && (
         <Field label="Runs as">
           <Select
             value={agentId || "auto"}
@@ -241,6 +308,51 @@ export function AutomationForm({
           </Select>
         </Field>
       )}
+
+      <Field
+        label="Runs with"
+        hint="The selected coding agent executes in Derive's isolated hosted job container."
+      >
+        <Select value={provider} onValueChange={(v) => setProvider(v as Automation["provider"])}>
+          <SelectTrigger
+            data-testid="automation-provider"
+            aria-label="Runs with"
+            className="w-full"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="codex">Codex</SelectItem>
+            <SelectItem value="claude-code">Claude Code</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="rounded-md border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
+          {modelCredentials.isPending ? (
+            <span>Checking your connected model plans…</span>
+          ) : personalPlan ? (
+            <span>
+              {provider === "codex" ? "Codex" : "Claude"} plan connected · {personalPlan.hint}
+            </span>
+          ) : (
+            <span>
+              {modelCredentials.isError
+                ? "Couldn't check your personal plan. "
+                : `No personal ${provider === "codex" ? "Codex" : "Claude"} plan connected. `}
+              An agent owner or shared workspace plan may still cover this run, or you can{" "}
+              <Link
+                to="/settings/$section"
+                params={{ section: "model-plans" }}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-foreground underline underline-offset-2"
+              >
+                connect yours in a new tab
+              </Link>
+              .
+            </span>
+          )}
+        </div>
+      </Field>
 
       <Field label="Instruction">
         <Textarea
@@ -516,10 +628,7 @@ export function AutomationForm({
                   data-testid="automation-agent-token-copy"
                   variant="secondary"
                   size="sm"
-                  onClick={() => {
-                    navigator.clipboard?.writeText(mintedToken)
-                    toast.success("Token copied")
-                  }}
+                  onClick={() => void copyText(mintedToken, { success: "Token copied" })}
                 >
                   Copy
                 </Button>
@@ -551,7 +660,12 @@ export function AutomationForm({
         >
           {save.isPending
             ? "Saving…"
-            : (submitLabel ?? (automation ? "Save changes" : "Create automation"))}
+            : (submitLabel ??
+              (automation
+                ? "Save changes"
+                : runOnCreate
+                  ? "Create & run now"
+                  : "Create automation"))}
         </Button>
       </div>
     </div>

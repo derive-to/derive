@@ -164,6 +164,18 @@ export function registerPublishTool(tc: ToolContext): void {
     {
       description:
         "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Goes LIVE at your role unless for_review. See derive://skills/publishing.",
+      // Additive versioning: a republish creates a new current version and the prior ones
+      // stay in history (read short_id, version:N) — nothing is overwritten irreversibly,
+      // so not destructive. Not idempotent: calling twice with the same content still
+      // creates two versions (or two proposals). Derive's own backend (the email/Slack
+      // review-request DM is a side notification, not the tool's domain).
+      annotations: {
+        title: "Publish an artifact",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         content: z
           .string()
@@ -666,6 +678,9 @@ export function registerPublishTool(tc: ToolContext): void {
             // Thread the dense arm too — agents publish primarily through this tool, so omitting
             // `search` here would leave the bulk of new content lexically-indexed but never embedded.
             search: ctx.search,
+            // And the summarizer, for the same reason: this is where most content is written, so
+            // an omission here would mean the cards that most need a description never get one.
+            summarize: ctx.summarize,
           },
           artifact,
           version,

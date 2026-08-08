@@ -10,6 +10,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sideb
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useAuth } from "@/ctx"
 import { readAuthHint } from "@/lib/auth-hint"
+import { bareHotkey } from "@/lib/hotkey"
 import { reloadAfterWorkspaceChange } from "@/lib/persist"
 import { collectionsQuery, summaryQuery, workspacesQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -98,10 +99,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         setPaletteOpen((o) => !o)
         return
       }
-      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (document.querySelector('[role="dialog"]')) return
-        const t = e.target as HTMLElement | null
-        if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.isContentEditable) return
+      if (e.key === "/" && bareHotkey(e)) {
         e.preventDefault()
         const field = document.querySelector<HTMLInputElement>("input[data-slash-target]")
         if (field) {

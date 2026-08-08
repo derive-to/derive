@@ -1,6 +1,6 @@
 import type { Diff } from "@/api"
+import { LoadError } from "@/components/shared/load-error"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
@@ -50,17 +50,11 @@ export function DiffView({
   if (failed)
     return (
       <div className="grid flex-1 place-items-center">
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load the changes."
-          action={
-            onRetry && (
-              <Button variant="outline" size="sm" data-testid="diff-retry" onClick={onRetry}>
-                Try again
-              </Button>
-            )
-          }
-        />
+        {onRetry ? (
+          <LoadError title="Couldn’t load the changes." testId="diff-retry" onRetry={onRetry} />
+        ) : (
+          <StatusPanel tone="danger" title="Couldn’t load the changes." />
+        )}
       </div>
     )
   if (!diff) return <DiffSkeleton />

@@ -5,8 +5,9 @@ import { useState } from "react"
 import { type Automation, api, type Run } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -15,6 +16,7 @@ import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AutomationForm } from "./automation-form"
 import {
+  runExecutionReceipt,
   runOutcome,
   runStatusLabel,
   runWrites,
@@ -61,20 +63,10 @@ export function AutomationsSection() {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load automations"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="automations-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load automations"
+          testId="automations-retry"
+          onRetry={() => refetch()}
         />
       ) : !automations || automations.length === 0 ? (
         <EmptyState>
@@ -137,6 +129,10 @@ function AutomationRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
           <span className="truncate">{automation.instruction}</span>
+          <Badge variant="outline">
+            {automation.provider === "codex" ? "Codex" : "Claude Code"}
+          </Badge>
+          {automation.context_id && <Badge variant="outline">Context</Badge>}
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Paused</Badge>}
           <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
@@ -195,7 +191,10 @@ function AutomationRow({
         )}
       </div>
       <Dialog open={editing} onOpenChange={setEditing}>
-        <DialogContent data-testid="automation-edit-dialog">
+        <DialogContent
+          data-testid="automation-edit-dialog"
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        >
           <DialogHeader>
             <DialogTitle>Edit automation</DialogTitle>
           </DialogHeader>
@@ -231,9 +230,9 @@ function Activity() {
   if (!runs || runs.length === 0) return null
   return (
     <div className="mt-6">
-      <div className="mb-1 text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+      <Eyebrow as="div" className="mb-1">
         Recent activity
-      </div>
+      </Eyebrow>
       <ul className="flex flex-col">
         {runs.slice(0, 12).map((r) => (
           <li
@@ -250,10 +249,24 @@ function Activity() {
               </span>
             </div>
             <RunWrites meta={r.meta} />
+            <RunExecution meta={r.meta} />
             <RunTimeline timeline={r.timeline} />
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function RunExecution({ meta }: { meta: string | null }) {
+  const receipt = runExecutionReceipt(meta)
+  if (!receipt) return null
+  return (
+    <div className="flex flex-wrap items-center gap-2 pl-1 text-2xs text-muted-foreground">
+      <span>{receipt.location === "hosted" ? "Hosted" : "Local"}</span>
+      <span>·</span>
+      <span>{receipt.provider === "codex" ? "Codex" : "Claude Code"}</span>
+      {receipt.actions > 0 && <span>· {receipt.actions} actions recorded</span>}
     </div>
   )
 }

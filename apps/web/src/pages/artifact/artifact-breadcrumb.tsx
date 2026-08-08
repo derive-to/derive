@@ -4,16 +4,14 @@ import { useCallback, useEffect, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { Breadcrumb, CrumbSep, crumbClass } from "@/components/shared/breadcrumb"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Kbd } from "@/components/ui/kbd"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { canRenameArtifact } from "@/lib/artifact"
+import { bareHotkey } from "@/lib/hotkey"
 import {
   artifactQuery,
   collectionFoldersQuery,
@@ -170,16 +168,12 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
 
   // `[` / `]` page prev/next — free keys (arrows are taken for slide decks). Off in focus
   // mode (the header is hidden — silent paging would eject you from a presented deck).
-  // Ignore while typing or with a dialog / menu / listbox open, and don't fight modified
-  // chords.
+  // bareHotkey owns the "may a bare key act" guard (typing, dialogs, open menus).
   useEffect(() => {
     if (focusMode || !contextId || (!prev && !next)) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key !== "[" && e.key !== "]") return
-      const t = e.target as HTMLElement | null
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return
-      if (document.querySelector('[role="dialog"],[role="menu"],[role="listbox"]')) return
+      if (!bareHotkey(e)) return
       e.preventDefault()
       goto(e.key === "[" ? prev : next)
     }
@@ -285,57 +279,6 @@ export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMod
         <h1 className={cn(TITLE_CLASS, "flex min-w-0 flex-1")}>
           <EditableTitle art={art} />
         </h1>
-      )}
-      {hasSwitcher && (
-        <div className="flex shrink-0 items-center gap-0.5 pl-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Previous artifact in collection"
-                data-testid="sibling-prev"
-                disabled={!prev}
-                onClick={() => goto(prev)}
-              >
-                <Icon name="chevron-left" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              Previous <Kbd>[</Kbd>
-            </TooltipContent>
-          </Tooltip>
-          <span
-            // The scope is otherwise invisible: the denominator is the FOLDER count when
-            // filed, the whole-collection count when not. The tooltip names it so the
-            // number never looks like it jumped for no reason.
-            title={
-              folderName
-                ? `${index + 1} of ${total} in ${folderName}`
-                : `${index + 1} of ${total} in the collection`
-            }
-            className="px-0.5 font-mono text-2xs tabular-nums text-muted-foreground"
-          >
-            {index + 1} / {total}
-          </span>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Next artifact in collection"
-                data-testid="sibling-next"
-                disabled={!next}
-                onClick={() => goto(next)}
-              >
-                <Icon name="chevron-right" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              Next <Kbd>]</Kbd>
-            </TooltipContent>
-          </Tooltip>
-        </div>
       )}
     </Breadcrumb>
   )

@@ -58,6 +58,7 @@ import { enqueueSlackChannelEvent } from "./lib/slack-comments"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
+import type { Summarizer } from "./summarizer"
 import { enqueueForEvent, type WebhookEvent } from "./webhooks"
 
 /** The refusal copy for blocked billing actions, keyed by reason. Built from baseUrl
@@ -127,6 +128,10 @@ export interface AppDeps {
    *  edge and a Postgres self-host inject a pgvector adapter (embeddings from Workers AI or, on
    *  self-host, a local ONNX model); it's absent on SQLite / when no embedder is configured. */
   search?: SearchIndex
+  /** Writes the one-line summary each new version is described by on unfurl surfaces
+   *  (summarizer.ts). Absent ⇒ no summaries and every card keeps its inventory line, which is
+   *  the resting state for self-host and for any deploy without a model binding. */
+  summarize?: Summarizer
   /** Realtime relay + presence. In-process when unset (self-host); the Cloudflare
    *  edge entry injects a Durable Object backplane. */
   backplane?: Backplane
@@ -165,6 +170,15 @@ export interface AppDeps {
    *  Unset ⇒ chat answers with "no model configured" instead of silently doing nothing. Injected
    *  rather than imported so a test can script it and so no provider choice is baked into the app. */
   callModel?: AgentLoopInput["callModel"]
+  /**
+   * Whether this deployment's operator gateway pays for unattended Claude runs.
+   *
+   * `callModel` alone is not enough: it also exists when queued work is executed by a CLI
+   * child/container, and that executor cannot use the in-process gateway credential. Entry
+   * points set this only when the model loop is the selected unattended substrate. Codex always
+   * resolves a Codex plan through the normal payer chain.
+   */
+  automationOperatorPays?: boolean
   /** EVERY model this deploy can answer an attended turn with, and how to reach each one.
    *
    *  `callModel` above is this catalog's DEFAULT entry — one is built from the other, so the two
@@ -331,15 +345,17 @@ export interface AppDeps {
   pokeRun?: (runId: string) => void
   /**
    * The marketing site (the front door). When set, `/` serves the marketing page
-   * to signed-out visitors (signed-in ones keep the SPA) and `/pricing` serves the
-   * pricing page. Each provider returns the page HTML — read from the web build's
-   * `site/` directory on Node, fetched from the ASSETS binding on the edge — or
-   * null when the page is missing (falls back to the shell). Set whenever the web
-   * build ships the pages; unset (a page-less build, tests) ⇒ the SPA owns `/`.
+   * to signed-out visitors (signed-in ones keep the SPA), `/pricing` serves the
+   * pricing page, and `/privacy` serves the privacy page. Each provider returns
+   * the page HTML — read from the web build's `site/` directory on Node, fetched
+   * from the ASSETS binding on the edge — or null when the page is missing (falls
+   * back to the shell). Set whenever the web build ships the pages; unset (a
+   * page-less build, tests) ⇒ the SPA owns `/`.
    */
   marketing?: {
     home: () => Promise<string | null>
     pricing: () => Promise<string | null>
+    privacy: () => Promise<string | null>
   }
 }
 
@@ -1492,6 +1508,7 @@ export function buildContext(deps: AppDeps) {
     modelsFor,
     chatAllowlist: deps.chatAllowlist,
     search: deps.search,
+    summarize: deps.summarize,
     bus,
     presence,
     backplane,

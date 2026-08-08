@@ -1,6 +1,15 @@
-import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
+import {
+  type AutomationTrigger,
+  DEFAULT_EXECUTION_PROVIDER,
+  EXECUTION_PROVIDERS,
+  newId,
+  normalizeSelectors,
+  roleAllows,
+} from "@derive/core"
 import { z } from "zod"
+import { automationProvider, runMetaForAutomation } from "../lib/automation"
 import { connectionBindError } from "../lib/broker"
+import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { mintToken, sha256 } from "../lib/crypto"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
@@ -39,6 +48,16 @@ export function registerAutomateTool(tc: ToolContext): void {
     {
       description:
         "Scheduled and triggered work: create/list/run_now an automation, record an outcome, or create_context. See derive://skills/loop.",
+      // Not read-only (create/run_now/record/create_context all write); no action here
+      // deletes or disables an existing automation or context — there is no such action
+      // in this tool — so it isn't destructive. Every effect (rows in the automations/
+      // runs/contexts tables, a minted managed agent) is Derive's own backend.
+      annotations: {
+        title: "Manage automations",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         // A STRING, not an enum, on purpose: this discriminator grows (create_context is
         // itself the fifth value, and it shipped unreachable to every already-connected
@@ -48,6 +67,7 @@ export function registerAutomateTool(tc: ToolContext): void {
         action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "What to do.")),
         trigger: TRIGGER.optional(),
         instruction: z.string().min(1).max(4000).optional(),
+        provider: z.enum(EXECUTION_PROVIDERS).optional(),
         refs: z
           .array(
             z.union([
@@ -141,6 +161,7 @@ export function registerAutomateTool(tc: ToolContext): void {
             id: a.id,
             instruction: a.instruction.slice(0, 140),
             context_id: a.context_id,
+            provider: automationProvider(a),
             enabled: a.enabled === 1,
           })),
         })
@@ -160,6 +181,7 @@ export function registerAutomateTool(tc: ToolContext): void {
             orgId: org,
             agentId: a.agent_id,
             initiator: tc.ownerId ? { userId: tc.ownerId, source: "initiator" } : null,
+            provider: automationProvider(a),
           }))
         )
           return json({ error: NO_PAYER_MESSAGE })
@@ -171,6 +193,7 @@ export function registerAutomateTool(tc: ToolContext): void {
           reason: "manual:mcp",
           initiated_by: tc.ownerId ?? null,
           scheduled_for: new Date().toISOString(),
+          meta: runMetaForAutomation(a),
         })
         ctx.deps.pokeRun?.(rec.id)
         return json({ run_id: rec.id, status: rec.status })
@@ -191,43 +214,31 @@ export function registerAutomateTool(tc: ToolContext): void {
           return json({ error: "no such manifest artifact in this workspace" })
         if (!roleAllows(reached.role, "share"))
           return json({ error: "creating a context needs share standing on the manifest" })
-        const mint = (name: string) =>
-          meta.createAgent({
-            id: newId("ag"),
-            org_id: org,
-            name,
-            token: sha256(mintToken("dk_agt")),
-            role: "editor",
-            created_by: tc.ownerId,
-            managed: 1,
-          })
-        const minted = await mint(input.name).catch(() =>
-          mint(`${input.name} ${newId("x").slice(-4)}`),
-        )
         try {
-          const created = await meta.createContext({
-            id: newId("ctx"),
-            org_id: org,
+          const made = await createContextCore(meta, {
+            orgId: org,
+            userId: tc.ownerId,
             name: input.name,
-            agent_id: minted.id,
-            manifest_artifact_id: reached.a.id,
-            created_by: tc.ownerId,
-            max_run_ms: input.max_run_ms ?? null,
-            ...(input.max_concurrency ? { max_concurrency: input.max_concurrency } : {}),
+            manifestArtifactId: reached.a.id,
+            maxRunMs: input.max_run_ms,
+            maxConcurrency: input.max_concurrency,
           })
           return json({
-            context_id: created.id,
-            name: created.name,
-            agent_id: minted.id,
-            ask_policy: created.ask_policy,
+            context_id: made.context.id,
+            name: made.context.name,
+            agent_id: made.agentId,
+            ask_policy: made.context.ask_policy,
             note:
               "No token is returned over MCP. You (an owner) run this context directly: " +
               "use({context}) pulls its queued work. A dedicated runner's token comes from " +
               "REST agent rotate.",
           })
-        } catch {
-          // A name-collision after the auto-mint must not strand an orphaned managed agent.
-          await meta.deleteAgent(minted.id, org).catch(() => {})
+        } catch (err) {
+          // Only a context-name collision earns the friendly message, and only
+          // ContextConflictError means that: createContextCore tags the case where the mint
+          // already succeeded and the context insert did not. Anything else — the mint itself
+          // failing, say — is not a naming problem and must not be reported as one.
+          if (!(err instanceof ContextConflictError)) throw err
           return json({ error: "a context with that name already exists" })
         }
       }
@@ -333,6 +344,7 @@ export function registerAutomateTool(tc: ToolContext): void {
         agent_id: agentId,
         trigger: JSON.stringify(trigger),
         instruction: input.instruction,
+        provider: input.provider ?? DEFAULT_EXECUTION_PROVIDER,
         refs: input.refs ? JSON.stringify(normalizeSelectors(input.refs)) : null,
         connection_ids: input.connection_ids?.length ? JSON.stringify(input.connection_ids) : null,
         context_id: input.context_id ?? null,

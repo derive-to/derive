@@ -162,7 +162,12 @@ export const embedRoutes = (ctx: AppContext) => {
     // was missing must land on the generic card exactly as an anonymous one does — otherwise
     // the narrow grant widens into a metadata read the moment a render is pending or failed.
     const svg = readableArtifact
-      ? ogCardSvg({ ...(await infoFor(readableArtifact)), reveal: true })
+      ? // `summary: null` deliberately: the card renders its description as ONE unwrapped
+        // <text> line at 28px, sized for the ~50-character inventory line. A 200-character
+        // generated summary would run off the canvas. The image travels beside an
+        // og:description that already carries the summary, so nothing is lost by keeping the
+        // picture on the spec line.
+        ogCardSvg({ ...(await infoFor(readableArtifact)), summary: null, reveal: true })
       : ogCardSvg({
           title: "",
           kindLabel: "Document",

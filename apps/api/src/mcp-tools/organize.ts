@@ -31,6 +31,17 @@ export function registerOrganizeTool(tc: ToolContext): void {
     {
       description:
         "Tags, collections and shelving. No `short_ids` reads the workspace vocabulary; with them, writes tags/`collection`/`state`. Each artifact authorizes on its own, so untouchable ones come back skipped. state:'deleted' is permanent. See derive://skills/organize.",
+      // Tag/collection edits are reversible (add/remove/set, fold into a collection), and
+      // `state:'removed'` is an explicitly reversible retire — but `state:'deleted'` is a
+      // real permanent delete (every version, comment and proposal, cascading to any
+      // context whose manifest it was — "This cannot be undone"), so destructive has to
+      // be true for the tool as a whole. Derive's own backend only.
+      annotations: {
+        title: "Organize the library",
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         short_ids: z
           .array(z.string())

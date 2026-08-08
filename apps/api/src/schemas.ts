@@ -263,6 +263,14 @@ export const Artifact = z
       .nullable()
       .optional()
       .describe("Source path (e.g. the repo path of a synced artifact); null when none."),
+    derived_from: z
+      .object({ short_id: z.string(), title: z.string().nullable() })
+      .nullable()
+      .optional()
+      .describe(
+        'The artifact this one was copied from ("use as template"). Detail responses ' +
+          "only; null when the source no longer resolves, absent when not derived.",
+      ),
     created_at: z.string().optional(),
     updated_at: z
       .string()

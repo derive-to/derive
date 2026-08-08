@@ -2,13 +2,14 @@ import { useQuery } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 import { useCallback, useEffect, useRef } from "react"
+import { api } from "@/api"
 import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatThread } from "@/components/chat/chat-thread"
 import { json, useChatSession } from "@/components/chat/use-chat-session"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -77,26 +78,18 @@ export function ChatPage() {
 
   const open = useCallback(
     (body: string) =>
-      json<{ session: { id: string } }>("/v1/chat-session", {
-        method: "POST",
-        body: JSON.stringify({
-          workspace: org,
-          body_md: body,
-          // Only when the person actually picked one: sending the default explicitly would
-          // pin a conversation to today's default forever, which is not what "default" means.
-          ...(modelParam ? { model: modelParam } : {}),
-        }),
+      api.createChatSession({
+        workspace: org,
+        body_md: body,
+        // Sending the default explicitly would pin the conversation to today's default.
+        ...(modelParam ? { model: modelParam } : {}),
       }),
     [org, modelParam],
   )
   // The model rides every follow-up too, so switching mid-conversation applies to the NEXT
   // turn and leaves the answers already given alone.
   const followUp = useCallback(
-    (id: string, body: string) =>
-      json(`/v1/sessions/${id}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ body_md: body, ...(modelParam ? { model: modelParam } : {}) }),
-      }),
+    (id: string, body: string) => api.postSessionMessage(id, body, modelParam),
     [modelParam],
   )
 
@@ -164,15 +157,11 @@ export function ChatPage() {
   if (wsFailed)
     return (
       <PageShell className="flex justify-center pt-16">
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load your workspace"
+        <LoadError
+          title="Couldn’t load your workspace"
           description="Chat needs to know which workspace you're asking about."
-          action={
-            <Button size="sm" onClick={() => void retryWs()} data-testid="chat-ws-retry">
-              Try again
-            </Button>
-          }
+          testId="chat-ws-retry"
+          onRetry={() => void retryWs()}
         />
       </PageShell>
     )

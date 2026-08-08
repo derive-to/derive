@@ -12,7 +12,7 @@
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
  *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
  *                  open-external / esc / present / edit-state / edit-edits /
- *                  edit-save / edit-blocked / edit-request / deck-sniff
+ *                  edit-save / edit-blocked / edit-request / edit-image / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
  *                  edit-mode / edit-collect / edit-restore / edit-armed /
  *                  edit-undo / edit-redo / edit-format / deck-drive
@@ -344,6 +344,12 @@ interface ElReg {
     const el = asEl(document.activeElement)?.closest("[data-derive-editable]")
     return el instanceof HTMLElement ? el : null
   }
+  // Reassigned by edit controls mounted later in the file. Escape must dismiss a
+  // focused in-frame control before it asks the host to leave the entire edit mode.
+  let dismissEditUi = (): boolean => false
+  // Same late-bound seam for Save: a small in-frame editor gets one chance to commit
+  // its pending value before the host snapshots the document.
+  let commitEditUi = (): boolean => true
 
   /* THE KEYBOARD, and who owns it.
    *
@@ -385,17 +391,25 @@ interface ElReg {
   }
   /** Our own chords, as a table: what the handler does is readable in one place,
    *  and every one of them is a modifier chord — never a bare key. */
-  const chordFor = (e: KeyboardEvent, focused: HTMLElement | null): (() => void) | null => {
+  const chordFor = (
+    e: KeyboardEvent,
+    focused: HTMLElement | null,
+    precisionFocused: boolean,
+  ): (() => void) | null => {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return null
     const k = e.key.toLowerCase()
     // Save works with the mode open even when no block holds the caret: the host's
     // own window listener cannot see keys typed in here, and ⌘S would otherwise
     // open the browser's Save-page dialog over the document.
-    if (editOn && (k === "s" || k === "enter")) return () => post({ type: "edit-save" })
-    if (!focused) return null
+    if (editOn && (k === "s" || k === "enter"))
+      return () => {
+        if (commitEditUi()) post({ type: "edit-save" })
+      }
     // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
-    // happened in — it cannot undo a bold, a link, a break, or a block put back.
-    if (k === "z") return e.shiftKey ? redo : undo
+    // happened in — it cannot undo a bold, a link, a break, or an element resize.
+    // Keep it live with no text caret because a resize grip never owns one.
+    if (editOn && k === "z" && !precisionFocused) return e.shiftKey ? redo : undo
+    if (!focused) return null
     // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
     // format command, so these keys did nothing in a mode that looks like an editor.
     if (k === "b") return () => applyFmt("b")
@@ -412,13 +426,16 @@ interface ElReg {
   const ownKeys = (e: KeyboardEvent) =>
     guard(() => {
       const focused = editingCaret()
+      const active = asEl(document.activeElement)
+      const editControlFocused = !!active?.closest(".derive-edit-ui")
+      const precisionFocused = !!active?.closest(".derive-resize-panel")
       // An IME is mid-word. Not ours to interpret, and not the page's to act on.
       if (e.isComposing || e.keyCode === 229) {
         if (focused) e.stopImmediatePropagation()
         return
       }
       if (e.type === "keydown") {
-        const run = chordFor(e, focused)
+        const run = chordFor(e, focused, precisionFocused)
         if (run) {
           e.preventDefault()
           e.stopImmediatePropagation()
@@ -426,6 +443,11 @@ interface ElReg {
           return
         }
         if (e.key === "Escape") {
+          if (!focused && dismissEditUi()) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            return
+          }
           // Two steps, deliberately. With the caret in a block, Escape drops the
           // caret and stops there — the typed text and the session both survive,
           // which is what "get this cursor out of the way" should mean. Only an
@@ -443,7 +465,14 @@ interface ElReg {
         // `p` presents, for the same reason: one click into a document moves
         // keyboard focus in here and the host goes deaf. Forwarded, not swallowed,
         // so a deck that binds `p` itself still gets it.
-        if (e.key.toLowerCase() === "p" && !e.metaKey && !e.ctrlKey && !e.altKey && !focused)
+        if (
+          e.key.toLowerCase() === "p" &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !focused &&
+          !editControlFocused
+        )
           post({ type: "present" })
       }
       if (focused) e.stopImmediatePropagation()
@@ -501,6 +530,32 @@ interface ElReg {
        something to discover what counts as text. Tracks exactly what a click would
        activate (same editContainerFor), so it can never promise the wrong region. */
     ".derive-edit-hover{background-color:rgba(100,116,139,.09);border-radius:3px;outline:1px solid rgba(100,116,139,.22);outline-offset:2px;cursor:text}" +
+    /* Direct manipulation: a source-safe selection box around media and opted-in
+       containers. It lives in our overlay layer, never in the target's layout. */
+    ".derive-resize-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:1.5px solid rgba(100,116,139,.82);border-radius:3px;box-shadow:0 0 0 3px rgba(100,116,139,.12);z-index:2147483642}" +
+    ".derive-resize-handle{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;padding:0;border:2px solid rgba(100,116,139,.95);border-radius:3px;background:rgb(248,250,252);box-shadow:0 1px 4px rgba(0,0,0,.28);cursor:nwse-resize;pointer-events:auto;touch-action:none}" +
+    ".derive-resize-size{position:absolute;right:-1px;bottom:-27px;min-height:21px;padding:3px 7px;border:0;border-radius:4px;background:rgba(30,41,59,.94);color:#fff;font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;cursor:pointer;pointer-events:auto}" +
+    /* The readout is the progressive-disclosure trigger: one quiet number at rest,
+       then an exact-size form only when someone asks for it. */
+    ".derive-resize-panel{position:absolute;top:calc(100% + 31px);right:-1px;display:none;width:224px;box-sizing:border-box;padding:10px;border:1px solid rgba(100,116,139,.45);border-radius:7px;background:rgb(248,250,252);color:#1e293b;box-shadow:0 8px 24px rgba(15,23,42,.22);font:500 12px/1.25 system-ui,sans-serif;pointer-events:auto}" +
+    ".derive-resize-box.derive-resize-precision .derive-resize-panel{display:grid;gap:9px}" +
+    ".derive-resize-box.derive-resize-panel-above .derive-resize-panel{top:auto;bottom:calc(100% + 10px)}" +
+    ".derive-resize-box.derive-resize-panel-left .derive-resize-panel{right:auto;left:-1px}" +
+    ".derive-resize-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}" +
+    ".derive-resize-field{display:grid;gap:4px;color:#475569;font-size:11px}" +
+    ".derive-resize-input{width:100%;height:30px;box-sizing:border-box;padding:4px 7px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}" +
+    ".derive-resize-lock{display:flex;align-items:center;gap:7px;min-height:20px;color:#334155;cursor:pointer}" +
+    ".derive-resize-lock input{width:14px;height:14px;margin:0;accent-color:#475569}" +
+    ".derive-resize-lock:has(input:disabled){cursor:default;color:#64748b}" +
+    ".derive-resize-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}" +
+    ".derive-resize-button{height:29px;padding:0 9px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#334155;font:600 11px/27px system-ui,sans-serif;cursor:pointer}" +
+    ".derive-resize-apply{margin-left:auto;border-color:#334155;background:#334155;color:#fff}" +
+    ".derive-resize-button:disabled{opacity:.45;cursor:default}" +
+    ".derive-resize-replace{position:absolute;top:6px;left:6px;height:25px;padding:0 8px;border:1px solid rgba(100,116,139,.55);border-radius:5px;background:rgba(248,250,252,.96);color:#334155;font:600 11px/23px system-ui,sans-serif;cursor:pointer;pointer-events:auto;white-space:nowrap}" +
+    ".derive-resize-box:not(.derive-resize-image) .derive-resize-replace{display:none}" +
+    ".derive-resize-box:not(.derive-resize-enabled) :is(.derive-resize-handle,.derive-resize-size,.derive-resize-panel){display:none}" +
+    ".derive-resize-handle:focus-visible,.derive-resize-size:focus-visible,.derive-resize-replace:focus-visible,.derive-resize-button:focus-visible{outline:2px solid rgba(100,116,139,.95);outline-offset:2px}" +
+    ".derive-resize-input:focus-visible{border-color:#475569;outline:2px solid rgba(100,116,139,.34);outline-offset:1px}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
        composites to ~1:1 on a dark page — invisible exactly where the invitation
@@ -532,7 +587,16 @@ interface ElReg {
     fingerprintFrom(el.tagName.toLowerCase(), elSrc(el), elAlt(el), elText(el))
   const elOrdinal = (el: Element): number => {
     const list = document.getElementsByTagName(el.tagName)
-    for (let i = 0; i < list.length; i++) if (list[i] === el) return i
+    let ordinal = 0
+    for (let i = 0; i < list.length; i++) {
+      const candidate = list[i]
+      // Editor/comment overlays are appended to the artifact DOM but do not exist in
+      // stored source. Leaving them in this count can shift selectors for content a
+      // client-side app mounts after the overlay.
+      if (candidate?.closest?.(".derive-edit-ui,.derive-el-hl")) continue
+      if (candidate === el) return ordinal
+      ordinal++
+    }
     return 0
   }
   /* nearest preceding/following text block, in document order. Walks OUTWARD from el
@@ -922,7 +986,7 @@ interface ElReg {
         // never leak into quote context windows or edit snapshots — a suffix containing
         // a badge glyph can't resolve against the stored source.
         const el = (n as Text).parentElement
-        if (el?.closest?.(".derive-el-hl")) return NodeFilter.FILTER_REJECT
+        if (el?.closest?.(".derive-el-hl,.derive-edit-ui")) return NodeFilter.FILTER_REJECT
         return NodeFilter.FILTER_ACCEPT
       },
     })
@@ -1475,6 +1539,9 @@ interface ElReg {
       // the slide out from under the caret. Capture + stopImmediatePropagation is
       // what catches those, including handlers bound to the zone elements themselves.
       if (editOn) {
+        // Our own overlay controls must reach their target listeners (Replace and
+        // the resize grip's synthesized click). They already stop propagation there.
+        if (asEl(e.target)?.closest(".derive-edit-ui")) return
         e.stopImmediatePropagation()
         editClick(e)
         return
@@ -1615,9 +1682,9 @@ interface ElReg {
      document text snapshot taken at mode entry, so on "edit-collect" each changed
      node becomes a minimal {exact, prefix, suffix, new_text} quote built from the
      PRE-EDIT text — which is what the server resolves against the stored source.
-     Structure never changes here: Enter is blocked, paste is flattened to plain
-     text, and a block whose element structure did change falls back to one
-     whole-block span (the server refuses it if it would cross markup). */
+     Text structure stays narrow: paste is flattened, Enter becomes one inline
+     break, and a changed block falls back to one whole-block span. Media and
+     opted-in boxes can also carry source-safe width/height intent. */
   interface EditTarget {
     el: HTMLElement
     origHtml: string
@@ -1627,13 +1694,41 @@ interface ElReg {
     origConcat: string
     structSig: string
   }
+  type ResizableElement = HTMLElement | SVGElement
+  interface ResizeTarget {
+    el: ResizableElement
+    /** Exact attribute state at first touch — Discard/undo put it back byte-for-byte. */
+    origStyle: string | null
+    /** Captured before the live style changes, so the server resolves the base element. */
+    selector: Record<string, unknown>
+    /** Media persists height:auto; containers persist an explicit pixel height. */
+    autoHeight: boolean
+    /** Media is always constrained. A box may opt into the same direct manipulation. */
+    lockRatio: boolean
+    /** The rendered proportion to preserve while lockRatio is on. */
+    aspect: number
+  }
   let editOn = false
+  // The frame is HTML even when the stored document is Markdown. Element selectors
+  // are only a supported write against HTML/deck SOURCE, so the host explicitly
+  // enables opening-tag operations. Image replacement remains available either way.
+  let elementEditsOn = false
   /* The host says this viewer may edit (permission, current version, not already in
      the mode). It arms the in-document entry gestures — a double-click on text asks
      the host to open edit mode there — so a reader who could never save never fires
      a message, and a right-less viewer's double-click stays a plain word select. */
   let editArmed = false
   let editTargets: EditTarget[] = []
+  let resizeTargets: ResizeTarget[] = []
+  interface ResizeFocusable {
+    el: ResizableElement
+    tabindex: string | null
+  }
+  let resizeFocusables: ResizeFocusable[] = []
+  // Assigned by the resize controller below. Edit mode can only be entered after
+  // this client has finished evaluating, so both are live before either runs.
+  let enableResizeFocus = () => {}
+  let restoreResizeFocus = () => {}
   // The pre-edit snapshot. Nodes are joined with "\n" separators (and starts offsets
   // account for them) so a prefix/suffix window crossing a node seam carries
   // whitespace there — matching the server projection, which renders a space for
@@ -1644,6 +1739,10 @@ interface ElReg {
    *  things can change (dirty count, undo, redo, a live selection) still posts only
    *  when something a control would show actually moved. */
   let lastState = ""
+  // The resize controller is mounted later in the file. Keeping this tiny bridge
+  // here lets the shared edit-state reporter describe the CURRENT editing context
+  // without coupling text history to the overlay's implementation details.
+  let hasSelectedResize = () => false
 
   const structSigOf = (el: Element): string => {
     const list = el.querySelectorAll("*")
@@ -1654,6 +1753,15 @@ interface ElReg {
   const targetFor = (el: Element): EditTarget | null => {
     for (const t of editTargets) if (t.el === el) return t
     return null
+  }
+  const resizeTargetFor = (el: Element): ResizeTarget | null => {
+    for (const t of resizeTargets) if (t.el === el) return t
+    return null
+  }
+  const rawStyle = (el: Element): string | null => el.getAttribute("style")
+  const restoreStyle = (el: ResizableElement, value: string | null) => {
+    if (value === null) el.removeAttribute("style")
+    else el.setAttribute("style", value)
   }
   const concatText = (el: Element): string => {
     let out = ""
@@ -1670,6 +1778,8 @@ interface ElReg {
       t.el.classList.toggle("derive-edited", changed)
       if (changed) n++
     }
+    for (const t of resizeTargets)
+      if (document.contains(t.el) && rawStyle(t.el) !== t.origStyle) n++
     return n
   }
   /* ── Undo, for the whole session ──────────────────────────────────────────────
@@ -1684,13 +1794,24 @@ interface ElReg {
      round trip to the host would be neither. */
   const UNDO_LIMIT = 60
   const TYPING_BURST_MS = 900
-  let undoStack: { el: HTMLElement; html: string }[] = []
-  let redoStack: { el: HTMLElement; html: string }[] = []
+  type HistoryEntry =
+    | { kind: "html"; el: HTMLElement; html: string }
+    | { kind: "style"; el: ResizableElement; style: string | null }
+  let undoStack: HistoryEntry[] = []
+  let redoStack: HistoryEntry[] = []
   let lastBurst: { el: HTMLElement; at: number } | null = null
+  // The resize overlay is mounted below; history can run before/after it without
+  // knowing its DOM. Reassigned once that controller exists.
+  let refreshResizeUi = () => {}
   const checkpoint = (el: HTMLElement) => {
-    undoStack.push({ el, html: el.innerHTML })
+    undoStack.push({ kind: "html", el, html: el.innerHTML })
     if (undoStack.length > UNDO_LIMIT) undoStack.shift()
     // A new action forks the timeline: whatever was undone is no longer ahead of us.
+    redoStack = []
+  }
+  const checkpointStyle = (el: ResizableElement) => {
+    undoStack.push({ kind: "style", el, style: rawStyle(el) })
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift()
     redoStack = []
   }
   /** Checkpoint at the start of a typing burst, never mid-word. */
@@ -1718,10 +1839,16 @@ interface ElReg {
   const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
     const entry = from.pop()
     if (!entry || !document.contains(entry.el)) return
-    to.push({ el: entry.el, html: entry.el.innerHTML })
-    entry.el.innerHTML = entry.html
-    reregister(targetFor(entry.el), entry.el)
+    if (entry.kind === "html") {
+      to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
+      entry.el.innerHTML = entry.html
+      reregister(targetFor(entry.el), entry.el)
+    } else {
+      to.push({ kind: "style", el: entry.el, style: rawStyle(entry.el) })
+      restoreStyle(entry.el, entry.style)
+    }
     lastBurst = null
+    refreshResizeUi()
     postDirty()
   }
   const undo = () => stepHistory(undoStack, redoStack)
@@ -1745,8 +1872,51 @@ interface ElReg {
 
   const postDirty = () => {
     const n = countDirty()
-    const canFormat = !!formattableRange()
-    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}`
+    const range = formattableRange()
+    const canFormat = !!range
+    // A double-click can select a word just before its block is armed editable.
+    // selectionchange sees the pre-armed block and cannot cache it, while this
+    // settled state pass can. Preserve it here too so the host may safely ask an
+    // intermediate question (the link URL) without losing the words it applies to.
+    if (range) pendingRange = range.cloneRange()
+    const pending =
+      pendingRange &&
+      pendingRange.startContainer.isConnected &&
+      pendingRange.endContainer.isConnected
+        ? pendingRange
+        : null
+    const contextRange = range ?? pending
+    const contextNode = contextRange?.commonAncestorContainer ?? null
+    const contextEl =
+      contextNode?.nodeType === 1 ? (contextNode as Element) : contextNode?.parentElement
+    const focused = asEl(document.activeElement)?.closest("[data-derive-editable]") ?? null
+    const textBlock = focused ?? contextEl?.closest("[data-derive-editable]") ?? null
+    // Keep the contextual tools standing while a host-side intermediate control
+    // (currently the Link URL field) owns focus. The cached range is still the
+    // command target, so swapping Inspect back to its empty state would be both
+    // visually jarring and misleading.
+    const textActive = !hasSelectedResize() && !!textBlock
+    const textKind = textActive
+      ? ({
+          P: "Paragraph",
+          LI: "List item",
+          BLOCKQUOTE: "Quote",
+          FIGCAPTION: "Caption",
+          PRE: "Code block",
+          TD: "Table cell",
+          TH: "Table heading",
+          H1: "Heading 1",
+          H2: "Heading 2",
+          H3: "Heading 3",
+          H4: "Heading 4",
+          H5: "Heading 5",
+          H6: "Heading 6",
+        }[textBlock?.tagName ?? ""] ?? "Text")
+      : ""
+    const selectedText = contextRange
+      ? contextRange.toString().replace(/\s+/g, " ").trim().slice(0, 120)
+      : ""
+    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}`
     if (state !== lastState) {
       lastState = state
       lastDirty = n
@@ -1756,6 +1926,9 @@ interface ElReg {
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,
         canFormat,
+        textActive,
+        textKind,
+        selectedText,
       })
     }
   }
@@ -1775,13 +1948,513 @@ interface ElReg {
     el?.classList.add("derive-edit-hover")
   }
 
+  /* ── Element resize ──────────────────────────────────────────────────────────
+     A bounding box + one southeast grip, following the same small interaction as
+     image editors everywhere. Images/media keep their natural aspect ratio; a
+     `[data-derive-resizable]` container (plus common card/box naming) carries both
+     dimensions. The live DOM is only the preview. Save sends an ElementSelector +
+     dimensions, and the server changes that one opening tag in the stored source. */
+  const DIRECT_RESIZABLE = "img,video,canvas,svg,figure,iframe,embed,object,[data-derive-resizable]"
+  const BOX_HINT = /(^|[\s_-])(card|box|panel|tile|frame|visual|chart|graph|plot)([\s_-]|$)/i
+  const isResizableElement = (el: Element | null): el is ResizableElement =>
+    !!el && (el instanceof HTMLElement || el instanceof SVGElement)
+  const resizableAt = (target: EventTarget | null): ResizableElement | null => {
+    const el = asEl(target)
+    if (!el?.closest || el.closest(".derive-edit-ui")) return null
+    // A Markdown image still gets the selection box's explicit Replace action, but
+    // no resize controls: element operations are not defined for Markdown source.
+    if (!elementEditsOn) {
+      const image = el.closest("img")
+      return image instanceof HTMLImageElement ? image : null
+    }
+    const direct = el.closest(DIRECT_RESIZABLE)
+    if (isResizableElement(direct) && !direct.hasAttribute("data-derive-slide")) return direct
+    const box = el.closest("div,section,article,aside")
+    if (!isResizableElement(box) || box.hasAttribute("data-derive-slide")) return null
+    const hint = `${box.id || ""} ${box.className || ""}`
+    const style = box.getAttribute("style") || ""
+    return BOX_HINT.test(hint) || /\b(?:width|height)\s*:/i.test(style) ? box : null
+  }
+  const keepsRatio = (el: Element): boolean => /^(img|video|canvas|svg)$/i.test(el.tagName)
+
+  /* Resize is direct manipulation, but it must not be pointer-only. During edit
+   * mode, supported elements join the document's tab order without changing the
+   * stored source. Focus selects the same overlay as hover/click, and Enter opens
+   * exact sizing. Every authored tabindex is restored byte-for-byte. */
+  enableResizeFocus = () => {
+    restoreResizeFocus()
+    if (!elementEditsOn) return
+    const candidates = document.querySelectorAll(`${DIRECT_RESIZABLE},div,section,article,aside`)
+    const seen = new Set<Element>()
+    for (let i = 0; i < candidates.length; i++) {
+      const el = candidates[i] as Element
+      const target = resizableAt(el)
+      if (target !== el || seen.has(el)) continue
+      seen.add(el)
+      resizeFocusables.push({ el: target, tabindex: target.getAttribute("tabindex") })
+      if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "0")
+    }
+  }
+  restoreResizeFocus = () => {
+    for (const target of resizeFocusables) {
+      if (!document.contains(target.el)) continue
+      if (target.tabindex === null) target.el.removeAttribute("tabindex")
+      else target.el.setAttribute("tabindex", target.tabindex)
+    }
+    resizeFocusables = []
+  }
+
+  const resizeBox = document.createElement("div")
+  resizeBox.className = "derive-edit-ui derive-resize-box"
+  const resizeReplace = document.createElement("button")
+  resizeReplace.type = "button"
+  resizeReplace.className = "derive-resize-replace"
+  resizeReplace.textContent = "Replace"
+  resizeReplace.setAttribute("aria-label", "Replace image")
+  const resizeSize = document.createElement("button")
+  resizeSize.type = "button"
+  resizeSize.className = "derive-resize-size"
+  resizeSize.setAttribute("aria-label", "Set element size")
+  const resizeHandle = document.createElement("button")
+  resizeHandle.type = "button"
+  resizeHandle.className = "derive-resize-handle"
+  resizeHandle.setAttribute("aria-label", "Resize element")
+  resizeHandle.title = "Drag or use arrow keys to resize"
+
+  const resizePanel = document.createElement("form")
+  resizePanel.className = "derive-resize-panel"
+  resizePanel.setAttribute("aria-label", "Element size")
+  resizePanel.noValidate = true
+  const resizeFields = document.createElement("div")
+  resizeFields.className = "derive-resize-fields"
+  const precisionInput = (name: "Width" | "Height") => {
+    const label = document.createElement("label")
+    label.className = "derive-resize-field"
+    label.append(name)
+    const input = document.createElement("input")
+    input.className = "derive-resize-input"
+    input.type = "number"
+    input.name = name.toLowerCase()
+    input.min = "24"
+    input.max = "8192"
+    input.step = "1"
+    input.required = true
+    input.inputMode = "numeric"
+    input.setAttribute("aria-label", `${name} in pixels`)
+    label.append(input)
+    resizeFields.append(label)
+    return input
+  }
+  const resizeWidth = precisionInput("Width")
+  const resizeHeight = precisionInput("Height")
+  const resizeLockLabel = document.createElement("label")
+  resizeLockLabel.className = "derive-resize-lock"
+  const resizeLock = document.createElement("input")
+  resizeLock.type = "checkbox"
+  const resizeLockText = document.createElement("span")
+  resizeLockLabel.append(resizeLock, resizeLockText)
+  const resizeActions = document.createElement("div")
+  resizeActions.className = "derive-resize-actions"
+  const resizeReset = document.createElement("button")
+  resizeReset.type = "button"
+  resizeReset.className = "derive-resize-button"
+  resizeReset.textContent = "Reset"
+  resizeReset.setAttribute("aria-label", "Reset to authored size")
+  const resizeApply = document.createElement("button")
+  resizeApply.type = "submit"
+  resizeApply.className = "derive-resize-button derive-resize-apply"
+  resizeApply.textContent = "Apply"
+  resizeActions.append(resizeReset, resizeApply)
+  resizePanel.append(resizeFields, resizeLockLabel, resizeActions)
+  resizeBox.append(resizeReplace, resizeSize, resizeHandle, resizePanel)
+  ;(document.body || document.documentElement).appendChild(resizeBox)
+
+  let resizeHoverEl: ResizableElement | null = null
+  let resizeSelectedEl: ResizableElement | null = null
+  hasSelectedResize = () => !!resizeSelectedEl
+  let precisionOn = false
+  let precisionAxis: "width" | "height" = "width"
+  interface ResizeDrag {
+    el: ResizableElement
+    pointerId: number
+    startX: number
+    startY: number
+    startWidth: number
+    startHeight: number
+    autoHeight: boolean
+    lockRatio: boolean
+    aspect: number
+    moved: boolean
+  }
+  let resizeDrag: ResizeDrag | null = null
+
+  const closePrecision = (focusTrigger: boolean) => {
+    if (!precisionOn) return
+    precisionOn = false
+    resizeBox.classList.remove("derive-resize-precision")
+    resizeWidth.setCustomValidity("")
+    resizeHeight.setCustomValidity("")
+    if (focusTrigger && resizeSize.offsetParent) resizeSize.focus()
+  }
+  dismissEditUi = () => {
+    if (!precisionOn) return false
+    closePrecision(true)
+    return true
+  }
+  const resizeUiEl = (): ResizableElement | null => resizeSelectedEl ?? resizeHoverEl
+  const aspectOf = (rect: DOMRect): number => {
+    const aspect = rect.height > 0 ? rect.width / rect.height : 1
+    return Number.isFinite(aspect) && aspect > 0 ? aspect : 1
+  }
+  const clampSize = (value: number): number => Math.min(8192, Math.max(24, Math.round(value)))
+  const ensureResizeTarget = (el: ResizableElement): ResizeTarget => {
+    const existing = resizeTargetFor(el)
+    if (existing) return existing
+    const rect = el.getBoundingClientRect()
+    const autoHeight = keepsRatio(el)
+    const target: ResizeTarget = {
+      el,
+      origStyle: rawStyle(el),
+      selector: buildElSelector(el),
+      autoHeight,
+      lockRatio: autoHeight,
+      aspect: aspectOf(rect),
+    }
+    resizeTargets.push(target)
+    return target
+  }
+  const paintResizeUi = () => {
+    const el = resizeUiEl()
+    if (!editOn || !el || !document.contains(el)) {
+      closePrecision(false)
+      resizeBox.style.display = "none"
+      return
+    }
+    const r = el.getBoundingClientRect()
+    if (!(r.width || r.height)) {
+      closePrecision(false)
+      resizeBox.style.display = "none"
+      return
+    }
+    resizeBox.style.display = "block"
+    resizeBox.style.left = `${r.left + (window.scrollX || 0)}px`
+    resizeBox.style.top = `${r.top + scrollTop()}px`
+    resizeBox.style.width = `${r.width}px`
+    resizeBox.style.height = `${r.height}px`
+    resizeBox.classList.toggle("derive-resize-image", el.tagName.toLowerCase() === "img")
+    resizeBox.classList.toggle("derive-resize-enabled", elementEditsOn)
+    resizeBox.classList.toggle(
+      "derive-resize-panel-above",
+      r.bottom + 160 > (window.innerHeight || document.documentElement.clientHeight),
+    )
+    resizeBox.classList.toggle("derive-resize-panel-left", r.right < 232)
+    resizeSize.textContent = `${Math.round(r.width)} × ${Math.round(r.height)}`
+  }
+  refreshResizeUi = paintResizeUi
+  const setResizeHover = (el: ResizableElement | null) => {
+    if (precisionOn || resizeDrag || el === resizeHoverEl) return
+    resizeHoverEl = el
+    paintResizeUi()
+  }
+  const selectResize = (el: ResizableElement | null) => {
+    if (el !== resizeSelectedEl) closePrecision(false)
+    resizeSelectedEl = el
+    if (el) resizeHoverEl = el
+    setEditHover(null)
+    paintResizeUi()
+    scheduleDirty()
+  }
+  const clearResizeUi = () => {
+    closePrecision(false)
+    resizeHoverEl = null
+    resizeSelectedEl = null
+    resizeDrag = null
+    resizeBox.style.display = "none"
+  }
+
+  const openPrecision = () => {
+    const el = resizeUiEl()
+    if (!elementEditsOn || !el || !document.contains(el)) return
+    selectResize(el)
+    const target = ensureResizeTarget(el)
+    const rect = el.getBoundingClientRect()
+    target.aspect = aspectOf(rect)
+    resizeWidth.value = String(Math.round(rect.width))
+    resizeHeight.value = String(Math.round(rect.height))
+    resizeLock.checked = target.lockRatio
+    resizeLock.disabled = target.autoHeight
+    resizeLockText.textContent = target.autoHeight ? "Proportions locked" : "Lock proportions"
+    resizeReset.disabled = rawStyle(el) === target.origStyle
+    precisionAxis = "width"
+    precisionOn = true
+    resizeBox.classList.add("derive-resize-precision")
+    paintResizeUi()
+    requestAnimationFrame(() => {
+      if (!precisionOn) return
+      resizeWidth.focus()
+      resizeWidth.select()
+    })
+  }
+  document.addEventListener("focusin", (e) => {
+    if (!editOn || !elementEditsOn) return
+    const active = asEl(e.target)
+    const target = resizableAt(active)
+    if (active && target === active) selectResize(target)
+  })
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (!editOn || !elementEditsOn || e.defaultPrevented || e.isComposing) return
+      if (e.key !== "Enter" || e.metaKey || e.ctrlKey || e.altKey) return
+      const active = asEl(document.activeElement)
+      const target = resizableAt(active)
+      if (!active || target !== active) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      selectResize(target)
+      openPrecision()
+    },
+    true,
+  )
+  const precisionValue = (input: HTMLInputElement): number | null => {
+    input.setCustomValidity("")
+    const value = input.valueAsNumber
+    if (!Number.isInteger(value) || value < 24 || value > 8192) {
+      input.setCustomValidity("Use a whole number from 24 to 8192 pixels.")
+      input.reportValidity()
+      return null
+    }
+    return value
+  }
+  const syncPrecisionRatio = (axis: "width" | "height") => {
+    precisionAxis = axis
+    resizeWidth.setCustomValidity("")
+    resizeHeight.setCustomValidity("")
+    if (!resizeLock.checked) return
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!target) return
+    const value = axis === "width" ? resizeWidth.valueAsNumber : resizeHeight.valueAsNumber
+    if (!Number.isFinite(value) || value <= 0) return
+    if (axis === "width") resizeHeight.value = String(clampSize(value / target.aspect))
+    else resizeWidth.value = String(clampSize(value * target.aspect))
+  }
+  resizeWidth.addEventListener("input", () => syncPrecisionRatio("width"))
+  resizeHeight.addEventListener("input", () => syncPrecisionRatio("height"))
+  resizeLock.addEventListener("change", () => {
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!target || target.autoHeight) return
+    if (!resizeLock.checked) return
+    const width = resizeWidth.valueAsNumber
+    const height = resizeHeight.valueAsNumber
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)
+      target.aspect = width / height
+    syncPrecisionRatio(precisionAxis)
+  })
+  resizePanel.addEventListener("submit", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!el || !target || !document.contains(el)) return
+    const rawWidth = precisionValue(resizeWidth)
+    if (rawWidth === null) return
+    const rawHeight = precisionValue(resizeHeight)
+    if (rawHeight === null) return
+    let width = rawWidth
+    let height = rawHeight
+    target.lockRatio = target.autoHeight || resizeLock.checked
+    if (target.lockRatio) {
+      if (precisionAxis === "height") width = clampSize(height * target.aspect)
+      else height = clampSize(width / target.aspect)
+      resizeWidth.value = String(width)
+      resizeHeight.value = String(height)
+    }
+    const before = rawStyle(el)
+    checkpointStyle(el)
+    el.style.width = `${width}px`
+    el.style.height = target.autoHeight ? "auto" : `${height}px`
+    if (rawStyle(el) === before) undoStack.pop()
+    else target.aspect = width / height
+    closePrecision(true)
+    paintResizeUi()
+    postDirty()
+  })
+  commitEditUi = () => {
+    if (!precisionOn) return true
+    resizePanel.requestSubmit()
+    return !precisionOn
+  }
+  resizeReset.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = resizeUiEl()
+    const target = el ? resizeTargetFor(el) : null
+    if (!el || !target || !document.contains(el)) return
+    if (rawStyle(el) !== target.origStyle) {
+      checkpointStyle(el)
+      restoreStyle(el, target.origStyle)
+      target.lockRatio = target.autoHeight
+      target.aspect = aspectOf(el.getBoundingClientRect())
+    }
+    closePrecision(true)
+    paintResizeUi()
+    postDirty()
+  })
+  resizeSize.addEventListener("pointerdown", (e) => e.stopPropagation())
+  resizeSize.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (precisionOn) closePrecision(true)
+    else openPrecision()
+  })
+  resizePanel.addEventListener("pointerdown", (e) => e.stopPropagation())
+  for (const type of ["keydown", "keypress", "keyup"])
+    resizePanel.addEventListener(type, (e) => e.stopPropagation())
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      if (!precisionOn) return
+      const target = asEl(e.target)
+      if (target?.closest(".derive-resize-panel,.derive-resize-size")) return
+      closePrecision(false)
+    },
+    true,
+  )
+
+  resizeReplace.addEventListener("pointerdown", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+  })
+  resizeReplace.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = resizeUiEl()
+    if (!(el instanceof HTMLImageElement)) return
+    const src = el.getAttribute("src") || ""
+    if (!src || src.slice(0, 5).toLowerCase() === "data:")
+      post({ type: "edit-blocked", reason: "embedded-image" })
+    else post({ type: "edit-image", src, alt: el.getAttribute("alt") || "" })
+  })
+
+  resizeHandle.addEventListener("pointerdown", (e) => {
+    if (!elementEditsOn) return
+    const el = resizeUiEl()
+    if (!el || !document.contains(el)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const target = ensureResizeTarget(el)
+    checkpointStyle(el)
+    const r = el.getBoundingClientRect()
+    target.aspect = aspectOf(r)
+    resizeSelectedEl = el
+    resizeDrag = {
+      el,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: r.width,
+      startHeight: r.height,
+      autoHeight: target.autoHeight,
+      lockRatio: target.lockRatio,
+      aspect: target.aspect,
+      moved: false,
+    }
+    resizeHandle.setPointerCapture?.(e.pointerId)
+  })
+  resizeHandle.addEventListener("keydown", (e) => {
+    if (!elementEditsOn) return
+    if (!/^Arrow(?:Left|Right|Up|Down)$/.test(e.key)) return
+    const el = resizeUiEl()
+    if (!el || !document.contains(el)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const target = ensureResizeTarget(el)
+    const before = rawStyle(el)
+    checkpointStyle(el)
+    const r = el.getBoundingClientRect()
+    target.aspect = aspectOf(r)
+    const step = e.shiftKey ? 1 : 8
+    const grow = e.key === "ArrowRight" || e.key === "ArrowDown" ? step : -step
+    let width = Math.round(r.width)
+    let height = Math.round(r.height)
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      width = clampSize(width + grow)
+      if (target.lockRatio) height = clampSize(width / target.aspect)
+      el.style.width = `${width}px`
+    } else {
+      height = clampSize(height + grow)
+      if (target.lockRatio) {
+        width = clampSize(height * target.aspect)
+        el.style.width = `${width}px`
+      }
+    }
+    if (target.autoHeight) el.style.height = "auto"
+    else if (target.lockRatio || e.key === "ArrowUp" || e.key === "ArrowDown")
+      el.style.height = `${height}px`
+    if (rawStyle(el) === before) undoStack.pop()
+    paintResizeUi()
+    postDirty()
+  })
+
+  window.addEventListener(
+    "pointermove",
+    (e) => {
+      const drag = resizeDrag
+      if (!drag || e.pointerId !== drag.pointerId) return
+      e.preventDefault()
+      const dx = e.clientX - drag.startX
+      const dy = e.clientY - drag.startY
+      if (!drag.moved && Math.abs(dx) < 1 && Math.abs(dy) < 1) return
+      drag.moved = true
+      const width = clampSize(drag.startWidth + dx)
+      drag.el.style.width = `${width}px`
+      drag.el.style.height = drag.autoHeight
+        ? "auto"
+        : `${drag.lockRatio ? clampSize(width / drag.aspect) : clampSize(drag.startHeight + dy)}px`
+      // Arm the unsaved-work guard on the first movement, before the settled count.
+      if (lastDirty <= 0) {
+        lastDirty = 1
+        post({ type: "edit-state", dirty: 1, canUndo: true })
+      }
+      paintResizeUi()
+    },
+    { passive: false },
+  )
+
+  const finishResize = (e: PointerEvent, cancel: boolean) => {
+    const drag = resizeDrag
+    if (!drag || e.pointerId !== drag.pointerId) return
+    resizeDrag = null
+    if (cancel || !drag.moved) {
+      const checkpoint = undoStack.pop()
+      if (checkpoint?.kind === "style" && checkpoint.el === drag.el)
+        restoreStyle(drag.el, checkpoint.style)
+    }
+    paintResizeUi()
+    postDirty()
+  }
+  window.addEventListener("pointerup", (e) => finishResize(e, false))
+  window.addEventListener("pointercancel", (e) => finishResize(e, true))
+  window.addEventListener("scroll", paintResizeUi, true)
+  window.addEventListener("resize", paintResizeUi)
+
   /** Which gesture asked the mode to open: the double-click whose target this client
    *  already captured, or the host's Edit verb on the live selection. */
   type EditEntry = { fromPointer?: boolean; fromSelection?: boolean }
-  const setEditMode = (on: boolean, keep?: boolean, entry?: EditEntry) => {
+  const setEditMode = (
+    on: boolean,
+    keep?: boolean,
+    entry?: EditEntry,
+    allowElementEdits = false,
+  ) => {
     if (on === editOn) return
     editOn = on
+    elementEditsOn = on && allowElementEdits
     if (on) {
+      clearResizeUi()
+      enableResizeFocus()
       // The pre-edit snapshot every quote is built from. normalize() first so the
       // per-node offsets recorded at enable time can't be split later by typing.
       // "\n" between nodes: every node seam is a tag boundary in the source, which
@@ -1848,6 +2521,9 @@ interface ElReg {
   const settleEdits = () => {
     for (const t of editTargets) if (document.contains(t.el)) disableTarget(t)
     editTargets = []
+    resizeTargets = []
+    restoreResizeFocus()
+    clearResizeUi()
     if (lastDirty !== 0) {
       lastDirty = 0
       post({ type: "edit-state", dirty: 0 })
@@ -1871,7 +2547,11 @@ interface ElReg {
         disableTarget(t)
       }
     }
+    for (const t of resizeTargets) if (document.contains(t.el)) restoreStyle(t.el, t.origStyle)
     editTargets = []
+    resizeTargets = []
+    restoreResizeFocus()
+    clearResizeUi()
     if (lastDirty !== 0) {
       lastDirty = 0
       post({ type: "edit-state", dirty: 0 })
@@ -1996,6 +2676,7 @@ interface ElReg {
     }
     setEditHover(null) // it's the focused block now; the focus ring speaks for it
     revealBlock(target.el)
+    scheduleDirty()
   }
   /** The text node a point resolves to, or null where editing can't reach. */
   const editNodeAt = (
@@ -2054,19 +2735,38 @@ interface ElReg {
     // silently arm an unrelated block. Editing is pointer-driven; ignore it.
     if (e.detail === 0 && e.clientX === 0 && e.clientY === 0) return
     const el0 = asEl(e.target)
+    if (el0?.closest(".derive-edit-ui")) return
     // Never navigate while editing — a click on a link edits its text instead.
     if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
-    // A picture. Nothing in the caret path can reach one (images hold no text), so
-    // clicking a picture in edit mode used to do nothing at all and the only way to
-    // change one was the source editor. Hand it to the host: pick a file, upload,
-    // swap the URL. A data: URI is refused — the picture IS the source there, and
-    // there is no URL to swap for a person to recognise.
+    // Once a text block is active, a double/triple click belongs to the browser's
+    // native word/paragraph selection. Re-focusing that same contenteditable from
+    // the click handler collapses Chromium's just-created selection to a caret,
+    // leaving every formatting command disabled. Let the selection stand and only
+    // publish its contextual state after the native event has settled.
+    if (e.detail > 1 && el0?.closest("[data-derive-editable]")) {
+      selectResize(null)
+      setResizeHover(null)
+      window.setTimeout(scheduleDirty, 0)
+      return
+    }
+    // A picture selects its direct-manipulation box. Replace is now an explicit verb
+    // on that box, leaving the corner grip free to mean resize on mouse and touch.
     const img = imageAt(e)
     if (img) {
-      const src = img.getAttribute("src") || ""
-      if (!src || src.slice(0, 5).toLowerCase() === "data:")
-        post({ type: "edit-blocked", reason: "embedded-image" })
-      else post({ type: "edit-image", src, alt: img.getAttribute("alt") || "" })
+      selectResize(img)
+      return
+    }
+    // A deliberately marked layout box is an explicit direct-manipulation target.
+    // Prefer it over its text on a single click: this is how an author discovers
+    // box resizing without needing to find blank padding. A double-click retains
+    // the normal path below, so text inside the box remains just as easy to edit.
+    const markedBox = el0?.closest("[data-derive-resizable]") ?? null
+    if (
+      e.detail <= 1 &&
+      isResizableElement(markedBox) &&
+      !markedBox.hasAttribute("data-derive-slide")
+    ) {
+      selectResize(markedBox)
       return
     }
     if (el0?.closest(BLOCKED_EDIT)) {
@@ -2074,7 +2774,13 @@ interface ElReg {
       return
     }
     const hit = editNodeVisibleAt(e.clientX, e.clientY)
-    if (!hit) return
+    if (!hit) {
+      const resize = resizableAt(e.target)
+      if (resize) selectResize(resize)
+      return
+    }
+    selectResize(null)
+    setResizeHover(null)
     // A double/triple click carries its own selection; editActivate keeps it.
     editActivate(hit.node, e.detail <= 1 ? hit.caret : null)
   }
@@ -2093,6 +2799,7 @@ interface ElReg {
     (e) =>
       guard(() => {
         if (!editOn) return
+        if (asEl(e.target)?.closest(".derive-edit-ui")) return
         const top = document.elementFromPoint(e.clientX, e.clientY)
         // Nothing on top of the words? Then the browser's own behaviour is already
         // right, and this must not touch it — drag-select depends on that default.
@@ -2102,6 +2809,16 @@ interface ElReg {
       }),
     true,
   )
+
+  // Text context in the host follows focus as well as selection. This makes Inspect
+  // useful as soon as someone clicks into a paragraph, before they select words to
+  // format. Defer focusout by one turn so focus moving within the frame settles first.
+  document.addEventListener("focusin", () => {
+    if (editOn) scheduleDirty()
+  })
+  document.addEventListener("focusout", () => {
+    if (editOn) window.setTimeout(scheduleDirty, 0)
+  })
 
   /* THE WAY IN, from the document itself. Double-click any text and the host opens
      edit mode with the caret already in that block — the mode used to be reachable
@@ -2167,11 +2884,13 @@ interface ElReg {
     editHoverTick = window.setTimeout(() => {
       editHoverTick = 0
       if (!editOn) return setEditHover(null)
+      if (asEl(target)?.closest(".derive-edit-ui")) return
+      const resize = resizableAt(target)
+      setResizeHover(resize)
       if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
-      // An image lights up too: a click on one starts a replacement, and the
-      // invitation is the only thing that says so.
+      // Media uses the bounding box; text keeps the quieter block invitation.
       const overImg = asEl(target)?.closest("img")
-      if (overImg instanceof HTMLElement) return setEditHover(overImg)
+      if (overImg instanceof HTMLElement) return setEditHover(null)
       // Through overlays, like the click that follows it — otherwise a deck's click
       // zone means the hover invitation never lights the block a click would open.
       const hit = editNodeVisibleAt(x, y)
@@ -2181,7 +2900,10 @@ interface ElReg {
       setEditHover(cand && !cand.hasAttribute("data-derive-editable") ? cand : null)
     }, 50)
   })
-  document.addEventListener("mouseleave", () => setEditHover(null))
+  document.addEventListener("mouseleave", () => {
+    setEditHover(null)
+    setResizeHover(null)
+  })
 
   document.addEventListener(
     "beforeinput",
@@ -2284,7 +3006,21 @@ interface ElReg {
       post({ type: "edit-blocked", reason: "format-range" })
       return
     }
-    window.getSelection()?.removeAllRanges()
+    // Return the writing context to the document after a host-side command. A
+    // collapsed caret immediately after the formatted run is the natural place to
+    // continue typing, and it keeps Inspect contextual instead of flashing back to
+    // its empty state once the selection is consumed.
+    try {
+      block.focus({ preventScroll: true })
+      const caret = document.createRange()
+      caret.setStartAfter(span)
+      caret.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(caret)
+    } catch (_e) {
+      window.getSelection()?.removeAllRanges()
+    }
     scheduleDirty()
   }
   /** Enter: a line break at the caret, carried by the same editor span the other
@@ -2402,6 +3138,13 @@ interface ElReg {
     new_text?: string
     new_html?: string
   }
+  interface WireElementEdit {
+    op: "resize"
+    target: Record<string, unknown>
+    width: number
+    height: number | "auto"
+  }
+  type WireChange = WireEdit | WireElementEdit
   const wireEdit = (qe: {
     exact: string
     prefix: string
@@ -2447,8 +3190,8 @@ interface ElReg {
      letting the post-save reload wipe the rest is data loss dressed up as success.
      Only the all-or-nothing case used to be detectable (edits empty while dirty), so
      one lost block among several good ones went out silently. */
-  const collectEdits = (): { edits: WireEdit[]; dirty: number; uncaptured: number } => {
-    const edits: WireEdit[] = []
+  const collectEdits = (): { edits: WireChange[]; dirty: number; uncaptured: number } => {
+    const edits: WireChange[] = []
     let dirty = 0
     let uncaptured = 0
     for (const t of editTargets) {
@@ -2494,6 +3237,23 @@ interface ElReg {
       if (be) edits.push(be)
       else uncaptured++
     }
+    for (const t of resizeTargets) {
+      if (!document.contains(t.el) || rawStyle(t.el) === t.origStyle) continue
+      dirty++
+      const width = Math.round(Number.parseFloat(t.el.style.width))
+      const rawHeight = t.el.style.height
+      const height = t.autoHeight ? "auto" : Math.round(Number.parseFloat(rawHeight))
+      if (
+        !Number.isFinite(width) ||
+        width < 24 ||
+        width > 8192 ||
+        (height !== "auto" && (!Number.isFinite(height) || height < 24 || height > 8192))
+      ) {
+        uncaptured++
+        continue
+      }
+      edits.push({ op: "resize", target: t.selector, width, height })
+    }
     return { edits, dirty, uncaptured }
   }
 
@@ -2510,6 +3270,7 @@ interface ElReg {
         d.fromPointer || d.fromSelection
           ? { fromPointer: !!d.fromPointer, fromSelection: !!d.fromSelection }
           : undefined,
+        !!d.elementEdits,
       )
     else if (d.type === "edit-armed") editArmed = !!d.on
     // The edit bar's controls, driven from the host. Same functions the keyboard

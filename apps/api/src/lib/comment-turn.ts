@@ -24,7 +24,7 @@ import {
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import type { AgentLoopInput } from "./agent-loop"
-import { chatArrival } from "./chat-gate"
+import { liveChatArrival } from "./chat-gate"
 import { type CommentActionDeps, commentCreatedAction } from "./comment-actions"
 import { DERIVE_AUTHOR_ID, quoteOf } from "./comments"
 import type { ResolvedChatModel } from "./model-catalog"
@@ -235,10 +235,10 @@ export const answerDeriveMention =
 
     // EVERY RUNG, ONCE (lib/chat-gate.ts). No rate key: this arrival rides the comment route's
     // own limiter, so a second one here would charge the same person twice for one action.
-    const gate = await chatArrival(
+    const gate = await liveChatArrival(
       {
         meta,
-        models: (await deps.models()).catalog ?? undefined,
+        models: deps.models,
         chatAllowlist: deps.chatAllowlist,
       },
       { org: artifact.org_id, userId: asker.id },

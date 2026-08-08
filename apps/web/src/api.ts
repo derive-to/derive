@@ -1,4 +1,11 @@
-import type { LinkRole, Listed, Role, SortMode, WorkspaceAccess } from "@derive/core"
+import type {
+  ElementSelector,
+  LinkRole,
+  Listed,
+  Role,
+  SortMode,
+  WorkspaceAccess,
+} from "@derive/core"
 import type { components, paths } from "./api-types"
 import { takeBootResponse } from "./lib/boot-fetch"
 import { guestQuery } from "./lib/guest-id"
@@ -113,6 +120,15 @@ export interface QuoteEditInput {
    *  link. Sanitized server-side down to a five-tag allowlist. */
   new_html?: string
 }
+/** A source-safe resize emitted by the rendered editor. The element selector is
+ *  resolved against the base version; only that opening tag's size is changed. */
+export interface ElementResizeEditInput {
+  op: "resize"
+  target: ElementSelector
+  width: number
+  height: number | "auto"
+}
+export type InlineEditInput = QuoteEditInput | ElementResizeEditInput
 /** The other edit shape the server accepts: a literal string swap against the raw
  *  source. The inline editor uses it for exactly one thing — replacing an image's
  *  URL, which lives in an attribute and so has no visible text to quote. The two
@@ -319,6 +335,10 @@ export type AutomationRef =
 export interface Automation {
   id: string
   agent_id: string
+  /** The coding-agent runtime this automation sends to hosted execution. */
+  provider: "claude-code" | "codex"
+  /** Optional packaged methodology (manifest, repos, and skills) for complex runs. */
+  context_id: string | null
   trigger: AutomationTrigger
   instruction: string
   refs: AutomationRef[]
@@ -372,6 +392,7 @@ export type ContextOutput =
   paths["/v1/contexts/{id}/outputs"]["get"]["responses"][200]["content"]["application/json"]["outputs"][number]
 /** The runner's structured payload on an agent message. Generated from the spec. */
 export type SessionMeta = components["schemas"]["SessionMeta"]
+export type BuilderCard = NonNullable<NonNullable<SessionMeta>["card"]>
 export type SessionMessage = components["schemas"]["SessionMessage"]
 /** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
 export type Session = components["schemas"]["Session"]
@@ -901,6 +922,12 @@ export const api = {
     f(`/v1/drafts/claim/${encodeURIComponent(token)}`, opts()).then(j),
   claimDraft: (token: string): Promise<{ short_id: string; url: string; org_id: string }> =>
     f("/v1/drafts/claim", opts({ token })).then(j),
+  // "Use this as a template": copy the artifact into the active workspace (signed-in
+  // only — the viewer defers a signed-out clicker through login with `?use=1`).
+  deriveArtifact: (
+    id: string,
+  ): Promise<{ short_id: string; title: string | null; url: string; org_id: string }> =>
+    f(`/v1/artifacts/${encodeURIComponent(id)}/use`, opts({})).then(j),
 
   // Per-artifact vanity subdomains (`base` null when off) + the workspace's custom
   // domains shown read-only as the artifact's URL on each.
@@ -998,17 +1025,24 @@ export const api = {
   // returns its bearer as agent_token, exactly once on this response.
   createAutomation: (input: {
     agentId?: string
+    provider?: Automation["provider"]
+    contextId?: string
     trigger: AutomationTrigger
     instruction: string
+    /** Create the first run in the same request; a failure unwinds the automation. */
+    runNow?: boolean
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
     /** Sources the run may read from. Each must be this workspace's and attachable by you. */
     connectionIds?: string[]
-  }): Promise<Automation & { agent_token?: string }> => f("/v1/automations", opts(input)).then(j),
+  }): Promise<Automation & { agent_token?: string; run_id?: string; run_status?: string }> =>
+    f("/v1/automations", opts(input)).then(j),
   updateAutomation: (
     id: string,
     input: {
       agentId?: string
+      provider?: Automation["provider"]
+      contextId?: string | null
       trigger?: AutomationTrigger
       instruction?: string
       refs?: (string | AutomationRef)[] | null
@@ -1066,6 +1100,13 @@ export const api = {
     agent_id?: string
     manifest_short_id: string
   }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
+  createChatSession: (input: {
+    workspace: string
+    body_md: string
+    model?: string
+    purpose?: "context_builder"
+  }): Promise<{ session: Session; messages: SessionMessage[] }> =>
+    f("/v1/chat-session", opts(input)).then(j),
   askContext: (
     id: string,
     body_md: string,
@@ -1119,8 +1160,12 @@ export const api = {
     context: { id: string; name: string }
     messages: SessionMessage[]
   }> => f(`/v1/sessions/${id}`, opts()).then(j),
-  postSessionMessage: (id: string, body_md: string): Promise<{ message: SessionMessage }> =>
-    f(`/v1/sessions/${id}/messages`, opts({ body_md })).then(j),
+  postSessionMessage: (
+    id: string,
+    body_md: string,
+    model?: string,
+  ): Promise<{ message: SessionMessage }> =>
+    f(`/v1/sessions/${id}/messages`, opts({ body_md, ...(model ? { model } : {}) })).then(j),
   closeSession: (id: string): Promise<{ session: Session }> =>
     f(`/v1/sessions/${id}`, { ...opts({ state: "closed" }), method: "PATCH" }).then(j),
 
@@ -1185,6 +1230,14 @@ export const api = {
   modelLibrary: (): Promise<ModelLibraryView> => f("/v1/system/models", opts()).then(j),
   addModel: (id: string, label?: string): Promise<{ id: string; probe: ModelProbeView }> =>
     f("/v1/system/models", { ...opts({ id, label }), method: "POST" }).then(j),
+  setModelLabel: (
+    id: string,
+    label: string | null,
+  ): Promise<{ id: string; label: string | null }> =>
+    f(`/v1/system/models/${encodeURIComponent(id)}`, {
+      ...opts({ label }),
+      method: "PATCH",
+    }).then(j),
   removeModel: (id: string): Promise<{ removed: string }> =>
     f(`/v1/system/models/${encodeURIComponent(id)}`, { ...opts(), method: "DELETE" }).then(j),
   probeModel: (id: string): Promise<{ id: string; probe: ModelProbeView }> =>
@@ -1422,6 +1475,20 @@ export const api = {
   // instruction lives server-side; omit agentId when exactly one agent is registered.
   reworkArtifact: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
     f(`/v1/artifacts/${shortId}/rework`, opts(agentId ? { agentId } : {})).then(j),
+  // The fill-with-your-work pair, for a derived copy: GET returns the copyable
+  // prompt, POST delivers the same instruction to an agent's inbox.
+  fillPrompt: (
+    shortId: string,
+    note?: string,
+  ): Promise<{ prompt: string; source: { short_id: string; title: string | null } }> =>
+    f(
+      `/v1/artifacts/${shortId}/fill${note ? `?note=${encodeURIComponent(note)}` : ""}`,
+      opts(),
+    ).then(j),
+  fillArtifact: (
+    shortId: string,
+    body: { agentId?: string; note?: string },
+  ): Promise<{ requestId: string }> => f(`/v1/artifacts/${shortId}/fill`, opts(body)).then(j),
   // Ask a registered agent to build the workspace's brand profile (shortId must be the
   // profile artifact). Same queue mechanics as reworkArtifact, different canned brief.
   generateProfile: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>
@@ -1475,7 +1542,7 @@ export const api = {
   // silently mis-placed splice.
   publishEdits(
     id: string,
-    edits: (QuoteEditInput | StrEditInput)[],
+    edits: (InlineEditInput | StrEditInput)[],
     baseVersion: number,
     message: string,
   ): Promise<Artifact> {
@@ -1493,7 +1560,7 @@ export const api = {
   // The commenter path: the same quote edits, filed as a proposal for review.
   proposeEdits(
     id: string,
-    edits: QuoteEditInput[],
+    edits: InlineEditInput[],
     baseVersion: number,
     message: string,
   ): Promise<Proposal> {

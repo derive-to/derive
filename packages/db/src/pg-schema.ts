@@ -78,6 +78,9 @@ export const artifact = pgTable("artifact", {
   // The Derive user who last published this by hand; null for sync/token/legacy. Mirrors
   // schema.ts — drives the profile work-list + people-follow.
   author_id: text("author_id"),
+  // Remix lineage: the artifact id this was derived from. Not an FK (the source may be
+  // deleted; the copy survives). Nullable, no default — ADD COLUMN IF NOT EXISTS clean.
+  derived_from: text("derived_from"),
 })
 
 export const version = pgTable(
@@ -117,6 +120,11 @@ export const version = pgTable(
     preview_marked_key: text("preview_marked_key"),
     preview_marked_status: text("preview_marked_status").$type<PreviewStatus>(),
     preview_marked_error: text("preview_marked_error"),
+    // The generated one-line description of this version, and a hash of the text it was
+    // generated from so an unchanged republish copies it forward instead of regenerating.
+    // See the matching comment in schema.ts. Mirrors schema.ts.
+    summary: text("summary"),
+    summary_src_hash: text("summary_src_hash"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent
@@ -191,6 +199,10 @@ export const automation = pgTable("automation", {
   agent_id: text("agent_id").notNull(),
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
+  provider: text("provider")
+    .$type<import("@derive/core").ExecutionProvider>()
+    .notNull()
+    .default("claude-code"),
   refs: text("refs"),
   connection_ids: text("connection_ids"),
   context_id: text("context_id"),

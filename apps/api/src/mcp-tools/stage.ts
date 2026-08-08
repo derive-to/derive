@@ -53,6 +53,17 @@ export function registerStageTool(tc: ToolContext): void {
     {
       description:
         "Mint a SHORT-LIVED capability and curl with it — zero bytes through context. target:'doc' a document/bundle past ~a page, 'asset' an image or font (max 25MB), 'api' a REAL bearer for REST (15 min, capped at your role, live in this transcript). NEVER base64 a binary through a tool call. See derive://skills/publishing.",
+      // Mints a short-lived credential (upload URL or bearer token) — a write in the
+      // sense that it CAN be spent to publish later, but this call itself never touches
+      // artifact content, so not destructive. Not idempotent: every call mints a distinct
+      // token. The minted URLs all point back at this same Derive server's own API.
+      annotations: {
+        title: "Stage an upload",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         // A STRING, not an enum, on purpose: this discriminator grows (api was added
         // after doc/asset), and a cached client validates an enum locally — so a new

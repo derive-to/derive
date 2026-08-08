@@ -1,19 +1,18 @@
 import type { SortMode } from "@derive/core"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link, useNavigate, useSearch } from "@tanstack/react-router"
+import { useNavigate, useSearch } from "@tanstack/react-router"
 import { FolderTree, List } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
-import { AskButton } from "@/components/shared/ask-button"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ConnectAgentButton } from "@/components/shared/connect-agent"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
 import { Spinner } from "@/components/shared/spinner"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
@@ -120,8 +119,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const { openAssistant } = useShell()
-  // ⌘↵ in the filter box and the Ask button beside it are one action, so they go through one
-  // call: whatever is typed, handed to the agent (empty simply opens the conversation).
+  // ⌘↵ in the filter box hands whatever is typed to the agent (empty simply opens the
+  // conversation).
   const askFromField = (v: string) => openAssistant(v.trim() || undefined)
 
   const [shareCol, setShareCol] = useState<(typeof collections)[number] | null>(null)
@@ -476,7 +475,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
             tools={
               <>
                 {filterField}
-                <AskButton text={query} testId="library-ask" />
                 <DisplayMenu
                   layout={layout}
                   onLayout={setLayout}
@@ -552,7 +550,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
               </>
             )}
             {filterField}
-            <AskButton text={query} testId="library-ask" />
             {/* Feeds have no view row, so Display stays up here for them; home's moves
                 down beside Filter — the two are one kind of control and sit together. */}
             {view !== "all" && (
@@ -644,39 +641,73 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
       {/* The artifact body. Absent in the Collections view — that view IS the page, and
           rendering the grid underneath it put shelves and artifacts on one screen. */}
-      {!showCollections && (
-        <>
-          {isPending ? (
-            showSkeleton ? (
-              <LibrarySkeleton />
-            ) : null
-          ) : isError ? (
-            <StatusPanel
-              tone="danger"
-              title="Couldn’t load the library"
-              description="This is usually temporary."
-              action={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  data-testid="library-retry"
-                  onClick={() => refetch()}
-                >
-                  Try again
-                </Button>
-              }
-            />
-          ) : items.length === 0 ? (
-            emptyHome ? (
-              <HowItWorks />
-            ) : (
-              <EmptyState {...emptyProps} />
-            )
-          ) : isSyncedCollection ? (
-            <SyncedCollection
-              items={recencyItems}
-              showFolders={showFolders}
-              onToggle={setShowFolders}
+      {!showCollections &&
+        (isPending ? (
+          showSkeleton ? (
+            <LibrarySkeleton />
+          ) : null
+        ) : isError ? (
+          <LoadError
+            title="Couldn’t load the library"
+            testId="library-retry"
+            onRetry={() => refetch()}
+          />
+        ) : items.length === 0 ? (
+          emptyHome ? (
+            <HowItWorks />
+          ) : (
+            <EmptyState {...emptyProps} />
+          )
+        ) : isSyncedCollection ? (
+          <SyncedCollection
+            items={recencyItems}
+            showFolders={showFolders}
+            onToggle={setShowFolders}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={() => fetchNextPage()}
+            onOpen={(a) =>
+              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+            }
+            onToggleFavorite={toggleFavorite}
+            onPickAuthor={pickAuthor}
+            onAddToCollection={setPendingCollections}
+            onDelete={setPendingDelete}
+            onPrefetch={(a) => prefetch(a.short_id)}
+            selection={selection}
+          />
+        ) : foldersView && isManualCollection && folders.length > 0 ? (
+          // An organized manual collection, grouped. Grouping is DECOUPLED from
+          // presentation: the Display menu's "Group by folder" flips grouping on/off, and
+          // the ungrouped state is the same card grid as everywhere else — grouping never
+          // costs you the thumbnails. Default grouped.
+          <CollectionFolders
+            collectionId={filter.id}
+            items={items}
+            folders={folders}
+            assignments={folderAssignments}
+            canManage={!!canManageFolders}
+            hasNextPage={!!hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            scrollToFolderId={folderAnchor}
+            onOpen={(a) =>
+              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
+            }
+            onToggleFavorite={toggleFavorite}
+            onAddToCollection={setPendingCollections}
+            onDelete={setPendingDelete}
+            onPrefetch={(a) => prefetch(a.short_id)}
+            selection={selection}
+          />
+        ) : (
+          <>
+            <ArtifactGrid
+              layout={layout}
+              sort={search.sort ?? DEFAULT_SORT}
+              onSort={setSort}
+              onPickAuthor={pickAuthor}
+              items={items}
+              scrollRef={scrollRef}
               hasNextPage={!!hasNextPage}
               isFetchingNextPage={isFetchingNextPage}
               onLoadMore={() => fetchNextPage()}
@@ -684,93 +715,18 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
               }
               onToggleFavorite={toggleFavorite}
-              onPickAuthor={pickAuthor}
               onAddToCollection={setPendingCollections}
               onDelete={setPendingDelete}
               onPrefetch={(a) => prefetch(a.short_id)}
               selection={selection}
             />
-          ) : isManualCollection && folders.length > 0 ? (
-            // An organized manual collection. Grouping is DECOUPLED from presentation: the
-            // Display menu's "Group by folder" flips grouping on/off, and BOTH states are the
-            // card grid — grouping never costs you the thumbnails. Default grouped.
-            foldersView ? (
-              <CollectionFolders
-                collectionId={filter.id}
-                items={items}
-                folders={folders}
-                assignments={folderAssignments}
-                canManage={!!canManageFolders}
-                hasNextPage={!!hasNextPage}
-                isFetchingNextPage={isFetchingNextPage}
-                scrollToFolderId={folderAnchor}
-                onOpen={(a) =>
-                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-                }
-                onToggleFavorite={toggleFavorite}
-                onAddToCollection={setPendingCollections}
-                onDelete={setPendingDelete}
-                onPrefetch={(a) => prefetch(a.short_id)}
-                selection={selection}
-              />
-            ) : (
-              <>
-                <ArtifactGrid
-                  layout={layout}
-                  sort={search.sort ?? DEFAULT_SORT}
-                  onSort={setSort}
-                  onPickAuthor={pickAuthor}
-                  items={items}
-                  scrollRef={scrollRef}
-                  hasNextPage={!!hasNextPage}
-                  isFetchingNextPage={isFetchingNextPage}
-                  onLoadMore={() => fetchNextPage()}
-                  onOpen={(a) =>
-                    nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-                  }
-                  onToggleFavorite={toggleFavorite}
-                  onAddToCollection={setPendingCollections}
-                  onDelete={setPendingDelete}
-                  onPrefetch={(a) => prefetch(a.short_id)}
-                  selection={selection}
-                />
-                {isFetchingNextPage && (
-                  <div className="flex justify-center py-2" data-testid="library-loading-more">
-                    <Spinner />
-                  </div>
-                )}
-              </>
-            )
-          ) : (
-            <>
-              <ArtifactGrid
-                layout={layout}
-                sort={search.sort ?? DEFAULT_SORT}
-                onSort={setSort}
-                onPickAuthor={pickAuthor}
-                items={items}
-                scrollRef={scrollRef}
-                hasNextPage={!!hasNextPage}
-                isFetchingNextPage={isFetchingNextPage}
-                onLoadMore={() => fetchNextPage()}
-                onOpen={(a) =>
-                  nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-                }
-                onToggleFavorite={toggleFavorite}
-                onAddToCollection={setPendingCollections}
-                onDelete={setPendingDelete}
-                onPrefetch={(a) => prefetch(a.short_id)}
-                selection={selection}
-              />
-              {isFetchingNextPage && (
-                <div className="flex justify-center py-2" data-testid="library-loading-more">
-                  <Spinner />
-                </div>
-              )}
-            </>
-          )}
-        </>
-      )}
+            {isFetchingNextPage && (
+              <div className="flex justify-center py-2" data-testid="library-loading-more">
+                <Spinner />
+              </div>
+            )}
+          </>
+        ))}
 
       {/* The bulk-action bar — the only surface multi-select adds. It rides at the end of
           the page content (sticky), so it pins above the fold while you scroll and never

@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS artifact (
   author_login TEXT,
   author_avatar TEXT,
   author_gh_id TEXT,
-  author_id TEXT
+  author_id TEXT,
+  derived_from TEXT
 );
 
 CREATE TABLE IF NOT EXISTS version (
@@ -56,6 +57,8 @@ CREATE TABLE IF NOT EXISTS version (
   preview_marked_key TEXT,
   preview_marked_status TEXT,
   preview_marked_error TEXT,
+  summary TEXT,
+  summary_src_hash TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (artifact_id, n),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
@@ -204,6 +207,7 @@ CREATE TABLE IF NOT EXISTS automation (
   agent_id TEXT NOT NULL,
   trigger TEXT NOT NULL,
   instruction TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'claude-code',
   refs TEXT,
   connection_ids TEXT,
   context_id TEXT,

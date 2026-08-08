@@ -15,6 +15,7 @@ import {
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
+import type { Summarizer } from "../summarizer"
 import { releaseAddressed } from "./addressed"
 import { emitVersionBump } from "./after-publish"
 
@@ -29,6 +30,9 @@ export interface ProposalActionDeps {
   /** The optional dense/semantic index — an approved proposal is a version bump, so it keeps
    *  the index current too (best-effort, via emitVersionBump). Absent on self-host. */
   search?: SearchIndex
+  /** Likewise the summarizer: approving a proposal publishes new content, so its card should
+   *  describe what the new version says rather than what the old one did. */
+  summarize?: Summarizer
 }
 
 /** Approve: the proposed content becomes the new live version. Mirrors the approve route. */
@@ -47,7 +51,11 @@ export const approveProposalAction = async (
   bus.publish(artifact.id, { type: "proposal.approved", proposal_id: proposal.id, n: version.n })
   // The approved candidate is now live content: run the shared version-bump core (announce
   // the version so open tabs reload, enqueue the preview render, re-anchor existing threads).
-  await emitVersionBump({ meta, blobs, bus, notifyRender, search }, artifact, version)
+  await emitVersionBump(
+    { meta, blobs, bus, notifyRender, search, summarize: deps.summarize },
+    artifact,
+    version,
+  )
   // Threads this proposal addressed are now settled.
   for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
     bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "resolved" })

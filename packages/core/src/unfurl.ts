@@ -29,6 +29,15 @@ export interface UnfurlInfo {
    *  carries any. Leads the description: the numbers are what a reader scanning a shared
    *  link actually wants, and showing them is what rewards publishing a fact at all. */
   dataSummary?: string | null
+  /** What the current version SAYS, generated at publish (apps/api summarizer.ts). Replaces
+   *  the inventory tail below when present — an artifact carries no author-written description
+   *  anywhere, so without this every surface answers "what is this?" and never "what is it
+   *  about?".
+   *
+   *  UNTRUSTED: derived from document content. Sanitized at write (markup characters stripped),
+   *  but any surface interpolating it into markup must still escape — the SVG card and the meta
+   *  tags both do. */
+  summary?: string | null
 }
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`
@@ -45,8 +54,15 @@ export const unfurlDescription = (i: {
   versionCount: number
   commentCount: number
   dataSummary?: string | null
+  summary?: string | null
 }): string => {
-  const tail = `${i.kindLabel} · ${plural(i.versionCount, "version")} · ${plural(i.commentCount, "comment")} · on Derive`
+  // The generated summary REPLACES the inventory tail rather than joining it: it is prose, the
+  // tail is a spec line, and a card has one line for whichever is more use to someone deciding
+  // whether to open the thing. `dataSummary` still leads either way — an author's own numbers
+  // outrank both, which is the incentive the fact grammar exists to pay.
+  const tail =
+    i.summary ??
+    `${i.kindLabel} · ${plural(i.versionCount, "version")} · ${plural(i.commentCount, "comment")} · on Derive`
   return i.dataSummary ? `${i.dataSummary} · ${tail}` : tail
 }
 
@@ -182,6 +198,10 @@ export interface OgCard {
   kindLabel: string
   versionCount: number
   commentCount: number
+  /** Kept so a caller spreading an `UnfurlInfo` in must decide what the picture says. The card
+   *  draws its description as one unwrapped line sized for the inventory string, so the OG route
+   *  passes null and keeps the spec line; the summary reaches that reader via og:description. */
+  summary?: string | null
   /** When false, render a generic locked card that leaks no title (private artifact). */
   reveal?: boolean
 }

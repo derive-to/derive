@@ -21,6 +21,7 @@ import {
   isMarkdownBundle,
   missingBlobAdvisory,
   newId,
+  newShortId,
   outlineOf,
   PublishError,
   pageText,
@@ -134,6 +135,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     meta,
     blobs,
     search,
+    summarize,
     deps,
     analyticsOn,
     versionWindowMs,
@@ -832,7 +834,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
       await afterPublish(
-        { meta, blobs, bus, notify, notifyRender, background, search },
+        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
         artifact,
         version,
         {
@@ -1545,6 +1547,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       // used to be its own resolveUserBylines call, sequential after resolveHandles —
       // ~80ms on the edge, on the request that gates the document's rendered bytes.
       const bylineByUserId = bylinesFrom(detail.bylines)
+      // Remix provenance for the derived-from banner: resolve the source to its public
+      // identity. Detail-only (the list would N+1), and only for derived rows.
+      const derivedFrom = artifact.derived_from
+        ? await meta.getArtifactById(artifact.derived_from)
+        : null
       const base = toJson(deps.baseUrl, artifact, versions)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
@@ -1595,6 +1602,14 @@ export const artifactRoutes = (ctx: AppContext) => {
         // The artifact's current workspace — the move dialog needs this to exclude
         // it from the destination picker.
         org_id: artifact.org_id,
+        ...(artifact.derived_from
+          ? {
+              derived_from:
+                derivedFrom && !derivedFrom.removed_at
+                  ? { short_id: derivedFrom.short_id, title: derivedFrom.title }
+                  : null,
+            }
+          : {}),
         tags,
         favorite,
         collections,
@@ -2015,7 +2030,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A restore is a version bump too: same webhook + realtime + re-anchor as a publish,
       // but never a new artifact, so no follower fan-out and no thread resolves.
       await afterPublish(
-        { meta, blobs, bus, notify, notifyRender, background, search },
+        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
         artifact,
         version,
         {
@@ -2031,6 +2046,118 @@ export const artifactRoutes = (ctx: AppContext) => {
           ...toJson(deps.baseUrl, fresh, versions),
           sessions: groupSessions(versions, versionWindowMs),
           published: version.n,
+        },
+        201,
+      )
+    },
+  )
+
+  // Use an artifact as a template: copy its current version into the caller's own
+  // space. The copy re-points at the source version's stored blob (content-addressed
+  // and org-agnostic, so no bytes move — the `restore` recipe, one createArtifact
+  // earlier) and records lineage in `derived_from`. Signed-in only: the copy lands
+  // in the caller's active workspace at the workspace's own access defaults. The
+  // viewer defers a signed-out clicker through login (`?use=1`) rather than minting
+  // anything pre-auth — an anonymous holder couldn't edit a copy, so it would add
+  // nothing over the source page they're already reading.
+  // Anyone who can READ the source can use it — the same standing that lets them
+  // select-all-copy the rendered page; `requireArtifact(read)` folds in the world
+  // link, membership, and the password unlock cookie.
+  //
+  // Embedded assets are NOT copied: /blob/:hash is org-blind with the (globally
+  // unique, hash-keyed) asset row as allowlist, so images keep serving from the
+  // copy. Same accepted semantics as the draft-claim move.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/use",
+      tags: ["Artifacts"],
+      summary: "Copy this artifact into your workspace (use it as a template).",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        201: {
+          description: "The new copy's identity and workspace home.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                short_id: z.string(),
+                title: z.string().nullable(),
+                url: z.string().describe("The copy's permanent URL in your workspace."),
+                org_id: z.string(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const over = await limited(c, publishLimiter)
+      if (over) return bail(over)
+      const src = await requireArtifact(c, "read")
+      if (src instanceof Response) return bail(src)
+      if (src.removed_at) return bail(fail(c, 410, "this artifact was removed"))
+      // A draft is itself an unclaimed copy mid-flight; templating one would let the
+      // claim funnel fork indefinitely. Claim it first.
+      if (src.expires_at) return bail(fail(c, 403, "claim this draft before using it"))
+      const srcVersion = await meta.getVersion(src.id, src.current_version)
+      if (!srcVersion) return bail(fail(c, 404, "nothing published yet"))
+      const me = await currentUser(c)
+      // The global anonymous-write gate already refused anonymous callers at the
+      // door; this 401 keeps the route safe on its own terms regardless.
+      if (!me) return bail(fail(c, 401, "sign in to use this artifact"))
+      if (!(await workspaceCan(c, "publish")))
+        return bail(fail(c, 403, "you need publish rights in this workspace"))
+      const org = await activeWorkspace(c)
+      const blocked = await billingGate(c, org)
+      if (blocked) return bail(blocked)
+      // The copy meters real bytes against the destination (dedup'd blob or not).
+      if (await overStorage(org, srcVersion.size_bytes))
+        return bail(fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code }))
+      const settings = await meta.getOrgSettings(org)
+      const copy = await meta.createArtifact({
+        id: newId("a"),
+        short_id: newShortId(),
+        org_id: org,
+        slug: src.slug,
+        title: src.title,
+        // The workspace's own default access (the team draft, unless configured wider) —
+        // NOT the source's: a public template must not make your copy public.
+        workspace_access: settings.defaultWorkspaceAccess,
+        link_role: settings.defaultLinkRole,
+        listed: settings.defaultListed,
+        kind: src.kind,
+        spa: src.spa,
+        derived_from: src.id,
+      })
+      const v = await meta.addVersion(copy.id, {
+        id: newId("v"),
+        blob_key: srcVersion.blob_key,
+        content_type: srcVersion.content_type,
+        size_bytes: srcVersion.size_bytes,
+        author: me.name ?? me.username ?? me.email,
+        author_id: me.id,
+        source: "web",
+        message: `Derived from ${src.short_id}`,
+        name: null,
+      })
+      await meta.setArtifactMember({
+        id: newId("am"),
+        artifact_id: copy.id,
+        user_id: me.id,
+        role: "owner",
+      })
+      await afterPublish(
+        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
+        copy,
+        v,
+        { isNew: true, onBehalf: me.id, actorId: me.id },
+      )
+      return c.json(
+        {
+          short_id: copy.short_id,
+          title: copy.title,
+          url: artifactUrl(deps.baseUrl, copy),
+          org_id: org,
         },
         201,
       )

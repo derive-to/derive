@@ -946,6 +946,18 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
 
+  const setVersionSummary = async (
+    artifactId: string,
+    n: number,
+    fields: { summary?: string | null; summary_src_hash?: string | null },
+  ): Promise<void> => {
+    await db
+      .update(version)
+      .set(fields)
+      .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      .run()
+  }
+
   const setVersionPreviewVariant = async (
     artifactId: string,
     n: number,
@@ -2468,6 +2480,33 @@ export function makeRepos(db: SqliteDb) {
       })
       .run()
   }
+  const setOrgSettingsIfRevision = async (
+    orgId: string,
+    expectedRevision: number,
+    settings: OrgSettings,
+  ): Promise<boolean> => {
+    const raw = JSON.stringify(settings)
+    const updated = await db
+      .update(orgSettings)
+      .set({ settings: raw })
+      .where(
+        and(
+          eq(orgSettings.org_id, orgId),
+          sql`coalesce(json_extract(${orgSettings.settings}, '$.settingsRevision'), 0) = ${expectedRevision}`,
+        ),
+      )
+      .returning({ id: orgSettings.org_id })
+      .get()
+    if (updated) return true
+    if (expectedRevision !== 0) return false
+    const inserted = await db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: raw })
+      .onConflictDoNothing()
+      .returning({ id: orgSettings.org_id })
+      .get()
+    return !!inserted
+  }
   const getSubscription = async (orgId: string): Promise<SubscriptionRecord | null> =>
     (await db.select().from(subscription).where(eq(subscription.org_id, orgId)).get()) ?? null
   const getSubscriptionByStripeId = async (sid: string): Promise<SubscriptionRecord | null> =>
@@ -3110,24 +3149,33 @@ export function makeRepos(db: SqliteDb) {
   // Count only LIVE working sessions (lease not lapsed): a crashed run whose lease has
   // expired must NOT fill the concurrency cap, or the queue wedges — the lapsed-lease
   // reclaim lives in claimPendingSessions, which only runs when there is room.
-  const listDueOpenSessions = async (now: string, limit = 50): Promise<SessionRecord[]> =>
-    (await db
-      .select()
-      .from(contextSession)
-      .where(
-        or(
-          eq(contextSession.state, "open"),
-          // A `working` row whose lease lapsed (or never existed) is a dead executor's
-          // session — runnable again, exactly as claimPendingSessions treats it.
-          and(
-            eq(contextSession.state, "working"),
-            or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
-          ),
-        ),
-      )
-      .orderBy(contextSession.created_at)
-      .limit(limit)
-      .all()) as SessionRecord[]
+  const listDueOpenSessions = async (
+    now: string,
+    limit = 50,
+    orgIds?: readonly string[],
+  ): Promise<SessionRecord[]> =>
+    orgIds?.length === 0
+      ? []
+      : ((await db
+          .select()
+          .from(contextSession)
+          .where(
+            and(
+              orgIds ? inArray(contextSession.org_id, [...orgIds]) : undefined,
+              or(
+                eq(contextSession.state, "open"),
+                // A `working` row whose lease lapsed (or never existed) is a dead executor's
+                // session — runnable again, exactly as claimPendingSessions treats it.
+                and(
+                  eq(contextSession.state, "working"),
+                  or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+                ),
+              ),
+            ),
+          )
+          .orderBy(contextSession.created_at)
+          .limit(limit)
+          .all()) as SessionRecord[])
   const claimSessionById = async (
     id: string,
     agentId: string,
@@ -3308,9 +3356,16 @@ export function makeRepos(db: SqliteDb) {
    * the port): it answers a question about the DEPLOY, and the route that calls it is
    * operator-only. `desc(created_at)` rides the `session_message_recent` index.
    */
-  const listRecentAgentMessages = async (limit: number): Promise<SessionMessageRecord[]> =>
+  const listRecentAgentMessages = async (
+    limit: number,
+  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]> =>
     db
-      .select()
+      .select({
+        session_id: sessionMessage.session_id,
+        author_kind: sessionMessage.author_kind,
+        created_at: sessionMessage.created_at,
+        meta: sessionMessage.meta,
+      })
       .from(sessionMessage)
       .where(eq(sessionMessage.author_kind, "agent"))
       .orderBy(desc(sessionMessage.created_at))
@@ -3412,7 +3467,9 @@ export function makeRepos(db: SqliteDb) {
       agent_id?: string
       trigger?: string
       instruction?: string
+      provider?: import("@derive/core").ExecutionProvider
       refs?: string | null
+      context_id?: string | null
       /** JSON array of connection ids this automation may spend; null clears them all. */
       connection_ids?: string | null
       enabled?: 0 | 1
@@ -3422,7 +3479,9 @@ export function makeRepos(db: SqliteDb) {
     if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
     if (fields.trigger !== undefined) set.trigger = fields.trigger
     if (fields.instruction !== undefined) set.instruction = fields.instruction
+    if (fields.provider !== undefined) set.provider = fields.provider
     if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.context_id !== undefined) set.context_id = fields.context_id
     if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
     if (fields.enabled !== undefined) set.enabled = fields.enabled
     if (Object.keys(set).length === 0) return getAutomation(id)
@@ -3591,13 +3650,21 @@ export function makeRepos(db: SqliteDb) {
   const reclaimStaleRuns = async (
     cutoffIso: string,
     maxAttempts = 3,
+    orgIds?: readonly string[],
   ): Promise<{ requeued: number; failed: number }> => {
+    if (orgIds?.length === 0) return { requeued: 0, failed: 0 }
     // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
     // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
     const stale = (await db
       .select()
       .from(run)
-      .where(and(eq(run.status, "running"), lte(run.started_at, cutoffIso)))
+      .where(
+        and(
+          orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
+          eq(run.status, "running"),
+          lte(run.started_at, cutoffIso),
+        ),
+      )
       .limit(100)
       .all()) as RunRecord[]
     let requeued = 0
@@ -3640,23 +3707,43 @@ export function makeRepos(db: SqliteDb) {
     }
     return { requeued, failed }
   }
-  const listEnabledAutomations = async (limit = 500): Promise<AutomationRecord[]> =>
-    (await db
-      .select()
-      .from(automation)
-      .where(eq(automation.enabled, 1))
-      .limit(limit)
-      .all()) as AutomationRecord[]
-  const listDueQueuedRuns = async (now: string, limit = 50): Promise<RunRecord[]> =>
-    (await db
-      .select()
-      .from(run)
-      .where(
-        and(eq(run.status, "queued"), or(isNull(run.scheduled_for), lte(run.scheduled_for, now))),
-      )
-      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
-      .limit(limit)
-      .all()) as RunRecord[]
+  const listEnabledAutomations = async (
+    limit = 500,
+    orgIds?: readonly string[],
+  ): Promise<AutomationRecord[]> =>
+    orgIds?.length === 0
+      ? []
+      : ((await db
+          .select()
+          .from(automation)
+          .where(
+            and(
+              orgIds ? inArray(automation.org_id, [...orgIds]) : undefined,
+              eq(automation.enabled, 1),
+            ),
+          )
+          .limit(limit)
+          .all()) as AutomationRecord[])
+  const listDueQueuedRuns = async (
+    now: string,
+    limit = 50,
+    orgIds?: readonly string[],
+  ): Promise<RunRecord[]> =>
+    orgIds?.length === 0
+      ? []
+      : ((await db
+          .select()
+          .from(run)
+          .where(
+            and(
+              orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
+              eq(run.status, "queued"),
+              or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
+            ),
+          )
+          .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+          .limit(limit)
+          .all()) as RunRecord[])
   const findCoalescibleRun = async (
     automationId: string,
     cutoffIso: string,
@@ -4411,6 +4498,7 @@ export function makeRepos(db: SqliteDb) {
     listFactAcrossArtifacts,
     reclassifyVersion,
     setVersionPreview,
+    setVersionSummary,
     setVersionPreviewVariant,
     listArtifacts,
     indexArtifact,
@@ -4534,6 +4622,7 @@ export function makeRepos(db: SqliteDb) {
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    setOrgSettingsIfRevision,
     getSubscription,
     getSubscriptionByStripeId,
     upsertSubscription,

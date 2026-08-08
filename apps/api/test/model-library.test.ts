@@ -1,11 +1,20 @@
+import type { MetaStore } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import type { ModelTurn } from "../src/lib/agent-loop"
+import { liveChatArrival } from "../src/lib/chat-gate"
 import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
 import { catalogOf, type GatewayConfig } from "../src/lib/model-catalog"
-import { effectiveCatalog, modelSource, parseLibrary, probeModel } from "../src/lib/model-library"
+import {
+  effectiveCatalog,
+  modelSource,
+  parseLibrary,
+  probeModel,
+  setInstanceSlot,
+  updateLibrary,
+} from "../src/lib/model-library"
 import { foldTimings, meterModel } from "../src/lib/model-timing"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
-import { as, makeAuthedApp } from "./helpers"
+import { as, countingStore, makeAuthedApp } from "./helpers"
 
 // THE MODEL LIBRARY — an operator adds a model, pins a lane to it, probes it, and reads how it
 // is actually performing, all without a deploy.
@@ -227,6 +236,35 @@ describe("pinning a lane", () => {
     expect(cleared.slots).toEqual({ chat: null, automation: "configured" })
   })
 
+  it("preserves the legacy chatModel when automation is the first lane written", async () => {
+    const { app, meta } = setup("lib-pin-legacy")
+    await meta.setOrgSettings(INSTANCE_SETTINGS_ID, {
+      ...(await meta.getOrgSettings(INSTANCE_SETTINGS_ID)),
+      chatModel: "configured",
+    })
+    const res = await app.request("/v1/system/models/slots/automation", {
+      method: "PUT",
+      headers: as("op@x.com"),
+      body: JSON.stringify({ model: "configured" }),
+    })
+    expect(res.status).toBe(200)
+    const stored = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
+    expect(stored.chatModel).toBeUndefined()
+    expect(stored.slots).toEqual({ chat: "configured", automation: "configured" })
+  })
+
+  it("keeps concurrent lane updates instead of letting the last snapshot win", async () => {
+    const { meta } = setup("lib-pin-concurrent")
+    await Promise.all([
+      setInstanceSlot(meta, "chat", "configured"),
+      setInstanceSlot(meta, "automation", "configured"),
+    ])
+    expect((await meta.getOrgSettings(INSTANCE_SETTINGS_ID)).slots).toEqual({
+      chat: "configured",
+      automation: "configured",
+    })
+  })
+
   it("unpins a lane when the model it named is removed", async () => {
     // A slot pointing at a model that no longer resolves is a silent fallback to the default —
     // a lane that quietly stopped honoring its pin is worse than one that was never pinned.
@@ -273,6 +311,39 @@ describe("pinning a lane", () => {
       headers: as("op@x.com"),
     })
     expect(res.status).toBe(404)
+  })
+
+  it("still refuses configured deletion after a probe creates metadata for it", async () => {
+    const { app } = setup("lib-remove-probed-configured")
+    await app.request("/v1/system/models/configured/probe", {
+      method: "POST",
+      headers: as("op@x.com"),
+    })
+    const res = await app.request("/v1/system/models/configured", {
+      method: "DELETE",
+      headers: as("op@x.com"),
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it("relabels configured models and resets them to their configured label", async () => {
+    const { app } = setup("lib-relabel")
+    const patch = (label: string | null) =>
+      app.request("/v1/system/models/configured", {
+        method: "PATCH",
+        headers: as("op@x.com"),
+        body: JSON.stringify({ label }),
+      })
+    expect((await patch("Fast lane")).status).toBe(200)
+    let listed = (await (
+      await app.request("/v1/system/models", { headers: as("op@x.com") })
+    ).json()) as { models: { id: string; label: string }[] }
+    expect(listed.models.find((m) => m.id === "configured")?.label).toBe("Fast lane")
+    expect((await patch(null)).status).toBe(200)
+    listed = (await (
+      await app.request("/v1/system/models", { headers: as("op@x.com") })
+    ).json()) as { models: { id: string; label: string }[] }
+    expect(listed.models.find((m) => m.id === "configured")?.label).toBe("Configured")
   })
 
   it("refuses an unknown lane rather than silently accepting it", async () => {
@@ -503,6 +574,75 @@ describe("what a turn costs to route", () => {
     // ...and the NEXT turn re-reads, which is the property the live lever depends on.
     await src({})
     expect(reads).toBe(2)
+  })
+
+  it("reads the instance row once for the operator's whole model view", async () => {
+    const base = setup("lib-view-one-read")
+    const { proxy, countWhere, reset } = countingStore(base.meta as MetaStore)
+    const { app } = makeAuthedApp(
+      "lib-view-one-read-probe",
+      [
+        { id: "u-op", email: "op@x.com", name: "Olive" },
+        { id: "u-mem", email: "mem@x.com", name: "Mem" },
+      ],
+      undefined,
+      {
+        deps: {
+          meta: proxy,
+          models: catalogOf([ONLY]),
+          modelGateway: GATEWAY,
+          superAdmins: ["op@x.com"],
+          rateLimiters: inMemoryRateLimiters(),
+        },
+      },
+    )
+    reset()
+    const res = await app.request("/v1/system/models", { headers: as("op@x.com") })
+    expect(res.status).toBe(200)
+    expect(countWhere("getOrgSettings", (args) => args[0] === INSTANCE_SETTINGS_ID)).toBe(1)
+  })
+
+  it("uses the live chat pin in the shared detached-arrival gate", async () => {
+    const { meta } = setup("lib-detached-pin")
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    const source = modelSource(
+      catalogOf([
+        { ...ONLY, build: () => async () => turn("default") },
+        {
+          id: "pinned",
+          label: "Pinned",
+          isDefault: false,
+          build: () => async () => turn("pin"),
+        },
+      ]),
+      GATEWAY,
+      async () => ({ models: [], slots: { chat: "pinned" } }),
+    )
+    const gate = await liveChatArrival({ meta, models: source }, { org: "default", userId: "u-op" })
+    expect(gate.ok && gate.model.id).toBe("pinned")
+  })
+
+  it("does not write an empty fallback when the strict mutation read fails", async () => {
+    const { meta } = setup("lib-strict-write")
+    let writes = 0
+    const broken = new Proxy(meta, {
+      get(target, prop, receiver) {
+        if (prop === "getOrgSettings") return async () => Promise.reject(new Error("db down"))
+        if (prop === "setOrgSettingsIfRevision")
+          return async () => {
+            writes += 1
+            return true
+          }
+        return Reflect.get(target, prop, receiver) as unknown
+      },
+    })
+    await expect(
+      updateLibrary(broken, (lib) => ({ ...lib, models: [{ id: "would-wipe" }] })),
+    ).rejects.toThrow("db down")
+    expect(writes).toBe(0)
   })
 })
 

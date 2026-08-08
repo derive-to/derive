@@ -3,7 +3,7 @@
   The public surface only. Artifacts are private by default and are never listed
   here: a sitemap is a publication signal, and enumerating user content would
   both leak the library and invite crawlers onto pages their owners chose not to
-  share. These three pages are the whole of derive.to that is meant to be indexed.
+  share. These four pages are the whole of derive.to that is meant to be indexed.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
@@ -15,6 +15,11 @@
     <loc>https://derive.to/pricing</loc>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://derive.to/privacy</loc>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
   </url>
   <url>
     <loc>https://derive.to/security</loc>

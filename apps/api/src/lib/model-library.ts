@@ -1,8 +1,7 @@
 import type { InstanceModel, InstanceSlots, MetaStore, ModelProbe } from "@derive/core"
-import { getInstanceSettings, INSTANCE_SETTINGS_ID, setInstanceSettings } from "./instance-settings"
+import { INSTANCE_SETTINGS_ID } from "./instance-settings"
 import type { GatewayConfig, ModelCatalog, ResolvedChatModel } from "./model-catalog"
-import { labelFor } from "./model-catalog"
-import { openAiCompatModel } from "./model-openai"
+import { callModelFromGateway, labelFor } from "./model-catalog"
 
 /**
  * THE MODEL LIBRARY: which models this deploy can answer with, and which one serves which lane,
@@ -83,17 +82,51 @@ export const parseLibrary = (raw: {
 }
 
 /** The library as stored on the reserved instance row. */
-export const readLibrary = async (meta: MetaStore): Promise<ModelLibrary> => {
-  const s = await getInstanceSettings(meta).catch(() => null)
-  return s ? parseLibrary(s) : EMPTY_LIBRARY
-}
+export const readLibraryStrict = async (meta: MetaStore): Promise<ModelLibrary> =>
+  parseLibrary(await meta.getOrgSettings(INSTANCE_SETTINGS_ID))
 
-/** Write it back, leaving every other instance-scoped setting alone. */
-export const writeLibrary = async (meta: MetaStore, lib: ModelLibrary): Promise<void> => {
-  await setInstanceSettings(meta, {
-    models: lib.models.length ? lib.models : undefined,
-    slots: lib.slots.chat || lib.slots.automation ? lib.slots : undefined,
-  })
+/** Best-effort read for answer lanes: a datastore failure costs the optional live preference,
+ * never the turn. Mutations use `readLibraryStrict`/`updateLibrary` instead. */
+export const readLibrary = async (meta: MetaStore): Promise<ModelLibrary> =>
+  await readLibraryStrict(meta).catch(() => EMPTY_LIBRARY)
+
+/**
+ * Atomically update the library from its latest value.
+ *
+ * A probe can spend 30 seconds outside the datastore. Writing the snapshot from before that
+ * call would resurrect a model another operator removed, discard a pin they changed, or lose a
+ * second model they added. The instance row therefore carries an optimistic revision: a stale
+ * writer loses the compare-and-set, re-reads, and reapplies only its narrow mutation.
+ *
+ * Unlike `readLibrary`, this read is STRICT. Falling back to an empty library is correct for a
+ * turn whose optional preference could not be read; it is destructive for a writer, because a
+ * transient read failure followed by a successful write would replace the real catalog with
+ * "empty plus my change".
+ */
+export const updateLibrary = async (
+  meta: MetaStore,
+  change: (current: ModelLibrary) => ModelLibrary,
+): Promise<ModelLibrary> => {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const settings = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
+    const revision =
+      typeof settings.settingsRevision === "number" &&
+      Number.isSafeInteger(settings.settingsRevision) &&
+      settings.settingsRevision >= 0
+        ? settings.settingsRevision
+        : 0
+    const next = parseLibrary(change(parseLibrary(settings)))
+    const saved = await meta.setOrgSettingsIfRevision(INSTANCE_SETTINGS_ID, revision, {
+      ...settings,
+      // Every successful update completes the lazy migration from the old flat field.
+      chatModel: undefined,
+      models: next.models.length ? next.models : undefined,
+      slots: next.slots.chat || next.slots.automation ? next.slots : undefined,
+      settingsRevision: revision + 1,
+    })
+    if (saved) return next
+  }
+  throw new Error("the model library changed repeatedly; retry the operation")
 }
 
 /**
@@ -197,19 +230,7 @@ export const modelSource =
  *  Kept in step with catalogFromGateway by taking the same GatewayConfig — an added model that
  *  answered differently from a configured one would make the library a second code path. */
 const buildAdded = (gw: GatewayConfig, id: string): ResolvedChatModel["callModel"] => {
-  const order = (gw.providers ?? "")
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean)
-  return openAiCompatModel({
-    baseUrl: gw.baseUrl,
-    apiKey: gw.apiKey,
-    model: id,
-    extraBody: {
-      ...(order.length ? { provider: { order, allow_fallbacks: true } } : {}),
-      reasoning: { enabled: false },
-    },
-  })
+  return callModelFromGateway(gw, id)
 }
 
 /**
@@ -306,9 +327,8 @@ export const setInstanceSlot = async (
   lane: keyof InstanceSlots,
   model: string | null,
 ): Promise<void> => {
-  const cur = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
-  await setInstanceSettings(meta, {
-    chatModel: undefined,
+  await updateLibrary(meta, (cur) => ({
+    ...cur,
     slots: { ...cur.slots, [lane]: model?.trim() || undefined },
-  })
+  }))
 }

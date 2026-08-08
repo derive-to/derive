@@ -13,7 +13,7 @@ export function Eyebrow({
   className,
   children,
 }: {
-  as?: "span" | "div" | "h2" | "h3" | "h4"
+  as?: "span" | "div" | "h2" | "h3" | "h4" | "th" | "footer"
   className?: string
   children: ReactNode
 }) {

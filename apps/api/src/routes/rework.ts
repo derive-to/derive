@@ -3,6 +3,7 @@ import {
   type AgentRecord,
   type ArtifactRecord,
   buildProfileInstruction,
+  fillInstruction,
   newId,
   profileState,
   reworkInstruction,
@@ -17,13 +18,14 @@ import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
 
-/** The canned agent-request endpoints — Rework and generate-profile. Thin wrappers
- *  over the existing @mention-to-inbox path: each composes its instruction server-side
- *  (the single source of truth; the client never carries a prompt) and posts it as a
- *  whole-document comment @mentioning the chosen agent, which drops into that agent's
- *  MCP pull inbox. The agent does the work and publishes per its grant: a
- *  publish-capable agent posts directly, a lower grant files a proposal — no special
- *  case here. */
+/** The canned agent-request endpoints — Rework, generate-profile, and the fill pair
+ *  (the GET returns fill's instruction for copy-paste; the POST delivers it). Thin
+ *  wrappers over the existing @mention-to-inbox path: each composes its instruction
+ *  server-side (the single source of truth; the client never carries a prompt) and
+ *  posts it as a whole-document comment @mentioning the chosen agent, which drops
+ *  into that agent's MCP pull inbox. The agent does the work and publishes per its
+ *  grant: a publish-capable agent posts directly, a lower grant files a proposal —
+ *  no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
   const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -56,10 +58,11 @@ export const reworkRoutes = (ctx: AppContext) => {
     },
   })
 
-  // The guard chain both endpoints share: the artifact, comment authz, a signed-in
-  // requester (the request is authored and attributed — no anonymous firing), the
-  // comment rate limit, and the optional { agentId } body (readJson tolerates a
-  // missing body, so a bare POST means "use the sole registered agent"). Returns a
+  // The guard chain the POST endpoints share: the artifact, comment authz, a
+  // signed-in requester (the request is authored and attributed — no anonymous
+  // firing), the comment rate limit, and the optional body (readJson tolerates a
+  // missing one, so a bare POST means "use the sole registered agent"). `note` is
+  // consumed by fill only; Rework and generate-profile ignore it. Returns a
   // ready-to-bail Response on any failed gate.
   const requestContext = async (c: Context, shortId: string) => {
     const artifact = await meta.getByShortId(shortId)
@@ -69,9 +72,33 @@ export const reworkRoutes = (ctx: AppContext) => {
     if (!acting) return fail(c, 401, "sign in to send an agent request")
     const rl = await limited(c, commentLimiter)
     if (rl) return rl
-    const body = await readJson(c, z.object({ agentId: z.string().optional() }))
+    const body = await readJson(
+      c,
+      z.object({ agentId: z.string().optional(), note: z.string().max(500).optional() }),
+    )
     if (body instanceof Response) return body
-    return { artifact, acting, agentId: body.agentId }
+    return { artifact, acting, agentId: body.agentId, note: body.note }
+  }
+
+  // A fill request only makes sense on a derived copy, against a source that still
+  // resolves — the instruction anchors on the template's short id. Returns the source
+  // artifact or the refusal to bail with.
+  const requireSource = async (c: Context, artifact: ArtifactRecord) => {
+    if (!artifact.derived_from)
+      return fail(c, 409, "this artifact was not derived from a template", {
+        code: "notDerived",
+      })
+    const source = await meta.getArtifactById(artifact.derived_from)
+    if (!source || source.removed_at)
+      return fail(c, 409, "the template this was derived from is gone", { code: "sourceGone" })
+    return source
+  }
+
+  // Does any Brandprint resolve for this requester? Fill works either way — the
+  // brand line is simply omitted — unlike Rework, where the Brandprint IS the job.
+  const hasBrandprint = async (orgId: string, userId: string): Promise<boolean> => {
+    const resolved = await resolveActorBrandprint(meta, orgId, userId)
+    return resolved.collectionIds.length > 0 || !!resolved.profileId
   }
 
   // Pick the addressee: the named agent, else the workspace's sole one.
@@ -241,6 +268,110 @@ export const reworkRoutes = (ctx: AppContext) => {
         agent,
         buildProfileInstruction(artifact.short_id),
       )
+      if (requestId instanceof Response) return bail(requestId)
+      return c.json({ requestId }, 201)
+    },
+  )
+
+  // The copyable fill prompt — the sheet's "paste this into whatever agent you
+  // already have" path. Same fillInstruction the POST below delivers to an inbox,
+  // ?note= included, so the client never assembles any part of the prompt.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}/fill",
+      tags: ["Artifacts"],
+      summary: "The fill-with-your-work prompt for a derived copy (the copy-paste variant).",
+      request: {
+        params: z.object({ shortId: z.string() }),
+        query: z.object({
+          note: z
+            .string()
+            .max(500)
+            .optional()
+            .describe("Optional requester intent, appended to the prompt verbatim."),
+        }),
+      },
+      responses: {
+        200: {
+          description:
+            "The prompt and the resolved template. 409 notDerived when the artifact has no " +
+            "template lineage; 409 sourceGone when the template no longer resolves.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                prompt: z.string(),
+                source: z.object({ short_id: z.string(), title: z.string().nullable() }),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const acting = await actingUser(c)
+      if (!acting) return bail(fail(c, 401, "sign in to fill from a template"))
+      const source = await requireSource(c, artifact)
+      if (source instanceof Response) return bail(source)
+      const prompt = fillInstruction(artifact.short_id, source.short_id, {
+        brandprint: await hasBrandprint(artifact.org_id, acting.id),
+        note: c.req.query("note"),
+      })
+      return c.json({ prompt, source: { short_id: source.short_id, title: source.title } })
+    },
+  )
+
+  // One-click fill: the same instruction, delivered to the chosen agent's inbox.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/fill",
+      tags: ["Artifacts"],
+      summary: "Ask a registered agent to fill this derived copy with the workspace's real work.",
+      request: {
+        params: z.object({ shortId: z.string() }),
+        body: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: z.object({
+                agentId: z
+                  .string()
+                  .optional()
+                  .describe("Which agent to ask; omit to use the sole registered agent."),
+                note: z
+                  .string()
+                  .max(500)
+                  .optional()
+                  .describe("Optional requester intent, appended to the prompt verbatim."),
+              }),
+            },
+          },
+        },
+      },
+      responses: requestCreated(
+        "The fill request landed in the agent's pull inbox. 409 notDerived when the artifact " +
+          "has no template lineage; 409 sourceGone when the template no longer resolves; 409 " +
+          "needsAgent when no agent is registered; 409 alreadyQueued while an earlier request " +
+          "for this artifact still waits.",
+      ),
+    }),
+    async (c) => {
+      const rc = await requestContext(c, c.req.param("shortId"))
+      if (rc instanceof Response) return bail(rc)
+      const { artifact, acting, agentId, note } = rc
+      const source = await requireSource(c, artifact)
+      if (source instanceof Response) return bail(source)
+      const agent = pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
+      if (agent instanceof Response) return bail(agent)
+      const instruction = fillInstruction(artifact.short_id, source.short_id, {
+        brandprint: await hasBrandprint(artifact.org_id, acting.id),
+        note,
+      })
+      const requestId = await postRequest(c, artifact, acting, agent, instruction)
       if (requestId instanceof Response) return bail(requestId)
       return c.json({ requestId }, 201)
     },

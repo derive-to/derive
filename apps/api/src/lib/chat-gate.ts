@@ -1,6 +1,7 @@
-import type { MetaStore, OrgSettings, Role } from "@derive/core"
+import type { InstanceSlots, MetaStore, OrgSettings, Role } from "@derive/core"
 import { overBudget } from "./budget"
 import type { ModelCatalog, ResolvedChatModel } from "./model-catalog"
+import type { ModelSource } from "./model-library"
 
 /**
  * EVERY RUNG A CHAT ARRIVAL WALKS, once.
@@ -42,6 +43,21 @@ export interface ChatGateDeps {
   /** The ask limiter, called with a key the LANE chooses — an HTTP actor, a Slack person. Absent
    *  ⇒ no rate limiting, which is the self-host default. */
   askLimiter?: ((key: string) => Promise<{ ok: boolean; retryAfter?: number }>) | null
+}
+
+/** Run the shared arrival gate against a live operator lane. Detached surfaces are built once at
+ * boot, so they must read both the catalog and the pin per turn; keeping that composition here
+ * prevents a caller from widening the catalog while accidentally discarding the pin. */
+export const liveChatArrival = async (
+  deps: Omit<ChatGateDeps, "models"> & { models: ModelSource },
+  who: { org: string; userId: string; rateKey?: string },
+  lane: keyof InstanceSlots = "chat",
+): Promise<ChatArrival> => {
+  const { catalog, slots } = await deps.models()
+  return chatArrival(
+    { ...deps, models: catalog ?? undefined },
+    { ...who, modelId: slots[lane] ?? null },
+  )
 }
 
 /**

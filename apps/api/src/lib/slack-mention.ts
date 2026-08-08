@@ -12,7 +12,7 @@
 import { type ArtifactRecord, type MetaStore, newId } from "@derive/core"
 import type { Backplane } from "../bus"
 import { log } from "../log"
-import { chatArrival, refusalMessage } from "./chat-gate"
+import { liveChatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
 import type { ModelSource } from "./model-library"
@@ -313,14 +313,18 @@ export const handleSlackMention = async (
 
   // EVERY RUNG, ONCE (lib/chat-gate.ts). Keyed on the Slack PERSON: the request actor here is
   // Slack itself, so the usual actor keying would put a whole workspace in one bucket.
-  const gate = await chatArrival(
+  const gate = await liveChatArrival(
     {
       meta,
-      models: (await deps.models()).catalog ?? undefined,
+      models: deps.models,
       chatAllowlist: deps.chatAllowlist,
       askLimiter: deps.askLimiter,
     },
-    { org: install.org_id, userId: asker.id, rateKey: `slack:${p.teamId}:${p.userId}` },
+    {
+      org: install.org_id,
+      userId: asker.id,
+      rateKey: `slack:${p.teamId}:${p.userId}`,
+    },
   )
   if (!gate.ok) {
     // A person is watching the thread, so a refusal is SAID. The two that leak nothing about a

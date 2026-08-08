@@ -442,6 +442,24 @@
             "nullable": true,
             "description": "Source path (e.g. the repo path of a synced artifact); null when none."
           },
+          "derived_from": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "short_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "short_id",
+              "title"
+            ],
+            "description": "The artifact this one was copied from (\"use as template\"). Detail responses only; null when the source no longer resolves, absent when not derived."
+          },
           "created_at": {
             "type": "string"
           },
@@ -2885,6 +2903,92 @@
               "local"
             ],
             "description": "Stamped on a recorded answer: work that already ran on the owner's own machine, filed here rather than served through the queue. Mirrors automate record's run.meta.lane. Absent on every normally-served turn."
+          },
+          "card": {
+            "type": "object",
+            "properties": {
+              "draft": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 280
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "knowledge",
+                      "worker"
+                    ]
+                  },
+                  "knows": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxItems": 20
+                  },
+                  "answers": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 280
+                  },
+                  "wont": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "maxItems": 20
+                  },
+                  "source_short_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "maxItems": 50
+                  }
+                },
+                "required": [
+                  "name",
+                  "description",
+                  "kind",
+                  "knows",
+                  "answers",
+                  "wont",
+                  "source_short_ids"
+                ]
+              },
+              "created": {
+                "type": "object",
+                "properties": {
+                  "context_id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "context_id",
+                  "name"
+                ]
+              }
+            },
+            "required": [
+              "draft"
+            ],
+            "description": "The public context draft from the last builder tool call on this turn."
           }
         },
         "description": "Structured answer payload on agent messages; null on asker messages."
@@ -4905,6 +5009,58 @@
                         "published"
                       ]
                     }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/use": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Copy this artifact into your workspace (use it as a template).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new copy's identity and workspace home.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "short_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "url": {
+                      "type": "string",
+                      "description": "The copy's permanent URL in your workspace."
+                    },
+                    "org_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "short_id",
+                    "title",
+                    "url",
+                    "org_id"
                   ]
                 }
               }
@@ -7441,6 +7597,130 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/fill": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "The fill-with-your-work prompt for a derived copy (the copy-paste variant).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 500,
+              "description": "Optional requester intent, appended to the prompt verbatim."
+            },
+            "required": false,
+            "description": "Optional requester intent, appended to the prompt verbatim.",
+            "name": "note",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The prompt and the resolved template. 409 notDerived when the artifact has no template lineage; 409 sourceGone when the template no longer resolves.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "object",
+                      "properties": {
+                        "short_id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "short_id",
+                        "title"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "prompt",
+                    "source"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Ask a registered agent to fill this derived copy with the workspace's real work.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string",
+                    "description": "Which agent to ask; omit to use the sole registered agent."
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "Optional requester intent, appended to the prompt verbatim."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The fill request landed in the agent's pull inbox. 409 notDerived when the artifact has no template lineage; 409 sourceGone when the template no longer resolves; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request for this artifact still waits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "description": "The request comment's thread id."
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/comments": {
       "post": {
         "tags": [
@@ -8342,7 +8622,7 @@
         "tags": [
           "Contexts"
         ],
-        "summary": "Open a chat session about the workspace (no context, no document).",
+        "summary": "Open an attended workspace chat session.",
         "responses": {
           "201": {
             "description": "The new session and its first message.",

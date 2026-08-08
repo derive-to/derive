@@ -1,13 +1,16 @@
 import { useNavigate } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { SessionMeta } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { useCopy } from "@/lib/clipboard"
 import { isInAppPath } from "@/lib/in-app-path"
 import { REVEAL } from "@/lib/interaction"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
 import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
+import { ContextCard } from "./context-card"
 
 // THE TRANSCRIPT, shared by every chat surface: the rail on a document and the workspace chat
 // page render the same rows, the same thinking state and the same streaming bubble, because
@@ -18,9 +21,7 @@ export interface ChatMessage {
   author_kind: "asker" | "agent"
   body_md: string
   created_at: string
-  /** The turn's structured payload on an agent message. Carries which MODEL answered, which is
-   *  how a surface can show what a conversation is running on without a second request. */
-  meta?: { model?: { id: string; label: string }; tools?: string[] } | null
+  meta?: SessionMeta
 }
 
 /** Poll while a turn is in flight, stop when it settles. Cheap, and it survives a reload —
@@ -187,17 +188,12 @@ const traceOf = (tools: string[] | undefined): string | null => {
 
 function Bubble({ msg }: { msg: ChatMessage }) {
   const mine = msg.author_kind === "asker"
-  const [copied, setCopied] = useState(false)
+  const { copied, copy: copyToClipboard } = useCopy(1200)
   const trace = mine ? null : traceOf(msg.meta?.tools)
   // The MARKDOWN, not the rendered text. What people paste an answer into is usually another
   // markdown surface (a document, a comment, an issue), so handing over the rendered form would
   // strip exactly the links and structure that made the answer worth keeping.
-  const copy = () => {
-    void navigator.clipboard?.writeText(msg.body_md).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1200)
-    })
-  }
+  const copy = () => void copyToClipboard(msg.body_md)
   return (
     <div className={cn("group flex items-start gap-1", mine ? "justify-end" : "justify-start")}>
       <div className={cn("flex max-w-[85%] flex-col gap-1", mine ? "items-end" : "items-start")}>
@@ -235,6 +231,10 @@ function Bubble({ msg }: { msg: ChatMessage }) {
             __html: mine ? mdToHtml(msg.body_md) : answerMdToHtml(msg.body_md),
           }}
         />
+        {/* THE DRAFT MADE VISIBLE — a context-builder turn's structured card, shown as its own
+            block under the turn's prose rather than folded into the markdown, so it reads as
+            the object being built rather than as something the agent said. */}
+        {msg.meta?.card && <ContextCard card={msg.meta.card} />}
       </div>
       {/* ON THE ANSWER ONLY, and only on hover. A person's own message is already in their head;
           an answer is the thing they came to take away. Kept out of the flow until pointed at, so

@@ -3,12 +3,13 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { type Artifact, api, type Folder } from "@/api"
 import { Icon } from "@/components/icons"
+import { LoadError } from "@/components/shared/load-error"
 import {
   CollectionToggleRow,
   canAddTo,
   pickableCollections,
+  ROW_CLASS,
 } from "@/components/shared/organize-dialogs"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -86,10 +87,7 @@ export function BulkFolderDialog({
       data-testid={testId}
       aria-pressed={target === id}
       onClick={() => setTarget(id)}
-      className={cn(
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-        target === id && "bg-accent",
-      )}
+      className={cn(ROW_CLASS, target === id && "bg-accent")}
     >
       <span className="grid w-3.5 shrink-0 place-items-center">
         {target === id && <Icon name="check" size={16} />}
@@ -209,20 +207,10 @@ export function BulkCollectionsDialog({
         {/* A failed load is NOT "no collections yet" — saying so would invite you to
             create a duplicate of one you already have. */}
         {isError && (
-          <StatusPanel
-            tone="danger"
+          <LoadError
             title="Couldn’t load your collections"
-            description="This is usually temporary."
-            action={
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="bulk-collection-retry"
-                onClick={() => refetch()}
-              >
-                Try again
-              </Button>
-            }
+            testId="bulk-collection-retry"
+            onRetry={() => refetch()}
           />
         )}
         {!isError && pickable.length === 0 && (

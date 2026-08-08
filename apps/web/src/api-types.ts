@@ -1696,6 +1696,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/use": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copy this artifact into your workspace (use it as a template). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new copy's identity and workspace home. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            short_id: string;
+                            title: string | null;
+                            /** @description The copy's permanent URL in your workspace. */
+                            url: string;
+                            org_id: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/preview": {
         parameters: {
             query?: never;
@@ -4312,6 +4356,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/fill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The fill-with-your-work prompt for a derived copy (the copy-paste variant). */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Optional requester intent, appended to the prompt verbatim. */
+                    note?: string;
+                };
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The prompt and the resolved template. 409 notDerived when the artifact has no template lineage; 409 sourceGone when the template no longer resolves. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            prompt: string;
+                            source: {
+                                short_id: string;
+                                title: string | null;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Ask a registered agent to fill this derived copy with the workspace's real work. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description Which agent to ask; omit to use the sole registered agent. */
+                        agentId?: string;
+                        /** @description Optional requester intent, appended to the prompt verbatim. */
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The fill request landed in the agent's pull inbox. 409 notDerived when the artifact has no template lineage; 409 sourceGone when the template no longer resolves; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request for this artifact still waits. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description The request comment's thread id. */
+                            requestId: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/comments": {
         parameters: {
             query?: never;
@@ -5056,7 +5181,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Open a chat session about the workspace (no context, no document). */
+        /** Open an attended workspace chat session. */
         post: {
             parameters: {
                 query?: never;
@@ -6227,6 +6352,11 @@ export interface components {
             };
             /** @description Source path (e.g. the repo path of a synced artifact); null when none. */
             source_path?: string | null;
+            /** @description The artifact this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
+            derived_from?: {
+                short_id: string;
+                title: string | null;
+            } | null;
             created_at?: string;
             /** @description Last-update timestamp; null when never updated since creation. */
             updated_at?: string | null;
@@ -7075,6 +7205,23 @@ export interface components {
              * @enum {string}
              */
             lane?: "local";
+            /** @description The public context draft from the last builder tool call on this turn. */
+            card?: {
+                draft: {
+                    name: string;
+                    description: string;
+                    /** @enum {string} */
+                    kind: "knowledge" | "worker";
+                    knows: string[];
+                    answers: string;
+                    wont: string[];
+                    source_short_ids: string[];
+                };
+                created?: {
+                    context_id: string;
+                    name: string;
+                };
+            };
         } | null;
         ChatModel: {
             /** @description The provider's model id — what to send back to pick it. */

@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router"
 import { Logo } from "@/components/shared/logo"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { useDocumentTitle } from "@/lib/use-document-title"
 
 // The public roadmap page. Its body is a Derive artifact (short id 9gqu98hd)
@@ -50,12 +51,12 @@ export function Roadmap() {
           <iframe src={ROADMAP_EMBED} title="Derive Roadmap" className="size-full" />
         </div>
 
-        <footer className="flex flex-wrap items-center justify-between gap-2 pt-5 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+        <Eyebrow as="footer" className="flex flex-wrap items-center justify-between gap-2 pt-5">
           <span>Derive · publish, review, and own your AI artifacts</span>
           <a href="https://derive.to" className="transition-colors hover:text-foreground">
             derive.to
           </a>
-        </footer>
+        </Eyebrow>
       </div>
     </div>
   )

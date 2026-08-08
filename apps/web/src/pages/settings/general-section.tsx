@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { FormField } from "@/components/shared/form-field"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -172,20 +173,10 @@ export function GeneralSection() {
       }
     >
       {isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load workspace settings"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="workspace-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load workspace settings"
+          testId="workspace-retry"
+          onRetry={() => refetch()}
         />
       ) : (
         <FormField label="Workspace name" htmlFor="workspace-name" className="max-w-sm">
@@ -291,20 +282,11 @@ function SharingDefaults() {
 
   if (isError)
     return (
-      <StatusPanel
+      <LoadError
         layout="inline"
-        tone="danger"
-        title="Couldn't load sharing defaults"
-        action={
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="sharing-defaults-retry"
-            onClick={() => refetch()}
-          >
-            Try again
-          </Button>
-        }
+        title="Couldn’t load sharing defaults"
+        testId="sharing-defaults-retry"
+        onRetry={() => refetch()}
       />
     )
   if (!settings) return null

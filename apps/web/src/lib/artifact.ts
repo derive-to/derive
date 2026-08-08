@@ -39,6 +39,17 @@ export const canEditArtifactDoc = (
 export const canRenameArtifact = (a: Artifact): boolean =>
   (a.my_role === "editor" || a.my_role === "owner") && !a.managed
 
+/** The format (md vs html) of the artifact's CURRENT version — publishing must keep
+ *  it (editing an .md artifact stays markdown), and the source editor keys its
+ *  highlighting + preview off it. One spelling, because the page and the actions
+ *  hook both decide this. Note this reads the version list, not
+ *  `current_content_type` — the denormalized field also carries deck/skill types
+ *  that the md-or-html question deliberately flattens. */
+export const formatOf = (a: Artifact): "md" | "html" =>
+  a.versions.find((v) => v.n === a.current_version)?.content_type === "text/markdown"
+    ? "md"
+    : "html"
+
 // The short type badge for an artifact (Skill / Site / Deck / MD / HTML / Doc),
 // derived from its kind + denormalized content type without opening the bundle.
 export function artifactTypeLabel(a: Artifact): string {

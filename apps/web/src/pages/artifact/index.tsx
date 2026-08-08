@@ -9,7 +9,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
-import { artifactTypeLabel, canEditArtifactDoc, canPublishArtifact } from "@/lib/artifact"
+import { artifactTypeLabel, canEditArtifactDoc, canPublishArtifact, formatOf } from "@/lib/artifact"
 import { guestPresenceId } from "@/lib/guest-id"
 import { bareHotkey } from "@/lib/hotkey"
 import {
@@ -27,18 +27,22 @@ import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
-import { ArtifactChat } from "./artifact-chat"
+import { ArtifactChat, type RailTab } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
+import { ArtifactInspect } from "./artifact-inspect"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
+import { DerivedFromBanner } from "./derived-from-banner"
 import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
+import { artifactLoginSearch } from "./lib/login-return"
 import { useArtifactChat } from "./lib/use-artifact-chat"
+import { takeUseIntent } from "./lib/use-intent"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -132,6 +136,42 @@ export function Artifact() {
     error,
     refetch,
   } = useQuery(artifactQuery(shortId, qc))
+
+  // Deferred use-as-template: the public viewer's "Make your own" sends a signed-out
+  // clicker through login with `?use=1`, and the copy fires here, right after auth.
+  // The same-tab marker gates it — `?use=1` alone is a shareable URL, and a pasted
+  // link must not write into the clicker's workspace (see lib/use-intent.ts). Fired
+  // at most once per mount; success replaces the URL with the copy's, anything else
+  // (no marker, still anonymous, refused) strips the flag and shows the page as-is.
+  const useFired = useRef(false)
+  useEffect(() => {
+    if (!search.use || loading || useFired.current) return
+    useFired.current = true
+    const strip = () =>
+      nav({
+        to: "/artifacts/$ref",
+        params: { ref },
+        search: (s) => ({ ...s, use: undefined }),
+        replace: true,
+      })
+    if (!me || !takeUseIntent(shortId)) {
+      strip()
+      return
+    }
+    api
+      .deriveArtifact(shortId)
+      .then((r) =>
+        nav({
+          to: "/artifacts/$ref",
+          params: { ref: refFor({ short_id: r.short_id, title: r.title }) },
+          replace: true,
+        }),
+      )
+      .catch(() => {
+        toast.error("Couldn't copy this artifact into your workspace")
+        strip()
+      })
+  }, [search.use, loading, me, shortId, ref, nav])
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
   // Comments are signed-in-only (the API 404s anon by design) — don't fire the
@@ -221,11 +261,11 @@ export function Artifact() {
   const [editTitle, setEditTitle] = useState("")
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
-  // The right rail carries two conversations about the same document: anchored comments
-  // and unanchored chat. They compete for the same space, so they TAB rather than stack —
-  // the document never loses width to a second panel. Declared with the other state, ABOVE
-  // the locked/loading early returns, so the hook order never changes between renders.
-  const [rail, setRail] = useState<"comments" | "chat">("comments")
+  // Reading is deliberately conversation-first: comments, then optional chat. Inspect
+  // joins this rail only after an editor has entered an HTML edit session, so visual
+  // controls never compete with review in the resting document state. Declared above
+  // the loading returns so the hook order never changes between renders.
+  const [rail, setRail] = useState<RailTab>("comments")
   // BETA: chat only renders where the workspace has opted in. The server refuses too —
   // this just avoids showing a tab that would 404 (see the chat-session route).
   const settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
@@ -478,7 +518,7 @@ export function Artifact() {
     error,
     onCanonical: (canonical) =>
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
-    onLoginBounce: () => nav({ to: "/login" }),
+    onLoginBounce: () => nav({ to: "/login", search: artifactLoginSearch(window.location) }),
     onOpenReview: (proposalId: string) => setReviewing({ proposalId }),
     post,
     setPanel,
@@ -547,6 +587,12 @@ export function Artifact() {
     // differ only while the mode is open (it freezes the view), and an open mode
     // is un-armed anyway.
     canEdit: canEditArtifactDoc(art, version ?? art?.current_version, editing),
+    // The frame always contains rendered HTML, including for Markdown. Only an
+    // HTML/deck source supports the opening-tag operation; Markdown keeps image
+    // replacement but gets no resize handle.
+    allowElementEdits:
+      art?.current_content_type?.startsWith("text/html") === true ||
+      art?.current_content_type === "text/x-derive-deck",
     onOpenSourceEditor: startEdit,
     onEnter: () => {
       setSel(null)
@@ -562,6 +608,25 @@ export function Artifact() {
     save: inlineEdit.save,
     start: inlineEdit.start,
   }
+
+  // Inspect is an edit-mode companion, never a passive third destination. The existing
+  // Edit entry point is the only way in; when it activates an editable HTML artifact,
+  // put the visual guide beside the document automatically. Leaving the session returns
+  // the rail to its reading default so an unavailable "inspect" selection cannot linger.
+  const inspectSessionActive =
+    inlineEdit.active &&
+    inlineEdit.allowElementEdits &&
+    (art?.my_role === "editor" || art?.my_role === "owner")
+  const hadInspectSession = useRef(false)
+  useEffect(() => {
+    if (inspectSessionActive) {
+      hadInspectSession.current = true
+      setRail("inspect")
+    } else if (hadInspectSession.current) {
+      hadInspectSession.current = false
+      setRail("comments")
+    }
+  }, [inspectSessionActive])
 
   // Unsaved inline edits live only in the frame's DOM — a route change unmounts it
   // and a reload throws it away, both silently. Guard BOTH: withResolver drives the
@@ -675,10 +740,7 @@ export function Artifact() {
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
-  const format: "md" | "html" =
-    art.versions.find((v) => v.n === art.current_version)?.content_type === "text/markdown"
-      ? "md"
-      : "html"
+  const format = formatOf(art)
   // Lock: any editor can toggle it (advanced menu). While locked, even an editor
   // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
   const canLock = canPublish
@@ -689,6 +751,11 @@ export function Artifact() {
   // a new rule can't land in one and not the other; the deck test likewise has a
   // single spelling that the isDeck prop and the inline gate both read.
   const canEditDoc = canEditArtifactDoc(art, shown, editing)
+  // Inspect intentionally stays narrower than inline text editing: it is an editor
+  // capability for source-safe HTML element operations. A slide deck reaches the
+  // same path because its stored source is HTML; there is no separate deck editor.
+  const canInspect = canPublish && inlineEdit.allowElementEdits
+  const inspectEnabled = canInspect && inlineEdit.active
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
@@ -1016,6 +1083,11 @@ export function Artifact() {
                 : undefined
             }
           >
+            {/* Remix provenance on a fresh copy: v1 only (the first publish makes the
+                document its own), editors only, and never over the editing surfaces. */}
+            {art.current_version === 1 && canEditDoc && !editing && !inlineEdit.active && (
+              <DerivedFromBanner art={art} />
+            )}
             {art.bundle && !editing && (
               <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
             )}
@@ -1035,6 +1107,7 @@ export function Artifact() {
                 canUndo={inlineEdit.tools.canUndo}
                 canRedo={inlineEdit.tools.canRedo}
                 canFormat={inlineEdit.tools.canFormat}
+                allowElementEdits={inlineEdit.allowElementEdits}
                 onUndo={inlineEdit.undo}
                 onRedo={inlineEdit.redo}
                 onFormat={inlineEdit.format}
@@ -1109,6 +1182,26 @@ export function Artifact() {
                   onSend={(b) => chat.send(b, effectiveCanPublish)}
                   onPoll={chat.poll}
                 />
+              }
+              inspectEnabled={inspectEnabled}
+              inspectPanel={
+                inspectEnabled ? (
+                  <ArtifactInspect
+                    dirty={inlineEdit.dirty}
+                    saving={inlineEdit.saving}
+                    canUndo={inlineEdit.tools.canUndo}
+                    canRedo={inlineEdit.tools.canRedo}
+                    canFormat={inlineEdit.tools.canFormat}
+                    textActive={inlineEdit.tools.textActive}
+                    textKind={inlineEdit.tools.textKind}
+                    selectedText={inlineEdit.tools.selectedText}
+                    onUndo={inlineEdit.undo}
+                    onRedo={inlineEdit.redo}
+                    onFormat={inlineEdit.format}
+                    onSave={inlineEdit.save}
+                    onDone={inlineEdit.done}
+                  />
+                ) : undefined
               }
               shortId={shortId}
               isMobile={isMobile}

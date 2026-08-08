@@ -15,6 +15,16 @@ export function registerCommentTool(tc: ToolContext): void {
     {
       description:
         "Give or resolve feedback on an artifact. `quote` anchors a NEW thread to exact rendered text; `reply_to` replies, reacts, or resolves an existing one. See derive://skills/loop.",
+      // Writes (comments, reactions, thread state) but nothing here deletes: a comment
+      // once posted stays, and set_state's resolve/reopen is explicitly reversible either
+      // way. The Slack/webhook/email fan-out is a best-effort side notification, not the
+      // tool's own domain (Derive's comment threads).
+      annotations: {
+        title: "Comment and review",
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         short_id: z.string(),
         body: z.string().optional(),
