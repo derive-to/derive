@@ -27,9 +27,10 @@ import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
 import { useArtifactActions } from "./artifact-actions"
 import { ArtifactBreadcrumb } from "./artifact-breadcrumb"
-import { ArtifactChat } from "./artifact-chat"
+import { ArtifactChat, type RailTab } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
+import { ArtifactInspect } from "./artifact-inspect"
 import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
@@ -260,11 +261,12 @@ export function Artifact() {
   const [editTitle, setEditTitle] = useState("")
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
-  // The right rail carries two conversations about the same document: anchored comments
-  // and unanchored chat. They compete for the same space, so they TAB rather than stack —
-  // the document never loses width to a second panel. Declared with the other state, ABOVE
-  // the locked/loading early returns, so the hook order never changes between renders.
-  const [rail, setRail] = useState<"comments" | "chat">("comments")
+  // The right rail is deliberately ordered conversation first: anchored comments,
+  // optional unanchored chat, then editor-only Inspect. They compete for the same
+  // space, so they tab rather than stack — a visual adjustment never displaces the
+  // discussion it is meant to support. Declared above the loading returns so the
+  // hook order never changes between renders.
+  const [rail, setRail] = useState<RailTab>("comments")
   // BETA: chat only renders where the workspace has opted in. The server refuses too —
   // this just avoids showing a tab that would 404 (see the chat-session route).
   const settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
@@ -734,6 +736,10 @@ export function Artifact() {
   // a new rule can't land in one and not the other; the deck test likewise has a
   // single spelling that the isDeck prop and the inline gate both read.
   const canEditDoc = canEditArtifactDoc(art, shown, editing)
+  // Inspect intentionally stays narrower than inline text editing: it is an editor
+  // capability for source-safe HTML element operations. A slide deck reaches the
+  // same path because its stored source is HTML; there is no separate deck editor.
+  const canInspect = canPublish && inlineEdit.allowElementEdits
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
@@ -1160,6 +1166,19 @@ export function Artifact() {
                   onSend={(b) => chat.send(b, effectiveCanPublish)}
                   onPoll={chat.poll}
                 />
+              }
+              inspectEnabled={canInspect}
+              inspectPanel={
+                canInspect ? (
+                  <ArtifactInspect
+                    active={inlineEdit.active}
+                    dirty={inlineEdit.dirty}
+                    saving={inlineEdit.saving}
+                    onStart={inlineEdit.start}
+                    onSave={inlineEdit.save}
+                    onDone={inlineEdit.done}
+                  />
+                ) : undefined
               }
               shortId={shortId}
               isMobile={isMobile}

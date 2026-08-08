@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test"
-import { expect, openArtifact, publishArtifact, test } from "./fixtures"
+import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fixtures"
 
 /**
  * Inline editing: the mode, end to end, through the real sandboxed frame.
@@ -392,4 +392,49 @@ test("Markdown keeps image replacement without offering an unsaveable resize", a
   // would make Save fail after the user had already done the work.
   await expect(doc(owner).getByRole("button", { name: "Replace image" })).toBeVisible()
   await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeHidden()
+})
+
+test("conversation stays first; Inspect is editor-only HTML tooling", async ({
+  owner,
+  secondUser,
+}) => {
+  // Make the shared chat tab explicit for this isolated workspace. The Inspector must
+  // follow it, never lead it — it is an editing aid, not a second way to review a doc.
+  const settings = await owner.request.patch("/v1/workspace/settings", {
+    data: { chatBeta: true },
+  })
+  expect(settings.ok(), `settings patch failed: ${settings.status()}`).toBeTruthy()
+
+  const shortId = await publishArtifact(owner, "rail.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+
+  const tabs = owner.getByTestId("rail-tabs").getByRole("button")
+  await expect(tabs).toHaveCount(3)
+  await expect(tabs).toHaveText(["comments", "chat", "inspect"])
+  await expect(owner.getByTestId("rail-tab-comments")).toHaveAttribute("aria-pressed", "true")
+
+  await owner.getByTestId("rail-tab-chat").click()
+  await expect(owner.getByTestId("artifact-chat")).toBeVisible()
+
+  await owner.getByTestId("rail-tab-inspect").click()
+  await expect(owner.getByTestId("artifact-inspect")).toContainText("Source-safe HTML tools")
+  await owner.getByTestId("artifact-inspect-start").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("No unsaved visual changes")
+  await owner.getByTestId("artifact-inspect-done").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+
+  // A commenter can still participate in the primary conversation, but does not get
+  // a visual source-editing tab. This is a UI affordance gate; the API keeps enforcing
+  // the same permission boundary underneath it.
+  await shareArtifact(owner.request, shortId, secondUser.email, "commenter")
+  await openArtifact(secondUser.page, shortId)
+  await expect(secondUser.page.getByTestId("rail-tab-inspect")).toHaveCount(0)
+
+  // Markdown is the lightweight, direct-text path. It keeps Comments and Chat but never
+  // promises an element operation that cannot be represented in Markdown source.
+  const markdownId = await publishArtifact(owner, "rail.md", "# A markdown doc", "text/markdown")
+  await openArtifact(owner, markdownId)
+  await expect(owner.getByTestId("rail-tabs").getByRole("button")).toHaveText(["comments", "chat"])
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 })

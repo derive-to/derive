@@ -3,7 +3,7 @@ import type { Comment, DirUser, Mention } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { RailTabs } from "./artifact-chat"
+import { type RailTab, RailTabs } from "./artifact-chat"
 import { MobileComments, OpenPanel } from "./comment-panels"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
@@ -28,16 +28,17 @@ import {
 export function ArtifactComments(p: {
   shortId: string
   isMobile: boolean
-  /** THE RAIL. Comments and chat are two bodies behind one tab strip, and this component
-   *  owns that strip on BOTH platforms — the desktop aside header and the mobile peek bar
-   *  are the same control in two places. Chat is passed in as an element rather than built
-   *  here so this file keeps knowing only about comments. */
-  rail?: "comments" | "chat"
-  onRail?: (r: "comments" | "chat") => void
-  /** Beta: when false the strip is not rendered at all and this is the comments panel it
-   *  has always been. */
+  /** THE RAIL. Conversation remains the default: comments, then optional chat; the quieter
+   *  editor-only Inspect tab comes last. Desktop aside and mobile peek bar share one control. */
+  rail?: RailTab
+  onRail?: (r: RailTab) => void
+  /** Beta: chat is absent rather than visible-and-refused when the workspace has it off. */
   chatBeta?: boolean
   chatPanel?: ReactNode
+  /** Inspect exists only for editors of an HTML artifact — it never appears as a generic
+   *  alternative to commenting or as a deck-specific surface. */
+  inspectEnabled?: boolean
+  inspectPanel?: ReactNode
   isAnon: boolean
   /** May the caller create comments here (commenter+)? Gates every write affordance;
    *  reading stays open to any authenticated viewer. */
@@ -93,6 +94,7 @@ export function ArtifactComments(p: {
   anchorConf?: AnchorConf
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
+  const hasRailTabs = !!p.chatBeta || !!p.inspectEnabled
   // Focus primer: tapping "Comment" focuses this synchronously, inside the tap
   // gesture, so iOS raises the keyboard; the composer's autofocus then takes over
   // and the keyboard stays up. (iOS won't open the keyboard for a focus that lands
@@ -162,13 +164,21 @@ export function ArtifactComments(p: {
             {/* The strip sits INSIDE the aside, above whichever body is showing — the same
                 control the mobile peek bar renders, just at the top of a column instead of
                 the top of a sheet. */}
-            {panel !== "hidden" && p.chatBeta && p.rail && p.onRail && (
+            {panel !== "hidden" && hasRailTabs && p.rail && p.onRail && (
               <div className="flex shrink-0 items-center border-b border-border px-2 py-1.5">
-                <RailTabs tab={p.rail} commentCount={p.openCount} onTab={p.onRail} />
+                <RailTabs
+                  tab={p.rail}
+                  commentCount={p.openCount}
+                  chatEnabled={p.chatBeta}
+                  inspectEnabled={p.inspectEnabled}
+                  onTab={p.onRail}
+                />
               </div>
             )}
             {panel !== "hidden" && p.rail === "chat" && p.chatBeta ? (
               p.chatPanel
+            ) : panel !== "hidden" && p.rail === "inspect" && p.inspectEnabled ? (
+              p.inspectPanel
             ) : panel !== "hidden" ? (
               <OpenPanel
                 editing={p.editing}
@@ -206,9 +216,12 @@ export function ArtifactComments(p: {
             onHeightChange={p.onSheetHeight}
             // The peek bar IS the tab strip on a phone: always docked, so comments never
             // lose their entry point and chat is one thumb-reach away.
-            rail={p.chatBeta ? p.rail : undefined}
+            rail={hasRailTabs ? p.rail : undefined}
             onRail={p.onRail}
             chatPanel={p.chatPanel}
+            inspectPanel={p.inspectPanel}
+            chatEnabled={p.chatBeta}
+            inspectEnabled={p.inspectEnabled}
             openCount={p.openCount}
           />
         )}
