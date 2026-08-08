@@ -12,9 +12,9 @@
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
  *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
  *                  open-external / esc / present / edit-state / edit-edits /
- *                  edit-save / edit-blocked / edit-request / edit-image / deck-sniff
+ *                  edit-save / edit-blocked / edit-image / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
- *                  edit-mode / edit-collect / edit-restore / edit-armed /
+ *                  edit-mode / edit-collect / edit-restore /
  *                  edit-undo / edit-redo / edit-format / deck-drive
  *
  * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
@@ -1546,27 +1546,6 @@ interface ElReg {
         editClick(e)
         return
       }
-      // A click on the WORDS, by someone who can edit them, is not "next slide".
-      //
-      // A deck's click zones cover the stage — that's how every deck we scaffold is
-      // written — so the first click of a double-click flips the slide, and the
-      // caret then lands on a slide the reader never meant to be on (watched it
-      // happen: aim at slide 2's headline, arrive editing slide 3).
-      //
-      // Narrow on purpose, and each clause earns its place: only on a DECK (a page
-      // with switched slides), only for a viewer the host has armed, never on a
-      // link, and only where the pointer is actually over text. A click outside all
-      // of that — the margins, the empty half of a title slide, or any click by
-      // someone who can't edit this document — reaches the page untouched.
-      if (
-        editArmed &&
-        slideEls().length > 1 &&
-        !asEl(e.target)?.closest("a[href],a[data-derive-nav]") &&
-        editNodeVisibleAt(e.clientX, e.clientY)
-      ) {
-        e.stopImmediatePropagation()
-        return
-      }
       const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
       if (badge) {
         post({ type: "anchor-click", id: badge.getAttribute("data-derive-id") })
@@ -1713,11 +1692,6 @@ interface ElReg {
   // are only a supported write against HTML/deck SOURCE, so the host explicitly
   // enables opening-tag operations. Image replacement remains available either way.
   let elementEditsOn = false
-  /* The host says this viewer may edit (permission, current version, not already in
-     the mode). It arms the in-document entry gestures — a double-click on text asks
-     the host to open edit mode there — so a reader who could never save never fires
-     a message, and a right-less viewer's double-click stays a plain word select. */
-  let editArmed = false
   let editTargets: EditTarget[] = []
   let resizeTargets: ResizeTarget[] = []
   interface ResizeFocusable {
@@ -2440,9 +2414,8 @@ interface ElReg {
   window.addEventListener("scroll", paintResizeUi, true)
   window.addEventListener("resize", paintResizeUi)
 
-  /** Which gesture asked the mode to open: the double-click whose target this client
-   *  already captured, or the host's Edit verb on the live selection. */
-  type EditEntry = { fromPointer?: boolean; fromSelection?: boolean }
+  /** The host's Edit verb may open the mode on the reader's live selection. */
+  type EditEntry = { fromSelection?: boolean }
   const setEditMode = (
     on: boolean,
     keep?: boolean,
@@ -2472,22 +2445,12 @@ interface ElReg {
       setHover(null)
       // Off-screen slides stop catching clicks meant for the slide on screen.
       maskOffscreenSlides()
-      // Entered FROM the document (a double-click, or Edit on a selection): land the
-      // caret where the user pointed instead of making them click the same words a
-      // second time. Deferred a frame so the host's chrome has settled and the
-      // block's rect is final before revealBlock measures it.
+      // Edit was invoked on a live selection: keep the caret on those words instead
+      // of making the user find them again. Deferred a frame so the host's chrome
+      // has settled and the block's rect is final before revealBlock measures it.
       if (entry)
         requestAnimationFrame(() => {
           if (!editOn) return
-          if (entry.fromPointer) {
-            // Captured by the double-click that asked for the mode. Stale means the
-            // host answered something else (or much later); ignore rather than
-            // arming a block the user has forgotten about.
-            const p = pendingEntry
-            pendingEntry = null
-            if (p && Date.now() - p.at < 5000 && p.node.isConnected) editActivate(p.node, p.caret)
-            return
-          }
           const s = window.getSelection()
           const n = s && s.rangeCount > 0 ? s.getRangeAt(0).startContainer : null
           if (n && n.nodeType === 3) editActivate(n as Text, null)
@@ -2819,38 +2782,6 @@ interface ElReg {
   document.addEventListener("focusout", () => {
     if (editOn) window.setTimeout(scheduleDirty, 0)
   })
-
-  /* THE WAY IN, from the document itself. Double-click any text and the host opens
-     edit mode with the caret already in that block — the mode used to be reachable
-     only from a button in the header, which is nowhere near the sentence you came to
-     fix. Only armed for a viewer who can actually save (the host says so), and only
-     where a click would have landed a caret anyway, so a double-click that lands on
-     a control or on a viewer's read-only page stays an ordinary word select.
-
-     The TEXT NODE is captured here, not the coordinates. Opening the mode adds a
-     band above the document, which resizes this frame — and a deck centres its
-     stage in whatever height it gets, so by the time the mode is open the words
-     that were under the pointer have moved. Re-resolving a point after that lands
-     the caret near the text, or in the gap beside it. A node reference survives the
-     reflow; the offset within it is still the character the user aimed at. */
-  let pendingEntry: {
-    node: Text
-    caret: { node: Node; offset: number } | null
-    at: number
-  } | null = null
-  document.addEventListener(
-    "dblclick",
-    (e) => {
-      if (editOn || !editArmed) return
-      const el0 = asEl(e.target)
-      if (el0?.closest(BLOCKED_EDIT)) return
-      const hit = editNodeVisibleAt(e.clientX, e.clientY)
-      if (!hit) return
-      pendingEntry = { node: hit.node, caret: hit.caret, at: Date.now() }
-      post({ type: "edit-request" })
-    },
-    true,
-  )
 
   /* Bring the block being edited into view. On a phone the host shrinks the frame by
      the keyboard's height, so "visible" here already means "above the keyboard" —
@@ -3267,12 +3198,9 @@ interface ElReg {
       setEditMode(
         !!d.on,
         !!d.keep,
-        d.fromPointer || d.fromSelection
-          ? { fromPointer: !!d.fromPointer, fromSelection: !!d.fromSelection }
-          : undefined,
+        d.fromSelection ? { fromSelection: true } : undefined,
         !!d.elementEdits,
       )
-    else if (d.type === "edit-armed") editArmed = !!d.on
     // The edit bar's controls, driven from the host. Same functions the keyboard
     // chords call, so a button and its shortcut can never mean different things.
     else if (d.type === "edit-undo") undo()

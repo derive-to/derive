@@ -150,25 +150,22 @@ test("navigating away with unsaved edits is guarded, not silent", async ({ owner
   expect(await versionOf(owner, shortId)).toBe(1)
 })
 
-test("double-click the text to enter the mode, with the caret already there", async ({ owner }) => {
+test("double-click selects text without entering edit mode", async ({ owner }) => {
   const shortId = await seed(owner)
-  // No mode yet — the document is being read.
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
 
-  // The gesture: double-click the words you came to fix.
+  // Reading stays reading. Double-click keeps its browser-native word-selection
+  // behavior and never exposes editing chrome or creates a version.
   await doc(owner).locator("#two").dblclick()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
-
-  // The caret is IN that block, so typing goes there without a second click.
-  await owner.keyboard.press("End")
-  await owner.keyboard.type(" Landed.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await owner.getByTestId("inline-edit-save").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
-
-  const src = await contentOf(owner, shortId)
-  expect(src).toContain("Second paragraph. Landed.")
-  expect(src).toContain("First paragraph.")
+  await expect
+    .poll(() =>
+      doc(owner)
+        .locator("#two")
+        .evaluate(() => window.getSelection()?.toString().trim().length ?? 0),
+    )
+    .toBeGreaterThan(0)
+  expect(await versionOf(owner, shortId)).toBe(1)
 })
 
 test("`e` opens the mode from the keyboard", async ({ owner }) => {
