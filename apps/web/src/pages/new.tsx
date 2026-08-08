@@ -97,7 +97,11 @@ export function NewArtifact() {
       // the workbench header paints on arrival instead of after a second round trip,
       // and start the raw-content fetch now so the iframe finds a warm HTTP cache.
       // Publish is the moment a person is most likely to be watching the screen.
-      qc.setQueryData(artifactQuery(a.short_id).queryKey, a)
+      // The publish response is deliberately lean and has no viewer-specific role.
+      // We do know one fact locally: the person who just created this artifact owns it.
+      // Preserve that while the detail query warms, otherwise the first artifact paint
+      // briefly hides every editor-only affordance (including Inspect) until a reload.
+      qc.setQueryData(artifactQuery(a.short_id).queryKey, { ...a, my_role: "owner" })
       // Drop the unsaved guard before navigating to the artifact (this nav IS the save,
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.

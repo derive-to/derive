@@ -87,7 +87,14 @@ export function useInlineEdit(p: {
   const [frozenVersion, setFrozenVersion] = useState<number | null>(null)
   const [dirty, setDirty] = useState(0)
   /** What the bar's controls can do at this instant, as the document reports it. */
-  const [tools, setTools] = useState({ canUndo: false, canRedo: false, canFormat: false })
+  const [tools, setTools] = useState({
+    canUndo: false,
+    canRedo: false,
+    canFormat: false,
+    textActive: false,
+    textKind: "",
+    selectedText: "",
+  })
   // Escape (or Done) pressed with unsaved edits: the confirm the page renders.
   const [exitPrompt, setExitPrompt] = useState(false)
   const active = frozenVersion !== null
@@ -124,7 +131,14 @@ export function useInlineEdit(p: {
   const exit = (frame: "restore" | "settle" | "none") => {
     setFrozenVersion(null)
     setDirty(0)
-    setTools({ canUndo: false, canRedo: false, canFormat: false })
+    setTools({
+      canUndo: false,
+      canRedo: false,
+      canFormat: false,
+      textActive: false,
+      textKind: "",
+      selectedText: "",
+    })
     setExitPrompt(false)
     if (frame === "restore") p.post({ type: "edit-mode", on: false })
     else if (frame === "settle") p.post({ type: "edit-mode", on: false, keep: true })
@@ -168,6 +182,9 @@ export function useInlineEdit(p: {
           canUndo: !!d.canUndo,
           canRedo: !!d.canRedo,
           canFormat: !!d.canFormat,
+          textActive: !!d.textActive,
+          textKind: typeof d.textKind === "string" ? d.textKind : "",
+          selectedText: typeof d.selectedText === "string" ? d.selectedText : "",
         })
       } else if (d.type === "edit-edits") {
         const w = collectWait.current
