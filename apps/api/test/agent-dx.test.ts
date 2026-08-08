@@ -1,5 +1,6 @@
 import type { MetaStore } from "@derive/core"
 import { describe, expect, it } from "vitest"
+import type { AppDeps } from "../src/context"
 import { parseManifestSkillPins, stalePins } from "../src/lib/manifest-pins"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -49,8 +50,8 @@ const callRaw = async (
 const call = async (app: App, token: string, name: string, args = {}): Promise<any> =>
   JSON.parse((await callRaw(app, token, name, args)).text)
 
-const setup = async (name: string) => {
-  const { app, meta } = makeAuthedApp(name, [owner], "editor")
+const setup = async (name: string, deps: Partial<AppDeps> = {}) => {
+  const { app, meta } = makeAuthedApp(name, [owner], "editor", { deps })
   await app.request("/v1/me", { headers: as(owner.email) })
   const bot = await (
     await app.request("/v1/agents", jsonAs(as(owner.email), { name: "DxBot", role: "editor" }))
@@ -111,7 +112,13 @@ describe("publish advisories reach the MCP response", () => {
 
 describe("read render self-heal", () => {
   it("a dead-lettered render re-queues on read instead of demanding a republish", async () => {
-    const { app, meta, token } = await setup("dx-render-heal")
+    let pokes = 0
+    const { app, meta, token } = await setup("dx-render-heal", {
+      renderPreviews: true,
+      pokePreviews: () => {
+        pokes += 1
+      },
+    })
     const pub = await call(app, token, "publish", {
       title: "Healed",
       filename: "index.html",
@@ -126,6 +133,7 @@ describe("read render self-heal", () => {
       preview_status: "failed",
       preview_error: "boom (transient)",
     })
+    const pokesAfterPublish = pokes
     const healed = await callRaw(app, token, "read", { short_id: pub.short_id, render: "top" })
     expect(healed.isError).toBe(true)
     expect(healed.text).toContain("re-queued")
@@ -133,6 +141,9 @@ describe("read render self-heal", () => {
     // The variant was reset to pending (a second read must not say failed again)...
     const v = await meta.getVersion(a.id, pub.version)
     expect(v?.preview_status).toBe("pending")
+    // The repair also wakes the renderer now; otherwise the read's own wait loop can only
+    // succeed if a later cron tick happens to arrive before its deadline.
+    expect(pokes).toBe(pokesAfterPublish + 1)
     // ...and exactly one fresh job is waiting for the worker.
     const jobs = await meta.claimDueRenderJobs(new Date().toISOString(), 50, lease)
     expect(jobs.filter((j) => j.artifact_id === a.id && j.version_n === pub.version)).toHaveLength(

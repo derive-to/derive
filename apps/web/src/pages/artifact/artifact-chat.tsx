@@ -60,17 +60,30 @@ export function ArtifactChat(props: {
   )
 }
 
-/** The rail's tab strip. Two tabs only, so this is a pair of buttons rather than a full
- *  Tabs primitive — it has to sit inline in the panel header the comments rail already owns. */
+/** The small, shared vocabulary for the artifact's one right rail. Comments must remain first:
+ * it is the default reading companion. Chat is optional per workspace, and Inspect is optional
+ * per artifact + role — neither gets to become a parallel primary surface. */
+export type RailTab = "comments" | "chat" | "inspect"
+
+/** The rail's tab strip. It stays a handful of buttons rather than a full Tabs primitive: it
+ * must fit inline in the existing desktop header and mobile peek bar. The capability gates are
+ * explicit here so every consumer renders the exact same order. */
 export function RailTabs(props: {
-  tab: "comments" | "chat"
+  tab: RailTab
   commentCount: number
-  onTab: (t: "comments" | "chat") => void
+  onTab: (t: RailTab) => void
+  chatEnabled?: boolean
+  inspectEnabled?: boolean
 }) {
-  const { tab, commentCount, onTab } = props
+  const { tab, commentCount, onTab, chatEnabled = false, inspectEnabled = false } = props
+  const tabs: RailTab[] = [
+    "comments",
+    ...(chatEnabled ? (["chat"] as const) : []),
+    ...(inspectEnabled ? (["inspect"] as const) : []),
+  ]
   return (
     <div className="flex items-center gap-1" data-testid="rail-tabs">
-      {(["comments", "chat"] as const).map((t) => (
+      {tabs.map((t) => (
         <button
           key={t}
           type="button"

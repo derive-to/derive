@@ -49,7 +49,6 @@ import {
   sleep,
   toBase64,
 } from "../mcp-util"
-import { enqueueRender } from "../previews"
 import { CORE_SKILLS } from "../skills-reference.gen"
 
 /** Does this version's KIND carry facts at all? Extraction and derivation both run on
@@ -440,7 +439,10 @@ export function registerReadTool(tc: ToolContext): void {
         // trades an honest error message for "not ready yet, try again shortly" forever.
         // An old version keeps its failure, which is the truthful answer.
         if (variant.status === "failed" && n === a.current_version) {
-          await enqueueRender(ctx.meta, a.id, n)
+          // Use the shared notifier rather than enqueueing directly: on Workers it also
+          // pokes the PreviewRenderer DO, so this read's wait loop can observe the repair
+          // instead of depending on a later cron tick.
+          await ctx.notifyRender(a, n)
           if (render === "top")
             await ctx.meta.setVersionPreview(a.id, n, { preview_status: "pending" })
           else await ctx.meta.setVersionPreviewVariant(a.id, n, render, { status: "pending" })

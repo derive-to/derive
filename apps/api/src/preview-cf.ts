@@ -1,5 +1,10 @@
 import puppeteer, { type BrowserWorker } from "@cloudflare/puppeteer"
-import { assertNavigationOk, type Renderer, type ScreenshotOpts } from "./previews"
+import {
+  assertNavigationOk,
+  assertRenderedDocumentOk,
+  type Renderer,
+  type ScreenshotOpts,
+} from "./previews"
 
 /**
  * A Renderer backed by Cloudflare Browser Rendering. One warm browser per DO
@@ -20,6 +25,20 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
       })
       assertNavigationOk(
         await page.goto(url, { waitUntil: "networkidle0", timeout: opts.timeoutMs }),
+        url,
+      )
+      assertRenderedDocumentOk(
+        await page.evaluate(() => {
+          // The Worker build intentionally excludes DOM types, but this callback is
+          // serialized by Puppeteer and executes inside the browser page.
+          const pageGlobal = globalThis as unknown as {
+            document: { contentType: string; body?: { innerText: string } | null }
+          }
+          return {
+            contentType: pageGlobal.document.contentType,
+            bodyText: pageGlobal.document.body?.innerText ?? "",
+          }
+        }),
         url,
       )
       const buf = (await page.screenshot({ type: "png", fullPage: !!opts.fullPage })) as Uint8Array

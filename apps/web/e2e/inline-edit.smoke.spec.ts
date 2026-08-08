@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test"
-import { expect, openArtifact, publishArtifact, test } from "./fixtures"
+import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fixtures"
 
 /**
  * Inline editing: the mode, end to end, through the real sandboxed frame.
@@ -206,22 +206,30 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   await expect(owner.getByTestId("inline-edit-undo")).toBeDisabled()
   await expect(owner.getByTestId("inline-edit-redo")).toBeDisabled()
   await expect(owner.getByTestId("inline-edit-bold")).toBeDisabled()
+  await expect(owner.getByTestId("artifact-inspect-choose")).toBeVisible()
 
   await appendToParagraph(owner, "one", " Typed.")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
   await expect(owner.getByTestId("inline-edit-undo")).toBeEnabled()
+  await expect(owner.getByTestId("artifact-inspect-text")).toContainText("Paragraph")
+  await expect(owner.getByTestId("artifact-inspect-undo")).toBeEnabled()
 
-  // Undo takes the document back and the bar with it; redo returns both.
-  await owner.getByTestId("inline-edit-undo").click()
+  // Inspect and the bar drive one history stack. Undo in the rail takes the document
+  // back; redo in the bar returns both the text and the rail's live state.
+  await owner.getByTestId("artifact-inspect-undo").click()
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
   await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
   await owner.getByTestId("inline-edit-redo").click()
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Typed.")
 
-  // A selection lights the format verbs, and Bold reaches the stored source as <b>.
+  // A selection appears in the contextual rail, lights both formatting surfaces,
+  // and Bold from Inspect reaches the stored source as <b>.
   await doc(owner).locator("#two").dblclick()
   await expect(owner.getByTestId("inline-edit-bold")).toBeEnabled()
-  await owner.getByTestId("inline-edit-bold").click()
+  await expect(owner.getByTestId("artifact-inspect-bold")).toBeEnabled()
+  await expect(owner.getByTestId("artifact-inspect-text")).toContainText(/“[^”]+”/)
+  await owner.getByTestId("artifact-inspect-bold").click()
+  await expect(owner.getByTestId("artifact-inspect-bold")).toBeDisabled()
   await owner.getByTestId("inline-edit-save").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
 
@@ -233,6 +241,30 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   expect(src.replace(/<\/?b>/g, "")).toContain("<p id=two>Second paragraph.</p>")
   // The editor's own markers never reach the document.
   expect(src).not.toContain("data-derive-fmt")
+})
+
+test("Inspect preserves a text selection while asking for a link", async ({ owner }) => {
+  const shortId = await seed(owner)
+  await enterEditMode(owner)
+
+  // Link is the one formatting verb with an intermediate question in the host.
+  // The frame must preserve a selected word while the rail's URL field owns focus.
+  await doc(owner).locator("#one").click()
+  await expect(owner.getByTestId("artifact-inspect-text")).toContainText("Paragraph")
+  await owner.keyboard.press("Home")
+  await owner.keyboard.down("Shift")
+  for (let i = 0; i < 5; i++) await owner.keyboard.press("ArrowRight")
+  await owner.keyboard.up("Shift")
+  await expect(owner.getByTestId("artifact-inspect-link")).toBeEnabled()
+  await owner.getByTestId("artifact-inspect-link").click()
+  await owner.getByTestId("artifact-inspect-link-input").fill("https://derive.to")
+  await owner.getByTestId("artifact-inspect-link-input").press("Enter")
+  await expect(owner.getByTestId("artifact-inspect-status")).toContainText("1 unsaved change")
+  await owner.getByTestId("artifact-inspect-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+
+  const src = await contentOf(owner, shortId)
+  expect(src).toMatch(/<p id=one>[\s\S]*<a href="https:\/\/derive\.to">[^<]+<\/a>[\s\S]*<\/p>/)
 })
 
 test("resize an image and box, then undo/redo and save", async ({ owner }) => {
@@ -392,4 +424,70 @@ test("Markdown keeps image replacement without offering an unsaveable resize", a
   // would make Save fail after the user had already done the work.
   await expect(doc(owner).getByRole("button", { name: "Replace image" })).toBeVisible()
   await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeHidden()
+})
+
+test("Inspect appears only inside an editor's HTML edit session", async ({ owner, secondUser }) => {
+  // Make the shared chat tab explicit for this isolated workspace. The resting artifact
+  // is conversation-only; Inspect appears only after the existing Edit entry point.
+  const settings = await owner.request.patch("/v1/workspace/settings", {
+    data: { chatBeta: true },
+  })
+  expect(settings.ok(), `settings patch failed: ${settings.status()}`).toBeTruthy()
+
+  const shortId = await publishArtifact(owner, "rail.html", RESIZE_DOC, "text/html")
+  await openArtifact(owner, shortId)
+
+  const tabs = owner.getByTestId("rail-tabs").getByRole("button")
+  await expect(tabs).toHaveCount(2)
+  await expect(tabs).toHaveText(["comments", "chat"])
+  await expect(owner.getByTestId("rail-tab-comments")).toHaveAttribute("aria-pressed", "true")
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
+
+  await owner.getByTestId("rail-tab-chat").click()
+  await expect(owner.getByTestId("artifact-chat")).toBeVisible()
+
+  await owner.getByTestId("artifact-inline-edit").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  await expect(tabs).toHaveText(["comments", "chat", "inspect"])
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveAttribute("aria-pressed", "true")
+  await expect(owner.getByTestId("artifact-inspect-choose")).toContainText(
+    "Choose content in the document",
+  )
+  await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("No unsaved changes")
+  await owner.getByTestId("artifact-inspect-done").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
+
+  // A commenter can still participate in the primary conversation, but never gains a
+  // visual source-editing tab. The API keeps enforcing the same boundary underneath it.
+  await shareArtifact(owner.request, shortId, secondUser.email, "commenter")
+  await openArtifact(secondUser.page, shortId)
+  await expect(secondUser.page.getByTestId("rail-tab-inspect")).toHaveCount(0)
+
+  // Markdown is the lightweight, direct-text path. It keeps Comments and Chat but never
+  // promises an element operation that cannot be represented in Markdown source.
+  const markdownId = await publishArtifact(owner, "rail.md", "# A markdown doc", "text/markdown")
+  await openArtifact(owner, markdownId)
+  await expect(owner.getByTestId("rail-tabs").getByRole("button")).toHaveText(["comments", "chat"])
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
+})
+
+test("a newly published HTML artifact enters Inspect without a reload", async ({ owner }) => {
+  // Publishing seeds the detail cache for an immediate navigation. That seed has to
+  // retain the just-published owner's role: otherwise Edit disappears until the detail
+  // query is manually refreshed, and the author cannot enter Inspect from it.
+  await owner.goto("/new")
+  await owner.getByTestId("artifact-title-input").fill("Fresh HTML artifact")
+  await expect(owner.locator(".cm-content")).toBeVisible()
+  // This scenario covers the post-publish cache handoff, not CodeMirror's keystroke
+  // dispatch. Fill avoids incidental global shortcut events from URL-like HTML source.
+  await owner.locator(".cm-content").fill(RESIZE_DOC)
+  await expect(owner.getByTestId("artifact-publish-version")).toBeEnabled()
+  await owner.getByTestId("artifact-publish-version").click()
+
+  await expect(owner).toHaveURL(/\/artifacts\//)
+  await expect(owner.getByTestId("artifact-inline-edit")).toBeVisible()
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
+  await owner.getByTestId("artifact-inline-edit").click()
+  await expect(owner.getByTestId("rail-tab-inspect")).toBeVisible()
 })
