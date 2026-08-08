@@ -66,8 +66,8 @@ export function MobileComments({
    *  closed). The page reserves exactly this under the document so no black band
    *  is left below it. */
   onHeightChange?: (px: number) => void
-  /** THE RAIL on a phone. The peek bar is always docked, so it carries the same ordered
-   *  Comments → Chat → Inspect control as desktop without a second competing sheet. */
+  /** THE RAIL on a phone. The peek bar carries Comments → Chat while reading, then adds
+   *  Inspect only during an eligible HTML edit session — never a second competing sheet. */
   rail?: RailTab
   onRail?: (r: RailTab) => void
   chatPanel?: ReactNode

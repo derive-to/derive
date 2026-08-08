@@ -35,8 +35,8 @@ export function ArtifactComments(p: {
   /** Beta: chat is absent rather than visible-and-refused when the workspace has it off. */
   chatBeta?: boolean
   chatPanel?: ReactNode
-  /** Inspect exists only for editors of an HTML artifact — it never appears as a generic
-   *  alternative to commenting or as a deck-specific surface. */
+  /** Inspect exists only while an editor is actively editing an HTML artifact — it never
+   *  becomes a generic alternative to commenting or a deck-specific surface. */
   inspectEnabled?: boolean
   inspectPanel?: ReactNode
   isAnon: boolean

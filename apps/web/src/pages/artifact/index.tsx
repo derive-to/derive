@@ -261,11 +261,10 @@ export function Artifact() {
   const [editTitle, setEditTitle] = useState("")
 
   // Comments UI state shared across the page, the panel, and the iframe bridge.
-  // The right rail is deliberately ordered conversation first: anchored comments,
-  // optional unanchored chat, then editor-only Inspect. They compete for the same
-  // space, so they tab rather than stack — a visual adjustment never displaces the
-  // discussion it is meant to support. Declared above the loading returns so the
-  // hook order never changes between renders.
+  // Reading is deliberately conversation-first: comments, then optional chat. Inspect
+  // joins this rail only after an editor has entered an HTML edit session, so visual
+  // controls never compete with review in the resting document state. Declared above
+  // the loading returns so the hook order never changes between renders.
   const [rail, setRail] = useState<RailTab>("comments")
   // BETA: chat only renders where the workspace has opted in. The server refuses too —
   // this just avoids showing a tab that would 404 (see the chat-session route).
@@ -610,6 +609,25 @@ export function Artifact() {
     start: inlineEdit.start,
   }
 
+  // Inspect is an edit-mode companion, never a passive third destination. The existing
+  // Edit entry point is the only way in; when it activates an editable HTML artifact,
+  // put the visual guide beside the document automatically. Leaving the session returns
+  // the rail to its reading default so an unavailable "inspect" selection cannot linger.
+  const inspectSessionActive =
+    inlineEdit.active &&
+    inlineEdit.allowElementEdits &&
+    (art?.my_role === "editor" || art?.my_role === "owner")
+  const hadInspectSession = useRef(false)
+  useEffect(() => {
+    if (inspectSessionActive) {
+      hadInspectSession.current = true
+      setRail("inspect")
+    } else if (hadInspectSession.current) {
+      hadInspectSession.current = false
+      setRail("comments")
+    }
+  }, [inspectSessionActive])
+
   // Unsaved inline edits live only in the frame's DOM — a route change unmounts it
   // and a reload throws it away, both silently. Guard BOTH: withResolver drives the
   // house ConfirmDialog for in-app navigation, enableBeforeUnload hands tab-close to
@@ -740,6 +758,7 @@ export function Artifact() {
   // capability for source-safe HTML element operations. A slide deck reaches the
   // same path because its stored source is HTML; there is no separate deck editor.
   const canInspect = canPublish && inlineEdit.allowElementEdits
+  const inspectEnabled = canInspect && inlineEdit.active
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // A logged-out visitor on a public/link artifact: strictly view-only. They get
   // the document + live presence/cursors (Google-Docs style) and nothing else —
@@ -1167,14 +1186,12 @@ export function Artifact() {
                   onPoll={chat.poll}
                 />
               }
-              inspectEnabled={canInspect}
+              inspectEnabled={inspectEnabled}
               inspectPanel={
-                canInspect ? (
+                inspectEnabled ? (
                   <ArtifactInspect
-                    active={inlineEdit.active}
                     dirty={inlineEdit.dirty}
                     saving={inlineEdit.saving}
-                    onStart={inlineEdit.start}
                     onSave={inlineEdit.save}
                     onDone={inlineEdit.done}
                   />

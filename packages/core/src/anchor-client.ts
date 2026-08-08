@@ -2692,6 +2692,19 @@ interface ElReg {
       selectResize(img)
       return
     }
+    // A deliberately marked layout box is an explicit direct-manipulation target.
+    // Prefer it over its text on a single click: this is how an author discovers
+    // box resizing without needing to find blank padding. A double-click retains
+    // the normal path below, so text inside the box remains just as easy to edit.
+    const markedBox = el0?.closest("[data-derive-resizable]") ?? null
+    if (
+      e.detail <= 1 &&
+      isResizableElement(markedBox) &&
+      !markedBox.hasAttribute("data-derive-slide")
+    ) {
+      selectResize(markedBox)
+      return
+    }
     if (el0?.closest(BLOCKED_EDIT)) {
       post({ type: "edit-blocked", reason: "control" })
       return

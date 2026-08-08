@@ -394,12 +394,9 @@ test("Markdown keeps image replacement without offering an unsaveable resize", a
   await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeHidden()
 })
 
-test("conversation stays first; Inspect is editor-only HTML tooling", async ({
-  owner,
-  secondUser,
-}) => {
-  // Make the shared chat tab explicit for this isolated workspace. The Inspector must
-  // follow it, never lead it — it is an editing aid, not a second way to review a doc.
+test("Inspect appears only inside an editor's HTML edit session", async ({ owner, secondUser }) => {
+  // Make the shared chat tab explicit for this isolated workspace. The resting artifact
+  // is conversation-only; Inspect appears only after the existing Edit entry point.
   const settings = await owner.request.patch("/v1/workspace/settings", {
     data: { chatBeta: true },
   })
@@ -409,24 +406,26 @@ test("conversation stays first; Inspect is editor-only HTML tooling", async ({
   await openArtifact(owner, shortId)
 
   const tabs = owner.getByTestId("rail-tabs").getByRole("button")
-  await expect(tabs).toHaveCount(3)
-  await expect(tabs).toHaveText(["comments", "chat", "inspect"])
+  await expect(tabs).toHaveCount(2)
+  await expect(tabs).toHaveText(["comments", "chat"])
   await expect(owner.getByTestId("rail-tab-comments")).toHaveAttribute("aria-pressed", "true")
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 
   await owner.getByTestId("rail-tab-chat").click()
   await expect(owner.getByTestId("artifact-chat")).toBeVisible()
 
-  await owner.getByTestId("rail-tab-inspect").click()
-  await expect(owner.getByTestId("artifact-inspect")).toContainText("Source-safe HTML tools")
-  await owner.getByTestId("artifact-inspect-start").click()
+  await owner.getByTestId("artifact-inline-edit").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  await expect(tabs).toHaveText(["comments", "chat", "inspect"])
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveAttribute("aria-pressed", "true")
+  await expect(owner.getByTestId("artifact-inspect")).toContainText("Source-safe HTML tools")
   await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("No unsaved visual changes")
   await owner.getByTestId("artifact-inspect-done").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 
-  // A commenter can still participate in the primary conversation, but does not get
-  // a visual source-editing tab. This is a UI affordance gate; the API keeps enforcing
-  // the same permission boundary underneath it.
+  // A commenter can still participate in the primary conversation, but never gains a
+  // visual source-editing tab. The API keeps enforcing the same boundary underneath it.
   await shareArtifact(owner.request, shortId, secondUser.email, "commenter")
   await openArtifact(secondUser.page, shortId)
   await expect(secondUser.page.getByTestId("rail-tab-inspect")).toHaveCount(0)
@@ -439,19 +438,22 @@ test("conversation stays first; Inspect is editor-only HTML tooling", async ({
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 })
 
-test("a newly published HTML artifact exposes owner tools without a reload", async ({ owner }) => {
+test("a newly published HTML artifact enters Inspect without a reload", async ({ owner }) => {
   // Publishing seeds the detail cache for an immediate navigation. That seed has to
-  // retain the just-published owner's role: otherwise Edit and Inspect disappear
-  // until the detail query is manually refreshed.
+  // retain the just-published owner's role: otherwise Edit disappears until the detail
+  // query is manually refreshed, and the author cannot enter Inspect from it.
   await owner.goto("/new")
   await owner.getByTestId("artifact-title-input").fill("Fresh HTML artifact")
   await expect(owner.locator(".cm-content")).toBeVisible()
-  await owner.locator(".cm-content").click()
-  await owner.keyboard.type(RESIZE_DOC)
+  // This scenario covers the post-publish cache handoff, not CodeMirror's keystroke
+  // dispatch. Fill avoids incidental global shortcut events from URL-like HTML source.
+  await owner.locator(".cm-content").fill(RESIZE_DOC)
   await expect(owner.getByTestId("artifact-publish-version")).toBeEnabled()
   await owner.getByTestId("artifact-publish-version").click()
 
   await expect(owner).toHaveURL(/\/artifacts\//)
   await expect(owner.getByTestId("artifact-inline-edit")).toBeVisible()
+  await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
+  await owner.getByTestId("artifact-inline-edit").click()
   await expect(owner.getByTestId("rail-tab-inspect")).toBeVisible()
 })
