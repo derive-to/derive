@@ -1192,6 +1192,15 @@ export function Artifact() {
                   <ArtifactInspect
                     dirty={inlineEdit.dirty}
                     saving={inlineEdit.saving}
+                    canUndo={inlineEdit.tools.canUndo}
+                    canRedo={inlineEdit.tools.canRedo}
+                    canFormat={inlineEdit.tools.canFormat}
+                    textActive={inlineEdit.tools.textActive}
+                    textKind={inlineEdit.tools.textKind}
+                    selectedText={inlineEdit.tools.selectedText}
+                    onUndo={inlineEdit.undo}
+                    onRedo={inlineEdit.redo}
+                    onFormat={inlineEdit.format}
                     onSave={inlineEdit.save}
                     onDone={inlineEdit.done}
                   />

@@ -206,22 +206,30 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   await expect(owner.getByTestId("inline-edit-undo")).toBeDisabled()
   await expect(owner.getByTestId("inline-edit-redo")).toBeDisabled()
   await expect(owner.getByTestId("inline-edit-bold")).toBeDisabled()
+  await expect(owner.getByTestId("artifact-inspect-choose")).toBeVisible()
 
   await appendToParagraph(owner, "one", " Typed.")
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
   await expect(owner.getByTestId("inline-edit-undo")).toBeEnabled()
+  await expect(owner.getByTestId("artifact-inspect-text")).toContainText("Paragraph")
+  await expect(owner.getByTestId("artifact-inspect-undo")).toBeEnabled()
 
-  // Undo takes the document back and the bar with it; redo returns both.
-  await owner.getByTestId("inline-edit-undo").click()
+  // Inspect and the bar drive one history stack. Undo in the rail takes the document
+  // back; redo in the bar returns both the text and the rail's live state.
+  await owner.getByTestId("artifact-inspect-undo").click()
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
   await expect(owner.getByTestId("inline-edit-bar")).not.toContainText("unsaved change")
   await owner.getByTestId("inline-edit-redo").click()
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph. Typed.")
 
-  // A selection lights the format verbs, and Bold reaches the stored source as <b>.
+  // A selection appears in the contextual rail, lights both formatting surfaces,
+  // and Bold from Inspect reaches the stored source as <b>.
   await doc(owner).locator("#two").dblclick()
   await expect(owner.getByTestId("inline-edit-bold")).toBeEnabled()
-  await owner.getByTestId("inline-edit-bold").click()
+  await expect(owner.getByTestId("artifact-inspect-bold")).toBeEnabled()
+  await expect(owner.getByTestId("artifact-inspect-text")).toContainText(/“[^”]+”/)
+  await owner.getByTestId("artifact-inspect-bold").click()
+  await expect(owner.getByTestId("artifact-inspect-bold")).toBeDisabled()
   await owner.getByTestId("inline-edit-save").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
 
@@ -233,6 +241,30 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   expect(src.replace(/<\/?b>/g, "")).toContain("<p id=two>Second paragraph.</p>")
   // The editor's own markers never reach the document.
   expect(src).not.toContain("data-derive-fmt")
+})
+
+test("Inspect preserves a text selection while asking for a link", async ({ owner }) => {
+  const shortId = await seed(owner)
+  await enterEditMode(owner)
+
+  // Link is the one formatting verb with an intermediate question in the host.
+  // The frame must preserve a selected word while the rail's URL field owns focus.
+  await doc(owner).locator("#one").click()
+  await expect(owner.getByTestId("artifact-inspect-text")).toContainText("Paragraph")
+  await owner.keyboard.press("Home")
+  await owner.keyboard.down("Shift")
+  for (let i = 0; i < 5; i++) await owner.keyboard.press("ArrowRight")
+  await owner.keyboard.up("Shift")
+  await expect(owner.getByTestId("artifact-inspect-link")).toBeEnabled()
+  await owner.getByTestId("artifact-inspect-link").click()
+  await owner.getByTestId("artifact-inspect-link-input").fill("https://derive.to")
+  await owner.getByTestId("artifact-inspect-link-input").press("Enter")
+  await expect(owner.getByTestId("artifact-inspect-status")).toContainText("1 unsaved change")
+  await owner.getByTestId("artifact-inspect-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+
+  const src = await contentOf(owner, shortId)
+  expect(src).toMatch(/<p id=one>[\s\S]*<a href="https:\/\/derive\.to">[^<]+<\/a>[\s\S]*<\/p>/)
 })
 
 test("resize an image and box, then undo/redo and save", async ({ owner }) => {
@@ -418,8 +450,10 @@ test("Inspect appears only inside an editor's HTML edit session", async ({ owner
   await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
   await expect(tabs).toHaveText(["comments", "chat", "inspect"])
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveAttribute("aria-pressed", "true")
-  await expect(owner.getByTestId("artifact-inspect")).toContainText("Source-safe HTML tools")
-  await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("No unsaved visual changes")
+  await expect(owner.getByTestId("artifact-inspect-choose")).toContainText(
+    "Choose content in the document",
+  )
+  await expect(owner.getByTestId("artifact-inspect-status")).toHaveText("No unsaved changes")
   await owner.getByTestId("artifact-inspect-done").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)

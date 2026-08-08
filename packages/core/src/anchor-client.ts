@@ -1739,6 +1739,10 @@ interface ElReg {
    *  things can change (dirty count, undo, redo, a live selection) still posts only
    *  when something a control would show actually moved. */
   let lastState = ""
+  // The resize controller is mounted later in the file. Keeping this tiny bridge
+  // here lets the shared edit-state reporter describe the CURRENT editing context
+  // without coupling text history to the overlay's implementation details.
+  let hasSelectedResize = () => false
 
   const structSigOf = (el: Element): string => {
     const list = el.querySelectorAll("*")
@@ -1868,8 +1872,51 @@ interface ElReg {
 
   const postDirty = () => {
     const n = countDirty()
-    const canFormat = !!formattableRange()
-    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}`
+    const range = formattableRange()
+    const canFormat = !!range
+    // A double-click can select a word just before its block is armed editable.
+    // selectionchange sees the pre-armed block and cannot cache it, while this
+    // settled state pass can. Preserve it here too so the host may safely ask an
+    // intermediate question (the link URL) without losing the words it applies to.
+    if (range) pendingRange = range.cloneRange()
+    const pending =
+      pendingRange &&
+      pendingRange.startContainer.isConnected &&
+      pendingRange.endContainer.isConnected
+        ? pendingRange
+        : null
+    const contextRange = range ?? pending
+    const contextNode = contextRange?.commonAncestorContainer ?? null
+    const contextEl =
+      contextNode?.nodeType === 1 ? (contextNode as Element) : contextNode?.parentElement
+    const focused = asEl(document.activeElement)?.closest("[data-derive-editable]") ?? null
+    const textBlock = focused ?? contextEl?.closest("[data-derive-editable]") ?? null
+    // Keep the contextual tools standing while a host-side intermediate control
+    // (currently the Link URL field) owns focus. The cached range is still the
+    // command target, so swapping Inspect back to its empty state would be both
+    // visually jarring and misleading.
+    const textActive = !hasSelectedResize() && !!textBlock
+    const textKind = textActive
+      ? ({
+          P: "Paragraph",
+          LI: "List item",
+          BLOCKQUOTE: "Quote",
+          FIGCAPTION: "Caption",
+          PRE: "Code block",
+          TD: "Table cell",
+          TH: "Table heading",
+          H1: "Heading 1",
+          H2: "Heading 2",
+          H3: "Heading 3",
+          H4: "Heading 4",
+          H5: "Heading 5",
+          H6: "Heading 6",
+        }[textBlock?.tagName ?? ""] ?? "Text")
+      : ""
+    const selectedText = contextRange
+      ? contextRange.toString().replace(/\s+/g, " ").trim().slice(0, 120)
+      : ""
+    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}`
     if (state !== lastState) {
       lastState = state
       lastDirty = n
@@ -1879,6 +1926,9 @@ interface ElReg {
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,
         canFormat,
+        textActive,
+        textKind,
+        selectedText,
       })
     }
   }
@@ -2021,6 +2071,7 @@ interface ElReg {
 
   let resizeHoverEl: ResizableElement | null = null
   let resizeSelectedEl: ResizableElement | null = null
+  hasSelectedResize = () => !!resizeSelectedEl
   let precisionOn = false
   let precisionAxis: "width" | "height" = "width"
   interface ResizeDrag {
@@ -2111,6 +2162,7 @@ interface ElReg {
     if (el) resizeHoverEl = el
     setEditHover(null)
     paintResizeUi()
+    scheduleDirty()
   }
   const clearResizeUi = () => {
     closePrecision(false)
@@ -2624,6 +2676,7 @@ interface ElReg {
     }
     setEditHover(null) // it's the focused block now; the focus ring speaks for it
     revealBlock(target.el)
+    scheduleDirty()
   }
   /** The text node a point resolves to, or null where editing can't reach. */
   const editNodeAt = (
@@ -2685,6 +2738,17 @@ interface ElReg {
     if (el0?.closest(".derive-edit-ui")) return
     // Never navigate while editing — a click on a link edits its text instead.
     if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+    // Once a text block is active, a double/triple click belongs to the browser's
+    // native word/paragraph selection. Re-focusing that same contenteditable from
+    // the click handler collapses Chromium's just-created selection to a caret,
+    // leaving every formatting command disabled. Let the selection stand and only
+    // publish its contextual state after the native event has settled.
+    if (e.detail > 1 && el0?.closest("[data-derive-editable]")) {
+      selectResize(null)
+      setResizeHover(null)
+      window.setTimeout(scheduleDirty, 0)
+      return
+    }
     // A picture selects its direct-manipulation box. Replace is now an explicit verb
     // on that box, leaving the corner grip free to mean resize on mouse and touch.
     const img = imageAt(e)
@@ -2745,6 +2809,16 @@ interface ElReg {
       }),
     true,
   )
+
+  // Text context in the host follows focus as well as selection. This makes Inspect
+  // useful as soon as someone clicks into a paragraph, before they select words to
+  // format. Defer focusout by one turn so focus moving within the frame settles first.
+  document.addEventListener("focusin", () => {
+    if (editOn) scheduleDirty()
+  })
+  document.addEventListener("focusout", () => {
+    if (editOn) window.setTimeout(scheduleDirty, 0)
+  })
 
   /* THE WAY IN, from the document itself. Double-click any text and the host opens
      edit mode with the caret already in that block — the mode used to be reachable
@@ -2932,7 +3006,21 @@ interface ElReg {
       post({ type: "edit-blocked", reason: "format-range" })
       return
     }
-    window.getSelection()?.removeAllRanges()
+    // Return the writing context to the document after a host-side command. A
+    // collapsed caret immediately after the formatted run is the natural place to
+    // continue typing, and it keeps Inspect contextual instead of flashing back to
+    // its empty state once the selection is consumed.
+    try {
+      block.focus({ preventScroll: true })
+      const caret = document.createRange()
+      caret.setStartAfter(span)
+      caret.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(caret)
+    } catch (_e) {
+      window.getSelection()?.removeAllRanges()
+    }
     scheduleDirty()
   }
   /** Enter: a line break at the caret, carried by the same editor span the other
