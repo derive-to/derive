@@ -172,11 +172,14 @@ export const materializeDueRuns = async (
     now,
   )
 
-/** The HOSTED tick: due schedule runs across every enabled automation on this deployment.
- *  `operatorPays` is true only when the selected unattended substrate can use the operator's
- *  gateway — see the payer guard in materializeFor for why the chain is skipped then. */
+/** The HOSTED tick: due schedule runs across every enabled automation in this deployment's
+ *  selected workspace scope (all when omitted). `operatorPays` is true only when the selected
+ *  unattended substrate can use the operator's gateway — see the payer guard in materializeFor
+ *  for why the chain is skipped then. */
 export const materializeAllDueRuns = async (
   meta: MetaStore,
   now: Date,
   operatorPays: boolean | ((automation: AutomationRecord) => boolean) = false,
-): Promise<number> => materializeFor(meta, await meta.listEnabledAutomations(), now, operatorPays)
+  orgIds?: readonly string[],
+): Promise<number> =>
+  materializeFor(meta, await meta.listEnabledAutomations(undefined, orgIds), now, operatorPays)

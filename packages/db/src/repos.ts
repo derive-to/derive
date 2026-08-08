@@ -3122,24 +3122,33 @@ export function makeRepos(db: SqliteDb) {
   // Count only LIVE working sessions (lease not lapsed): a crashed run whose lease has
   // expired must NOT fill the concurrency cap, or the queue wedges — the lapsed-lease
   // reclaim lives in claimPendingSessions, which only runs when there is room.
-  const listDueOpenSessions = async (now: string, limit = 50): Promise<SessionRecord[]> =>
-    (await db
-      .select()
-      .from(contextSession)
-      .where(
-        or(
-          eq(contextSession.state, "open"),
-          // A `working` row whose lease lapsed (or never existed) is a dead executor's
-          // session — runnable again, exactly as claimPendingSessions treats it.
-          and(
-            eq(contextSession.state, "working"),
-            or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
-          ),
-        ),
-      )
-      .orderBy(contextSession.created_at)
-      .limit(limit)
-      .all()) as SessionRecord[]
+  const listDueOpenSessions = async (
+    now: string,
+    limit = 50,
+    orgIds?: readonly string[],
+  ): Promise<SessionRecord[]> =>
+    orgIds?.length === 0
+      ? []
+      : ((await db
+          .select()
+          .from(contextSession)
+          .where(
+            and(
+              orgIds ? inArray(contextSession.org_id, [...orgIds]) : undefined,
+              or(
+                eq(contextSession.state, "open"),
+                // A `working` row whose lease lapsed (or never existed) is a dead executor's
+                // session — runnable again, exactly as claimPendingSessions treats it.
+                and(
+                  eq(contextSession.state, "working"),
+                  or(isNull(contextSession.lease_until), lt(contextSession.lease_until, now)),
+                ),
+              ),
+            ),
+          )
+          .orderBy(contextSession.created_at)
+          .limit(limit)
+          .all()) as SessionRecord[])
   const claimSessionById = async (
     id: string,
     agentId: string,
@@ -3594,13 +3603,21 @@ export function makeRepos(db: SqliteDb) {
   const reclaimStaleRuns = async (
     cutoffIso: string,
     maxAttempts = 3,
+    orgIds?: readonly string[],
   ): Promise<{ requeued: number; failed: number }> => {
+    if (orgIds?.length === 0) return { requeued: 0, failed: 0 }
     // Substrate died mid-run: running since before the cutoff. Requeue with an attempt count
     // in meta (JSON attribute, not a column); give up as failed/lost past maxAttempts.
     const stale = (await db
       .select()
       .from(run)
-      .where(and(eq(run.status, "running"), lte(run.started_at, cutoffIso)))
+      .where(
+        and(
+          orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
+          eq(run.status, "running"),
+          lte(run.started_at, cutoffIso),
+        ),
+      )
       .limit(100)
       .all()) as RunRecord[]
     let requeued = 0
@@ -3643,23 +3660,43 @@ export function makeRepos(db: SqliteDb) {
     }
     return { requeued, failed }
   }
-  const listEnabledAutomations = async (limit = 500): Promise<AutomationRecord[]> =>
-    (await db
-      .select()
-      .from(automation)
-      .where(eq(automation.enabled, 1))
-      .limit(limit)
-      .all()) as AutomationRecord[]
-  const listDueQueuedRuns = async (now: string, limit = 50): Promise<RunRecord[]> =>
-    (await db
-      .select()
-      .from(run)
-      .where(
-        and(eq(run.status, "queued"), or(isNull(run.scheduled_for), lte(run.scheduled_for, now))),
-      )
-      .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
-      .limit(limit)
-      .all()) as RunRecord[]
+  const listEnabledAutomations = async (
+    limit = 500,
+    orgIds?: readonly string[],
+  ): Promise<AutomationRecord[]> =>
+    orgIds?.length === 0
+      ? []
+      : ((await db
+          .select()
+          .from(automation)
+          .where(
+            and(
+              orgIds ? inArray(automation.org_id, [...orgIds]) : undefined,
+              eq(automation.enabled, 1),
+            ),
+          )
+          .limit(limit)
+          .all()) as AutomationRecord[])
+  const listDueQueuedRuns = async (
+    now: string,
+    limit = 50,
+    orgIds?: readonly string[],
+  ): Promise<RunRecord[]> =>
+    orgIds?.length === 0
+      ? []
+      : ((await db
+          .select()
+          .from(run)
+          .where(
+            and(
+              orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
+              eq(run.status, "queued"),
+              or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
+            ),
+          )
+          .orderBy(sql`coalesce(${run.scheduled_for}, '') asc`)
+          .limit(limit)
+          .all()) as RunRecord[])
   const findCoalescibleRun = async (
     automationId: string,
     cutoffIso: string,

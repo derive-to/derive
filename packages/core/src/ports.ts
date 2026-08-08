@@ -1505,11 +1505,15 @@ export interface ContextStore {
   /** How many sessions are currently `working` on a context — the per-context
    *  concurrency cap (the route claims min(limit, max_concurrency - working)). */
   countWorkingSessions(contextId: string): Promise<number>
-  /** Sessions awaiting an executor across ALL workspaces (capped, oldest first) — the hosted
-   *  tick's ask-lane scan, the twin of listDueQueuedRuns. Runnable means `open`, or `working`
-   *  with a lapsed lease (a dead executor's session self-heals). Read-only: dispatch never
-   *  claims, the booted executor does. */
-  listDueOpenSessions(now: string, limit?: number): Promise<SessionRecord[]>
+  /** Sessions awaiting an executor across the selected workspaces (all when omitted), capped
+   *  oldest first — the hosted tick's ask-lane scan, the twin of listDueQueuedRuns. Runnable
+   *  means `open`, or `working` with a lapsed lease (a dead executor's session self-heals).
+   *  Read-only: dispatch never claims, the booted executor does. */
+  listDueOpenSessions(
+    now: string,
+    limit?: number,
+    orgIds?: readonly string[],
+  ): Promise<SessionRecord[]>
   /** Claim EXACTLY one session for one agent (the capability-token path: a dispatched substrate
    *  serves its one session, never a batch). open|lapsed-working → `working` under the same
    *  lease, so a double-booted substrate loses the race and exits clean. Null when it isn't
@@ -1784,13 +1788,16 @@ export interface AgentStore {
   reclaimStaleRuns(
     cutoffIso: string,
     maxAttempts?: number,
+    orgIds?: readonly string[],
   ): Promise<{ requeued: number; failed: number }>
-  /** Every enabled automation across ALL workspaces (capped) — the hosted tick scans these
-   *  to materialize due schedule runs. Fine at self-host scale; revisit if it ever shows up. */
-  listEnabledAutomations(limit?: number): Promise<AutomationRecord[]>
-  /** Queued runs due now across ALL workspaces (capped), oldest first — the hosted tick's
-   *  dispatch scan. Read-only: dispatch does NOT claim; the booted substrate claims. */
-  listDueQueuedRuns(now: string, limit?: number): Promise<RunRecord[]>
+  /** Every enabled automation across the selected workspaces (all when omitted), capped — the
+   *  hosted tick scans these to materialize due schedule runs. Fine at self-host scale; revisit
+   *  if it ever shows up. */
+  listEnabledAutomations(limit?: number, orgIds?: readonly string[]): Promise<AutomationRecord[]>
+  /** Queued runs due now across the selected workspaces (all when omitted), capped oldest first
+   *  — the hosted tick's dispatch scan. Read-only: dispatch does NOT claim; the booted substrate
+   *  claims. */
+  listDueQueuedRuns(now: string, limit?: number, orgIds?: readonly string[]): Promise<RunRecord[]>
   /** Terminate a run: set the terminal status, finished_at, and (optional) cost + meta.
    *  Scoped to (id, agent) so only the claiming agent settles it. `expectedStartedAt`, when
    *  given, fences it to THIS caller's own claim — see requeueRun's doc for why: without it, a

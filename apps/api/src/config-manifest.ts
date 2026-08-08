@@ -346,6 +346,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "true",
   },
   {
+    name: "DERIVE_HOSTED_RUNS_ALLOWLIST",
+    group: "advanced",
+    doc: "Comma-separated immutable workspace ids allowed to execute on this deployment's\nhosted substrate. It gates scheduled materialization, stale-run recovery, the minute dispatch\nsweep, Run now nudges, and hosted ask sessions. Owner-operated polling runners are unaffected.\n\nOn the multi-tenant Cloudflare Worker, unset or blank means NOBODY (fail closed). On a Node\nself-host, unset preserves the single-tenant default of no restriction; set it to restrict\nhosted execution there too, and set it to an empty string for a deployment-level stop.",
+    example: "ws_abc123,ws_def456",
+  },
+  {
     name: "DERIVE_LOOP_RUNS",
     group: "advanced",
     doc: 'EXPERIMENTAL — run hosted automations IN THIS PROCESS instead of spawning the derive CLI.\nA model call plus fetch, which is all a "read something, write an artifact" automation\nneeds, with no child process and no container. Anything wanting a shell, a filesystem or\ngit still belongs on the CLI runner, so this is opt-in and DERIVE_HOSTED_RUNS must also be\non. The same code path runs on Cloudflare: the loop is an HTTP client of this API, so\nthere is no platform-specific implementation to keep in step.',

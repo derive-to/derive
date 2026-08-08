@@ -28,7 +28,12 @@ import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
-import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import {
+  slackFromEnv,
+  subdomainBaseFromEnv,
+  superAdminsFromEnv,
+  workspaceIdsFromEnv,
+} from "./lib/env"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
@@ -157,6 +162,9 @@ export interface Env {
   DERIVE_MODEL_GATEWAYS?: string
   /** Workspace ids allowed to enable chat while the gateway above pays. */
   DERIVE_CHAT_ALLOWLIST?: string
+  /** Workspace ids allowed to execute on Derive's hosted substrate. Empty/unset means nobody
+   *  on the multi-tenant edge; owner-operated polling runners remain available everywhere. */
+  DERIVE_HOSTED_RUNS_ALLOWLIST?: string
   /** "1" runs automations in this isolate via the loop substrate instead of booting a container.
    *  Off by default, so derive.to keeps its current behaviour until it is set deliberately. */
   DERIVE_LOOP_RUNS?: string
@@ -624,6 +632,9 @@ async function withHostedDispatch(
       // The gateway can pay only for work that actually uses the in-Worker loop. Containerized
       // coding agents still resolve their selected provider's plan through the payer chain.
       operatorPays: env.DERIVE_LOOP_RUNS === "1" && !!gateway,
+      // Multi-tenant rollout is FAIL CLOSED: unlike Node self-host, the Worker always passes a
+      // set. A missing/blank binding therefore selects zero workspaces rather than every one.
+      hostedOrgIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
     })
   await (env.HYPERDRIVE
     ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)

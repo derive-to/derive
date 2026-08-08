@@ -404,6 +404,99 @@ describe("the workspace master switch", () => {
   })
 })
 
+describe("the operator hosted-execution rollout boundary", () => {
+  const deniedDeps = (substrate: Substrate) => ({
+    ...deps(substrate),
+    // The exact shape the multi-tenant Worker produces when the deployment variable is missing
+    // or blank: fail closed to nobody, never fall back to the Node self-host default.
+    hostedOrgIds: new Set<string>(),
+  })
+
+  it("boots work when its immutable workspace id is explicitly selected", async () => {
+    const auto = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "This workspace is in the hosted rollout.",
+    })
+    const run = await runNow(auto.id)
+    const { substrate, started } = fakeSubstrate()
+
+    const pass = await dispatchPass({ ...deps(substrate), hostedOrgIds: new Set(["default"]) })
+    expect(pass.started).toBe(1)
+    expect(started[0]?.runId).toBe(run.id)
+  })
+
+  it("keeps both the minute sweep and Run now out of a workspace not on the allowlist", async () => {
+    const auto = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "Stay queued for an owner-operated runner.",
+    })
+    const run = await runNow(auto.id)
+    const { substrate, started } = fakeSubstrate()
+
+    const pass = await dispatchPass(deniedDeps(substrate))
+    expect(pass.started).toBe(0)
+    expect(started).toHaveLength(0)
+    expect(await dispatchRunNow(deniedDeps(substrate), run.id)).toBe(false)
+    // Not failed or consumed: the deployment's hosted substrate is off here, while a polling
+    // runner owned by the workspace can still claim the same durable queue row.
+    expect((await meta.getRun(run.id))?.status).toBe("queued")
+  })
+
+  it("does not materialize schedules or reclaim stale work outside the rollout", async () => {
+    const scheduled = await mkAutomation({
+      trigger: { kind: "schedule", cron: "* * * * *", tz: "UTC" },
+      instruction: "The hosted clock must not fire this.",
+    })
+    const manual = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "The hosted recovery sweep must not touch this.",
+    })
+    const stale = await runNow(manual.id)
+    const rec = await meta.getRun(stale.id)
+    await meta.claimRunById(
+      stale.id,
+      rec?.agent_id ?? "",
+      new Date(Date.now() - 3_600_000).toISOString(),
+    )
+
+    const { substrate } = fakeSubstrate()
+    const pass = await dispatchPass(deniedDeps(substrate))
+    expect(pass.materialized).toBe(0)
+    expect(pass.requeued).toBe(0)
+    expect((await meta.getRun(stale.id))?.status).toBe("running")
+    expect(
+      (await meta.listRuns("default", 200)).filter((r) => r.automation_id === scheduled.id),
+    ).toHaveLength(0)
+  })
+
+  it("does not boot hosted asks outside the rollout", async () => {
+    const brief = await publishAs(app, "# QA boundary", { title: "QA Boundary" }, as(owner.email))
+    const briefJson = (await brief.json()) as { short_id: string }
+    const context = (await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "QA Boundary Context",
+          manifest_short_id: briefJson.short_id,
+        }),
+      )
+    ).json()) as { id: string }
+    const { session } = (await (
+      await app.request(
+        `/v1/contexts/${context.id}/sessions`,
+        jsonAs(as(owner.email), { body_md: "Do not boot this ask." }),
+      )
+    ).json()) as { session: { id: string } }
+
+    const { substrate, started } = fakeSubstrate()
+    const pass = await dispatchPass(deniedDeps(substrate))
+    expect(pass.sessionsStarted).toBe(0)
+    expect(started.some((s) => s.runId === session.id)).toBe(false)
+    expect((await meta.getSession(session.id))?.state).toBe("open")
+    await meta.setSessionState(session.id, "failed")
+  })
+})
+
 describe("run capability tokens", () => {
   it("round-trips its claim, and rejects a forged, tampered, or expired token", async () => {
     const now = Date.now()

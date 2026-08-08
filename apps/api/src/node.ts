@@ -25,6 +25,7 @@ import { answerDeriveMention } from "./lib/comment-turn"
 import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
+import { workspaceIdsFromEnv } from "./lib/env"
 import { makeGithubCommentSender } from "./lib/github-comments"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { mountWeb } from "./lib/serve-web"
@@ -457,6 +458,11 @@ const hostedDispatch = cfg.hostedRuns
       // A generic gateway pays only when the selected unattended substrate can actually use it.
       // The CLI child cannot, and must resolve its own Claude/Codex plan through the payer chain.
       operatorPays: process.env.DERIVE_LOOP_RUNS === "1" && modelGateway() !== null,
+      // Self-host stays unrestricted when unset. Setting the variable (including explicitly
+      // blank) gives an operator the same precise rollout/kill boundary as the shared host.
+      ...(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST === undefined
+        ? {}
+        : { hostedOrgIds: workspaceIdsFromEnv(process.env.DERIVE_HOSTED_RUNS_ALLOWLIST) }),
     }
   : null
 
