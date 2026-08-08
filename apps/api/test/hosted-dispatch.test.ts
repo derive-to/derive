@@ -1,9 +1,17 @@
-import { newId } from "@derive/core"
+import { newId, type RunExecution } from "@derive/core"
 import { beforeEach, describe, expect, it } from "vitest"
 import { dispatchPass, dispatchRunNow, type Substrate } from "../src/lib/dispatch"
 import { SESSION_MAX_AGE_MS } from "../src/lib/run-lifecycle"
 import { signRunToken, verifyRunToken } from "../src/lib/run-token"
-import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import {
+  as,
+  bearer,
+  connectPoolPlan,
+  jsonAs,
+  makeAuthedApp,
+  publishAs,
+  type TestUser,
+} from "./helpers"
 
 // HOSTED DISPATCH, tested with NO container, NO wrangler, and NO network. The substrate is the
 // only platform-specific piece, so a fake one lets the whole correctness story — materialize,
@@ -18,7 +26,7 @@ const { app, meta } = makeAuthedApp("hosted-dispatch", [owner], "commenter", {
 
 /** A substrate that records what it was asked to boot instead of booting anything. */
 const fakeSubstrate = () => {
-  const started: { runId: string; token: string; server: string }[] = []
+  const started: { runId: string; token: string; server: string; execution?: RunExecution }[] = []
   const s: Substrate = {
     name: "fake",
     async start(input) {
@@ -75,6 +83,7 @@ describe("hosted dispatch — the platform-agnostic core", () => {
     expect(first.started).toBe(1)
     expect(started[0]?.runId).toBe(run.id)
     expect(started[0]?.server).toBe("https://derive.test")
+    expect(started[0]?.execution?.provider).toBe("claude-code")
 
     // The token is a real signed capability, pinned to this run + its agent + workspace.
     const claim = await verifyRunToken(SECRET, started[0]?.token ?? "", Date.now())
@@ -83,6 +92,23 @@ describe("hosted dispatch — the platform-agnostic core", () => {
     // Dispatch does NOT claim — the executor does. So the run is still queued, and that is
     // exactly why a duplicate boot is harmless (the loser's claim finds nothing).
     expect((await meta.getRun(run.id))?.status).toBe("queued")
+  })
+
+  it("hands the immutable Codex choice to the substrate", async () => {
+    await connectPoolPlan(meta, "default", "codex")
+    const auto = await mkAutomation({
+      trigger: { kind: "manual" },
+      instruction: "Use the selected coding agent.",
+      provider: "codex",
+    })
+    const run = await runNow(auto.id)
+    const { substrate, started } = fakeSubstrate()
+
+    expect((await dispatchPass(deps(substrate))).started).toBe(1)
+    expect(started[0]).toMatchObject({
+      runId: run.id,
+      execution: { version: 1, provider: "codex", location: "hosted", model: null },
+    })
   })
 
   it("a run already claimed by an executor is not dispatched again", async () => {
@@ -603,6 +629,7 @@ describe("the unattended lane on a deployment that holds the model key", () => {
     // tier — initiator, owner-lend, pool — genuinely comes up empty.
     const noPlans = Object.create(meta) as typeof meta
     noPlans.listModelCredentials = async () => []
+    noPlans.getModelCredential = async () => null
 
     // Without a gateway, refusing is correct: this is the guard doing its job.
     const { substrate } = fakeSubstrate()

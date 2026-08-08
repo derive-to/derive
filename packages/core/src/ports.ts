@@ -1729,7 +1729,9 @@ export interface AgentStore {
       agent_id?: string
       trigger?: string
       instruction?: string
+      provider?: import("./execution").ExecutionProvider
       refs?: string | null
+      context_id?: string | null
       /** JSON array of connection ids this automation may spend; null clears them all. */
       connection_ids?: string | null
       enabled?: 0 | 1
@@ -2309,6 +2311,8 @@ export interface AutomationRecord {
   trigger: string
   /** Free-form: what the agent should do. */
   instruction: string
+  /** The coding-agent runtime this automation executes with. */
+  provider: import("./execution").ExecutionProvider
   /** Serialized inputs/targets (artifact ids, urls, arbitrary), or null. */
   refs: string | null
   /** Serialized JSON array of bound connection ids — the SOURCES a run may read from. A run
@@ -2327,6 +2331,7 @@ export interface NewAutomation {
   agent_id: string
   trigger: string
   instruction: string
+  provider?: import("./execution").ExecutionProvider
   refs?: string | null
   connection_ids?: string | null
   context_id?: string | null

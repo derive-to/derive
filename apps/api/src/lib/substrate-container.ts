@@ -61,6 +61,10 @@ export const containerSubstrate = (opts: ContainerSubstrateOpts): Substrate => (
       DERIVE_SERVER: server,
       DERIVE_CONTEXT: "",
       DERIVE_RUN_TIMEOUT_MS: String(opts.timeoutMs ?? RUN_TIMEOUT_MS),
+      // The coding-agent sandbox is the container itself. This lets Codex make the requested
+      // workspace changes without layering a second Landlock sandbox that is unavailable in
+      // the Cloudflare runtime; source credentials still never enter the container.
+      DERIVE_RUNNER_ISOLATED: "1",
     }
     if (typeof inst.startRun === "function") {
       await inst.startRun(envVars)

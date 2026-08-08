@@ -342,7 +342,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_HOSTED_RUNS",
     group: "advanced",
-    doc: "EXPERIMENTAL — hosted automation runs on this Node deploy: the API process materializes\ndue schedules and executes each run by spawning the derive CLI\n(`derive runner run <capability token>`) as a child process on this box. Needs the CLI\nplus a coding agent (claude/codex) installed, and a connected model plan (or an ambient\nANTHROPIC_API_KEY / OPENAI_API_KEY). Unset = off; queued runs then wait for a polling\n`derive runner`.",
+    doc: "EXPERIMENTAL — hosted automation runs on this Node deploy: the API process materializes\ndue schedules and executes each run by spawning the derive CLI\n(`derive runner run <capability token>`) as a child process on this box. Needs the CLI,\nthe selected coding agent (Claude Code or Codex), and a matching connected model plan.\nAmbient model keys are deliberately not inherited by the child. Unset = off; queued runs\nthen wait for a polling `derive runner`.",
     example: "true",
   },
   {

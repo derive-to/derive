@@ -1,4 +1,4 @@
-import type { MetaStore } from "@derive/core"
+import type { ExecutionProvider, MetaStore } from "@derive/core"
 
 /**
  * WHO PAYS for a run or an ask — one definition, used at both ends.
@@ -21,10 +21,10 @@ import type { MetaStore } from "@derive/core"
  *   3. POOL — a workspace-level credential stored against a sentinel user, for work with no
  *      person behind it (a clock, an event) or a person who has connected nothing.
  *
- * A tier counts as payable when it holds ANY model credential. The stored kinds are api_key,
- * oauth and login, and each is a legitimate way to pay, so presence is what is checked — not a
- * particular shape. The executor still resolves the specific provider and decrypts, which is
- * where an unreadable secret is caught; this is a "can anyone pay at all" question.
+ * Once work names a provider, a tier counts as payable only when it holds THAT provider's
+ * credential. Older lanes that have not selected a runtime may still ask whether any credential
+ * exists. This distinction prevents a Codex run from passing preflight because Claude happens to
+ * be connected, then booting a container that can never authenticate.
  */
 
 /** The sentinel user a workspace-level (pool) credential is stored against. */
@@ -68,17 +68,30 @@ export const payerChain = async (
 /**
  * The FIRST tier that holds a credential, or null when nothing in the chain can pay.
  *
- * Deliberately provider-agnostic. At enqueue nobody has chosen a provider yet — the executor
- * picks one from its own configuration — so requiring a specific one here would refuse a
- * workspace that has connected Codex because the question happened to be asked about Claude.
+ * Provider-aware when the work has already selected one; provider-agnostic for legacy lanes
+ * that still delegate that choice to their executor configuration.
  */
 export const findPayer = async (
   meta: MetaStore,
-  input: { orgId: string; agentId: string; agentCreatedBy: string | null; initiator: Payer | null },
+  input: {
+    orgId: string
+    agentId: string
+    agentCreatedBy: string | null
+    initiator: Payer | null
+    provider?: ExecutionProvider
+  },
 ): Promise<Payer | null> => {
   for (const tier of await payerChain(meta, input)) {
-    const creds = await meta.listModelCredentials(input.orgId, tier.userId).catch(() => [])
-    if (creds.length > 0) return tier
+    const payable = input.provider
+      ? await meta
+          .getModelCredential(input.orgId, tier.userId, input.provider)
+          .then((credential) => credential !== null)
+          .catch(() => false)
+      : await meta
+          .listModelCredentials(input.orgId, tier.userId)
+          .then((credentials) => credentials.length > 0)
+          .catch(() => false)
+    if (payable) return tier
   }
   return null
 }
@@ -98,7 +111,12 @@ export const findPayer = async (
  */
 export const canPayForAgent = async (
   meta: MetaStore,
-  input: { orgId: string; agentId: string; initiator: Payer | null },
+  input: {
+    orgId: string
+    agentId: string
+    initiator: Payer | null
+    provider?: ExecutionProvider
+  },
 ): Promise<boolean> => {
   const agent = await meta.getAgent(input.agentId)
   const payer = await findPayer(meta, {
@@ -106,6 +124,7 @@ export const canPayForAgent = async (
     agentId: input.agentId,
     agentCreatedBy: agent?.created_by ?? null,
     initiator: input.initiator,
+    provider: input.provider,
   })
   return payer !== null
 }

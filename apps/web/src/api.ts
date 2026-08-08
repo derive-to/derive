@@ -282,6 +282,10 @@ export type AutomationRef =
 export interface Automation {
   id: string
   agent_id: string
+  /** The coding-agent runtime this automation sends to hosted execution. */
+  provider: "claude-code" | "codex"
+  /** Optional packaged methodology (manifest, repos, and skills) for complex runs. */
+  context_id: string | null
   trigger: AutomationTrigger
   instruction: string
   refs: AutomationRef[]
@@ -968,17 +972,24 @@ export const api = {
   // returns its bearer as agent_token, exactly once on this response.
   createAutomation: (input: {
     agentId?: string
+    provider?: Automation["provider"]
+    contextId?: string
     trigger: AutomationTrigger
     instruction: string
+    /** Create the first run in the same request; a failure unwinds the automation. */
+    runNow?: boolean
     /** Bare strings are artifact shorthand; the server stores canonical selectors. */
     refs?: (string | AutomationRef)[]
     /** Sources the run may read from. Each must be this workspace's and attachable by you. */
     connectionIds?: string[]
-  }): Promise<Automation & { agent_token?: string }> => f("/v1/automations", opts(input)).then(j),
+  }): Promise<Automation & { agent_token?: string; run_id?: string; run_status?: string }> =>
+    f("/v1/automations", opts(input)).then(j),
   updateAutomation: (
     id: string,
     input: {
       agentId?: string
+      provider?: Automation["provider"]
+      contextId?: string | null
       trigger?: AutomationTrigger
       instruction?: string
       refs?: (string | AutomationRef)[] | null

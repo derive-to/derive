@@ -19,8 +19,7 @@
 import { claudeCode } from "./claude-code.js"
 import { codex } from "./codex.js"
 
-/** name → provider. claude-code is the default and the verified reference impl;
- *  codex is experimental (see its header). */
+/** name → provider. Both adapters use their official CLI and a shared structured result shape. */
 export const PROVIDERS = {
   [claudeCode.name]: claudeCode,
   [codex.name]: codex,

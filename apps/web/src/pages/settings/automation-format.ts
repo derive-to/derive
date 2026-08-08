@@ -98,3 +98,33 @@ export function runOutcome(meta: string | null): string | null {
     return null
   }
 }
+
+export interface RunExecutionReceipt {
+  provider: "claude-code" | "codex"
+  location: "hosted" | "local"
+  model: string | null
+  actions: number
+  threadId: string | null
+}
+
+/** The execution proof attached at enqueue (provider/location/model) and enriched at finish with
+ *  the coding agent's structured action count + thread id. Malformed or historical rows are
+ *  simply quiet in the activity list. */
+export function runExecutionReceipt(meta: string | null): RunExecutionReceipt | null {
+  if (!meta) return null
+  try {
+    const value = JSON.parse(meta) as Record<string, unknown>
+    const execution = value.execution as Record<string, unknown> | undefined
+    if (!execution || (execution.provider !== "claude-code" && execution.provider !== "codex"))
+      return null
+    return {
+      provider: execution.provider,
+      location: execution.location === "local" ? "local" : "hosted",
+      model: typeof execution.model === "string" ? execution.model : null,
+      actions: Array.isArray(value.actions) ? value.actions.length : 0,
+      threadId: typeof value.thread_id === "string" ? value.thread_id : null,
+    }
+  } catch {
+    return null
+  }
+}

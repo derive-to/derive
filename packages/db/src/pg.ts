@@ -4439,7 +4439,9 @@ export class PgMetaStore implements MetaStore {
       agent_id?: string
       trigger?: string
       instruction?: string
+      provider?: import("@derive/core").ExecutionProvider
       refs?: string | null
+      context_id?: string | null
       /** JSON array of connection ids this automation may spend; null clears them all. */
       connection_ids?: string | null
       enabled?: 0 | 1
@@ -4449,7 +4451,9 @@ export class PgMetaStore implements MetaStore {
     if (fields.agent_id !== undefined) set.agent_id = fields.agent_id
     if (fields.trigger !== undefined) set.trigger = fields.trigger
     if (fields.instruction !== undefined) set.instruction = fields.instruction
+    if (fields.provider !== undefined) set.provider = fields.provider
     if (fields.refs !== undefined) set.refs = fields.refs
+    if (fields.context_id !== undefined) set.context_id = fields.context_id
     if (fields.connection_ids !== undefined) set.connection_ids = fields.connection_ids
     if (fields.enabled !== undefined) set.enabled = fields.enabled
     if (Object.keys(set).length === 0) return this.getAutomation(id)

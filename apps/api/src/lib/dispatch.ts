@@ -1,4 +1,10 @@
-import type { MetaStore, RunRecord } from "@derive/core"
+import {
+  type MetaStore,
+  parseRunExecution,
+  parseRunMeta,
+  type RunExecution,
+  type RunRecord,
+} from "@derive/core"
 import { log } from "../log"
 import { overBudget } from "./budget"
 import {
@@ -39,6 +45,8 @@ export interface Substrate {
     token: string
     /** The API base URL the executor calls back on. */
     server: string
+    /** Enqueue-time execution choice. Absent for sessions and historical work. */
+    execution?: RunExecution
   }): Promise<void>
 }
 
@@ -53,11 +61,9 @@ export interface DispatchDeps {
   server: string
   /** DERIVE_AUTH_SECRET / encryptionKey — signs the capability tokens. */
   secret: string
-  /** True when this deployment has an operator gateway (DERIVE_MODEL_BASE_URL/_API_KEY/_NAME),
-   *  i.e. it holds the key and pays for every workspace on it. The schedule materializer then
-   *  skips the payer walk: there is no plan for anyone to connect, so the chain returns null and
-   *  would refuse every occurrence forever. Set from the SAME gateway helper each entry point
-   *  already uses to build the substrate, so the two can never disagree about it. */
+  /** True when this deployment has an operator gateway AND unattended work uses the in-process
+   *  model loop. The schedule materializer then skips the payer walk for Claude loop runs. A
+   *  CLI/container coding-agent run cannot use that gateway and must still resolve a plan. */
   operatorPays?: boolean
   /** Max runs started per pass (the global burst valve). Default 10. */
   limit?: number
@@ -91,11 +97,16 @@ export interface DispatchResult {
 const startOne = async (
   deps: DispatchDeps,
   kind: "run" | "session",
-  item: { id: string; agentId: string; orgId: string },
+  item: { id: string; agentId: string; orgId: string; execution?: RunExecution },
   expMs: number,
 ): Promise<void> => {
   const token = await signWorkToken(kind, deps.secret, item.id, item.agentId, item.orgId, expMs)
-  await deps.substrate.start({ runId: item.id, token, server: deps.server })
+  await deps.substrate.start({
+    runId: item.id,
+    token,
+    server: deps.server,
+    ...(item.execution ? { execution: item.execution } : {}),
+  })
 }
 
 /**
@@ -118,7 +129,13 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
 
   // 1. Materialize due schedules.
   try {
-    out.materialized = await materializeAllDueRuns(deps.meta, now, deps.operatorPays === true)
+    out.materialized = await materializeAllDueRuns(
+      deps.meta,
+      now,
+      // The operator's generic model gateway can cover the in-process lane. It cannot
+      // authenticate a Codex CLI run, which must still resolve its selected plan.
+      (automation) => deps.operatorPays === true && automation.provider !== "codex",
+    )
   } catch (e) {
     log.warn("hosted dispatch: materialize failed", { error: (e as Error).message })
   }
@@ -215,7 +232,17 @@ export const dispatchPass = async (deps: DispatchDeps): Promise<DispatchResult> 
       continue
     }
     try {
-      await startOne(deps, "run", { id: r.id, agentId: r.agent_id, orgId: r.org_id }, expMs)
+      await startOne(
+        deps,
+        "run",
+        {
+          id: r.id,
+          agentId: r.agent_id,
+          orgId: r.org_id,
+          execution: parseRunExecution(parseRunMeta(r.meta)),
+        },
+        expMs,
+      )
       out.started += 1
       inFlight.set(r.org_id, (inFlight.get(r.org_id) ?? 0) + 1)
     } catch (e) {

@@ -838,6 +838,16 @@ async function runStructured(provider, opts) {
   const meter = opts.meter ?? { costUsd: null }
   const spend = (x) => {
     if (Number.isFinite(x?.costUsd)) meter.costUsd = (meter.costUsd ?? 0) + x.costUsd
+    if (x?.threadId) meter.threadId = x.threadId
+    if (x?.usage) meter.usage = x.usage
+    if (Array.isArray(x?.actions) && x.actions.length) {
+      const collected = meter.actions ?? []
+      for (const action of x.actions) {
+        if (collected.length >= 50 || JSON.stringify([...collected, action]).length > 4_000) break
+        collected.push(action)
+      }
+      meter.actions = collected
+    }
   }
   const started = Date.now()
   let r = await provider.run({ ...base, prompt: opts.prompt, resumeSessionId: null })
@@ -1088,6 +1098,7 @@ const MODEL_TOKEN_ENV = [
   "ANTHROPIC_AUTH_TOKEN",
   "ANTHROPIC_BASE_URL",
   "OPENAI_API_KEY",
+  "CODEX_API_KEY",
   "OPENAI_BASE_URL",
   "CODEX_HOME",
 ]
@@ -1306,19 +1317,57 @@ const outcomeFor = (decision) =>
       ? "proposed"
       : "shadow"
 
+/** Apply the run's enqueue-time provider snapshot to a generic runner process. */
+export function configForRun(cfg, run, env = process.env) {
+  const execution = run?.execution
+  const providerName = execution?.provider ?? cfg.providerName
+  if (!providerName || providerName === cfg.providerName) {
+    return {
+      ...cfg,
+      model: execution?.model ?? cfg.model,
+    }
+  }
+  const provider = selectProvider(providerName)
+  // A run that switches provider must not inherit the generic binary/model selected for the
+  // process's default provider. Use only provider-specific overrides across this boundary.
+  const agentBin =
+    providerName === "codex"
+      ? (env.CODEX_BIN ?? provider.defaultBin)
+      : (env.CLAUDE_BIN ?? provider.defaultBin)
+  const providerModel = providerName === "codex" ? env.CODEX_MODEL : env.CLAUDE_MODEL
+  return {
+    ...cfg,
+    providerName,
+    agentBin,
+    model: execution?.model ?? providerModel ?? provider.defaultModel,
+  }
+}
+
 /** Execute one claimed run: resolve the initiator's model plan, build the prompt (instruction +
  *  target + tools), run the model with the run contract + tool shim, parse the <revision>, run the
  *  write gate, write through the matching endpoint, and finish the run. Soft failures (no revision,
  *  a write error) finish the run `failed` server-side and return — never thrown — so one bad run
  *  can't stall the drain, exactly like a failed session. */
 export async function serveRun(client, run, manifest, cfg) {
+  cfg = configForRun(cfg, run)
   console.log(`[runner] run ${run.id}: "${run.instruction.slice(0, 80)}"`)
   // What this run spent, filled in by the model spawns below. Attached to EVERY finish (including
   // failures — a run that burned three attempts and produced nothing still cost money) so the
   // workspace budget sums something real. Until this existed, run.cost_micro_usd was never
   // written, so the budget's SUM was always zero and every check passed: the cap was decoration
   // and concurrency was the only true ceiling.
-  const meter = { costUsd: null }
+  const meter = { costUsd: null, actions: [], threadId: null, usage: null }
+  const receipt = () => ({
+    execution: {
+      version: 1,
+      provider: cfg.providerName,
+      location: run.execution?.location ?? "hosted",
+      model: cfg.model ?? null,
+    },
+    ...(meter.threadId ? { thread_id: meter.threadId } : {}),
+    ...(meter.actions.length ? { actions: meter.actions } : {}),
+    ...(meter.usage ? { usage: meter.usage } : {}),
+  })
   // `run.started_at` is what THIS claim actually began with -- proof to the server that
   // this call is settling the claim it holds, not merely naming a run id its token still
   // (validly, unexpired) authorizes. Without it, a run that gets reclaimed and re-claimed
@@ -1341,7 +1390,12 @@ export async function serveRun(client, run, manifest, cfg) {
   const failRun = (why, retryable = false) =>
     finish({
       status: "failed",
-      meta: { outcome: "failed", why: (why ?? "").slice(0, 200), retryable },
+      meta: {
+        outcome: "failed",
+        why: (why ?? "").slice(0, 200),
+        retryable,
+        ...receipt(),
+      },
     })
 
   // Whose plan pays for this run: its initiator (registrant fallback), a per-spawn overlay like a
@@ -1463,6 +1517,7 @@ export async function serveRun(client, run, manifest, cfg) {
       outcome,
       writes: write ? [write] : [],
       artifact_short_id: write?.short_id ?? null,
+      ...receipt(),
     },
   })
   console.log(`[runner] run ${run.id} ${outcome}${write ? ` (${write.short_id})` : ""}`)
@@ -1481,11 +1536,13 @@ invent content the instruction or the sources don't support.`
  *  unbound run gets the bare contract. Cached per context within one drain, and best-effort:
  *  a context that fails to materialize falls back to the bare contract with a loud log,
  *  because a run that executes without its methodology beats one that never executes.
- *  (Materializing writes .claude/skills into cfg.cwd — per-run temp dirs on the hosted path,
- *  so no cross-run bleed; a polling runner's cwd is its own context's home already.) */
+ *  (Materializing writes the selected provider's skill directory into cfg.cwd — per-run temp
+ *  dirs on the hosted path, so no cross-run bleed; a polling runner's cwd is its own context's
+ *  home already.) */
 async function manifestForRun(cfg, run, cache) {
   if (!run.context_id) return RUN_MANIFEST
-  if (cache.has(run.context_id)) return cache.get(run.context_id)
+  const cacheKey = `${run.context_id}:${cfg.providerName}`
+  if (cache.has(cacheKey)) return cache.get(cacheKey)
   let manifest = RUN_MANIFEST
   try {
     const host = await bootHost({ ...cfg, contextId: run.context_id }, `run ${run.id}`)
@@ -1498,7 +1555,7 @@ async function manifestForRun(cfg, run, cache) {
       `[runner] run ${run.id}: context ${run.context_id} failed to materialize (${err.message}) — running with the bare contract`,
     )
   }
-  cache.set(run.context_id, manifest)
+  cache.set(cacheKey, manifest)
   return manifest
 }
 
@@ -1558,7 +1615,8 @@ export async function runOnce(cfg) {
   const manifests = new Map()
   for (const run of runs) {
     try {
-      await serveRun(client, run, await manifestForRun(cfg, run, manifests), cfg)
+      const runCfg = configForRun(cfg, run)
+      await serveRun(client, run, await manifestForRun(runCfg, run, manifests), runCfg)
       counts.served += 1
     } catch (err) {
       counts.failed += 1
@@ -1602,7 +1660,8 @@ async function bootHost(cfg, modeLabel) {
 
   // Conventions materialize at boot, like repos: the workspace Brandprint (ambient,
   // unless `brandprint: off`) plus the manifest's own pinned skills. Skills land in
-  // .claude/skills/ (the spawned claude auto-discovers them); notes land in brandprint/.
+  // the selected provider's repository skill root (`.agents/skills` for Codex,
+  // `.claude/skills` for Claude); notes land in brandprint/.
   // The Brandprint rides on the same config fetch as the manifest (info.brandprint) —
   // the runner's only window into workspace settings.
   const api = client.skillApi()
@@ -1619,7 +1678,7 @@ async function bootHost(cfg, modeLabel) {
   const skillCatalog = await materializeSkills(
     api,
     mergeSkillLayers(bpSkills, boot.skills),
-    join(cfg.cwd, ".claude", "skills"),
+    join(cfg.cwd, cfg.providerName === "codex" ? ".agents" : ".claude", "skills"),
   )
   const noteCatalog = await materializeNotes(api, bpNotes, join(cfg.cwd, "brandprint"))
   const conventions = conventionsBlock(skillCatalog, noteCatalog)
@@ -1680,7 +1739,8 @@ export async function drainPass(cfg, host) {
       // A run bound to a context materializes THAT context; unbound runs get the bare
       // contract rather than this polling context's manifest — an ask persona and an
       // automation job are different registers, and mixing them was never intentional.
-      await serveRun(client, run, await manifestForRun(cfg, run, runManifests), cfg)
+      const runCfg = configForRun(cfg, run)
+      await serveRun(client, run, await manifestForRun(runCfg, run, runManifests), runCfg)
       counts.served += 1
     } catch (err) {
       counts.failed += 1
