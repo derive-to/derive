@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest"
-import { as, bearer, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import {
+  as,
+  bearer,
+  connectPoolPlan,
+  jsonAs,
+  makeAuthedApp,
+  publishAs,
+  type TestUser,
+} from "./helpers"
 
 // Automations + runs — the generic agent-work primitive. An owner defines an
 // automation (agent + trigger + instruction); "run now" enqueues a run; the agent claims
@@ -8,7 +16,19 @@ import { as, bearer, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 describe("automations + runs", () => {
   const owner: TestUser = { id: "u_auto_own", email: "autoown@derive.test", name: "Owner" }
   const member: TestUser = { id: "u_auto_mem", email: "automem@derive.test", name: "Member" }
-  const { app } = makeAuthedApp("automations", [owner, member], "commenter")
+  const { app, meta } = makeAuthedApp("automations", [owner, member], "commenter")
+  const { app: badPokeApp, meta: badPokeMeta } = makeAuthedApp(
+    "automations-bad-poke",
+    [owner],
+    "commenter",
+    {
+      deps: {
+        pokeRun: () => {
+          throw new Error("queue unavailable")
+        },
+      },
+    },
+  )
 
   let n = 0
   const mintAgent = async () => {
@@ -150,6 +170,128 @@ describe("automations + runs", () => {
     const row = ledger.runs.find((r: { id: string }) => r.id === runId)
     expect(row?.status).toBe("succeeded")
     expect(row?.cost_micro_usd).toBe(900)
+  })
+
+  it("snapshots Codex onto the run, so a later automation edit cannot reroute accepted work", async () => {
+    const agent = await mintAgent()
+    await connectPoolPlan(meta, "default", "codex")
+    const created = await (await createAutomation(agent.id, { provider: "codex" })).json()
+    expect(created.provider).toBe("codex")
+
+    const queued = await (
+      await app.request(`/v1/automations/${created.id}/run`, {
+        method: "POST",
+        headers: as(owner.email),
+      })
+    ).json()
+    await app.request(`/v1/automations/${created.id}`, {
+      ...jsonAs(as(owner.email), { provider: "claude-code" }),
+      method: "PATCH",
+    })
+
+    const claimed = await (
+      await app.request("/v1/agent/runs/claim", { headers: bearer(agent.token) })
+    ).json()
+    const run = claimed.runs.find((r: { id: string }) => r.id === queued.id)
+    expect(run.execution).toEqual({
+      version: 1,
+      provider: "codex",
+      location: "hosted",
+      model: null,
+    })
+  })
+
+  it("create-and-run atomically queues the first Codex proof without exposing a standing token", async () => {
+    await connectPoolPlan(meta, "default", "codex")
+    const res = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: { kind: "manual" },
+        instruction: "prove the hosted Codex path",
+        provider: "codex",
+        runNow: true,
+      }),
+    )
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body).toMatchObject({ provider: "codex", run_status: "queued" })
+    expect(body.run_id).toMatch(/^run_/)
+    expect(body.agent_token).toBeUndefined()
+    expect(JSON.parse((await meta.getRun(body.run_id))?.meta ?? "{}").execution.provider).toBe(
+      "codex",
+    )
+  })
+
+  it("keeps an atomic create-and-run when the best-effort dispatch nudge is unavailable", async () => {
+    await connectPoolPlan(badPokeMeta, "default", "codex")
+    const res = await badPokeApp.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: { kind: "manual" },
+        instruction: "queue durably even when the nudge is down",
+        provider: "codex",
+        runNow: true,
+      }),
+    )
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body.run_status).toBe("queued")
+    expect((await badPokeMeta.getRun(body.run_id))?.status).toBe("queued")
+  })
+
+  it("binds complex runs to a context and lets an edit remove that methodology", async () => {
+    await connectPoolPlan(meta, "default", "codex")
+    const manifest = await publishAs(
+      app,
+      "# Release method\n\nInspect the repository and apply the release checklist.",
+      { title: "Release method" },
+      as(owner.email),
+    )
+    const manifestId = ((await manifest.json()) as { short_id: string }).short_id
+    const contextRes = await app.request(
+      "/v1/contexts",
+      jsonAs(as(owner.email), { name: "Release operator", manifest_short_id: manifestId }),
+    )
+    expect(contextRes.status).toBe(201)
+    const context = (await contextRes.json()) as {
+      id: string
+      agent_id: string
+      agent_token: string
+    }
+
+    const createdRes = await app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        contextId: context.id,
+        trigger: { kind: "manual" },
+        instruction: "prepare this week's release artifact",
+        provider: "codex",
+      }),
+    )
+    expect(createdRes.status).toBe(201)
+    const created = await createdRes.json()
+    expect(created).toMatchObject({ context_id: context.id, agent_id: context.agent_id })
+
+    await app.request(`/v1/automations/${created.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    const claimed = await (
+      await app.request("/v1/agent/runs/claim", { headers: bearer(context.agent_token) })
+    ).json()
+    const run = claimed.runs.find(
+      (candidate: { automation_id: string }) => candidate.automation_id === created.id,
+    )
+    expect(run).toMatchObject({ context_id: context.id, execution: { provider: "codex" } })
+
+    const unbound = await (
+      await app.request(`/v1/automations/${created.id}`, {
+        ...jsonAs(as(owner.email), { contextId: null }),
+        method: "PATCH",
+      })
+    ).json()
+    expect(unbound.context_id).toBeNull()
+    expect(unbound.agent_id).toBe(context.agent_id)
   })
 
   it("a disabled automation takes no new runs, and its stale queued runs cancel at claim", async () => {

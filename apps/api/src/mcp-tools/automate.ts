@@ -1,5 +1,13 @@
-import { type AutomationTrigger, newId, normalizeSelectors, roleAllows } from "@derive/core"
+import {
+  type AutomationTrigger,
+  DEFAULT_EXECUTION_PROVIDER,
+  EXECUTION_PROVIDERS,
+  newId,
+  normalizeSelectors,
+  roleAllows,
+} from "@derive/core"
 import { z } from "zod"
+import { automationProvider, runMetaForAutomation } from "../lib/automation"
 import { connectionBindError } from "../lib/broker"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { mintToken, sha256 } from "../lib/crypto"
@@ -59,6 +67,7 @@ export function registerAutomateTool(tc: ToolContext): void {
         action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "What to do.")),
         trigger: TRIGGER.optional(),
         instruction: z.string().min(1).max(4000).optional(),
+        provider: z.enum(EXECUTION_PROVIDERS).optional(),
         refs: z
           .array(
             z.union([
@@ -152,6 +161,7 @@ export function registerAutomateTool(tc: ToolContext): void {
             id: a.id,
             instruction: a.instruction.slice(0, 140),
             context_id: a.context_id,
+            provider: automationProvider(a),
             enabled: a.enabled === 1,
           })),
         })
@@ -171,6 +181,7 @@ export function registerAutomateTool(tc: ToolContext): void {
             orgId: org,
             agentId: a.agent_id,
             initiator: tc.ownerId ? { userId: tc.ownerId, source: "initiator" } : null,
+            provider: automationProvider(a),
           }))
         )
           return json({ error: NO_PAYER_MESSAGE })
@@ -182,6 +193,7 @@ export function registerAutomateTool(tc: ToolContext): void {
           reason: "manual:mcp",
           initiated_by: tc.ownerId ?? null,
           scheduled_for: new Date().toISOString(),
+          meta: runMetaForAutomation(a),
         })
         ctx.deps.pokeRun?.(rec.id)
         return json({ run_id: rec.id, status: rec.status })
@@ -332,6 +344,7 @@ export function registerAutomateTool(tc: ToolContext): void {
         agent_id: agentId,
         trigger: JSON.stringify(trigger),
         instruction: input.instruction,
+        provider: input.provider ?? DEFAULT_EXECUTION_PROVIDER,
         refs: input.refs ? JSON.stringify(normalizeSelectors(input.refs)) : null,
         connection_ids: input.connection_ids?.length ? JSON.stringify(input.connection_ids) : null,
         context_id: input.context_id ?? null,

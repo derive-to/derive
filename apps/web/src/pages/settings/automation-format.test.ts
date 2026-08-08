@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { AutomationRef } from "@/api"
 import {
+  runExecutionReceipt,
   runOutcome,
   runStatusLabel,
   runWrites,
@@ -22,6 +23,28 @@ describe("triggerLabel", () => {
   it("falls back gracefully for a custom cron or unknown event", () => {
     expect(triggerLabel({ kind: "schedule", cron: "*/5 * * * *" })).toBe("Schedule · */5 * * * *")
     expect(triggerLabel({ kind: "event", on: "custom.thing" })).toBe("On custom.thing")
+  })
+})
+
+describe("runExecutionReceipt", () => {
+  it("reads the immutable execution choice and finished action evidence", () => {
+    expect(
+      runExecutionReceipt(
+        JSON.stringify({
+          execution: { provider: "codex", location: "hosted", model: null },
+          thread_id: "thread_1",
+          actions: [{ type: "command_execution" }, { type: "file_change" }],
+        }),
+      ),
+    ).toEqual({
+      provider: "codex",
+      location: "hosted",
+      model: null,
+      actions: 2,
+      threadId: "thread_1",
+    })
+    expect(runExecutionReceipt("bad json")).toBeNull()
+    expect(runExecutionReceipt(JSON.stringify({ outcome: "published" }))).toBeNull()
   })
 })
 

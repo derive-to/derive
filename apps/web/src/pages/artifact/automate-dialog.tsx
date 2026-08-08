@@ -31,7 +31,10 @@ export function AutomateDialog({
   const isAdmin = !isError && ws?.role === "owner"
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="automate-dialog">
+      <DialogContent
+        data-testid="automate-dialog"
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>Automate this artifact</DialogTitle>
           <DialogDescription>
@@ -44,6 +47,7 @@ export function AutomateDialog({
           <AutomationForm
             refs={[shortId]}
             defaultInstruction="Keep this artifact current."
+            runOnCreate
             onDone={() => onOpenChange(false)}
           />
         ) : (

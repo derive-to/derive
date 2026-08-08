@@ -10,6 +10,17 @@ export const superAdminsFromEnv = (env: { DERIVE_SUPERADMIN_EMAILS?: string }): 
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
 
+/** A comma-separated set of immutable workspace ids. An absent value and an explicitly empty
+ *  value both parse to an empty set; callers decide whether absence means unrestricted (Node
+ *  self-host) or fail-closed (the multi-tenant edge). */
+export const workspaceIdsFromEnv = (raw: string | undefined): ReadonlySet<string> =>
+  new Set(
+    (raw ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  )
+
 /** The Slack App credentials — only when all three are set (else Slack stays off). */
 export const slackFromEnv = (env: {
   SLACK_CLIENT_ID?: string

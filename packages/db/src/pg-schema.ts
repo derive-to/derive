@@ -199,6 +199,10 @@ export const automation = pgTable("automation", {
   agent_id: text("agent_id").notNull(),
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
+  provider: text("provider")
+    .$type<import("@derive/core").ExecutionProvider>()
+    .notNull()
+    .default("claude-code"),
   refs: text("refs"),
   connection_ids: text("connection_ids"),
   context_id: text("context_id"),

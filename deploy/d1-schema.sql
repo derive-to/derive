@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS automation (
   agent_id TEXT NOT NULL,
   trigger TEXT NOT NULL,
   instruction TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'claude-code',
   refs TEXT,
   connection_ids TEXT,
   context_id TEXT,

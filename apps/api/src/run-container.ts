@@ -1,9 +1,10 @@
-import { Container } from "@cloudflare/containers"
+import { Container, type StopParams } from "@cloudflare/containers"
+import { log } from "./log"
 
 /**
  * The hosted-run container: ONE automation run per instance, then it exits.
  *
- * A job container, not a server — it exposes no port and nothing fetches it. The tick boots it
+ * A job container, not a server — it accepts no traffic and nothing fetches it. The tick boots it
  * with the run's per-run capability token in the environment; the image's entrypoint sees that
  * token, executes `derive runner run` exactly once, and the process ends. Cloudflare scales the
  * instance to zero after it goes idle, so between runs there is no compute and no cost.
@@ -13,7 +14,11 @@ import { Container } from "@cloudflare/containers"
  * the claim is status-guarded server-side — the loser gets an empty claim and exits clean.
  */
 export class RunContainer extends Container {
-  /** No defaultPort: nothing connects to this container, it just runs and exits. */
+  private runId: string | undefined
+
+  /** Metadata only: start() probes this port to distinguish a running non-listener from a crash.
+   *  The image never listens on it and the Worker exposes no route to the container. */
+  override defaultPort = 8080
   override sleepAfter = "15m"
 
   /**
@@ -23,8 +28,30 @@ export class RunContainer extends Container {
    * pulls proxy back through the API's tool endpoint, which holds those server-side.
    */
   async startRun(envVars: Record<string, string>): Promise<void> {
+    this.runId = envVars.DERIVE_RUN_ID
     // enableInternet: the executor calls the Derive API back (claim, pull, write, finish) and
     // the model provider directly with the run initiator's own plan.
-    await this.start({ envVars, enableInternet: true })
+    await this.start({
+      envVars,
+      enableInternet: true,
+      ...(this.runId ? { labels: { run_id: this.runId } } : {}),
+    })
+  }
+
+  override onStart(): void {
+    log.info("hosted container started", { run_id: this.runId })
+  }
+
+  override onStop({ exitCode, reason }: StopParams): void {
+    const fields = { run_id: this.runId, exit_code: exitCode, reason }
+    if (exitCode === 0) log.info("hosted container stopped", fields)
+    else log.warn("hosted container stopped", fields)
+  }
+
+  override onError(error: unknown): void {
+    log.error("hosted container error", {
+      run_id: this.runId,
+      error: error instanceof Error ? error.message : String(error),
+    })
   }
 }

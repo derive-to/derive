@@ -244,6 +244,12 @@ export const automation = sqliteTable("automation", {
   // trigger kind adds no columns — it is a new value in this blob.
   trigger: text("trigger").notNull(),
   instruction: text("instruction").notNull(),
+  // Coding-agent runtime. Existing rows stay on the historical Claude default; new work can
+  // choose Codex explicitly and snapshots that choice onto each run.
+  provider: text("provider")
+    .$type<import("@derive/core").ExecutionProvider>()
+    .notNull()
+    .default("claude-code"),
   // Serialized inputs/targets (artifact ids, urls, arbitrary), or null.
   // How each write lands (publish vs propose) rides IN the refs blob per target —
   // policy is config, config evolves, and evolving config never gets a column.

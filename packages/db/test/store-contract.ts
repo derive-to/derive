@@ -4428,35 +4428,35 @@ export function runStoreContract(
   // off from rows the rest of this file leaves lying around.
   describe(`${label}: hosted dispatch (runs, automations, sessions)`, () => {
     // Agent names are unique per workspace, and this whole block shares one ORG.
-    const newAgent = () =>
+    const newAgent = (orgId = ORG) =>
       store.createAgent({
         id: uuid(),
-        org_id: ORG,
+        org_id: orgId,
         name: `runner_${uuid().slice(0, 8)}`,
         token: `tok_${uuid()}`,
         role: "editor",
       })
 
-    const newAutomation = (agentId: string, enabled: 0 | 1 = 1) =>
+    const newAutomation = (agentId: string, enabled: 0 | 1 = 1, orgId = ORG) =>
       store.createAutomation({
         id: uuid(),
-        org_id: ORG,
+        org_id: orgId,
         agent_id: agentId,
         trigger: JSON.stringify({ kind: "schedule", cron: "*/5 * * * *" }),
         instruction: "refresh the weekly numbers",
         enabled,
       })
 
-    const newRun = (agentId: string, over: Partial<NewRun> = {}) =>
-      store.createRun({ id: uuid(), org_id: ORG, agent_id: agentId, reason: "schedule", ...over })
+    const newRun = (agentId: string, over: Partial<NewRun> = {}, orgId = ORG) =>
+      store.createRun({ id: uuid(), org_id: orgId, agent_id: agentId, reason: "schedule", ...over })
 
     // A session hangs off a CONTEXT, and the context names the acting agent — so a session's
     // ownership is only resolvable through it. These bind a known agent id to make that explicit.
-    const newBoundContext = async (agentId: string) => {
-      const manifest = await store.createArtifact(newArtifact({ kind: "bundle" }))
+    const newBoundContext = async (agentId: string, orgId = ORG) => {
+      const manifest = await store.createArtifact(newArtifact({ kind: "bundle", org_id: orgId }))
       return store.createContext({
         id: uuid(),
-        org_id: ORG,
+        org_id: orgId,
         name: `qa_${uuid().slice(0, 8)}`,
         agent_id: agentId,
         manifest_artifact_id: manifest.id,
@@ -4464,11 +4464,11 @@ export function runStoreContract(
       })
     }
 
-    const sessionOn = (contextId: string) =>
+    const sessionOn = (contextId: string, orgId = ORG) =>
       store.createSession({
         id: uuid(),
         context_id: contextId,
-        org_id: ORG,
+        org_id: orgId,
         asker_id: "daniel",
         context_version: 1,
       })
@@ -4498,6 +4498,42 @@ export function runStoreContract(
       expect(ids).toEqual(expect.arrayContaining([asap.id, due.id]))
       expect(ids).not.toContain(later.id)
       expect(ids).not.toContain(claimed.id)
+    })
+
+    it("scopes every hosted queue scan to the operator-selected workspaces", async () => {
+      const otherOrg = `org_${uuid()}`
+      const otherAgent = await newAgent(otherOrg)
+      const otherAutomation = await newAutomation(otherAgent.id, 1, otherOrg)
+      const otherRun = await newRun(otherAgent.id, { scheduled_for: null }, otherOrg)
+      const otherContext = await newBoundContext(otherAgent.id, otherOrg)
+      const otherSession = await sessionOn(otherContext.id, otherOrg)
+      const now = new Date().toISOString()
+
+      expect((await store.listEnabledAutomations(500, [otherOrg])).map((a) => a.id)).toContain(
+        otherAutomation.id,
+      )
+      expect((await store.listDueQueuedRuns(now, 500, [otherOrg])).map((r) => r.id)).toContain(
+        otherRun.id,
+      )
+      expect((await store.listDueOpenSessions(now, 500, [otherOrg])).map((s) => s.id)).toContain(
+        otherSession.id,
+      )
+
+      // The same rows are invisible from a different deployment scope, and an explicitly empty
+      // rollout selects nobody rather than falling back to a global scan.
+      expect((await store.listEnabledAutomations(500, [ORG])).map((a) => a.id)).not.toContain(
+        otherAutomation.id,
+      )
+      expect((await store.listDueQueuedRuns(now, 500, [ORG])).map((r) => r.id)).not.toContain(
+        otherRun.id,
+      )
+      expect((await store.listDueOpenSessions(now, 500, [ORG])).map((s) => s.id)).not.toContain(
+        otherSession.id,
+      )
+      expect(await store.listEnabledAutomations(500, [])).toEqual([])
+      expect(await store.listDueQueuedRuns(now, 500, [])).toEqual([])
+      expect(await store.listDueOpenSessions(now, 500, [])).toEqual([])
+      await store.setSessionState(otherSession.id, "failed")
     })
 
     it("claims a run exactly once, and only for the agent it belongs to", async () => {
@@ -4553,6 +4589,31 @@ export function runStoreContract(
       const dead = await store.getRun(doomed.id)
       expect(dead).toMatchObject({ status: "failed", finished_at: cutoff })
       expect(JSON.parse(dead?.meta ?? "{}")).toMatchObject({ attempts: 3, outcome: "lost" })
+    })
+
+    it("reclaims stale runs only inside the operator-selected workspaces", async () => {
+      const otherOrg = `org_${uuid()}`
+      const otherAgent = await newAgent(otherOrg)
+      const stale = await newRun(
+        otherAgent.id,
+        { status: "running", started_at: "1999-01-01T00:00:00.000Z" },
+        otherOrg,
+      )
+
+      expect(await store.reclaimStaleRuns("1999-01-02T00:00:00.000Z", 3, [ORG])).toEqual({
+        requeued: 0,
+        failed: 0,
+      })
+      expect((await store.getRun(stale.id))?.status).toBe("running")
+      expect(await store.reclaimStaleRuns("1999-01-02T00:00:00.000Z", 3, [])).toEqual({
+        requeued: 0,
+        failed: 0,
+      })
+      expect(await store.reclaimStaleRuns("1999-01-02T00:00:00.000Z", 3, [otherOrg])).toEqual({
+        requeued: 1,
+        failed: 0,
+      })
+      expect((await store.getRun(stale.id))?.status).toBe("queued")
     })
 
     it("resolves an automation's most recent run by schedule time", async () => {
