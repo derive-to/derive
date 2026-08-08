@@ -438,3 +438,20 @@ test("conversation stays first; Inspect is editor-only HTML tooling", async ({
   await expect(owner.getByTestId("rail-tabs").getByRole("button")).toHaveText(["comments", "chat"])
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 })
+
+test("a newly published HTML artifact exposes owner tools without a reload", async ({ owner }) => {
+  // Publishing seeds the detail cache for an immediate navigation. That seed has to
+  // retain the just-published owner's role: otherwise Edit and Inspect disappear
+  // until the detail query is manually refreshed.
+  await owner.goto("/new")
+  await owner.getByTestId("artifact-title-input").fill("Fresh HTML artifact")
+  await expect(owner.locator(".cm-content")).toBeVisible()
+  await owner.locator(".cm-content").click()
+  await owner.keyboard.type(RESIZE_DOC)
+  await expect(owner.getByTestId("artifact-publish-version")).toBeEnabled()
+  await owner.getByTestId("artifact-publish-version").click()
+
+  await expect(owner).toHaveURL(/\/artifacts\//)
+  await expect(owner.getByTestId("artifact-inline-edit")).toBeVisible()
+  await expect(owner.getByTestId("rail-tab-inspect")).toBeVisible()
+})
