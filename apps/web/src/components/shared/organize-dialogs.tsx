@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react"
 import { api, type Collection } from "@/api"
 import { Icon } from "@/components/icons"
-import { StatusPanel } from "@/components/shared/status-panel"
+import { LoadError } from "@/components/shared/load-error"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -171,7 +172,8 @@ const rowHint = (col: Collection, addable: boolean, reason?: SuggestReason): str
 
 // The menu-row grammar (the dropdown item recipe): rounded-lg, bg-accent as the
 // pointer/keyboard wash only — membership renders in the checkbox, never as a wash.
-const ROW_CLASS =
+// Exported so bulk-organize's target rows speak the same grammar.
+export const ROW_CLASS =
   "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-60"
 
 /** One picker row — also the bulk dialog's row, so the grammar can't drift. */
@@ -229,9 +231,9 @@ export function CollectionToggleRow({
 
 function SectionLabel({ children }: { children: string }) {
   return (
-    <div className="px-2 pt-2.5 pb-1 font-medium text-2xs tracking-wide text-muted-foreground uppercase first:pt-0.5">
+    <Eyebrow as="div" className="px-2 pt-2.5 pb-1 first:pt-0.5">
       {children}
-    </div>
+    </Eyebrow>
   )
 }
 
@@ -428,20 +430,10 @@ export function CollectionsDialog({
         {/* A failed load is NOT "no collections yet" — saying so would invite you to
             create a duplicate of one you already have. */}
         {isError && (
-          <StatusPanel
-            tone="danger"
+          <LoadError
             title="Couldn’t load your collections"
-            description="This is usually temporary."
-            action={
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="collections-retry"
-                onClick={() => refetch()}
-              >
-                Try again
-              </Button>
-            }
+            testId="collections-retry"
+            onRetry={() => refetch()}
           />
         )}
         {!isError && isPending && (

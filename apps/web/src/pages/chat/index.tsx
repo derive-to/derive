@@ -8,8 +8,8 @@ import { ChatThread } from "@/components/chat/chat-thread"
 import { json, useChatSession } from "@/components/chat/use-chat-session"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -157,15 +157,11 @@ export function ChatPage() {
   if (wsFailed)
     return (
       <PageShell className="flex justify-center pt-16">
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load your workspace"
+        <LoadError
+          title="Couldn’t load your workspace"
           description="Chat needs to know which workspace you're asking about."
-          action={
-            <Button size="sm" onClick={() => void retryWs()} data-testid="chat-ws-retry">
-              Try again
-            </Button>
-          }
+          testId="chat-ws-retry"
+          onRetry={() => void retryWs()}
         />
       </PageShell>
     )

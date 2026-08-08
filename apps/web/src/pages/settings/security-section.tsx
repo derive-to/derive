@@ -6,6 +6,7 @@ import { type AuthCapabilities, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -30,6 +31,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
+import { copyText } from "@/lib/clipboard"
 import { connectedAgentsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -116,20 +118,10 @@ function ConnectedAgents() {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load connected agents"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="security-agents-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load connected agents"
+          testId="security-agents-retry"
+          onRetry={() => refetch()}
         />
       ) : (
         <SettingsGroup>
@@ -483,10 +475,9 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
                     variant="ghost"
                     size="sm"
                     data-testid="2fa-copy-backup"
-                    onClick={() => {
-                      navigator.clipboard?.writeText(backup.join("\n"))
-                      toast.success("Backup codes copied")
-                    }}
+                    onClick={() =>
+                      void copyText(backup.join("\n"), { success: "Backup codes copied" })
+                    }
                   >
                     Copy codes
                   </Button>
@@ -756,21 +747,11 @@ function Passkeys() {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
+        <LoadError
           layout="inline"
-          title="Couldn't load your passkeys"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="passkeys-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
+          title="Couldn’t load your passkeys"
+          testId="passkeys-retry"
+          onRetry={() => refetch()}
         />
       ) : !passkeys || passkeys.length === 0 ? (
         <EmptyState>No passkeys yet. Add one for a phishing-resistant, one-tap sign-in.</EmptyState>

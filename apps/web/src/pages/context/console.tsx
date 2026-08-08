@@ -14,6 +14,7 @@ import {
 import { Icon, type IconName } from "@/components/icons"
 import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
@@ -28,10 +29,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { toast } from "@/components/ui/sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
+import { copyText, useCopy } from "@/lib/clipboard"
 import {
   artifactQuery,
   contextOutputsQuery,
@@ -225,21 +226,12 @@ function Console({ id }: { id: string }) {
             {/* A failed sessions load mustn't masquerade as "no conversations yet" — say so and
                 let them retry (they can still ask a fresh question below). */}
             {sessionsFailed && !sessions && (
-              <StatusPanel
-                tone="danger"
+              <LoadError
                 layout="inline"
-                title="Couldn't load your conversations"
+                title="Couldn’t load your conversations"
                 description="You can still message it below, or try again."
-                action={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    data-testid="console-sessions-retry"
-                    onClick={() => refetchSessions()}
-                  >
-                    Try again
-                  </Button>
-                }
+                testId="console-sessions-retry"
+                onRetry={() => refetchSessions()}
               />
             )}
             {mine.length > 0 && (
@@ -302,8 +294,7 @@ function Console({ id }: { id: string }) {
               rotating={rotateToken.isPending}
               onCopy={() => {
                 if (!rotatedToken) return
-                navigator.clipboard?.writeText(rotatedToken)
-                toast.success("Key copied")
+                void copyText(rotatedToken, { success: "Key copied" })
               }}
               onDoneRotate={() => setRotatedToken(null)}
             />
@@ -791,18 +782,18 @@ function ManifestTab({ context }: { context: ContextDetail }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-card">
-                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <Eyebrow as="th" className="px-3.5 py-2 text-left">
                     Skill
-                  </th>
-                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                  </Eyebrow>
+                  <Eyebrow as="th" className="px-3.5 py-2 text-left">
                     Pinned
-                  </th>
-                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                  </Eyebrow>
+                  <Eyebrow as="th" className="px-3.5 py-2 text-left">
                     Current
-                  </th>
-                  <th className="px-3.5 py-2 text-left font-mono text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                  </Eyebrow>
+                  <Eyebrow as="th" className="px-3.5 py-2 text-left">
                     Status
-                  </th>
+                  </Eyebrow>
                 </tr>
               </thead>
               <tbody>
@@ -1068,16 +1059,12 @@ function SessionThread({
   // screen; it self-heals on the next poll.
   if (isError && !data)
     return (
-      <StatusPanel
+      <LoadError
         layout="inline"
-        tone="danger"
-        title="Couldn't load this conversation"
+        title="Couldn’t load this conversation"
         description="Try again in a moment."
-        action={
-          <Button variant="outline" size="sm" data-testid="console-retry" onClick={refresh}>
-            Try again
-          </Button>
-        }
+        testId="console-retry"
+        onRetry={refresh}
         className="mt-8"
       />
     )
@@ -1110,9 +1097,7 @@ function SessionThread({
             each slice through the renderer makes it visibly thrash as it completes. */}
         {streaming && (
           <div className="flex flex-col gap-1 px-1" data-testid="console-streaming">
-            <span className="text-2xs uppercase tracking-wide text-muted-foreground">
-              {contextName}
-            </span>
+            <Eyebrow>{contextName}</Eyebrow>
             <p className="whitespace-pre-wrap text-sm text-foreground">
               {streaming}
               <span className="ml-0.5 inline-block h-3.5 w-px translate-y-0.5 animate-pulse bg-foreground/70" />
@@ -1232,20 +1217,12 @@ function safeMeta(meta: SessionMeta | null) {
 
 function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string }) {
   const [showQuery, setShowQuery] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const fromAgent = m.author_kind === "agent"
   const meta = safeMeta(m.meta)
   // Answers travel onward as markdown (into docs, Slack, a PR) — copy the
   // SOURCE, not the rendered text.
-  const copyMd = async () => {
-    try {
-      await navigator.clipboard.writeText(m.body_md)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      toast.error("Couldn't copy")
-    }
-  }
+  const copyMd = () => void copy(m.body_md, { error: "Couldn't copy" })
   return (
     <div
       data-testid="console-message"
@@ -1422,21 +1399,12 @@ function OutputList({ contextId }: { contextId: string }) {
   if (isPending) return <ContextRowsSkeleton />
   if (isError)
     return (
-      <StatusPanel
+      <LoadError
         layout="inline"
-        tone="danger"
-        title="Couldn't load this context's output"
+        title="Couldn’t load this context's output"
         description="Try again in a moment."
-        action={
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="console-output-retry"
-            onClick={() => refetch()}
-          >
-            Try again
-          </Button>
-        }
+        testId="console-output-retry"
+        onRetry={() => refetch()}
       />
     )
   if (!outputs || outputs.length === 0)

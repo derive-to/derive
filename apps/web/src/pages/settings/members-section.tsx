@@ -3,9 +3,9 @@ import { Link } from "@tanstack/react-router"
 import { useRef, useState } from "react"
 import { type ArtifactMember, api, type BillingInfo, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { LoadError } from "@/components/shared/load-error"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -220,21 +220,7 @@ export function MembersSection({ meId }: { meId: string }) {
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <StatusPanel
-          tone="danger"
-          title="Couldn't load members"
-          description="This is usually temporary."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="members-retry"
-              onClick={() => refetch()}
-            >
-              Try again
-            </Button>
-          }
-        />
+        <LoadError title="Couldn’t load members" testId="members-retry" onRetry={() => refetch()} />
       ) : ws ? (
         <SettingsGroup>
           {ws.members.map((m) => (
