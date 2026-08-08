@@ -379,7 +379,12 @@ function Row({
           size="sm"
           variant="ghost"
           disabled={busy || editing}
-          onClick={() => setEditing(true)}
+          onClick={() => {
+            // A probe, reset, or another operator can refresh this row while it stays mounted.
+            // Start each edit from the server-backed label rather than an old local draft.
+            setLabel(model.label)
+            setEditing(true)
+          }}
           data-testid={`rename-model-${model.id}`}
         >
           Rename
