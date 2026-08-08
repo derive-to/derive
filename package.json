@@ -31,7 +31,8 @@
       "undici": "^7.29.0",
       "ip-address": ">=10.3.1",
       "ws": "^8.21.0",
-      "postcss": ">=8.5.18",
+      "postcss": ">=8.5.23",
+      "nanoid@<4": ">=3.3.17",
       "brace-expansion@>=3.0.0 <5.0.8": ">=5.0.8"
     },
     "patchedDependencies": {
