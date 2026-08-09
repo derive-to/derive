@@ -62,14 +62,24 @@ describe("comment channel fan-out", () => {
     const answerDeriveMention = vi.fn(async () => {})
     // This is the durable bell-row write, not a mock notification transport. A storage hiccup
     // must not turn a saved comment into a lost agent question.
-    const notificationWrite = vi
-      .spyOn(meta, "createNotifications")
-      .mockRejectedValue(new Error("notification store unavailable"))
+    // `makeAuthedApp` intentionally exposes a deferred Proxy on its Postgres lane, so Vitest
+    // cannot replace one of its methods with `spyOn` (there is no own property to patch). Wrap
+    // the same store instead: all reads still hit the real store, while the bulk bell write
+    // deterministically fails on both SQLite and Postgres.
+    const notificationWrite = vi.fn(async () => {
+      throw new Error("notification store unavailable")
+    })
+    const failingMeta = new Proxy(meta, {
+      get(target, prop, receiver) {
+        if (prop === "createNotifications") return notificationWrite
+        return Reflect.get(target, prop, receiver)
+      },
+    })
 
     await expect(
       commentCreatedAction(
         {
-          meta,
+          meta: failingMeta,
           bus: { publish: () => {}, subscribe: () => () => {} } as never,
           blobs: {} as never,
           baseUrl: "http://derive.test",
@@ -96,7 +106,6 @@ describe("comment channel fan-out", () => {
       created,
       expect.objectContaining({ id: editor.id }),
     )
-    notificationWrite.mockRestore()
   })
 
   it("a plain comment emails NO ONE — not even workspace owners", async () => {
