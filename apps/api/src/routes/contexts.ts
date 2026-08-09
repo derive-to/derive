@@ -1686,8 +1686,13 @@ export const contextRoutes = (ctx: AppContext) => {
           agentId: x.agent_id,
           initiator: { userId: me.id, source: "asker" },
         }))
-      )
-        return bail(fail(c, 402, NO_PAYER_MESSAGE))
+      ) {
+        // A workspace OWNER with no payer is not a dead end: their own owner-run pull
+        // serves the queue without a model plan (mirrors mcp-tools/use's give path, and
+        // the runtime payer re-check in substrate-loop still gates any hosted run).
+        const seat = await meta.getMembership(x.org_id, me.id)
+        if (!seat || !roleAllows(seat.role, "manage")) return bail(fail(c, 402, NO_PAYER_MESSAGE))
+      }
       let session: SessionRecord
       try {
         session = await meta.createSession({

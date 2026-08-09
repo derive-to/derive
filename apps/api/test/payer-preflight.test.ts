@@ -17,8 +17,11 @@ import { as, connectPoolPlan, jsonAs, makeAuthedApp, publishAs, type TestUser } 
 // Each test here fails if the corresponding guard is deleted. That was checked by deleting them.
 describe("payer preflight: refusing work nothing can pay for", () => {
   const owner: TestUser = { id: "u_pay_own", email: "payown@derive.test", name: "Owner" }
+  const asker: TestUser = { id: "u_pay_ask", email: "payask@derive.test", name: "Asker" }
   // noPlan: this whole file is about a workspace that has connected nothing.
-  const { app, meta } = makeAuthedApp("payer-preflight", [owner], "editor", { noPlan: true })
+  const { app, meta } = makeAuthedApp("payer-preflight", [owner, asker], "editor", {
+    noPlan: true,
+  })
 
   const mintAgent = async (name: string) => {
     const res = await app.request("/v1/agents", jsonAs(as(owner.email), { name }))
@@ -81,9 +84,11 @@ describe("payer preflight: refusing work nothing can pay for", () => {
     expect(res.status).toBe(402)
   })
 
-  it("the MCP ask lane is refused before a session opens", async () => {
+  it("the ask lane refuses a non-owner before a session opens, but queues the owner for owner-run", async () => {
     // The REST ask lane's twin. Both guard AFTER the dedupe join, so joining an already-open
-    // session keeps working even in a workspace whose plan was disconnected afterwards.
+    // session keeps working even in a workspace whose plan was disconnected afterwards. The
+    // OWNER is exempt: their own owner-run pull serves the queue on their machine, at their
+    // expense — refusing their ask at the payer door was a dead end, not a guard.
     const agent = await mintAgent("AskAgent")
     const manifest = (await (
       await publishAs(app, "# QA manifest", { title: "QA manifest" }, as(owner.email))
@@ -98,11 +103,19 @@ describe("payer preflight: refusing work nothing can pay for", () => {
     )
     expect(create.status).toBe(201)
     const cx = (await create.json()) as { id: string }
-    const res = await app.request(
+    await meta.setContextAskPolicy(cx.id, "workspace")
+    // A non-owner's ask creates work only a connected plan could run → still 402.
+    const refused = await app.request(
+      `/v1/contexts/${cx.id}/sessions`,
+      jsonAs(as(asker.email), { body_md: "what changed this week?" }),
+    )
+    expect(refused.status).toBe(402)
+    // The owner's ask queues — they can pull and serve it themselves.
+    const queued = await app.request(
       `/v1/contexts/${cx.id}/sessions`,
       jsonAs(as(owner.email), { body_md: "what changed this week?" }),
     )
-    expect(res.status).toBe(402)
+    expect(queued.status).toBe(201)
   })
 
   it("connecting a plan unblocks the SAME request that was refused", async () => {

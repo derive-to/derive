@@ -18,7 +18,7 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
   // One workspace; u_admin owns it, u_editor is an editor. Three grants:
   // tok_full (owner + manage), tok_nomanage (owner member, publish-only scopes),
   // tok_editor (editor member + manage scope).
-  function ownerApp(name: string) {
+  function ownerApp(name: string, opts?: { noPlan?: boolean }) {
     const path = join(dir, `${name}.db`)
     const meta = new SqliteMetaStore(path)
     const db = new Database(path)
@@ -63,9 +63,9 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     })
     // Opening a session queues work, and work that nothing can pay for is refused at the door
     // (src/lib/payer.ts). This suite builds its app directly rather than through makeAuthedApp,
-    // so it does not inherit that fixture's workspace plan — without one, every give here is a
-    // 402 and the owner-run path never gets exercised.
-    void connectPoolPlan(meta, "ws_main")
+    // so it does not inherit that fixture's workspace plan — without one, a non-owner give is
+    // a 402. `noPlan` opts out for the tests that are ABOUT the plan-less owner-run lane.
+    if (!opts?.noPlan) void connectPoolPlan(meta, "ws_main")
     return { app, meta }
   }
   type App = ReturnType<typeof ownerApp>["app"]
@@ -260,6 +260,34 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     expect(opened.state).toBe("open")
     expect(opened.note).toContain("serve it yourself")
     expect(opened.note).toContain('use({context: "QA"})')
+  })
+
+  it("no model plan: the owner's give queues for owner-run; a non-owner still needs a payer", async () => {
+    const { app, meta } = ownerApp("own-noplan", { noPlan: true })
+    const { created } = await setupContext(app)
+    // The owner can serve their own queue on their own machine, at their own expense —
+    // refusing their give at the payer door was a dead end, not a guard. It queues and
+    // the note points at the owner-run pull.
+    const opened = await call(app, "tok_full", "use", {
+      context: "QA",
+      instruction: "Run the smoke suite.",
+      wait: 0,
+    })
+    expect(opened.state).toBe("open")
+    expect(opened.note).toContain("owner-run pull")
+    // ...and the pull actually serves it.
+    const pulled = await call(app, "tok_full", "use", { context: "QA" })
+    expect(pulled.claimed).toBe(1)
+    expect(pulled.sessions[0]).toMatchObject({ session_id: opened.session_id, state: "working" })
+    // A non-owner's give creates work only a connected plan could run — the guard holds.
+    await meta.setContextAskPolicy(created.context_id, "workspace")
+    const refused = await callRaw(app, "tok_editor", "use", {
+      context: "QA",
+      instruction: "Run it for me too.",
+      wait: 0,
+    })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain("no model plan is connected")
   })
 
   it("non-owner grants fall through to the give path unchanged", async () => {

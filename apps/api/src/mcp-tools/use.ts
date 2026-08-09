@@ -160,7 +160,12 @@ export function registerUseTool(tc: ToolContext): void {
       // this human's sessions; the loop re-checks ours and waits out the remainder.
       const isSettled = (st: string) =>
         st === "answered" || st === "escalated" || st === "failed" || st === "closed"
-      const reply = async (start: SessionRecord, x: ContextRecord, checkOnly: boolean) => {
+      const reply = async (
+        start: SessionRecord,
+        x: ContextRecord,
+        checkOnly: boolean,
+        ownerRunOnly = false,
+      ) => {
         let s = start
         const deadline = Date.now() + Math.min(Math.max(wait ?? 25, 0), 50) * 1000
         while (!isSettled(s.state) && ctx.bus.waitFor) {
@@ -214,11 +219,13 @@ export function registerUseTool(tc: ToolContext): void {
         // reaches contexts they are the agent for.
         const note =
           s.state === "open"
-            ? runnerOnline(x)
-              ? "Queued — re-call use with this session_id (+ wait) to collect the answer."
-              : (await ownerRunsOrg(tc, x.org_id))
-                ? `Queued, and no runner is polling this context's queue — but you own this workspace, so you can serve it yourself: use({context: "${x.name}"}) with no instruction pulls the queued work (see derive://skills/contexts).`
-                : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
+            ? ownerRunOnly
+              ? `Queued — no model plan is connected, so this run waits for an owner-run pull: you own this workspace, so use({context: "${x.name}"}) with no instruction pulls the queued work and runs it on your machine (see derive://skills/contexts).`
+              : runnerOnline(x)
+                ? "Queued — re-call use with this session_id (+ wait) to collect the answer."
+                : (await ownerRunsOrg(tc, x.org_id))
+                  ? `Queued, and no runner is polling this context's queue — but you own this workspace, so you can serve it yourself: use({context: "${x.name}"}) with no instruction pulls the queued work (see derive://skills/contexts).`
+                  : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
             : s.state === "working"
               ? "In progress — the runner is working. Re-call use with this session_id (+ wait) to keep watching; the result link fills in as it goes."
               : s.state === "escalated"
@@ -344,15 +351,16 @@ export function registerUseTool(tc: ToolContext): void {
       }
       // PAYER guard, mirroring the REST ask (routes/contexts.ts): the asker pays, then
       // owner-lend, then the pool. After the dedupe join for the same reason — joining an
-      // open session creates no new work.
-      if (
-        !(await canPayForAgent(ctx.meta, {
-          orgId: hit.x.org_id,
-          agentId: hit.x.agent_id,
-          initiator: { userId: actingFor.id, source: "asker" },
-        }))
-      )
-        return err(NO_PAYER_MESSAGE)
+      // open session creates no new work. A workspace OWNER with no payer is not a dead
+      // end: their own pull serves the queue (owner-run pays nothing), so the give queues
+      // instead of erroring — the runtime re-check in substrate-loop still gates the run.
+      const payable = await canPayForAgent(ctx.meta, {
+        orgId: hit.x.org_id,
+        agentId: hit.x.agent_id,
+        initiator: { userId: actingFor.id, source: "asker" },
+      })
+      const ownerRunOnly = !payable && (await ownerRunsOrg(tc, hit.x.org_id))
+      if (!payable && !ownerRunOnly) return err(NO_PAYER_MESSAGE)
       let opened: SessionRecord
       try {
         opened = await ctx.meta.createSession({
@@ -369,7 +377,7 @@ export function registerUseTool(tc: ToolContext): void {
         const winner = dedupe_key
           ? await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
           : null
-        if (winner) return reply(winner, hit.x, false)
+        if (winner) return reply(winner, hit.x, false, ownerRunOnly)
         throw e
       }
       await ctx.meta.addSessionMessage(
@@ -382,7 +390,7 @@ export function registerUseTool(tc: ToolContext): void {
         },
         "open",
       )
-      return reply(opened, hit.x, false)
+      return reply(opened, hit.x, false, ownerRunOnly)
     },
   )
 }
