@@ -1,4 +1,3 @@
-import { autocompletion, type CompletionContext } from "@codemirror/autocomplete"
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import { html } from "@codemirror/lang-html"
 import { markdown } from "@codemirror/lang-markdown"
@@ -8,7 +7,7 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language"
-import { EditorState } from "@codemirror/state"
+import { EditorState, StateEffect } from "@codemirror/state"
 import {
   placeholder as cmPlaceholder,
   drawSelection,
@@ -20,40 +19,6 @@ import {
 } from "@codemirror/view"
 import { tags as t } from "@lezer/highlight"
 import { useEffect, useRef } from "react"
-import { api } from "@/api"
-
-/** A source document stores durable, portable @handles rather than app-private mention ids. The
- * server resolves those handles when the version publishes; this picker makes the write path as
- * discoverable as comment mentions without pretending source text has a comment-thread reply. */
-const sourceMentionCompletions = (shortId?: string) => async (context: CompletionContext) => {
-  const before = context.matchBefore(/@[a-zA-Z0-9_-]*/)
-  if (!before || (before.from === before.to && !context.explicit)) return null
-  // Do not offer a person picker in an email address, URL, or a longer identifier.
-  if (
-    before.from > 0 &&
-    /[a-zA-Z0-9._@-]/.test(context.state.sliceDoc(before.from - 1, before.from))
-  )
-    return null
-  try {
-    const query = before.text.slice(1)
-    const { users } = await api.users(query, shortId)
-    const options = users
-      // Source mentions wake people; @derive and registered agents remain intentionally
-      // thread-only until source mentions have a canonical reply surface.
-      .filter((user) => user.kind !== "agent" && !!user.handle)
-      .slice(0, 6)
-      .map((user) => ({
-        label: `@${user.handle}`,
-        detail: user.name ?? undefined,
-        type: "user",
-        apply: `@${user.handle} `,
-      }))
-    return options.length ? { from: before.from, options } : null
-  } catch {
-    // Directory search is an affordance; raw @handles still publish safely if it is unavailable.
-    return null
-  }
-}
 
 // Syntax colors ride the semantic CSS variables instead of hard-coded values, so
 // the highlight follows the active theme (dark and light) with a single style.
@@ -123,7 +88,6 @@ export function CodeEditor({
           bracketMatching(),
           syntaxHighlighting(tokenHighlight, { fallback: true }),
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          autocompletion({ override: [sourceMentionCompletions(shortId)] }),
           format === "md" ? markdown() : html(),
           ...(placeholder ? [cmPlaceholder(placeholder)] : []),
           EditorView.lineWrapping,
@@ -153,6 +117,18 @@ export function CodeEditor({
       }),
     })
     view.current = view_
+    // Directory lookup is valuable once a writer starts composing a mention, but
+    // CodeMirror is already our largest lazy chunk. Load its completion grammar
+    // separately so opening source keeps its existing performance budget; the
+    // editor stays fully usable if that optional affordance cannot load.
+    void import("./source-mention-completion")
+      .then(({ sourceMentionCompletion }) => {
+        if (view.current !== view_) return
+        view_.dispatch({ effects: StateEffect.appendConfig.of(sourceMentionCompletion(shortId)) })
+      })
+      .catch(() => {
+        // Source editing remains safe and publishable without the optional picker.
+      })
     return () => {
       view_.destroy()
       view.current = null
