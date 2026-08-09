@@ -1,4 +1,4 @@
-import type { AutomationRef, AutomationTrigger, Run } from "@/api"
+import type { AutomationRef, AutomationTrigger, OrgSettings, Run } from "@/api"
 
 // Pure formatting for the Automations UI — kept out of the component so it's unit-tested.
 
@@ -8,6 +8,29 @@ import type { AutomationRef, AutomationTrigger, Run } from "@/api"
  *  targets uniformly; per-target modes are a future refinement. */
 export function stampMode(refs: AutomationRef[], mode: "publish" | "propose"): AutomationRef[] {
   return refs.map((r) => (mode === "publish" ? { ...r, mode: "publish" } : r))
+}
+
+type AutonomySettings = Pick<OrgSettings, "agentAutoEnabled" | "agentKillswitch">
+
+/** Why a stored publish-mode target will still be routed through review. The executor reads
+ * these switches again at claim time; this is the current UI explanation, not a promise. */
+export function livePublishHoldReason(settings: AutonomySettings | undefined): string | null {
+  if (!settings) return null
+  if (settings.agentKillswitch)
+    return "The workspace safety stop is on. This run will propose changes for review."
+  if (!settings.agentAutoEnabled)
+    return "Live publishing is disabled for this workspace. This run will propose changes for review."
+  return null
+}
+
+/** The automation row must not say "Publishes live" when the workspace gate will demote it. */
+export function automationWriteLabel(
+  refs: AutomationRef[],
+  settings: AutonomySettings | undefined,
+): string {
+  if (!refs.some((ref) => ref.mode === "publish")) return "Proposes for review"
+  const hold = livePublishHoldReason(settings)
+  return hold ? "Requests live publishing · review gate is on" : "Publishes live"
 }
 
 /** A compact human summary of an automation's targets for the row subtitle, e.g.

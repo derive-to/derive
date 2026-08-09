@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { Zap } from "lucide-react"
 import { useState } from "react"
-import { type Automation, api, type Run } from "@/api"
+import { type Automation, api, type OrgSettings, type Run } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
@@ -11,11 +11,12 @@ import { SettingsGroup } from "@/components/shared/settings-group"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { automationsQuery, runsQuery, workspaceQuery } from "@/lib/queries"
+import { automationsQuery, runsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AutomationForm } from "./automation-form"
 import {
+  automationWriteLabel,
   runExecutionReceipt,
   runOutcome,
   runStatusLabel,
@@ -29,6 +30,7 @@ import { SettingsSection } from "./settings-section"
 export function AutomationsSection() {
   const qc = useQueryClient()
   const { data: automations, isPending, isError, refetch } = useQuery(automationsQuery())
+  const { data: settings } = useQuery(workspaceSettingsQuery())
   // Creating / removing / activity are Admin-gated server-side; Run now needs a write seat.
   // Read the caller's role once and render only what they can actually do — never a form
   // whose submit is guaranteed a 403.
@@ -78,6 +80,7 @@ export function AutomationsSection() {
             <AutomationRow
               key={a.id}
               automation={a}
+              settings={settings}
               canRun={canRun}
               canRemove={isAdmin}
               onDone={reload}
@@ -94,11 +97,13 @@ export function AutomationsSection() {
 
 function AutomationRow({
   automation,
+  settings,
   canRun,
   canRemove,
   onDone,
 }: {
   automation: Automation
+  settings: Pick<OrgSettings, "agentAutoEnabled" | "agentKillswitch"> | undefined
   canRun: boolean
   canRemove: boolean
   onDone: () => void
@@ -121,6 +126,7 @@ function AutomationRow({
     onSuccess: () => onDone(),
   })
   const summary = targetSummary(automation.refs)
+  const writeLabel = automationWriteLabel(automation.refs, settings)
   return (
     <div data-testid={`automation-row-${automation.id}`} className="flex items-center gap-3 py-3">
       <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent">
@@ -138,9 +144,7 @@ function AutomationRow({
           <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
         </div>
         <div className="truncate text-sm text-muted-foreground">
-          {automation.refs.some((r) => r.mode === "publish")
-            ? "Publishes live"
-            : "Proposes for review"}
+          {writeLabel}
           {summary && ` · ${summary}`}
         </div>
       </div>
