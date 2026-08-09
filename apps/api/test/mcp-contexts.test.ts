@@ -450,3 +450,75 @@ describe("use({wait}) — the settle wake and the session loop", () => {
     expect(check.state).toBe("open")
   })
 })
+
+// create_context and the FRONTMATTER-ONLY skill rule: a context's skills load from the
+// manifest's `skills:` frontmatter pins (lib/manifest-pins.ts) — a prose derive://skills/...
+// mention in the body is deliberately not parsed. The REST create reports skills_count; the
+// MCP create_context said nothing, so a body-only mention came back as a working context with
+// skills:[] and no signal. It now reports the pin count and, when the body names skills that
+// nothing pinned, says how to pin them — without adding a skills param or parsing prose.
+describe("automate create_context — skills_count comes from frontmatter pins", () => {
+  // The automate tool is owner-only, and /v1/agents caps registration at editor — so the
+  // owner-role MCP caller is seeded straight into the store, acting for the workspace owner.
+  const setupOwnerBot = async (name: string) => {
+    const { app, meta } = makeAuthedApp(name, [owner])
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const raw = `dk_agt_${name}`
+    await meta.createAgent({
+      id: `ag_${name}`,
+      org_id: "default",
+      name: "OwnerBot",
+      token: sha256(raw),
+      role: "owner",
+      created_by: owner.id,
+    })
+    const createContext = async (contextName: string, content: string) => {
+      const manifest = await (
+        await publishAs(app, content, { title: `${contextName} manifest` }, as(owner.email))
+      ).json()
+      return call(app, raw, "automate", {
+        action: "create_context",
+        name: contextName,
+        manifest_short_id: manifest.short_id,
+      })
+    }
+    return { createContext }
+  }
+
+  it("counts the frontmatter pins, with no hint when the declaration is right", async () => {
+    const { createContext } = await setupOwnerBot("mcx-cc-pins")
+    const md = [
+      "---",
+      "skills:",
+      "  - id: skl11111",
+      "    version: 2",
+      "  - id: skl22222",
+      "---",
+      "# QA manifest",
+      "Run the checks with derive://skills/loop in mind.",
+    ].join("\n")
+    const r = await createContext("QA", md)
+    expect(r.context_id).toBeTruthy()
+    expect(r.skills_count).toBe(2)
+    // Pinned properly: the body mention changes nothing and earns no lecture.
+    expect(r.skills_hint).toBeUndefined()
+  })
+
+  it("a body-only derive://skills mention pins nothing — and the response says so", async () => {
+    const { createContext } = await setupOwnerBot("mcx-cc-prose")
+    const r = await createContext("QA", "# QA manifest\nRead derive://skills/loop before acting.")
+    expect(r.context_id).toBeTruthy()
+    expect(r.skills_count).toBe(0)
+    // The hint teaches the fix: pins live in frontmatter, one `- id:` per skill.
+    expect(r.skills_hint).toContain("frontmatter")
+    expect(r.skills_hint).toContain("- id:")
+  })
+
+  it("no pins and no mention is just zero — silence, not a warning", async () => {
+    const { createContext } = await setupOwnerBot("mcx-cc-plain")
+    const r = await createContext("QA", "# QA manifest\nRun the checks.")
+    expect(r.context_id).toBeTruthy()
+    expect(r.skills_count).toBe(0)
+    expect(r.skills_hint).toBeUndefined()
+  })
+})
