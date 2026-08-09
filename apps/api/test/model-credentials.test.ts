@@ -50,6 +50,24 @@ describe("model credentials", () => {
     expect(JSON.stringify(list)).not.toContain(token)
   })
 
+  it("labels a pasted Codex subscription login without echoing auth.json punctuation", async () => {
+    const login = JSON.stringify({
+      tokens: { access_token: "access-secret", refresh_token: "refresh-secret" },
+    })
+    const res = await connect(owner.email, { provider: "codex", kind: "login", token: login })
+    expect(res.status).toBe(201)
+    expect((await res.json()).hint).toBe("subscription")
+
+    const list = await (
+      await app.request("/v1/me/model-credentials", { headers: as(owner.email) })
+    ).json()
+    expect(list.credentials).toContainEqual(
+      expect.objectContaining({ provider: "codex", kind: "login", hint: "subscription" }),
+    )
+    expect(JSON.stringify(list)).not.toContain("access-secret")
+    expect(JSON.stringify(list)).not.toContain("refresh-secret")
+  })
+
   it("owner-lend is OFF by default: a no-initiator fetch is null even though the owner has a plan", async () => {
     await connect(owner.email, { provider: "codex", kind: "api_key", token: "owner-plan-fixture" })
     const agent = await mintAgent(owner.email, "Owner Runner")

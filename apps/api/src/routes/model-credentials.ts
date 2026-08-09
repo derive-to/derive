@@ -20,6 +20,12 @@ import { fallbackPayerTiers, POOL_USER } from "../lib/payer"
 const PROVIDERS = ["claude-code", "codex"] as const
 const isoNow = () => new Date().toISOString()
 
+/** A connection hint is product copy, never credential material. Codex subscription
+ * logins are an auth.json document, so their last characters are JSON punctuation (and
+ * can include part of a token). Name that credential shape instead of slicing it. */
+const credentialHint = (kind: "oauth" | "api_key" | "login", token: string): string =>
+  kind === "login" ? "subscription" : token.slice(-4)
+
 // The workspace-pool credential is a model_credential row keyed on a reserved sentinel user
 // id, so the org's shared plan reuses the whole encrypted-secret store with no new table. It
 // can never collide with a real user id (those are newId-prefixed). Defined in lib/payer.ts,
@@ -67,7 +73,7 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     const token = b.token.trim()
     if (token === "") return fail(c, 400, "token is empty")
     const now = isoNow()
-    const hint = token.slice(-4)
+    const hint = credentialHint(b.kind, token)
     await meta.setModelCredential({
       id: newId("mcr"),
       org_id: org,
@@ -126,7 +132,7 @@ export const modelCredentialRoutes = (ctx: AppContext) => {
     const token = b.token.trim()
     if (token === "") return fail(c, 400, "token is empty")
     const now = isoNow()
-    const hint = token.slice(-4)
+    const hint = credentialHint(b.kind, token)
     await meta.setModelCredential({
       id: newId("mcr"),
       org_id: org,

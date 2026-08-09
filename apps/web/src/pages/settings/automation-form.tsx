@@ -36,9 +36,16 @@ import {
   modelCredentialsQuery,
   runsQuery,
   targetPickerQuery,
+  workspaceSettingsQuery,
 } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { EVENT_KINDS, SCHEDULE_PRESETS, stampMode } from "./automation-format"
+import {
+  EVENT_KINDS,
+  livePublishHoldReason,
+  SCHEDULE_PRESETS,
+  stampMode,
+} from "./automation-format"
+import { credentialHintLabel } from "./model-credential-format"
 
 // The automation form, shared by the Settings manager (create + edit) and the per-artifact
 // Automate dialog. Targets are first-class: one "Add target" search over documents and
@@ -131,7 +138,14 @@ export function AutomationForm({
   const connections = useQuery(connectionsQuery())
   const contexts = useQuery(contextsQuery())
   const modelCredentials = useQuery(modelCredentialsQuery())
+  const workspaceSettings = useQuery(workspaceSettingsQuery())
   const personalPlan = modelCredentials.data?.find((c) => c.provider === provider)
+  const livePublishHold =
+    mode === "publish"
+      ? workspaceSettings.isError
+        ? "We couldn't confirm the workspace publishing policy. This run may be proposed for review."
+        : livePublishHoldReason(workspaceSettings.data)
+      : null
   const sources = useMemo(
     () => (connections.data ?? []).filter((c) => c.kind === "mcp" && c.status === "active"),
     [connections.data],
@@ -331,7 +345,8 @@ export function AutomationForm({
             <span>Checking your connected model plans…</span>
           ) : personalPlan ? (
             <span>
-              {provider === "codex" ? "Codex" : "Claude"} plan connected · {personalPlan.hint}
+              {provider === "codex" ? "Codex" : "Claude"} plan connected ·{" "}
+              {credentialHintLabel(personalPlan)}
             </span>
           ) : (
             <span>
@@ -554,6 +569,16 @@ export function AutomationForm({
               <SelectItem value="publish">Publish live</SelectItem>
             </SelectContent>
           </Select>
+          {livePublishHold && (
+            <div data-testid="automation-live-publish-held">
+              <StatusPanel
+                tone="warning"
+                layout="inline"
+                title="Live publishing is currently held for review."
+                description={livePublishHold}
+              />
+            </div>
+          )}
         </Field>
       )}
 

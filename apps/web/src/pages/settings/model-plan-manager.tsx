@@ -18,6 +18,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { modelCredentialsQuery, poolCredentialsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { credentialHintLabel } from "./model-credential-format"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 
 type Provider = "claude-code" | "codex"
@@ -255,7 +256,9 @@ function CredentialRow({
           {providerLabel(cred.provider)}
           <Badge variant="outline">{kindLabel(cred.provider, cred.kind)}</Badge>
         </div>
-        <div className="font-mono text-2xs text-muted-foreground">connected · ••••{cred.hint}</div>
+        <div className="font-mono text-2xs text-muted-foreground">
+          connected · {credentialHintLabel(cred)}
+        </div>
       </div>
       <Button
         data-testid={`${prefix}-disconnect-${cred.provider}`}

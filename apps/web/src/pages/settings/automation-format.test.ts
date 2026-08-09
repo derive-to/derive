@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 import type { AutomationRef } from "@/api"
 import {
+  automationWriteLabel,
+  livePublishHoldReason,
   runExecutionReceipt,
   runOutcome,
   runStatusLabel,
@@ -81,6 +83,31 @@ describe("stampMode", () => {
   })
   it("empty targets → empty", () => {
     expect(stampMode([], "publish")).toEqual([])
+  })
+})
+
+describe("live publishing labels", () => {
+  const publishTarget: AutomationRef[] = [{ kind: "artifact", id: "a1", mode: "publish" }]
+
+  it("explains when workspace policy demotes a requested live write to review", () => {
+    expect(livePublishHoldReason({ agentAutoEnabled: false, agentKillswitch: false })).toBe(
+      "Live publishing is disabled for this workspace. This run will propose changes for review.",
+    )
+    expect(
+      automationWriteLabel(publishTarget, { agentAutoEnabled: false, agentKillswitch: false }),
+    ).toBe("Requests live publishing · review gate is on")
+  })
+
+  it("keeps live publishing honest for a ready workspace and the safety stop", () => {
+    expect(
+      automationWriteLabel(publishTarget, { agentAutoEnabled: true, agentKillswitch: false }),
+    ).toBe("Publishes live")
+    expect(livePublishHoldReason({ agentAutoEnabled: true, agentKillswitch: true })).toBe(
+      "The workspace safety stop is on. This run will propose changes for review.",
+    )
+    expect(automationWriteLabel([{ kind: "artifact", id: "a1" }], undefined)).toBe(
+      "Proposes for review",
+    )
   })
 })
 
