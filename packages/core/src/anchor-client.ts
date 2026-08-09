@@ -12,10 +12,12 @@
  *   frame → host:  select / anchors-resolved / anchor-rects / scroll / anchor-click /
  *                  anchor-hover / cursor / cursor-tap / cursor-leave / navigate /
  *                  open-external / esc / present / edit-state / edit-edits /
- *                  edit-save / edit-blocked / edit-request / edit-image / deck-sniff
+ *                  edit-save / edit-blocked / edit-request / edit-image /
+ *                  edit-mention-query / edit-mention-key / deck-sniff
  *   host → frame:  anchors / remeasure / focus-anchor / emphasize / scroll-by /
  *                  edit-mode / edit-collect / edit-restore / edit-armed /
- *                  edit-undo / edit-redo / edit-format / deck-drive
+ *                  edit-undo / edit-redo / edit-format / edit-mention-insert /
+ *                  edit-mention-close / deck-drive
  *
  * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
  * bundles into one small self-contained script.
@@ -440,6 +442,27 @@ interface ElReg {
           e.preventDefault()
           e.stopImmediatePropagation()
           run()
+          return
+        }
+        // The directory lives in the host (this sandboxed frame has no authenticated
+        // access to it), but the caret belongs here. Keep the familiar picker keys
+        // in the frame and route them across the boundary before Escape's normal
+        // "leave this block" grammar gets a chance to run.
+        if (
+          editMention &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          (e.key === "ArrowDown" ||
+            e.key === "ArrowUp" ||
+            e.key === "Enter" ||
+            e.key === "Tab" ||
+            e.key === "Escape")
+        ) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          post({ type: "edit-mention-key", key: e.key })
+          if (e.key === "Escape") clearEditMention()
           return
         }
         if (e.key === "Escape") {
@@ -1739,6 +1762,136 @@ interface ElReg {
    *  things can change (dirty count, undo, redo, a live selection) still posts only
    *  when something a control would show actually moved. */
   let lastState = ""
+
+  /* -- inline body @mention picker -------------------------------------------
+     The frame owns text and the live Range; the host owns the authenticated people
+     directory and paints the menu above this opaque-origin iframe. Persisting a
+     token range lets a click in that host-side menu replace exactly what was typed
+     without guessing from the document after focus has crossed the frame boundary. */
+  let editMention: { token: Range; query: string } | null = null
+  const clearEditMention = () => {
+    editMention = null
+  }
+  const HANDLE_TOKEN = /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/i
+  /** A DOM range at a textContent offset. Token matching is constrained to one
+   * editable block, so textContent is the same narrow, plaintext grammar this
+   * editor persists. */
+  const textOffsetRange = (block: HTMLElement, start: number, end: number): Range | null => {
+    const nodes: Text[] = []
+    const walk = document.createTreeWalker(block, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) nodes.push(n as Text)
+    let cursor = 0
+    let startPoint: { node: Text; offset: number } | null = null
+    let endPoint: { node: Text; offset: number } | null = null
+    for (const node of nodes) {
+      const length = node.nodeValue?.length ?? 0
+      if (!startPoint && start >= cursor && start <= cursor + length)
+        startPoint = { node, offset: start - cursor }
+      if (!endPoint && end >= cursor && end <= cursor + length)
+        endPoint = { node, offset: end - cursor }
+      cursor += length
+    }
+    if (!startPoint || !endPoint) return null
+    const range = document.createRange()
+    range.setStart(startPoint.node, startPoint.offset)
+    range.setEnd(endPoint.node, endPoint.offset)
+    return range
+  }
+  const detectEditMention = () => {
+    if (!editOn) return
+    const selection = window.getSelection()
+    if (!selection?.rangeCount || !selection.isCollapsed) {
+      if (editMention) {
+        clearEditMention()
+        post({ type: "edit-mention-close" })
+      }
+      return
+    }
+    const caret = selection.getRangeAt(0)
+    const owner =
+      caret.startContainer.nodeType === 1
+        ? (caret.startContainer as Element)
+        : caret.startContainer.parentElement
+    const block = owner?.closest("[data-derive-editable]")
+    if (!(block instanceof HTMLElement)) {
+      if (editMention) {
+        clearEditMention()
+        post({ type: "edit-mention-close" })
+      }
+      return
+    }
+    const before = document.createRange()
+    before.selectNodeContents(block)
+    try {
+      before.setEnd(caret.startContainer, caret.startOffset)
+    } catch (_e) {
+      return
+    }
+    const text = before.toString()
+    // Mirrors the live-content parser's boundary rule: an @ after a word, dot,
+    // hyphen, or another @ is an email / URL / identifier, not a person mention.
+    const match = /(^|[^a-z0-9._@-])@([a-z0-9_-]{0,30})$/i.exec(text)
+    if (!match) {
+      if (editMention) {
+        clearEditMention()
+        post({ type: "edit-mention-close" })
+      }
+      return
+    }
+    const prefix = match[1] ?? ""
+    const query = match[2] ?? ""
+    const start = text.length - match[0].length + prefix.length
+    const token = textOffsetRange(block, start, text.length)
+    if (!token) return
+    // Re-query on every changed token. The host's request token discards late
+    // directory responses, so a slow `@a` cannot paint over a later `@alex`.
+    if (
+      editMention?.query === query &&
+      editMention.token.startContainer === token.startContainer &&
+      editMention.token.startOffset === token.startOffset &&
+      editMention.token.endContainer === token.endContainer &&
+      editMention.token.endOffset === token.endOffset
+    )
+      return
+    editMention = { token, query }
+    const rect = caret.getBoundingClientRect()
+    post({
+      type: "edit-mention-query",
+      query,
+      rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
+    })
+  }
+  const insertEditMention = (handle: string) => {
+    if (!HANDLE_TOKEN.test(handle)) return
+    const mention = editMention
+    if (!mention?.token.startContainer.isConnected || !mention.token.endContainer.isConnected)
+      return
+    const owner =
+      mention.token.commonAncestorContainer.nodeType === 1
+        ? (mention.token.commonAncestorContainer as Element)
+        : mention.token.commonAncestorContainer.parentElement
+    const block = owner?.closest("[data-derive-editable]")
+    if (!(block instanceof HTMLElement)) return
+    checkpoint(block)
+    const text = document.createTextNode(`@${handle} `)
+    mention.token.deleteContents()
+    mention.token.insertNode(text)
+    const caret = document.createRange()
+    caret.setStartAfter(text)
+    caret.collapse(true)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(caret)
+    block.focus({ preventScroll: true })
+    clearEditMention()
+    // The initial `@` already marks this block dirty. This is still needed for a
+    // host response that lands before the input event's optimistic state reaches it.
+    if (lastDirty <= 0) {
+      lastDirty = 1
+      post({ type: "edit-state", dirty: 1 })
+    }
+    scheduleDirty()
+  }
   // The resize controller is mounted later in the file. Keeping this tiny bridge
   // here lets the shared edit-state reporter describe the CURRENT editing context
   // without coupling text history to the overlay's implementation details.
@@ -2509,6 +2662,8 @@ interface ElReg {
       lastBurst = null
       pendingRange = null
       lastState = ""
+      clearEditMention()
+      post({ type: "edit-mention-close" })
     }
   }
   const disableTarget = (t: EditTarget) => {
@@ -2954,6 +3109,12 @@ interface ElReg {
       post({ type: "edit-state", dirty: 1 })
     }
     scheduleDirty()
+    detectEditMention()
+  })
+  // A click or arrow key can move the caret out of a token without changing text.
+  // Close the host menu immediately rather than leaving a stale insertion target up.
+  document.addEventListener("selectionchange", () => {
+    if (editOn) detectEditMention()
   })
 
   /* ── Bold, italic, link ───────────────────────────────────────────────────────
@@ -3282,6 +3443,8 @@ interface ElReg {
         d.kind === "i" ? "i" : d.kind === "a" ? "a" : "b",
         typeof d.href === "string" ? d.href : undefined,
       )
+    else if (d.type === "edit-mention-insert") insertEditMention(String(d.handle || ""))
+    else if (d.type === "edit-mention-close") clearEditMention()
     // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
     // `deck` message, which it answers itself.
     else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)

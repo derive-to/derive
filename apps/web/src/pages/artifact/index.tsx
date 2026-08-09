@@ -38,6 +38,7 @@ import { ActionsCtx } from "./comment-actions"
 import { DerivedFromBanner } from "./derived-from-banner"
 import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
+import { InlineMentionMenu } from "./inline-mention-menu"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
@@ -1138,6 +1139,9 @@ export function Artifact() {
               />
             ) : (
               documentEl
+            )}
+            {inlineEdit.mention && !editing && (
+              <InlineMentionMenu menu={inlineEdit.mention} onChoose={inlineEdit.chooseMention} />
             )}
             {/* On desktop, only when there ARE open comments — a zero-count pill is
                 noise there, since the top-bar Comments toggle (and `c`) already opens
