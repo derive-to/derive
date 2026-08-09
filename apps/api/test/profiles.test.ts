@@ -1,5 +1,13 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { newId } from "@derive/core"
-import { describe, expect, it } from "vitest"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
+import Database from "better-sqlite3"
+import { afterAll, describe, expect, it } from "vitest"
+import { createApp } from "../src/app"
+import { makeAuth, migrateAuth } from "../src/auth-config"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 const post = (
@@ -564,5 +572,96 @@ describe("people (/v1/people) — your workmates, not a directory", () => {
 
     // Signed-in only — anonymous is refused.
     expect((await app.request("/v1/people")).status).toBe(401)
+  })
+})
+
+// The fake-session harness above can't see the session COOKIE CACHE (auth-config.ts:
+// Better Auth answers /api/auth/get-session from a signed `session_data` cookie for up
+// to 60s). The /v1/me/* writes go straight to the user row, below that cache, so a save
+// used to read as a revert until the cookie expired. This suite runs a REAL Better Auth
+// instance and pins the fix: each write hands back a re-signed cookie, and the very
+// next identity read serves the NEW value.
+describe("profile writes stay fresh through the session cookie cache", () => {
+  const dir = mkdtempSync(join(tmpdir(), "derive-profile-cache-"))
+  const dbPath = join(dir, "auth.db")
+  const db = new Database(dbPath)
+  const BASE = "http://localhost:8080"
+  const auth = makeAuth(db, BASE, "test-secret-0123456789abcd")
+  const app = createApp({
+    meta: new SqliteMetaStore(dbPath),
+    blobs: new FsBlobStore(join(dir, "blobs")),
+    baseUrl: BASE,
+    auth,
+  })
+
+  afterAll(() => {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  // A minimal browser: keep one jar, fold every response's Set-Cookie back in by name.
+  let jar = ""
+  const absorb = (res: Response): Response => {
+    const fresh = res.headers.getSetCookie().map((c) => c.split(";")[0] ?? "")
+    if (fresh.length) {
+      const names = new Set(fresh.map((c) => c.split("=")[0]))
+      const kept = jar ? jar.split("; ").filter((c) => !names.has(c.split("=")[0])) : []
+      jar = [...kept, ...fresh].join("; ")
+    }
+    return res
+  }
+  const post = async (path: string, body?: unknown) =>
+    absorb(
+      await app.request(`${BASE}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: BASE, cookie: jar },
+        body: JSON.stringify(body ?? {}),
+      }),
+    )
+  const me = async () => {
+    const res = await app.request(`${BASE}/v1/me`, { headers: { origin: BASE, cookie: jar } })
+    return (await res.json()).user
+  }
+
+  it("signs up and holds a cached-session cookie", async () => {
+    await migrateAuth(auth)
+    const up = await post("/api/auth/sign-up/email", {
+      email: "fresh@derive.test",
+      password: "initialPassw0rd",
+      name: "Fresh",
+    })
+    expect(up.status).toBe(200)
+    const sin = await post("/api/auth/sign-in/email", {
+      email: "fresh@derive.test",
+      password: "initialPassw0rd",
+    })
+    expect(sin.status).toBe(200)
+    expect(jar).toContain("session_data")
+  })
+
+  it("serves a saved role + bio on the next read — no 60s revert", async () => {
+    expect((await me()).profession).toBeNull()
+    const saved = await post("/v1/me/profile", { profession: "Design", about: "maps + moods" })
+    expect(saved.status).toBe(200)
+    const u = await me()
+    expect(u.profession).toBe("Design")
+    expect(u.about).toBe("maps + moods")
+  })
+
+  it("serves a discoverable opt-out on the next read", async () => {
+    expect((await me()).discoverable).toBe(true)
+    expect((await post("/v1/me/discoverable", { discoverable: false })).status).toBe(200)
+    expect((await me()).discoverable).toBe(false)
+  })
+
+  it("serves the onboarded flag on the next read", async () => {
+    expect((await me()).onboarded).toBe(false)
+    expect((await post("/v1/me/onboarded")).status).toBe(200)
+    expect((await me()).onboarded).toBe(true)
+  })
+
+  it("serves a claimed handle on the next read", async () => {
+    expect((await post("/v1/me/username", { username: "freshly" })).status).toBe(200)
+    expect((await me()).username).toBe("freshly")
   })
 })
