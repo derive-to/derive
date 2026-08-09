@@ -100,6 +100,8 @@ export function registerCatchUpTool(tc: ToolContext): void {
             [
               "review.sent_back",
               "review.approved",
+              "proposal.approved",
+              "proposal.changes_requested",
               "comment.created",
               "comment.updated",
               "version.published",
@@ -217,10 +219,45 @@ export function registerCatchUpTool(tc: ToolContext): void {
             ? ` The human sent back their review of v${review.version} — read the open threads, revise, and re-request.`
             : ` The human approved v${review.version} — you're clear to proceed.`
         : ""
+      // Proposals are the OTHER review loop (a for_review publish): a candidate
+      // version blocked on a human's approve/send-back. One read, split in memory
+      // like the comments above. Without this a proposer's own catch_up showed
+      // review:null while its proposal sat in the queue.
+      const allProposals = await ctx.meta.listProposals(a.id)
+      const openProposals = allProposals.filter((p) => p.state === "open")
+      // The freshest decision that still applies to what the agent sees: an approval
+      // that IS the current head, or changes requested against it (feedback the
+      // proposer hasn't revised past yet). Older decisions were already consumed.
+      const decidedProposal =
+        allProposals.find(
+          (p) =>
+            (p.state === "approved" && p.decided_version === head) ||
+            (p.state === "changes_requested" && p.base_version === head),
+        ) ?? null
+      const summarizeProposal = (p: (typeof allProposals)[number]) => ({
+        proposal_id: p.id,
+        state: p.state,
+        base_version: p.base_version,
+        message: p.message,
+        author: p.author,
+        created_at: p.created_at,
+        ...(p.decided_version != null ? { decided_version: p.decided_version } : {}),
+        ...(p.decision_note ? { decision_note: p.decision_note } : {}),
+      })
+      const proposals = [...openProposals, ...(decidedProposal ? [decidedProposal] : [])].map(
+        summarizeProposal,
+      )
+      const proposalBit = openProposals.length
+        ? ` ${openProposals.length} proposal${openProposals.length === 1 ? "" : "s"} awaiting human review (not live until approved).`
+        : decidedProposal
+          ? decidedProposal.state === "approved"
+            ? ` The proposal against v${decidedProposal.base_version} was approved — live as v${decidedProposal.decided_version}.`
+            : ` The human requested changes on the proposal against v${decidedProposal.base_version} — read the note, revise, and re-propose.`
+          : ""
       const summary =
         since >= to
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}${proposalBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}${proposalBit}`
       // What the NUMBERS did between the versions being compared. The prose diff already
       // shows what the page says; without this a review round sees everything except the
       // figures the page is about.
@@ -236,6 +273,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
       return json({
         summary,
         review,
+        ...(proposals.length ? { proposals } : {}),
         short_id,
         since,
         to,

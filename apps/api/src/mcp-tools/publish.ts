@@ -542,6 +542,7 @@ export function registerPublishTool(tc: ToolContext): void {
             // authorized it, so reviewers see "Agent X on behalf of Alice."
             on_behalf_of: actingFor?.id ?? null,
           })
+          ctx.bus.publish(existing.id, { type: "proposal.created", proposal_id: proposal.id })
           const addressed = addresses?.length
             ? await markAddressed(ctx.meta, existing.id, proposal.id, addresses)
             : []
@@ -551,6 +552,38 @@ export function registerPublishTool(tc: ToolContext): void {
               thread_id: threadId,
               state: "addressed",
             })
+          // Webhook + Slack fan-out — event parity with the REST proposal route, so
+          // integrations hear about an MCP-filed proposal the same way.
+          await ctx.notify(existing, "proposal.created", {
+            proposal_id: proposal.id,
+            author: proposal.author,
+            actor_id: proposal.author_id,
+            message: proposal.message,
+            base_version: proposal.base_version,
+          })
+          // Bell entry for the reviewing human (the one the agent acts on behalf of,
+          // same recipient as the live-publish path below): the proposal is blocked on
+          // THEIR decision, and without a row the review queue is only discoverable by
+          // opening it by hand.
+          if (actingFor) {
+            const row = {
+              id: newId("n"),
+              user_id: actingFor.id,
+              actor: agent.name,
+              kind: "review" as const,
+              artifact_id: existing.id,
+              artifact_short_id: existing.short_id,
+              artifact_title: existing.title,
+              thread_id: "",
+              comment_id: "",
+              preview: `proposed a revision of v${proposal.base_version} for your review`,
+            }
+            await ctx.meta.createNotification(row)
+            ctx.bus.publish(`u:${actingFor.id}`, {
+              type: "notification",
+              notification: { ...row, read: 0, created_at: new Date().toISOString() },
+            })
+          }
           return json({
             published: false,
             proposed: true,

@@ -9,6 +9,7 @@ import { zipSync } from "fflate"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
+import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
 import {
   MAX_INDEX_TEXT,
@@ -2975,6 +2976,47 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).toContain("version: 1 (current)")
     expect(read).toContain("Draft")
     expect(read).not.toContain("Revised")
+  })
+
+  it("publish for_review bells the reviewing human and emits proposal.created", async () => {
+    // A filed proposal must interrupt BOTH sides of the loop: the artifact channel
+    // (the review queue's live refresh) and the reviewing human's bell — without the
+    // row the owner only finds the proposal by opening the review queue by hand.
+    const backplane = createInProcessBackplane()
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "reviewbell",
+      "openid derive:read derive:publish",
+      { backplane },
+    )
+    const shortId = (await (await publish(app, token, "Bell Draft")).json()).short_id
+    const a = await meta.getByShortId(shortId as string)
+    if (!a) throw new Error("artifact missing")
+    const artEvents: DeriveEvent[] = []
+    backplane.subscribe(a.id, (e) => artEvents.push(e))
+    const userEvents: DeriveEvent[] = []
+    backplane.subscribe("u:u_o", (e) => userEvents.push(e))
+
+    const p = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: shortId,
+          content: "<h1>Revised</h1>",
+          for_review: true,
+        }),
+      ),
+    )
+    expect(p.proposed).toBe(true)
+    // The bus event fires on the artifact channel (REST-route parity)...
+    expect(artEvents.find((e) => e.type === "proposal.created")).toMatchObject({
+      proposal_id: p.proposal_id,
+    })
+    // ...and the human behind the grant gets a bell row plus the live push.
+    const rows = await meta.listNotifications("u_o", 10)
+    const bell = rows.find((r) => r.artifact_short_id === shortId)
+    expect(bell?.kind).toBe("review")
+    expect(bell?.preview).toContain("review")
+    expect(userEvents.some((e) => e.type === "notification")).toBe(true)
   })
 
   // The sniffer types by filename first, so a bare index.html fallback silently

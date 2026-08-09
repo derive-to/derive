@@ -350,6 +350,51 @@ describe("catch_up `wait` long-poll", () => {
   })
 })
 
+describe("catch_up surfaces proposals (the for_review side of the loop)", () => {
+  it("a proposer sees its open proposal, then the human's decision", async () => {
+    const { app, meta, backplane, token } = loopApp("proposal")
+    const created = await call(app, token, "publish", {
+      content: "<h1>Doc</h1>",
+      title: "Proposal Loop",
+    })
+    const userEvents = record(backplane, "u:u_o")
+    const p = await call(app, token, "publish", {
+      short_id: created.short_id,
+      content: "<h1>Doc v2</h1>",
+      message: "tighten the intro",
+      for_review: true,
+    })
+    expect(p.proposed).toBe(true)
+    // The reviewing human is belled (kind review — the proposal awaits THEIR decision).
+    const rows = await meta.listNotifications("u_o", 10)
+    expect(rows.some((r) => r.kind === "review" && r.artifact_short_id === created.short_id)).toBe(
+      true,
+    )
+    expect(userEvents.some((e) => e.type === "notification")).toBe(true)
+
+    // The proposer's own catch_up shows the proposal instead of "you're up to date".
+    const out = await call(app, token, "catch_up", { short_id: created.short_id })
+    expect(out.summary).toContain("awaiting human review")
+    expect(out.proposals).toMatchObject([{ proposal_id: p.proposal_id, state: "open" }])
+
+    // The human requests changes; the next catch_up carries the decision + note.
+    const res = await app.request(
+      `/v1/artifacts/${created.short_id}/proposals/${p.proposal_id}/request-changes`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ note: "tone it down" }),
+      },
+    )
+    expect(res.status).toBe(200)
+    const after = await call(app, token, "catch_up", { short_id: created.short_id })
+    expect(after.summary).toContain("requested changes")
+    expect(after.proposals).toMatchObject([
+      { proposal_id: p.proposal_id, state: "changes_requested", decision_note: "tone it down" },
+    ])
+  })
+})
+
 describe("comment bells (the MCP path)", () => {
   it("an agent's comment on the human's artifact bells them — parity with HTTP", async () => {
     const { app, meta, token } = loopApp("comment-bell")
