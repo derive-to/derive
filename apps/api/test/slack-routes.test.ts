@@ -148,6 +148,62 @@ const addV = async (m: MetaStore, artifactId: string): Promise<number> => {
 }
 
 describe("slack status + admin routes", () => {
+  it("persists an OAuth install and returns an explicit success handoff", async () => {
+    const { app, meta } = make("slack-oauth-success")
+    const start = await app.request("/v1/slack/install", { headers: as(owner.email) })
+    const authorizeUrl = new URL(start.headers.get("location") ?? "")
+    const state = authorizeUrl.searchParams.get("state")
+    expect(state).toBeTruthy()
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          ok: true,
+          access_token: "xoxb-oauth",
+          bot_user_id: "UBOT",
+          team: { id: "T-OAUTH", name: "Acme Slack" },
+        }),
+      ),
+    )
+    const callback = await app.request(
+      `/v1/slack/oauth/callback?code=oauth-code&state=${encodeURIComponent(state ?? "")}`,
+    )
+
+    expect(callback.status).toBe(302)
+    expect(callback.headers.get("location")).toBe("/settings/integrations?slack_connected=1")
+    expect(await meta.getSlackInstall("default")).toMatchObject({
+      team_id: "T-OAUTH",
+      team_name: "Acme Slack",
+      bot_user_id: "UBOT",
+    })
+  })
+
+  it("returns OAuth failures to settings with a useful recovery state", async () => {
+    const { app } = make("slack-oauth-error")
+    const canceled = await app.request("/v1/slack/oauth/callback?error=access_denied")
+    expect(canceled.status).toBe(302)
+    expect(canceled.headers.get("location")).toBe("/settings/integrations?slack_error=canceled")
+
+    const expired = await app.request("/v1/slack/oauth/callback?code=orphaned")
+    expect(expired.status).toBe(302)
+    expect(expired.headers.get("location")).toBe("/settings/integrations?slack_error=expired")
+
+    const start = await app.request("/v1/slack/install", { headers: as(owner.email) })
+    const state = new URL(start.headers.get("location") ?? "").searchParams.get("state")
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ ok: false, error: "invalid_team_for_non_distributed_app" }),
+      ),
+    )
+    const misconfigured = await app.request(
+      `/v1/slack/oauth/callback?code=oauth-code&state=${encodeURIComponent(state ?? "")}`,
+    )
+    expect(misconfigured.status).toBe(302)
+    expect(misconfigured.headers.get("location")).toBe("/settings/integrations?slack_error=config")
+  })
+
   it("reports available + not connected before an install, connected after", async () => {
     const { app, meta } = make("slack-status")
     const before = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()

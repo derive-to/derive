@@ -462,14 +462,14 @@ export const blockedQuery = () =>
     queryFn: () => api.getBilling().then((b) => b.blocked),
   })
 
-// Slack connection status for the Integrations section (availability, connected
-// team, default channel). Invalidated on disconnect; staleTime Infinity so a
-// background refetch can't re-seed the editable channel field mid-edit.
+// Slack connection status for the Integrations section. Keep it eligible for focus
+// refetches so an OAuth flow completed in another tab updates the original settings
+// page as soon as the user returns.
 export const slackQuery = () =>
   queryOptions({
     queryKey: ["slack"] as const,
     queryFn: () => api.getSlack(),
-    staleTime: Number.POSITIVE_INFINITY,
+    refetchOnWindowFocus: "always",
   })
 
 // The workspace's Slack channel subscriptions, plus the event types one can carry (the server

@@ -1,11 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { AlertTriangle } from "lucide-react"
+import { useEffect, useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
@@ -13,14 +16,76 @@ import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 import { SlackSubscriptionsSection } from "./slack-subscriptions-section"
 
+type SlackInstallResult = { connected: true } | { connected: false; error: string } | null
+
+const DEFAULT_SLACK_INSTALL_ERROR = {
+  title: "Slack couldn't be connected",
+  description: "Slack didn't complete the authorization. Try again or check the app configuration.",
+}
+
+const SLACK_INSTALL_ERRORS: Record<string, { title: string; description: string }> = {
+  canceled: {
+    title: "Slack connection canceled",
+    description: "Nothing changed. When you're ready, start the connection again below.",
+  },
+  expired: {
+    title: "Slack connection expired",
+    description: "The authorization session was missing or expired. Start again below.",
+  },
+  config: {
+    title: "Slack app configuration needs attention",
+    description:
+      "Slack rejected this app's credentials, redirect URL, or workspace eligibility. Check the Slack app configuration, then try again.",
+  },
+  save: {
+    title: "Derive couldn't save the Slack connection",
+    description: "Slack approved the app, but Derive couldn't persist the installation. Try again.",
+  },
+  oauth: DEFAULT_SLACK_INSTALL_ERROR,
+}
+
+// Read the one-shot callback result without mutating browser state during render.
+// The effect below clears it after mount and invalidates any restored Slack cache.
+const readSlackInstallResult = (): SlackInstallResult => {
+  if (typeof window === "undefined") return null
+  const qs = new URLSearchParams(window.location.search)
+  const connected = qs.get("slack_connected") === "1"
+  const error = qs.get("slack_error")
+  if (!connected && !error) return null
+  return connected ? { connected: true } : { connected: false, error: error ?? "oauth" }
+}
+
 // The workspace activity toggles (email + GitHub mirroring) plus the Slack connection.
 // Where Slack posts is per-channel now — see slack-subscriptions-section.tsx. Toggles apply optimistically
 // with no save (the toggle contract); the Slack channel id is an explicit save.
 export function IntegrationsSection() {
   const qc = useQueryClient()
   const { data: settings, isPending, isError, refetch } = useQuery(workspaceSettingsQuery())
-  const { data: slack } = useQuery(slackQuery())
+  const { data: slack, isFetching: slackIsFetching } = useQuery(slackQuery())
+  const [installResult] = useState(readSlackInstallResult)
+  const installError =
+    installResult && !installResult.connected
+      ? (SLACK_INSTALL_ERRORS[installResult.error] ?? DEFAULT_SLACK_INSTALL_ERROR)
+      : null
   const [disconnecting, setDisconnecting] = useState(false)
+
+  useEffect(() => {
+    if (!installResult) return
+    const cleanupUrl = window.setTimeout(() => {
+      const qs = new URLSearchParams(window.location.search)
+      qs.delete("slack_connected")
+      qs.delete("slack_error")
+      const rest = qs.toString()
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${rest ? `?${rest}` : ""}`,
+      )
+    }, 0)
+    void qc.invalidateQueries({ queryKey: slackQuery().queryKey })
+    if (installResult.connected) toast.success("Slack connected")
+    return () => window.clearTimeout(cleanupUrl)
+  }, [installResult, qc])
 
   // Toggle a single settings key, optimistically flipping the shared cache entry so the
   // switch stays live; the primitive rolls back + toasts on failure, and the server's
@@ -134,6 +199,20 @@ export function IntegrationsSection() {
       ) : null}
 
       <SettingsGroup title="Slack">
+        {installError && installResult && !installResult.connected && (
+          <StatusPanel
+            tone={installResult.error === "canceled" ? "warning" : "danger"}
+            layout="inline"
+            icon={<AlertTriangle aria-hidden />}
+            title={installError.title}
+            description={installError.description}
+            action={
+              <Button data-testid="slack-install-retry" variant="outline" size="sm" asChild>
+                <a href="/v1/slack/install">Try again</a>
+              </Button>
+            }
+          />
+        )}
         {slack && !slack.available ? (
           <div className="flex flex-col items-start gap-3 py-1">
             <p className="text-sm text-muted-foreground">
@@ -144,6 +223,28 @@ export function IntegrationsSection() {
               <a href="/settings/slack/app/new">Set up Slack app</a>
             </Button>
           </div>
+        ) : installResult?.connected && !slack?.connected ? (
+          <StatusPanel
+            tone={slackIsFetching ? "neutral" : "danger"}
+            layout="inline"
+            title={
+              slackIsFetching
+                ? "Finishing the Slack connection…"
+                : "Slack approved the app, but the connection is missing"
+            }
+            description={
+              slackIsFetching
+                ? "Slack approved the app. Derive is confirming the saved workspace now."
+                : "Derive couldn't confirm the saved installation. Try connecting once more."
+            }
+            action={
+              !slackIsFetching && (
+                <Button data-testid="slack-confirm-retry" variant="outline" size="sm" asChild>
+                  <a href="/v1/slack/install">Try again</a>
+                </Button>
+              )
+            }
+          />
         ) : slack?.connected ? (
           <div className="flex flex-col gap-4 py-1">
             <p className="text-sm">
@@ -216,14 +317,19 @@ export function IntegrationsSection() {
               run <code>/derive subscribe</code> in the channel itself.
             </p>
             <div>
-              <Button
-                data-testid="slack-disconnect"
-                variant="destructive-ghost"
-                size="sm"
-                onClick={() => setDisconnecting(true)}
-              >
-                Disconnect Slack
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button data-testid="slack-change-workspace" variant="outline" size="sm" asChild>
+                  <a href="/v1/slack/install">Change Slack workspace</a>
+                </Button>
+                <Button
+                  data-testid="slack-disconnect"
+                  variant="destructive-ghost"
+                  size="sm"
+                  onClick={() => setDisconnecting(true)}
+                >
+                  Disconnect Slack
+                </Button>
+              </div>
             </div>
             <ConfirmDialog
               open={disconnecting}
@@ -238,22 +344,12 @@ export function IntegrationsSection() {
         ) : (
           <div className="flex flex-col items-start gap-3 py-1">
             <p className="text-sm text-muted-foreground">
-              Connect a Slack workspace to get comments in a channel and reply back from Slack.
+              Authorize a Slack workspace for this Derive workspace. If you already installed the
+              app in Slack, complete this step once so Derive can save the connection.
             </p>
             <Button data-testid="slack-connect" variant="default" asChild>
-              <a href="/v1/slack/install">Add to Slack</a>
+              <a href="/v1/slack/install">Connect Slack</a>
             </Button>
-            <p className="text-xs text-muted-foreground">
-              Haven't created the Slack app yet?{" "}
-              <a
-                className="underline"
-                href="/settings/slack/app/new"
-                data-testid="slack-setup-link"
-              >
-                Set it up from a manifest
-              </a>
-              .
-            </p>
           </div>
         )}
       </SettingsGroup>

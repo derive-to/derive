@@ -24,6 +24,7 @@ import {
   openSlackView,
   postSlackResponseUrl,
   presentSlackEntityDetails,
+  SlackOAuthError,
   slackAuthorizeUrl,
   slackChannelReach,
   slackOidcAuthorizeUrl,
@@ -446,6 +447,13 @@ export const slackRoutes = (ctx: AppContext) => {
     iat: number
   }
 
+  const slackSettingsRedirect = (
+    result: "connected" | "canceled" | "expired" | "config" | "oauth" | "save",
+  ) =>
+    result === "connected"
+      ? "/settings/integrations?slack_connected=1"
+      : `/settings/integrations?slack_error=${result}`
+
   const SlackStatus = z
     .object({
       available: z.boolean().describe("True if this instance has Slack configured at all"),
@@ -502,12 +510,33 @@ export const slackRoutes = (ctx: AppContext) => {
   // OAuth callback: exchange the code for a bot token and store the install (encrypted).
   app.get("/v1/slack/oauth/callback", async (c) => {
     if (!slack || !deps.encryptionKey) return fail(c, 404, "Slack is not configured")
+    const oauthError = c.req.query("error")
+    if (oauthError)
+      return c.redirect(
+        slackSettingsRedirect(oauthError === "access_denied" ? "canceled" : "oauth"),
+      )
     const code = c.req.query("code")
     const stateRaw = c.req.query("state")
     const state = stateRaw ? verifyState<ConnectState>(stateRaw, deps.encryptionKey) : null
-    if (!code || !state) return fail(c, 400, "invalid Slack callback")
+    if (!code || !state) return c.redirect(slackSettingsRedirect("expired"))
+
+    let r: Awaited<ReturnType<typeof exchangeSlackOAuth>>
     try {
-      const r = await exchangeSlackOAuth(slack.clientId, slack.clientSecret, code, redirectUri)
+      r = await exchangeSlackOAuth(slack.clientId, slack.clientSecret, code, redirectUri)
+    } catch (err) {
+      log.warn("slack oauth failed", { error: err instanceof Error ? err.message : String(err) })
+      const configurationErrors = new Set([
+        "bad_client_secret",
+        "bad_redirect_uri",
+        "invalid_client_id",
+        "invalid_team_for_non_distributed_app",
+      ])
+      const result =
+        err instanceof SlackOAuthError && configurationErrors.has(err.code) ? "config" : "oauth"
+      return c.redirect(slackSettingsRedirect(result))
+    }
+
+    try {
       // A reconnect keeps the workspace's channel subscriptions (they live in their own table)
       // and its created_at; only the credentials are replaced.
       const existing = await meta.getSlackInstall(state.org)
@@ -521,10 +550,12 @@ export const slackRoutes = (ctx: AppContext) => {
         created_at: existing?.created_at ?? new Date().toISOString(),
       } satisfies SlackInstallRecord)
       // Slack lives under the Integrations section (there is no standalone Slack page).
-      return c.redirect("/settings/integrations")
+      return c.redirect(slackSettingsRedirect("connected"))
     } catch (err) {
-      log.warn("slack oauth failed", { error: err instanceof Error ? err.message : String(err) })
-      return c.redirect("/settings/integrations?error=oauth")
+      log.warn("slack install save failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return c.redirect(slackSettingsRedirect("save"))
     }
   })
 

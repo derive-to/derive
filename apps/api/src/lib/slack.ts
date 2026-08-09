@@ -33,6 +33,15 @@ export interface SlackOAuthResult {
   botUserId: string | null
 }
 
+/** Slack's machine-readable OAuth failure. Keep the code so the callback can turn
+ *  configuration errors into useful UI instead of silently landing back on the
+ *  disconnected card. */
+export class SlackOAuthError extends Error {
+  constructor(public code: string) {
+    super(`slack oauth failed: ${code}`)
+  }
+}
+
 /** Exchange an OAuth `code` for a bot token via oauth.v2.access. */
 export const exchangeSlackOAuth = async (
   clientId: string,
@@ -57,8 +66,7 @@ export const exchangeSlackOAuth = async (
     bot_user_id?: string
     team?: { id?: string; name?: string }
   }
-  if (!data.ok || !data.access_token)
-    throw new Error(`slack oauth failed: ${data.error ?? "unknown"}`)
+  if (!data.ok || !data.access_token) throw new SlackOAuthError(data.error ?? "unknown")
   return {
     botToken: data.access_token,
     teamId: data.team?.id ?? "",
