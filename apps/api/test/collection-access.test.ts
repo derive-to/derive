@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { sha256 } from "../src/lib/crypto"
+import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // A collection's own share experience (docs/access-model.md, extended to
 // collections): workspace_access none|member, same Invited/Workspace toggle the
@@ -166,6 +167,53 @@ describe("a collection's own workspace access", () => {
     expect(
       (await app.request(`/v1/artifacts/${priv.short_id}`, { headers: as(ben.email) })).status,
     ).toBe(200)
+  })
+
+  // An agent holds no collection rows of its own: it borrows exactly its human's standing,
+  // capped at its registered role. On an invite-only collection, the creator's agent can
+  // still curate (owner standing, capped to the editor bar the routes gate on) while an
+  // agent whose human has no role on it derives none — the same removal that works for
+  // one is a 403 for the other, so the agent path never widens access.
+  it("an agent borrows exactly its human's standing on an invite-only collection", async () => {
+    const col = await create("Curated", as(ana.email))
+    const { short_id } = await (
+      await publishAs(app, "<p>x</p>", { title: "Curated doc" }, as(ana.email))
+    ).json()
+    await app.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "PUT",
+      headers: as(ana.email),
+    })
+    await setAccess(col.id, "none", as(ana.email))
+
+    // Ben has a workspace seat but no role on the invite-only collection, so an agent
+    // registered to him derives none — seeded directly, since registration is Admin-gated.
+    const benToken = `dk_agt_${"b".repeat(64)}`
+    await meta.createAgent({
+      id: "ag_ca_ben",
+      org_id: "default",
+      name: "BenBot",
+      token: sha256(benToken),
+      role: "editor",
+      created_by: ben.id,
+    })
+    const refused = await app.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "DELETE",
+      headers: bearer(benToken),
+    })
+    expect(refused.status).toBe(403)
+
+    // Ana created the collection, so her agent curates it — and the item is really gone.
+    const anasBot = await (
+      await app.request("/v1/agents", jsonAs(as(ana.email), { name: "AnaBot", role: "editor" }))
+    ).json()
+    const removed = await app.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "DELETE",
+      headers: bearer(anasBot.token),
+    })
+    expect(removed.status).toBe(204)
+    const art = await meta.getByShortId(short_id)
+    if (!art) throw new Error("artifact missing")
+    expect(await meta.collectionIdsForArtifact(art.id)).toEqual([])
   })
 
   // The creator is permanently owner via created_by — their roster row is immovable, and

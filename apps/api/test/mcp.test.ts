@@ -19,7 +19,15 @@ import {
   versionIndexText,
 } from "../src/lib/search"
 import { PNG_BYTES } from "./fixtures"
-import { appWithGrant, call, type McpApp, type RpcOut, rpc, toolText } from "./mcp-helpers"
+import {
+  appWithGrant,
+  call,
+  type McpApp,
+  type RpcOut,
+  rpc,
+  toolIsError,
+  toolText,
+} from "./mcp-helpers"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -1589,6 +1597,39 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(col?.count).toBe(2)
     const inspect = JSON.parse(toolText(await call(app, token, "organize", { short_ids: [a] })))
     expect(inspect.artifacts[0].collections).toContain(col.id)
+  })
+
+  it("organize: uncollect pulls artifacts back out of a collection", async () => {
+    const { app, token, meta } = appWithGrant(dir, "uncollect", "openid derive:read derive:publish")
+    const a = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Filed", content: "# Filed\n\nbody" })),
+    ).short_id
+    const filed = JSON.parse(
+      toolText(await call(app, token, "organize", { short_ids: [a], collection: "Inbox" })),
+    )
+    expect(filed.collected.added).toBe(1)
+    const colId = filed.collected.collection.id
+
+    // The removal `collection` was missing: same ref grammar (id or name), same manage bar.
+    const out = JSON.parse(
+      toolText(await call(app, token, "organize", { short_ids: [a], uncollect: "Inbox" })),
+    )
+    expect(out.uncollected).toMatchObject({ removed: 1, skipped: 0 })
+    expect(out.uncollected.collection.id).toBe(colId)
+    const art = await meta.getByShortId(a)
+    if (!art) throw new Error("artifact missing")
+    expect(await meta.collectionIdsForArtifact(art.id)).toEqual([])
+
+    // Unlike `collection`, uncollect never creates: an unknown ref is refused by name.
+    const missing = await call(app, token, "organize", { short_ids: [a], uncollect: "Nope" })
+    expect(toolIsError(missing)).toBe(true)
+    expect(toolText(missing)).toContain("No collection")
+
+    // An unknown parameter still no-ops into the read path rather than erroring — the
+    // cached-client tolerance the tool has always had is unchanged.
+    const unknown = await call(app, token, "organize", { short_ids: [a], collection_yank: "In" })
+    expect(toolIsError(unknown)).toBe(false)
+    expect(JSON.parse(toolText(unknown)).artifacts[0].collections).toEqual([])
   })
 
   it("organize never folds a roaming artifact into the default workspace's collection", async () => {

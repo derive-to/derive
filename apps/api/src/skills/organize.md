@@ -23,6 +23,8 @@ for plain findability. Tags can also be set at publish time via publish's `tags`
 - **`remove`** — drop these tags.
 - **`set`** — replace the whole tag set (overrides add/remove).
 - **`collection`** — fold the artifacts into a collection, by id or by name (created if new).
+- **`uncollect`** — pull the artifacts back out of a collection, by id or by name. The
+  artifacts themselves are untouched — only the filing changes.
 
 Tags are normalized (trimmed, lowercased, deduped, capped 20). Each artifact is authorized on
 its own; ones you can't edit come back as `skipped`, never failing the batch.

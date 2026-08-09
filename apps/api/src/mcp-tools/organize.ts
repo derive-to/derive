@@ -1,4 +1,4 @@
-import { type ArtifactRecord, newId, roleAllows } from "@derive/core"
+import { type ArtifactRecord, type CollectionRecord, newId, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { deleteArtifactAndUnindex } from "../lib/search"
@@ -24,13 +24,13 @@ export function registerOrganizeTool(tc: ToolContext): void {
   // ORGANIZE — ONE tool for the library's findability metadata: tags + collections,
   // read + write. No short_ids ⇒ the workspace overview (vocabulary + collections).
   // short_ids alone ⇒ inspect them (current tags/collections + tag suggestions). Any of
-  // add/remove/set/collection ⇒ write. Replaces the old list_tags/suggest_tags/tag/
+  // add/remove/set/collection/uncollect ⇒ write. Replaces the old list_tags/suggest_tags/tag/
   // list_collections/collect point-tools.
   server.registerTool(
     "organize",
     {
       description:
-        "Tags, collections and shelving. No `short_ids` reads the workspace vocabulary; with them, writes tags/`collection`/`state`. Each artifact authorizes on its own, so untouchable ones come back skipped. state:'deleted' is permanent. See derive://skills/organize.",
+        "Tags, collections and shelving. No `short_ids` reads the workspace vocabulary; with them, writes tags/`collection`/`uncollect`/`state`. Each artifact authorizes on its own, so untouchable ones come back skipped. state:'deleted' is permanent. See derive://skills/organize.",
       // Tag/collection edits are reversible (add/remove/set, fold into a collection), and
       // `state:'removed'` is an explicitly reversible retire — but `state:'deleted'` is a
       // real permanent delete (every version, comment and proposal, cascading to any
@@ -54,6 +54,12 @@ export function registerOrganizeTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
+        // The way back out of `collection`. Same shape and the same bar as folding in, so
+        // an artifact filed into the wrong collection is never stuck there.
+        uncollect: z
+          .string()
+          .optional()
+          .describe("Pull `short_ids` back out of this collection — an id, or a name."),
         // Both directions on ONE parameter, deliberately. Remove and undo are the same
         // decision read in two directions, and splitting them across two actions (or two
         // tools) is how you end up with a surface that can retire something and no obvious
@@ -70,7 +76,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
         workspace: wsArg,
       },
     },
-    async ({ short_ids, add, remove, set, collection, state, workspace }) => {
+    async ({ short_ids, add, remove, set, collection, uncollect, state, workspace }) => {
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       const actorId = actingFor?.id ?? agent.id
@@ -78,9 +84,11 @@ export function registerOrganizeTool(tc: ToolContext): void {
         v.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
 
       // ---- WRITE: add/remove/set tags, fold into a collection, and/or shelve ----
-      if (add || remove || set || collection || state) {
+      if (add || remove || set || collection || uncollect || state) {
         if (!short_ids?.length)
-          return err("Pass `short_ids` to organize (with add/remove/set, collection and/or state).")
+          return err(
+            "Pass `short_ids` to organize (with add/remove/set, collection/uncollect and/or state).",
+          )
         const out: Record<string, unknown> = {}
 
         if (add || remove || set) {
@@ -107,15 +115,15 @@ export function registerOrganizeTool(tc: ToolContext): void {
           }
           out.tagged = { updated, skipped, results }
         }
-        if (collection) {
-          // Resolve the target collection: an id, else a name (matched team-visible, else
-          // created). Then the caller must be able to MANAGE it (mirrors the HTTP route).
-          const ref = collection.trim()
-          if (!ref) return err("Pass a non-empty collection name or id.")
-          let col = await ctx.meta.getCollection(ref)
-          if (col && col.org_id !== t.org) return err("That collection is in another workspace.")
-          if (!col) {
-            const existing = (
+        // Resolve a collection ref: an id, else a name matched among team-visible ones.
+        // Shared by both directions; only `collection` creates a missing one.
+        const findCollection = async (
+          ref: string,
+        ): Promise<CollectionRecord | "foreign" | null> => {
+          const byId = await ctx.meta.getCollection(ref)
+          if (byId) return byId.org_id === t.org ? byId : "foreign"
+          return (
+            (
               await Promise.all(
                 (
                   await ctx.meta.listCollections(t.org)
@@ -127,32 +135,40 @@ export function registerOrganizeTool(tc: ToolContext): void {
                     !!(await ctx.meta.getCollectionMember(x.id, actorId)),
                 })),
               )
-            ).find(({ x, visible }) => x.title.toLowerCase() === ref.toLowerCase() && visible)?.x
-            if (existing) col = existing
-            else {
-              col = await ctx.meta.createCollection({
-                id: newId("col"),
-                org_id: t.org,
-                title: ref.slice(0, 120),
-                created_by: actorId,
-                workspace_access: "member",
-              })
-              await ctx.meta.setCollectionMember({
-                id: newId("cm"),
-                collection_id: col.id,
-                user_id: actorId,
-                role: "owner",
-              })
-            }
+            ).find(({ x, visible }) => x.title.toLowerCase() === ref.toLowerCase() && visible)?.x ??
+            null
+          )
+        }
+        // The caller must be able to MANAGE the collection (mirrors the HTTP routes) — the
+        // SAME bar in both directions, so `uncollect` never reaches wider than `collection`.
+        const canManageCollection = async (col: CollectionRecord) =>
+          col.workspace_access === "member"
+            ? roleAllows(t.role, "publish")
+            : roleAllows(
+                (await ctx.meta.getCollectionMember(col.id, actorId))?.role ?? "viewer",
+                "publish",
+              )
+        if (collection) {
+          const ref = collection.trim()
+          if (!ref) return err("Pass a non-empty collection name or id.")
+          let col = await findCollection(ref)
+          if (col === "foreign") return err("That collection is in another workspace.")
+          if (!col) {
+            col = await ctx.meta.createCollection({
+              id: newId("col"),
+              org_id: t.org,
+              title: ref.slice(0, 120),
+              created_by: actorId,
+              workspace_access: "member",
+            })
+            await ctx.meta.setCollectionMember({
+              id: newId("cm"),
+              collection_id: col.id,
+              user_id: actorId,
+              role: "owner",
+            })
           }
-          const canManage =
-            col.workspace_access === "member"
-              ? roleAllows(t.role, "publish")
-              : roleAllows(
-                  (await ctx.meta.getCollectionMember(col.id, actorId))?.role ?? "viewer",
-                  "publish",
-                )
-          if (!canManage) return err("You can't add to that collection.")
+          if (!(await canManageCollection(col))) return err("You can't add to that collection.")
           let added = 0
           let skipped = 0
           for (const shortId of [...new Set(short_ids)]) {
@@ -175,6 +191,31 @@ export function registerOrganizeTool(tc: ToolContext): void {
             added++
           }
           out.collected = { collection: { id: col.id, title: col.title }, added, skipped }
+        }
+        // UNCOLLECT — the removal `collection` was missing. Same resolution, same manage
+        // bar; removing only ever narrows reach, so no per-artifact share gate (matching
+        // the HTTP DELETE items route). `allowRemoved` because pulling a retired artifact
+        // out of a collection is exactly the cleanup this exists for.
+        if (uncollect) {
+          const ref = uncollect.trim()
+          if (!ref) return err("Pass a non-empty collection name or id.")
+          const col = await findCollection(ref)
+          if (col === "foreign") return err("That collection is in another workspace.")
+          if (!col) return err("No collection by that name or id here.")
+          if (!(await canManageCollection(col)))
+            return err("You can't remove from that collection.")
+          let removed = 0
+          let skipped = 0
+          for (const shortId of [...new Set(short_ids)]) {
+            const reached = await reach(shortId, workspace, { allowRemoved: true })
+            if (!reached || "error" in reached || reached.org !== t.org) {
+              skipped++
+              continue
+            }
+            await ctx.meta.removeCollectionItem(col.id, reached.a.id)
+            removed++
+          }
+          out.uncollected = { collection: { id: col.id, title: col.title }, removed, skipped }
         }
         // SHELVE / UNSHELVE. Both directions on one parameter: an artifact retired with
         // `state:"removed"` comes back with `state:"live"`, and the response says so, so

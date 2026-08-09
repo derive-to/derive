@@ -1407,6 +1407,33 @@ export function buildContext(deps: AppDeps) {
   // listing (collection scoping).
   const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
     if (isToken(c)) return "owner"
+    // An agent borrows its human's standing on a collection exactly as it does on an
+    // artifact (resolveActor's agent branch): the on-behalf human's role — creator,
+    // explicit member, or seat on a workspace-open collection — capped at the agent's
+    // registered role and bound to its home workspace. Rows written to the agent id
+    // itself still count, uncapped — they were explicit grants. Without this branch an
+    // agent bearer resolved to no role at all, and collections REST was effectively
+    // cookie-only.
+    const p = await resolvePrincipal(c)
+    if (p.kind === "agent") {
+      const ag = p.agent
+      const own = (await meta.getCollectionMember(col.id, ag.id))?.role ?? null
+      let derived: Role | null = null
+      const ownerId = p.onBehalfOf
+      if (ownerId && ag.org_id === col.org_id) {
+        const human =
+          col.created_by === ownerId
+            ? "owner"
+            : maxRole(
+                (await meta.getCollectionMember(col.id, ownerId))?.role ?? null,
+                col.workspace_access === "member"
+                  ? ((await meta.getMembership(col.org_id, ownerId))?.role ?? null)
+                  : null,
+              )
+        derived = capRole(human, ag.role)
+      }
+      return maxRole(own, derived)
+    }
     const me = await currentUser(c)
     if (!me) return null
     if (col.created_by === me.id) return "owner"

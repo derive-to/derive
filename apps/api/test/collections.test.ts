@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest"
-import { app, as, makeAuthedApp, meta, postJson, publishAs, type TestUser, upload } from "./helpers"
+import {
+  app,
+  as,
+  bearer,
+  jsonAs,
+  makeAuthedApp,
+  meta,
+  postJson,
+  publishAs,
+  type TestUser,
+  upload,
+} from "./helpers"
 
 describe("collections", () => {
   const put = (path: string) =>
@@ -177,6 +188,46 @@ describe("collections", () => {
     expect(pr.prNumber).toBe(7)
     // Nests under its repo collection, not top-level.
     expect(pr.parentId).toBe(repoCol.id)
+  })
+})
+
+// An agent principal (a registered dk_agt_ bearer, or a minted API token) borrows its
+// human's standing on a collection — the same derivation authorize() applies per artifact.
+// Regression: collectionRole only recognized the static token or a session cookie, so an
+// agent could ADD an item (the MCP organize path) but every REST curation call — including
+// the only removal route — answered 403. An artifact filed into the wrong collection was
+// stuck there for good from the agent side.
+describe("collections: agent bearers", () => {
+  const ana: TestUser = { id: "u_cag_ana", email: "ana@cag.test", name: "Ana" }
+  const { app: agApp, meta: agMeta } = makeAuthedApp("col-agent", [ana], "editor")
+
+  it("an agent token can add and remove an item wherever its human could", async () => {
+    const col = await (
+      await agApp.request("/v1/collections", jsonAs(as(ana.email), { title: "Agent shelf" }))
+    ).json()
+    const { short_id } = await (
+      await publishAs(agApp, "<p>doc</p>", { title: "Doc" }, as(ana.email))
+    ).json()
+    const bot = await (
+      await agApp.request("/v1/agents", jsonAs(as(ana.email), { name: "ColBot", role: "editor" }))
+    ).json()
+
+    // The agent files the artifact…
+    const put = await agApp.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "PUT",
+      headers: bearer(bot.token),
+    })
+    expect(put.status).toBe(200)
+
+    // …and can take it back out: a collection you can add to is one you can remove from.
+    const del = await agApp.request(`/v1/collections/${col.id}/items/${short_id}`, {
+      method: "DELETE",
+      headers: bearer(bot.token),
+    })
+    expect(del.status).toBe(204)
+    const art = await agMeta.getByShortId(short_id)
+    if (!art) throw new Error("artifact missing")
+    expect(await agMeta.collectionIdsForArtifact(art.id)).toEqual([])
   })
 })
 
