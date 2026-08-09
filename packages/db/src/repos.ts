@@ -2480,6 +2480,33 @@ export function makeRepos(db: SqliteDb) {
       })
       .run()
   }
+  const setOrgSettingsIfRevision = async (
+    orgId: string,
+    expectedRevision: number,
+    settings: OrgSettings,
+  ): Promise<boolean> => {
+    const raw = JSON.stringify(settings)
+    const updated = await db
+      .update(orgSettings)
+      .set({ settings: raw })
+      .where(
+        and(
+          eq(orgSettings.org_id, orgId),
+          sql`coalesce(json_extract(${orgSettings.settings}, '$.settingsRevision'), 0) = ${expectedRevision}`,
+        ),
+      )
+      .returning({ id: orgSettings.org_id })
+      .get()
+    if (updated) return true
+    if (expectedRevision !== 0) return false
+    const inserted = await db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: raw })
+      .onConflictDoNothing()
+      .returning({ id: orgSettings.org_id })
+      .get()
+    return !!inserted
+  }
   const getSubscription = async (orgId: string): Promise<SubscriptionRecord | null> =>
     (await db.select().from(subscription).where(eq(subscription.org_id, orgId)).get()) ?? null
   const getSubscriptionByStripeId = async (sid: string): Promise<SubscriptionRecord | null> =>
@@ -3323,6 +3350,26 @@ export function makeRepos(db: SqliteDb) {
       .from(sessionMessage)
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
+      .all()
+  /**
+   * The most recent AGENT answers across every session, newest first. Unscoped by design (see
+   * the port): it answers a question about the DEPLOY, and the route that calls it is
+   * operator-only. `desc(created_at)` rides the `session_message_recent` index.
+   */
+  const listRecentAgentMessages = async (
+    limit: number,
+  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]> =>
+    db
+      .select({
+        session_id: sessionMessage.session_id,
+        author_kind: sessionMessage.author_kind,
+        created_at: sessionMessage.created_at,
+        meta: sessionMessage.meta,
+      })
+      .from(sessionMessage)
+      .where(eq(sessionMessage.author_kind, "agent"))
+      .orderBy(desc(sessionMessage.created_at))
+      .limit(limit)
       .all()
   const listSessionMessagesFor = async (sessionIds: string[]): Promise<SessionMessageRecord[]> =>
     sessionIds.length === 0
@@ -4575,6 +4622,7 @@ export function makeRepos(db: SqliteDb) {
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
+    setOrgSettingsIfRevision,
     getSubscription,
     getSubscriptionByStripeId,
     upsertSubscription,
@@ -4650,6 +4698,7 @@ export function makeRepos(db: SqliteDb) {
     addSessionMessage,
     listSessionMessages,
     listSessionMessagesFor,
+    listRecentAgentMessages,
     getProposal,
     listProposals,
     decideProposal,

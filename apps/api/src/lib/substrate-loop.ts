@@ -84,6 +84,23 @@ export interface LoopSubstrateOptions {
    *  credential it never supplied. An earlier version of this comment said the opposite; it was
    *  read as intent and cost a release. */
   gateway?: { baseUrl: string; apiKey: string; model: string }
+  /**
+   * The operator's live pin for the AUTOMATION lane (`slots.automation`), or undefined for the
+   * configured default. Applied to the GATEWAY branch only.
+   *
+   * 🚨 NEVER TO `model` ABOVE, and this is the whole reason it is a separate option rather than
+   * an override of that one. The library holds ids in the GATEWAY's namespace
+   * (`deepseek/deepseek-v4-flash`); `model` is an ANTHROPIC id (`claude-sonnet-5`). Crossing
+   * them is the exact mistake that 404'd `model_not_found` on every hosted run of every deploy
+   * that had configured chat, and it is documented twice more in this file because it has
+   * already been made twice.
+   *
+   * A FUNCTION, and read once per resolve, because the point of the pin is that it moves without
+   * a deploy — a value captured when this substrate was constructed would be the boot-time
+   * answer for the life of the process. Callers resolve it where a valid datastore context
+   * exists (dispatch), not inside the detached loop, where on the Worker tier there is none.
+   */
+  gatewayModel?: () => Promise<string | undefined>
   /** Cloudflare's `ctx.waitUntil`, so a Worker does not tear the isolate down mid-run. Absent on
    *  Node, where nothing collects the process out from under us. */
   waitUntil?: (p: Promise<unknown>) => void
@@ -289,14 +306,20 @@ const resolveModel = async (
   | { callModel?: undefined; why: string }
 > => {
   if (opts.callModel) return { callModel: opts.callModel }
-  if (opts.gateway)
+  if (opts.gateway) {
+    // The operator's pin, or the configured default. A pin naming nothing the gateway serves
+    // would fail the run — which is why it is validated against the catalog where it is SET
+    // (routes/system.ts), so a typo costs a 400 in front of somebody rather than every
+    // unattended run afterwards.
+    const pinned = await opts.gatewayModel?.().catch(() => undefined)
     return {
       callModel: openAiCompatModel({
         baseUrl: opts.gateway.baseUrl,
         apiKey: opts.gateway.apiKey,
-        model: opts.gateway.model,
+        model: pinned?.trim() || opts.gateway.model,
       }),
     }
+  }
   const cred = await json<CredentialReply>(
     `/v1/agent/model-credential?provider=${LOOP_PROVIDER}&${scope}`,
   )

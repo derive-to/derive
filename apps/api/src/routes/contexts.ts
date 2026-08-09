@@ -20,7 +20,6 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { isAbandoned } from "../lib/abandoned-turn"
-import type { AgentLoopInput } from "../lib/agent-loop"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -40,13 +39,13 @@ import { BuilderCardSchema, metaForWire } from "../lib/context-builder-card"
 import { buildContextBuilderTools, latestBuilderCard } from "../lib/context-builder-tools"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { bail, fail, readJson } from "../lib/http"
-import { getInstanceChatModel } from "../lib/instance-settings"
 import {
   manifestDescription,
   parseManifestRepos,
   parseManifestSkillPins,
   stalePins,
 } from "../lib/manifest-pins"
+import { meterModel, timingMeta } from "../lib/model-timing"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
@@ -128,7 +127,7 @@ export const contextRoutes = (ctx: AppContext) => {
   const lastModelId = (transcript: SessionMessageRecord[]): string | null => {
     for (let i = transcript.length - 1; i >= 0; i--) {
       const m = transcript[i]
-      if (!m || m.author_kind !== "agent" || !m.meta) continue
+      if (m?.author_kind !== "agent" || !m.meta) continue
       try {
         const id = (JSON.parse(m.meta) as { model?: { id?: unknown } }).model?.id
         if (typeof id === "string" && id) return id
@@ -172,7 +171,16 @@ export const contextRoutes = (ctx: AppContext) => {
     const rl = await limited(c, askLimiter)
     if (rl) return rl
     const gate = await chatArrival(
-      { meta, models: ctx.models, chatAllowlist: ctx.callModel ? ctx.chatAllowlist : [] },
+      {
+        meta,
+        // The CONFIGURED catalog, and deliberately not the live one. This gate's only use of it
+        // is the `no_model` rung — "can anything answer here at all" — and the library can only
+        // ADD to the configured ids, never remove one (see lib/model-library.ts), so the floor
+        // always answers whenever the library would. Reading the library here would put a second
+        // fetch of the same settings row on the attended path for an answer it cannot change.
+        models: ctx.models,
+        chatAllowlist: ctx.callModel ? ctx.chatAllowlist : [],
+      },
       { org: orgId, userId },
     )
     if (gate.ok) return null
@@ -223,38 +231,6 @@ export const contextRoutes = (ctx: AppContext) => {
   }
 
   /**
-   * WHERE A TURN'S TIME ACTUALLY WENT.
-   *
-   * A turn is a loop — model, tool, model — and the two halves have completely different fixes:
-   * time inside the model is the provider's, time outside it is ours (store round trips, tool
-   * work). Without splitting them, "chat feels slow" is unactionable, and the two are easy to
-   * confuse: the same turn measured 2.5s against a local disk store and 8s on the hosted tier,
-   * which says most of the gap is not the model at all.
-   *
-   * So: count the model calls and the milliseconds spent inside them, and log both next to the
-   * total when the turn settles. One line per turn, no sampling — a turn is already an expensive
-   * thing, and this is what makes the next round of work aimable.
-   */
-  const timedModel = (call: AgentLoopInput["callModel"]) => {
-    // Each call's own duration, not just the sum: three calls of 1.5s and one of 4.5s are the
-    // same total and completely different problems — the first is per-call latency to fix, the
-    // second is one pathological step to find.
-    const stat = { calls: 0, ms: 0, each: [] as number[] }
-    const wrapped: AgentLoopInput["callModel"] = async (req) => {
-      stat.calls++
-      const t0 = Date.now()
-      try {
-        return await call(req)
-      } finally {
-        const took = Date.now() - t0
-        stat.ms += took
-        stat.each.push(took)
-      }
-    }
-    return { stat, wrapped }
-  }
-
-  /**
    * One WORKSPACE chat turn: the model, this workspace's tools, and the transcript.
    *
    * The tools are Derive's own MCP tools, constructed for the ASKER (see lib/chat-tools.ts), so
@@ -267,6 +243,10 @@ export const contextRoutes = (ctx: AppContext) => {
     reply: (body: string, state: SessionState, payload?: unknown) => Promise<void>,
     stream: DeltaStream,
     askedModelId: string | null,
+    /** The caller's per-turn memo identity for reads of the instance settings row (see
+     *  ctx.modelsFor). Passed in rather than made here so a turn that arrived through
+     *  serveAttended reads that row once for the whole turn, not once per lane. */
+    scope: object,
   ) => {
     // The seat is re-read PER TURN, never trusted from session creation: someone removed from
     // the workspace still holds the session id, and their tools would otherwise keep working.
@@ -291,11 +271,14 @@ export const contextRoutes = (ctx: AppContext) => {
     //    sticks without a column).
     // 4. The deploy's default.
     const previous = lastModelId(transcript)
-    const operatorPick = await getInstanceChatModel(meta).catch(() => null)
-    const override = operatorPick && ctx.models?.resolve(operatorPick)
+    // ONE read: the catalog a turn may choose from, and the operator's pin, are the same row.
+    // Fetching them separately read it twice on the path where somebody is waiting.
+    const { catalog, slots } = await ctx.modelsFor(scope)
+    const operatorPick = slots.chat ?? null
+    const override = operatorPick && catalog?.resolve(operatorPick)
     const model = askedModelId
-      ? ctx.models?.resolve(askedModelId)
-      : override || ctx.models?.resolve(previous ?? null)
+      ? catalog?.resolve(askedModelId)
+      : override || catalog?.resolve(previous ?? null)
     if (!model) {
       // A named model that is gone is worth saying out loud: silently answering with a different
       // one is a lie about which model produced the text.
@@ -332,11 +315,14 @@ export const contextRoutes = (ctx: AppContext) => {
         ? buildContextBuilderTools(ctx, who, latestBuilderCard(transcript))
         : null
     const tools = builderTools ?? buildChatTools(ctx, who)
-    const timed = timedModel(stream.wrap(model.callModel))
+    // ONE METER, serving both readers of it: the per-turn log line and the timings persisted on
+    // the answer for the operator's model page. It sits inside the stream wrapper so the
+    // composed onDelta reaches it and time-to-first-token is recorded.
+    const meter = meterModel(model.callModel)
     const startedAt = Date.now()
     const res = await withinTurnBudget(
       runChatTurn(
-        { model: { ...model, callModel: timed.wrapped } },
+        { model: { ...model, callModel: stream.wrap(meter.call) } },
         {
           session: s,
           transcript,
@@ -348,16 +334,19 @@ export const contextRoutes = (ctx: AppContext) => {
         },
       ),
     )
+    const t = meter.timing()
     log.info("attended turn", {
       session: s.id,
       org: s.org_id,
       total_ms: Date.now() - startedAt,
-      model_ms: timed.stat.ms,
+      model_ms: t.modelMs,
       // Everything that was NOT the model: store round trips, tool work, our own code. The half
       // we can actually do something about.
-      other_ms: Date.now() - startedAt - timed.stat.ms,
-      model_calls: timed.stat.calls,
-      model_each_ms: timed.stat.each.join(","),
+      other_ms: Date.now() - startedAt - t.modelMs,
+      model_calls: t.calls,
+      // The number a person actually waits through, which the log line never had.
+      ttft_ms: t.ttftMs,
+      model_each_ms: t.each.join(","),
       outcome: res.outcome,
     })
     // The card from the LAST draft_manifest / create_context_from_draft call this turn, when
@@ -373,6 +362,10 @@ export const contextRoutes = (ctx: AppContext) => {
       ...("costMicroUsd" in res ? { cost_micro_usd: res.costMicroUsd } : {}),
       ...("model" in res ? { model: res.model } : {}),
       ...("tools" in res ? { tools: res.tools } : {}),
+      // UNCONDITIONAL, unlike the fields above: a turn that was cut short still waited on the
+      // model for however long it waited, and a slow model is the likeliest reason it was cut.
+      // This is the one measurement whose failures matter as much as its successes.
+      ...timingMeta(t),
       ...(card ? { card } : {}),
     })
   }
@@ -442,9 +435,15 @@ export const contextRoutes = (ctx: AppContext) => {
       if (state !== "open") settleWake(s, state)
     }
     const flags = await meta.getOrgSettings(s.org_id).catch(() => null)
-    // No model wired (the common self-host case) — say so in the transcript rather than leaving
-    // the session `open` forever waiting on a runner that will never come.
-    if (!ctx.callModel) {
+    // ONE memo identity for this turn's reads of the instance settings row (see
+    // ctx.modelsFor). Made HERE and threaded into whichever lane serves, so a turn that
+    // delegates to the workspace chat still reads that row once rather than once per lane.
+    const scope = {}
+    // A cheap "could anything answer at all", off the CONFIGURED catalog and therefore off no
+    // datastore read. The library can only ADD to those ids, never remove one, so a deploy with
+    // no configured model has none either way — and this runs before the claim, on both lanes,
+    // where the honest answer is worth more than the specific model.
+    if (!ctx.models) {
       await reply(
         "No model is configured on this deploy, so I cannot answer. Set DERIVE_MODEL_BASE_URL, DERIVE_MODEL_API_KEY and DERIVE_MODEL_NAME.",
         "failed",
@@ -470,7 +469,28 @@ export const contextRoutes = (ctx: AppContext) => {
       // writer, the settle wake — is shared with the document lane and deliberately not
       // duplicated; what differs is only what the turn is given and what it may do.
       if (!subject) {
-        await serveWorkspaceChat(s, me, reply, stream, opts?.modelId ?? null)
+        await serveWorkspaceChat(s, me, reply, stream, opts?.modelId ?? null, scope)
+        return
+      }
+      // WHICH MODEL ANSWERS THE DOCUMENT RAIL. Resolved through the catalog with the operator's
+      // pin, exactly as the workspace lane does — this used to take `ctx.callModel` (the
+      // deploy's configured default) directly, so the deploy-wide switch that exists to move
+      // everyone off a failing provider moved every surface EXCEPT this one, while its own
+      // settings copy promised "across this whole deployment". A lever with a hole in it is
+      // worse than no lever, because it is trusted.
+      //
+      // Resolved HERE, on the branch that uses it, and not in the prologue above: the workspace
+      // lane resolves its own (it has a per-turn model pick to honor), so doing it for both
+      // read the instance row twice per turn and threw one answer away.
+      //
+      // No per-turn pick on this lane: the rail has no picker, so there is nothing to honor
+      // beyond the operator's choice and the deploy default behind it.
+      const { catalog: railCatalog, slots: railSlots } = await ctx.modelsFor(scope)
+      const operatorPin = railSlots.chat ?? null
+      const railModel =
+        (operatorPin ? railCatalog?.resolve(operatorPin) : null) ?? railCatalog?.resolve(null)
+      if (!railModel) {
+        await reply("No model is configured on this deploy, so I cannot answer.", "failed")
         return
       }
       const artifact = await meta.getByShortId(subject.id)
@@ -542,6 +562,8 @@ export const contextRoutes = (ctx: AppContext) => {
         subject.mode === "publish" && roleAllows(role, "publish")
           ? subject
           : { kind: "artifact", id: subject.id }
+      // See the workspace lane: metered INSIDE the stream wrapper, or TTFT is never recorded.
+      const railMeter = meterModel(railModel.callModel)
       const res = await withinTurnBudget(
         runSessionTurn(
           {
@@ -556,7 +578,7 @@ export const contextRoutes = (ctx: AppContext) => {
             // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
             // `callModel` along exactly as before, and the streaming decision stays here, where
             // the transport (this asker's channel) is actually known.
-            callModel: stream.wrap(ctx.callModel),
+            callModel: stream.wrap(railMeter.call),
             billingBlocked: ctx.billingBlocked,
           },
           {
@@ -605,6 +627,10 @@ export const contextRoutes = (ctx: AppContext) => {
         // read as a turn that wrote nothing and cost nothing rather than one that was stopped.
         ...("wrote" in res ? { wrote: res.wrote } : {}),
         ...("costMicroUsd" in res ? { cost_micro_usd: res.costMicroUsd } : {}),
+        // WHICH model answered, which this lane never recorded — so a rail answer could not be
+        // attributed and its latency counted for nobody. Same shape the workspace lane writes.
+        model: { id: railModel.id, label: railModel.label },
+        ...timingMeta(railMeter.timing()),
       })
     } catch (e) {
       log.error("attended turn failed", {
@@ -1972,7 +1998,7 @@ export const contextRoutes = (ctx: AppContext) => {
       // capability, and it carries no workspace data. A signed-in person asking what models
       // exist learns nothing about who may use them.
       return c.json({
-        models: (ctx.models?.options ?? []).map((m) => ({
+        models: ((await ctx.modelsFor(c)).catalog?.options ?? []).map((m) => ({
           id: m.id,
           label: m.label,
           is_default: m.isDefault,
@@ -2031,7 +2057,7 @@ export const contextRoutes = (ctx: AppContext) => {
       }
       // A model named here must exist NOW — better a 400 the person can act on than a session
       // that opens and then answers with something they did not choose.
-      if (b.model && !ctx.models?.resolve(b.model))
+      if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
       const created = await meta.createSessionWithMessage(
         {
@@ -2472,7 +2498,7 @@ export const contextRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
-      if (b.model && !ctx.models?.resolve(b.model))
+      if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
       // THE MONTHLY BUDGET, for the same reason. Dispatch enforces it on every hosted run and
       // every queued session; an attended follow-up bypassed dispatch entirely, so the one lane

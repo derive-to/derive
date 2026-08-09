@@ -3138,6 +3138,18 @@ export function runStoreContract(
       const both = await store.listSessionMessagesFor([s.id, s2.id])
       expect(both.filter((m) => m.session_id === s.id)).toHaveLength(3)
       expect(both.filter((m) => m.session_id === s2.id)).toHaveLength(1)
+
+      // The operator's model timings read the newest AGENT answers across EVERY session — the
+      // one unscoped transcript read, because it answers a question about the deploy rather
+      // than about a workspace. Asker messages must not be in it: they carry no model and no
+      // timing, so they would only dilute the sample.
+      const recent = await store.listRecentAgentMessages(50)
+      expect(recent.every((m) => m.author_kind === "agent")).toBe(true)
+      expect(recent.some((m) => m.session_id === s.id)).toBe(true)
+      // Newest first, and the limit is honored (both sessions' rows are in scope here).
+      expect(await store.listRecentAgentMessages(1)).toHaveLength(1)
+      const times = recent.map((m) => m.created_at)
+      expect([...times].sort().reverse()).toEqual(times)
     })
 
     it("scopes session listings to one asker and orders the queue oldest first", async () => {
@@ -3724,6 +3736,33 @@ export function runStoreContract(
       expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
         emailNotifications: false,
         githubPostComments: true,
+      })
+    })
+
+    it("compare-and-sets settings by revision across insert and update paths", async () => {
+      const settingsOrg = `org_${uuid()}`
+      const first = { ...DEFAULT_ORG_SETTINGS, settingsRevision: 1, chatBeta: true }
+      expect(await store.setOrgSettingsIfRevision(settingsOrg, 0, first)).toBe(true)
+      // A second writer holding revision zero loses and cannot overwrite the winner.
+      expect(
+        await store.setOrgSettingsIfRevision(settingsOrg, 0, {
+          ...DEFAULT_ORG_SETTINGS,
+          settingsRevision: 1,
+          chatBeta: false,
+        }),
+      ).toBe(false)
+      expect((await store.getOrgSettings(settingsOrg)).chatBeta).toBe(true)
+      expect(
+        await store.setOrgSettingsIfRevision(settingsOrg, 1, {
+          ...first,
+          settingsRevision: 2,
+          automateBeta: true,
+        }),
+      ).toBe(true)
+      expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
+        settingsRevision: 2,
+        chatBeta: true,
+        automateBeta: true,
       })
     })
 

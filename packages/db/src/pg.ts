@@ -3201,6 +3201,31 @@ export class PgMetaStore implements MetaStore {
         set: { settings: JSON.stringify(settings) },
       })
   }
+  async setOrgSettingsIfRevision(
+    orgId: string,
+    expectedRevision: number,
+    settings: OrgSettings,
+  ): Promise<boolean> {
+    const raw = JSON.stringify(settings)
+    const updated = await this.db
+      .update(orgSettings)
+      .set({ settings: raw })
+      .where(
+        and(
+          eq(orgSettings.org_id, orgId),
+          sql`coalesce((${orgSettings.settings}::jsonb ->> 'settingsRevision')::integer, 0) = ${expectedRevision}`,
+        ),
+      )
+      .returning({ id: orgSettings.org_id })
+    if (updated.length) return true
+    if (expectedRevision !== 0) return false
+    const inserted = await this.db
+      .insert(orgSettings)
+      .values({ org_id: orgId, settings: raw })
+      .onConflictDoNothing()
+      .returning({ id: orgSettings.org_id })
+    return inserted.length > 0
+  }
   async getSubscription(orgId: string): Promise<SubscriptionRecord | null> {
     const rows = await this.db.select().from(subscription).where(eq(subscription.org_id, orgId))
     return rows[0] ?? null
@@ -4092,6 +4117,27 @@ export class PgMetaStore implements MetaStore {
       .where(eq(sessionMessage.session_id, sessionId))
       .orderBy(asc(sessionMessage.created_at))
   }
+  /**
+   * The most recent AGENT answers across every session, newest first. Unscoped by design (see
+   * the port): it answers a question about the DEPLOY, and the route that calls it is
+   * operator-only. `desc(created_at)` rides the `session_message_recent` index.
+   */
+  async listRecentAgentMessages(
+    limit: number,
+  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]> {
+    return this.db
+      .select({
+        session_id: sessionMessage.session_id,
+        author_kind: sessionMessage.author_kind,
+        created_at: sessionMessage.created_at,
+        meta: sessionMessage.meta,
+      })
+      .from(sessionMessage)
+      .where(eq(sessionMessage.author_kind, "agent"))
+      .orderBy(desc(sessionMessage.created_at))
+      .limit(limit)
+  }
+
   async listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]> {
     if (sessionIds.length === 0) return []
     return this.db

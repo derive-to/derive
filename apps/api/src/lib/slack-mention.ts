@@ -12,12 +12,12 @@
 import { type ArtifactRecord, type MetaStore, newId } from "@derive/core"
 import type { Backplane } from "../bus"
 import { log } from "../log"
-import { chatArrival, refusalMessage } from "./chat-gate"
+import { liveChatArrival, refusalMessage } from "./chat-gate"
 import { buildChatTools } from "./chat-tools"
 import { runChatTurn } from "./chat-turn"
-import type { ModelCatalog } from "./model-catalog"
+import type { ModelSource } from "./model-library"
 import { slackUserEmail, updateSlackMessage } from "./slack"
-import { escapeMrkdwn, mrkdwnBody } from "./slack-cards"
+import { mrkdwnBody } from "./slack-cards"
 import { postWithRecovery, resolveBotToken } from "./slack-delivery"
 import { CHAT_UNVERIFIED_NOTE, chatSeatFor, isVerifiedLink } from "./slack-identity"
 
@@ -86,7 +86,9 @@ export interface SlackMentionDeps {
   meta: MetaStore
   bus: Backplane
   baseUrl: string
-  models: ModelCatalog
+  /** Read PER TURN (lib/model-library.ts), not held: this sender is built once at boot, and a
+   *  held catalog would answer every future mention with the model the process started with. */
+  models: ModelSource
   encryptionKey: string | undefined
   ctx: Parameters<typeof buildChatTools>[0]
   chatAllowlist?: string[]
@@ -311,9 +313,18 @@ export const handleSlackMention = async (
 
   // EVERY RUNG, ONCE (lib/chat-gate.ts). Keyed on the Slack PERSON: the request actor here is
   // Slack itself, so the usual actor keying would put a whole workspace in one bucket.
-  const gate = await chatArrival(
-    { meta, models: deps.models, chatAllowlist: deps.chatAllowlist, askLimiter: deps.askLimiter },
-    { org: install.org_id, userId: asker.id, rateKey: `slack:${p.teamId}:${p.userId}` },
+  const gate = await liveChatArrival(
+    {
+      meta,
+      models: deps.models,
+      chatAllowlist: deps.chatAllowlist,
+      askLimiter: deps.askLimiter,
+    },
+    {
+      org: install.org_id,
+      userId: asker.id,
+      rateKey: `slack:${p.teamId}:${p.userId}`,
+    },
   )
   if (!gate.ok) {
     // A person is watching the thread, so a refusal is SAID. The two that leak nothing about a

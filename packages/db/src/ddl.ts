@@ -145,4 +145,9 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS comment_artifact_state ON comment (artifact_id, state)`,
   `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,
   `CREATE INDEX IF NOT EXISTS audit_artifact ON audit_log (artifact_id, created_at)`,
+  // The operator's model timings read the newest AGENT answers across every session
+  // (listRecentAgentMessages). The table's own index is keyed on session_id first, so it cannot
+  // serve an unscoped newest-first scan — without this the query sorts the whole table on a page
+  // that exists to be looked at while a provider is misbehaving.
+  `CREATE INDEX IF NOT EXISTS session_message_recent ON session_message (author_kind, created_at)`,
 ]

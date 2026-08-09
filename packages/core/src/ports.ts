@@ -1237,6 +1237,14 @@ export interface IntegrationStore {
   ): Promise<{ settings: OrgSettings; personalBrandprint: string | null }>
   /** Persist the workspace's integration preferences (full object; upsert by org). */
   setOrgSettings(orgId: string, settings: OrgSettings): Promise<void>
+  /** Persist settings only when the stored settings revision still matches. The compare and
+   *  write are atomic; callers retry from a fresh read when false. This is the write primitive
+   *  for deploy-wide settings whose operators may act concurrently. */
+  setOrgSettingsIfRevision(
+    orgId: string,
+    expectedRevision: number,
+    settings: OrgSettings,
+  ): Promise<boolean>
   /** The workspace's cached Stripe subscription, absent ⇒ null (free). */
   getSubscription(orgId: string): Promise<SubscriptionRecord | null>
   /** Webhook resolution fallback when metadata.org_id is missing. */
@@ -1554,6 +1562,23 @@ export interface ContextStore {
   /** Transcripts for a set of sessions in ONE query (session_id ∈ sessionIds), oldest
    *  first; callers group by `session_id`. Empty ⇒ []. Use over a per-session loop. */
   listSessionMessagesFor(sessionIds: string[]): Promise<SessionMessageRecord[]>
+  /**
+   * The most recent AGENT answers across every session, newest first — the sample the
+   * operator's model timings are computed from.
+   *
+   * DELIBERATELY UNSCOPED, and the only unscoped read of a transcript in this interface. It
+   * answers a question about the DEPLOY ("how is each model performing"), not about a
+   * workspace, and there is no workspace whose answer would be the right one. That makes it
+   * operator-only at the route. The projection deliberately excludes `body_md`: timing a model
+   * must not transfer 500 full answers only to discard them in memory.
+   *
+   * Bounded by `limit` rather than by time. A quiet deploy still has a sample, a busy one does
+   * not pay for a window it will never read past, and either way the cost of the query is a
+   * constant the caller picked.
+   */
+  listRecentAgentMessages(
+    limit: number,
+  ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]>
 }
 
 export interface DirectoryStore {
@@ -3247,6 +3272,79 @@ export interface OrgSettings {
    *  the credential resolver falls to the owner's plan for a listed agent, then the
    *  workspace pool, then fail-closed. */
   ownerLendAgents?: string[]
+  /**
+   * THE MODEL LIBRARY. Deploy-scoped, and read on the reserved `__instance__` settings row
+   * ONLY — a workspace's own settings never carry it (see lib/instance-settings.ts).
+   *
+   * Models the operator added on top of the ones configured in the environment. Same gateway,
+   * same key, so a model here is DATA: `DERIVE_MODEL_NAMES` needs a redeploy to change, and a
+   * provider going slow is exactly the moment nobody can afford one. A genuinely different
+   * provider is a different credential and therefore still environment + a deploy — this list
+   * cannot express one, deliberately, because a model id with no key behind it is a 401 per
+   * turn.
+   *
+   * Absent = the environment's catalog alone, exactly as before this existed.
+   */
+  models?: InstanceModel[]
+  /**
+   * WHICH MODEL SERVES WHICH LANE. Instance row only, same as {@link models}.
+   *
+   * Lanes rather than one default, because they answer different questions on different
+   * budgets: `chat` is attended and somebody is waiting on the first token, while `automation`
+   * runs unattended where depth is worth more than turnaround. Both used to be pinned in the
+   * environment (`DERIVE_MODEL_NAME`, `DERIVE_LOOP_MODEL`), which put a redeploy between an
+   * operator and an outage.
+   *
+   * An id naming nothing in the catalog is IGNORED, not fatal — a slot that has gone stale
+   * costs the override, never every turn on the deploy.
+   */
+  slots?: InstanceSlots
+  /** Optimistic-concurrency revision for the reserved instance row. Ordinary workspace settings
+   *  do not use it. Absent is revision zero, preserving rows written before live model updates. */
+  settingsRevision?: number
+}
+
+/** One model in the library: the provider's own id, an optional display override, and what the
+ *  last probe found. The probe rides the entry it describes rather than sitting in a parallel
+ *  table — there is exactly one last-known-good per model, and it is meaningless without it. */
+export interface InstanceModel {
+  /** The provider's model id, exactly as it names it. The stable, public handle: a stored
+   *  transcript and an operator's picker both carry it. */
+  id: string
+  /** Display override. Absent = the id's readable tail, which is what the catalog derives. */
+  label?: string
+  /** The last probe, or absent if it has never been probed. */
+  probe?: ModelProbe
+}
+
+/** What a probe found: whether the model answered, and how long it took to. Both numbers,
+ *  because they measure different failures — a model can start fast and then grind, or think
+ *  for six seconds and finish instantly, and only one of those is felt as slow in chat. */
+export interface ModelProbe {
+  /** When it ran (ISO). Stale probe data is worse than none if you cannot see its age. */
+  at: string
+  ok: boolean
+  /** Time to the FIRST token, ms. Null when the adapter did not stream (the probe still
+   *  reports a total). This is the number that predicts how a chat turn feels. */
+  ttftMs: number | null
+  /** Wall time for the whole call, ms. Null only when the call never returned. */
+  totalMs: number | null
+  /** Why it failed, in the provider's own words, trimmed. Absent when ok. */
+  error?: string
+}
+
+/** The lanes a model can be pinned to. A lane with no entry falls to the deploy's configured
+ *  default for that lane, which is what every deploy predating the library has. */
+export interface InstanceSlots {
+  /** Attended chat, and an @Derive mention. Falls back to `DERIVE_MODEL_NAME`. */
+  chat?: string
+  /** Unattended automation runs on the in-process loop. Falls back to `DERIVE_LOOP_MODEL`,
+   *  then to model-anthropic's DEFAULT_ANTHROPIC_MODEL.
+   *
+   *  🚨 THIS NAMES THE MODEL, NOT WHO PAYS. The automation lane resolves a credential per run
+   *  through the payer chain unless the operator configured a gateway, so pinning a model here
+   *  moves no turn onto the operator's key. */
+  automation?: string
 }
 
 /** How a workspace/profile likes its stuff built: a pointer to a "conventions"

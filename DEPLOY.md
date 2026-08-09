@@ -390,6 +390,37 @@ payer a hosted workspace never has, so scheduled automations silently never fire
 > separate `DERIVE_LOOP_MODEL` (unset = `claude-sonnet-5`). Do not set `DERIVE_LOOP_MODEL`
 > to a gateway path — `api.anthropic.com` answers `model_not_found`.
 
+#### The model library (Settings → Instance → Models)
+
+These variables are the **floor**, not the whole story. An instance operator (`DERIVE_TOKEN`,
+or an account listed in `DERIVE_OPERATORS`) manages the rest live, from Settings → Instance →
+Models, with no redeploy and no restart:
+
+| What | Where it lives | Needs a deploy? |
+| --- | --- | --- |
+| Add a model id on the gateway you already configured | the library | no |
+| Rename a model for the picker | the library | no |
+| Pin chat, or automations, to a model | the library | no |
+| Probe a model: does it answer, and how fast | the library | no |
+| A new gateway, or a second provider's key | `DERIVE_MODEL_*` | **yes** |
+
+The line is the credential. A model added in the library rides the base URL and key this
+deployment already holds, so it costs no new secret; a genuinely different provider needs a key
+that only the environment can hold. The environment's ids are also the floor in a second sense:
+an operator can add to them, relabel them and pin to them, but cannot delete one — taking the
+last reachable model off a running deployment through a settings write is not a lever.
+
+Pins take effect on the **next turn**, including in conversations that are already open. A pin
+names the model and never who pays: automation runs that resolve a connected plan through the
+payer chain keep their own Anthropic model id (`DERIVE_LOOP_MODEL`), because the library's ids
+are the gateway's and the two namespaces are not interchangeable.
+
+Each model shows two timings, which answer different questions. **Observed** is the median and
+p95 of real turns, folded from the answers Derive already stores — the better number, and absent
+for a model nobody has used yet. **Probe** is one synthetic call through the exact path a turn
+takes, so it is comparable across models and available immediately. Adding a model probes it
+first and refuses an id the provider will not answer for.
+
 ### Automations (beta, off by default)
 
 Automations are gated per workspace by `automateBeta` and ship **off**. The gate is a real

@@ -35,6 +35,7 @@ import {
   workspaceIdsFromEnv,
 } from "./lib/env"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
@@ -320,6 +321,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         callModel: models?.resolve(null)?.callModel,
         automationOperatorPays: env.DERIVE_LOOP_RUNS === "1" && workerGateway(env) !== undefined,
         models: models ?? undefined,
+        // The gateway that catalog was built from, so the operator's model library can reach an
+        // id the environment never named — same endpoint, same key, no new secret. Without it
+        // the library can still relabel and pin a lane, but not ADD. See lib/model-library.ts.
+        modelGateway: workerGateway(env),
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
         chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
@@ -578,12 +583,23 @@ async function withHostedDispatch(
   // the key and spending it for every workspace IS the hosted posture. `operatorPays` below
   // depends on the same fact.
   const gateway = workerGateway(env)
+  /**
+   * The operator's live pin for the automation lane, resolved at DISPATCH and read by the loop.
+   *
+   * Two-step on this tier for a reason the Node twin does not have: the datastore is reached
+   * through request-scoped AsyncLocalStorage proxies (liveD1 / livePgPool), and the loop runs
+   * DETACHED through waitUntil, where that context is gone — a store built inside the loop would
+   * hang on a reclaimed binding rather than fail. `scoped()` below runs with a valid context, so
+   * the pin is read there and the loop only ever reads the value that was already resolved.
+   */
+  const pin: { automation?: string } = {}
   const container = containerSubstrateFromEnv(env as unknown as Record<string, unknown>)
   const loop =
     env.DERIVE_LOOP_RUNS === "1"
       ? loopSubstrate({
           model: env.DERIVE_LOOP_MODEL,
           gateway,
+          gatewayModel: async () => pin.automation,
           waitUntil,
           // Reach this API WITHOUT leaving the isolate. The loop is an HTTP client of its own
           // deployment; on Workers a global fetch at BASE_URL exits to the edge and comes back
@@ -624,9 +640,14 @@ async function withHostedDispatch(
     : container
   const secret = env.DERIVE_AUTH_SECRET
   if (!substrate || !secret) return
-  const scoped = () =>
-    fn({
-      meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
+  const scoped = async () => {
+    const meta = env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1)
+    // Read here, inside the live datastore context, for the loop to use after this returns.
+    // Best-effort: a failed lookup leaves the configured default in place rather than stopping
+    // dispatch, because "we could not read a preference" must never mean "nothing runs".
+    pin.automation = (await getInstanceSlot(meta, "automation").catch(() => null)) ?? undefined
+    return fn({
+      meta,
       substrate,
       server: env.BASE_URL ?? "",
       secret,
@@ -637,6 +658,7 @@ async function withHostedDispatch(
       // set. A missing/blank binding therefore selects zero workspaces rather than every one.
       hostedOrgIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
     })
+  }
   await (env.HYPERDRIVE
     ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
     : requestD1.run(env.DB, scoped)

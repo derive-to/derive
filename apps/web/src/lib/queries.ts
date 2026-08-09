@@ -403,6 +403,16 @@ export const instanceChatModelQuery = () =>
     retry: false,
   })
 
+/** The whole model library — operator-only, so its failure is also the signal that the person is
+ *  not one. NOT cached long: the page exists to be looked at while a provider is misbehaving, and
+ *  a probe or a pin has to be visible the moment it lands. */
+export const modelLibraryQuery = () =>
+  queryOptions({
+    queryKey: ["model-library"] as const,
+    queryFn: () => api.modelLibrary(),
+    retry: false,
+  })
+
 /** Whether the signed-in person is an INSTANCE operator (super-admin), by asking for something
  *  only an operator may read. Errors for everyone else, which is the signal; `retry: false` so a
  *  normal member's 403 costs one request and not four. */

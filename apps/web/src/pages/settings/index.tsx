@@ -4,7 +4,7 @@ import { PageShell } from "@/components/shared/page-shell"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/ctx"
-import { instanceChatModelQuery, reportsQuery } from "@/lib/queries"
+import { modelLibraryQuery, reportsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentsSection } from "./agents-section"
 import { AppearanceSection } from "./appearance-section"
@@ -35,7 +35,7 @@ const route = getRouteApi("/settings/$section")
 // derived from it, so an id or label can't drift between the two. Order here is
 // display order. Two sections are data-gated at render (`models`, `reports`); they
 // stay in this list unconditionally so a hidden tab keeps its title.
-const GROUP_ORDER = ["Account", "Workspace", "Developer", "Moderation"] as const
+const GROUP_ORDER = ["Account", "Workspace", "Developer", "Instance"] as const
 const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number] }[] = [
   { id: "profile", label: "Profile", group: "Account" },
   { id: "security", label: "Security", group: "Account" },
@@ -47,14 +47,14 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "billing", label: "Billing", group: "Workspace" },
   { id: "integrations", label: "Integrations", group: "Workspace" },
   { id: "sources", label: "Sources", group: "Workspace" },
-  { id: "models", label: "Chat model", group: "Workspace" },
   { id: "brandprint", label: "Brandprint", group: "Workspace" },
   { id: "github", label: "GitHub", group: "Developer" },
   { id: "webhooks", label: "Webhooks", group: "Developer" },
   { id: "agents", label: "Agents", group: "Developer" },
   { id: "automations", label: "Automations", group: "Developer" },
   { id: "domains", label: "Domains", group: "Developer" },
-  { id: "reports", label: "Reports", group: "Moderation" },
+  { id: "models", label: "Models", group: "Instance" },
+  { id: "reports", label: "Reports", group: "Instance" },
 ]
 
 const SECTION_TITLES: Record<string, string> = Object.fromEntries(
@@ -75,7 +75,12 @@ export function Settings() {
   // Operator-only, and the query IS the gate: it 403s for everyone who does not run this
   // instance. It also carries the catalog, so the tab appears only once there is a real choice —
   // one configured model is a fact about the deployment rather than a decision.
-  const { data: instanceModel } = useQuery({ ...instanceChatModelQuery(), enabled: !!me })
+  // Operator-only, and the query IS the gate: it 403s for everyone who does not run this
+  // instance. It used to also decide whether the section was WORTH showing, by requiring more
+  // than one model to choose between — which, once an operator can ADD models, hid the only
+  // surface that could ever create the second one.
+  const { data: library } = useQuery({ ...modelLibraryQuery(), enabled: !!me })
+  const isOperator = !!library
   const { section } = route.useParams()
   const nav = route.useNavigate()
 
@@ -88,15 +93,11 @@ export function Settings() {
   const openReports = reports ?? []
   const hasReports = openReports.length > 0
 
-  // The data-gated sections: the operator model tab appears only once the deployment
-  // offers a real choice; Reports is urgent + owner-only, surfaced only while open
+  // The data-gated sections: Models appears only once the operator-only query confirms that the
+  // caller runs this deployment; Reports is surfaced only while open
   // ones exist. Everything else is always shown.
   const shown = (id: string) =>
-    id === "models"
-      ? (instanceModel?.options.length ?? 0) > 1
-      : id === "reports"
-        ? hasReports
-        : true
+    id === "models" ? isOperator : id === "reports" ? hasReports : true
 
   const groups: SettingsNavGroup[] = GROUP_ORDER.map((label) => ({
     label,
