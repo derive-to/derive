@@ -300,7 +300,10 @@ const landInProcess =
     await afterPublish(deps, input.artifact, version, {
       isNew: false,
       onBehalf: input.onBehalf?.id ?? null,
-      actorId: input.onBehalf?.id ?? null,
+      // This revision was written by the Derive agent, even though its attribution belongs to
+      // the human it serves. Leave actorId null so an intentional `@human` in the live body is
+      // a real handoff, not suppressed as that human mentioning themself.
+      actorId: null,
     })
     return {
       outcome: "published",

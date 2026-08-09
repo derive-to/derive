@@ -1,3 +1,4 @@
+import { autocompletion, type CompletionContext } from "@codemirror/autocomplete"
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import { html } from "@codemirror/lang-html"
 import { markdown } from "@codemirror/lang-markdown"
@@ -19,6 +20,40 @@ import {
 } from "@codemirror/view"
 import { tags as t } from "@lezer/highlight"
 import { useEffect, useRef } from "react"
+import { api } from "@/api"
+
+/** A source document stores durable, portable @handles rather than app-private mention ids. The
+ * server resolves those handles when the version publishes; this picker makes the write path as
+ * discoverable as comment mentions without pretending source text has a comment-thread reply. */
+const sourceMentionCompletions = (shortId?: string) => async (context: CompletionContext) => {
+  const before = context.matchBefore(/@[a-zA-Z0-9_-]*/)
+  if (!before || (before.from === before.to && !context.explicit)) return null
+  // Do not offer a person picker in an email address, URL, or a longer identifier.
+  if (
+    before.from > 0 &&
+    /[a-zA-Z0-9._@-]/.test(context.state.sliceDoc(before.from - 1, before.from))
+  )
+    return null
+  try {
+    const query = before.text.slice(1)
+    const { users } = await api.users(query, shortId)
+    const options = users
+      // Source mentions wake people; @derive and registered agents remain intentionally
+      // thread-only until source mentions have a canonical reply surface.
+      .filter((user) => user.kind !== "agent" && !!user.handle)
+      .slice(0, 6)
+      .map((user) => ({
+        label: `@${user.handle}`,
+        detail: user.name ?? undefined,
+        type: "user",
+        apply: `@${user.handle} `,
+      }))
+    return options.length ? { from: before.from, options } : null
+  } catch {
+    // Directory search is an affordance; raw @handles still publish safely if it is unavailable.
+    return null
+  }
+}
 
 // Syntax colors ride the semantic CSS variables instead of hard-coded values, so
 // the highlight follows the active theme (dark and light) with a single style.
@@ -48,12 +83,16 @@ export function CodeEditor({
   format,
   onChange,
   placeholder,
+  shortId,
 }: {
   value: string
   format: "md" | "html"
   onChange: (v: string) => void
   /** First-use hint shown in the empty editor (the /new flow); omitted when editing. */
   placeholder?: string
+  /** The existing artifact scopes people search to its collaborators. New docs use the active
+   * workspace directory; the publish-time gate remains the authority in both cases. */
+  shortId?: string
 }) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
@@ -73,8 +112,8 @@ export function CodeEditor({
         extensions: [
           // A curated set instead of CodeMirror's basicSetup: the editing niceties
           // (line numbers, active line, undo, bracket matching, syntax highlight,
-          // indent-on-input) without autocomplete / search / lint / folding — keeps
-          // this lazy chunk lighter, which matters on a phone.
+          // indent-on-input) without search / lint / folding. @mention completion is the one
+          // exception: it makes a live-body handoff discoverable and writes a portable handle.
           lineNumbers(),
           highlightActiveLineGutter(),
           highlightActiveLine(),
@@ -84,6 +123,7 @@ export function CodeEditor({
           bracketMatching(),
           syntaxHighlighting(tokenHighlight, { fallback: true }),
           keymap.of([...defaultKeymap, ...historyKeymap]),
+          autocompletion({ override: [sourceMentionCompletions(shortId)] }),
           format === "md" ? markdown() : html(),
           ...(placeholder ? [cmPlaceholder(placeholder)] : []),
           EditorView.lineWrapping,
@@ -117,7 +157,7 @@ export function CodeEditor({
       view_.destroy()
       view.current = null
     }
-  }, [format])
+  }, [format, shortId])
 
   // Sync external value changes (initial load, programmatic resets) without
   // disturbing the user mid-type: only dispatch when the value truly differs.

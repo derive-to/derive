@@ -834,7 +834,17 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
       await afterPublish(
-        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
+        {
+          meta,
+          blobs,
+          bus,
+          notify,
+          notifyRender,
+          background,
+          search,
+          summarize,
+          baseUrl: deps.baseUrl,
+        },
         artifact,
         version,
         {
@@ -2030,7 +2040,17 @@ export const artifactRoutes = (ctx: AppContext) => {
       // A restore is a version bump too: same webhook + realtime + re-anchor as a publish,
       // but never a new artifact, so no follower fan-out and no thread resolves.
       await afterPublish(
-        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
+        {
+          meta,
+          blobs,
+          bus,
+          notify,
+          notifyRender,
+          background,
+          search,
+          summarize,
+          baseUrl: deps.baseUrl,
+        },
         artifact,
         version,
         {
@@ -2147,7 +2167,17 @@ export const artifactRoutes = (ctx: AppContext) => {
         role: "owner",
       })
       await afterPublish(
-        { meta, blobs, bus, notify, notifyRender, background, search, summarize },
+        {
+          meta,
+          blobs,
+          bus,
+          notify,
+          notifyRender,
+          background,
+          search,
+          summarize,
+          baseUrl: deps.baseUrl,
+        },
         copy,
         v,
         { isNew: true, onBehalf: me.id, actorId: me.id },

@@ -257,6 +257,36 @@ export interface CommentEmailInput {
   mention?: boolean
 }
 
+/** Render the interrupt email for an @mention written into an artifact's live body.
+ *
+ * This intentionally opens the document, not a synthetic comment thread: the mention lives in
+ * the versioned source, and there is no canonical thread for an email reply to mirror yet. */
+export const buildArtifactMentionEmail = (
+  baseUrl: string,
+  artifact: ArtifactRecord,
+  input: { author: string; excerpt: string },
+): { subject: string; html: string; text: string } => {
+  const title = artifact.title ?? artifact.short_id
+  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`
+  const excerpt = truncate(input.excerpt, 600)
+  const subject = `${input.author} mentioned you in ${title}`
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p><strong>${escapeHtml(input.author)}</strong> mentioned you in <a href="${escapeHtml(link)}">${escapeHtml(title)}</a>.</p>
+  <p style="white-space:pre-wrap">${escapeHtml(excerpt)}</p>
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">Open in Derive</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">You're receiving this because you were mentioned in this live Derive document.</p>
+  </body></html>`
+  const text = [
+    `${input.author} mentioned you in ${title}.`,
+    ``,
+    excerpt,
+    ``,
+    `Open in Derive: ${link}`,
+  ].join("\n")
+  return { subject, html, text }
+}
+
 /** Render a comment/mention notification email (subject + html + text). Plain, readable,
  *  one clear call-to-action back to the thread in Derive. */
 export const buildCommentEmail = (

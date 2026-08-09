@@ -1134,6 +1134,7 @@ export function Artifact() {
                 onPublish={publishEdit}
                 onPropose={proposeEdit}
                 publishing={publishing}
+                shortId={shortId}
               />
             ) : (
               documentEl

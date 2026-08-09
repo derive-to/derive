@@ -1316,7 +1316,17 @@ export const slackRoutes = (ctx: AppContext) => {
       if (pt && payload.team?.id && payload.user?.id) {
         runAfterAck(
           runSlackProposalAction(
-            { meta, blobs, bus, notify, notifyRender, search, billingBlocked },
+            {
+              meta,
+              blobs,
+              bus,
+              notify,
+              notifyRender,
+              search,
+              background,
+              baseUrl: deps.baseUrl,
+              billingBlocked,
+            },
             {
               teamId: payload.team.id,
               slackUserId: payload.user.id,

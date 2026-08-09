@@ -43,6 +43,7 @@ export const proposalRoutes = (ctx: AppContext) => {
     bus,
     notify,
     notifyRender,
+    background,
     currentUser,
     actingUser,
     privateOwnerId,
@@ -414,7 +415,16 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (body instanceof Response) return bail(body)
       try {
         const version = await approveProposalAction(
-          { meta, blobs, bus, notify, notifyRender, search },
+          {
+            meta,
+            blobs,
+            bus,
+            notify,
+            notifyRender,
+            search,
+            background,
+            baseUrl: deps.baseUrl,
+          },
           artifact,
           proposal,
           approver,
