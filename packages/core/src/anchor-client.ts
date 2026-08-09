@@ -547,6 +547,14 @@ interface ElReg {
     "[data-derive-editable]{cursor:text}" +
     "[data-derive-editable]:focus{outline:2px solid rgba(100,116,139,.6);outline-offset:3px;border-radius:3px}" +
     ".derive-edited{background-color:rgba(100,116,139,.08);border-radius:2px}" +
+    /* A mention is still plain, portable `@handle` source. In the rendered document,
+       though, it earns a compact capsule so a handoff reads as addressed rather than
+       incidental prose. currentColor makes the treatment adapt to an artifact's own
+       palette; the slate wash is only a fallback for browsers without color-mix. */
+    ".derive-mention{display:inline-block;margin:0 .06em;padding:.06em .34em .08em;border-radius:999px;background:rgba(100,116,139,.12);box-shadow:inset 0 0 0 1px rgba(100,116,139,.24);color:inherit;font-weight:600;line-height:1.35;white-space:nowrap;text-decoration:none;vertical-align:baseline}" +
+    ".derive-mention[data-derive-mention-new]{animation:derive-mention-in .18s cubic-bezier(.16,1,.3,1)}" +
+    "@keyframes derive-mention-in{from{opacity:.45;transform:translateY(1px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}" +
+    "@media(prefers-reduced-motion:reduce){.derive-mention[data-derive-mention-new]{animation:none}}" +
     /* The invitation. In edit mode the block under the pointer lifts slightly, so the
        document itself shows which runs are editable BEFORE you commit a click —
        without it, edit mode is pixel-identical to reading and you have to click
@@ -587,6 +595,7 @@ interface ElReg {
     "@supports (color: color-mix(in srgb, currentColor 10%, transparent)){" +
     ".derive-edit-hover{background-color:color-mix(in srgb, currentColor 8%, transparent);outline-color:color-mix(in srgb, currentColor 38%, transparent)}" +
     "[data-derive-editable]:focus{outline-color:color-mix(in srgb, currentColor 70%, transparent)}" +
+    ".derive-mention{background:color-mix(in srgb,currentColor 9%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 25%,transparent)}" +
     "}" +
     /* Formatting applied in this session, shown as it will read once saved. These
        spans are the EDITOR's, not the document's: they carry the intent until the
@@ -1018,6 +1027,68 @@ interface ElReg {
     // biome-ignore lint/suspicious/noAssignInExpressions: standard TreeWalker iteration
     while ((n = w.nextNode())) out.push(n as Text)
     return out
+  }
+
+  /* === Rendered document @mentions ===========================================
+     Mentions persist as portable, readable `@handle` source — never an app-private
+     user id or a span in a saved document. This is only a presentational wrapper in
+     the iframe. The grammar intentionally mirrors content-mentions.ts, including
+     its email / domain boundary, so what looks addressed here is what publish will
+     consider for a collaborator notification (subject to the server's access gate).
+
+     We decorate once at document boot, then keep the small wrapper through inline
+     editing. That matters for a double-click on a chip: replacing its text node on
+     mode entry would invalidate the captured caret before the host has armed the
+     editable block. The save serializer already reduces unknown editor spans back to
+     their text, so the visual wrapper can never leak into source. */
+  const HANDLE_TOKEN = /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/i
+  const HANDLE_MENTION =
+    /(^|[^a-z0-9._@-])@([a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29})(?![a-z0-9_-]|\.[a-z0-9])/gi
+  const mentionChip = (handle: string, fresh = false): HTMLSpanElement => {
+    const chip = document.createElement("span")
+    chip.className = "derive-mention"
+    chip.setAttribute("data-derive-mention", "")
+    if (fresh) {
+      chip.setAttribute("data-derive-mention-new", "")
+      window.setTimeout(() => chip.removeAttribute("data-derive-mention-new"), 220)
+    }
+    chip.textContent = `@${handle}`
+    return chip
+  }
+  const canDecorateMention = (node: Text): boolean => {
+    const parent = node.parentElement
+    // Source code and controls are not reader prose. Aside from preserving their
+    // intended styling, skipping them matches the notification parser's promise not
+    // to turn examples, forms, or scripts into actual body mentions.
+    return !parent?.closest(
+      "script,style,noscript,template,code,pre,textarea,input,button,select,option,.derive-edit-ui",
+    )
+  }
+  const decorateMentions = () => {
+    if (!document.body) return
+    for (const node of textNodes(document.body)) {
+      if (!node.isConnected || !canDecorateMention(node)) continue
+      const value = node.nodeValue ?? ""
+      HANDLE_MENTION.lastIndex = 0
+      let match: RegExpExecArray | null
+      let last = 0
+      let fragment: DocumentFragment | null = null
+      // biome-ignore lint/suspicious/noAssignInExpressions: standard RegExp iteration.
+      while ((match = HANDLE_MENTION.exec(value))) {
+        const boundary = match[1] ?? ""
+        const handle = match[2]
+        if (!handle) continue
+        const start = match.index + boundary.length
+        const end = start + handle.length + 1 // `@` + handle
+        if (!fragment) fragment = document.createDocumentFragment()
+        if (start > last) fragment.appendChild(document.createTextNode(value.slice(last, start)))
+        fragment.appendChild(mentionChip(handle))
+        last = end
+      }
+      if (!fragment) continue
+      if (last < value.length) fragment.appendChild(document.createTextNode(value.slice(last)))
+      node.replaceWith(fragment)
+    }
   }
   /* === Text-comment highlights via the CSS Custom Highlight API ==============
      Each text comment's live Range is kept in `textEntries` (for hit-testing +
@@ -1772,7 +1843,6 @@ interface ElReg {
   const clearEditMention = () => {
     editMention = null
   }
-  const HANDLE_TOKEN = /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/i
   /** A DOM range at a textContent offset. Token matching is constrained to one
    * editable block, so textContent is the same narrow, plaintext grammar this
    * editor persists. */
@@ -1873,11 +1943,17 @@ interface ElReg {
     const block = owner?.closest("[data-derive-editable]")
     if (!(block instanceof HTMLElement)) return
     checkpoint(block)
-    const text = document.createTextNode(`@${handle} `)
+    // Insert the same plain @handle source that notifications resolve at publish,
+    // wrapped only for the live document's visual treatment. The serializer reduces
+    // this unknown span back to text, so source and copied text stay portable.
+    const chip = mentionChip(handle, true)
+    const trailingSpace = document.createTextNode(" ")
+    const replacement = document.createDocumentFragment()
+    replacement.append(chip, trailingSpace)
     mention.token.deleteContents()
-    mention.token.insertNode(text)
+    mention.token.insertNode(replacement)
     const caret = document.createRange()
-    caret.setStartAfter(text)
+    caret.setStartAfter(trailingSpace)
     caret.collapse(true)
     const selection = window.getSelection()
     selection?.removeAllRanges()
@@ -3482,4 +3558,9 @@ interface ElReg {
       setTimeout(reportScroll, 260) // just past fastScrollTo's 220ms
     }
   })
+
+  // Last on purpose: the document is fully parsed, our own overlay vocabulary is
+  // established, and no edit mode is active yet. The wrappers are purely local to
+  // this rendered frame; saving always serializes their text content.
+  decorateMentions()
 })()
