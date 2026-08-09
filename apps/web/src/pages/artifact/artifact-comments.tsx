@@ -236,6 +236,7 @@ export function ArtifactComments(p: {
             subscribeGeom={p.subscribeGeom}
             asideWidth={p.asideWidth}
             onComment={() => {
+              p.onRail?.("comments")
               if (panel !== "open") p.setPanel("open")
               p.startSelComment()
             }}

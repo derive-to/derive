@@ -5,6 +5,7 @@ import { SLACK_SUBSCRIBABLE_EVENTS } from "../src/lib/slack-subscriptions"
 import {
   artifactDetails,
   artifactEntity,
+  commentThreadEntity,
   decodeReviewAction,
   encodeReviewAction,
   SLACK_REVIEW_ACTION,
@@ -152,6 +153,29 @@ describe("artifactEntity", () => {
     expect((ws.entity_payload as Record<string, never>).attributes).not.toHaveProperty(
       "full_size_preview",
     )
+  })
+})
+
+describe("commentThreadEntity", () => {
+  it("puts a thread target on Reply as well as its Work Object external ref", () => {
+    const entity = commentThreadEntity({
+      baseUrl: "https://derive.test",
+      artifact: artifact(),
+      comment: {
+        thread_id: "c_thread",
+        body_md: "Which direction should we take?",
+        author: "Derive",
+        state: "open",
+      },
+      iconUrl: "https://derive.test/icon.png",
+    })
+    expect(entity.external_ref).toEqual({ id: "c_thread", type: "comment_thread" })
+    const action = (
+      entity.entity_payload as { actions: { primary_actions: Array<Record<string, unknown>> } }
+    ).actions.primary_actions[0]
+    if (!action) throw new Error("Reply action missing")
+    expect(action.action_id).toBe("derive_question_reply")
+    expect(action.value).toBe(JSON.stringify({ artifactId: "a1", threadId: "c_thread" }))
   })
 })
 

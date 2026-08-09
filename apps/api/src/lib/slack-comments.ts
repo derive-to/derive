@@ -17,7 +17,8 @@ import {
 import type { EventBus } from "../bus"
 import type { WebhookEvent } from "../events"
 import { type ChannelSendResult, enqueueChannelDelivery } from "../webhooks"
-import { commentDeepLink, parseMeta } from "./comments"
+import { commentDeepLink, DERIVE_AUTHOR_ID, isCollaboratorAuthor, parseMeta } from "./comments"
+import { notifyThreadReplyAgents } from "./mentions"
 import { SlackApiError, slackUserName, updateSlackMessage } from "./slack"
 import {
   actionButton,
@@ -492,6 +493,9 @@ export const makeSlackSender =
         thread_id: p.threadId,
         channel: res.channel,
         message_ts: res.ts,
+        surface: "channel_mirror",
+        recipient_user_id: null,
+        slack_user_id: null,
         created_at: new Date().toISOString(),
       } satisfies SlackThreadLinkRecord)
     }
@@ -545,9 +549,12 @@ export const makeSlackIngestSender =
     const p = JSON.parse(d.payload) as SlackIngestPayload
     const link = await meta.getSlackThreadLinkByTs(p.channel, p.threadTs)
     if (!link) return { ok: true, status: "skipped: no thread link" }
-    // A thread link outlives an unsubscribe (nothing deletes them), so the subscription is what
-    // says whether this channel is still connected — in BOTH directions.
-    if (!(await channelIsSubscribed(meta, link.org_id, p.channel)))
+    // Channel mirrors follow subscriptions. A private mention DM deliberately does not: its
+    // stored recipient is the audience. Re-check that recipient's Derive standing below, so a
+    // removed member cannot keep writing through an old Slack DM.
+    // A pre-surface legacy row is a channel mirror too. Treating it as a private DM would let
+    // an unsubscribed legacy channel keep writing into Derive after an upgrade.
+    if (link.surface !== "mention_dm" && !(await channelIsSubscribed(meta, link.org_id, p.channel)))
       return { ok: true, status: "skipped: channel not subscribed" }
     const bot = await resolveBotToken(meta, link.org_id, encryptionKey)
     if (!bot) return { ok: true, status: "skipped: slack not connected" }
@@ -561,6 +568,20 @@ export const makeSlackIngestSender =
     // so nothing is lost except the claim we cannot make.
     const rawLink = await meta.getSlackUserLinkBySlackId(bot.install.team_id, p.userId)
     const userLink = isVerifiedLink(rawLink) ? rawLink : null
+    if (
+      link.surface === "mention_dm" &&
+      (!userLink ||
+        userLink.user_id !== link.recipient_user_id ||
+        (link.slack_user_id && link.slack_user_id !== p.userId))
+    )
+      return { ok: true, status: "skipped: DM sender is not recipient" }
+    const artifact = await meta.getArtifactById(link.artifact_id)
+    if (!artifact) return { ok: true, status: "skipped: artifact removed" }
+    if (
+      link.surface === "mention_dm" &&
+      !(await isCollaboratorAuthor(meta, artifact, userLink?.user_id ?? null))
+    )
+      return { ok: true, status: "skipped: recipient no longer has standing" }
     const deriveUser = userLink ? (await meta.getUsers([userLink.user_id]))[0] : undefined
     const created = await ingestSlackReply(meta, link, {
       ts: p.ts,
@@ -570,7 +591,23 @@ export const makeSlackIngestSender =
       botUserId: bot.install.bot_user_id,
       deriveUserId: userLink?.user_id ?? null,
     })
-    if (created) bus?.publish(created.artifact_id, { type: "comment.created" })
+    // A delivery can be reclaimed after `ingestSlackReply` committed but before the agent
+    // wake-up below. Find that committed origin row on a retry and replay only idempotent
+    // side effects; otherwise an answer can sit in Derive forever without waking the agent
+    // that asked it.
+    const ingested = created ?? (await slackReplyByTs(meta, link.artifact_id, p.ts))
+    if (ingested) {
+      bus?.publish(ingested.artifact_id, { type: "comment.created" })
+      // A linked recipient replying to a question in their mention DM is a genuine human answer,
+      // not merely a Slack transcript line. Wake the registered agents already participating in
+      // that Derive thread so they can resume without the human @mentioning them again.
+      await notifyThreadReplyAgents(
+        { meta, bus: bus ?? { publish: () => undefined } },
+        artifact,
+        ingested,
+        userLink?.user_id ?? null,
+      )
+    }
     // @Derive, TYPED IN SLACK. Slack sends a mention as `<@BOT_USER_ID>`, so the bot's own id is
     // what identifies it — there is no Derive mention payload on this path (the reply arrives as
     // plain text, which is also why this lane does not run the full comment fan-out).
@@ -580,8 +617,16 @@ export const makeSlackIngestSender =
     // answer computed against somebody else's permissions.
     if (created && answerDeriveMention && bot.install.bot_user_id && userLink) {
       const mentionsBot = p.text.includes(`<@${bot.install.bot_user_id}>`)
-      const artifact = mentionsBot ? await meta.getArtifactById(link.artifact_id) : null
-      if (artifact)
+      const prior = (await meta.listComments(link.artifact_id, { threadId: link.thread_id }))
+        .filter((c) => c.id !== created.id && c.author_id === DERIVE_AUTHOR_ID)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+      const resumes = !!prior && parseMeta(prior.meta).awaiting_reply === true
+      if (resumes && prior) {
+        const md = parseMeta(prior.meta)
+        md.awaiting_reply = false
+        await meta.updateComment(prior.id, { meta: JSON.stringify(md) })
+      }
+      if (mentionsBot || resumes)
         await answerDeriveMention(artifact, created, {
           id: userLink.user_id,
           name: deriveUser?.name ?? name,
@@ -589,6 +634,16 @@ export const makeSlackIngestSender =
     }
     return { ok: true, status: created ? "ingested" : "skipped: own or duplicate" }
   }
+
+/** Return the already-persisted row for a redelivered Slack message. Kept separate from
+ * `ingestSlackReply` so its public null-on-duplicate contract stays useful to callers while the
+ * outbox sender can still repair its durable wake-up work after a crash. */
+const slackReplyByTs = async (
+  meta: MetaStore,
+  artifactId: string,
+  ts: string,
+): Promise<CommentRecord | null> =>
+  (await meta.listComments(artifactId)).find((c) => parseMeta(c.meta).slack?.ts === ts) ?? null
 
 /** Mirror a Slack thread reply into Derive as a comment on the linked thread. Returns the
  *  created comment, or null when it should be skipped (our own bot, or no thread link).
@@ -609,8 +664,7 @@ export const ingestSlackReply = async (
 ): Promise<CommentRecord | null> => {
   if (args.botUserId && args.userId === args.botUserId) return null // our own post
   // Dedupe on the Slack message ts (re-deliveries / retries).
-  const existing = await meta.listComments(link.artifact_id)
-  if (existing.some((c) => parseMeta(c.meta).slack?.ts === args.ts)) return null
+  if (await slackReplyByTs(meta, link.artifact_id, args.ts)) return null
 
   // Write the Slack origin marker atomically WITH the row (not a second updateComment): the
   // outbox can re-claim a leased slack_ingest delivery after a crash, and a marker written

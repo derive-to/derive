@@ -1,4 +1,5 @@
 import type {
+  AgentMentionKind,
   AgentMentionState,
   ArtifactKind,
   AuditAction,
@@ -26,6 +27,7 @@ import type {
   SessionState,
   SlackAuthorFilter,
   SlackScopeKind,
+  SlackThreadSurface,
   VersionSource,
   WebhookKind,
   WorkspaceAccess,
@@ -406,6 +408,7 @@ export const agentMention = pgTable("agent_mention", {
   thread_id: text("thread_id").notNull(),
   body: text("body").notNull(),
   author: text("author").notNull(),
+  kind: text("kind").$type<AgentMentionKind>().notNull().default("mention"),
   state: text("state").$type<AgentMentionState>().notNull().default("pending"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
@@ -621,6 +624,9 @@ export const slackThreadLink = pgTable(
     thread_id: text("thread_id").notNull(),
     channel: text("channel").notNull(),
     message_ts: text("message_ts").notNull(),
+    surface: text("surface").$type<SlackThreadSurface>().notNull().default("channel_mirror"),
+    recipient_user_id: text("recipient_user_id"),
+    slack_user_id: text("slack_user_id"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [

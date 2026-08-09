@@ -2529,7 +2529,11 @@ export interface NewConnection {
 }
 
 export type AgentMentionState = "pending" | "done"
-/** A queued mention for an agent's pull inbox (denormalized for a cheap read). */
+/** Why an agent was woken. A direct mention is an explicit request; a thread reply is the
+ * answer to work the agent already started. Keeping the distinction lets a client resume the
+ * right turn without guessing from prose. */
+export type AgentMentionKind = "mention" | "thread_reply"
+/** A queued request for an agent's pull inbox (denormalized for a cheap read). */
 export interface AgentMentionRecord {
   id: string
   agent_id: string
@@ -2541,6 +2545,7 @@ export interface AgentMentionRecord {
   body: string
   /** Who mentioned it. */
   author: string
+  kind: AgentMentionKind
   state: AgentMentionState
   created_at: string
 }
@@ -2553,6 +2558,8 @@ export interface NewAgentMention {
   thread_id: string
   body: string
   author: string
+  /** Omitted by old callers; the store default preserves the pre-thread-reply meaning. */
+  kind?: AgentMentionKind
 }
 
 /**
@@ -3439,8 +3446,12 @@ export interface UserNotificationPrefRecord {
   created_at: string
 }
 
+/** Where a Slack root was posted. Channel roots need a live subscription; a mention DM is a
+ * personal reply route bound to one intended Derive/Slack identity. */
+export type SlackThreadSurface = "channel_mirror" | "mention_dm"
+
 /** Links a Derive comment thread to the Slack message Derive posted for it, so replies
- *  thread under it (Derive→Slack) and Slack thread replies map back (Slack→Derive). */
+ * thread under it (Derive→Slack) and Slack thread replies map back (Slack→Derive). */
 export interface SlackThreadLinkRecord {
   id: string
   org_id: string
@@ -3448,6 +3459,12 @@ export interface SlackThreadLinkRecord {
   thread_id: string
   channel: string
   message_ts: string
+  /** Missing only on an in-memory/legacy caller; persisted rows default to channel_mirror. */
+  surface?: SlackThreadSurface
+  /** The human this DM route was addressed to. Null for channel mirrors. */
+  recipient_user_id?: string | null
+  /** Slack actor allowed to answer a mention DM route. Null for channel mirrors. */
+  slack_user_id?: string | null
   created_at: string
 }
 

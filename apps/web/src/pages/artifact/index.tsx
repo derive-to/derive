@@ -397,6 +397,7 @@ export function Artifact() {
     setHoverThread,
     setActiveThread,
     setPanel,
+    onOpenComments: () => setRail("comments"),
     onNavigate: (ref, newTab) => {
       // Same-origin SPA route. A modified/middle click opens it un-sandboxed in a new
       // tab (the frame's own new tab would inherit the sandbox and break the app).
@@ -520,6 +521,7 @@ export function Artifact() {
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
     onLoginBounce: () => nav({ to: "/login", search: artifactLoginSearch(window.location) }),
     onOpenReview: (proposalId: string) => setReviewing({ proposalId }),
+    onOpenComments: () => setRail("comments"),
     post,
     setPanel,
     setActiveThread,

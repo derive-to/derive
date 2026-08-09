@@ -1,7 +1,15 @@
 import { newId, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { commentCreatedAction } from "../lib/comment-actions"
-import { parseMeta, REACTIONS } from "../lib/comments"
+import {
+  DERIVE_MENTION_ID,
+  isCollaboratorAuthor,
+  MAX_MENTIONS,
+  type Mention,
+  parseMeta,
+  REACTIONS,
+} from "../lib/comments"
+import { resolveUserRef } from "../lib/resolve-user"
 import { resolveThreadAction } from "../lib/thread-actions"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
@@ -46,10 +54,26 @@ export function registerCommentTool(tc: ToolContext): void {
           .enum(["resolved", "open"])
           .optional()
           .describe("Resolve the thread, or reopen it (with `reply_to`)."),
+        mentions: z
+          .array(z.string().min(1))
+          .max(MAX_MENTIONS)
+          .optional()
+          .describe(
+            "People or registered workspace agents to notify. Use a human @handle/email, an agent id/name, or @derive to ask the built-in Derive assistant.",
+          ),
         workspace: wsArg,
       },
     },
-    async ({ short_id, body, reply_to, quote, react, set_state, workspace }) => {
+    async ({
+      short_id,
+      body,
+      reply_to,
+      quote,
+      react,
+      set_state,
+      mentions: mentionRefs,
+      workspace,
+    }) => {
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
@@ -65,6 +89,49 @@ export function registerCommentTool(tc: ToolContext): void {
       let thread = reply_to
       let commentId: string | undefined
       if (body) {
+        // The web composer supplies stable mention ids. MCP callers only have prose, so resolve
+        // each target here and reject anything that is not a current collaborator / registered
+        // workspace agent rather than silently dropping a request.
+        const mentions: Mention[] = []
+        const seen = new Set<string>()
+        const agents = await ctx.meta.listAgents(a.org_id)
+        for (const raw of mentionRefs ?? []) {
+          const ref = raw.trim()
+          if (!ref) continue
+          if (ref.replace(/^@/, "").toLowerCase() === DERIVE_MENTION_ID) {
+            if (!seen.has(DERIVE_MENTION_ID)) {
+              seen.add(DERIVE_MENTION_ID)
+              mentions.push({ id: DERIVE_MENTION_ID, name: "Derive" })
+            }
+            continue
+          }
+          const bare = ref.replace(/^@/, "")
+          const direct = await ctx.meta.getAgent(bare)
+          const agentTarget =
+            direct?.org_id === a.org_id
+              ? direct
+              : agents.find(
+                  (x) => x.id === bare || x.name.trim().toLowerCase() === bare.trim().toLowerCase(),
+                )
+          if (agentTarget) {
+            if (!seen.has(agentTarget.id)) {
+              seen.add(agentTarget.id)
+              mentions.push({ id: agentTarget.id, name: agentTarget.name })
+            }
+            continue
+          }
+          const userId = await resolveUserRef(ctx.meta, ref)
+          if (!userId || !(await isCollaboratorAuthor(ctx.meta, a, userId)))
+            return err(
+              `Can't mention "${ref}" here. Use a collaborating human's @handle/email, a registered workspace agent, or @derive.`,
+            )
+          if (!seen.has(userId)) {
+            const [user] = await ctx.meta.getUsers([userId])
+            if (!user) return err(`Can't mention "${ref}" here.`)
+            seen.add(userId)
+            mentions.push({ id: userId, name: user.name ?? user.username ?? ref })
+          }
+        }
         commentId = newId("c")
         thread = reply_to || commentId
         const anchor = quote ? JSON.stringify({ type: "TextQuoteSelector", exact: quote }) : null
@@ -78,12 +145,13 @@ export function registerCommentTool(tc: ToolContext): void {
           body_md: body,
           author: agent.name,
           author_id: agent.id,
+          ...(mentions.length ? { meta: JSON.stringify({ mentions }) } : {}),
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
         // The SAME fan-out the HTTP route runs (lib/comment-actions.ts): bells for thread
         // participants + the artifact's owners, plus webhooks, email, and the GitHub and Slack
         // mirrors. This path used to bell only, so an agent's comment reached no channel at
-        // all. The `comment` tool has no mentions of its own, so it passes none.
+        // all. It now sends the same resolved mention payload as the web composer too.
         const created = await ctx.meta.getComment(commentId)
         // Through ctx.background, exactly as the HTTP route runs it: the fan-out is
         // best-effort, and the comment is already durable by now. Awaiting it bare would turn
@@ -101,10 +169,11 @@ export function registerCommentTool(tc: ToolContext): void {
                 baseUrl: ctx.deps.baseUrl,
                 notify: ctx.notify,
                 pokeWebhooks: ctx.deps.pokeWebhooks,
+                answerDeriveMention: ctx.answerDeriveMention,
               },
               a,
               created,
-              { mentions: [], actorId: agent.id, onBehalfOf: ownerId },
+              { mentions, actorId: agent.id, onBehalfOf: ownerId },
             ),
           )
       }

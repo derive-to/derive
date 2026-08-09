@@ -239,6 +239,7 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
         thread: m.thread_id,
         author: m.author,
         request: m.body,
+        kind: m.kind,
         created_at: m.created_at,
       })),
     })

@@ -1,4 +1,5 @@
 import type {
+  AgentMentionKind,
   AgentMentionState,
   ArtifactKind,
   AuditAction,
@@ -26,6 +27,7 @@ import type {
   SessionState,
   SlackAuthorFilter,
   SlackScopeKind,
+  SlackThreadSurface,
   VersionSource,
   WebhookKind,
   WorkspaceAccess,
@@ -486,7 +488,7 @@ export const signupAttribution = sqliteTable(
   (t) => [uniqueIndex("signup_attribution_user").on(t.user_id)],
 )
 
-// An agent's pull inbox: one row per mention directed at the agent.
+// An agent's pull inbox: one row per explicit mention or reply to a thread it owns.
 export const agentMention = sqliteTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -496,6 +498,7 @@ export const agentMention = sqliteTable("agent_mention", {
   thread_id: text("thread_id").notNull(),
   body: text("body").notNull(),
   author: text("author").notNull(),
+  kind: text("kind").$type<AgentMentionKind>().notNull().default("mention"),
   state: text("state").$type<AgentMentionState>().notNull().default("pending"),
   created_at: text("created_at").notNull().default(now),
 })
@@ -769,6 +772,9 @@ export const slackThreadLink = sqliteTable(
     thread_id: text("thread_id").notNull(),
     channel: text("channel").notNull(),
     message_ts: text("message_ts").notNull(),
+    surface: text("surface").$type<SlackThreadSurface>().notNull().default("channel_mirror"),
+    recipient_user_id: text("recipient_user_id"),
+    slack_user_id: text("slack_user_id"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [
@@ -1328,12 +1334,17 @@ export const SLACK_THREAD_LINK_REKEY_SQLITE: string[] = [
   thread_id TEXT NOT NULL,
   channel TEXT NOT NULL,
   message_ts TEXT NOT NULL,
+  surface TEXT NOT NULL DEFAULT 'channel_mirror',
+  recipient_user_id TEXT,
+  slack_user_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (thread_id, channel),
   UNIQUE (channel, message_ts)
 )`,
-  `INSERT INTO slack_thread_link__new (id, org_id, artifact_id, thread_id, channel, message_ts, created_at)
-   SELECT id, org_id, artifact_id, thread_id, channel, message_ts, created_at FROM slack_thread_link`,
+  `INSERT INTO slack_thread_link__new
+   (id, org_id, artifact_id, thread_id, channel, message_ts, surface, recipient_user_id, slack_user_id, created_at)
+   SELECT id, org_id, artifact_id, thread_id, channel, message_ts, surface, recipient_user_id, slack_user_id, created_at
+   FROM slack_thread_link`,
   `DROP TABLE slack_thread_link`, // schema-ignore: middle step of the rebuild above
   `ALTER TABLE slack_thread_link__new RENAME TO slack_thread_link`,
 ]

@@ -14,6 +14,17 @@ import {
   SlackApiError,
 } from "./slack"
 
+// A Work Object fallback is only for a feature/schema rejection. Retrying a rate limit,
+// permission problem or malformed blocks without metadata wastes an API call and can mask the
+// real diagnosis (and a blocks error still needs the ordinary text-only recovery below).
+const WORK_OBJECT_METADATA_ERRORS = new Set([
+  "invalid_metadata_format",
+  "invalid_metadata_schema",
+  "error_processing_metadata",
+  "metadata_must_be_sent_from_app",
+  "metadata_too_large",
+])
+
 /** Flag a workspace's Slack install as needing re-auth after a Slack call failed for auth
  *  or scope reasons, so the Settings UI prompts a reconnect. Best-effort. */
 export const flagSlackReauth = async (meta: MetaStore, orgId: string): Promise<void> => {
@@ -65,8 +76,14 @@ export const postWithRecovery = async (
   meta: MetaStore,
   orgId: string,
   token: string,
-  args: { channel: string; text: string; blocks?: unknown; threadTs?: string },
-  opts: { autoJoin?: boolean; textFallback?: boolean } = {},
+  args: {
+    channel: string
+    text: string
+    blocks?: unknown
+    threadTs?: string
+    metadata?: Record<string, unknown>
+  },
+  opts: { autoJoin?: boolean; textFallback?: boolean; metadataFallback?: boolean } = {},
 ): Promise<SlackDeliveryResult> => {
   const post = (blocks: unknown) => postSlackMessage(token, { ...args, blocks })
   const ok = (ts: string, channel: string, note = ""): SlackDeliveryResult => ({
@@ -89,6 +106,18 @@ export const postWithRecovery = async (
       try {
         const res = await post(args.blocks)
         return ok(res.ts, res.channel)
+      } catch (retryErr) {
+        return slackFailure(meta, orgId, retryErr)
+      }
+    }
+    // Work Objects are progressively enabled by Slack. A rich DM must remain a useful
+    // notification when an older install rejects the entity metadata, so retry once as the
+    // ordinary Block Kit card. This happens only after Slack rejected the first request (not a
+    // network ambiguity), avoiding duplicate DMs.
+    if (opts.metadataFallback && args.metadata && WORK_OBJECT_METADATA_ERRORS.has(err.code)) {
+      try {
+        const res = await postSlackMessage(token, { ...args, metadata: undefined })
+        return ok(res.ts, res.channel, " blocks-only")
       } catch (retryErr) {
         return slackFailure(meta, orgId, retryErr)
       }

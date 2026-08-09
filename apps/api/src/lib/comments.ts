@@ -4,7 +4,7 @@ import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
  *  Slack, and GitHub notification builders. Normalizes a trailing slash on baseUrl. */
 export const commentDeepLink = (
   baseUrl: string,
-  artifact: ArtifactRecord,
+  artifact: Pick<ArtifactRecord, "short_id">,
   threadId: string,
 ): string =>
   `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(threadId)}`
@@ -64,6 +64,9 @@ export type CommentMeta = {
   edited_at?: string
   deleted?: boolean
   mentions?: Mention[]
+  /** An explicit model protocol marker: Derive asked a question and the next human reply in the
+   * thread should resume the turn. This is never inferred from punctuation. */
+  awaiting_reply?: boolean
   // The id of the open proposal whose revision claims to address this thread.
   // Set when the thread flips to `addressed`; cleared when that proposal is
   // approved (→ resolved) or withdrawn / sent back for changes (→ open).

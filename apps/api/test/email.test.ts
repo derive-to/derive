@@ -22,14 +22,19 @@ describe("email content", () => {
     expect(text).toContain("View in Derive: https://derive.to/artifacts/spec0001?comment=t_123")
   })
 
-  it("uses mention phrasing when the email is for a mention", () => {
-    const { subject } = buildCommentEmail("https://derive.to", artifact, {
+  it("puts the cited context and comment body in a mention email", () => {
+    const { subject, html, text } = buildCommentEmail("https://derive.to", artifact, {
       author: "Ann",
-      body: "hey",
+      body: "Could you check the launch checklist before we ship?",
+      quote: "The launch team owns the final checklist.",
       threadId: "t_1",
       mention: true,
     })
     expect(subject).toBe("Ann mentioned you on Roadmap")
+    expect(html).toContain("Could you check the launch checklist")
+    expect(html).toContain("The launch team owns the final checklist")
+    expect(text).toContain("Could you check the launch checklist")
+    expect(text).toContain("> The launch team owns the final checklist.")
   })
 
   it("escapes HTML in author/body to prevent injection", () => {

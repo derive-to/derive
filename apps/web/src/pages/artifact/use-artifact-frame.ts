@@ -50,6 +50,8 @@ export function useArtifactFrame(p: {
   setHoverThread: Dispatch<SetStateAction<string | null>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
   setPanel: Dispatch<SetStateAction<Panel>>
+  /** An in-document anchor click must also reveal the collaboration rail. */
+  onOpenComments?: () => void
   // A cross-document link inside the frame was clicked: the server resolved it to a
   // sibling artifact `ref`. The frame is sandboxed and can't navigate the host, so it
   // hands the click here for an SPA transition (or a new tab on a modified click).
@@ -87,7 +89,15 @@ export function useArtifactFrame(p: {
     onPointerLeave,
     onTap,
   } = p
-  const { setHoverThread, setActiveThread, setPanel, onNavigate, onEsc, onOpenExternal } = p
+  const {
+    setHoverThread,
+    setActiveThread,
+    setPanel,
+    onOpenComments,
+    onNavigate,
+    onEsc,
+    onOpenExternal,
+  } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
@@ -218,6 +228,7 @@ export function useArtifactFrame(p: {
         updateGeom(d)
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
       else if (d.type === "anchor-click") {
+        onOpenComments?.()
         setActiveThread(d.id)
         setPanel((cur) => (cur === "open" ? cur : "open"))
       } else if (d.type === "cursor" && typeof d.x === "number" && typeof d.y === "number") {
@@ -247,6 +258,7 @@ export function useArtifactFrame(p: {
     setHoverThread,
     setActiveThread,
     setPanel,
+    onOpenComments,
     onNavigate,
     onEsc,
     onOpenExternal,

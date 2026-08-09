@@ -203,3 +203,21 @@ export const artifactRefFromUrl = (baseUrl: string, url: string): string | null 
     return null
   }
 }
+
+/** Resolve the exact comment thread named by a Derive deep link. The artifact decision has
+ * already proved workspace/read standing; this only ensures a forged `?comment=` cannot point
+ * at a thread on some other document. */
+export const questionThreadFromUrl = async (
+  meta: MetaStore,
+  artifact: ArtifactRecord,
+  url: string,
+): Promise<import("@derive/core").CommentRecord | null> => {
+  try {
+    const threadId = new URL(url).searchParams.get("comment")
+    if (!threadId) return null
+    const root = await meta.getComment(threadId)
+    return root && root.artifact_id === artifact.id && root.thread_id === threadId ? root : null
+  } catch {
+    return null
+  }
+}

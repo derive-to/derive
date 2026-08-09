@@ -197,6 +197,7 @@ CREATE TABLE IF NOT EXISTS agent_mention (
   thread_id TEXT NOT NULL,
   body TEXT NOT NULL,
   author TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'mention',
   state TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -460,6 +461,9 @@ CREATE TABLE IF NOT EXISTS slack_thread_link (
   thread_id TEXT NOT NULL,
   channel TEXT NOT NULL,
   message_ts TEXT NOT NULL,
+  surface TEXT NOT NULL DEFAULT 'channel_mirror',
+  recipient_user_id TEXT,
+  slack_user_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (thread_id, channel),
   UNIQUE (channel, message_ts)

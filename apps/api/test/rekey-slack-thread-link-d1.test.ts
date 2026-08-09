@@ -16,9 +16,26 @@ const MIGRATION = readFileSync(
   fileURLToPath(new URL("../../../deploy/rekey-slack-thread-link-d1.sql", import.meta.url)),
   "utf8",
 )
+const ADD_INLINE_MENTION_COLUMNS = readFileSync(
+  fileURLToPath(new URL("../../../deploy/add-inline-mention-columns-d1.sql", import.meta.url)),
+  "utf8",
+)
 
-/** The PRE-migration shape: UNIQUE(thread_id). What an existing D1 database actually looks like. */
+/** The pre-inline-mentions D1 shape: a link key of UNIQUE(thread_id) and no mention kind. */
 const LEGACY_SCHEMA = `
+CREATE TABLE agent_mention (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  artifact_short_id TEXT NOT NULL,
+  comment_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  author TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE slack_thread_link (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -47,17 +64,24 @@ const seeded = () => {
 
 /** The file with its comment lines stripped — comments carry prose semicolons, so they have to
  *  go before the statements can be split. Same treatment as relax-context-session-d1.test.ts. */
-const sqlOnly = MIGRATION.split("\n")
-  .filter((l) => !l.trimStart().startsWith("--"))
-  .join("\n")
+const sqlOnly = (sql: string) =>
+  sql
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith("--"))
+    .join("\n")
 
 /** Apply the file the way an operator does — one statement at a time, autocommitted. */
-const applyMigration = (raw: Database.Database) => {
-  for (const stmt of sqlOnly
+const apply = (raw: Database.Database, sql: string) => {
+  for (const stmt of sqlOnly(sql)
     .split(";")
     .map((x) => x.trim())
     .filter(Boolean))
     raw.exec(stmt)
+}
+
+const applyUpgrade = (raw: Database.Database) => {
+  apply(raw, ADD_INLINE_MENTION_COLUMNS)
+  apply(raw, MIGRATION)
 }
 
 const uniques = (raw: Database.Database): string[][] =>
@@ -73,7 +97,7 @@ describe("deploy/rekey-slack-thread-link-d1.sql", () => {
   it("runs statement-by-statement with foreign keys on, and re-keys the table", () => {
     const raw = seeded()
     expect(uniques(raw)).toContainEqual(["thread_id"])
-    applyMigration(raw)
+    applyUpgrade(raw)
     const after = uniques(raw)
     expect(after).toContainEqual(["thread_id", "channel"])
     expect(after).not.toContainEqual(["thread_id"])
@@ -83,7 +107,7 @@ describe("deploy/rekey-slack-thread-link-d1.sql", () => {
 
   it("carries every existing row across", () => {
     const raw = seeded()
-    applyMigration(raw)
+    applyUpgrade(raw)
     expect(raw.prepare("SELECT * FROM slack_thread_link").all()).toEqual([
       {
         id: "stl_1",
@@ -92,6 +116,9 @@ describe("deploy/rekey-slack-thread-link-d1.sql", () => {
         thread_id: "th_1",
         channel: "C1",
         message_ts: "1700000000.1",
+        surface: "channel_mirror",
+        recipient_user_id: null,
+        slack_user_id: null,
         created_at: "2026-01-01T00:00:00.000Z",
       },
     ])
@@ -108,7 +135,7 @@ describe("deploy/rekey-slack-thread-link-d1.sql", () => {
         )
         .run("stl_2", "default", "a_1", "th_1", "C2", "1700000000.2", "2026-01-02T00:00:00.000Z")
     expect(second).toThrow(/UNIQUE/i) // the bug this migration exists for
-    applyMigration(raw)
+    applyUpgrade(raw)
     expect(second).not.toThrow()
     raw.close()
   })
@@ -116,15 +143,15 @@ describe("deploy/rekey-slack-thread-link-d1.sql", () => {
   // D1 rejects transaction control inside an executed file, and `PRAGMA defer_foreign_keys`
   // only DEFERS the check rather than disabling it — both traps the sibling migration fell into.
   it("carries no BEGIN / COMMIT / PRAGMA", () => {
-    expect(sqlOnly).not.toMatch(/\bBEGIN\b/i)
-    expect(sqlOnly).not.toMatch(/\bCOMMIT\b/i)
-    expect(sqlOnly).not.toMatch(/\bPRAGMA\b/i)
+    expect(sqlOnly(MIGRATION)).not.toMatch(/\bBEGIN\b/i)
+    expect(sqlOnly(MIGRATION)).not.toMatch(/\bCOMMIT\b/i)
+    expect(sqlOnly(MIGRATION)).not.toMatch(/\bPRAGMA\b/i)
   })
 
   it("is safe to run twice", () => {
     const raw = seeded()
-    applyMigration(raw)
-    applyMigration(raw)
+    applyUpgrade(raw)
+    apply(raw, MIGRATION)
     expect(raw.prepare("SELECT COUNT(*) AS n FROM slack_thread_link").get()).toEqual({ n: 1 })
     expect(uniques(raw)).toContainEqual(["thread_id", "channel"])
     raw.close()

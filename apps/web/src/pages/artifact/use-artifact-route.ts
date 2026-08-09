@@ -35,12 +35,22 @@ export function useArtifactRoute(p: {
   onLoginBounce: () => void
   /** Open the proposal-review overlay on a specific proposal (the ?review deep link). */
   onOpenReview: (proposalId: string) => void
+  /** A deep-linked conversation is collaboration, never inspection/chat. */
+  onOpenComments: () => void
   post: (msg: Record<string, unknown>) => void
   setPanel: Dispatch<SetStateAction<Panel>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
 }) {
   const { art, ref, shortId, version, comments, authed, loading, failed, locked, error } = p
-  const { onCanonical, onLoginBounce, onOpenReview, post, setPanel, setActiveThread } = p
+  const {
+    onCanonical,
+    onLoginBounce,
+    onOpenReview,
+    onOpenComments,
+    post,
+    setPanel,
+    setActiveThread,
+  } = p
 
   // Canonicalise the URL client-side: rewrite any non-canonical ref (bare id, stale
   // name, legacy order) to /artifacts/<name>-<shortId>. Idempotent — once the ref
@@ -82,9 +92,10 @@ export function useArtifactRoute(p: {
     const cid = new URLSearchParams(window.location.search).get("comment")
     const target = cid ? comments.find((c) => c.thread_id === cid) : undefined
     if (target) {
+      onOpenComments()
       setPanel("open")
       setActiveThread(target.thread_id)
       setTimeout(() => post({ type: "focus-anchor", id: target.thread_id }), 320)
     }
-  }, [comments, post, setPanel, setActiveThread])
+  }, [comments, onOpenComments, post, setPanel, setActiveThread])
 }

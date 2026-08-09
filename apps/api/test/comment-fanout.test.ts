@@ -43,6 +43,62 @@ const comment = (
   )
 
 describe("comment channel fan-out", () => {
+  it("keeps an @derive continuation alive when notification delivery fails", async () => {
+    const { app, meta } = makeAuthedApp("fanout-failure-isolation", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact) throw new Error("published artifact missing")
+    const created = await meta.createComment({
+      id: newId("c"),
+      artifact_id: artifact.id,
+      thread_id: newId("th"),
+      base_version: 1,
+      path: null,
+      anchor: null,
+      body_md: "Can @Derive take a look?",
+      author: editor.name ?? "Ed",
+      author_id: editor.id,
+    })
+    const answerDeriveMention = vi.fn(async () => {})
+    // This is the durable bell-row write, not a mock notification transport. A storage hiccup
+    // must not turn a saved comment into a lost agent question.
+    const notificationWrite = vi
+      .spyOn(meta, "createNotifications")
+      .mockRejectedValue(new Error("notification store unavailable"))
+
+    await expect(
+      commentCreatedAction(
+        {
+          meta,
+          bus: { publish: () => {}, subscribe: () => () => {} } as never,
+          blobs: {} as never,
+          baseUrl: "http://derive.test",
+          notify: async () => {
+            throw new Error("webhook enqueue unavailable")
+          },
+          answerDeriveMention,
+        },
+        artifact,
+        created,
+        {
+          mentions: [
+            { id: owner.id, name: owner.name ?? "Owner" },
+            { id: "derive", name: "Derive" },
+          ],
+          actorId: editor.id,
+        },
+      ),
+    ).resolves.toBeUndefined()
+
+    expect(notificationWrite).toHaveBeenCalled()
+    expect(answerDeriveMention).toHaveBeenCalledWith(
+      artifact,
+      created,
+      expect.objectContaining({ id: editor.id }),
+    )
+    notificationWrite.mockRestore()
+  })
+
   it("a plain comment emails NO ONE — not even workspace owners", async () => {
     // The old policy blasted every workspace owner on every comment; with agents
     // multiplying comment volume that made admins' inboxes the firehose. Owners
