@@ -56,6 +56,14 @@ const cookiesOf = (res: Response): string =>
     .map((c) => c.split(";")[0])
     .join("; ")
 
+/** What a browser does with a response: fold its Set-Cookie into the jar, by name. */
+const mergeCookies = (jar: string, res: Response): string => {
+  const fresh = res.headers.getSetCookie().map((c) => c.split(";")[0] ?? "")
+  const names = new Set(fresh.map((c) => c.split("=")[0]))
+  const kept = jar.split("; ").filter((c) => !names.has(c.split("=")[0]))
+  return [...kept, ...fresh].join("; ")
+}
+
 afterAll(() => {
   db.close()
   rmSync(dir, { recursive: true, force: true })
@@ -97,6 +105,40 @@ describe("the session cookie cache", () => {
     const after = await get("/v1/me", cookie)
     expect(after.status).toBe(200)
     expect(await after.json()).toMatchObject({ user: { email } })
+  })
+
+  it("a profile write refreshes the cached cookie — the save is visible immediately", async () => {
+    // Re-establish a session (the row-deletion case above burned the old one).
+    const signin = await post("/api/auth/sign-in/email", { email, password: "initialPassw0rd" })
+    expect(signin.status).toBe(200)
+    let jar = cookiesOf(signin)
+    expect(jar).toContain("session_data")
+
+    // The cached cookie is what /v1/me answers from: it still carries no profession.
+    const before = await (await get("/v1/me", jar)).json()
+    expect(before.user.profession).toBeNull()
+
+    // Save a role. The write goes straight to the user row, BELOW the cookie cache —
+    // so the response must carry a re-signed session_data cookie, or every read for
+    // the next 60s serves the old value and the save looks lost.
+    const saved = await app.request(`${BASE}/v1/me/profile`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: BASE, cookie: jar },
+      body: JSON.stringify({ profession: "Design" }),
+    })
+    expect(saved.status).toBe(200)
+    const refreshed = cookiesOf(saved)
+    expect(refreshed).toContain("session_data")
+
+    // The STALE jar still serves the old identity — proof the cache is the reader,
+    // and that without the refreshed cookie this would read as data loss.
+    const stale = await (await get("/v1/me", jar)).json()
+    expect(stale.user.profession).toBeNull()
+
+    // A browser folds the Set-Cookie in; do the same, then the very next read is new.
+    jar = mergeCookies(jar, saved)
+    const after = await (await get("/v1/me", jar)).json()
+    expect(after.user.profession).toBe("Design")
   })
 
   it("refuses once the cached cookie is gone — the window is bounded, not a bypass", async () => {

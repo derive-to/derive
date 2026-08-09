@@ -13,6 +13,7 @@ import type { AppContext } from "../context"
 import { authorProfile, handlesFrom } from "../lib/author"
 import { bail, fail, IMMUTABLE_CACHE, readJson, toBody } from "../lib/http"
 import { MAX_AVATAR_BYTES, sniffImageType } from "../lib/image"
+import { log } from "../log"
 import { Artifact, PersonalBrandprintSchema } from "../schemas"
 
 /** Session identity + the workspace member/agent directory for the @mention picker.
@@ -35,6 +36,38 @@ export const sessionRoutes = (ctx: AppContext) => {
     analyticsOn,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  // The /v1/me/* writes below go straight to the user row (meta.*), bypassing Better
+  // Auth — but the SPA's identity read is /api/auth/get-session, which the session
+  // COOKIE CACHE (auth-config.ts) answers from a signed `session_data` cookie for up
+  // to 60s without touching the database. Every one of these fields rides that cookie
+  // (additionalFields), so a save followed by a reload showed the OLD value — data
+  // loss to the user's eye. After the write, re-resolve the session with the cache
+  // bypassed: Better Auth re-reads the rows and re-signs a fresh `session_data`
+  // cookie, forwarded here onto the response so the very next read is already new.
+  // Skipped when the caller carries no cached cookie (bearer tokens, the test
+  // harness): with nothing cached there is nothing stale.
+  const refreshSessionCookie = async (c: Context): Promise<void> => {
+    if (!deps.auth) return
+    if (!(c.req.header("cookie") ?? "").includes("session_data")) return
+    try {
+      const { headers } = await deps.auth.api.getSession({
+        headers: c.req.raw.headers,
+        query: { disableCookieCache: true },
+        returnHeaders: true,
+      })
+      // getSetCookie is runtime-universal (Node 20+, workerd) but absent from the
+      // worker tsconfig's Headers lib, so reach it through a structural widening.
+      const withSetCookie = headers as Headers & { getSetCookie?: () => string[] }
+      for (const cookie of withSetCookie.getSetCookie?.() ?? [])
+        c.header("set-cookie", cookie, { append: true })
+    } catch (err) {
+      // Best-effort: the write itself succeeded and the cookie self-expires in 60s.
+      log.warn("session cookie cache refresh failed after a profile write", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
 
   // A public profile by @handle — email is intentionally omitted. The list surfaces
   // (search/people/followers/following) carry the top fields; the full /users/:handle
@@ -167,6 +200,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       if (err) return bail(fail(c, 400, err))
       const res = await meta.setUsername(u.id, username)
       if (res === "taken") return bail(fail(c, 409, "That username is taken."))
+      await refreshSessionCookie(c)
       return c.json({ username })
     },
   )
@@ -230,6 +264,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       if (body.brandprint !== undefined)
         patch.brandprint = body.brandprint ? JSON.stringify(body.brandprint) : null
       await meta.setUserProfile(u.id, patch)
+      await refreshSessionCookie(c)
       return c.json({
         profession: patch.profession ?? null,
         about: patch.about ?? null,
@@ -258,6 +293,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       const body = await readJson(c, z.object({ discoverable: z.boolean() }))
       if (body instanceof Response) return bail(body)
       await meta.setUserDiscoverable(u.id, body.discoverable)
+      await refreshSessionCookie(c)
       return c.json({ discoverable: body.discoverable })
     },
   )
@@ -280,6 +316,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       const u = await requireUser(c)
       if (u instanceof Response) return bail(u)
       await meta.setUserOnboarded(u.id, true)
+      await refreshSessionCookie(c)
       return c.json({ onboarded: true })
     },
   )
@@ -617,6 +654,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       // from a separate origin (hosted split); the bytes never touch the app cookie.
       const image = `${deps.baseUrl.replace(/\/$/, "")}/v1/avatars/${key}`
       await meta.setUserImage(u.id, image)
+      await refreshSessionCookie(c)
       return c.json({ image })
     },
   )
