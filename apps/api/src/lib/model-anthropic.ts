@@ -123,6 +123,13 @@ export const anthropicModel = (opts: AnthropicOptions): AgentLoopInput["callMode
     // reads ANTHROPIC_API_KEY from the environment when given none — which on a self-host box is
     // how one workspace's run quietly bills the operator's key. Always pass the connected value.
     apiKey: opts.credential.value,
+    // PIN the Messages API origin. createAnthropic otherwise reads ANTHROPIC_BASE_URL from the
+    // process environment (a local Claude proxy, a self-host gateway rewrite, a test harness) and
+    // that quietly redirects every hosted plan-token turn off api.anthropic.com. The credential
+    // path exists specifically to spend a WORKSPACE's Claude plan; the destination is not a
+    // deploy-time preference. Mirror openAiCompatModel, which takes baseUrl as a required option
+    // rather than an ambient env.
+    baseURL: "https://api.anthropic.com/v1",
     headers: authHeaders(opts.credential) as Record<string, string>,
     ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
   })

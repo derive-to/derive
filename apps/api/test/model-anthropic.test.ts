@@ -76,6 +76,27 @@ describe("how a connected plan authenticates", () => {
     })
     expect((calls[0]?.body as { model: string }).model).toBe(DEFAULT_ANTHROPIC_MODEL)
   })
+
+  it("hits api.anthropic.com even when ANTHROPIC_BASE_URL is set in the process environment", async () => {
+    // createAnthropic reads ANTHROPIC_BASE_URL unless baseURL is pinned. A local Claude proxy,
+    // CI harness, or self-host rewrite would otherwise steer every plan-token turn off the
+    // Messages API the connected credential is for — and the intercept in substrate-loop's
+    // credential tests (which keys on api.anthropic.com) would go silent the same way.
+    const prev = process.env.ANTHROPIC_BASE_URL
+    process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9"
+    try {
+      const { calls, impl } = captured()
+      await anthropicModel({ credential: { kind: "api_key", value: "k" }, fetchImpl: impl })({
+        system: "s",
+        messages: [{ role: "user", content: "hi" }],
+        tools: [],
+      })
+      expect(calls[0]?.url).toMatch(/^https:\/\/api\.anthropic\.com\//)
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_BASE_URL
+      else process.env.ANTHROPIC_BASE_URL = prev
+    }
+  })
 })
 
 describe("what a plan turn reports", () => {
