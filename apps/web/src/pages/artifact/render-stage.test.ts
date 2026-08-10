@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { type UpdateCueState, updateCue } from "./render-stage"
+import {
+  BOOT_MAX_TRIES,
+  bootStatusCopy,
+  bootTimeoutDecision,
+  type UpdateCueState,
+  updateCue,
+} from "./render-stage"
 
 // The soft "Updated · vN" cue's decision, pinned after it shipped a phantom: the render
 // stage stays mounted while the sibling switcher pages between artifacts, and a bare
@@ -50,5 +56,36 @@ describe("updateCue", () => {
     expect(s.state).toBeNull()
     s = step(s.state, "other", 9)
     expect(s.fire).toBeNull()
+  })
+})
+
+// Boot timeout after publish often races a still-warm render. Auto-retry a few times
+// with growing backoff; only the exhausted attempt is terminal (manual Retry).
+describe("bootTimeoutDecision", () => {
+  it("retries with growing backoff, then fails once tries are exhausted", () => {
+    expect(BOOT_MAX_TRIES).toBe(3)
+    const sequence = Array.from({ length: BOOT_MAX_TRIES }, (_, i) => bootTimeoutDecision(i))
+    expect(sequence).toEqual([
+      { action: "retry", delayMs: 1_000 },
+      { action: "retry", delayMs: 2_000 },
+      { action: "fail" },
+    ])
+  })
+
+  it("stays terminal past the last budgeted try", () => {
+    expect(bootTimeoutDecision(BOOT_MAX_TRIES)).toEqual({ action: "fail" })
+    expect(bootTimeoutDecision(BOOT_MAX_TRIES + 4)).toEqual({ action: "fail" })
+  })
+})
+
+describe("bootStatusCopy", () => {
+  it("keeps the calm first-paint label until a retry path engages", () => {
+    expect(bootStatusCopy(0, false)).toBe("Loading preview…")
+  })
+
+  it("names the extended wait after a timeout or on a later try", () => {
+    expect(bootStatusCopy(0, true)).toBe("Still rendering…")
+    expect(bootStatusCopy(1, false)).toBe("Still rendering…")
+    expect(bootStatusCopy(2, true)).toBe("Still rendering…")
   })
 })

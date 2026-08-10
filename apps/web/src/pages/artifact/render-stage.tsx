@@ -11,6 +11,26 @@ import { cn } from "@/lib/utils"
 // white frame (NN/g #1 — visibility of system status; the render's own failure
 // must be legible, not indistinguishable from "still loading").
 const BOOT_TIMEOUT_MS = 15_000
+/** Total boot tries before the stage goes terminal-failed (initial + auto-retries). */
+export const BOOT_MAX_TRIES = 3
+
+/**
+ * Pure decision after a boot timeout at `tryIndex` (0-based). Retries with growing
+ * backoff while tries remain; only the last exhaustion is terminal. Extracted so the
+ * sequence is pinned by tests — the viewer should keep waiting on a slow server-side
+ * render instead of forcing a manual Retry at 15s.
+ */
+export const bootTimeoutDecision = (
+  tryIndex: number,
+): { action: "retry"; delayMs: number } | { action: "fail" } => {
+  if (tryIndex + 1 >= BOOT_MAX_TRIES) return { action: "fail" }
+  // 1s, then 2s — short enough to feel alive, long enough for the render to land.
+  return { action: "retry", delayMs: 1_000 * 2 ** tryIndex }
+}
+
+/** Waiting-state copy: first try is calm; after a timeout/retry we name the wait. */
+export const bootStatusCopy = (tryIndex: number, awaitingRetry: boolean): string =>
+  tryIndex > 0 || awaitingRetry ? "Still rendering…" : "Loading preview…"
 
 /**
  * The render stage — the artifact is the hero. The sandboxed iframe fills the stage
@@ -94,24 +114,57 @@ export function RenderStage({
   // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
   const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
   const [attempt, setAttempt] = useState(0)
+  // 0-based try within the current boot cycle — independent of the iframe mount key so
+  // a manual Retry after terminal failure can re-arm the full auto-retry budget.
+  const [bootTry, setBootTry] = useState(0)
+  // True between a timed-out boot and the backoff-driven remount (copy flips here).
+  const [awaitingRetry, setAwaitingRetry] = useState(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rawSrc is an intentional reset trigger (version swap / new src); body only flips local boot state.
   useEffect(() => {
     setPhase("booting")
-  }, [])
+    setBootTry(0)
+    setAwaitingRetry(false)
+  }, [rawSrc])
 
   // Arm the stuck-boot timeout while booting; clear it the moment the frame loads.
   // No src yet means no load in flight — don't count seed-wait time against the render.
+  // On timeout: auto-retry with backoff a few times (slow server-side render is common
+  // right after publish); only exhaust into terminal failed after BOOT_MAX_TRIES.
   useEffect(() => {
     if (phase !== "booting" || rawSrc == null) return
-    const t = setTimeout(() => setPhase("failed"), BOOT_TIMEOUT_MS)
-    return () => clearTimeout(t)
-  }, [phase, rawSrc])
+    let cancelled = false
+    let backoffId: ReturnType<typeof setTimeout> | undefined
+    const bootId = setTimeout(() => {
+      const decision = bootTimeoutDecision(bootTry)
+      if (decision.action === "fail") {
+        setPhase("failed")
+        setAwaitingRetry(false)
+        return
+      }
+      setAwaitingRetry(true)
+      backoffId = setTimeout(() => {
+        if (cancelled) return
+        setAwaitingRetry(false)
+        setBootTry((n) => n + 1)
+        setAttempt((n) => n + 1)
+      }, decision.delayMs)
+    }, BOOT_TIMEOUT_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(bootId)
+      if (backoffId !== undefined) clearTimeout(backoffId)
+    }
+  }, [phase, rawSrc, bootTry])
 
   const handleLoad = () => {
     setPhase("ready")
+    setAwaitingRetry(false)
     onFrameLoad?.()
   }
   const retry = () => {
     setPhase("booting")
+    setBootTry(0)
+    setAwaitingRetry(false)
     setAttempt((n) => n + 1)
   }
 
@@ -211,7 +264,9 @@ export function RenderStage({
               {/* Decorative: the wrapping div is the live region (aria-live) with the
                   visible label, so the spinner must not announce a second time. */}
               <Spinner size="lg" role="presentation" aria-label={undefined} />
-              <span className="font-mono text-2xs text-muted-foreground">Loading preview…</span>
+              <span className="font-mono text-2xs text-muted-foreground">
+                {bootStatusCopy(bootTry, awaitingRetry)}
+              </span>
             </div>
           </div>
         )}
