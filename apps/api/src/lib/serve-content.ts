@@ -54,10 +54,9 @@ export const serveContent = async (
    *  hover UI renders but can deliver nothing. Default on for the raw routes,
    *  whose pages the viewer embeds. */
   anchors = true,
-  /** Serve-time HTML appended to every rendered page, after the anchor client —
-   *  the draft discovery chip today (lib/draft-chip.ts). Rides the same
-   *  injection seam as the anchor client: never part of the stored bytes,
-   *  never on non-HTML responses. Empty ⇒ nothing appended. */
+  /** Extra serve-time HTML appended to every rendered page (today: the draft
+   *  discovery chip, lib/draft-chip.ts). Same contract as the anchor client:
+   *  never part of the stored bytes, never on non-HTML responses. */
   append = "",
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
