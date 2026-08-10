@@ -3,6 +3,7 @@
   "version": "0.5.1",
   "type": "module",
   "description": "Stdio MCP server for Derive — list, read, catch up on, comment on, and publish artifacts on a Derive instance.",
+  "mcpName": "to.derive/derive",
   "keywords": [
     "mcp",
     "model-context-protocol",
