@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "to.derive/derive",
+  "title": "Derive",
+  "description": "Publish agent output to permanent versioned URLs, read review comments back, and revise.",
+  "version": "1.0.0",
+  "websiteUrl": "https://derive.to",
+  "repository": {
+    "url": "https://github.com/derive-to/derive",
+    "source": "github",
+    "id": "1266729582"
+  },
+  "icons": [
+    {
+      "src": "https://derive.to/brand/masters/icon-square-light.png",
+      "mimeType": "image/png",
+      "sizes": ["3840x3840"],
+      "theme": "light"
+    },
+    {
+      "src": "https://derive.to/brand/masters/icon-square-dark.png",
+      "mimeType": "image/png",
+      "sizes": ["3840x3840"],
+      "theme": "dark"
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://derive.to/mcp"
+    }
+  ]
+}
