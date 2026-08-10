@@ -40,7 +40,6 @@ import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
-import { artifactLoginSearch } from "./lib/login-return"
 import { useArtifactChat } from "./lib/use-artifact-chat"
 import { takeUseIntent } from "./lib/use-intent"
 import { parseRef, refFor } from "./parse-ref"
@@ -503,8 +502,8 @@ export function Artifact() {
     post({ type: "focus-anchor", id: threadId, bias: isMobile ? 0.28 : undefined })
   }
 
-  // URL canonicalisation, the anon-bounce gate, and the ?comment deep link — the
-  // page's routing side-effects. `nav` stays here; the hook takes decoupled callbacks.
+  // URL canonicalisation and the ?comment / ?review deep links — the page's routing
+  // side-effects. `nav` stays here; the hook takes decoupled callbacks.
   useArtifactRoute({
     art,
     ref,
@@ -512,13 +511,8 @@ export function Artifact() {
     version,
     comments,
     authed: !!me,
-    loading,
-    failed,
-    locked,
-    error,
     onCanonical: (canonical) =>
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
-    onLoginBounce: () => nav({ to: "/login", search: artifactLoginSearch(window.location) }),
     onOpenReview: (proposalId: string) => setReviewing({ proposalId }),
     post,
     setPanel,
@@ -676,7 +670,17 @@ export function Artifact() {
     // dead-end. This is what made the outage look like a permanent failure.
     const status = error instanceof ApiError ? error.status : undefined
     return status === 404 || status === 403 ? (
-      <ArtifactNotFound onBack={() => nav({ to: "/" })} />
+      // Wait for auth to settle so signed-out visitors get the Sign-in CTA (not a flash
+      // of the signed-in empty state while `me` is still loading).
+      loading ? (
+        <WorkbenchSkeleton />
+      ) : (
+        <ArtifactNotFound
+          authed={!!me}
+          location={{ pathname: window.location.pathname, search: window.location.search }}
+          onBack={() => nav({ to: "/" })}
+        />
+      )
     ) : (
       <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
     )
@@ -703,7 +707,13 @@ export function Artifact() {
   // SETTLED anonymous: while it loads, `me` is null for signed-in users too,
   // and they must not flash a not-found for a version they can see.
   if (!loading && !me && shown !== art.current_version && !art.public_history)
-    return <ArtifactNotFound onBack={() => nav({ to: "/" })} />
+    return (
+      <ArtifactNotFound
+        authed={false}
+        location={{ pathname: window.location.pathname, search: window.location.search }}
+        onBack={() => nav({ to: "/" })}
+      />
+    )
   // The `t/:raw_token` segment is the sandboxed iframe's own proof of access: it has no
   // `allow-same-origin` (by design — the content must never touch our cookies/storage),
   // so it has no origin to send our session cookie back on, and Chrome refuses to attach

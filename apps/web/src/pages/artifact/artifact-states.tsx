@@ -1,23 +1,50 @@
+import { Link } from "@tanstack/react-router"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
+import { artifactUnavailableView } from "./lib/login-return"
 
 /** Full-page states the artifact route renders instead of the doc. The loading
  *  frame is the shape-matched WorkbenchSkeleton (workbench-skeleton.tsx), not a
  *  bare spinner. */
 
-export function ArtifactNotFound({ onBack }: { onBack: () => void }) {
+/**
+ * Masked 404/403 (missing and private are indistinguishable by design). Signed-out
+ * visitors get "Sign in to view" with a return path; signed-in visitors stay on a
+ * not-available page — no CTA that would imply the doc exists under another seat.
+ */
+export function ArtifactNotFound({
+  authed,
+  location,
+  onBack,
+}: {
+  /** Auth has settled: true when a session is present. */
+  authed: boolean
+  /** Current URL pieces for the sign-in return path (used when signed out). */
+  location: Pick<Location, "pathname" | "search">
+  onBack: () => void
+}) {
+  const view = artifactUnavailableView(authed, location)
   return (
     <EmptyState
       className="h-full"
       icon={<Icon name="removed" strokeWidth={1.75} />}
-      title="Artifact not found"
-      description="It doesn’t exist, or you don’t have access to it."
+      title={view.title}
+      description={view.description}
       action={
-        <Button variant="outline" data-testid="artifact-notfound-back" onClick={onBack}>
-          Back to library
-        </Button>
+        <div className="flex gap-2">
+          {view.signIn && (
+            <Button asChild variant="default" data-testid="artifact-notfound-sign-in">
+              <Link to="/login" search={view.signIn.search}>
+                {view.signIn.label}
+              </Link>
+            </Button>
+          )}
+          <Button variant="outline" data-testid="artifact-notfound-back" onClick={onBack}>
+            Back to library
+          </Button>
+        </div>
       }
     />
   )

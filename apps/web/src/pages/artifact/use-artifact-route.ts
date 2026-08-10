@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react"
 import { useEffect, useRef } from "react"
-import { ApiError, type Artifact, type Comment } from "@/api"
+import type { Artifact, Comment } from "@/api"
 import { refFor } from "./parse-ref"
 import type { Panel } from "./types"
 
@@ -9,15 +9,17 @@ import type { Panel } from "./types"
  * keeps only view state:
  *  - canonicalise the URL to /artifacts/<name>-<shortId> once the artifact loads
  *    (preserving the @vN suffix + current search), so the browser holds the readable ref;
- *  - bounce a logged-out visitor to /login ONLY on a genuine 404/403 gate — never on a
- *    transient 5xx/network failure (which also nulls `me`), so an outage doesn't eject them;
  *  - honour a ?comment=<thread> deep link once comments arrive (open the panel, activate
  *    the thread, scroll to its highlight), exactly once;
  *  - honour a ?review=<proposal> deep link once the artifact loads (open the review
  *    overlay on that proposal), exactly once.
  *
- * `nav` stays in the page: the two navigations are passed in as `onCanonical`/
- * `onLoginBounce` so this hook is router-type-free (matching artifact-actions).
+ * A gated (404/403) read no longer auto-bounces to /login — the page renders
+ * ArtifactNotFound with an optional Sign-in CTA (return path) so missing and private
+ * stay indistinguishable and signed-out visitors still have a path forward.
+ *
+ * `nav` stays in the page: the navigations are passed in as `onCanonical` so this
+ * hook is router-type-free (matching artifact-actions).
  */
 export function useArtifactRoute(p: {
   art: Artifact | undefined
@@ -27,20 +29,15 @@ export function useArtifactRoute(p: {
   comments: Comment[]
   /** !!me — a signed-in viewer. */
   authed: boolean
-  loading: boolean
-  failed: boolean
-  locked: boolean
-  error: unknown
   onCanonical: (canonicalRef: string) => void
-  onLoginBounce: () => void
   /** Open the proposal-review overlay on a specific proposal (the ?review deep link). */
   onOpenReview: (proposalId: string) => void
   post: (msg: Record<string, unknown>) => void
   setPanel: Dispatch<SetStateAction<Panel>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
 }) {
-  const { art, ref, shortId, version, comments, authed, loading, failed, locked, error } = p
-  const { onCanonical, onLoginBounce, onOpenReview, post, setPanel, setActiveThread } = p
+  const { art, ref, shortId, version, comments, authed } = p
+  const { onCanonical, onOpenReview, post, setPanel, setActiveThread } = p
 
   // Canonicalise the URL client-side: rewrite any non-canonical ref (bare id, stale
   // name, legacy order) to /artifacts/<name>-<shortId>. Idempotent — once the ref
@@ -52,15 +49,6 @@ export function useArtifactRoute(p: {
       : refFor({ short_id: shortId, title: art.title })
     if (ref !== canonical) onCanonical(canonical)
   }, [art, ref, version, shortId, onCanonical])
-
-  // Anonymous can view a public artifact (read-only, with a sign-up CTA). Bounce to
-  // login ONLY when the artifact is genuinely gated (404/403) for a logged-out visitor.
-  // A TRANSIENT failure (5xx/network) also nulls `me`, but must NOT eject the user
-  // mid-outage — the recoverable error state handles that.
-  useEffect(() => {
-    const gated = error instanceof ApiError && (error.status === 404 || error.status === 403)
-    if (!loading && !authed && failed && !locked && gated) onLoginBounce()
-  }, [loading, authed, failed, locked, error, onLoginBounce])
 
   // Deep link: ?review=<proposal> opens the review overlay on that proposal. Runs once,
   // after the artifact is in — the overlay owns loading and the role-appropriate view,
