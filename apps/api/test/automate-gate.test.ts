@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { sha256 } from "../src/lib/crypto"
 import { materializeAllDueRuns } from "../src/lib/schedule"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -185,5 +186,89 @@ describe("the schedule tick obeys the gate", () => {
           : Reflect.get(t, prop, recv),
     })
     expect(await materializeAllDueRuns(blipping, new Date())).toBe(0)
+  })
+})
+
+// THE GATE STATE IS PART OF THE LIST, over MCP. `automate {action:"list"}` stays deliberately
+// UNGATED (the beta flag binds the lanes that create or run work, never reads) — but a bare
+// `count: 0` in a gated workspace reads exactly like "none created yet", so an agent only
+// discovered `automateBeta` when its create was refused. The list now says which it is.
+describe("automate list over MCP reports the gate state", () => {
+  const owner: TestUser = { id: "u_gate_mcp", email: "gatemcp@derive.test", name: "Owner" }
+
+  type App = ReturnType<typeof makeAuthedApp>["app"]
+
+  // A direct tools/call over the stateless /mcp endpoint (mcp-contexts' shape).
+  const callAutomate = async (app: App, token: string, args: Record<string, unknown>) => {
+    const res = await app.request("/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "automate", arguments: args },
+      }),
+    })
+    const ct = res.headers.get("content-type") ?? ""
+    const txt = await res.text()
+    const out = ct.includes("application/json")
+      ? JSON.parse(txt)
+      : JSON.parse(
+          (txt.split("\n").find((l) => l.startsWith("data:")) ?? "data:null").slice(5).trim(),
+        )
+    const t = (out?.result as { content?: { text: string }[] } | undefined)?.content?.[0]?.text
+    if (t == null) throw new Error(`no tool text: ${JSON.stringify(out)}`)
+    // biome-ignore lint/suspicious/noExplicitAny: test convenience over a JSON payload
+    return JSON.parse(t) as any
+  }
+
+  // The automate tool is owner-only, and /v1/agents caps registration at editor — so the
+  // owner-role MCP caller is seeded straight into the store, acting for the workspace owner.
+  const setup = async (name: string) => {
+    const { app, meta } = makeAuthedApp(name, [owner])
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const raw = `dk_agt_${name}`
+    await meta.createAgent({
+      id: `ag_${name}`,
+      org_id: "default",
+      name: "GateBot",
+      token: sha256(raw),
+      role: "owner",
+      created_by: owner.id,
+    })
+    return { app, meta, raw }
+  }
+
+  it("a gated workspace reports enabled:false and names the flag — the read itself stays open", async () => {
+    const { app, meta, raw } = await setup("gate-mcp-list-off")
+    // One automation stood up while the beta is on (makeAuthedApp's seed), so the gated
+    // list below proves rows still come back — the flag closed the lanes, not the read.
+    const made = await callAutomate(app, raw, {
+      action: "create",
+      trigger: { kind: "manual" },
+      instruction: "Keep the roadmap current",
+    })
+    expect(made.id).toBeTruthy()
+    const current = await meta.getOrgSettings("default")
+    if (current) await meta.setOrgSettings("default", { ...current, automateBeta: false })
+
+    const r = await callAutomate(app, raw, { action: "list" })
+    expect(r.count).toBe(1)
+    expect(r.automations).toHaveLength(1)
+    expect(r.automations_enabled).toBe(false)
+    // The note names the flag, so the agent learns create/run_now will fail BEFORE trying.
+    expect(r.note).toContain("automateBeta")
+  })
+
+  it("an opted-in workspace reports enabled:true with no warning", async () => {
+    const { app, raw } = await setup("gate-mcp-list-on")
+    const r = await callAutomate(app, raw, { action: "list" })
+    expect(r.automations_enabled).toBe(true)
+    expect(r.note).toBeUndefined()
   })
 })

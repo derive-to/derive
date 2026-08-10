@@ -11,6 +11,7 @@ import { automationProvider, runMetaForAutomation } from "../lib/automation"
 import { connectionBindError } from "../lib/broker"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { mintToken, sha256 } from "../lib/crypto"
+import { parseManifestSkillPins } from "../lib/manifest-pins"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { scopeGapMessage } from "../lib/scope-gap"
@@ -154,9 +155,20 @@ export function registerAutomateTool(tc: ToolContext): void {
         })
 
       if (input.action === "list") {
-        const rows = await meta.listAutomations(org)
+        // Deliberately NOT gated (reads stay open), but the gate state rides along: a bare
+        // `count: 0` in a gated workspace reads as "none yet", and the agent only learns the
+        // flag exists when its create is refused. Saying so here is what lets it plan.
+        const [rows, off] = await Promise.all([meta.listAutomations(org), automateOff()])
         return json({
           count: rows.length,
+          automations_enabled: !off,
+          ...(off
+            ? {
+                note:
+                  "automations are not enabled for this workspace (automateBeta) — create and " +
+                  "run_now will be refused until an owner turns them on in workspace settings.",
+              }
+            : {}),
           automations: rows.map((a) => ({
             id: a.id,
             instruction: a.instruction.slice(0, 140),
@@ -214,6 +226,20 @@ export function registerAutomateTool(tc: ToolContext): void {
           return json({ error: "no such manifest artifact in this workspace" })
         if (!roleAllows(reached.role, "share"))
           return json({ error: "creating a context needs share standing on the manifest" })
+        // The pin count the REST create already reports (routes/contexts.ts, skills_count):
+        // skills load ONLY from the frontmatter `skills:` list (parseManifestSkillPins), and
+        // a prose derive://skills/... mention does nothing — so a manifest whose body names
+        // skills but pins none gets told, in the result it is already reading, instead of
+        // discovering skills:[] on the finished context. Deliberately no skills param and no
+        // prose parsing: pins stay the one way to declare a skill.
+        const mv = await meta.getVersion(reached.a.id, reached.a.current_version)
+        const manifestMd = mv ? await ctx.sourceText(mv) : null
+        const pins = manifestMd ? parseManifestSkillPins(manifestMd) : []
+        const bodyMentionsSkills =
+          pins.length === 0 &&
+          /derive:\/\/skills\//.test(
+            (manifestMd ?? "").replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, ""),
+          )
         try {
           const made = await createContextCore(meta, {
             orgId: org,
@@ -228,6 +254,15 @@ export function registerAutomateTool(tc: ToolContext): void {
             name: made.context.name,
             agent_id: made.agentId,
             ask_policy: made.context.ask_policy,
+            skills_count: pins.length,
+            ...(bodyMentionsSkills
+              ? {
+                  skills_hint:
+                    "The manifest body mentions derive://skills/... but its frontmatter pins " +
+                    "none, so this context loads no skills. Skills must be pinned in " +
+                    "frontmatter: skills:\n  - id: <skill short_id>",
+                }
+              : {}),
             note:
               "No token is returned over MCP. You (an owner) run this context directly: " +
               "use({context}) pulls its queued work. A dedicated runner's token comes from " +
