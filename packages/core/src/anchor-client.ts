@@ -2489,8 +2489,22 @@ interface ElReg {
             return
           }
           const s = window.getSelection()
-          const n = s && s.rangeCount > 0 ? s.getRangeAt(0).startContainer : null
-          if (n && n.nodeType === 3) editActivate(n as Text, null)
+          const range = s && s.rangeCount > 0 ? s.getRangeAt(0) : null
+          const n = range ? range.startContainer : null
+          if (n && n.nodeType === 3) {
+            // Guard: if the selection end is in a different block, entering edit
+            // mode would accept typing that the server will refuse at save time
+            // because the resulting quote would cross a gap segment.
+            const ec = range?.endContainer
+            const startBlock = editContainerFor(n as Text)
+            const endBlock = ec && ec.nodeType === 3 ? editContainerFor(ec as Text) : null
+            if (startBlock && endBlock && startBlock !== endBlock) {
+              setEditMode(false)
+              post({ type: "edit-blocked", reason: "cross-boundary" })
+              return
+            }
+            editActivate(n as Text, null)
+          }
         })
     } else {
       // `keep`: drop the editing chrome but leave the typed text standing. Used right
