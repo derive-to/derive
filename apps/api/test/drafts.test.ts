@@ -1,3 +1,4 @@
+import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { sweepExpiredDrafts } from "../src/lib/drafts"
 import { as, makeAuthedApp } from "./helpers"
@@ -45,10 +46,42 @@ describe("POST /v1/drafts (anonymous mint)", () => {
     // Standalone hosts get no anchor client: its comment UI only works embedded in
     // the app viewer, and a vanity/draft page is never iframed by the app.
     expect(html).not.toContain("/raw/derive-client.js")
-    // The same artifact through the raw route (which the viewer embeds) keeps it.
+    // A draft page names its host: the discovery chip carries attribution + the
+    // expiry nudge. It is serve-time chrome, never part of the stored bytes.
+    expect(html).toContain("data-derive-draft-chip")
+    expect(html).toContain("Made with Derive")
+    expect(html).toMatch(/expires in ~\d+h/)
+    expect(html).toContain("http://derive.test/?src=draft_chip")
+    // The same artifact through the raw route (which the viewer embeds) keeps the
+    // anchor client and gets NO chip — the viewer is already Derive chrome.
     const raw = await drafts.request(`/raw/${body.short_id}/v/1/index.html`)
     expect(raw.status).toBe(200)
-    expect(await raw.text()).toContain("/raw/derive-client.js")
+    const rawHtml = await raw.text()
+    expect(rawHtml).toContain("/raw/derive-client.js")
+    expect(rawHtml).not.toContain("data-derive-draft-chip")
+  })
+
+  it("chips every rendered page of a bundle draft, and only those", async () => {
+    const zip = zipSync({
+      "index.html": new TextEncoder().encode("<h1>Site</h1><script src=app.js></script>"),
+      "notes.md": new TextEncoder().encode("# Notes"),
+      "app.js": new TextEncoder().encode("console.log(1)"),
+    })
+    const form = new FormData()
+    form.append("file", new Blob([zip]), "site.zip")
+    const res = await drafts.request("/v1/drafts", { method: "POST", body: form })
+    expect(res.status).toBe(201)
+    const { short_id } = await res.json()
+    const page = async (path: string) => {
+      const r = await drafts.request(`http://${short_id}.${BASE}/${path}`)
+      expect(r.status).toBe(200)
+      return r.text()
+    }
+    // HTML pages and rendered markdown carry the chip; code assets must not —
+    // a chip inside a script the page loads would break the page.
+    expect(await page("")).toContain("data-derive-draft-chip")
+    expect(await page("notes.md")).toContain("data-derive-draft-chip")
+    expect(await page("app.js")).not.toContain("data-derive-draft-chip")
   })
 
   it("forces the draft access shape — client access fields are ignored", async () => {
@@ -79,6 +112,13 @@ describe("POST /v1/drafts (anonymous mint)", () => {
     await meta.setArtifactExpiry(a.id, new Date(Date.now() - 1000).toISOString())
     const served = await drafts.request(`http://${short_id}.${BASE}/`)
     expect(served.status).toBe(410)
+    // The tombstone is a small branded page, not a dead-end text line: a shared
+    // link that outlived its draft still explains what this was and where to go.
+    expect(served.headers.get("content-type")).toContain("text/html")
+    const gone = await served.text()
+    expect(gone).toContain("draft expired")
+    expect(gone).toContain("http://derive.test")
+    expect(served.headers.get("cache-control")).toBe("no-store")
   })
 })
 

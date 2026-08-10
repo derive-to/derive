@@ -54,6 +54,10 @@ export const serveContent = async (
    *  hover UI renders but can deliver nothing. Default on for the raw routes,
    *  whose pages the viewer embeds. */
   anchors = true,
+  /** Extra serve-time HTML appended to every rendered page (today: the draft
+   *  discovery chip, lib/draft-chip.ts). Same contract as the anchor client:
+   *  never part of the stored bytes, never on non-HTML responses. */
+  append = "",
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
@@ -69,7 +73,8 @@ export const serveContent = async (
   const anchorClient = anchors ? SELECTION_SCRIPT : ""
   // Produce the final HTML body for a document: cross-doc rewrite + auto-reflow, then append
   // the anchor client (for comment anchoring + live cursors) and, when asked, the marks overlay.
-  const htmlBody = async (doc: string): Promise<string> => rf(await tx(doc)) + anchorClient + marks
+  const htmlBody = async (doc: string): Promise<string> =>
+    rf(await tx(doc)) + anchorClient + marks + append
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -91,7 +96,7 @@ export const serveContent = async (
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
       const out = entry.type.startsWith("text/html")
-        ? rf(rewritten) + anchorClient + marks
+        ? rf(rewritten) + anchorClient + marks + append
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
@@ -108,7 +113,7 @@ export const serveContent = async (
       // would otherwise render it as a stray `<hr>` + heading. The parsed fields surface
       // as skill chrome around this iframe, not in the document body.
       const body = parseFrontmatter(new TextDecoder().decode(data)).body
-      const html = await tx(await renderMarkdown(body, title))
+      const html = (await tx(await renderMarkdown(body, title))) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
@@ -137,7 +142,7 @@ export const serveContent = async (
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const html = await tx(await renderMarkdown(text, title))
+    const html = (await tx(await renderMarkdown(text, title))) + append
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 

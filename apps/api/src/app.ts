@@ -7,6 +7,7 @@ import type { BlankEnv } from "hono/types"
 import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { captureSignupSource } from "./lib/attribution"
+import { draftChip, expiredDraftPage } from "./lib/draft-chip"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
@@ -209,7 +210,7 @@ export function createApp(deps: AppDeps): Hono {
       // otherwise earn a year-long immutable cache — an expired-then-swept draft
       // could outlive itself at the edge.
       if (a.expires_at && a.expires_at <= new Date().toISOString())
-        return c.text("this draft expired — it was never claimed", 410)
+        return c.html(expiredDraftPage(deps.baseUrl), 410, { "Cache-Control": "no-store" })
       const version = await ctx.meta.getVersion(a.id, n)
       if (!version) return c.text("not found", 404)
       return serveContent(
@@ -227,6 +228,9 @@ export function createApp(deps: AppDeps): Hono {
         // app viewer, so its hover/selection comment UI would render but reach no
         // host — a "Comment" chip that can't comment.
         false,
+        // An unclaimed draft (the only artifact carrying an expiry) serves the
+        // discovery chip: attribution + the expiry nudge, gone once claimed.
+        a.expires_at ? draftChip(a.expires_at, deps.baseUrl) : "",
       )
     }
     app.use("*", async (c, next) => {
