@@ -249,6 +249,19 @@ html.light .wordmark .wm-light{display:block}
   margin-top:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);
 }
 .wl-meta:empty{display:none}
+/* ── the other door: publish before you even have an account ── */
+.hero-curl{
+  margin-top:20px;display:inline-flex;align-items:center;gap:10px;max-width:100%;min-width:0;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.02em;color:var(--muted);
+  background:none;border:1px solid var(--border-soft);border-radius:7px;padding:7px 12px;
+  cursor:pointer;transition:border-color .15s ease,color .15s ease;
+}
+.hero-curl:hover,.hero-curl:focus-visible{border-color:var(--border);color:var(--fg)}
+.hero-curl .hc-cmd{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hero-curl .hc-note{color:var(--faint);white-space:nowrap}
+.hero-curl .hc-copy{flex:none;font-size:9.5px;letter-spacing:.08em;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:2px 7px}
+.hero-curl.copied .hc-copy{color:var(--success);border-color:color-mix(in srgb,var(--success) 45%,transparent)}
+@media(max-width:680px){.hero-curl .hc-note{display:none}}
 .hero-eyebrow{margin-bottom:0;color:var(--muted);font-size:14px;letter-spacing:.14em}
 /* the tagline in gradient ink: lit at the cap line, settling toward the baseline */
 .grad-ink{
@@ -602,6 +615,26 @@ html.light .pcursor .flag{color:#fff}
   font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;color:var(--faint);
 }
 .loop .cast span b{color:var(--muted);font-weight:500}
+/* ── connect yours: the three real commands, each one click to copy ── */
+.hookup{margin-top:34px;border:1px solid var(--border-soft);border-radius:10px;background:var(--card);overflow:hidden}
+.hookup .hk-row{
+  display:flex;align-items:center;gap:16px;width:100%;text-align:left;background:none;border:0;
+  padding:13px 18px;cursor:pointer;transition:background .15s ease;
+}
+.hookup .hk-row + .hk-row{border-top:1px solid var(--border-soft)}
+.hookup .hk-row:hover,.hookup .hk-row:focus-visible{background:var(--secondary)}
+.hookup .hk-what{flex:none;width:21ch;font-size:12.5px;color:var(--muted)}
+.hookup .hk-row code{
+  flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.hookup .hk-copy{flex:none;font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:2px 7px}
+.hookup .hk-row.copied .hk-copy{color:var(--success);border-color:color-mix(in srgb,var(--success) 45%,transparent)}
+@media(max-width:680px){
+  .hookup .hk-row{flex-wrap:wrap;gap:6px 12px}
+  .hookup .hk-what{width:100%}
+  .hookup .hk-row code{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+}
 
 /* ══════════ PRICING STATEMENT ══════════ */
 .price{padding-top:210px}
@@ -781,6 +814,11 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
         </div>
         <div class="wl-meta" id="wlMeta"></div>
       </div>
+      <button class="hero-curl" type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" title="Copy. Publishes an expiring draft — claim it into a workspace whenever.">
+        <span class="hc-cmd">curl -F file=@page.html https://derive.to/v1/drafts</span>
+        <span class="hc-note">→ a live URL in a second, no account</span>
+        <span class="hc-copy" aria-hidden="true">COPY</span>
+      </button>
     </div>
   </div>
 
@@ -1128,6 +1166,23 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
     <div class="tbody" id="termBody"><span class="cursor" id="termCursor"></span></div>
   </div>
   <p class="cast reveal"><span><b>publish</b> save a revision</span><span><b>catch_up</b> what changed + open feedback</span><span><b>comment</b> reply or resolve</span><span><b>read</b> any artifact, any version</span></p>
+  <div class="hookup reveal">
+    <button class="hk-row" type="button" data-copy="npx skills add derive-to/derive --skill derive" title="Copy">
+      <span class="hk-what">Give any agent the skill</span>
+      <code>npx skills add derive-to/derive --skill derive</code>
+      <span class="hk-copy" aria-hidden="true">COPY</span>
+    </button>
+    <button class="hk-row" type="button" data-copy="claude mcp add --transport http derive https://derive.to/mcp" title="Copy">
+      <span class="hk-what">Or connect over MCP</span>
+      <code>claude mcp add --transport http derive https://derive.to/mcp</code>
+      <span class="hk-copy" aria-hidden="true">COPY</span>
+    </button>
+    <button class="hk-row" type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" title="Copy. Publishes an expiring draft — claim it into a workspace whenever.">
+      <span class="hk-what">No agent, no account</span>
+      <code>curl -F file=@page.html https://derive.to/v1/drafts</code>
+      <span class="hk-copy" aria-hidden="true">COPY</span>
+    </button>
+  </div>
 </section>
 
 <!-- ══════════ PRICING ══════════ -->
@@ -1201,6 +1256,19 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* nav hairline */
 const nav = $('nav');
 addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
+
+/* click-to-copy commands (hero curl + the connect rows). Clipboard API needs a
+   secure context; if it's unavailable the click quietly does nothing — the text
+   is right there to select by hand. */
+document.querySelectorAll('[data-copy]').forEach(el => {
+  el.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(el.dataset.copy); } catch { return; }
+    el.classList.add('copied');
+    const tag = el.querySelector('.hc-copy, .hk-copy');
+    if (tag) tag.textContent = 'COPIED';
+    setTimeout(() => { el.classList.remove('copied'); if (tag) tag.textContent = 'COPY'; }, 1600);
+  });
+});
 
 /* beta signup: the API records the email and sends the access link */
 document.querySelectorAll('[data-waitlist]').forEach(form => {

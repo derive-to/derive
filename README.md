@@ -29,6 +29,23 @@ Permanent versioned URLs and a review loop your team and its agents share, on in
   <img src="docs/assets/readme/hero.png" alt="The Derive library: published artifacts with live previews" width="900">
 </p>
 
+## Try it in ten seconds
+
+No account, no install — one request publishes a live page:
+
+```bash
+curl -F file=@page.html https://derive.to/v1/drafts   # or a .zip of a whole site
+# → a live URL in about a second, plus a claim link that turns the
+#   expiring draft into a permanent, versioned artifact in your workspace
+```
+
+Give your agent the whole loop — publish, read comments back, revise:
+
+```bash
+npx skills add derive-to/derive --skill derive        # any agent that reads skills
+claude mcp add --transport http derive https://derive.to/mcp   # or connect over MCP
+```
+
 ## What is Derive
 
 Derive gives any static artifact, an HTML page, a Markdown doc, or a whole built site, a permanent URL with version history. Publish it from the CLI, the HTTP API, or an agent over MCP. View it rendered inside a sandboxed iframe. Share it with your team, gather comments pinned to the exact text, and approve revisions in a review loop that people and agents run together.
