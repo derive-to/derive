@@ -44,7 +44,11 @@ describe("vanity subdomains", () => {
     const served = await anon.request(`http://launch.${BASE}/`)
     expect(served.status).toBe(200)
     expect(served.headers.get("content-type")).toContain("text/html")
-    expect(await served.text()).toContain("Launch")
+    const html = await served.text()
+    expect(html).toContain("Launch")
+    // The draft discovery chip is drafts-only: a claimed artifact on its vanity
+    // host serves clean bytes with no injected attribution.
+    expect(html).not.toContain("data-derive-draft-chip")
   })
 
   it("409s a label already taken by another artifact", async () => {
