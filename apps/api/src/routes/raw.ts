@@ -286,6 +286,29 @@ export const rawRoutes = (ctx: AppContext) => {
     return serveVersion(c, artifact, n, `/raw/${shortId}/v/${c.req.param("n")}/`)
   })
 
+  // Proposal render — tokened path first (same opaque-origin constraint as versions:
+  // the sandboxed review iframe can't send cookies, so private HTML blanked without
+  // a path-carried capability). Cookie authorize is the fallback for both routes.
+  app.get("/raw/:shortId/p/:proposalId/t/:token/*", async (c) => {
+    const shortId = c.req.param("shortId")
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact) return c.text("not found", 404)
+    if (artifact.removed_at) return c.text(TOMBSTONE, 410)
+    const claim = verifyState<{ rid: string }>(
+      c.req.param("token"),
+      deps.encryptionKey ?? "",
+      RAW_TOKEN_MAX_AGE_MS,
+    )
+    const ok = claim?.rid === artifact.id || (await authorize(c, "read", artifact))
+    if (!ok) return c.text("not found", 404)
+    const proposal = await meta.getProposal(c.req.param("proposalId"))
+    if (!proposal || proposal.artifact_id !== artifact.id) return c.text("not found", 404)
+
+    const prefix = `/raw/${shortId}/p/${proposal.id}/t/${c.req.param("token")}/`
+    const path = decodeURIComponent(c.req.path.slice(prefix.length))
+    return serveContent(c, blobs, proposal, artifact.title, prefix, path, "private, no-store")
+  })
+
   // Render a proposed version exactly like a live one, so review is of the
   // experience, not a source dump. Read-gated; the proposal must belong here.
   app.get("/raw/:shortId/p/:proposalId/*", async (c) => {

@@ -273,4 +273,24 @@ describe("organize state — retire an artifact and put it back", () => {
     expect(bare.isError).toBe(true)
     expect(bare.text).toContain("short_ids")
   })
+
+  it("drops a retired artifact from GET /v1/artifacts while the detail still tombs it", async () => {
+    // Library browse must not keep serving placeholder cards for removed work. The list
+    // excludes removed rows; the detail still returns the tombstone so deep links and the
+    // restore path stay honest.
+    const { app, token } = await setup("shelve-list-excludes")
+    const keep = await call(app, token, "publish", { title: "Keep", content: "# Keep\n\nbody" })
+    const gone = await call(app, token, "publish", { title: "Gone", content: "# Gone\n\nbody" })
+    await call(app, token, "organize", { short_ids: [gone.short_id], state: "removed" })
+
+    const list = await (await app.request("/v1/artifacts", { headers: as(owner.email) })).json()
+    const ids = (list.artifacts as { short_id: string }[]).map((a) => a.short_id)
+    expect(ids).toContain(keep.short_id)
+    expect(ids).not.toContain(gone.short_id)
+
+    const detail = await (
+      await app.request(`/v1/artifacts/${gone.short_id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.removed).toBe(true)
+  })
 })

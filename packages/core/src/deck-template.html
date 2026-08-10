@@ -88,8 +88,11 @@
   figure svg { display: block; width: 100%; height: auto }
   figcaption { margin-top: 14px; font-size: 15px; color: var(--mut) }
 
-  /* 4 — standalone chrome. Click zones sit under the content so links stay clickable. */
-  .zone { position: absolute; top: 0; bottom: 0; width: 22%; z-index: 0; cursor: pointer; border: 0; background: none }
+  /* 4 — standalone chrome. Click zones sit ABOVE the slide stack so edge clicks
+     reach them (slides are full-stage pointer-events:auto when .on; under-content
+     zones were unreachable). Kept narrower than the old 22% so centre content and
+     mid-slide links stay clickable. */
+  .zone { position: absolute; top: 0; bottom: 0; width: 14%; z-index: 5; cursor: pointer; border: 0; background: none }
   .zone.l { left: 0 } .zone.r { right: 0 }
   .rail { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255, 255, 255, .07); z-index: 2 }
   .rail i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .32s ease }
@@ -261,8 +264,29 @@
 
   window.addEventListener("resize", fitStage)
   fitStage()
-  // #s3 opens on slide 3 — deep links survive a reload and a shared URL.
-  const deep = Number.parseInt(String(location.hash).replace(/^#s/, ""), 10)
+  // Deep links: #s3 / #3 / ?slide=3 open on that slide. Prefer the host URL when
+  // we're framed (the SPA owns the address bar; the iframe's own hash is usually empty).
+  const deepFrom = (hash, search) => {
+    const fromHash = String(hash || "").match(/^#(?:s)?(\d+)$/i)
+    if (fromHash) return Number.parseInt(fromHash[1], 10)
+    try {
+      const n = Number.parseInt(
+        new URLSearchParams(String(search || "").replace(/^\?/, "")).get("slide") || "",
+        10,
+      )
+      return Number.isFinite(n) ? n : NaN
+    } catch {
+      return NaN
+    }
+  }
+  let deep = deepFrom(location.hash, location.search)
+  try {
+    if (!(deep > 0) && parent && parent !== window) {
+      deep = deepFrom(parent.location.hash, parent.location.search)
+    }
+  } catch {
+    /* cross-origin host — host drives us via postMessage instead */
+  }
   show(deep > 0 ? deep - 1 : 0, true)
 }
 </script>

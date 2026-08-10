@@ -348,6 +348,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         // (all items) would outrun the list (only your explicitly-shared items).
         viewerId:
           isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
+        // Retired / moderated rows stay readable at their direct URL (tombstone +
+        // reinstate), but the library and collection feeds should not keep showing
+        // them as placeholder cards. Counts already exclude removed_at; without this
+        // flag the list outruns the badge and removed docs look like dead "private"
+        // stubs forever.
+        excludeRemoved: true,
       }
       // THE COLD BOOT'S CRITICAL PATH. After the rest of this PR, nothing is queued in
       // front of this request any more — the first card paints 43ms after it lands — so

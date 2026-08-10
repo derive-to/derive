@@ -74,7 +74,7 @@ export function ArtifactRemoved({
       className="h-full"
       icon={<Icon name="removed" strokeWidth={1.75} />}
       title="This artifact was removed"
-      description="It was taken down by a moderator and is no longer available."
+      description="It is no longer available. An owner can reinstate it if the removal was intentional cleanup rather than a permanent delete."
       action={
         <div className="flex gap-2">
           {canReinstate && (

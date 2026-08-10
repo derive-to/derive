@@ -39,6 +39,7 @@ export const libraryFeedParams = (
   collection: search.collection,
   favorite: view === "favorites" || search.filter === "starred" || undefined,
   author: search.author,
+  tag: search.tag?.trim() || undefined,
   // The filter narrows the HOME library only, exactly as deriveFilter orders it: a
   // named feed is matched first, so /following?filter=mine is still the following feed.
   // (Their validateSearch drops `filter` anyway — but correctness here must not rest

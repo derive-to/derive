@@ -13,6 +13,32 @@ import {
 } from "./types"
 import { usePresentMode } from "./use-present-mode"
 
+/** Host URL deep link for decks: `#s3` / `#3` / `?slide=3` (1-based). Returns NaN when absent. */
+export const deepSlideFrom = (hash: string, search: string): number => {
+  const fromHash = String(hash || "").match(/^#(?:s)?(\d+)$/i)
+  if (fromHash) return Number.parseInt(fromHash[1] as string, 10)
+  try {
+    const n = Number.parseInt(
+      new URLSearchParams(String(search || "").replace(/^\?/, "")).get("slide") || "",
+      10,
+    )
+    return Number.isFinite(n) ? n : Number.NaN
+  } catch {
+    return Number.NaN
+  }
+}
+
+/** Keep the SPA hash on `#sN` so a copied URL opens the same slide. */
+const writeDeckHash = (i: number) => {
+  try {
+    const next = `#s${i + 1}`
+    if (window.location.hash === next) return
+    history.replaceState(null, "", `${window.location.pathname}${window.location.search}${next}`)
+  } catch {
+    /* private mode / sandboxed history */
+  }
+}
+
 // Keep `anchorTops` referentially stable when the tops are unchanged, so a re-post doesn't
 // churn the comment layout. The frame already dedupes anchor-rects on tops before sending
 // (geometry rides its own `scroll` message now), so this is belt-and-suspenders.
@@ -163,6 +189,9 @@ export function useArtifactFrame(p: {
         const next = { i: d.i ?? 0, total: d.total ?? 1, sniffed: false }
         deckRef.current = next
         setDeck(next)
+        // Keep the SPA address bar in step with the deck so a shared URL lands on
+        // the same slide (template deep links alone only see the iframe's empty hash).
+        writeDeckHash(next.i)
         return
       }
       if (d.source !== "derive") return
@@ -175,6 +204,7 @@ export function useArtifactFrame(p: {
         const next = { i: d.i ?? 0, total: d.total ?? 1, sniffed: true }
         deckRef.current = next
         setDeck(next)
+        writeDeckHash(next.i)
         return
       }
       if (d.type === "select") {
@@ -280,6 +310,21 @@ export function useArtifactFrame(p: {
       ),
     [],
   )
+
+  // On first announce, honour a host deep link the iframe couldn't see
+  // (`#s3` / `#3` / `?slide=3` on the SPA URL). Only once per document load —
+  // later state messages already reflect navigation the user made.
+  const deepApplied = useRef(false)
+  useEffect(() => {
+    if (!deck || deepApplied.current) return
+    deepApplied.current = true
+    const deep = deepSlideFrom(window.location.hash, window.location.search)
+    if (deep > 0 && deep - 1 !== deck.i) deckCmd("goto", deep - 1)
+  }, [deck, deckCmd])
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset the deep-link latch when the document changes.
+  useEffect(() => {
+    deepApplied.current = false
+  }, [shortId, version])
   // Present mode owns the fullscreen element, the presenting state and the keyboard
   // that drives a deck while it's up (see use-present-mode). It lives here because
   // this hook already owns the wrapper and the drive command.

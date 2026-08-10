@@ -469,6 +469,7 @@ export const artifactsListPath = (params?: {
   collection?: string
   favorite?: boolean
   author?: string
+  tag?: string
   scope?: "shared" | "following" | "needs_feedback" | "mine"
   cursor?: string
   limit?: number
@@ -479,6 +480,7 @@ export const artifactsListPath = (params?: {
   if (params?.collection) qs.set("collection", params.collection)
   if (params?.favorite) qs.set("favorite", "true")
   if (params?.author) qs.set("author", params.author)
+  if (params?.tag) qs.set("tag", params.tag)
   if (params?.scope) qs.set("scope", params.scope)
   if (params?.cursor) qs.set("cursor", params.cursor)
   if (params?.limit) qs.set("limit", String(params.limit))
@@ -754,6 +756,8 @@ export const api = {
       favorite?: boolean
       /** Narrow to artifacts last changed by this GitHub login. */
       author?: string
+      /** Workspace browse tag (server `?tag=`). */
+      tag?: string
       /** "shared" → only artifacts explicitly shared with you (across workspaces).
        *  "following" → artifacts in the active workspace matching your follows
        *  (followed GitHub authors + repo path prefixes) — the activity feed.

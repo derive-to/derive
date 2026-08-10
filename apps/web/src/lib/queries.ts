@@ -79,6 +79,8 @@ export type LibraryParams = {
   favorite?: boolean
   // Narrow to artifacts last changed by this GitHub login.
   author?: string
+  // Workspace browse tag — same server-side ?tag= the list route already honors.
+  tag?: string
   // The named-feed scopes, each its own route (see LibraryView):
   // "following" → the activity feed (followed authors + repo path prefixes);
   // "shared" → artifacts explicitly shared with you (can span workspaces);

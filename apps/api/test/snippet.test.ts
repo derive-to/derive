@@ -1,8 +1,32 @@
 import { describe, expect, it } from "vitest"
-import { snippetAround } from "../src/lib/search"
+import { searchMatcher, snippetAround, stripMarkup } from "../src/lib/search"
 
 // snippetAround windows a matching line so the highlighted term survives the palette's
 // single-line, LEFT-truncating render — the match must land near the left edge.
+describe("searchMatcher", () => {
+  it("matches a multi-word query by OR over alnum tokens, longest first", () => {
+    const re = searchMatcher("alpha beta", false)
+    expect("the alpha arrives".match(re)?.[0]).toBe("alpha")
+    expect("only beta here".match(re)?.[0]).toBe("beta")
+    // Longer tokens win the alternation order so "launchpad" prefers "launchpad" over "launch".
+    const longFirst = searchMatcher("launch launchpad", false)
+    expect("see the launchpad now".match(longFirst)?.[0]).toBe("launchpad")
+  })
+
+  it("keeps a one-token query as a full-literal match", () => {
+    const re = searchMatcher("kestrel", false)
+    expect(re.test("the kestrel review")).toBe(true)
+    expect(re.test("kest")).toBe(false)
+  })
+})
+
+describe("stripMarkup", () => {
+  it("drops tags so a semantic snippet does not leak raw HTML into ⌘K", () => {
+    expect(stripMarkup("<p>Hello <strong>world</strong></p>")).toBe("Hello world")
+    expect(stripMarkup("<div class='x'>deck&nbsp;title</div>")).toContain("deck")
+  })
+})
+
 describe("snippetAround", () => {
   it("returns a short line whole, with the match intact", () => {
     expect(snippetAround("the kestrel review is friday", "kestrel")).toBe(
@@ -45,5 +69,12 @@ describe("snippetAround", () => {
     const long = snippetAround("q".repeat(300), "zzz")
     expect(long.endsWith("…")).toBe(true)
     expect(long.length).toBeLessThanOrEqual(161)
+  })
+
+  it("windows on the first token when only one word of a multi-word query is present", () => {
+    const line = `${"x".repeat(120)}beta-only line${"y".repeat(120)}`
+    const snip = snippetAround(line, "alpha beta")
+    expect(snip).toContain("beta")
+    expect(snip.indexOf("beta")).toBeLessThan(30)
   })
 })

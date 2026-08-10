@@ -53,6 +53,7 @@ import {
   Smile,
   Sparkles,
   Star,
+  Tag,
   Trash2,
   Undo2,
   User,
@@ -132,6 +133,8 @@ const REG = {
   delete: Trash2,
   // notifications
   at: AtSign,
+  // Browse tags on library cards / the active ?tag= clear pill.
+  tag: Tag,
 } as const satisfies Record<string, LucideIcon>
 
 // Icons stay monochrome: they inherit `currentColor`, so a glyph always matches

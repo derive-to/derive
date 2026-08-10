@@ -14,6 +14,10 @@ export function ReviewBody({
   isOpen,
   stale,
   onCompareCurrent,
+  /** Sandboxed iframe has no cookies — same raw_token the live viewer embeds so
+   *  private/non-public HTML doesn't 404 on every nested asset (and on Chrome, on
+   *  the document itself). Optional for callers that only need the diff tab. */
+  rawToken,
 }: {
   shortId: string
   view: "proposed" | "current" | "diff"
@@ -22,12 +26,16 @@ export function ReviewBody({
   isOpen: boolean
   stale: boolean
   onCompareCurrent: () => void
+  rawToken?: string
 }) {
+  // Token rides in the PATH (not a query) so a bundle's relative asset URLs inherit
+  // it automatically — same convention as the live viewer and raw.ts `/t/:token/`.
+  const tok = rawToken ? `/t/${rawToken}` : ""
   const src =
     view === "current"
-      ? `${API_BASE}/raw/${shortId}/v/${currentVersion}/index.html`
+      ? `${API_BASE}/raw/${shortId}/v/${currentVersion}${tok}/index.html`
       : active
-        ? `${API_BASE}/raw/${shortId}/p/${active.id}/index.html`
+        ? `${API_BASE}/raw/${shortId}/p/${active.id}${tok}/index.html`
         : "about:blank"
 
   const decisionNote = active && !isOpen && active.decision_note ? active : null
@@ -109,6 +117,9 @@ export function ReviewBody({
           </pre>
         ) : (
           <iframe
+            // Key on the exact document so Proposed ↔ Current (or proposal swap) always
+            // reloads — without it a reused iframe can show the previous blob's src.
+            key={src}
             data-testid="review-frame"
             title="Proposed version preview"
             src={src}

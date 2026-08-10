@@ -61,6 +61,7 @@ export const Route = createFileRoute("/")({
     folder: typeof s.folder === "string" ? s.folder : undefined,
     query: typeof s.query === "string" ? s.query : undefined,
     author: typeof s.author === "string" ? s.author : undefined,
+    tag: typeof s.tag === "string" && s.tag.trim() ? s.tag.trim() : undefined,
     // "drafts" is the tab's retired name — old bookmarks and agent-emitted
     // links keep landing on the same view.
     // `tab` is the retired spelling of the mine filter — old bookmarks and

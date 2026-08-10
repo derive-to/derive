@@ -42,6 +42,7 @@ export function ArtifactGrid({
   sort,
   onSort,
   onPickAuthor,
+  onPickTag,
 }: {
   items: Artifact[]
   // The scrolling ancestor (the library's overflow-y-auto container).
@@ -62,6 +63,7 @@ export function ArtifactGrid({
    *  which is exactly where an unvirtualized path would hurt. */
   layout?: "grid" | "list"
   onPickAuthor?: (login: string) => void
+  onPickTag?: (tag: string) => void
   /** List mode only: the header row is where sort lives. */
   sort?: SortMode
   onSort?: (mode: SortMode) => void
@@ -164,6 +166,7 @@ export function ArtifactGrid({
                   onAddToCollection={() => onAddToCollection(a)}
                   onDelete={() => onDelete(a)}
                   onPrefetch={() => onPrefetch(a)}
+                  onPickTag={onPickTag}
                   selected={selection?.selected.has(a.short_id)}
                   selectionActive={selection?.active}
                   onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}

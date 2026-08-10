@@ -35,6 +35,7 @@ export function ArtifactCard({
   onAddToCollection,
   onDelete,
   onPrefetch,
+  onPickTag,
   selected = false,
   selectionActive = false,
   onSelect,
@@ -50,6 +51,8 @@ export function ArtifactCard({
   // Warm the artifact (metadata + comments + rendered HTML) when the card is
   // hovered or focused, so the click that follows opens instantly.
   onPrefetch?: () => void
+  /** Narrow the library to this browse tag (MCP-stamped tags become clickable). */
+  onPickTag?: (tag: string) => void
   // Multi-select. The checkbox is the ONLY selection affordance: a plain click on
   // the card still opens the artifact, even mid-selection, so the library's one
   // lifelong gesture never changes meaning underneath you.
@@ -261,6 +264,50 @@ export function ArtifactCard({
             </span>
           )}
         </button>
+
+        {/* Browse tags (from the list enrichment). Above the open-button stretch so a
+            click narrows the library instead of opening the doc. Cap at two chips so a
+            heavily-tagged card stays scannable; the rest ride the title tooltip. */}
+        {!!a.tags?.length && (
+          <div
+            className="relative z-20 flex min-w-0 flex-wrap gap-1"
+            data-testid={`artifact-card-tags-${a.short_id}`}
+          >
+            {a.tags.slice(0, 2).map((tag) =>
+              onPickTag ? (
+                <button
+                  key={tag}
+                  type="button"
+                  data-testid={`artifact-card-tag-${tag}`}
+                  title={`Show artifacts tagged “${tag}”`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onPickTag(tag)
+                  }}
+                  className="max-w-full truncate rounded-sm bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground transition-colors duration-state hover:bg-accent hover:text-foreground"
+                >
+                  {tag}
+                </button>
+              ) : (
+                <span
+                  key={tag}
+                  className="max-w-full truncate rounded-sm bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ),
+            )}
+            {(a.tags.length ?? 0) > 2 && (
+              <span
+                className="rounded-sm px-1 font-mono text-2xs text-muted-foreground"
+                title={a.tags.slice(2).join(", ")}
+              >
+                +{a.tags.length - 2}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* One line, three facts at most: who made it, whether it is private, and
             whether it wants you. The card used to carry nine — a version

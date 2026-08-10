@@ -909,6 +909,7 @@ export function Artifact() {
             initialProposalId={reviewing.proposalId}
             onClose={() => setReviewing(null)}
             onApplied={load}
+            rawToken={rawToken}
           />
         </Suspense>
       )}

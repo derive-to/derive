@@ -36,6 +36,8 @@ export function ReviewOverlay({
   initialProposalId,
   onClose,
   onApplied,
+  /** Opaque-origin iframe proof — same raw_token the live viewer embeds. */
+  rawToken,
 }: {
   shortId: string
   currentVersion: number
@@ -45,6 +47,7 @@ export function ReviewOverlay({
   initialProposalId?: string
   onClose: () => void
   onApplied: () => void
+  rawToken?: string
 }) {
   const narrow = useNarrow()
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -259,6 +262,7 @@ export function ReviewOverlay({
           isOpen={isOpen}
           stale={stale}
           onCompareCurrent={() => setView("current")}
+          rawToken={rawToken}
         />
       </div>
 

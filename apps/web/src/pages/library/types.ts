@@ -55,6 +55,7 @@ export const LIBRARY_SEARCH_PARAMS = [
   "folder",
   "query",
   "author",
+  "tag",
   "filter",
   "sort",
 ] as const
@@ -72,6 +73,9 @@ export type LibrarySearch = {
   query?: string
   // Narrow to artifacts last changed by this GitHub login (synced collections).
   author?: string
+  // Browse tag (workspace vocabulary). Same capability MCP's `organize`/`find` already
+  // expose — without this, tags stamped by an agent never surface in the browser library.
+  tag?: string
   // How the home library is narrowed. Absent = everything you can see. These were
   // three separate places — /favorites and /shared were routes, "Created by me" was
   // a `tab` param — for one list under three names. They are facets of the home

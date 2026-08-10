@@ -78,14 +78,29 @@ export const present = (source: string, contentType: string, format: ReadFormat)
 // The grep engine
 // ---------------------------------------------------------------------------
 
-// The compiled matcher for `search`. The query is matched LITERALLY: metacharacters
-// are escaped so an agent pasting "$31k" or "a.b()" matches verbatim, and — because a
-// literal has no quantifiers — the scan is linear even on a multi-MB minified line.
-// (Arbitrary user regex is deliberately NOT accepted: catastrophic backtracking on a
-// long line blows the Workers CPU budget, and there is no linear-time regex engine on
-// this tier. Re-add regex only behind a re2-style matcher.)
-export const searchMatcher = (query: string, caseSensitive: boolean): RegExp =>
-  new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), caseSensitive ? "g" : "gi")
+// Escape a literal so it is safe inside a RegExp constructed below. Shared by the
+// whole-query path and the multi-token alternation.
+const escapeLiteral = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+// The compiled matcher for `search`. Metacharacters are escaped so an agent pasting
+// "$31k" or "a.b()" matches verbatim, and — because a literal has no quantifiers — the
+// scan is linear even on a multi-MB minified line. (Arbitrary user regex is deliberately
+// NOT accepted: catastrophic backtracking on a long line blows the Workers CPU budget.)
+//
+// Multi-word queries use OR over alnum tokens rather than requiring the full phrase:
+// the FTS nomination arm already tokenizes this way, and a phrase-only grep left the
+// palette empty for "auth tokens" when each word appeared alone on a line. A single
+// token (or a query with no alnum tokens at all, e.g. "$31k") still matches exactly.
+export const searchMatcher = (query: string, caseSensitive: boolean): RegExp => {
+  const tokens = query.match(/[\p{L}\p{N}]+/gu)
+  const flags = caseSensitive ? "g" : "gi"
+  if (tokens && tokens.length > 1) {
+    // Longest first so "authentication" wins over "auth" when both appear as tokens.
+    const uniq = [...new Set(tokens)].sort((a, b) => b.length - a.length)
+    return new RegExp(uniq.map(escapeLiteral).join("|"), flags)
+  }
+  return new RegExp(escapeLiteral(query), flags)
+}
 
 // One line-oriented match hunk: the matched line plus its context, with line numbers.
 // A hit line carries `section` (the heading/region it falls under, when known) so a hit
@@ -657,10 +672,15 @@ export const workspaceSearchReport = (
   const grandTotal = results.reduce((sum, r) => sum + r.total, 0)
   // A result with no literal hunks (total 0) but a semantic snippet is a dense-arm match.
   const hasSemantic = results.some((r) => r.total === 0 && r.semantic)
-  if (grandTotal === 0 && !hasSemantic)
+  if (grandTotal === 0 && !hasSemantic) {
+    const multi = (query.match(/[\p{L}\p{N}]+/gu) ?? []).length > 1
+    const phraseHint = multi
+      ? " Multi-word search matches any token; try one distinctive keyword if this still misses."
+      : ""
     return `No matches for "${query}" in ${where} across the workspace${note ? ` (${note})` : ""}.${
       where === "source" ? " Try in:'text' to search the visible text." : ""
-    }`
+    }${phraseHint}`
+  }
   // Header keeps the exact literal-match wording when there are any (so the lexical-only path —
   // every self-host deploy — is unchanged); an all-dense result set reports a semantic-match
   // count instead of reading as "0 matches".
@@ -733,7 +753,18 @@ export const stripMarkup = (line: string): string =>
 export const snippetAround = (line: string, query: string): string => {
   const flat = line.replace(/\s+/g, " ").trim()
   const q = query.replace(/\s+/g, " ").trim()
-  const at = q ? flat.toLowerCase().indexOf(q.toLowerCase()) : -1
+  // Prefer the whole query; fall back across alnum tokens (longest first) so multi-word
+  // OR hits still window on whichever token actually matched the line.
+  let at = q ? flat.toLowerCase().indexOf(q.toLowerCase()) : -1
+  if (at < 0) {
+    const tokens = [...new Set(q.match(/[\p{L}\p{N}]+/gu) ?? [])].sort(
+      (a, b) => b.length - a.length,
+    )
+    for (const token of tokens) {
+      at = flat.toLowerCase().indexOf(token.toLowerCase())
+      if (at >= 0) break
+    }
+  }
   if (at < 0) return flat.length > SNIPPET_LEN ? `${flat.slice(0, SNIPPET_LEN)}…` : flat
   const start = Math.max(0, at - SNIPPET_LEAD)
   const end = Math.min(flat.length, start + SNIPPET_LEN)
@@ -748,8 +779,12 @@ export const toSearchHits = (results: WorkspaceSearchResult[], query: string): S
       short_id: r.short_id,
       title: r.title,
       current_version: r.current_version,
-      // A literal hit line is the best snippet; a dense-only hit falls back to its chunk snippet.
-      snippet: hit ? snippetAround(stripMarkup(hit.text), query) : (r.semantic?.snippet ?? ""),
+      // A literal hit line is the best snippet; a dense-only hit falls back to its chunk
+      // snippet. Both arms strip markup — the palette and search page render snippets as
+      // plain text, and HTML sources otherwise leak raw tags into the result card.
+      snippet: hit
+        ? snippetAround(stripMarkup(hit.text), query)
+        : stripMarkup(r.semantic?.snippet ?? ""),
       // Semantic-only when there's no literal hit line but a dense passage carried it here.
       semantic: !hit && !!r.semantic?.snippet,
     }

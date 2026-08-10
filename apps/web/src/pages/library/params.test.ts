@@ -38,11 +38,16 @@ describe("libraryFeedParams", () => {
     expect(libraryFeedParams("all", { query: "old" }, "").q).toBeUndefined()
   })
 
-  it("keeps the home's collection/author narrowing", () => {
-    expect(libraryFeedParams("all", { collection: "c1", author: "amy" })).toMatchObject({
+  it("keeps the home's collection/author/tag narrowing", () => {
+    expect(
+      libraryFeedParams("all", { collection: "c1", author: "amy", tag: "launch" }),
+    ).toMatchObject({
       collection: "c1",
       author: "amy",
+      tag: "launch",
     })
+    // Whitespace-only is the same as absent — don't key a wasted request.
+    expect(libraryFeedParams("all", { tag: "  " }).tag).toBeUndefined()
   })
 
   it("keeps the Created-by-me tab to the home library", () => {
@@ -76,6 +81,7 @@ describe("LIBRARY_SEARCH_PARAMS", () => {
       folder: true,
       query: true,
       author: true,
+      tag: true,
       filter: true,
       sort: true,
     }

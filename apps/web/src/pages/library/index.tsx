@@ -333,6 +333,13 @@ function LibraryBody({ view }: { view: LibraryView }) {
     const { author: _drop, ...rest } = search
     nav({ to: "/", search: rest })
   }
+  // Browse tags are already on every list row; clicking one just writes ?tag= so MCP-stamped
+  // labels are reachable from the browser without a separate taxonomy surface.
+  const pickTag = (tag: string) => nav({ to: "/", search: { ...search, tag } })
+  const clearTag = () => {
+    const { tag: _drop, ...rest } = search
+    nav({ to: "/", search: rest })
+  }
   const { follows, isFollowingAuthor, toggleAuthor, unfollow } = useFollows()
   const followingAuthor = !!search.author && isFollowingAuthor(search.author)
 
@@ -549,6 +556,18 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 </Button>
               </>
             )}
+            {search.tag && (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="library-tag-filter-clear"
+                title={`Clear tag filter: ${search.tag}`}
+                onClick={clearTag}
+              >
+                <Icon name="tag" size={16} /> {search.tag}
+                <Icon name="close" size={16} />
+              </Button>
+            )}
             {filterField}
             {/* Feeds have no view row, so Display stays up here for them; home's moves
                 down beside Filter — the two are one kind of control and sit together. */}
@@ -706,6 +725,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
               sort={search.sort ?? DEFAULT_SORT}
               onSort={setSort}
               onPickAuthor={pickAuthor}
+              onPickTag={pickTag}
               items={items}
               scrollRef={scrollRef}
               hasNextPage={!!hasNextPage}
