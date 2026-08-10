@@ -46,6 +46,13 @@ npx skills add derive-to/derive --skill derive        # any agent that reads ski
 claude mcp add --transport http derive https://derive.to/mcp   # or connect over MCP
 ```
 
+Or paste this into any agent and let it set itself up:
+
+> I'd like you to set up Derive: the home for the work my agents and I make — published pages with versions and review.
+> Install the skill if I have npm: `npx skills add derive-to/derive --skill derive`
+> Otherwise connect over MCP: the server is `https://derive.to/mcp` (Claude Code: `claude mcp add --transport http derive https://derive.to/mcp`)
+> After setup, review https://derive.to/skill.md and ask me what I'd like to publish first.
+
 ## What is Derive
 
 Derive gives any static artifact, an HTML page, a Markdown doc, or a whole built site, a permanent URL with version history. Publish it from the CLI, the HTTP API, or an agent over MCP. View it rendered inside a sandboxed iframe. Share it with your team, gather comments pinned to the exact text, and approve revisions in a review loop that people and agents run together.

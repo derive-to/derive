@@ -615,8 +615,10 @@ html.light .pcursor .flag{color:#fff}
   font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;color:var(--faint);
 }
 .loop .cast span b{color:var(--muted);font-weight:500}
-/* ── connect yours: the three real commands, each one click to copy ── */
-.hookup{margin-top:34px;border:1px solid var(--border-soft);border-radius:10px;background:var(--card);overflow:hidden}
+/* ── connect yours: one paste for the agent, or the three commands by hand ── */
+.hk-lead{margin-top:34px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.hk-lead .hk-leadnote{font-size:13px;color:var(--muted);max-width:40ch}
+.hookup{margin-top:14px;border:1px solid var(--border-soft);border-radius:10px;background:var(--card);overflow:hidden}
 .hookup .hk-row{
   display:flex;align-items:center;gap:16px;width:100%;text-align:left;background:none;border:0;
   padding:13px 18px;cursor:pointer;transition:background .15s ease;
@@ -1166,6 +1168,17 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
     <div class="tbody" id="termBody"><span class="cursor" id="termCursor"></span></div>
   </div>
   <p class="cast reveal"><span><b>publish</b> save a revision</span><span><b>catch_up</b> what changed + open feedback</span><span><b>comment</b> reply or resolve</span><span><b>read</b> any artifact, any version</span></p>
+  <script type="text/plain" id="agentPrompt">I'd like you to set up Derive: the home for the work my agents and I make — published pages with versions and review.
+
+Install the skill if I have npm: npx skills add derive-to/derive --skill derive
+
+Otherwise connect over MCP: the server is https://derive.to/mcp (Claude Code: claude mcp add --transport http derive https://derive.to/mcp)
+
+After setup, review https://derive.to/skill.md and ask me what I'd like to publish first.</script>
+  <div class="hk-lead reveal">
+    <button class="btn btn-primary" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — paste it into your agent">Copy instructions for my agent</button>
+    <span class="hk-leadnote">one paste into any agent — it sets itself up, then asks what you'd like to publish</span>
+  </div>
   <div class="hookup reveal">
     <button class="hk-row" type="button" data-copy="npx skills add derive-to/derive --skill derive" title="Copy">
       <span class="hk-what">Give any agent the skill</span>
@@ -1257,16 +1270,26 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const nav = $('nav');
 addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
 
-/* click-to-copy commands (hero curl + the connect rows). Clipboard API needs a
-   secure context; if it's unavailable the click quietly does nothing — the text
-   is right there to select by hand. */
-document.querySelectorAll('[data-copy]').forEach(el => {
+/* click-to-copy (hero curl, the connect rows, the agent-instructions prompt).
+   data-copy holds the text inline; data-copy-from points at a text/plain block
+   for multi-line prompts. Clipboard API needs a secure context; if it's
+   unavailable the click quietly does nothing — the text is there to select. */
+document.querySelectorAll('[data-copy], [data-copy-from]').forEach(el => {
   el.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(el.dataset.copy); } catch { return; }
+    const text = el.dataset.copy ?? $(el.dataset.copyFrom)?.textContent.trim();
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); } catch { return; }
     el.classList.add('copied');
     const tag = el.querySelector('.hc-copy, .hk-copy');
+    const label = el.dataset.copiedLabel;
+    const prev = label && !tag ? el.textContent : null;
     if (tag) tag.textContent = 'COPIED';
-    setTimeout(() => { el.classList.remove('copied'); if (tag) tag.textContent = 'COPY'; }, 1600);
+    else if (label) el.textContent = label;
+    setTimeout(() => {
+      el.classList.remove('copied');
+      if (tag) tag.textContent = 'COPY';
+      else if (prev !== null) el.textContent = prev;
+    }, 1800);
   });
 });
 
