@@ -8,6 +8,31 @@ import { API_BASE } from "@/api"
 const BEACON_URL =
   (import.meta.env.VITE_VITALS_URL as string | undefined) ?? `${API_BASE}/v1/vitals`
 
+type VitalRating = Metric["rating"]
+
+// One metric (Core Web Vital or a custom boot/field event) through the shared
+// sink. Dev logs; prod beacons. No-op off-window.
+export function reportVital(
+  name: string,
+  value: number,
+  rating: VitalRating = "poor",
+  id?: string,
+) {
+  if (typeof window === "undefined") return
+  if (import.meta.env.DEV) {
+    console.info(`[web-vitals] ${name} ${Math.round(value)} (${rating})`)
+    return
+  }
+  const body = JSON.stringify({
+    name,
+    value,
+    rating,
+    id: id ?? `${name}-${Math.round(performance.now())}`,
+    path: location.pathname,
+  })
+  navigator.sendBeacon?.(BEACON_URL, body)
+}
+
 // Report Core Web Vitals. In dev we log each metric to the console (with its
 // rating) for before/after tuning; in prod we also beacon it to the collector —
 // sendBeacon survives the page unload that finalizes CLS/INP/LCP, so the numbers
@@ -15,18 +40,7 @@ const BEACON_URL =
 export function reportWebVitals() {
   if (typeof window === "undefined") return
   const sink = (m: Metric) => {
-    if (import.meta.env.DEV) {
-      console.info(`[web-vitals] ${m.name} ${Math.round(m.value)} (${m.rating})`)
-    } else {
-      const body = JSON.stringify({
-        name: m.name,
-        value: m.value,
-        rating: m.rating,
-        id: m.id,
-        path: location.pathname,
-      })
-      navigator.sendBeacon?.(BEACON_URL, body)
-    }
+    reportVital(m.name, m.value, m.rating, m.id)
   }
   onLCP(sink)
   onINP(sink)
