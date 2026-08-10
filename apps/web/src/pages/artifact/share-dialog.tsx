@@ -15,6 +15,7 @@ import {
 } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
@@ -44,6 +45,13 @@ import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import {
+  type AccessSegment,
+  accessSegmentOf,
+  accessSegmentToast,
+  decideAccessSegmentChange,
+  draftForAccessSegment,
+} from "@/pages/artifact/lib/access-segment"
 import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
 
 // Access is ONE primary question — who can open this — projected from the v2
@@ -51,8 +59,7 @@ import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
 // is the WIDEST reach currently granted: a world link is "anyone"; workspace-seat
 // access is "workspace"; neither is "invite". The world link's role and each
 // segment's listing (does it show in a feed) are secondary switches beneath it.
-type Segment = "invite" | "workspace" | "anyone"
-const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
+const SEGMENTS: { value: AccessSegment; label: string; icon: IconName }[] = [
   { value: "invite", label: "Invited", icon: "lock" },
   { value: "workspace", label: "Workspace", icon: "workspace" },
   { value: "anyone", label: "Anyone", icon: "globe" },
@@ -215,8 +222,7 @@ export function ShareButton({
   // listed) draft ──────────────────────────────────────────────────────────────
   // The segment is the WIDEST reach: a live world link is "anyone"; workspace-seat
   // access is "workspace"; neither is "invite".
-  const segment: Segment =
-    lRole !== "none" ? "anyone" : wsAccess === "member" ? "workspace" : "invite"
+  const segment: AccessSegment = accessSegmentOf(lRole, wsAccess)
   // The listing switch per segment — public directory for "anyone", the workspace
   // library for "workspace". Invited lists nowhere.
   const isListed =
@@ -228,9 +234,15 @@ export function ShareButton({
   // checking the box reveals the input, and nothing applies until Set password.
   // Optimistic so the controls don't flash the old state; the primitive rolls back the
   // draft AND toasts on failure (converged with ShareCollectionDialog — no more inline err).
+  // Pending "open to anyone" confirm — only the widen-to-Anyone jump asks first.
+  const [pendingAnyone, setPendingAnyone] = useState<AccessDraft | null>(null)
+  // Snapshot the reach BEFORE optimistic state lands — success runs after a re-render
+  // and would otherwise see the post-optimistic segment and skip the toast.
+  const reachBeforeRef = useRef<AccessSegment | null>(null)
   const accessMut = useApiMutation({
     mutationFn: (next: AccessDraft) => api.setAccess(shortId, next),
     optimistic: (next) => {
+      reachBeforeRef.current = accessSegmentOf(lRole, wsAccess)
       const prev = { wsAccess, lRole, lst, hasLock, lockDraft, pubHist }
       setWsAccess(next.workspaceAccess)
       setLRole(next.linkRole)
@@ -249,6 +261,14 @@ export function ShareButton({
         setPubHist(prev.pubHist)
       }
     },
+    // Segment picks name the new reach; other access writes (role/list/password) stay quiet.
+    success: (_r, next) => {
+      const prevSeg = reachBeforeRef.current
+      reachBeforeRef.current = null
+      const nextSeg = accessSegmentOf(next.linkRole, next.workspaceAccess)
+      if (prevSeg == null || nextSeg === prevSeg) return
+      return accessSegmentToast(nextSeg)
+    },
     onSuccess: (r) => {
       setWsAccess(r.workspace_access)
       setLRole(r.link_role)
@@ -258,6 +278,7 @@ export function ShareButton({
       setLockDraft(false)
       setPw("")
       setPwOpen(false)
+      setPendingAnyone(null)
     },
     // Refresh the artifact (drives the toolbar glyph) and the library.
     invalidate: [artifactQuery(shortId).queryKey, ["artifacts"]],
@@ -265,21 +286,15 @@ export function ShareButton({
   const applyAccess = (next: AccessDraft) => accessMut.mutate(next)
   // Picking a segment sets its fields at the safe default: a fresh segment starts
   // UNLISTED (the switch is how you opt into a feed), the world link at view.
-  const pickSegment = (seg: Segment) => {
-    if (seg === "invite")
-      return void applyAccess({ workspaceAccess: "none", linkRole: "none", listed: "none" })
-    if (seg === "workspace")
-      return void applyAccess({
-        workspaceAccess: "member",
-        linkRole: "none",
-        listed: lst === "workspace" ? "workspace" : "none",
-      })
-    // anyone: keep the current link role (or default to view), keep a public listing.
-    return void applyAccess({
-      workspaceAccess: "member",
-      linkRole: lRole === "none" ? "viewer" : lRole,
-      listed: lst === "public" ? "public" : "none",
-    })
+  // Widening to Anyone confirms first (BUG-16); everything else still applies on click.
+  const pickSegment = (seg: AccessSegment) => {
+    const decision = decideAccessSegmentChange(segment, seg)
+    const next = draftForAccessSegment(seg, lRole, lst)
+    if (decision.needsConfirm) {
+      setPendingAnyone(next)
+      return
+    }
+    applyAccess(next)
   }
   // The world-link role select (Anyone only).
   const pickRole = (r: Exclude<LinkRole, "none">) =>
@@ -1048,6 +1063,22 @@ export function ShareButton({
           onClose={() => setManageCol(null)}
         />
       )}
+      {/* Widening to Anyone is the one reach jump that needs a beat — a private doc
+          becomes link-reachable. Confirm only that direction; toast names the change. */}
+      <ConfirmDialog
+        open={pendingAnyone !== null}
+        onOpenChange={(o) => {
+          if (!o) setPendingAnyone(null)
+        }}
+        title="Open this to anyone with the link?"
+        description="Anyone who has the link will be able to open this. You can tighten access again anytime."
+        confirmLabel="Open to anyone"
+        confirmTestId="share-anyone-confirm"
+        onConfirm={async () => {
+          if (!pendingAnyone) return
+          await accessMut.mutateAsync(pendingAnyone)
+        }}
+      />
     </Dialog>
   )
 }
