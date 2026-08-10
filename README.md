@@ -36,7 +36,7 @@ No account, no install — one request publishes a live page:
 ```bash
 curl -F file=@page.html https://derive.to/v1/drafts   # or a .zip of a whole site
 # → a live URL in about a second, plus a claim link that turns the
-#   expiring draft into a permanent, versioned artifact in your workspace
+#   draft into a permanent, versioned artifact in your workspace
 ```
 
 Give your agent the whole loop — publish, read comments back, revise:
@@ -48,10 +48,15 @@ claude mcp add --transport http derive https://derive.to/mcp   # or connect over
 
 Or paste this into any agent and let it set itself up:
 
-> I'd like you to set up Derive: the home for the work my agents and I make — published pages with versions and review.
-> Install the skill if I have npm: `npx skills add derive-to/derive --skill derive`
-> Otherwise connect over MCP: the server is `https://derive.to/mcp` (Claude Code: `claude mcp add --transport http derive https://derive.to/mcp`)
-> After setup, review https://derive.to/skill.md and ask me what I'd like to publish first.
+```text
+I'd like you to set up Derive: the home for the work my agents and I make — published pages with versions and review.
+
+Install the skill if I have npm: npx skills add derive-to/derive --skill derive
+
+Otherwise connect over MCP: the server is https://derive.to/mcp (Claude Code: claude mcp add --transport http derive https://derive.to/mcp)
+
+After setup, review https://derive.to/skill.md and ask me what I'd like to publish first.
+```
 
 ## What is Derive
 
@@ -211,7 +216,9 @@ Or skip installation entirely: the skill is served at [derive.to/skill.md](https
 curl -F file=@page.html https://derive.to/v1/drafts   # or a .zip of a whole site
 # → a live URL in about a second, plus a claim link that turns the
 #   draft into a permanent, versioned artifact in your workspace
-``` `derive init` scaffolds one canonical `derive` skill into the native Codex and Claude locations (`.agents/skills/derive` and `.claude/skills/derive`) plus each client's project MCP config. For an existing repo, run `derive agent setup`; rerun with `--update` to refresh only the packaged Derive skill files while preserving MCP configs. The skill declares its MCP dependency for Codex and routes either client into the matching `derive://skills/*` workflow before it acts.
+```
+
+`derive init` scaffolds one canonical `derive` skill into the native Codex and Claude locations (`.agents/skills/derive` and `.claude/skills/derive`) plus each client's project MCP config. For an existing repo, run `derive agent setup`; rerun with `--update` to refresh only the packaged Derive skill files while preserving MCP configs. The skill declares its MCP dependency for Codex and routes either client into the matching `derive://skills/*` workflow before it acts.
 
 The core MCP tools: `find` (search + browse artifacts and contexts), `read` (content), `catch_up` (what changed, open feedback, version history, and — with no id — your work queue), `comment` (leave, reply, resolve), `publish` (save a revision), `stage` (upload out of band), `use` (ask a workspace context), and `checkpoint` (save resumable working state). For an image/font, `stage` mints a short-lived upload URL; the agent POSTs the local file's raw bytes, then uses the returned permanent URL or bundle ref in `publish`. Staging alone does not publish an artifact. `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
 

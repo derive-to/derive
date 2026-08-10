@@ -1262,6 +1262,9 @@ After setup, review https://derive.to/skill.md and ask me what I'd like to publi
   </div>
 </footer>
 
+<!-- announces copy-button success to assistive tech; visually hidden -->
+<div id="copyStatus" role="status" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"></div>
+
 <script>
 const $ = id => document.getElementById(id);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1274,12 +1277,15 @@ addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), 
    data-copy holds the text inline; data-copy-from points at a text/plain block
    for multi-line prompts. Clipboard API needs a secure context; if it's
    unavailable the click quietly does nothing — the text is there to select. */
+const copyStatus = $('copyStatus');
 document.querySelectorAll('[data-copy], [data-copy-from]').forEach(el => {
   el.addEventListener('click', async () => {
+    if (el.classList.contains('copied')) return; // still showing the last copy
     const text = el.dataset.copy ?? $(el.dataset.copyFrom)?.textContent.trim();
     if (!text) return;
     try { await navigator.clipboard.writeText(text); } catch { return; }
     el.classList.add('copied');
+    copyStatus.textContent = 'Copied to clipboard';
     const tag = el.querySelector('.hc-copy, .hk-copy');
     const label = el.dataset.copiedLabel;
     const prev = label && !tag ? el.textContent : null;
@@ -1287,6 +1293,7 @@ document.querySelectorAll('[data-copy], [data-copy-from]').forEach(el => {
     else if (label) el.textContent = label;
     setTimeout(() => {
       el.classList.remove('copied');
+      copyStatus.textContent = '';
       if (tag) tag.textContent = 'COPY';
       else if (prev !== null) el.textContent = prev;
     }, 1800);
