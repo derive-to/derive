@@ -249,19 +249,15 @@ html.light .wordmark .wm-light{display:block}
   margin-top:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);
 }
 .wl-meta:empty{display:none}
-/* ── the other door: publish before you even have an account ── */
-.hero-curl{
-  margin-top:20px;display:inline-flex;align-items:center;gap:10px;max-width:100%;min-width:0;
-  font-family:var(--mono);font-size:11.5px;letter-spacing:.02em;color:var(--muted);
-  background:none;border:1px solid var(--border-soft);border-radius:7px;padding:7px 12px;
-  cursor:pointer;transition:border-color .15s ease,color .15s ease;
+/* ── the other door: hand the setup prompt to whatever agent you run ── */
+.hero-agent{
+  margin-top:18px;display:inline-flex;align-items:center;gap:8px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;color:var(--muted);
+  background:none;border:0;padding:4px 2px;cursor:pointer;transition:color .15s ease;
 }
-.hero-curl:hover,.hero-curl:focus-visible{border-color:var(--border);color:var(--fg)}
-.hero-curl .hc-cmd{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.hero-curl .hc-note{color:var(--faint);white-space:nowrap}
-.hero-curl .hc-copy{flex:none;font-size:9.5px;letter-spacing:.08em;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:2px 7px}
-.hero-curl.copied .hc-copy{color:var(--success);border-color:color-mix(in srgb,var(--success) 45%,transparent)}
-@media(max-width:680px){.hero-curl .hc-note{display:none}}
+.hero-agent:hover,.hero-agent:focus-visible{color:var(--fg)}
+.hero-agent svg{flex:none;opacity:.7}
+.hero-agent.copied{color:var(--success)}
 .hero-eyebrow{margin-bottom:0;color:var(--muted);font-size:14px;letter-spacing:.14em}
 /* the tagline in gradient ink: lit at the cap line, settling toward the baseline */
 .grad-ink{
@@ -816,10 +812,9 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
         </div>
         <div class="wl-meta" id="wlMeta"></div>
       </div>
-      <button class="hero-curl" type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" title="Copy. Publishes an expiring draft — claim it into a workspace whenever.">
-        <span class="hc-cmd">curl -F file=@page.html https://derive.to/v1/drafts</span>
-        <span class="hc-note">→ a live URL in a second, no account</span>
-        <span class="hc-copy" aria-hidden="true">COPY</span>
+      <button class="hero-agent" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — paste it into your agent">
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M9.5 4.5v-2a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 2.5V8A1.5 1.5 0 0 0 3 9.5h1.5" stroke="currentColor" stroke-width="1.3"/></svg>
+        <span class="copy-label">Copy instructions for my agent</span>
       </button>
     </div>
   </div>
@@ -1287,15 +1282,18 @@ document.querySelectorAll('[data-copy], [data-copy-from]').forEach(el => {
     el.classList.add('copied');
     copyStatus.textContent = 'Copied to clipboard';
     const tag = el.querySelector('.hc-copy, .hk-copy');
+    // The confirmation label swaps into .copy-label when present (keeps icon
+    // siblings intact), else the whole button.
+    const labelEl = el.querySelector('.copy-label') ?? el;
     const label = el.dataset.copiedLabel;
-    const prev = label && !tag ? el.textContent : null;
+    const prev = label && !tag ? labelEl.textContent : null;
     if (tag) tag.textContent = 'COPIED';
-    else if (label) el.textContent = label;
+    else if (label) labelEl.textContent = label;
     setTimeout(() => {
       el.classList.remove('copied');
       copyStatus.textContent = '';
       if (tag) tag.textContent = 'COPY';
-      else if (prev !== null) el.textContent = prev;
+      else if (prev !== null) labelEl.textContent = prev;
     }, 1800);
   });
 });
