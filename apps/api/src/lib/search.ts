@@ -78,8 +78,7 @@ export const present = (source: string, contentType: string, format: ReadFormat)
 // The grep engine
 // ---------------------------------------------------------------------------
 
-// Escape a literal so it is safe inside a RegExp constructed below. Shared by the
-// whole-query path and the multi-token alternation.
+// Escape a literal so it is safe inside a RegExp constructed below.
 const escapeLiteral = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 // The compiled matcher for `search`. Metacharacters are escaped so an agent pasting
@@ -87,20 +86,13 @@ const escapeLiteral = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\
 // scan is linear even on a multi-MB minified line. (Arbitrary user regex is deliberately
 // NOT accepted: catastrophic backtracking on a long line blows the Workers CPU budget.)
 //
-// Multi-word queries use OR over alnum tokens rather than requiring the full phrase:
-// the FTS nomination arm already tokenizes this way, and a phrase-only grep left the
-// palette empty for "auth tokens" when each word appeared alone on a line. A single
-// token (or a query with no alnum tokens at all, e.g. "$31k") still matches exactly.
-export const searchMatcher = (query: string, caseSensitive: boolean): RegExp => {
-  const tokens = query.match(/[\p{L}\p{N}]+/gu)
-  const flags = caseSensitive ? "g" : "gi"
-  if (tokens && tokens.length > 1) {
-    // Longest first so "authentication" wins over "auth" when both appear as tokens.
-    const uniq = [...new Set(tokens)].sort((a, b) => b.length - a.length)
-    return new RegExp(uniq.map(escapeLiteral).join("|"), flags)
-  }
-  return new RegExp(escapeLiteral(query), flags)
-}
+// Grep-confirm is PRECISION on the exact literal, including multi-word phrases and
+// hyphenated needles. FTS may nominate on token overlap ("alpha" + "omega" in any order),
+// but a confirmed hit still requires the contiguous query string — otherwise soft OR
+// would report false matches and double-count hyphen-split tokens ("a-b-c" → a|b|c).
+// Multi-word empty results steer the caller toward a single distinctive keyword instead.
+export const searchMatcher = (query: string, caseSensitive: boolean): RegExp =>
+  new RegExp(escapeLiteral(query), caseSensitive ? "g" : "gi")
 
 // One line-oriented match hunk: the matched line plus its context, with line numbers.
 // A hit line carries `section` (the heading/region it falls under, when known) so a hit

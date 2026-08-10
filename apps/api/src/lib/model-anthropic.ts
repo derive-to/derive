@@ -116,6 +116,12 @@ const authHeaders = (c: AnthropicCredential): Record<string, string | undefined>
       }
     : {}
 
+/** The Messages API origin this lane always hits. Pinned rather than inherited from
+ *  `ANTHROPIC_BASE_URL`: that env is the Claude Code CLI's local proxy escape hatch, and a
+ *  developer laptop with it set would otherwise bill a WORKSPACE plan against 127.0.0.1 — the
+ *  credential path below is real customer money and must reach Anthropic, not a shell proxy. */
+const ANTHROPIC_API = "https://api.anthropic.com/v1"
+
 export const anthropicModel = (opts: AnthropicOptions): AgentLoopInput["callModel"] => {
   const model = opts.model ?? DEFAULT_ANTHROPIC_MODEL
   const provider = createAnthropic({
@@ -123,6 +129,7 @@ export const anthropicModel = (opts: AnthropicOptions): AgentLoopInput["callMode
     // reads ANTHROPIC_API_KEY from the environment when given none — which on a self-host box is
     // how one workspace's run quietly bills the operator's key. Always pass the connected value.
     apiKey: opts.credential.value,
+    baseURL: ANTHROPIC_API,
     headers: authHeaders(opts.credential) as Record<string, string>,
     ...(opts.fetchImpl ? { fetch: opts.fetchImpl } : {}),
   })

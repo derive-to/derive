@@ -4,19 +4,25 @@ import { searchMatcher, snippetAround, stripMarkup } from "../src/lib/search"
 // snippetAround windows a matching line so the highlighted term survives the palette's
 // single-line, LEFT-truncating render — the match must land near the left edge.
 describe("searchMatcher", () => {
-  it("matches a multi-word query by OR over alnum tokens, longest first", () => {
+  it("matches the full query literally, including multi-word phrases", () => {
     const re = searchMatcher("alpha beta", false)
-    expect("the alpha arrives".match(re)?.[0]).toBe("alpha")
-    expect("only beta here".match(re)?.[0]).toBe("beta")
-    // Longer tokens win the alternation order so "launchpad" prefers "launchpad" over "launch".
-    const longFirst = searchMatcher("launch launchpad", false)
-    expect("see the launchpad now".match(longFirst)?.[0]).toBe("launchpad")
+    expect(re.test("the alpha beta arrives")).toBe(true)
+    // Token overlap alone is not enough — that is FTS recall; grep stays precise.
+    expect(re.test("the alpha arrives")).toBe(false)
+    expect(re.test("only beta here")).toBe(false)
   })
 
-  it("keeps a one-token query as a full-literal match", () => {
-    const re = searchMatcher("kestrel", false)
-    expect(re.test("the kestrel review")).toBe(true)
-    expect(re.test("kest")).toBe(false)
+  it("keeps hyphenated needles whole (does not OR the parts)", () => {
+    const re = searchMatcher("visible-rest-needle-1", false)
+    expect(re.test("the visible-rest-needle-1 is here")).toBe(true)
+    expect(re.test("visible rest needle 1")).toBe(false)
+    expect(re.test("just visible and needle")).toBe(false)
+  })
+
+  it("escapes metacharacters so pasted literals stay safe", () => {
+    const re = searchMatcher("a.b()", false)
+    expect(re.test("call a.b() now")).toBe(true)
+    expect(re.test("call axb) now")).toBe(false)
   })
 })
 
