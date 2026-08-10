@@ -24,6 +24,7 @@ import { CHROMELESS_EXACT, CHROMELESS_PREFIX, isChromelessPath } from "../lib/ch
 import { cacheRestored } from "../lib/persist"
 import { LIBRARY_PAGE } from "../lib/queries"
 import { queryClient } from "../lib/query-client"
+import { raceTimeout } from "../lib/race-timeout"
 import { STORAGE_KEYS } from "../lib/storage-keys"
 import { reportWebVitals } from "../lib/vitals"
 import { DEFAULT_SORT } from "../pages/library/sort"
@@ -94,8 +95,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   // Gate ALL route loading on the IndexedDB cache restore, so a loader's ensureQueryData reads
   // the persisted data instead of fetching cold before it lands — the ordering that lets a
   // reload paint from cache like a nav. Resolved-instant after the first boot; never rejects.
+  // Bound the wait: a wedged idb-keyval get() never settles (Chrome profile-level hang) and
+  // would otherwise block every route forever across reloads. Cold boot is correct; cache is
+  // an optimization. Late restore after timeout can't clobber fresher query state — the
+  // persister only hydrates once up front and then subscribes for future writes.
   beforeLoad: async () => {
-    await cacheRestored
+    await raceTimeout(cacheRestored, 3_000, undefined, "cache-restore-timeout")
   },
   head: () => ({
     meta: [
