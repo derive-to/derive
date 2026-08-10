@@ -33,6 +33,7 @@ export function EditBar({
   canRedo = false,
   canFormat = false,
   allowElementEdits = false,
+  staleNotice,
   onUndo,
   onRedo,
   onFormat,
@@ -51,6 +52,8 @@ export function EditBar({
   canFormat?: boolean
   /** HTML/deck sources can persist resize operations; rendered Markdown cannot. */
   allowElementEdits?: boolean
+  /** Concurrent publish while editing — sticky for the whole remaining session. */
+  staleNotice?: string | null
   onUndo: () => void
   onRedo: () => void
   /** A link needs a URL; the bar asks for it (below) before it sends one. */
@@ -76,162 +79,173 @@ export function EditBar({
   return (
     // role=status + aria-live: entering the mode unmounts the Edit button the user
     // just pressed, so focus falls to body and a screen reader would otherwise get
-    // no signal at all that the document became editable.
+    // no signal at all that the document became editable. The concurrent-publish
+    // chip rides under the tools so it stays visible for the whole remaining edit.
     <div
       data-testid="inline-edit-bar"
       role="status"
       aria-live="polite"
-      className="flex shrink-0 items-center gap-2 border-border border-b bg-accent/40 py-1.5 pr-2 pl-4"
+      className="flex shrink-0 flex-col border-border border-b bg-accent/40"
     >
-      <Icon name="pencil" size={14} className="shrink-0 text-muted-foreground" />
-      {/* The word is the mode's name; it drops on a phone, where the pencil and the
+      <div className="flex items-center gap-2 py-1.5 pr-2 pl-4">
+        <Icon name="pencil" size={14} className="shrink-0 text-muted-foreground" />
+        {/* The word is the mode's name; it drops on a phone, where the pencil and the
           live controls already say what this is and every px of width is spoken for. */}
-      <span className="hidden font-medium text-foreground text-xs sm:inline">Editing</span>
+        <span className="hidden font-medium text-foreground text-xs sm:inline">Editing</span>
 
-      {/* History, then formatting: two groups, held apart by a hairline rather than
+        {/* History, then formatting: two groups, held apart by a hairline rather than
           gaps alone, because they answer different questions. */}
-      <div className="flex shrink-0 items-center gap-0.5">
-        <ToolButton
-          testId="inline-edit-undo"
-          icon="undo"
-          label="Undo"
-          chord="⌘Z"
-          size={toolSize}
-          disabled={!canUndo || saving}
-          onClick={onUndo}
-        />
-        <ToolButton
-          testId="inline-edit-redo"
-          icon="redo"
-          label="Redo"
-          chord="⇧⌘Z"
-          size={toolSize}
-          disabled={!canRedo || saving}
-          onClick={onRedo}
-        />
-        <span aria-hidden className="mx-1 h-4 w-px bg-border" />
-        <ToolButton
-          testId="inline-edit-bold"
-          icon="bold"
-          label="Bold"
-          chord="⌘B"
-          size={toolSize}
-          disabled={!canFormat || saving}
-          onClick={() => onFormat("b")}
-        />
-        <ToolButton
-          testId="inline-edit-italic"
-          icon="italic"
-          label="Italic"
-          chord="⌘I"
-          size={toolSize}
-          disabled={!canFormat || saving}
-          onClick={() => onFormat("i")}
-        />
-        <ToolButton
-          testId="inline-edit-link"
-          icon="link"
-          label="Link"
-          chord="⌘K"
-          size={toolSize}
-          disabled={(!canFormat && href === null) || saving}
-          onClick={() => setHref("")}
-        />
-      </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <ToolButton
+            testId="inline-edit-undo"
+            icon="undo"
+            label="Undo"
+            chord="⌘Z"
+            size={toolSize}
+            disabled={!canUndo || saving}
+            onClick={onUndo}
+          />
+          <ToolButton
+            testId="inline-edit-redo"
+            icon="redo"
+            label="Redo"
+            chord="⇧⌘Z"
+            size={toolSize}
+            disabled={!canRedo || saving}
+            onClick={onRedo}
+          />
+          <span aria-hidden className="mx-1 h-4 w-px bg-border" />
+          <ToolButton
+            testId="inline-edit-bold"
+            icon="bold"
+            label="Bold"
+            chord="⌘B"
+            size={toolSize}
+            disabled={!canFormat || saving}
+            onClick={() => onFormat("b")}
+          />
+          <ToolButton
+            testId="inline-edit-italic"
+            icon="italic"
+            label="Italic"
+            chord="⌘I"
+            size={toolSize}
+            disabled={!canFormat || saving}
+            onClick={() => onFormat("i")}
+          />
+          <ToolButton
+            testId="inline-edit-link"
+            icon="link"
+            label="Link"
+            chord="⌘K"
+            size={toolSize}
+            disabled={(!canFormat && href === null) || saving}
+            onClick={() => setHref("")}
+          />
+        </div>
 
-      {/* Asking for the URL takes the status line's place: one line, one question,
+        {/* Asking for the URL takes the status line's place: one line, one question,
           gone the moment it's answered. Enter applies it, Escape drops it. */}
-      {href !== null && (
-        <input
-          // biome-ignore lint/a11y/noAutofocus: the field IS the question the button just asked.
-          autoFocus
-          aria-label="Link to"
-          data-testid="inline-edit-link-input"
-          placeholder="Link to…"
-          className="min-w-0 flex-1 rounded-sm bg-transparent px-1 text-xs outline-none ring-1 ring-border focus:ring-ring"
-          value={href}
-          onChange={(e) => setHref(e.target.value)}
-          onBlur={commitLink}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault()
-              commitLink()
-            } else if (e.key === "Escape") {
-              e.preventDefault()
-              setHref(null)
-            }
-            e.stopPropagation()
-          }}
-        />
-      )}
-
-      {/* The status line. It yields first under width pressure — the controls and the
-          way to save matter more than the sentence describing them. */}
-      <span
-        className={cn(
-          "hidden min-w-0 truncate text-2xs text-muted-foreground md:inline",
-          href !== null && "md:hidden",
+        {href !== null && (
+          <input
+            // biome-ignore lint/a11y/noAutofocus: the field IS the question the button just asked.
+            autoFocus
+            aria-label="Link to"
+            data-testid="inline-edit-link-input"
+            placeholder="Link to…"
+            className="min-w-0 flex-1 rounded-sm bg-transparent px-1 text-xs outline-none ring-1 ring-border focus:ring-ring"
+            value={href}
+            onChange={(e) => setHref(e.target.value)}
+            onBlur={commitLink}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                commitLink()
+              } else if (e.key === "Escape") {
+                e.preventDefault()
+                setHref(null)
+              }
+              e.stopPropagation()
+            }}
+          />
         )}
-      >
-        {dirty === 0
-          ? allowElementEdits
-            ? touch
-              ? "tap text to edit; tap an image to resize or replace it"
-              : "click text to edit; drag a media or box corner to resize"
-            : touch
-              ? "tap text to edit; select an image to replace it"
-              : "click text to edit; select an image to replace it"
-          : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
-      </span>
-      {/* …and on a phone the count still has to be visible, so it appears alone. */}
-      {dirty > 0 && (
-        <span className="shrink-0 text-2xs text-muted-foreground tabular-nums md:hidden">
-          {dirty}
-        </span>
-      )}
 
-      <div className="ml-auto flex shrink-0 items-center gap-1">
-        {dirty > 0 ? (
-          <>
+        {/* The status line. It yields first under width pressure — the controls and the
+          way to save matter more than the sentence describing them. */}
+        <span
+          className={cn(
+            "hidden min-w-0 truncate text-2xs text-muted-foreground md:inline",
+            href !== null && "md:hidden",
+          )}
+        >
+          {dirty === 0
+            ? allowElementEdits
+              ? touch
+                ? "tap text to edit; tap an image to resize or replace it"
+                : "click text to edit; drag a media or box corner to resize"
+              : touch
+                ? "tap text to edit; select an image to replace it"
+                : "click text to edit; select an image to replace it"
+            : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
+        </span>
+        {/* …and on a phone the count still has to be visible, so it appears alone. */}
+        {dirty > 0 && (
+          <span className="shrink-0 text-2xs text-muted-foreground tabular-nums md:hidden">
+            {dirty}
+          </span>
+        )}
+
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {dirty > 0 ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                data-testid="inline-edit-discard"
+                onClick={onDiscard}
+                disabled={saving}
+                className={hit}
+              >
+                Discard
+              </Button>
+              <Button
+                variant="default"
+                size="sm"
+                data-testid="inline-edit-save"
+                onClick={onSave}
+                loading={saving}
+                className={hit}
+              >
+                {canPublish ? "Save" : "Suggest"}
+                <Kbd aria-hidden className="max-sm:hidden">
+                  ⌘S
+                </Kbd>
+              </Button>
+            </>
+          ) : (
             <Button
               variant="ghost"
               size="sm"
-              data-testid="inline-edit-discard"
-              onClick={onDiscard}
-              disabled={saving}
+              data-testid="inline-edit-done"
+              onClick={onDone}
               className={hit}
             >
-              Discard
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              data-testid="inline-edit-save"
-              onClick={onSave}
-              loading={saving}
-              className={hit}
-            >
-              {canPublish ? "Save" : "Suggest"}
+              Done
               <Kbd aria-hidden className="max-sm:hidden">
-                ⌘S
+                Esc
               </Kbd>
             </Button>
-          </>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            data-testid="inline-edit-done"
-            onClick={onDone}
-            className={hit}
-          >
-            Done
-            <Kbd aria-hidden className="max-sm:hidden">
-              Esc
-            </Kbd>
-          </Button>
-        )}
+          )}
+        </div>
       </div>
+      {staleNotice && (
+        <div
+          data-testid="stale-edit-notice"
+          className="border-warning/25 border-t bg-warning/10 px-4 py-1 text-2xs text-warning"
+        >
+          {staleNotice}
+        </div>
+      )}
     </div>
   )
 }

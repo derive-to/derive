@@ -37,6 +37,7 @@ export function SourceEditor({
   onTitle,
   placeholder,
   publishing,
+  staleNotice,
 }: {
   canPublish: boolean
   title: string
@@ -58,6 +59,8 @@ export function SourceEditor({
   // True while the parent's publish/propose mutation is in flight — disables the toolbar
   // buttons and shows a spinner, so a double-click can't duplicate a version.
   publishing?: boolean
+  /** Concurrent publish while editing — sticky for the whole remaining session. */
+  staleNotice?: string | null
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -206,6 +209,14 @@ export function SourceEditor({
           )}
         </span>
       </div>
+      {staleNotice && (
+        <div
+          data-testid="stale-edit-notice"
+          className="border-b border-warning/25 bg-warning/10 px-4 py-1.5 text-2xs text-warning"
+        >
+          {staleNotice}
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <div className={cn("min-h-0 flex-1 flex-col md:flex", pane === "edit" ? "flex" : "hidden")}>

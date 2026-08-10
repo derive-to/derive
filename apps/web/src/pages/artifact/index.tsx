@@ -48,6 +48,7 @@ import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
 import { ReviewCard } from "./review-card"
 import { SourceEditor } from "./source-editor"
+import { clearStaleEdit, noteStalePublish, type StaleEditState, staleEditCopy } from "./stale-edit"
 import { type ComposerState, parseAnchor } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
@@ -184,6 +185,8 @@ export function Artifact() {
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
   const [editing, setEditing] = useState(false)
+  // Concurrent publish while mid-edit — sticky chip until save/exit (toast alone is too easy to miss).
+  const [staleVersion, setStaleVersion] = useState<StaleEditState>(null)
   // Focus/hero mode — strip the workbench chrome to just the matted render (Esc exits).
   const [focus, setFocus] = useState(false)
   useEffect(() => {
@@ -295,11 +298,11 @@ export function Artifact() {
 
   // A version published while we're LOOKING refetches (the unpinned render swaps
   // in place) and gets a cue, so the repaint reads as an update, not a glitch:
-  // a quiet toast normally, a WARNING while editing (this edit started from the
-  // old version — publishing it replaces the newer one). Pinned views (@vN) get
-  // neither: their version bar already carries "you're on an old version", and the
-  // refetch keeps it truthful. Read through refs so the SSE stream doesn't
-  // resubscribe every time the user opens the editor.
+  // a quiet toast while reading; a sticky chip while either edit surface is open
+  // (the document under the edit moved — save re-checks / publish replaces).
+  // Pinned views (@vN) get neither: their version bar already carries "you're on
+  // an old version", and the refetch keeps it truthful. Read through refs so the
+  // SSE stream doesn't resubscribe every time the user opens the editor.
   const editingRef = useRef(editing)
   editingRef.current = editing
   // Same read-through-a-ref pattern for INLINE editing (set after the hook below):
@@ -329,22 +332,16 @@ export function Artifact() {
     (n?: number) => {
       load()
       if (pinnedRef.current !== undefined) return
-      const v = n !== undefined ? `v${n}` : "A new version"
-      if (inlineEditRef.current.active) {
-        toast.warning(`${v} was just published. Saving will re-check your edits against it.`, {
-          id: `stale-edit-${shortId}`,
-          duration: 8000,
-        })
-      } else if (editingRef.current) {
-        toast.warning(`${v} was just published — publishing this edit will replace it.`, {
-          id: `stale-edit-${shortId}`,
-          duration: 8000,
-        })
-      } else {
-        toast(`Updated to ${v === "A new version" ? "the newest version" : v}.`, {
-          id: `live-version-${shortId}`,
-        })
+      const editingNow = inlineEditRef.current.active || editingRef.current
+      if (editingNow) {
+        // Sticky chip for the whole remaining edit — the toast alone was easy to miss.
+        setStaleVersion((prev) => noteStalePublish(prev, true, n))
+        return
       }
+      const v = n !== undefined ? `v${n}` : "A new version"
+      toast(`Updated to ${v === "A new version" ? "the newest version" : v}.`, {
+        id: `live-version-${shortId}`,
+      })
     },
     [load, shortId],
   )
@@ -602,6 +599,12 @@ export function Artifact() {
     save: inlineEdit.save,
     start: inlineEdit.start,
   }
+
+  // Drop the concurrent-publish latch the moment neither edit surface is open —
+  // covers Save / Done / Discard / Cancel / Escape / nav-confirm / frame-gone.
+  useEffect(() => {
+    if (!editing && !inlineEdit.active) setStaleVersion(clearStaleEdit())
+  }, [editing, inlineEdit.active])
 
   // Inspect is an edit-mode companion, never a passive third destination. The existing
   // Edit entry point is the only way in; when it activates an editable HTML artifact,
@@ -1118,6 +1121,7 @@ export function Artifact() {
                 canRedo={inlineEdit.tools.canRedo}
                 canFormat={inlineEdit.tools.canFormat}
                 allowElementEdits={inlineEdit.allowElementEdits}
+                staleNotice={staleEditCopy(staleVersion, "inline")}
                 onUndo={inlineEdit.undo}
                 onRedo={inlineEdit.redo}
                 onFormat={inlineEdit.format}
@@ -1138,6 +1142,7 @@ export function Artifact() {
                 onProposeMsg={setProposeMsg}
                 onMessage={setMessage}
                 onSrc={setSrc}
+                staleNotice={staleEditCopy(staleVersion, "source")}
                 onCancel={() => setEditing(false)}
                 onPublish={publishEdit}
                 onPropose={proposeEdit}
