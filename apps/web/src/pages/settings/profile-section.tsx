@@ -67,11 +67,9 @@ export function ProfileSection() {
         <FormField
           label="Username"
           className="min-w-60 flex-1"
-          hint={
-            <>
-              <span className="font-medium text-foreground">{me.email}</span> stays private.
-            </>
-          }
+          // The address is a fact, not the emphasis: bolding it made the hint
+          // louder than the field label above it.
+          hint={`${me.email} stays private.`}
         >
           <UsernameForm
             initial={me.username ?? ""}
@@ -93,7 +91,7 @@ export function ProfileSection() {
         <SettingRow
           htmlFor="account-discoverable"
           label="Public profile"
-          description={`On by default. Your profile at @${me.username ?? "handle"} — name, role, photo, and public work — is visible to anyone, and you appear in people search. Turn it off and only people who share a workspace with you can see it.`}
+          description={`Anyone can see your name, role, photo, and public work at @${me.username ?? "handle"}, and you turn up in people search. Off means only workspace-mates find you.`}
         >
           <Switch
             id="account-discoverable"

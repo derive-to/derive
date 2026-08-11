@@ -4,11 +4,11 @@ import { Bot } from "lucide-react"
 import { useState } from "react"
 import { type Agent, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { EmptyState } from "@/components/shared/empty-state"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SecretReveal } from "@/components/shared/secret-reveal"
 import { SettingRow } from "@/components/shared/setting-row"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -49,7 +49,9 @@ export function AgentsSection({ meId }: { meId: string }) {
       ) : isError ? (
         <LoadError title="Couldn’t load agents" testId="agents-retry" onRetry={() => refetch()} />
       ) : !agents || agents.filter((a) => !a.managed).length === 0 ? (
-        <EmptyState>No agents yet. Add one above.</EmptyState>
+        <SettingsEmpty>
+          No agents yet. A registered agent can be @mentioned in any thread.
+        </SettingsEmpty>
       ) : (
         <SettingsGroup>
           {agents

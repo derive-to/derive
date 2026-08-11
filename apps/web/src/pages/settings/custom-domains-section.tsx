@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge, type StatusTone } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
@@ -44,6 +45,8 @@ export function CustomDomainsSection() {
   if (!state?.enabled)
     return (
       <SettingsSection title="Domains" description={description}>
+        {/* Not a list empty — this IS the section when the server has no custom-domain
+            support, so it keeps the page-level treatment. */}
         <EmptyState>Custom domains aren't enabled on this server.</EmptyState>
       </SettingsSection>
     )
@@ -53,7 +56,9 @@ export function CustomDomainsSection() {
       <NewDomain cnameTarget={state.cname_target} onCreated={reload} />
 
       {state.domains.length === 0 ? (
-        <EmptyState>No custom domains yet. Add one above.</EmptyState>
+        <SettingsEmpty>
+          No custom domains yet — shared pages use the default derive.to address.
+        </SettingsEmpty>
       ) : (
         <SettingsGroup>
           {state.domains.map((d) => (

@@ -356,13 +356,25 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
           )}
         </>
       ) : (
+        // Both scopes render this row, so its label can't be a generic "Get
+        // started" and its button can't be a second filled primary — stacked,
+        // they read as the same block pasted twice. The scope's own group header
+        // says which one this is; the row says what it would do.
         <SettingRow
-          label="Get started"
-          description="Upload files for how your work should look and read, write your conventions from scratch, or use an existing collection."
+          label="Nothing set up yet"
+          description="Upload files, write your conventions, or point at an existing collection."
         >
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" data-testid={`brandprint-create-${scope}`} disabled={disabled}>
+              {/* Outline in both scopes: whichever one is empty may be the only
+                  create row on the page, so keying the fill to scope would
+                  de-emphasize the page's single action half the time. */}
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid={`brandprint-create-${scope}`}
+                disabled={disabled}
+              >
                 Create Brandprint
               </Button>
             </DialogTrigger>

@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
-import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import {
   Select,
@@ -43,7 +43,11 @@ export function SlackSubscriptionsSection() {
           onRetry={() => refetch()}
         />
       ) : !data || data.subscriptions.length === 0 ? (
-        <EmptyState>No channels subscribed yet. Add one above.</EmptyState>
+        // Padding-neutral wrapper: as the group's last child its own pb would be
+        // stripped, hugging the sentence against the group's bottom edge.
+        <div>
+          <SettingsEmpty>No channels subscribed yet — nothing is posted to Slack.</SettingsEmpty>
+        </div>
       ) : (
         data.subscriptions.map((s) => (
           <SlackSubscriptionRow

@@ -208,8 +208,8 @@ export function GeneralSection() {
         <>
           <SettingsGroup title="Danger zone">
             <SettingRow
-              label={<span className="font-medium text-destructive">Delete this workspace</span>}
-              description="Permanently delete this workspace. It must be empty (no artifacts), and this can't be undone."
+              label="Delete this workspace"
+              description="Permanently deletes this workspace. It must be empty (no artifacts), and this can't be undone."
             >
               <Button
                 data-testid="workspace-delete"
