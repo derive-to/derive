@@ -92,10 +92,16 @@ export function GithubSection() {
         <SetUpApp />
       )}
 
-      {/* Rendered only once status is known. */}
+      {/* Rendered only once status is known. Before the App exists, the setup
+          card above is the whole story — a "no repos yet" line under it would
+          point at a step that isn't available yet. */}
       {status !== null &&
         (status.sources.length === 0 ? (
-          <EmptyState>No repos connected yet. Add one above.</EmptyState>
+          appConfigured && (
+            <EmptyState>
+              No repos mirrored yet — install the app on a repo above, then pick it here.
+            </EmptyState>
+          )
         ) : (
           <SettingsGroup title="Mirrored repositories">
             {status.sources.map((s) => (

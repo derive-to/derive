@@ -40,14 +40,7 @@ export function AgentsSection({ meId }: { meId: string }) {
   return (
     <SettingsSection
       title="Agents"
-      description={
-        <>
-          Register an agent so people can <code className="font-mono">@mention</code> it in a
-          thread. It gets a scoped token and acts as a commenter — it can propose changes for
-          review, but a human still approves. The agent reads its mentions from{" "}
-          <code className="font-mono">GET /v1/agent/inbox</code> with its token.
-        </>
-      }
+      description="Register an agent so people can @mention it in a thread. It proposes changes; a human approves."
     >
       <NewAgent onCreated={reload} />
 
@@ -77,8 +70,8 @@ export function AgentsSection({ meId }: { meId: string }) {
           plan), then the agent OWNER's plan (only for agents lent above), then the shared
           workspace pool. The personal plan lives under You → Model plans and is linked
           here; only the workspace pool is managed in place. */}
-      <div className="flex flex-col gap-5">
-        <SettingsGroup title="Your plan" description="Managed under You → Model plans.">
+      <div className="flex flex-col gap-8">
+        <SettingsGroup>
           <SettingRow
             label="Your plan"
             description="Runs you start bill your own connected plan first."
@@ -92,8 +85,8 @@ export function AgentsSection({ meId }: { meId: string }) {
         </SettingsGroup>
 
         <SettingsGroup
-          title="Workspace model plan pool"
-          description="A shared plan billed when a run's initiator has no plan of their own and the agent isn't lent its owner's. Optional — leave it empty to require everyone to bring their own."
+          title="Workspace plan pool"
+          description="Optional. A shared plan for runs whose starter has no plan of their own."
         >
           <div>
             <ModelPlanManager scope="pool" />
@@ -136,7 +129,7 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
           className="min-w-45 flex-1"
         />
         <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-          <SelectTrigger data-testid="agent-role" aria-label="Agent role" className="w-37.5">
+          <SelectTrigger data-testid="agent-role" aria-label="Agent role" className="w-46">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
