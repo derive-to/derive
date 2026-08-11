@@ -224,56 +224,21 @@ html.light .wordmark .wm-light{display:block}
   margin-top:30px;display:flex;flex-direction:column;align-items:center;gap:0;
 }
 
-/* ── the form's provenance: one line that reads like a resolved comment ── */
-.wl-theatre{position:relative;display:flex;flex-direction:column;align-items:center}
-.wl-story{
-  margin-top:14px;display:flex;align-items:center;justify-content:center;gap:9px;flex-wrap:wrap;
-  font-size:12.5px;color:var(--muted);max-width:60ch;
+/* ── the primary: hand the setup prompt to whatever agent you run.
+      Value first — the agent publishes a first page before any signup;
+      the email form below is the fallback for the agentless. ── */
+.hero-cta{height:50px;padding:0 26px;font-size:15.5px;cursor:pointer}
+.hero-cta svg{flex:none;opacity:.75}
+.hero-cta.copied{background:var(--primary-hover)}
+.hero-cta-note{
+  margin-top:14px;font-size:13.5px;color:var(--muted);max-width:56ch;text-align:center;line-height:1.6;text-wrap:balance;
 }
-.wl-story .chip{
-  flex:none;width:17px;height:17px;border-radius:50%;
-  background:color-mix(in srgb,var(--gold) 16%,transparent);
-  border:1px solid color-mix(in srgb,var(--gold) 35%,transparent);
-  display:inline-flex;align-items:center;justify-content:center;
-  font-family:var(--mono);font-size:8.5px;color:var(--gold);
-}
-.wl-story .q{font-style:italic}
-.wl-story .res{
-  font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--success);
-  display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
-}
-.wl-story .res .vdot2{width:5px;height:5px;border-radius:50%;background:var(--success)}
-.wl-story .res.bump .vdot2{animation:vbump .5s ease-out}
-@keyframes vbump{0%{transform:scale(1)}45%{transform:scale(2.1)}100%{transform:scale(1)}}
-.wl-meta{
-  margin-top:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);
-}
-.wl-meta:empty{display:none}
-/* ── the other door: hand the setup prompt to whatever agent you run ── */
-.hero-agent{
-  margin-top:18px;display:inline-flex;align-items:center;gap:8px;
-  font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;color:var(--muted);
-  background:none;border:0;padding:4px 2px;cursor:pointer;transition:color .15s ease;
-}
-.hero-agent:hover,.hero-agent:focus-visible{color:var(--fg)}
-.hero-agent svg{flex:none;opacity:.7}
-.hero-agent.copied{color:var(--success)}
 .hero-eyebrow{margin-bottom:0;color:var(--muted);font-size:14px;letter-spacing:.14em}
 /* the tagline in gradient ink: lit at the cap line, settling toward the baseline */
 .grad-ink{
   background-image:linear-gradient(178deg,var(--ink-top) 6%,var(--fg) 44%,var(--ink-bot) 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent;
 }
-/* presence — you show up, like opening any Derive artifact */
-.wl-presence{
-  margin-top:10px;display:inline-flex;align-items:center;gap:8px;
-  font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--faint);
-  opacity:0;transform:translateY(3px);transition:opacity .35s ease,transform .35s ease;
-}
-.wl-presence.show{opacity:1;transform:none}
-.wl-presence .pd{width:6px;height:6px;border-radius:50%}
-.wl-presence .pd.you{background:var(--fg)}
-.wl-presence .pd.rob{background:var(--gold)}
 .wl-note-slot{min-height:0;transition:min-height .3s ease}
 .replay{
   font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--faint);
@@ -697,7 +662,6 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   .derivation{margin-top:20px}
   .hero .sub{margin-top:26px}
   .hero .cta-row{margin-top:26px;align-self:stretch}
-  .wl-theatre{align-self:stretch}
   .waitlist{width:100%;justify-content:center}
   .waitlist input{font-size:16px} /* <16px makes iOS zoom the page on focus */
   .waitlist-done{height:auto;min-height:52px;padding:12px 16px}
@@ -790,32 +754,11 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
     <h1 class="derivation grad-ink">The open source home for&nbsp;AI&nbsp;artifacts.</h1>
     <p class="sub"><strong>You've never made more, and never kept less.</strong> Derive is your team's library for the work you and your agents make: publish it, share it anywhere with a link, and revise it together until it's right. One URL, every version, yours.</p>
     <div class="cta-row">
-      <div class="wl-theatre" id="wlTheatre">
-        <div class="waitlist" id="join">
-          <form data-waitlist action="/v1/beta/signup" method="post" novalidate>
-            <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
-            <button class="btn btn-primary" type="submit">Get beta access</button>
-          </form>
-          <div class="waitlist-done" role="status">
-            <span class="tick">✓</span><span>Check your email. Your access link is on the way.</span>
-          </div>
-        </div>
-        <div class="wl-presence" id="wlPresence" aria-hidden="true">
-          <span class="pd you"></span>you
-          <span class="pd rob"></span>Maeva
-          <span>· here now</span>
-        </div>
-        <div class="wl-story">
-          <span class="chip" aria-hidden="true">M</span>
-          <span class="q">"Add a beta signup right here?"</span>
-          <span class="res" id="wlRes"><span class="vdot2" aria-hidden="true"></span><span id="wlResText">RESOLVED IN V12</span></span>
-        </div>
-        <div class="wl-meta" id="wlMeta"></div>
-      </div>
-      <button class="hero-agent" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — paste it into your agent">
-        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M9.5 4.5v-2a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 2.5V8A1.5 1.5 0 0 0 3 9.5h1.5" stroke="currentColor" stroke-width="1.3"/></svg>
+      <button class="btn btn-primary hero-cta" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — now paste it into your agent">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M9.5 4.5v-2a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 2.5V8A1.5 1.5 0 0 0 3 9.5h1.5" stroke="currentColor" stroke-width="1.3"/></svg>
         <span class="copy-label">Copy instructions for my agent</span>
       </button>
+      <p class="hero-cta-note">Get a live link for your artifacts in the next 30 seconds.</p>
     </div>
   </div>
 
@@ -1163,16 +1106,15 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
     <div class="tbody" id="termBody"><span class="cursor" id="termCursor"></span></div>
   </div>
   <p class="cast reveal"><span><b>publish</b> save a revision</span><span><b>catch_up</b> what changed + open feedback</span><span><b>comment</b> reply or resolve</span><span><b>read</b> any artifact, any version</span></p>
-  <script type="text/plain" id="agentPrompt">I'd like you to set up Derive: the home for the work my agents and I make — published pages with versions and review.
+  <script type="text/plain" id="agentPrompt">I'd like you to set up Derive — where the work we make gets published, reviewed, and kept.
 
 Install the skill if I have npm: npx skills add derive-to/derive --skill derive
+Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://derive.to/mcp).
 
-Otherwise connect over MCP: the server is https://derive.to/mcp (Claude Code: claude mcp add --transport http derive https://derive.to/mcp)
-
-After setup, review https://derive.to/skill.md and ask me what I'd like to publish first.</script>
+Then pick something real we've worked on recently — a plan, a report, a designed page — and publish it. If I'm not connected to Derive, use the anonymous draft flow: no account needed, and it returns a live URL plus a claim link. Send me both so I can see it and claim it.</script>
   <div class="hk-lead reveal">
     <button class="btn btn-primary" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — paste it into your agent">Copy instructions for my agent</button>
-    <span class="hk-leadnote">one paste into any agent — it sets itself up, then asks what you'd like to publish</span>
+    <span class="hk-leadnote">one paste into any agent — it sets itself up and publishes your first page</span>
   </div>
   <div class="hookup reveal">
     <button class="hk-row" type="button" data-copy="npx skills add derive-to/derive --skill derive" title="Copy">
@@ -1319,23 +1261,8 @@ document.querySelectorAll('[data-waitlist]').forEach(form => {
     }
     form.style.display = 'none';
     form.parentElement.querySelector('.waitlist-done').style.display = 'inline-flex';
-    /* in the hero, your signup lands like any other edit: a new version */
-    const theatre = form.closest('#wlTheatre');
-    if (theatre) {
-      const res = document.getElementById('wlRes');
-      document.getElementById('wlResText').textContent = 'RESOLVED IN V12';
-      document.getElementById('wlMeta').textContent = 'v13 · you joined · kept, like everything here.';
-      res.classList.remove('bump'); void res.offsetWidth; res.classList.add('bump');
-    }
   });
 });
-/* focus the hero form and you're present, like opening any artifact */
-(() => {
-  const heroInput = document.querySelector('#wlTheatre input[name=email]');
-  const presence = document.getElementById('wlPresence');
-  if (!heroInput || !presence) return;
-  heroInput.addEventListener('focus', () => presence.classList.add('show'), {once:true});
-})();
 
 /* reveal on scroll */
 const io = new IntersectionObserver(es => es.forEach(en => {

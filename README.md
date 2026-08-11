@@ -49,13 +49,12 @@ claude mcp add --transport http derive https://derive.to/mcp   # or connect over
 Or paste this into any agent and let it set itself up:
 
 ```text
-I'd like you to set up Derive: the home for the work my agents and I make — published pages with versions and review.
+I'd like you to set up Derive — where the work we make gets published, reviewed, and kept.
 
 Install the skill if I have npm: npx skills add derive-to/derive --skill derive
+Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://derive.to/mcp).
 
-Otherwise connect over MCP: the server is https://derive.to/mcp (Claude Code: claude mcp add --transport http derive https://derive.to/mcp)
-
-After setup, review https://derive.to/skill.md and ask me what I'd like to publish first.
+Then pick something real we've worked on recently — a plan, a report, a designed page — and publish it. If I'm not connected to Derive, use the anonymous draft flow: no account needed, and it returns a live URL plus a claim link. Send me both so I can see it and claim it.
 ```
 
 ## What is Derive

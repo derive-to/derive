@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, useNavigate } from "@tanstack/react-router"
+import { useEffect, useRef } from "react"
 import { ApiError, api } from "@/api"
 import { Logo } from "@/components/shared/logo"
 import { Spinner } from "@/components/shared/spinner"
@@ -36,6 +37,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 export function ClaimDraft() {
   useDocumentTitle("Claim draft")
   const { token } = route.useParams()
+  const { go } = route.useSearch()
   const { me, loading } = useAuth()
   const nav = useNavigate()
 
@@ -60,20 +62,33 @@ export function ClaimDraft() {
     // The claimed artifact lands in the library — reconcile the lists + rail counts.
     invalidate: [["artifacts"], ["summary"]],
     onSuccess: (r) => nav({ to: "/artifacts/$ref", params: { ref: r.short_id } }),
-    // A session that lapsed between load and click: finish sign-in, then return here.
+    // A session that lapsed between load and click: finish sign-in, then return
+    // here with ?go=1 so the claim completes without a second click.
     onError: (err) => {
       if (err instanceof ApiError && err.status === 401)
-        nav({ to: "/login", search: { return_to: `/claim/${token}` } })
+        nav({ to: "/login", search: { return_to: `/claim/${token}?go=1` } })
     },
   })
   const claim = () => {
-    // Not signed in → send them to sign in, returning here to finish.
+    // Not signed in: almost always a brand-new user holding their agent's claim
+    // link, so open auth in signup mode (the page has a sign-in toggle for the
+    // rest). ?go=1 rides return_to so the claim they just asked for finishes
+    // itself after auth.
     if (!me) {
-      nav({ to: "/login", search: { return_to: `/claim/${token}` } })
+      nav({ to: "/login", search: { signup: true, return_to: `/claim/${token}?go=1` } })
       return
     }
     claimMut.mutate()
   }
+
+  // Back from the auth hand-off: the user already clicked claim once — finish it.
+  const fired = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on (go, me, preview); claimMut is stable from useApiMutation
+  useEffect(() => {
+    if (!go || fired.current || !me || !preview) return
+    fired.current = true
+    claimMut.mutate()
+  }, [go, me, preview])
 
   if (isPending || loading)
     return (
@@ -147,7 +162,7 @@ export function ClaimDraft() {
           ? claimMut.isPending
             ? "Claiming…"
             : `Claim into ${workspace?.name ?? "your workspace"}`
-          : "Sign in to claim"}
+          : "Create an account to claim"}
       </Button>
     </Shell>
   )
