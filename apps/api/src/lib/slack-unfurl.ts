@@ -3,8 +3,16 @@
 // The whole design turns on one property of Slack's API: an unfurl is attached to the MESSAGE,
 // not to a viewer. `chat.unfurl` takes no `user` parameter, so whatever we render is seen by
 // everyone in the channel. The question is therefore never "may this viewer read it" but "may
-// this be broadcast" — which the connected app already answers everywhere else with
-// `artifact.listed !== "none"`, and which we answer the same way here.
+// this be broadcast" — and the field that answers it is ACCESS, not discovery: an artifact with
+// `workspace_access === "member"` is readable by every member of the workspace this Slack team
+// is connected to, so a channel in that workspace's own Slack is substantially its audience.
+// That includes the default "team draft" (workspace_access=member, link_role=none, listed=none),
+// which is the shape people paste most. `listed` is discovery-only and carries no access
+// (schema.ts), so it gates nothing here beyond the one case access can't cover: a
+// publicly-LISTED artifact is world-discoverable, so it broadcasts too. What stays locked is
+// an artifact granting the workspace nothing — a link-only draft or a doc shared with named
+// people — because every grant it has is personal to its holder, and a personal grant must
+// never unlock a broadcast.
 //
 // The one per-person surface Slack does offer is the sign-in prompt, which goes to the person
 // who POSTED the link. We use it for someone who hasn't linked their Derive account: without a
@@ -17,22 +25,24 @@ import {
   type UnfurlInfo,
   unfurlDescription,
 } from "@derive/core"
+import { type ArtifactStatus, artifactStatus } from "./artifact-status"
 import { context, mrkdwnLabel, section } from "./slack-cards"
 import { encodeProposalAction, SLACK_PROPOSAL_ACTION } from "./slack-comments"
 import { unfurlInfoFor } from "./unfurl-info"
 
-/** The card for an artifact the channel may see: title, one-line description, and — for an open
- *  proposal — the buttons to decide it.
+/** The card for an artifact the channel may see: title, one-line description, the screenshot
+ *  when one is ready, and — for an open proposal — the buttons to decide it.
  *
- *  Deliberately NO image, even though `UnfurlInfo` carries one and Derive's OG screenshot is the
- *  best-looking thing it has. Slack fetches an unfurl's image ANONYMOUSLY, and `/v1/og/:ref`
- *  answers an anonymous fetch by the artifact's link role: a workspace-listed artifact with no
- *  world link — the common shape for internal docs — returns the title-less LOCKED card. So the
- *  image would be a padlock placeholder on precisely the cards people paste most, next to a
- *  title we are already showing. A broken-looking card is worse than none. Revisit if the OG
- *  endpoint ever accepts a signed, short-lived token an unfurl could carry. */
+ *  `imageUrl` is the caller's decision, not `info.imageUrl` verbatim: Slack fetches an unfurl's
+ *  image ANONYMOUSLY, and `/v1/og/:ref` answers an anonymous fetch by the artifact's link role —
+ *  for anything short of world-readable it returns the title-less LOCKED card, a padlock
+ *  placeholder next to a title we are already showing. The caller therefore passes either a URL
+ *  it KNOWS answers anonymously with the rendered PNG (a signed OG token for a workspace doc,
+ *  the bare URL for a public one — see routes/slack.ts previewUrlFor), or null, and null means
+ *  no image at all. A broken-looking card is worse than none. */
 export const unfurlBlocks = (
   info: UnfurlInfo,
+  imageUrl: string | null,
   hasOpenProposal: boolean,
   artifactId: string,
   proposalId: string | null,
@@ -42,6 +52,15 @@ export const unfurlBlocks = (
       `*<${info.pageUrl}|${mrkdwnLabel(info.title)}>*\n${mrkdwnLabel(unfurlDescription(info), 120)}`,
     ),
   ]
+  // alt_text is required on an image block, and it is plain text, not mrkdwn — no escaping.
+  // Same phrasing as the Work Object thumbnail. The title is safe to use: only broadcast-safe
+  // artifacts reach this builder at all.
+  if (imageUrl)
+    blocks.push({
+      type: "image",
+      image_url: imageUrl,
+      alt_text: `Preview of ${info.title}`.slice(0, 200),
+    })
   // An open proposal turns the preview into somewhere you can act, the way Linear's issue
   // unfurls do. The clicker is re-authorized as their own linked account by the interactivity
   // handler, so showing the buttons to a channel is safe — an unauthorized click gets an
@@ -107,7 +126,18 @@ export type UnfurlDecision =
    *  the URL. The caller logs this. */
   | { kind: "skip"; why: string }
   | { kind: "auth" }
-  | { kind: "card"; url: string; blocks: unknown[]; artifact: ArtifactRecord; info: UnfurlInfo }
+  | {
+      kind: "card"
+      url: string
+      blocks: unknown[]
+      artifact: ArtifactRecord
+      info: UnfurlInfo
+      /** Resolved once here, carried so the Work Object builder doesn't re-read the same rows. */
+      status: ArtifactStatus
+      /** The image URL both card shapes share (block `image` and Work Object preview), or null
+       *  when there is nothing safe to promise — see UnfurlDeps.previewUrl. */
+      previewUrl: string | null
+    }
   | { kind: "locked"; url: string; blocks: unknown[]; artifact: ArtifactRecord }
 
 export interface UnfurlDeps {
@@ -121,6 +151,15 @@ export interface UnfurlDeps {
    *  role is personal to whoever holds the URL; an unfurl is a broadcast, so it must not be
    *  what unlocks the preview. (context.ts authorizeUserStanding) */
   canRead: (userId: string, artifact: ArtifactRecord) => Promise<boolean>
+  /** The screenshot URL a card may promise for this artifact, or null for none. Must be a URL
+   *  that answers an ANONYMOUS fetch with the rendered PNG — Slack fetches preview images with
+   *  no credential — which for a workspace doc means a signed OG token (routes/slack.ts
+   *  previewUrlFor, lib/og-token.ts). Absent means cards carry no image. */
+  previewUrl?: (
+    artifact: ArtifactRecord,
+    info: UnfurlInfo,
+    status: ArtifactStatus,
+  ) => Promise<string | null>
 }
 
 /** Resolve one shared URL to a decision.
@@ -131,8 +170,8 @@ export interface UnfurlDeps {
  *    not ours / gone    → skip, so a stray URL on our domain doesn't render an empty card
  *    another workspace  → skip (see UnfurlDeps.orgId)
  *    can't read it      → skip; they shouldn't confirm the existence of something they can't open
- *    listed === "none"  → locked card
- *    otherwise          → the full card
+ *    grants the workspace nothing and is unlisted → locked card
+ *    otherwise          → the full card (workspace-readable or listed; see the module header)
  */
 export const decideUnfurl = async (
   deps: UnfurlDeps,
@@ -157,8 +196,10 @@ export const decideUnfurl = async (
     return { kind: "skip", why: "sharer has no read standing on it" }
 
   // Build the locked card BEFORE unfurlInfoFor: it needs none of that, and the whole point is
-  // to touch as little of the artifact as possible.
-  if (artifact.listed === "none")
+  // to touch as little of the artifact as possible. Locked means the workspace gets no access
+  // AND it is unlisted — the module header carries the reasoning; a link role alone never
+  // counts toward a broadcast.
+  if (artifact.workspace_access === "none" && artifact.listed === "none")
     return {
       kind: "locked",
       url,
@@ -167,13 +208,17 @@ export const decideUnfurl = async (
     }
 
   const info = await unfurlInfoFor(deps.meta, deps.baseUrl, artifact)
+  const status = await artifactStatus(deps.meta, artifact)
+  const previewUrl = (await deps.previewUrl?.(artifact, info, status)) ?? null
   const open = await deps.meta.listProposals(artifact.id, { state: "open" })
   return {
     kind: "card",
     url,
-    blocks: unfurlBlocks(info, open.length > 0, artifact.id, open[0]?.id ?? null),
+    blocks: unfurlBlocks(info, previewUrl, open.length > 0, artifact.id, open[0]?.id ?? null),
     artifact,
     info,
+    status,
+    previewUrl,
   }
 }
 

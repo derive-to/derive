@@ -1343,14 +1343,19 @@ describe("slack link unfurls", () => {
   // Slack fetches preview images anonymously, so for anything short of world-readable the card
   // used to show /v1/og's title-less padlock — on precisely the docs people paste most. A
   // signed, version-pinned token (lib/og-token.ts) buys that one image without loosening the
-  // endpoint for anyone else. The line is drawn at `listed`: `workspace` means the org may see
-  // it and a channel in that org's own Slack is substantially that audience; `none` is what
-  // somebody chose when they meant private, and it must stay a padlock.
+  // endpoint for anyone else. The line is drawn at ACCESS: `workspace_access === "member"`
+  // means every member of the org may read it — the default team draft included — and a channel
+  // in that org's own Slack is substantially that audience. An artifact granting the workspace
+  // nothing is what somebody chose when they meant private, and it must stay a padlock.
   const unfurlEntity = async (
     name: string,
-    listed: "workspace" | "none" | "public",
+    access: {
+      listed: "workspace" | "none" | "public"
+      workspace_access?: "member" | "none"
+    },
     rendered = true,
   ) => {
+    const { listed, workspace_access = "member" } = access
     const { app, meta } = make(name)
     await meta.setSlackInstall({
       org_id: "default",
@@ -1376,12 +1381,22 @@ describe("slack link unfurls", () => {
       org_id: "default",
       slug: null,
       title: "Q4 roadmap",
-      workspace_access: "member",
+      workspace_access,
       link_role: listed === "public" ? "viewer" : "none",
       listed,
       kind: "file",
       spa: 0,
     })
+    // A doc granting the workspace nothing is readable only through an explicit share — give
+    // the sharer one, so the test exercises the broadcast gate rather than the read check
+    // (a sharer without standing skips long before any card is considered).
+    if (workspace_access === "none")
+      await meta.setArtifactMember({
+        id: newId("am"),
+        artifact_id: artifact.id,
+        user_id: owner.id,
+        role: "viewer",
+      })
     // `createArtifact` alone leaves current_version = 0 and no version row — a shape production
     // never has, because publishing makes v1. Give it one, then decide whether it has rendered:
     // renders are enqueued in the BACKGROUND after a publish, so the unrendered window is real
@@ -1423,23 +1438,46 @@ describe("slack link unfurls", () => {
     return { entity: ents?.[0] as Record<string, unknown> | undefined, artifact }
   }
 
-  it("carries a signed screenshot URL for a workspace-listed doc", async () => {
-    const { entity, artifact } = await unfurlEntity("slack-unfurl-preview-ws", "workspace")
-    const preview = (
+  const fullSizePreview = (entity: Record<string, unknown> | undefined) =>
+    (
       (entity?.entity_payload as { attributes?: Record<string, unknown> })?.attributes as {
         full_size_preview?: { preview_url?: string }
       }
     )?.full_size_preview
-    const url = new URL(preview?.preview_url ?? "")
+
+  it("carries a signed screenshot URL for a workspace-listed doc", async () => {
+    const { entity, artifact } = await unfurlEntity("slack-unfurl-preview-ws", {
+      listed: "workspace",
+    })
+    const url = new URL(fullSizePreview(entity)?.preview_url ?? "")
     expect(url.pathname).toContain(`/v1/og/${artifact.short_id}`)
     // The token is the whole mechanism — without it Slack's anonymous fetch gets the padlock.
     expect(url.searchParams.get("t")).toBeTruthy()
   })
 
-  it("carries NO screenshot for a doc somebody marked private", async () => {
-    // `listed: "none"` is answered by the locked card, which is title-less by construction —
-    // so there is nothing to mint a token for, and nothing that could be minted by mistake.
-    const { entity } = await unfurlEntity("slack-unfurl-preview-none", "none")
+  it("carries a signed screenshot URL for a team draft — access broadcasts, not listing", async () => {
+    // The default publish shape: workspace_access=member, listed=none. Every member of the
+    // workspace behind this Slack team may open it, so the card shows the real thing — title
+    // and tokened screenshot — exactly as a workspace-LISTED doc does. `listed` is discovery,
+    // not access, and must not decide a broadcast.
+    const { entity, artifact } = await unfurlEntity("slack-unfurl-preview-draft", {
+      listed: "none",
+      workspace_access: "member",
+    })
+    expect(JSON.stringify(entity)).toContain("Q4 roadmap")
+    const url = new URL(fullSizePreview(entity)?.preview_url ?? "")
+    expect(url.pathname).toContain(`/v1/og/${artifact.short_id}`)
+    expect(url.searchParams.get("t")).toBeTruthy()
+  })
+
+  it("carries NO screenshot for a doc somebody kept private", async () => {
+    // Grants the workspace nothing and is unlisted → the locked card, which is title-less by
+    // construction — so there is nothing to mint a token for, and nothing that could be minted
+    // by mistake.
+    const { entity } = await unfurlEntity("slack-unfurl-preview-none", {
+      listed: "none",
+      workspace_access: "none",
+    })
     expect(JSON.stringify(entity)).not.toContain("full_size_preview")
     expect(JSON.stringify(entity)).not.toContain("Q4 roadmap")
   })
@@ -1448,7 +1486,11 @@ describe("slack link unfurls", () => {
     // `chat.unfurl` accepts a preview_url without fetching it (verified against the API: ok:true,
     // no warning), so a card that promises image/png and serves the SVG fallback fails silently.
     // The same check therefore covers both visibilities rather than only the new one.
-    const { entity } = await unfurlEntity("slack-unfurl-preview-pub-pending", "public", false)
+    const { entity } = await unfurlEntity(
+      "slack-unfurl-preview-pub-pending",
+      { listed: "public" },
+      false,
+    )
     expect(JSON.stringify(entity)).not.toContain("full_size_preview")
   })
 
@@ -1457,18 +1499,18 @@ describe("slack link unfurls", () => {
     // anonymous fetch for an unrendered workspace doc with the TITLE-LESS padlock, so offering
     // the URL would put a padlock graphic on the card beside the title we are already showing —
     // the exact outcome the block card avoided by carrying no image at all.
-    const { entity } = await unfurlEntity("slack-unfurl-preview-pending", "workspace", false)
+    const { entity } = await unfurlEntity(
+      "slack-unfurl-preview-pending",
+      { listed: "workspace" },
+      false,
+    )
     expect(JSON.stringify(entity)).toContain("Q4 roadmap")
     expect(JSON.stringify(entity)).not.toContain("full_size_preview")
   })
 
   it("needs no token for a world-readable doc — /v1/og already serves it", async () => {
-    const { entity } = await unfurlEntity("slack-unfurl-preview-pub", "public")
-    const preview = (
-      (entity?.entity_payload as { attributes?: Record<string, unknown> })?.attributes as {
-        full_size_preview?: { preview_url?: string }
-      }
-    )?.full_size_preview
+    const { entity } = await unfurlEntity("slack-unfurl-preview-pub", { listed: "public" })
+    const preview = fullSizePreview(entity)
     expect(preview?.preview_url).toBeTruthy()
     expect(new URL(preview?.preview_url ?? "").searchParams.get("t")).toBeNull()
   })
@@ -2440,7 +2482,10 @@ describe("question Reply actions", () => {
 // broadcast card has always had to assume the most cautious reader in the channel. This surface
 // carries the clicking user, so the answer can finally depend on who is asking.
 describe("entity_details_requested (the flexpane)", () => {
-  const withInstall = async (name: string, opts: { link?: boolean; listed?: string } = {}) => {
+  const withInstall = async (
+    name: string,
+    opts: { link?: boolean; listed?: string; workspace_access?: "member" | "none" } = {},
+  ) => {
     const { app, meta } = make(name)
     await meta.setSlackInstall({
       org_id: "default",
@@ -2467,12 +2512,21 @@ describe("entity_details_requested (the flexpane)", () => {
       org_id: "default",
       slug: null,
       title: "Secret plan",
-      workspace_access: "member",
+      workspace_access: opts.workspace_access ?? "member",
       link_role: "viewer",
       listed: (opts.listed ?? "workspace") as "workspace",
       kind: "file",
       spa: 0,
     })
+    // A doc granting the workspace nothing is readable only through an explicit share; the
+    // viewer needs one so the private-doc tests exercise the minting gate, not the read check.
+    if (opts.workspace_access === "none")
+      await meta.setArtifactMember({
+        id: newId("am"),
+        artifact_id: artifact.id,
+        user_id: owner.id,
+        role: "viewer",
+      })
     await meta.setVersionPreview(artifact.id, await addV(meta, artifact.id), {
       preview_key: "blob-og",
       preview_status: "ready",
@@ -2523,20 +2577,33 @@ describe("entity_details_requested (the flexpane)", () => {
 
   // THE ONE PATH WHERE A PRIVATE DOC CAN REACH THE MINTER.
   //
-  // The unfurl never does — decideUnfurl answers `listed: "none"` with the locked card long
-  // before a preview is considered. The flexpane resolves an artifact itself, so a private doc
-  // arrives at the same function, and only its own `listed` check stops a token being minted.
+  // The unfurl never does — decideUnfurl answers a doc that grants the workspace nothing with
+  // the locked card long before a preview is considered. The flexpane resolves an artifact
+  // itself, so a private doc arrives at the same function, and only its own access check stops
+  // a token being minted.
   //
   // Which it must, even though this panel is per-viewer and this viewer just passed a read
   // check. The panel is private; the IMAGE URL is not — Slack fetches it anonymously and its
   // proxy caches the bytes. Being entitled to read something is not the same as consenting to
   // a copy of it living in another company's cache.
   it("mints no screenshot URL for a private doc, even for a viewer who may read it", async () => {
-    const { app, artifact } = await withInstall("flex-private-preview", { listed: "none" })
+    const { app, artifact } = await withInstall("flex-private-preview", {
+      listed: "none",
+      workspace_access: "none",
+    })
     const body = await clickAndCapture(app, artifact.short_id)
     // The viewer IS entitled — the panel opens and names the doc.
     expect(JSON.stringify(body)).toContain("Secret plan")
     expect(JSON.stringify(body)).not.toContain("full_size_preview")
+  })
+
+  // The default team draft, by contrast, mints one here exactly as the channel card does: the
+  // workspace may read it, and the flexpane viewer is a member of that workspace.
+  it("mints a screenshot URL for a team draft in the flexpane", async () => {
+    const { app, artifact } = await withInstall("flex-draft-preview", { listed: "none" })
+    const body = await clickAndCapture(app, artifact.short_id)
+    expect(JSON.stringify(body)).toContain("Secret plan")
+    expect(JSON.stringify(body)).toContain("full_size_preview")
   })
 
   it("does mint one for a workspace-listed doc, which is the whole point", async () => {

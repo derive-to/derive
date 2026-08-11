@@ -240,6 +240,7 @@ export const slackRoutes = (ctx: AppContext) => {
           baseUrl: deps.baseUrl,
           orgId: install.org_id,
           canRead: (userId, artifact) => authorizeUserStanding(userId, "read", artifact),
+          previewUrl: previewUrlFor,
         },
         l.url,
         userLink.user_id,
@@ -313,15 +314,17 @@ export const slackRoutes = (ctx: AppContext) => {
    *
    * Slack fetches preview images anonymously, so the question is never "may this viewer see it"
    * but "may this be fetched with no credential at all" — and the answer, for anything short of
-   * world-readable, used to be no. A workspace-listed doc therefore rendered the title-less
-   * padlock, which is why the cards people paste most carried no picture.
+   * world-readable, used to be no. A workspace doc therefore rendered the title-less padlock,
+   * which is why the cards people paste most carried no picture.
    *
    * A signed token settles it without loosening `/v1/og` for anyone else: it buys that one
-   * version's rendered image, expires, and retires itself on the next publish. The reasoning for
-   * why a workspace-listed doc is the right place to draw this line is the product's own —
-   * `workspace` means the org may see it, a Slack channel in that org's own workspace is
-   * substantially that audience, and anything genuinely sensitive is marked `none`, which never
-   * reaches this function.
+   * version's rendered image, expires, and retires itself on the next publish. The line is
+   * drawn at ACCESS, matching decideUnfurl's broadcast gate: `workspace_access === "member"`
+   * means every member of this workspace may read it — the default team draft included — and a
+   * Slack channel in that workspace's own Slack is substantially that audience. (`listed ===
+   * "workspace"` implies member access, an invariant routes/artifacts.ts enforces; it is checked
+   * here anyway so a legacy row degrades to the tokened image, never to a leak.) Anything
+   * granting the workspace nothing stays a padlock.
    *
    * ONE RULE, both visibilities: offer a URL only when a rendered PNG is actually behind it.
    *
@@ -342,7 +345,11 @@ export const slackRoutes = (ctx: AppContext) => {
     info: UnfurlInfo,
     status: ArtifactStatus,
   ): Promise<string | null> => {
-    if (artifact.listed !== "public" && artifact.listed !== "workspace") return null
+    const broadcastVisible =
+      artifact.workspace_access === "member" ||
+      artifact.listed === "public" ||
+      artifact.listed === "workspace"
+    if (!broadcastVisible) return null
     if (!status.previewReady) return null
     // A world-readable doc needs no capability: /v1/og already serves its PNG to anyone.
     if (artifact.listed === "public") return info.imageUrl
@@ -383,19 +390,20 @@ export const slackRoutes = (ctx: AppContext) => {
           fields: {},
         },
       }
-    const status = await artifactStatus(meta, d.artifact)
     return artifactEntity({
       pastedUrl,
       artifact: d.artifact,
       info: d.info,
-      status,
-      // The screenshot. Slack fetches preview images ANONYMOUSLY, so a world-readable artifact
-      // links its OG image directly and a workspace-listed one carries a signed, version-pinned
-      // token that buys that image and nothing else (lib/og-token.ts). `listed: "none"` never
-      // reaches here — decideUnfurl answered it with the locked card above — which is the line
-      // this feature deliberately does not cross: a doc someone marked private stays a padlock.
-      previewUrl: await previewUrlFor(d.artifact, d.info, status),
-      withActions: status.review?.state === "pending",
+      status: d.status,
+      // The screenshot, resolved once by decideUnfurl (via previewUrlFor above) and shared with
+      // the block-card fallback so both shapes promise the same image. Slack fetches preview
+      // images ANONYMOUSLY, so a world-readable artifact links its OG image directly and a
+      // workspace-readable one carries a signed, version-pinned token that buys that image and
+      // nothing else (lib/og-token.ts). An artifact granting the workspace nothing never reaches
+      // here — decideUnfurl answered it with the locked card above — which is the line this
+      // feature deliberately does not cross: a doc someone kept private stays a padlock.
+      previewUrl: d.previewUrl,
+      withActions: d.status.review?.state === "pending",
       iconUrl,
     })
   }
