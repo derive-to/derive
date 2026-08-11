@@ -488,6 +488,14 @@ export const signupAttribution = sqliteTable(
   (t) => [uniqueIndex("signup_attribution_user").on(t.user_id)],
 )
 
+// Instance-wide authority belongs to an immutable Better Auth user id. There is
+// deliberately no email column: changing or reusing an address cannot transfer
+// operator powers. Better Auth owns `user`, so this cross-owner relation has no FK.
+export const instanceOperator = sqliteTable("instance_operator", {
+  user_id: text("user_id").primaryKey(),
+  created_at: text("created_at").notNull().default(now),
+})
+
 // An agent's pull inbox: one row per explicit mention or reply to a thread it owns.
 export const agentMention = sqliteTable("agent_mention", {
   id: text("id").primaryKey(),
@@ -1192,6 +1200,7 @@ const TABLES = [
   artifactInvite,
   betaSignup,
   signupAttribution,
+  instanceOperator,
   oauthClientWorkspace,
   artifactFavorite,
   follow,

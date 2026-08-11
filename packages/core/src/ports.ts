@@ -1585,6 +1585,12 @@ export interface DirectoryStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
   getUsers(ids: string[]): Promise<UserDir[]>
+  /** Instance-wide authority is bound to Better Auth's immutable user id, never
+   *  to a submitted email address. The offline bootstrap command is the normal
+   *  writer; the verified-email migration path may also bind a legacy operator. */
+  isInstanceOperator(userId: string): Promise<boolean>
+  hasInstanceOperators(): Promise<boolean>
+  addInstanceOperator(userId: string): Promise<void>
   /** Map GitHub numeric user ids (as strings) to the Derive accounts that signed in with
    *  GitHub — joins Better Auth's `account` (providerId='github', accountId IN ids) to
    *  `user`. Lets a synced artifact's commit author resolve to a Derive profile/handle.
@@ -1968,8 +1974,8 @@ export interface AgentStore {
   deletePendingInvitationsFor(orgId: string, email: string): Promise<void>
   /** Revoke a specific pending invitation (Admin), scoped to its workspace. */
   deleteInvitation(id: string, orgId: string): Promise<void>
-  /** Stamp accepted_at so the invite can't be redeemed twice. */
-  markInvitationAccepted(id: string): Promise<void>
+  /** Atomically spend a still-live invite. Exactly one concurrent caller wins. */
+  consumeInvitation(id: string, now: string): Promise<boolean>
 
   // ---- Artifact invitations (share-by-email → accept) ---------------------
   /** Create a pending per-artifact invite. Any prior pending invite for the same
@@ -1984,8 +1990,8 @@ export interface AgentStore {
   deletePendingArtifactInvitesFor(artifactId: string, email: string): Promise<void>
   /** Revoke one pending invite, scoped to its artifact. */
   deleteArtifactInvite(id: string, artifactId: string): Promise<void>
-  /** Stamp accepted_at so the invite can't be redeemed twice. */
-  markArtifactInviteAccepted(id: string): Promise<void>
+  /** Atomically spend a still-live invite. Exactly one concurrent caller wins. */
+  consumeArtifactInvite(id: string, now: string): Promise<boolean>
   // ---- Beta signups (the marketing site's request-access form) ------------
   /** Record a beta signup (idempotent per email). Returns true when the email is
    *  new, false when it was already on the list — the caller resends the access

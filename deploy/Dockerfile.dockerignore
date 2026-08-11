@@ -1,0 +1,30 @@
+# Deny by default. The self-host build must never upload deploy/.env, backups,
+# repository history, or unrelated workspace data to a builder/cache.
+**
+
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!.npmrc
+!tsconfig.base.json
+
+!patches/
+!patches/**
+
+!apps/
+!apps/api/
+!apps/api/**
+!apps/web/
+!apps/web/**
+
+!packages/
+!packages/broker/
+!packages/broker/**
+!packages/core/
+!packages/core/**
+!packages/db/
+!packages/db/**
+!packages/facts/
+!packages/facts/**
+!packages/storage/
+!packages/storage/**

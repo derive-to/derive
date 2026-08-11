@@ -205,7 +205,8 @@ export interface AppDeps {
    *  operator IS the user. On a shared host this is what stops any workspace owner from
    *  enabling chat for themselves and spending the operator's key. */
   chatAllowlist?: string[]
-  /** Operator (instance super-admin) emails: global moderation powers, on top of `token`. */
+  /** Deprecated migration allow-list. A matching account is bound to immutable
+   *  user-id authority only after Better Auth says its email is verified. */
   superAdmins?: string[]
   /** Slack App credentials for the connect flow + inbound Events API. All three set ⇒
    *  the "Add to Slack" connect flow + reply-back are available; unset ⇒ Slack off. */
@@ -540,16 +541,20 @@ export function buildContext(deps: AppDeps) {
     return u
   }
 
-  // Instance super-admins: the people who run + host the deployment. The static
-  // DERIVE_TOKEN (automation) or any signed-in user whose email is in the operator
-  // allow-list. Super-admins get global moderation (cross-workspace takedown +
-  // the global reports/audit queue); a workspace Admin stays scoped to their own.
+  // Instance operators: the people who run + host the deployment. The static
+  // DERIVE_TOKEN remains an automation credential; human authority is persisted
+  // against an immutable Better Auth user id. The email list is migration-only:
+  // an already-verified legacy account may bind itself once, but merely submitting
+  // a configured address can never grant authority.
   const superAdminEmails = new Set((deps.superAdmins ?? []).map((e) => e.toLowerCase()))
   const isSuperAdmin = async (c: Context): Promise<boolean> => {
     if (isToken(c)) return true
-    if (superAdminEmails.size === 0) return false
     const me = await currentUser(c)
-    return !!me && superAdminEmails.has(me.email.toLowerCase())
+    if (!me) return false
+    if (await meta.isInstanceOperator(me.id)) return true
+    if (!me.emailVerified || !superAdminEmails.has(me.email.toLowerCase())) return false
+    await meta.addInstanceOperator(me.id)
+    return true
   }
 
   // The one identity resolution for a request (memoized): a typed `Principal` that folds

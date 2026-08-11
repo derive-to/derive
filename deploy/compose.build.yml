@@ -1,0 +1,11 @@
+# Contributor/source-build override:
+#   docker compose -f deploy/compose.yml -f deploy/compose.build.yml up --build
+services:
+  derive:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        VERSION: dev
+        REVISION: local
+    image: derive:local

@@ -149,7 +149,7 @@ export const buildBetaEmail = (input: { to: string; url: string }): EmailMsg => 
   <p><a href="${href}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Create your account</a></p>
   <p style="color:#666;font-size:13px">Or paste this link into your browser:<br/><a href="${href}" style="color:#666">${href}</a></p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
-  <p style="color:#999;font-size:12px">Prefer to run it yourself? Derive is open source: <a href="https://github.com/derive-to/derive" style="color:#999">github.com/derive-to/derive</a><br/>If you didn't request access, you can ignore this email.</p>
+  <p style="color:#999;font-size:12px">Prefer to run it yourself? Derive is Fair Source and self-hostable: <a href="https://github.com/derive-to/derive" style="color:#999">github.com/derive-to/derive</a><br/>If you didn't request access, you can ignore this email.</p>
   </body></html>`
   const text = [
     "You're in.",
@@ -158,7 +158,7 @@ export const buildBetaEmail = (input: { to: string; url: string }): EmailMsg => 
     "",
     `Create your account: ${input.url}`,
     "",
-    "Prefer to run it yourself? Derive is open source: https://github.com/derive-to/derive",
+    "Prefer to run it yourself? Derive is Fair Source and self-hostable: https://github.com/derive-to/derive",
     "If you didn't request access, you can ignore this email.",
   ].join("\n")
   return { to: input.to, subject: "Your Derive beta access", html, text }

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import { parseSignupMode, type SignupMode } from "./lib/signup-policy"
 import { log } from "./log"
 
 /** Parse a positive-integer env var; unset/blank = "no limit". A set-but-invalid
@@ -54,10 +55,11 @@ export interface Config {
   baseUrl: string
   databaseUrl?: string
   token?: string
-  /** Operator (instance super-admin) emails: these accounts get global powers
-   *  (cross-workspace takedown, the global reports/audit queue) on top of the
-   *  DERIVE_TOKEN bearer. The people who run + host the deployment. */
+  /** Deprecated migration allow-list for already-verified legacy accounts.
+   *  Runtime authority itself is persisted against immutable user ids. */
   superAdmins: string[]
+  /** Who may create a new account. Existing users can always sign in. */
+  signupMode: SignupMode
   analytics: boolean
   rateLimit: boolean
   sandboxOrigin?: string
@@ -169,6 +171,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
 
   const dataDir = env.DATA_DIR ?? "./data"
+  const databaseUrl = urlOr("DATABASE_URL", env.DATABASE_URL)
+  const objectStoreUrl = urlOr("OBJECT_STORE_URL", env.OBJECT_STORE_URL)
+  if (!!databaseUrl !== !!objectStoreUrl)
+    log.warn(
+      "hybrid storage topology configured (only one of DATABASE_URL / OBJECT_STORE_URL); runtime is supported, but the built-in Lite backup command is intentionally unavailable",
+    )
+  // A Postgres deployment is commonly ephemeral or replicated. Letting either of
+  // these identities fall back to a per-container file makes sessions and the
+  // bootstrap workspace disagree between replicas (and change on replacement).
+  if (databaseUrl) {
+    if (!env.DERIVE_AUTH_SECRET || env.DERIVE_AUTH_SECRET.length < 16)
+      throw new Error(
+        "DATABASE_URL requires DERIVE_AUTH_SECRET (at least 16 characters, shared by every replica)",
+      )
+    if (!env.DERIVE_DEFAULT_ORG_ID?.trim())
+      throw new Error("DATABASE_URL requires DERIVE_DEFAULT_ORG_ID (shared by every replica)")
+  }
   // Single-container self-host: when the web SPA has been built, this process
   // serves it. DERIVE_WEB_DIR overrides; default is the build output beside us.
   // TanStack Start's SPA build emits `_shell.html`; the edge prep copies it to
@@ -188,11 +207,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     dataDir,
     baseUrl,
-    databaseUrl: urlOr("DATABASE_URL", env.DATABASE_URL),
+    databaseUrl,
     token: env.DERIVE_TOKEN,
-    // Comma-separated operator emails (case-insensitive). More than one person
-    // can run + host a deployment, so this is a list, not a single owner.
+    // Deprecated verified-account migration list; never an admission bypass.
     superAdmins: superAdminsFromEnv(env),
+    signupMode: parseSignupMode(env.DERIVE_SIGNUP_MODE),
     backgroundWorkers: env.DERIVE_BACKGROUND_WORKERS !== "0",
     previews: env.DERIVE_PREVIEWS === "true",
     hostedRuns: env.DERIVE_HOSTED_RUNS === "true",
@@ -218,7 +237,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       env.DERIVE_ANALYTICS_RETENTION_DAYS,
       365,
     ),
-    objectStoreUrl: urlOr("OBJECT_STORE_URL", env.OBJECT_STORE_URL),
+    objectStoreUrl,
     emailFrom: env.EMAIL_FROM,
     resendApiKey: env.RESEND_API_KEY,
     slack: slackFromEnv(env),

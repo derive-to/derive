@@ -32,8 +32,9 @@ export const systemRoutes = (ctx: AppContext) => {
    * if-statement do not.
    *
    * `isSuperAdmin` is DERIVE_TOKEN (the static operator bearer) or a signed-in account whose
-   * email is in DERIVE_OPERATORS. A workspace Admin is NOT an operator here, deliberately: they
-   * administer a tenant, and this spends the operator's credential for every tenant at once.
+   * immutable user id is in instance_operator. A workspace Admin is NOT an operator here,
+   * deliberately: they administer a tenant, and this spends the operator's credential for every
+   * tenant at once.
    */
   const operatorOnly = async (c: Parameters<typeof isSuperAdmin>[0]): Promise<Response | null> =>
     isToken(c) || (await isSuperAdmin(c))

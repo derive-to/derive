@@ -261,6 +261,7 @@ export type TestUser = {
   image?: string | null
   username?: string | null
   discoverable?: boolean
+  emailVerified?: boolean
 }
 
 const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
@@ -309,7 +310,13 @@ export const makeAuthedApp = (
   name: string,
   users: TestUser[],
   defaultRole?: AppDeps["defaultRole"],
-  opts?: { isolated?: boolean; deps?: Partial<AppDeps>; noPlan?: boolean; noAutomate?: boolean },
+  opts?: {
+    isolated?: boolean
+    deps?: Partial<AppDeps>
+    noPlan?: boolean
+    noAutomate?: boolean
+    operatorIds?: string[]
+  },
 ) => {
   // Seed a shared "default" workspace so the user list collaborates (the single-
   // mode default before always-multi): users[0] is the Admin/owner, the rest take
@@ -342,6 +349,8 @@ export const makeAuthedApp = (
   // deliberately in automate-gate.test.ts, which builds apps WITHOUT this seed, instead of being
   // proved incidentally by every other suite having to remember.
   const planReady = (async () => {
+    const authorityStore = opts?.deps?.meta ?? m
+    for (const userId of opts?.operatorIds ?? []) await authorityStore.addInstanceOperator(userId)
     if (!opts?.noPlan) await connectPoolPlan(m, "default").catch(() => undefined)
     // `noAutomate` opts OUT: the suite that asserts the shipped DEFAULTS has to see the real ones,
     // and a blanket seed would have made that assertion quietly lie about this exact field.

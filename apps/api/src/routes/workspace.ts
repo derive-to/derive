@@ -22,6 +22,7 @@ import {
 } from "../lib/invite"
 import { resolveUserRef } from "../lib/resolve-user"
 import { syncSeats } from "../lib/seats"
+import { armInviteAdmission } from "../lib/signup-policy"
 import { ArtifactMember, BrandprintSchema, roleEnum } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
@@ -520,9 +521,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const inv = await meta.getInvitationByToken(sha256(c.req.param("token")))
+      const tokenHash = sha256(c.req.param("token"))
+      const inv = await meta.getInvitationByToken(tokenHash)
       if (!inv || !isLiveInvite(inv))
         return bail(fail(c, 404, "this invitation is invalid or has expired"))
+      await armInviteAdmission(c, "workspace", tokenHash, inv.expires_at, deps.encryptionKey, {
+        baseUrl: deps.baseUrl,
+        crossSite: deps.crossSite,
+      })
       const ws = await meta.getWorkspace(inv.org_id)
       const inviter = inv.invited_by ? (await meta.getUsers([inv.invited_by]))[0] : undefined
       return c.json({
@@ -559,6 +565,9 @@ export const workspaceRoutes = (ctx: AppContext) => {
         return bail(fail(c, 404, "this invitation is invalid or has expired"))
       const mismatch = await emailMismatch409(c, inv.email, me.email)
       if (mismatch) return bail(mismatch)
+      const now = new Date().toISOString()
+      if (!(await meta.consumeInvitation(inv.id, now)))
+        return bail(fail(c, 409, "this invitation has already been accepted"))
       const existing = await meta.getMembership(inv.org_id, me.id)
       if (!existing) {
         await meta.setMembership({
@@ -569,7 +578,6 @@ export const workspaceRoutes = (ctx: AppContext) => {
         })
         await syncSeats({ meta, billing }, inv.org_id)
       }
-      await meta.markInvitationAccepted(inv.id)
       return c.json({ org_id: inv.org_id, role: existing?.role ?? inv.role })
     },
   )

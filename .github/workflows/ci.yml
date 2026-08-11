@@ -173,12 +173,28 @@ jobs:
               - 'packages/**'
               - 'pnpm-lock.yaml'
               - 'package.json'
-            docker:
+            runner:
               - 'packages/cli/**'
               - 'pnpm-lock.yaml'
               - 'deploy/runner.Dockerfile'
               - 'deploy/runner.Dockerfile.dockerignore'
               - 'deploy/runner-entrypoint.sh'
+            app_image:
+              - '.dockerignore'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release-images.yml'
+              - 'apps/api/**'
+              - 'apps/web/**'
+              - 'packages/broker/**'
+              - 'packages/core/**'
+              - 'packages/db/**'
+              - 'packages/storage/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'deploy/Dockerfile*'
+              - 'deploy/compose*.yml'
+              - 'deploy/selfhost.env.example'
       - uses: ./.github/actions/setup
 
       # More workers than cores, deliberately. This lane is the critical path —
@@ -230,13 +246,39 @@ jobs:
       # CLI's only dependency is fflate, pure JS. So an arch change would not break
       # this step; it just would not be building the thing that ships.)
       - name: Build runner image + start check
-        if: steps.filter.outputs.docker == 'true'
+        if: steps.filter.outputs.runner == 'true'
         # No token/context on purpose: a healthy image exits 1 with the house
         # one-liner, not a stack trace — proves node, the CLI, and its deps wired.
         run: |
           docker build -f deploy/runner.Dockerfile -t derive-runner:ci .
           out=$(docker run --rm derive-runner:ci serve 2>&1) && exit 1 || true
           echo "$out" | grep -q "error: a context id and an agent token are required"
+
+      # The self-host image is a release artifact in its own right. Build and boot
+      # it on every affecting PR so a bad production dependency graph, non-root
+      # permission, SPA path, or healthcheck cannot wait until a version tag.
+      - name: Build self-host image + readiness check
+        if: steps.filter.outputs.app_image == 'true'
+        run: |
+          mkdir -p deploy/backups
+          printf '%s\n' 'build-context-secret-canary' > deploy/.env
+          printf '%s\n' 'build-context-backup-canary' > deploy/backups/build-context-canary
+          docker build -f deploy/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t derive:ci .
+          id=$(docker run -d -p 127.0.0.1:18080:8080 derive:ci)
+          trap 'docker rm -f "$id" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/readyz >/dev/null; then
+              curl -fsS http://127.0.0.1:18080/healthz >/dev/null
+              curl -fsS http://127.0.0.1:18080/ >/dev/null
+              test "$(docker inspect -f '{{.Config.User}}' derive:ci)" = node
+              docker exec "$id" node --import tsx src/server-cli.ts backup /tmp/smoke-backup
+              docker exec "$id" node --import tsx src/server-cli.ts verify-backup /tmp/smoke-backup
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs "$id"
+          exit 1
 
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # both lanes pass. Schemas (D1 + Postgres) land BEFORE the worker flips, so a

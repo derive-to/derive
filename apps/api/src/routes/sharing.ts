@@ -23,6 +23,7 @@ import {
   looksLikeEmail,
 } from "../lib/invite"
 import { resolveUserRef } from "../lib/resolve-user"
+import { armInviteAdmission } from "../lib/signup-policy"
 import { enqueueSlackShareDm } from "../lib/slack-dm"
 import { ArtifactMember, roleEnum } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
@@ -386,6 +387,14 @@ export const sharingRoutes = (ctx: AppContext) => {
       const live = await liveArtifactInvite(c)
       if (!live) return bail(fail(c, 404, "this invitation is invalid or has expired"))
       const { inv, artifact } = live
+      await armInviteAdmission(
+        c,
+        "artifact",
+        sha256(c.req.param("token")),
+        inv.expires_at,
+        deps.encryptionKey,
+        { baseUrl: deps.baseUrl, crossSite: deps.crossSite },
+      )
       const inviter = inv.invited_by ? (await meta.getUsers([inv.invited_by]))[0] : undefined
       return c.json({
         title: artifact.title,
@@ -425,6 +434,9 @@ export const sharingRoutes = (ctx: AppContext) => {
       const { inv, artifact } = live
       const mismatch = await emailMismatch409(c, inv.email, me.email)
       if (mismatch) return bail(mismatch)
+      const now = new Date().toISOString()
+      if (!(await meta.consumeArtifactInvite(inv.id, now)))
+        return bail(fail(c, 409, "this invitation has already been accepted"))
       // An existing share only ever upgrades — accepting a commenter invite while
       // already an editor member must not downgrade the real grant.
       const existing = await meta.getArtifactMember(artifact.id, me.id)
@@ -436,7 +448,6 @@ export const sharingRoutes = (ctx: AppContext) => {
           user_id: me.id,
           role: granted,
         })
-      await meta.markArtifactInviteAccepted(inv.id)
       // Any OTHER pending invites for this email on the artifact are now moot.
       await meta.deletePendingArtifactInvitesFor(artifact.id, inv.email)
       return c.json({ short_id: artifact.short_id, role: granted })

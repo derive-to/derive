@@ -4399,6 +4399,70 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: invitation consumption`, () => {
+    it("lets exactly one caller atomically spend a live invitation", async () => {
+      const orgId = `invite_org_${uuid()}`
+      await store.setWorkspace(orgId, "Invitation Contract")
+      const invitedArtifact = newArtifact({
+        id: uuid(),
+        short_id: uuid().slice(0, 8),
+        org_id: orgId,
+      })
+      await store.createArtifact(invitedArtifact)
+      const future = new Date(Date.now() + 60_000).toISOString()
+      const past = new Date(Date.now() - 60_000).toISOString()
+      const workspaceInvitation = await store.createInvitation({
+        id: uuid(),
+        org_id: orgId,
+        email: "workspace@example.com",
+        role: "editor",
+        token: uuid(),
+        invited_by: null,
+        expires_at: future,
+      })
+      const artifactInvitation = await store.createArtifactInvite({
+        id: uuid(),
+        artifact_id: invitedArtifact.id,
+        email: "artifact@example.com",
+        role: "commenter",
+        token: uuid(),
+        invited_by: null,
+        expires_at: future,
+      })
+      const expiredInvitation = await store.createInvitation({
+        id: uuid(),
+        org_id: orgId,
+        email: "expired@example.com",
+        role: "viewer",
+        token: uuid(),
+        invited_by: null,
+        expires_at: past,
+      })
+
+      const now = new Date().toISOString()
+      const [first, second] = await Promise.all([
+        store.consumeInvitation(workspaceInvitation.id, now),
+        store.consumeInvitation(workspaceInvitation.id, now),
+      ])
+      expect([first, second].sort()).toEqual([false, true])
+      await expect(store.consumeArtifactInvite(artifactInvitation.id, now)).resolves.toBe(true)
+      await expect(store.consumeArtifactInvite(artifactInvitation.id, now)).resolves.toBe(false)
+      await expect(store.consumeInvitation(expiredInvitation.id, now)).resolves.toBe(false)
+    })
+  })
+
+  describe(`${label}: instance operators`, () => {
+    it("binds authority idempotently to an immutable user id", async () => {
+      const userId = `operator_${uuid()}`
+      await expect(store.hasInstanceOperators()).resolves.toBe(false)
+      await store.addInstanceOperator(userId)
+      await store.addInstanceOperator(userId)
+      await expect(store.isInstanceOperator(userId)).resolves.toBe(true)
+      await expect(store.isInstanceOperator(`${userId}_other`)).resolves.toBe(false)
+      await expect(store.hasInstanceOperators()).resolves.toBe(true)
+    })
+  })
+
   describe(`${label}: signup attribution`, () => {
     it("records the signup source once per user (first write wins) and reads it back", async () => {
       const userId = `u_${uuid()}`

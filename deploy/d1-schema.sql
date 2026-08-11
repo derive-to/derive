@@ -307,6 +307,11 @@ CREATE TABLE IF NOT EXISTS signup_attribution (
   UNIQUE (user_id)
 );
 
+CREATE TABLE IF NOT EXISTS instance_operator (
+  user_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS oauth_client_workspace (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

@@ -176,8 +176,14 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_SUPERADMIN_EMAILS",
     group: "auth",
-    doc: "Instance operators (super-admins): comma-separated emails that get global powers\n(cross-workspace takedown, the reports/audit queue) on top of the DERIVE_TOKEN bearer.",
+    doc: "Deprecated migration only: matching verified legacy accounts are bound once to\nimmutable user-id operator records. This list never admits account creation.",
     example: "you@example.com,ops@example.com",
+  },
+  {
+    name: "DERIVE_SIGNUP_MODE",
+    group: "auth",
+    doc: "Account admission: open (anyone), invite (requires a live invitation capability),\nor closed (offline bootstrap only). Existing users can always sign in.",
+    example: "invite",
   },
   {
     name: "DERIVE_WEB_ORIGIN",

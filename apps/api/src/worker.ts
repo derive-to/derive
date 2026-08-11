@@ -38,6 +38,7 @@ import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
+import { parseSignupMode, signupPolicy } from "./lib/signup-policy"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { loopSubstrate } from "./lib/substrate-loop"
@@ -176,6 +177,7 @@ export interface Env {
   DERIVE_LOOP_MODEL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
+  DERIVE_SIGNUP_MODE?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
   DERIVE_SUBDOMAIN_BASE?: string
   // Cloudflare for SaaS (BYO custom domains); all three unset = custom domains off.
@@ -285,6 +287,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       // routes share the exact same driver instance instead of constructing two.
       const billing = makeBillingDriver(env.STRIPE_SECRET_KEY, env.STRIPE_WEBHOOK_SECRET)
       const auth = makeAuth(authDb, baseUrl, secret, {
+        signupAllowed: signupPolicy(parseSignupMode(env.DERIVE_SIGNUP_MODE), secret, meta),
         usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
         // Transactional auth emails ride the same outbox; the WebhookOutbox DO drains it
         // with the Cloudflare Email sender (env.SEND_EMAIL). See webhook-do.ts.

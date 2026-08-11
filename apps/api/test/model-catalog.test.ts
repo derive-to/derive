@@ -31,15 +31,20 @@ describe("gateway extras reach the request", () => {
 
 describe("the operator's deploy-wide model", () => {
   const setup = () =>
-    makeAuthedApp("instance-model", [{ id: "u-op", email: "op@x.com", name: "Op" }], undefined, {
-      deps: {
-        models: catalogOf([
-          { id: "fast", label: "Fast", isDefault: true, build: () => async () => THE_TURN },
-          { id: "slow", label: "Slow", isDefault: false, build: () => async () => THE_TURN },
-        ]),
-        superAdmins: ["op@x.com"],
+    makeAuthedApp(
+      "instance-model",
+      [{ id: "u-op", email: "op@x.com", name: "Op", emailVerified: true }],
+      undefined,
+      {
+        operatorIds: ["u-op"],
+        deps: {
+          models: catalogOf([
+            { id: "fast", label: "Fast", isDefault: true, build: () => async () => THE_TURN },
+            { id: "slow", label: "Slow", isDefault: false, build: () => async () => THE_TURN },
+          ]),
+        },
       },
-    })
+    )
 
   it("is refused to somebody who does not run the instance", async () => {
     // A workspace Admin is still not an operator: the model is the operator's credential to
