@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
+import { AdminNote } from "@/components/shared/admin-note"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { FormField } from "@/components/shared/form-field"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
@@ -27,6 +29,7 @@ import { Switch } from "@/components/ui/switch"
 import { reloadAfterWorkspaceChange } from "@/lib/persist"
 import { workspaceQuery, workspaceSettingsQuery, workspacesQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsSection } from "./settings-section"
 
 // Workspace identity + lifecycle: rename it, spin up a new one, or (admins only)
@@ -41,7 +44,7 @@ export function GeneralSection() {
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState("")
   const [newInvites, setNewInvites] = useState("")
-  const [delName, setDelName] = useState("")
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   // Seed the editable name once the workspace loads (and re-seed on a rename that
   // updates the cache). Focus refetches are off globally, so this won't clobber typing.
@@ -50,16 +53,11 @@ export function GeneralSection() {
   }, [ws])
 
   // ?new-workspace=1 auto-opens the create dialog — the deep link the user pod and
-  // the share dialog's first-need hint navigate to. One-shot: consumed + stripped
-  // (same pattern as the GitHub section's gh_install handshake params).
+  // the share dialog's first-need hint navigate to. One-shot: consumed + stripped.
+  const { "new-workspace": newWorkspaceParam } = useOneShotParams("new-workspace")
   useEffect(() => {
-    const url = new URL(window.location.href)
-    if (url.searchParams.get("new-workspace")) {
-      setCreateOpen(true)
-      url.searchParams.delete("new-workspace")
-      window.history.replaceState(null, "", url)
-    }
-  }, [])
+    if (newWorkspaceParam) setCreateOpen(true)
+  }, [newWorkspaceParam])
 
   const isAdmin = ws?.role === "owner"
 
@@ -106,9 +104,6 @@ export function GeneralSection() {
     mutationFn: (id: string) => api.deleteWorkspace(id),
     onSuccess: () => reloadAfterWorkspaceChange(),
   })
-  const onDelete = () => {
-    if (ws) del.mutate(ws.id)
-  }
 
   return (
     <SettingsSection
@@ -208,51 +203,39 @@ export function GeneralSection() {
         </FormField>
       )}
 
-      {isAdmin && <SharingDefaults />}
+      {isAdmin ? <SharingDefaults /> : <AdminNote can="change workspace settings" />}
 
       {isAdmin && ws && (
-        <StatusPanel
-          tone="danger"
-          layout="inline"
-          title="Delete this workspace"
-          description="Permanently delete this workspace. It must be empty (no artifacts), and this can't be undone."
-          action={
-            <Dialog onOpenChange={(o) => !o && setDelName("")}>
-              <DialogTrigger asChild>
-                <Button data-testid="workspace-delete" variant="destructive" size="sm">
-                  Delete workspace
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Delete "{ws.name}"?</DialogTitle>
-                  <DialogDescription>
-                    This permanently deletes the workspace and removes everyone from it. To confirm,
-                    type <strong className="font-medium text-foreground">{ws.name}</strong> below.
-                  </DialogDescription>
-                </DialogHeader>
-                <Input
-                  data-testid="workspace-delete-confirm"
-                  aria-label="Type the workspace name to confirm"
-                  value={delName}
-                  onChange={(e) => setDelName(e.target.value)}
-                  placeholder={ws.name}
-                  autoComplete="off"
-                />
-                <Button
-                  data-testid="workspace-delete-go"
-                  variant="destructive"
-                  onClick={onDelete}
-                  loading={del.isPending}
-                  disabled={del.isPending || delName.trim() !== ws.name}
-                  className="mt-2 w-full"
-                >
-                  {del.isPending ? "Deleting…" : "Delete this workspace"}
-                </Button>
-              </DialogContent>
-            </Dialog>
-          }
-        />
+        <>
+          <StatusPanel
+            tone="danger"
+            layout="inline"
+            title="Delete this workspace"
+            description="Permanently delete this workspace. It must be empty (no artifacts), and this can't be undone."
+            action={
+              <Button
+                data-testid="workspace-delete"
+                variant="destructive"
+                size="sm"
+                onClick={() => setDeleteOpen(true)}
+              >
+                Delete workspace
+              </Button>
+            }
+          />
+          <ConfirmDialog
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+            title={`Delete "${ws.name}"?`}
+            description="This permanently deletes the workspace and removes everyone from it."
+            confirmLabel="Delete workspace"
+            confirmTestId="workspace-delete-go"
+            confirmPhrase={ws.name}
+            onConfirm={async () => {
+              await del.mutateAsync(ws.id)
+            }}
+          />
+        </>
       )}
     </SettingsSection>
   )

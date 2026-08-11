@@ -12,6 +12,7 @@ import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { slackQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 import { SlackSubscriptionsSection } from "./slack-subscriptions-section"
@@ -44,17 +45,6 @@ const SLACK_INSTALL_ERRORS: Record<string, { title: string; description: string 
   oauth: DEFAULT_SLACK_INSTALL_ERROR,
 }
 
-// Read the one-shot callback result without mutating browser state during render.
-// The effect below clears it after mount and invalidates any restored Slack cache.
-const readSlackInstallResult = (): SlackInstallResult => {
-  if (typeof window === "undefined") return null
-  const qs = new URLSearchParams(window.location.search)
-  const connected = qs.get("slack_connected") === "1"
-  const error = qs.get("slack_error")
-  if (!connected && !error) return null
-  return connected ? { connected: true } : { connected: false, error: error ?? "oauth" }
-}
-
 // The workspace activity toggles (email + GitHub mirroring) plus the Slack connection.
 // Where Slack posts is per-channel now — see slack-subscriptions-section.tsx. Toggles apply optimistically
 // with no save (the toggle contract); the Slack channel id is an explicit save.
@@ -62,7 +52,18 @@ export function IntegrationsSection() {
   const qc = useQueryClient()
   const { data: settings, isPending, isError, refetch } = useQuery(workspaceSettingsQuery())
   const { data: slack, isFetching: slackIsFetching } = useQuery(slackQuery())
-  const [installResult] = useState(readSlackInstallResult)
+  // The one-shot callback result the Slack OAuth flow lands back on.
+  const { slack_connected: slackConnected, slack_error: slackError } = useOneShotParams(
+    "slack_connected",
+    "slack_error",
+  )
+  const [installResult] = useState<SlackInstallResult>(() =>
+    slackConnected === "1"
+      ? { connected: true }
+      : slackError
+        ? { connected: false, error: slackError }
+        : null,
+  )
   const installError =
     installResult && !installResult.connected
       ? (SLACK_INSTALL_ERRORS[installResult.error] ?? DEFAULT_SLACK_INSTALL_ERROR)
@@ -71,20 +72,8 @@ export function IntegrationsSection() {
 
   useEffect(() => {
     if (!installResult) return
-    const cleanupUrl = window.setTimeout(() => {
-      const qs = new URLSearchParams(window.location.search)
-      qs.delete("slack_connected")
-      qs.delete("slack_error")
-      const rest = qs.toString()
-      window.history.replaceState(
-        window.history.state,
-        "",
-        `${window.location.pathname}${rest ? `?${rest}` : ""}`,
-      )
-    }, 0)
     void qc.invalidateQueries({ queryKey: slackQuery().queryKey })
     if (installResult.connected) toast.success("Slack connected")
-    return () => window.clearTimeout(cleanupUrl)
   }, [installResult, qc])
 
   // Toggle a single settings key, optimistically flipping the shared cache entry so the
@@ -198,7 +187,19 @@ export function IntegrationsSection() {
         </SettingsGroup>
       ) : null}
 
-      <SettingsGroup title="Slack">
+      <SettingsGroup
+        title="Slack"
+        description={
+          slack?.connected ? (
+            <>
+              Connected to{" "}
+              <span className="font-medium">{slack.team_name ?? "your Slack workspace"}</span>.
+              Choose which channels hear about what under <strong>Slack channels</strong> below, or
+              run <code>/derive subscribe</code> in the channel itself.
+            </>
+          ) : undefined
+        }
+      >
         {installError && installResult && !installResult.connected && (
           <StatusPanel
             tone={installResult.error === "canceled" ? "warning" : "danger"}
@@ -246,23 +247,20 @@ export function IntegrationsSection() {
             }
           />
         ) : slack?.connected ? (
-          <div className="flex flex-col gap-4 py-1">
-            <p className="text-sm">
-              Connected to{" "}
-              <span className="font-medium">{slack.team_name ?? "your Slack workspace"}</span>.
-            </p>
+          <>
             {slack.needs_reauth && (
-              <div
-                data-testid="slack-reauth-banner"
-                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
-              >
-                Derive can't use the saved Slack connection (the app may have been removed or its
-                token revoked, or it needs a permission that was added since. Reconnect to fix it.
-                <div className="mt-2">
-                  <Button data-testid="slack-reconnect" variant="default" size="sm" asChild>
-                    <a href="/v1/slack/install">Reconnect Slack</a>
-                  </Button>
-                </div>
+              <div data-testid="slack-reauth-banner">
+                <StatusPanel
+                  tone="danger"
+                  layout="inline"
+                  title="Derive can't use the saved Slack connection"
+                  description="The app may have been removed or its token revoked, or it needs a permission that was added since. Reconnect to fix it."
+                  action={
+                    <Button data-testid="slack-reconnect" variant="default" size="sm" asChild>
+                      <a href="/v1/slack/install">Reconnect Slack</a>
+                    </Button>
+                  }
+                />
               </div>
             )}
             <SettingRow
@@ -312,24 +310,18 @@ export function IntegrationsSection() {
                 </Button>
               )}
             </SettingRow>
-            <p className="text-sm text-muted-foreground">
-              Choose which channels hear about what under <strong>Slack channels</strong> below, or
-              run <code>/derive subscribe</code> in the channel itself.
-            </p>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button data-testid="slack-change-workspace" variant="outline" size="sm" asChild>
-                  <a href="/v1/slack/install">Change Slack workspace</a>
-                </Button>
-                <Button
-                  data-testid="slack-disconnect"
-                  variant="destructive-ghost"
-                  size="sm"
-                  onClick={() => setDisconnecting(true)}
-                >
-                  Disconnect Slack
-                </Button>
-              </div>
+            <div className="flex flex-wrap items-center gap-2 py-3.5">
+              <Button data-testid="slack-change-workspace" variant="outline" size="sm" asChild>
+                <a href="/v1/slack/install">Change Slack workspace</a>
+              </Button>
+              <Button
+                data-testid="slack-disconnect"
+                variant="destructive-ghost"
+                size="sm"
+                onClick={() => setDisconnecting(true)}
+              >
+                Disconnect Slack
+              </Button>
             </div>
             <ConfirmDialog
               open={disconnecting}
@@ -340,7 +332,7 @@ export function IntegrationsSection() {
               onConfirm={disconnectSlack}
               confirmTestId="slack-disconnect-confirm"
             />
-          </div>
+          </>
         ) : (
           <div className="flex flex-col items-start gap-3 py-1">
             <p className="text-sm text-muted-foreground">

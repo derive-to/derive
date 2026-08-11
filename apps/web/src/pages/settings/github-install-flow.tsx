@@ -31,21 +31,6 @@ const LEVEL_LABELS: Record<string, string> = {
   admin: "Admin",
 }
 
-// Read (and clear) the one-shot query params the App install flow lands back on.
-export const takeInstallParams = (): { install?: string; error?: string } => {
-  if (typeof window === "undefined") return {}
-  const qs = new URLSearchParams(window.location.search)
-  const install = qs.get("gh_install") ?? undefined
-  const error = qs.get("gh_error") ?? undefined
-  if (install || error) {
-    qs.delete("gh_install")
-    qs.delete("gh_error")
-    const rest = qs.toString()
-    window.history.replaceState({}, "", `${window.location.pathname}${rest ? `?${rest}` : ""}`)
-  }
-  return { install, error }
-}
-
 // No App yet: one button that kicks off the manifest flow (a top-level nav, since
 // it posts a form to GitHub).
 export function SetUpApp() {

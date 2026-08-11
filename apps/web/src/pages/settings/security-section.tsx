@@ -6,7 +6,9 @@ import { type AuthCapabilities, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { SecretReveal } from "@/components/shared/secret-reveal"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -31,7 +33,6 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { authClient } from "@/lib/auth-client"
-import { copyText } from "@/lib/clipboard"
 import { connectedAgentsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -39,8 +40,8 @@ import { SettingsSection } from "./settings-section"
 
 // Account security — the home for the credentials that protect your account (and, since a
 // human's factor is the root of trust the agent-delegation chain hangs from, a first-class
-// surface). This phase: password + email/verification. Passkeys, active sessions, connected
-// accounts, 2FA, and delete-account land here in later phases.
+// surface): password + email/verification, passkeys, 2FA, connected agents, active
+// sessions, and delete-account.
 export function SecuritySection() {
   const { me } = useAuth()
   // What flows this instance actually supports (change-password/email only make sense where
@@ -108,48 +109,47 @@ function ConnectedAgents() {
   if (!isPending && !isError && (!agents || agents.length === 0)) return null
 
   return (
-    <div className="flex flex-col gap-3">
-      <div>
-        <div className="text-sm font-medium text-foreground">Connected agents</div>
-        <p className="text-sm text-muted-foreground">
-          Agents you've authorized to act on your behalf. Revoke any at any time.
-        </p>
-      </div>
+    <SettingsGroup
+      title="Connected agents"
+      description="Agents you've authorized to act on your behalf. Revoke any at any time."
+    >
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <LoadError
-          title="Couldn’t load connected agents"
-          testId="security-agents-retry"
-          onRetry={() => refetch()}
-        />
+        // Padding-neutral wrapper: SettingsGroup strips its first/last child's
+        // vertical padding (a row contract), which would squash this state.
+        <div>
+          <LoadError
+            title="Couldn’t load connected agents"
+            testId="security-agents-retry"
+            onRetry={() => refetch()}
+          />
+        </div>
       ) : (
-        <SettingsGroup>
-          {agents?.map((a) => {
-            const perms = a.scopes.map((s) => SCOPE_LABEL[s]).filter(Boolean)
-            return (
-              <div
-                key={a.clientId}
-                data-testid={`agent-conn-${a.clientId}`}
-                className="flex items-center gap-3 py-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-foreground">{a.clientName}</div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                    {perms.length > 0 ? (
-                      perms.map((p) => (
-                        <Badge key={p} variant="secondary">
-                          {p}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className="text-2xs text-muted-foreground">Read-only</span>
-                    )}
-                    <span className="text-2xs text-muted-foreground">
-                      · since {new Date(a.grantedAt).toLocaleDateString()}
-                    </span>
-                  </div>
+        agents?.map((a) => {
+          const perms = a.scopes.map((s) => SCOPE_LABEL[s]).filter(Boolean)
+          return (
+            <ListRow
+              key={a.clientId}
+              data-testid={`agent-conn-${a.clientId}`}
+              title={a.clientName}
+              meta={
+                <div className="flex flex-wrap items-center gap-1">
+                  {perms.length > 0 ? (
+                    perms.map((p) => (
+                      <Badge key={p} variant="secondary">
+                        {p}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-2xs text-muted-foreground">Read-only</span>
+                  )}
+                  <span className="text-2xs text-muted-foreground">
+                    · since {new Date(a.grantedAt).toLocaleDateString()}
+                  </span>
                 </div>
+              }
+              actions={
                 <Button
                   data-testid={`agent-conn-revoke-${a.clientId}`}
                   variant="destructive-ghost"
@@ -158,10 +158,10 @@ function ConnectedAgents() {
                 >
                   Revoke
                 </Button>
-              </div>
-            )
-          })}
-        </SettingsGroup>
+              }
+            />
+          )
+        })
       )}
       {confirming && (
         <ConfirmDialog
@@ -173,7 +173,7 @@ function ConnectedAgents() {
           onConfirm={() => revoke(confirming)}
         />
       )}
-    </div>
+    </SettingsGroup>
   )
 }
 
@@ -457,49 +457,18 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
               )}
             </div>
             {backup.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                <div className="text-sm font-medium text-foreground">
-                  Backup codes — save these somewhere safe
-                </div>
-                <div
-                  data-testid="2fa-backup-codes"
-                  className="grid grid-cols-2 gap-1 rounded-md bg-secondary px-2.5 py-2 font-mono text-2xs text-foreground"
-                >
-                  {backup.map((c) => (
-                    <span key={c}>{c}</span>
-                  ))}
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    data-testid="2fa-copy-backup"
-                    onClick={() =>
-                      void copyText(backup.join("\n"), { success: "Backup codes copied" })
-                    }
-                  >
-                    Copy codes
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    data-testid="2fa-download-backup"
-                    onClick={() => {
-                      const blob = new Blob([`${backup.join("\n")}\n`], { type: "text/plain" })
-                      const url = URL.createObjectURL(blob)
-                      const a = document.createElement("a")
-                      a.href = url
-                      a.download = "derive-backup-codes.txt"
-                      a.click()
-                      URL.revokeObjectURL(url)
-                    }}
-                  >
-                    Download
-                  </Button>
-                </div>
-              </div>
+              // No onDone: the dialog flow owns dismissal. (SecretReveal's buttons
+              // are type="button", so the reveal is safe inside this confirm form.)
+              <SecretReveal
+                title="Backup codes — save these somewhere safe"
+                secret={backup}
+                copySuccess="Backup codes copied"
+                copyLabel="Copy codes"
+                downloadName="derive-backup-codes.txt"
+                copyTestId="2fa-copy-backup"
+                downloadTestId="2fa-download-backup"
+                secretTestId="2fa-backup-codes"
+              />
             )}
             <FormField label="Confirm a code from your app" htmlFor="tfa-code">
               <InputOTP
@@ -646,7 +615,7 @@ function Sessions() {
           isPending
             ? "Loading your signed-in devices…"
             : isError
-              ? "Couldn't load your sessions."
+              ? "Couldn’t load your sessions."
               : count <= 1
                 ? "You're signed in on this device only."
                 : `You're signed in on ${count} devices.`
@@ -731,9 +700,9 @@ function Passkeys() {
   const remove = (id: string) => removeMut.mutate(id)
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium text-foreground">Passkeys</div>
+    <SettingsGroup
+      title="Passkeys"
+      action={
         <Button
           variant="secondary"
           size="sm"
@@ -743,34 +712,35 @@ function Passkeys() {
         >
           {adding ? "Waiting…" : "Add passkey"}
         </Button>
-      </div>
+      }
+    >
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <LoadError
-          layout="inline"
-          title="Couldn’t load your passkeys"
-          testId="passkeys-retry"
-          onRetry={() => refetch()}
-        />
+        // Padding-neutral wrappers: SettingsGroup strips its first/last child's
+        // vertical padding (a row contract), which would squash these states.
+        <div>
+          <LoadError
+            layout="inline"
+            title="Couldn’t load your passkeys"
+            testId="passkeys-retry"
+            onRetry={() => refetch()}
+          />
+        </div>
       ) : !passkeys || passkeys.length === 0 ? (
-        <EmptyState>No passkeys yet. Add one for a phishing-resistant, one-tap sign-in.</EmptyState>
+        <div>
+          <EmptyState>
+            No passkeys yet. Add one for a phishing-resistant, one-tap sign-in.
+          </EmptyState>
+        </div>
       ) : (
-        <SettingsGroup>
-          {passkeys.map((p) => (
-            <div
-              key={p.id}
-              data-testid={`passkey-row-${p.id}`}
-              className="flex items-center gap-3 py-3"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-foreground">
-                  {p.name || "Passkey"}
-                </div>
-                <div className="text-2xs text-muted-foreground">
-                  Added {new Date(p.createdAt).toLocaleDateString()}
-                </div>
-              </div>
+        passkeys.map((p) => (
+          <ListRow
+            key={p.id}
+            data-testid={`passkey-row-${p.id}`}
+            title={p.name || "Passkey"}
+            meta={`Added ${new Date(p.createdAt).toLocaleDateString()}`}
+            actions={
               <Button
                 data-testid={`passkey-remove-${p.id}`}
                 variant="destructive-ghost"
@@ -779,11 +749,11 @@ function Passkeys() {
               >
                 Remove
               </Button>
-            </div>
-          ))}
-        </SettingsGroup>
+            }
+          />
+        ))
       )}
-    </div>
+    </SettingsGroup>
   )
 }
 

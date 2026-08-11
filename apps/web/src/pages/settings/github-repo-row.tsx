@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { api, parseProgress, type RepoSource, type SyncProgress, type SyncStatus } from "@/api"
+import { ListRow } from "@/components/shared/list-row"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
@@ -127,145 +128,154 @@ export function RepoSourceRow({ source, onDone }: { source: RepoSource; onDone: 
   const indeterminate = active && (!prog || prog.total === 0)
 
   return (
-    <div data-testid={`github-row-${source.id}`} className="flex flex-col gap-3 py-3">
-      <div className="flex items-center gap-2.5">
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-sm text-foreground">
-            {source.repo}
-            <span className="text-muted-foreground"> · {source.ref}</span>
-            {source.installation_id && <span className="text-muted-foreground"> · app</span>}
-          </div>
-          {!active && !errored && (
-            <div className="mt-px flex items-center gap-1 truncate font-mono text-2xs text-muted-foreground">
-              {(status.last_status?.startsWith("ok") || status.last_synced_at) && (
-                <CheckCircle2 className="size-3 shrink-0 text-success" aria-hidden />
-              )}
-              {status.file_count} doc{status.file_count === 1 ? "" : "s"}
-              {status.last_synced_at
-                ? ` · synced ${ago(status.last_synced_at)}`
-                : " · never synced"}
+    <ListRow
+      data-testid={`github-row-${source.id}`}
+      mono
+      title={
+        <>
+          {source.repo}
+          <span className="text-muted-foreground"> · {source.ref}</span>
+          {source.installation_id && <span className="text-muted-foreground"> · app</span>}
+        </>
+      }
+      meta={
+        !active && !errored ? (
+          <span className="flex items-center gap-1 truncate font-mono">
+            {(status.last_status?.startsWith("ok") || status.last_synced_at) && (
+              <CheckCircle2 className="size-3 shrink-0 text-success" aria-hidden />
+            )}
+            {status.file_count} doc{status.file_count === 1 ? "" : "s"}
+            {status.last_synced_at ? ` · synced ${ago(status.last_synced_at)}` : " · never synced"}
+          </span>
+        ) : undefined
+      }
+      actions={
+        <>
+          <Button
+            data-testid={`github-sync-${source.id}`}
+            variant="ghost"
+            size="sm"
+            onClick={() => sync.mutate()}
+            disabled={active}
+          >
+            {active ? "Syncing…" : "Sync now"}
+          </Button>
+          <Button
+            data-testid={`github-remove-${source.id}`}
+            variant="destructive-ghost"
+            size="sm"
+            onClick={() => setDisconnectDialog(true)}
+          >
+            Disconnect
+          </Button>
+        </>
+      }
+      below={
+        <>
+          {/* Hand-rolled on purpose: a two-outcome CHOICE (keep vs delete the synced docs), not a
+              yes/no confirm — ConfirmDialog has no second verb. */}
+          {disconnectDialog && (
+            <Dialog open onOpenChange={(o) => !o && setDisconnectDialog(false)}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Disconnect {source.repo}?</DialogTitle>
+                  <DialogDescription>
+                    Choose what happens to the {status.file_count} synced doc
+                    {status.file_count === 1 ? "" : "s"}.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="mt-2 flex flex-col gap-2">
+                  <Button
+                    variant="outline"
+                    disabled={remove.isPending}
+                    data-testid={`github-disconnect-keep-${source.id}`}
+                    onClick={() => remove.mutate(false)}
+                  >
+                    Keep docs — stop syncing, docs stay readable
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    disabled={remove.isPending}
+                    data-testid={`github-disconnect-wipe-${source.id}`}
+                    onClick={() => remove.mutate(true)}
+                  >
+                    {remove.isPending ? "Deleting…" : "Delete docs — remove all synced content"}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+
+          {/* ACTIVE — the giant, explicit progress block. Every phase named, live counts,
+              a clear %, and a standing reassurance that it runs on the server. */}
+          {active && prog && (
+            <div
+              className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
+              data-testid={`github-progress-${source.id}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
+                  {/* Decorative — the phase headline beside it announces the state. */}
+                  <Spinner role="presentation" aria-label={undefined} className="size-4 shrink-0" />
+                  <span className="truncate">{phaseHeadline(prog, source.repo)}</span>
+                </div>
+                {!indeterminate && (
+                  <span className="shrink-0 font-mono text-sm font-medium tabular-nums text-primary">
+                    {pct}%
+                  </span>
+                )}
+              </div>
+
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
+                <div
+                  className={`h-full rounded-full bg-primary transition-[width] duration-500 ${indeterminate ? "w-1/3 animate-pulse" : ""}`}
+                  style={indeterminate ? undefined : { width: `${pct}%` }}
+                />
+              </div>
+
+              <div
+                className="font-mono text-2xs text-muted-foreground"
+                data-testid={`github-progress-detail-${source.id}`}
+              >
+                {phaseDetail(prog)}
+              </div>
+
+              <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                Running on our servers — you can close this tab, it’ll keep going.
+              </div>
             </div>
           )}
-        </div>
-        <Button
-          data-testid={`github-sync-${source.id}`}
-          variant="outline"
-          size="sm"
-          onClick={() => sync.mutate()}
-          disabled={active}
-        >
-          {active ? "Syncing…" : "Sync now"}
-        </Button>
-        <Button
-          data-testid={`github-remove-${source.id}`}
-          variant="destructive-ghost"
-          size="sm"
-          onClick={() => setDisconnectDialog(true)}
-        >
-          Disconnect
-        </Button>
-      </div>
 
-      {disconnectDialog && (
-        <Dialog open onOpenChange={(o) => !o && setDisconnectDialog(false)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Disconnect {source.repo}?</DialogTitle>
-              <DialogDescription>
-                Choose what happens to the {status.file_count} synced doc
-                {status.file_count === 1 ? "" : "s"}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-2 flex flex-col gap-2">
-              <Button
-                variant="outline"
-                disabled={remove.isPending}
-                data-testid={`github-disconnect-keep-${source.id}`}
-                onClick={() => remove.mutate(false)}
-              >
-                Keep docs — stop syncing, docs stay readable
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={remove.isPending}
-                data-testid={`github-disconnect-wipe-${source.id}`}
-                onClick={() => remove.mutate(true)}
-              >
-                {remove.isPending ? "Deleting…" : "Delete docs — remove all synced content"}
-              </Button>
+          {/* ERROR — danger callout with the message and a one-click retry. */}
+          {errored && !active && (
+            <div data-testid={`github-error-${source.id}`}>
+              <StatusPanel
+                tone="danger"
+                layout="inline"
+                icon={<AlertTriangle aria-hidden />}
+                className="p-3"
+                title="Sync failed"
+                description={
+                  <span className="break-words font-mono text-2xs">
+                    {prog?.message ?? status.last_status ?? "Unknown error"}
+                  </span>
+                }
+                action={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => sync.mutate()}
+                    data-testid={`github-retry-${source.id}`}
+                  >
+                    Try again
+                  </Button>
+                }
+              />
             </div>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* ACTIVE — the giant, explicit progress block. Every phase named, live counts,
-          a clear %, and a standing reassurance that it runs on the server. */}
-      {active && prog && (
-        <div
-          className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3"
-          data-testid={`github-progress-${source.id}`}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
-              {/* Decorative — the phase headline beside it announces the state. */}
-              <Spinner role="presentation" aria-label={undefined} className="size-4 shrink-0" />
-              <span className="truncate">{phaseHeadline(prog, source.repo)}</span>
-            </div>
-            {!indeterminate && (
-              <span className="shrink-0 font-mono text-sm font-medium tabular-nums text-primary">
-                {pct}%
-              </span>
-            )}
-          </div>
-
-          <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
-            <div
-              className={`h-full rounded-full bg-primary transition-[width] duration-500 ${indeterminate ? "w-1/3 animate-pulse" : ""}`}
-              style={indeterminate ? undefined : { width: `${pct}%` }}
-            />
-          </div>
-
-          <div
-            className="font-mono text-2xs text-muted-foreground"
-            data-testid={`github-progress-detail-${source.id}`}
-          >
-            {phaseDetail(prog)}
-          </div>
-
-          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-            Running on our servers — you can close this tab, it’ll keep going.
-          </div>
-        </div>
-      )}
-
-      {/* ERROR — danger callout with the message and a one-click retry. */}
-      {errored && !active && (
-        <div data-testid={`github-error-${source.id}`}>
-          <StatusPanel
-            tone="danger"
-            layout="inline"
-            icon={<AlertTriangle aria-hidden />}
-            className="p-3"
-            title="Sync failed"
-            description={
-              <span className="break-words font-mono text-2xs">
-                {prog?.message ?? status.last_status ?? "Unknown error"}
-              </span>
-            }
-            action={
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => sync.mutate()}
-                data-testid={`github-retry-${source.id}`}
-              >
-                Try again
-              </Button>
-            }
-          />
-        </div>
-      )}
-    </div>
+          )}
+        </>
+      }
+    />
   )
 }

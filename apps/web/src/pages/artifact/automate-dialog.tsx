@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
+import { AdminNote } from "@/components/shared/admin-note"
 import {
   Dialog,
   DialogContent,
@@ -51,9 +52,7 @@ export function AutomateDialog({
             onDone={() => onOpenChange(false)}
           />
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Only a workspace Admin can create automations. Ask an Admin to set this up.
-          </p>
+          <AdminNote can="create automations" />
         )}
       </DialogContent>
     </Dialog>

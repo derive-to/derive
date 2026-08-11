@@ -3,6 +3,7 @@ import { useState } from "react"
 import { api, type ModelCredentialHint } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Badge } from "@/components/ui/badge"
@@ -88,7 +89,7 @@ export function ModelPlanManager({ scope }: { scope: Scope }) {
 
   return (
     <>
-      <div className="rounded-lg border bg-card p-4">
+      <div className="rounded-lg bg-secondary p-4">
         <ConnectForm connect={connect} prefix={prefix} onConnected={reload} />
       </div>
 
@@ -221,7 +222,7 @@ function ConnectForm({
           loading={connect.isPending}
           disabled={connect.isPending || !ready}
         >
-          {connect.isPending ? "Connecting…" : "Connect"}
+          Connect
         </Button>
       </div>
     </div>
@@ -246,33 +247,35 @@ function CredentialRow({
     onSuccess: () => onDone(),
   })
   return (
-    <div
+    <ListRow
       data-testid={`${prefix}-row-${cred.provider}`}
-      className="flex items-center gap-3 py-3 text-sm"
-    >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 font-medium text-foreground">
+      title={
+        <span className="flex items-center gap-1.5">
           {providerLabel(cred.provider)}
           <Badge variant="outline">{kindLabel(cred.provider, cred.kind)}</Badge>
-        </div>
-        <div className="font-mono text-2xs text-muted-foreground">connected · ••••{cred.hint}</div>
-      </div>
-      <Button
-        data-testid={`${prefix}-disconnect-${cred.provider}`}
-        variant="destructive-ghost"
-        size="sm"
-        onClick={() => setConfirming(true)}
-      >
-        Disconnect
-      </Button>
-      <ConfirmDialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title="Disconnect this plan?"
-        description="Runs that relied on it will stop until it is reconnected."
-        confirmLabel="Disconnect"
-        onConfirm={() => remove.mutate()}
-      />
-    </div>
+        </span>
+      }
+      meta={<span className="font-mono">connected · ••••{cred.hint}</span>}
+      actions={
+        <>
+          <Button
+            data-testid={`${prefix}-disconnect-${cred.provider}`}
+            variant="destructive-ghost"
+            size="sm"
+            onClick={() => setConfirming(true)}
+          >
+            Disconnect
+          </Button>
+          <ConfirmDialog
+            open={confirming}
+            onOpenChange={setConfirming}
+            title="Disconnect this plan?"
+            description="Runs that relied on it will stop until it is reconnected."
+            confirmLabel="Disconnect"
+            onConfirm={() => remove.mutate()}
+          />
+        </>
+      }
+    />
   )
 }

@@ -3,13 +3,15 @@ import { useState } from "react"
 import { api, type WorkspaceDomain } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Badge } from "@/components/ui/badge"
+import { StatusBadge, type StatusTone } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { customDomainsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { AddForm } from "./add-form"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -84,50 +86,43 @@ function NewDomain({
     if (h) addDomain.mutate(h)
   }
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          data-testid="domain-host"
-          aria-label="Custom domain"
-          value={host}
-          onChange={(e) => setHost(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder="docs.acme.com"
-          className="min-w-60 flex-1 font-mono"
-        />
-        <Button
-          data-testid="domain-add"
-          variant="secondary"
-          size="sm"
-          onClick={add}
-          loading={addDomain.isPending}
-          disabled={addDomain.isPending || !host.trim()}
-        >
-          {addDomain.isPending ? "Adding…" : "Add"}
-        </Button>
-      </div>
-      {cnameTarget && (
-        <p className="font-mono text-2xs text-muted-foreground">
-          CNAME your domain to <span className="text-foreground">{cnameTarget}</span>.
-        </p>
-      )}
-    </div>
+    <AddForm
+      onSubmit={add}
+      submitLabel="Add"
+      submitTestId="domain-add"
+      pending={addDomain.isPending}
+      disabled={!host.trim()}
+      after={
+        cnameTarget && (
+          <p className="font-mono text-2xs text-muted-foreground">
+            CNAME your domain to <span className="text-foreground">{cnameTarget}</span>.
+          </p>
+        )
+      }
+    >
+      <Input
+        data-testid="domain-host"
+        aria-label="Custom domain"
+        value={host}
+        onChange={(e) => setHost(e.target.value)}
+        placeholder="docs.acme.com"
+        className="min-w-60 flex-1 font-mono"
+      />
+    </AddForm>
   )
 }
 
-// Verification state → badge tone: a live cert is a success, a failed issuance is
-// destructive, and pending means DNS work is still on the user (warning, not the accent).
-const statusBadge = (
-  s: string,
-): { variant: "success" | "destructive" | "warning"; label: string } =>
+// Verification state → tone: a live cert is confirmed good, a failed issuance
+// errored, and pending means DNS work is still on the user (attention, not the accent).
+const statusTone = (s: string): { tone: StatusTone; label: string } =>
   s === "active"
-    ? { variant: "success", label: "Active" }
+    ? { tone: "ok", label: "Active" }
     : s === "error"
-      ? { variant: "destructive", label: "Error" }
-      : { variant: "warning", label: "Pending" }
+      ? { tone: "error", label: "Error" }
+      : { tone: "attention", label: "Pending" }
 
 function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: () => void }) {
-  const b = statusBadge(domain.status)
+  const b = statusTone(domain.status)
   const [confirming, setConfirming] = useState(false)
   const refreshMut = useApiMutation({
     mutationFn: () => api.refreshWorkspaceDomain(domain.host),
@@ -141,51 +136,57 @@ function DomainRow({ domain, onChanged }: { domain: WorkspaceDomain; onChanged: 
   })
   const remove = () => removeMut.mutate()
   return (
-    <div data-testid={`domain-row-${domain.host}`} className="flex flex-col gap-2 py-3">
-      <div className="flex items-center gap-2.5">
-        <div className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">
-          {domain.host}
-        </div>
-        <Badge data-testid="domain-status" variant={b.variant}>
-          {b.label}
-        </Badge>
-        {domain.status !== "active" && (
-          <Button data-testid="domain-refresh" variant="ghost" size="sm" onClick={refresh}>
-            Refresh
+    <ListRow
+      data-testid={`domain-row-${domain.host}`}
+      mono
+      title={domain.host}
+      actions={
+        <>
+          <StatusBadge data-testid="domain-status" tone={b.tone}>
+            {b.label}
+          </StatusBadge>
+          {domain.status !== "active" && (
+            <Button data-testid="domain-refresh" variant="ghost" size="sm" onClick={refresh}>
+              Refresh
+            </Button>
+          )}
+          <Button
+            data-testid="domain-remove"
+            variant="destructive-ghost"
+            size="sm"
+            onClick={() => setConfirming(true)}
+          >
+            Remove
           </Button>
-        )}
-        <Button
-          data-testid="domain-remove"
-          variant="destructive-ghost"
-          size="sm"
-          onClick={() => setConfirming(true)}
-        >
-          Remove
-        </Button>
-      </div>
-      <ConfirmDialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title={`Remove ${domain.host}?`}
-        description="Artifacts stop serving on this domain immediately; the TLS cert is released."
-        confirmLabel="Remove"
-        onConfirm={remove}
-      />
-      {domain.status !== "active" && domain.records && domain.records.length > 0 && (
-        <div className="rounded-lg bg-secondary px-3 py-2">
-          <p className="mb-1 font-mono text-2xs text-muted-foreground">
-            Add these DNS records at your registrar:
-          </p>
-          {domain.records.map((r) => (
-            <div
-              key={`${r.type}-${r.name}`}
-              className="truncate font-mono text-2xs text-foreground"
-            >
-              <span className="text-muted-foreground">{r.type}</span> {r.name} → {r.value}
+        </>
+      }
+      below={
+        <>
+          <ConfirmDialog
+            open={confirming}
+            onOpenChange={setConfirming}
+            title={`Remove ${domain.host}?`}
+            description="Artifacts stop serving on this domain immediately; the TLS cert is released."
+            confirmLabel="Remove"
+            onConfirm={remove}
+          />
+          {domain.status !== "active" && domain.records && domain.records.length > 0 && (
+            <div className="rounded-lg bg-secondary px-3 py-2">
+              <p className="mb-1 font-mono text-2xs text-muted-foreground">
+                Add these DNS records at your registrar:
+              </p>
+              {domain.records.map((r) => (
+                <div
+                  key={`${r.type}-${r.name}`}
+                  className="truncate font-mono text-2xs text-foreground"
+                >
+                  <span className="text-muted-foreground">{r.type}</span> {r.name} → {r.value}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+          )}
+        </>
+      }
+    />
   )
 }

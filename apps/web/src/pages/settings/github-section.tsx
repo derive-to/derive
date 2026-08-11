@@ -5,8 +5,9 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { toast } from "@/components/ui/sonner"
+import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { AdvancedPat } from "./github-advanced-pat"
-import { ConnectViaApp, SetUpApp, takeInstallParams } from "./github-install-flow"
+import { ConnectViaApp, SetUpApp } from "./github-install-flow"
 import { PrPreviewRow } from "./github-pr-preview"
 import { RepoPicker } from "./github-repo-picker"
 import { RepoSourceRow } from "./github-repo-row"
@@ -48,11 +49,12 @@ export function GithubSection() {
   }, [])
 
   // After the GitHub redirect (?gh_install / ?gh_error), open the picker or toast.
+  const { gh_install: ghInstall, gh_error: ghError } = useOneShotParams("gh_install", "gh_error")
   useEffect(() => {
-    const { install, error } = takeInstallParams()
-    if (error) toast.error(error === "install_expired" ? "Install link expired" : "Install failed") // mutation-ignore: OAuth ?gh_error redirect param, not a mutation
-    if (install) setPickerInstall(install)
-  }, [])
+    if (ghError)
+      toast.error(ghError === "install_expired" ? "Install link expired" : "Install failed") // mutation-ignore: OAuth ?gh_error redirect param, not a mutation
+    if (ghInstall) setPickerInstall(ghInstall)
+  }, [ghInstall, ghError])
 
   // Onboarding shortcut: an App is configured and installed but no repo is connected
   // yet → open the picker for the first installation so the user goes straight to

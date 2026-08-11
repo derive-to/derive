@@ -4,12 +4,14 @@ import { api, type BillingInfo } from "@/api"
 import { BillingCycleToggle } from "@/components/billing/billing-cycle-toggle"
 import { PlanCard } from "@/components/billing/plan-card"
 import { useCheckout } from "@/components/billing/use-checkout"
+import { AdminNote } from "@/components/shared/admin-note"
 import { LoadError } from "@/components/shared/load-error"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { gb } from "@/lib/bytes"
 import { billingQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { FREE_SEAT_LIMIT, type PaidTier, PLANS, unitPrice } from "./billing-plans"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -73,19 +75,16 @@ export function BillingSection() {
   const pollDeadline = useRef<number | null>(null)
 
   // ?checkout=success lands here fresh back from Stripe: the cached billing
-  // query may predate the webhook, so consume + strip the param (same one-shot
-  // idiom as general-section's ?new-workspace=1), force a refetch, and poll
-  // briefly until the webhook flips `subscribed` true.
+  // query may predate the webhook, so consume the one-shot param, force a
+  // refetch, and poll briefly until the webhook flips `subscribed` true.
+  const { checkout: checkoutParam } = useOneShotParams("checkout")
   useEffect(() => {
-    const url = new URL(window.location.href)
-    if (url.searchParams.get("checkout") === "success") {
-      url.searchParams.delete("checkout")
-      window.history.replaceState(null, "", url)
+    if (checkoutParam === "success") {
       setShowSuccessBanner(true)
       pollDeadline.current = Date.now() + CHECKOUT_POLL_TIMEOUT_MS
       void qc.invalidateQueries({ queryKey: billingQuery().queryKey })
     }
-  }, [qc])
+  }, [checkoutParam, qc])
 
   const {
     data: billing,
@@ -140,13 +139,7 @@ export function BillingSection() {
             pendingTier={(t) => checkout.isPendingFor(t)}
             checkoutPending={checkout.isPending}
           />
-          {isAdmin ? (
-            billing.subscribed && <ManageBilling />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Only a workspace Admin can change billing.
-            </p>
-          )}
+          {isAdmin ? billing.subscribed && <ManageBilling /> : <AdminNote can="change billing" />}
           <p className="text-sm text-muted-foreground">
             Need isolation, residency, or procurement?{" "}
             <a
@@ -205,18 +198,12 @@ function StorageMeter({
       </p>
       <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-secondary">
         <div
-          className={
-            high
-              ? "h-full rounded-full bg-amber-500" /* tokens-ignore */
-              : "h-full rounded-full bg-primary"
-          }
+          className={high ? "h-full rounded-full bg-warning" : "h-full rounded-full bg-primary"}
           style={{ width: `${pct}%` }}
         />
       </div>
       {high && tier === "free" && (
-        <p className="text-amber-600 dark:text-amber-500" /* tokens-ignore */>
-          Running low? Team includes 50 GB pooled storage.
-        </p>
+        <p className="text-warning">Running low? Team includes 50 GB pooled storage.</p>
       )}
     </div>
   )
