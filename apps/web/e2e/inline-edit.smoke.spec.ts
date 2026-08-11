@@ -195,25 +195,19 @@ test("navigating away with unsaved edits is guarded, not silent", async ({ owner
   expect(await versionOf(owner, shortId)).toBe(1)
 })
 
-test("double-click the text to enter the mode, with the caret already there", async ({ owner }) => {
-  const shortId = await seed(owner)
-  // No mode yet — the document is being read.
+test("double-clicking the text stays a plain word select — it never opens the mode", async ({
+  owner,
+}) => {
+  // The gesture used to be an entry point; it was removed because it collided with
+  // the reading grammar (select a word to comment/quote it). The button, `e`, and
+  // Edit on a selection are the ways in. This pins the removal.
+  await seed(owner)
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
 
-  // The gesture: double-click the words you came to fix.
   await doc(owner).locator("#two").dblclick()
-  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
-
-  // The caret is IN that block, so typing goes there without a second click.
-  await owner.keyboard.press("End")
-  await owner.keyboard.type(" Landed.")
-  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
-  await owner.getByTestId("inline-edit-save").click()
+  // Give a would-be edit-request round trip time to land before reading the bar.
+  await owner.waitForTimeout(500)
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
-
-  const src = await contentOf(owner, shortId)
-  expect(src).toContain("Second paragraph. Landed.")
-  expect(src).toContain("First paragraph.")
 })
 
 test("`e` opens the mode from the keyboard", async ({ owner }) => {

@@ -225,7 +225,7 @@ export function Artifact() {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [])
-  // `e` opens edit mode, the keyboard twin of double-clicking the text. No entry
+  // `e` opens edit mode, the keyboard twin of the header's Edit button. No entry
   // point, no key: the ref carries whether the mode is even available, so this is
   // silent on a version you're reading, a bundle, or someone else's locked doc.
   useEffect(() => {
@@ -585,10 +585,9 @@ export function Artifact() {
     frameRef: frame,
     post,
     load,
-    // Arming the document's double-click is decided BEFORE the mode's own state
-    // exists, so it reads the URL's version rather than the shown one. The two
-    // differ only while the mode is open (it freezes the view), and an open mode
-    // is un-armed anyway.
+    // Eligibility is decided BEFORE the mode's own state exists, so it reads the
+    // URL's version rather than the shown one. The two differ only while the mode
+    // is open (it freezes the view), and the mode can't be re-entered from inside.
     canEdit: canEditArtifactDoc(art, version ?? art?.current_version, editing),
     // The frame always contains rendered HTML, including for Markdown. Only an
     // HTML/deck source supports the opening-tag operation; Markdown keeps image

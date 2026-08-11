@@ -209,13 +209,15 @@ test.describe("deck", () => {
     await owner.getByTestId("deck-next").click()
     await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
 
-    // Edit the slide on screen. `force` because Playwright's actionability check sees
-    // the NEXT slide stacked on top of this one (a deck hides slides with opacity,
-    // which leaves them hit-testable) and refuses to click. A real click lands fine:
-    // the client peels those overlays before it resolves what the pointer is over,
-    // which is the whole reason editing a deck works at all.
-    await doc(owner).locator("#s2").dblclick({ force: true })
+    // Enter the mode from the header, then click the slide on screen to arm it.
+    // `force` because Playwright's actionability check sees the NEXT slide stacked
+    // on top of this one (a deck hides slides with opacity, which leaves them
+    // hit-testable) and refuses to click. A real click lands fine: the client peels
+    // those overlays before it resolves what the pointer is over, which is the
+    // whole reason editing a deck works at all.
+    await owner.getByTestId("artifact-inline-edit").click()
     await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+    await doc(owner).locator("#s2").click({ force: true })
     await owner.keyboard.press("End")
     // A space is the tell: this deck binds Space to "next slide".
     await owner.keyboard.type(" and a half")
