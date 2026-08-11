@@ -18,7 +18,7 @@ import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
 import { ModelPlansSection } from "./model-plans-section"
 import { ModelsSection } from "./models-section"
-import { PeopleSection } from "./people-section"
+import { NotificationsSection } from "./notifications-section"
 import { ProfileSection } from "./profile-section"
 import { ReportsSection } from "./reports-section"
 import { SecuritySection } from "./security-section"
@@ -35,26 +35,32 @@ const route = getRouteApi("/settings/$section")
 // derived from it, so an id or label can't drift between the two. Order here is
 // display order. Two sections are data-gated at render (`models`, `reports`); they
 // stay in this list unconditionally so a hidden tab keeps its title.
-const GROUP_ORDER = ["Account", "Workspace", "Developer", "Instance"] as const
+//
+// Groups are SCOPE, and only scope: You (your account, follows you across
+// workspaces), Workspace (this workspace's resources — webhooks, agents, and
+// domains are workspace things, not a "developer" persona's), Operator (running
+// the instance). Nothing enters this list to reclaim a nav row: a directory, a
+// ledger, or a studio is a product surface, not a section.
+const GROUP_ORDER = ["You", "Workspace", "Operator"] as const
 const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number] }[] = [
-  { id: "profile", label: "Profile", group: "Account" },
-  { id: "security", label: "Security", group: "Account" },
-  { id: "model-plans", label: "Model plans", group: "Account" },
-  { id: "appearance", label: "Appearance", group: "Account" },
+  { id: "profile", label: "Profile", group: "You" },
+  { id: "security", label: "Security", group: "You" },
+  { id: "notifications", label: "Notifications", group: "You" },
+  { id: "model-plans", label: "Model plans", group: "You" },
+  { id: "appearance", label: "Appearance", group: "You" },
   { id: "general", label: "General", group: "Workspace" },
   { id: "members", label: "Members", group: "Workspace" },
-  { id: "people", label: "People", group: "Workspace" },
   { id: "billing", label: "Billing", group: "Workspace" },
   { id: "integrations", label: "Integrations", group: "Workspace" },
   { id: "sources", label: "Sources", group: "Workspace" },
   { id: "brandprint", label: "Brandprint", group: "Workspace" },
-  { id: "github", label: "GitHub", group: "Developer" },
-  { id: "webhooks", label: "Webhooks", group: "Developer" },
-  { id: "agents", label: "Agents", group: "Developer" },
-  { id: "automations", label: "Automations", group: "Developer" },
-  { id: "domains", label: "Domains", group: "Developer" },
-  { id: "models", label: "Models", group: "Instance" },
-  { id: "reports", label: "Reports", group: "Instance" },
+  { id: "github", label: "GitHub", group: "Workspace" },
+  { id: "webhooks", label: "Webhooks", group: "Workspace" },
+  { id: "agents", label: "Agents", group: "Workspace" },
+  { id: "automations", label: "Automations", group: "Workspace" },
+  { id: "domains", label: "Domains", group: "Workspace" },
+  { id: "models", label: "Models", group: "Operator" },
+  { id: "reports", label: "Reports", group: "Operator" },
 ]
 
 const SECTION_TITLES: Record<string, string> = Object.fromEntries(
@@ -62,7 +68,7 @@ const SECTION_TITLES: Record<string, string> = Object.fromEntries(
 )
 
 // Settings, reconceived as a scope-grouped two-pane: a sticky category rail
-// (Account · Workspace · Developer · Moderation) beside a readable detail column,
+// (You · Workspace · Operator) beside a readable detail column,
 // reflowing to a horizontal strip on a narrow pane. The active section is a path
 // segment (/settings/$section) — deep-linkable, back-button-friendly, and a peer of
 // the server's own /settings/github/app/* pages — and the GitHub App install lands on
@@ -139,11 +145,11 @@ export function Settings() {
           <div className="min-w-0">
             {active === "profile" && <ProfileSection />}
             {active === "security" && <SecuritySection />}
+            {active === "notifications" && <NotificationsSection />}
             {active === "model-plans" && <ModelPlansSection />}
             {active === "appearance" && <AppearanceSection />}
             {active === "general" && <GeneralSection />}
             {active === "members" && <MembersSection meId={me.id} />}
-            {active === "people" && <PeopleSection />}
             {active === "billing" && <BillingSection />}
             {active === "integrations" && <IntegrationsSection />}
             {active === "sources" && <SourcesSection />}

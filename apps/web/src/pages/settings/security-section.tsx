@@ -200,7 +200,7 @@ function DeleteAccount() {
   const submit = () => del.mutate()
 
   return (
-    <SettingsGroup>
+    <SettingsGroup title="Danger zone">
       <SettingRow
         label={<span className="font-medium text-destructive">Delete account</span>}
         description="Permanently delete your account and remove you from every workspace. This can't be undone."

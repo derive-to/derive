@@ -304,7 +304,7 @@ export const handleSlackMention = async (
     // miss row above keeps us quiet until it ages out or they fix it.
     await say(
       `I answer with *your* permissions, so I need to know who you are. ` +
-        `<${deps.baseUrl}/settings/integrations|Link your Derive account> and ask me again.\n\n` +
+        `<${deps.baseUrl}/settings/notifications|Link your Derive account> and ask me again.\n\n` +
         `If your Slack email already matches your Derive account, linking is not needed — ` +
         `check that the two match.`,
     )

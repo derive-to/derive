@@ -109,7 +109,7 @@ test("settings save and theme switch persist", async ({ owner }) => {
   await expect(owner.locator("html")).toHaveClass(/dark/)
 })
 
-test("Brandprint and People live in Settings, and their old paths still resolve", async ({
+test("Brandprint lives in Settings, People is its own page, and old paths on both still resolve", async ({
   owner,
 }) => {
   // The rail is down to the two destinations that are places. Everything else is a
@@ -119,18 +119,21 @@ test("Brandprint and People live in Settings, and their old paths still resolve"
   await expect(owner.getByTestId("nav-people")).toHaveCount(0)
   await expect(owner.getByTestId("nav-brandprint")).toHaveCount(0)
 
-  // Both are settings sections now, reachable by their own path.
+  // Brandprint is a settings section, reachable by its own path.
   await owner.goto("/settings/brandprint")
   await expect(owner.getByTestId("settings-tab-brandprint")).toHaveAttribute("aria-current", "page")
+
+  // People is a standalone directory page; its retired settings path redirects out.
+  await owner.goto("/people")
+  await expect(owner).toHaveURL(/\/people$/)
+  await expect(owner.getByTestId("people-search")).toBeVisible()
   await owner.goto("/settings/people")
-  await expect(owner.getByTestId("settings-tab-people")).toHaveAttribute("aria-current", "page")
+  await expect(owner).toHaveURL(/\/people$/)
   await expect(owner.getByTestId("people-search")).toBeVisible()
 
-  // The old paths keep working — bookmarks, and links agents have already emitted.
+  // The old Brandprint path keeps working — bookmarks, and links agents have already emitted.
   await owner.goto("/brandprint")
   await expect(owner).toHaveURL(/\/settings\/brandprint$/)
-  await owner.goto("/people")
-  await expect(owner).toHaveURL(/\/settings\/people$/)
 })
 
 test("starring a collection pins it to the sidebar's Starred group", async ({ owner }) => {

@@ -97,7 +97,7 @@ export const captureLinkPromptModal = (baseUrl: string): unknown => ({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `Connect your Derive account first, so the comment is saved as *you*.\n\n<${baseUrl}/settings/integrations|Connect Derive and Slack>`,
+        text: `Connect your Derive account first, so the comment is saved as *you*.\n\n<${baseUrl}/settings/notifications|Connect Derive and Slack>`,
       },
     },
   ],

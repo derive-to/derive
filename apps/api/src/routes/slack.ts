@@ -645,7 +645,7 @@ export const slackRoutes = (ctx: AppContext) => {
     if (me instanceof Response) return me
     const org = await activeWorkspace(c)
     const install = await meta.getSlackInstall(org)
-    if (!install) return c.redirect("/settings/integrations?error=not_connected")
+    if (!install) return c.redirect("/settings/notifications?error=not_connected")
     const state = signState({ org, uid: me.id }, deps.encryptionKey)
     return c.redirect(
       slackOidcAuthorizeUrl(
@@ -672,7 +672,7 @@ export const slackRoutes = (ctx: AppContext) => {
     // 15-min window), so a session is required and must match — otherwise someone who got a
     // victim's state could complete the link and route the victim's DMs to their own Slack.
     if (me instanceof Response || !code || !state || me.id !== state.uid)
-      return c.redirect("/settings/integrations?error=link")
+      return c.redirect("/settings/notifications?error=link")
     try {
       const { accessToken } = await exchangeSlackOidc(
         slack.clientId,
@@ -683,7 +683,7 @@ export const slackRoutes = (ctx: AppContext) => {
       const identity = await slackOidcUserinfo(accessToken)
       const install = await meta.getSlackInstall(state.org)
       if (!install || install.team_id !== identity.teamId)
-        return c.redirect("/settings/integrations?error=link_team")
+        return c.redirect("/settings/notifications?error=link_team")
       // One link per user per team: clear any prior link, then store the new one, bound to the
       // Derive user from the signed state (never from the OAuth response).
       await meta.deleteSlackUserLink(identity.teamId, state.uid)
@@ -700,10 +700,10 @@ export const slackRoutes = (ctx: AppContext) => {
         checked_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
-      return c.redirect("/settings/integrations")
+      return c.redirect("/settings/notifications")
     } catch (err) {
       log.warn("slack link failed", { error: err instanceof Error ? err.message : String(err) })
-      return c.redirect("/settings/integrations?error=link")
+      return c.redirect("/settings/notifications?error=link")
     }
   })
 
@@ -1117,7 +1117,7 @@ export const slackRoutes = (ctx: AppContext) => {
           bot.token,
           payload.trigger_id,
           questionReplyNoticeModal(
-            `Connect your Derive account first, so the reply is saved as *you*.\n\n<${deps.baseUrl}/settings/integrations|Connect Derive and Slack>`,
+            `Connect your Derive account first, so the reply is saved as *you*.\n\n<${deps.baseUrl}/settings/notifications|Connect Derive and Slack>`,
           ),
         )
       } catch {

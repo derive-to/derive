@@ -8,7 +8,6 @@ import { FormField } from "@/components/shared/form-field"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -207,22 +206,21 @@ export function GeneralSection() {
 
       {isAdmin && ws && (
         <>
-          <StatusPanel
-            tone="danger"
-            layout="inline"
-            title="Delete this workspace"
-            description="Permanently delete this workspace. It must be empty (no artifacts), and this can't be undone."
-            action={
+          <SettingsGroup title="Danger zone">
+            <SettingRow
+              label={<span className="font-medium text-destructive">Delete this workspace</span>}
+              description="Permanently delete this workspace. It must be empty (no artifacts), and this can't be undone."
+            >
               <Button
                 data-testid="workspace-delete"
-                variant="destructive"
+                variant="destructive-ghost"
                 size="sm"
                 onClick={() => setDeleteOpen(true)}
               >
                 Delete workspace
               </Button>
-            }
-          />
+            </SettingRow>
+          </SettingsGroup>
           <ConfirmDialog
             open={deleteOpen}
             onOpenChange={setDeleteOpen}

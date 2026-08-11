@@ -900,7 +900,7 @@ function emptyStateFor(
             variant="outline"
             size="sm"
             data-testid="library-empty-browse-people"
-            onClick={() => nav({ to: "/settings/$section", params: { section: "people" } })}
+            onClick={() => nav({ to: "/people" })}
           >
             Browse people
           </Button>

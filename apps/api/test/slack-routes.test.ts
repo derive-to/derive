@@ -352,7 +352,8 @@ describe("slack account linking (OIDC)", () => {
       { redirect: "manual", headers: as(owner.email) },
     )
     expect(r.status).toBe(302)
-    expect(r.headers.get("location")).toBe("/settings/integrations")
+    // The account-link affordance lives under You → Notifications now.
+    expect(r.headers.get("location")).toBe("/settings/notifications")
     const link = await meta.getSlackUserLinkBySlackId("T1", "U777")
     expect(link?.user_id).toBe(owner.id)
     // Reverse + forward lookups both resolve.
