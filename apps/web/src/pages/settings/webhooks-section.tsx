@@ -37,8 +37,8 @@ export function WebhooksSection() {
       title="Webhooks"
       description={
         <>
-          Get a POST (or a Slack message) when a comment is added or resolved, or a new version is
-          published. Generic payloads are signed with{" "}
+          Get a POST — or a Slack message — when comments change or a new version is published.
+          Payloads are signed (
           <a
             href="https://www.standardwebhooks.com"
             target="_blank"
@@ -46,9 +46,8 @@ export function WebhooksSection() {
             className="text-primary underline underline-offset-2"
           >
             Standard Webhooks
-          </a>{" "}
-          headers (<code className="font-mono">webhook-signature</code>), and the legacy{" "}
-          <code className="font-mono">X-Derive-Signature</code>.
+          </a>
+          ).
         </>
       }
     >
@@ -86,6 +85,7 @@ function NewWebhook({
   const [kind, setKind] = useState<"generic" | "slack">("generic")
   // Everything ticked by default, and "everything ticked" is what sends no filter at all.
   const [events, setEvents] = useState<string[] | null>(null)
+  const [filtering, setFiltering] = useState(false)
   const selected = events ?? eventOptions
   const valid = /^https?:\/\//.test(url)
   const urlField = fieldError(
@@ -108,6 +108,7 @@ function NewWebhook({
     onSuccess: () => {
       setUrl("")
       setEvents(null)
+      setFiltering(false)
       onCreated()
     },
   })
@@ -124,21 +125,37 @@ function NewWebhook({
       after={
         <>
           {urlField.node}
-          <div className="flex flex-wrap gap-3.5">
-            {eventOptions.map((e) => (
-              <label
-                key={e}
-                className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground"
-              >
-                <Checkbox
-                  data-testid={`webhook-event-${e}`}
-                  checked={selected.includes(e)}
-                  onCheckedChange={() => toggle(e)}
-                />
-                {e}
-              </label>
-            ))}
-          </div>
+          {/* The default is every event, which stores no filter — so the checkbox
+              wall carries no information until someone wants to narrow it. Keep it
+              behind a quiet disclosure; surface it automatically once narrowed. */}
+          {!filtering && events === null ? (
+            <Button
+              type="button"
+              data-testid="webhook-filter-events"
+              variant="link"
+              size="sm"
+              className="self-start px-0 text-muted-foreground"
+              onClick={() => setFiltering(true)}
+            >
+              Sends every event — filter…
+            </Button>
+          ) : (
+            <div className="flex flex-wrap gap-3.5">
+              {eventOptions.map((e) => (
+                <label
+                  key={e}
+                  className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground"
+                >
+                  <Checkbox
+                    data-testid={`webhook-event-${e}`}
+                    checked={selected.includes(e)}
+                    onCheckedChange={() => toggle(e)}
+                  />
+                  {e}
+                </label>
+              ))}
+            </div>
+          )}
         </>
       }
     >

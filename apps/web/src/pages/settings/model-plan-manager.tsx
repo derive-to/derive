@@ -2,7 +2,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type ModelCredentialHint } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { EmptyState } from "@/components/shared/empty-state"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
@@ -82,10 +81,6 @@ export function ModelPlanManager({ scope }: { scope: Scope }) {
   const connect = scope === "pool" ? api.connectPoolCredential : api.connectModelCredential
   const disconnect = scope === "pool" ? api.disconnectPoolCredential : api.disconnectModelCredential
   const prefix = scope === "pool" ? "pool-model-plan" : "model-plan"
-  const empty =
-    scope === "pool"
-      ? "No shared plan connected. Connect one above to give the workspace a fallback."
-      : "No plan connected yet. Connect one above to run on your own plan."
 
   return (
     <>
@@ -101,9 +96,9 @@ export function ModelPlanManager({ scope }: { scope: Scope }) {
           testId={`${prefix}-retry`}
           onRetry={() => refetch()}
         />
-      ) : !creds || creds.length === 0 ? (
-        <EmptyState>{empty}</EmptyState>
-      ) : (
+      ) : // No plans yet renders NOTHING: the connect form above is the empty
+      // state, and a "no plan yet" line under it would only repeat the form.
+      !creds || creds.length === 0 ? null : (
         <SettingsGroup>
           {creds.map((c) => (
             <CredentialRow

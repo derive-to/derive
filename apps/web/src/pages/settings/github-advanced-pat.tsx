@@ -55,10 +55,10 @@ export function AdvancedPat({ onCreated }: { onCreated: () => void }) {
       <Button
         variant="link"
         data-testid="github-advanced-toggle"
-        className="h-auto p-0"
+        className="h-auto p-0 font-normal text-muted-foreground underline decoration-border underline-offset-2 hover:text-foreground"
         onClick={() => setOpen((o) => !o)}
       >
-        {open ? "Hide advanced" : "Advanced: connect with a token or a public repo"}
+        {open ? "Hide advanced" : "Advanced: connect with a token or a public repo…"}
       </Button>
       {open && (
         <Card className="mt-2 gap-3 p-4">
