@@ -83,6 +83,8 @@ export function ArtifactTopBar(props: {
   onInlineEdit: () => void
   onToggleComments: () => void
   onPresent: () => void
+  /** Open this artifact's current source as an independent draft. */
+  onCreateFrom: () => void
   onLockToggle: () => void
   onArchive: () => void
   /** Enter focus/hero mode — strip the chrome to just the render. */
@@ -158,6 +160,9 @@ export function ArtifactTopBar(props: {
                 <Icon name="present" size={16} /> Present
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem data-testid="artifact-create-from" onSelect={props.onCreateFrom}>
+              <Icon name="derive" size={16} /> Create from this
+            </DropdownMenuItem>
             {/* Opt out of the live-cursor layer: peers vanish and yours stops broadcasting.
                 Kept open on toggle so the state reads back; the preference persists per-browser. */}
             <DropdownMenuCheckboxItem

@@ -4,9 +4,11 @@ import { useEffect, useState } from "react"
 // the client mounts). Drives the mobile layout branches across the app. 640 is
 // Tailwind's `sm`, so JS branches and `max-sm:` utilities stay in lockstep.
 export function useIsMobile(bp = 640): boolean {
-  const [m, setM] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(`(max-width:${bp}px)`).matches,
-  )
+  // Never read matchMedia during the initial client render: prerendering assumes
+  // desktop, and a mobile-first client value would make Sidebar render a Sheet
+  // where the server emitted the desktop rail. Set the real value after mount,
+  // when changing the DOM cannot break hydration.
+  const [m, setM] = useState(false)
   useEffect(() => {
     const mq = window.matchMedia(`(max-width:${bp}px)`)
     const on = () => setM(mq.matches)

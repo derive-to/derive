@@ -30,6 +30,7 @@
     "@codemirror/language": "^6.12.3",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.1",
+    "@derive-to/templates": "workspace:*",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.2.8",
     "@lezer/highlight": "^1.2.3",

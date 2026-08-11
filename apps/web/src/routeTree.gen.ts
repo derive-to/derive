@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UnlistedRouteImport } from './routes/unlisted'
+import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as SharedRouteImport } from './routes/shared'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -48,6 +49,11 @@ const WelcomeRoute = WelcomeRouteImport.update({
 const UnlistedRoute = UnlistedRouteImport.update({
   id: '/unlisted',
   path: '/unlisted',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesRoute = TemplatesRouteImport.update({
+  id: '/templates',
+  path: '/templates',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShowcaseRoute = ShowcaseRouteImport.update({
@@ -208,6 +214,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/templates': typeof TemplatesRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -239,6 +246,7 @@ export interface FileRoutesByTo {
   '/search': typeof SearchRoute
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/templates': typeof TemplatesRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -272,6 +280,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/templates': typeof TemplatesRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -306,6 +315,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/templates'
     | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
@@ -337,6 +347,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/shared'
     | '/showcase'
+    | '/templates'
     | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
@@ -369,6 +380,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/templates'
     | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
@@ -402,6 +414,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   SharedRoute: typeof SharedRoute
   ShowcaseRoute: typeof ShowcaseRoute
+  TemplatesRoute: typeof TemplatesRoute
   UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
@@ -430,6 +443,13 @@ declare module '@tanstack/react-router' {
       path: '/unlisted'
       fullPath: '/unlisted'
       preLoaderRoute: typeof UnlistedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/templates': {
+      id: '/templates'
+      path: '/templates'
+      fullPath: '/templates'
+      preLoaderRoute: typeof TemplatesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/showcase': {
@@ -662,6 +682,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   SharedRoute: SharedRoute,
   ShowcaseRoute: ShowcaseRoute,
+  TemplatesRoute: TemplatesRoute,
   UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,

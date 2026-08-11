@@ -142,6 +142,15 @@ for the recommended install and verification flow.
   manage their own artifacts in team workspaces).
 
 ### Added
+- **Built-in Templates are a versioned, source-bearing catalog.** The product ships
+  24 artifact Templates and 6 credential-free Context manifests from the shared
+  `derive/built-ins` library. The web catalog, Quick Create, remote MCP, and stdio
+  MCP read the same deterministic starter bytes and provenance (`library`, template
+  id, catalog version). Agents discover `derive://templates/catalog`, read a
+  `derive://templates/:id` resource, and use the existing `publish` tool to create
+  a normal independent, shareable artifact — no new MCP tool surface. Context
+  Templates deliberately contain no runners, source bindings, approvals, or
+  credentials; those are bound after creation.
 - **Invite-only, org-wide collections, and a world-link password lock.** An artifact
   can be invite-only (`workspace_access=none`) so only explicit shares reach it, even
   for teammates. Collections are workspace-wide — any member manages one at their seat

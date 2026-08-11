@@ -34,6 +34,14 @@ export default {
       to: { path: "^(packages/(mcp|cli|runner)|apps)/" },
     },
     {
+      name: "templates-is-a-leaf",
+      severity: "error",
+      comment:
+        "@derive-to/templates is portable starter data and rendering only: no app, adapter, or client runtime imports.",
+      from: { path: "^packages/templates/src" },
+      to: { path: "^(packages|apps)/", pathNot: "^packages/templates/" },
+    },
+    {
       name: "clients-no-core-at-runtime",
       severity: "error",
       comment:

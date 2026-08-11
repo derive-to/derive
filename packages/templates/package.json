@@ -1,0 +1,31 @@
+{
+  "name": "@derive-to/templates",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Portable built-in Templates catalog and starter renderers for Derive.",
+  "license": "FSL-1.1-ALv2",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/derive-to/derive.git",
+    "directory": "packages/templates"
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "typecheck:tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
