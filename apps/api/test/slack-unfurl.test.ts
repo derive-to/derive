@@ -30,7 +30,15 @@ describe("artifactRefFromUrl", () => {
 })
 
 describe("decideUnfurl — the broadcast gate", () => {
-  const setup = async (name: string, listed: "none" | "workspace") => {
+  // The broadcast gate is ACCESS, not discovery: locked means the artifact grants the
+  // workspace nothing AND is unlisted. The default team draft (workspace_access=member,
+  // listed=none) broadcasts; a link-only draft does not — a link role is personal to
+  // whoever holds the URL, so `link_role: "viewer"` rides along on the locked fixtures
+  // to pin that it never unlocks one.
+  const setup = async (
+    name: string,
+    access: { workspace_access: "none" | "member"; listed: "none" | "workspace" },
+  ) => {
     const { meta } = quotaApp(name, { defaultOrgId: "default" }, [], [])
     const artifact = (await meta.createArtifact({
       id: newId("a"),
@@ -38,9 +46,9 @@ describe("decideUnfurl — the broadcast gate", () => {
       org_id: "default",
       slug: null,
       title: "Q4 plan",
-      workspace_access: "member",
+      workspace_access: access.workspace_access,
       link_role: "viewer",
-      listed,
+      listed: access.listed,
       kind: "file",
       spa: 0,
     })) as ArtifactRecord
@@ -52,19 +60,58 @@ describe("decideUnfurl — the broadcast gate", () => {
     }
     return { meta, artifact, deps, url: `${BASE}/artifacts/${artifact.short_id}` }
   }
+  const TEAM = { workspace_access: "member", listed: "workspace" } as const
+  const DRAFT = { workspace_access: "member", listed: "none" } as const
+  const LINK_ONLY = { workspace_access: "none", listed: "none" } as const
 
   // Without an account link there is no principal to authorize, so Slack's own sign-in prompt
   // is the answer — it is also the only per-person surface chat.unfurl offers.
   it("asks an unlinked sharer to connect", async () => {
-    const { deps, url } = await setup("unfurl-unlinked", "workspace")
+    const { deps, url } = await setup("unfurl-unlinked", TEAM)
     expect((await decideUnfurl(deps, url, null)).kind).toBe("auth")
   })
 
   it("renders a card for a feed-visible artifact", async () => {
-    const { deps, url } = await setup("unfurl-listed", "workspace")
+    const { deps, url } = await setup("unfurl-listed", TEAM)
     const d = await decideUnfurl(deps, url, "u-1")
     expect(d.kind).toBe("card")
     if (d.kind === "card") expect(JSON.stringify(d.blocks)).toContain("Q4 plan")
+  })
+
+  // The default publish shape: workspace members may read it, it just isn't in the library
+  // feed. `listed` is discovery-only and carries no access, so it must not be what decides a
+  // broadcast into the workspace's own Slack — every member of the audience may already open it.
+  it("renders a card for a team draft — workspace access broadcasts, unlisted or not", async () => {
+    const { deps, url } = await setup("unfurl-draft", DRAFT)
+    const d = await decideUnfurl(deps, url, "u-1")
+    expect(d.kind).toBe("card")
+    if (d.kind === "card") expect(JSON.stringify(d.blocks)).toContain("Q4 plan")
+  })
+
+  // The screenshot rides both card shapes: the deps callback resolves the (possibly tokened)
+  // URL once, the blocks carry it as an image block, and the decision carries it for the Work
+  // Object. Null (or no callback at all) means no image block — never a broken one.
+  it("puts the resolved preview image on the block card, and none when unresolved", async () => {
+    const { deps, url } = await setup("unfurl-image", DRAFT)
+    const withImage = await decideUnfurl(
+      { ...deps, previewUrl: async () => "https://derive.test/v1/og/x?t=tok" },
+      url,
+      "u-1",
+    )
+    expect(withImage.kind).toBe("card")
+    if (withImage.kind === "card") {
+      expect(withImage.previewUrl).toBe("https://derive.test/v1/og/x?t=tok")
+      const image = (withImage.blocks as { type: string; image_url?: string }[]).find(
+        (b) => b.type === "image",
+      )
+      expect(image?.image_url).toBe("https://derive.test/v1/og/x?t=tok")
+    }
+    const without = await decideUnfurl(deps, url, "u-1")
+    expect(without.kind).toBe("card")
+    if (without.kind === "card") {
+      expect(without.previewUrl).toBe(null)
+      expect((without.blocks as { type: string }[]).some((b) => b.type === "image")).toBe(false)
+    }
   })
 
   // The unfurl is seen by the whole channel, so a private draft gets a card that confirms
@@ -74,7 +121,7 @@ describe("decideUnfurl — the broadcast gate", () => {
   // the card's href read `…/artifacts/q4-plan-vs8g8mh6` — the title was right there, lowercased
   // and hyphenated, recoverable by hovering the link.
   it("renders a locked card that leaks the title in no form, including the slug", async () => {
-    const { deps, url, artifact } = await setup("unfurl-private", "none")
+    const { deps, url, artifact } = await setup("unfurl-private", LINK_ONLY)
     const d = await decideUnfurl(deps, url, "u-1")
     // `locked` is its own kind now: the BROADCAST half must still say nothing, but the artifact
     // rides along so the caller can build a clickable entity whose flexpane answers per-viewer.
@@ -99,7 +146,7 @@ describe("decideUnfurl — the broadcast gate", () => {
   // on every rename, so building the href from the record would add a title the channel never
   // had — even though the pasted URL carried none.
   it("does not add a title the pasted URL never carried", async () => {
-    const { deps, artifact } = await setup("unfurl-private-bare", "none")
+    const { deps, artifact } = await setup("unfurl-private-bare", LINK_ONLY)
     const d = await decideUnfurl(deps, `${BASE}/artifacts/${artifact.short_id}`, "u-1")
     expect(d.kind).toBe("locked")
     // Same short-id excision as the card test above — its comment already recorded CI
@@ -110,7 +157,7 @@ describe("decideUnfurl — the broadcast gate", () => {
   })
 
   it("skips an artifact the sharer cannot read", async () => {
-    const { deps, url } = await setup("unfurl-unreadable", "workspace")
+    const { deps, url } = await setup("unfurl-unreadable", TEAM)
     const d = await decideUnfurl({ ...deps, canRead: async () => false }, url, "u-1")
     expect(d.kind).toBe("skip")
   })
@@ -118,7 +165,7 @@ describe("decideUnfurl — the broadcast gate", () => {
   // Belongs to another Derive workspace: even if the sharer personally has access, it must not
   // render into THIS team's channel.
   it("skips an artifact from a different workspace", async () => {
-    const { deps, url } = await setup("unfurl-other-org", "workspace")
+    const { deps, url } = await setup("unfurl-other-org", TEAM)
     const d = await decideUnfurl({ ...deps, orgId: "some-other-org" }, url, "u-1")
     expect(d.kind).toBe("skip")
   })
@@ -126,7 +173,7 @@ describe("decideUnfurl — the broadcast gate", () => {
   it("skips a URL with a malformed percent escape instead of throwing", async () => {
     // This used to raise URIError out of decodeURIComponent, which runAfterAck swallowed —
     // silently killing every OTHER preview in the same message.
-    const { deps } = await setup("unfurl-badescape", "workspace")
+    const { deps } = await setup("unfurl-badescape", TEAM)
     expect(artifactRefFromUrl(BASE, `${BASE}/artifacts/%zz`)).toBe(null)
     expect((await decideUnfurl(deps, `${BASE}/artifacts/100%-done-abc12345`, "u-1")).kind).toBe(
       "skip",
@@ -134,7 +181,7 @@ describe("decideUnfurl — the broadcast gate", () => {
   })
 
   it("skips a URL that isn't an artifact link", async () => {
-    const { deps } = await setup("unfurl-nonartifact", "workspace")
+    const { deps } = await setup("unfurl-nonartifact", TEAM)
     expect((await decideUnfurl(deps, `${BASE}/pricing`, "u-1")).kind).toBe("skip")
     expect((await decideUnfurl(deps, `${BASE}/artifacts/nope404`, "u-1")).kind).toBe("skip")
   })
