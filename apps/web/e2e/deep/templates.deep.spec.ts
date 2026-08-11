@@ -1,4 +1,4 @@
-import { expect, shareArtifact, test } from "../fixtures"
+import { expect, publishArtifact, shareArtifact, test } from "../fixtures"
 
 // Templates must be a complete creation route, not merely a catalog screen. This
 // covers the two distinct output contracts: ordinary shareable artifacts and
@@ -44,4 +44,33 @@ test("a Context Template publishes a safe manifest before binding an agent", asy
   await expect(owner.getByText("Connections and secrets are not stored in it.")).toBeVisible()
   await owner.getByTestId("context-create-submit").click()
   await expect(owner.getByTestId("context-card")).toHaveCount(1)
+})
+
+test("a library pins an artifact starter and opens an independent draft", async ({ owner }) => {
+  const source = await publishArtifact(
+    owner,
+    "trusted-decision.md",
+    "# Trusted decision\n\nThis exact source is the reusable starting point.",
+  )
+  await owner.goto("/templates?tab=libraries")
+  await owner.getByTestId("template-library-new").click()
+  await owner.getByLabel("Name").fill("Product team starters")
+  await owner.getByLabel("What belongs here?").fill("The documents our team trusts.")
+  await owner.getByTestId("template-library-create").click()
+  await owner.getByText("Product team starters", { exact: true }).click()
+  await owner.getByRole("button", { name: "Library settings" }).click()
+  await owner.getByRole("button", { name: /Public Discoverable by anyone and MCP/ }).click()
+  await owner.getByRole("button", { name: "Save settings" }).click()
+  await expect(owner.getByRole("link", { name: "Public page" })).toBeVisible()
+  await owner.getByText("Add starter", { exact: true }).click()
+  await owner.getByLabel("Source artifact ID or Derive link").fill(`trusted-decision-${source}`)
+  await owner.getByLabel("Display name").fill("Trusted decision")
+  await owner.getByLabel("Description").fill("A decision-ready starting point.")
+  await owner.getByTestId("template-library-entry-create").click()
+  await expect(owner.getByText("Trusted decision", { exact: true })).toBeVisible()
+  await owner.getByRole("button", { name: "Use starter" }).click()
+  await expect(owner).toHaveURL(/\/new\?library=.*&entry=/)
+  await expect(owner.getByTestId("artifact-source-editor")).toContainText(
+    "This exact source is the reusable starting point.",
+  )
 })

@@ -1112,6 +1112,69 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(listed.facts.filter((s: { derived?: boolean }) => !s.derived)).toEqual([])
   })
 
+  it("exposes accessible authored template libraries as resources without adding tools", async () => {
+    const { app, token, meta } = appWithGrant(
+      "template-library",
+      "openid derive:read derive:publish",
+    )
+    const source = await (await publish(app, token, "Reusable planning note")).json()
+    const artifact = await meta.getByShortId(source.short_id)
+    if (!artifact) throw new Error("missing source")
+    const version = await meta.getVersion(artifact.id, artifact.current_version)
+    if (!version) throw new Error("missing source version")
+    const library = await meta.createTemplateLibrary({
+      id: "tlb_mcp",
+      org_id: artifact.org_id,
+      title: "Planning starters",
+      description: "Reusable planning documents.",
+      scope: "workspace",
+      created_by: "u_o",
+    })
+    await meta.createTemplateLibraryEntry({
+      id: "tpl_mcp",
+      library_id: library.id,
+      source_artifact_id: artifact.id,
+      source_version: version.n,
+      source_blob_key: version.blob_key,
+      source_content_type: version.content_type,
+      kind: "artifact",
+      category: "Doc",
+      format: "html",
+      title: "Planning note",
+      description: "A source-pinned planning starter.",
+      outcome: "A clear planning conversation.",
+      sections_json: '["Context", "Plan"]',
+      inputs_json: "[]",
+      tags_json: '["planning"]',
+      theme_mode: "fixed",
+      created_by: "u_o",
+    })
+
+    await rpc(app, token, initBody)
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((resource) => resource.uri)
+    expect(uris).toContain("derive://template-libraries")
+    expect(uris).toContain("derive://template-libraries/tlb_mcp")
+    expect(uris).toContain("derive://template-libraries/tlb_mcp/tpl_mcp")
+
+    const entry = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "resources/read",
+      params: { uri: "derive://template-libraries/tlb_mcp/tpl_mcp" },
+    })
+    const text = (entry.parsed?.result as { contents?: { text: string }[] } | undefined)
+      ?.contents?.[0]?.text
+    const body = JSON.parse(text ?? "{}") as {
+      starter?: { source?: string }
+      source_version?: number
+    }
+    expect(body.source_version).toBe(1)
+    expect(body.starter?.source).toContain("Reusable planning note")
+  })
+
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
     const { app, token, meta } = appWithGrant(
       dir,

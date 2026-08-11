@@ -80,6 +80,8 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewSlackSubscription,
+  NewTemplateLibrary,
+  NewTemplateLibraryEntry,
   NewVersion,
   NewVersionData,
   NewView,
@@ -116,6 +118,9 @@ import type {
   SlackUserLinkRecord,
   SubscriptionRecord,
   TakedownInput,
+  TemplateLibraryEntryRecord,
+  TemplateLibraryRecord,
+  TemplateLibraryScope,
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
@@ -210,6 +215,8 @@ import {
   slackThreadLink,
   slackUserLink,
   subscription,
+  templateLibrary,
+  templateLibraryEntry,
   userNotificationPref,
   version,
   versionData,
@@ -273,6 +280,8 @@ export const schema = {
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   githubApp,
   githubInstallation,
@@ -319,6 +328,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   folder: true,
+  templateLibrary: true,
+  templateLibraryEntry: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -3246,6 +3257,74 @@ export class PgMetaStore implements MetaStore {
     const out: Record<string, Role> = {}
     for (const r of rows) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
+  }
+
+  // ---- Template libraries ------------------------------------------------
+  async createTemplateLibrary(x: NewTemplateLibrary): Promise<TemplateLibraryRecord> {
+    const rows = await this.db.insert(templateLibrary).values(x).returning()
+    return one(rows)
+  }
+  async getTemplateLibrary(id: string): Promise<TemplateLibraryRecord | null> {
+    const rows = await this.db.select().from(templateLibrary).where(eq(templateLibrary.id, id))
+    return rows[0] ?? null
+  }
+  async listTemplateLibraries(opts?: {
+    orgId?: string
+    scope?: TemplateLibraryScope
+    createdBy?: string
+  }): Promise<TemplateLibraryRecord[]> {
+    return this.db
+      .select()
+      .from(templateLibrary)
+      .where(
+        and(
+          opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
+          opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
+          opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibrary.created_at))
+  }
+  async updateTemplateLibrary(
+    id: string,
+    fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibraryRecord | null> {
+    if (Object.keys(fields).length === 0) return this.getTemplateLibrary(id)
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ ...fields, updated_at: new Date().toISOString() })
+      .where(eq(templateLibrary.id, id))
+      .returning()
+    return rows[0] ?? null
+  }
+  async deleteTemplateLibrary(id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(templateLibraryEntry).where(eq(templateLibraryEntry.library_id, id))
+      await tx.delete(templateLibrary).where(eq(templateLibrary.id, id))
+    })
+  }
+  async createTemplateLibraryEntry(
+    x: NewTemplateLibraryEntry,
+  ): Promise<TemplateLibraryEntryRecord> {
+    const rows = await this.db.insert(templateLibraryEntry).values(x).returning()
+    return one(rows)
+  }
+  async getTemplateLibraryEntry(id: string): Promise<TemplateLibraryEntryRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.id, id))
+    return rows[0] ?? null
+  }
+  listTemplateLibraryEntries(libraryId: string): Promise<TemplateLibraryEntryRecord[]> {
+    return this.db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.library_id, libraryId))
+      .orderBy(desc(templateLibraryEntry.created_at))
+  }
+  async deleteTemplateLibraryEntry(id: string): Promise<void> {
+    await this.db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id))
   }
 
   // ---- GitHub sync sources -----------------------------------------------

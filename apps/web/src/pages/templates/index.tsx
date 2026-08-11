@@ -19,6 +19,7 @@ import {
   themeMatches,
 } from "./catalog"
 import { DeriveSource } from "./derive-source"
+import { LibraryShelf } from "./library-shelf"
 import { TemplateCard, ThemeCard } from "./template-card"
 import { TemplateDetail, ThemeDetail } from "./template-detail"
 import type { TemplateTab } from "./types"
@@ -35,6 +36,11 @@ const TAB_COPY: Record<TemplateTab, { title: string; description: string }> = {
   themes: {
     title: "Appearance without rewriting the story.",
     description: "Choose a visual recipe independently from the template's content structure.",
+  },
+  libraries: {
+    title: "A useful beginning can travel.",
+    description:
+      "Build a library from the work you trust, then share its pinned starters with the people—or agents—who need them.",
   },
 }
 
@@ -53,7 +59,7 @@ export function Templates() {
   )
   const themes = BUILT_IN_THEMES.filter((theme) => themeMatches(theme, query))
   const selectedTemplate =
-    tab !== "themes"
+    tab !== "themes" && tab !== "libraries"
       ? (getTemplate(search.selected) ?? templates.find((item) => item.featured) ?? templates[0])
       : undefined
   const selectedThemeDetail =
@@ -64,7 +70,8 @@ export function Templates() {
       search: {
         tab: next,
         theme: next === "artifacts" ? search.theme : undefined,
-        derive: search.derive,
+        derive: next === "artifacts" ? search.derive : undefined,
+        library: undefined,
       },
     })
 
@@ -144,6 +151,9 @@ export function Templates() {
           <TabsTrigger value="contexts" data-testid="templates-tab-contexts">
             Contexts
           </TabsTrigger>
+          <TabsTrigger value="libraries" data-testid="templates-tab-libraries">
+            Libraries
+          </TabsTrigger>
           <TabsTrigger value="themes" data-testid="templates-tab-themes">
             Themes
           </TabsTrigger>
@@ -157,54 +167,72 @@ export function Templates() {
         />
       )}
 
-      <div className="flex flex-col gap-3">
-        <SearchField
-          value={search.query ?? ""}
-          onValueChange={(queryValue) =>
-            nav({ search: { ...search, query: queryValue || undefined, selected: undefined } })
-          }
-          placeholder={`Filter ${tab}`}
-          aria-label={`Filter ${tab}`}
-          testId="templates-search"
-          hotkey
-        />
-        {tab === "artifacts" && (
-          <fieldset className="flex flex-wrap gap-1.5">
-            <legend className="sr-only">Template categories</legend>
-            <Button
-              size="xs"
-              variant={!search.category ? "default" : "outline"}
-              data-testid="templates-category-all"
-              onClick={() =>
-                nav({ search: { ...search, category: undefined, selected: undefined } })
-              }
-            >
-              All
-            </Button>
-            {TEMPLATE_CATEGORIES.map((category) => (
+      {tab !== "libraries" && (
+        <div className="flex flex-col gap-3">
+          <SearchField
+            value={search.query ?? ""}
+            onValueChange={(queryValue) =>
+              nav({ search: { ...search, query: queryValue || undefined, selected: undefined } })
+            }
+            placeholder={`Filter ${tab}`}
+            aria-label={`Filter ${tab}`}
+            testId="templates-search"
+            hotkey
+          />
+          {tab === "artifacts" && (
+            <fieldset className="flex flex-wrap gap-1.5">
+              <legend className="sr-only">Template categories</legend>
               <Button
-                key={category}
                 size="xs"
-                variant={search.category === category ? "default" : "outline"}
-                data-testid={`templates-category-${category.toLowerCase()}`}
+                variant={!search.category ? "default" : "outline"}
+                data-testid="templates-category-all"
                 onClick={() =>
-                  nav({
-                    search: {
-                      ...search,
-                      category: search.category === category ? undefined : category,
-                      selected: undefined,
-                    },
-                  })
+                  nav({ search: { ...search, category: undefined, selected: undefined } })
                 }
               >
-                {category}
+                All
               </Button>
-            ))}
-          </fieldset>
-        )}
-      </div>
+              {TEMPLATE_CATEGORIES.map((category) => (
+                <Button
+                  key={category}
+                  size="xs"
+                  variant={search.category === category ? "default" : "outline"}
+                  data-testid={`templates-category-${category.toLowerCase()}`}
+                  onClick={() =>
+                    nav({
+                      search: {
+                        ...search,
+                        category: search.category === category ? undefined : category,
+                        selected: undefined,
+                      },
+                    })
+                  }
+                >
+                  {category}
+                </Button>
+              ))}
+            </fieldset>
+          )}
+        </div>
+      )}
 
-      {noResults ? (
+      {tab === "libraries" ? (
+        <LibraryShelf
+          selectedId={search.library}
+          onSelect={(library) => nav({ search: { tab: "libraries", library } })}
+          onUse={(entry) =>
+            nav({
+              to: "/new",
+              search: {
+                library: entry.library_id,
+                entry: entry.id,
+                next: entry.kind === "context" ? "context" : undefined,
+                contextName: entry.kind === "context" ? entry.title : undefined,
+              },
+            })
+          }
+        />
+      ) : noResults ? (
         <div className="grid min-h-64 place-items-center border-y py-12 text-center">
           <div className="flex max-w-sm flex-col items-center gap-3">
             <Icon name="templates" size={24} className="text-muted-foreground" />
@@ -293,8 +321,8 @@ export function Templates() {
             Templates are meant to be found, not memorized.
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-pretty text-muted-foreground">
-            The catalog model is structured for UI, CLI, and MCP discovery. This built-in slice
-            keeps those identities stable while the workspace catalog lands.
+            Built-ins, authored libraries, and pinned starters resolve through the same catalog
+            model for the app, CLI, and MCP discovery.
           </p>
         </div>
         <Icon name="derive" size={24} className="text-muted-foreground" />

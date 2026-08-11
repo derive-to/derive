@@ -49,6 +49,8 @@ import type {
   SignupAttributionRecord,
   SubscriptionRecord,
   VersionDataRecord,
+  TemplateLibraryEntryRecord,
+  TemplateLibraryRecord,
   VersionRecord,
   WebhookRecord,
   WorkspaceRecord,
@@ -91,6 +93,8 @@ export interface TypedTables {
   collection: CollectionRecord
   collectionMember: CollectionMemberRecord
   folder: FolderRecord
+  templateLibrary: TemplateLibraryRecord
+  templateLibraryEntry: TemplateLibraryEntryRecord
   repoSource: RepoSourceRecord
   githubApp: GitHubAppRecord
   githubInstallation: GitHubInstallationRecord

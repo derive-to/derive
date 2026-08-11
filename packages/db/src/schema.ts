@@ -29,6 +29,10 @@ import type {
   SlackScopeKind,
   SlackThreadSurface,
   VersionSource,
+  TemplateEntryFormat,
+  TemplateEntryKind,
+  TemplateEntryThemeMode,
+  TemplateLibraryScope,
   WebhookKind,
   WorkspaceAccess,
 } from "@derive/core"
@@ -693,6 +697,53 @@ export const collectionFavorite = sqliteTable(
   (t) => [uniqueIndex("collection_favorite_user").on(t.collection_id, t.user_id)],
 )
 
+// A library is deliberately a content-sharing boundary of its own. Entries
+// snapshot a source artifact version below, so making a library public is an
+// explicit publication action—not a live widening of the source artifact.
+export const templateLibrary = sqliteTable("template_library", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  scope: text("scope").$type<TemplateLibraryScope>().notNull().default("private"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().default(now),
+  updated_at: text("updated_at"),
+})
+
+// An entry owns the exact starter bytes it publishes through source_blob_key +
+// source_content_type. source_artifact_id/source_version are provenance only;
+// consumers never read the source artifact to adopt this template.
+export const templateLibraryEntry = sqliteTable(
+  "template_library_entry",
+  {
+    id: text("id").primaryKey(),
+    library_id: text("library_id")
+      .notNull()
+      .references(() => templateLibrary.id),
+    // Deliberately not an FK: this is immutable provenance. A creator may
+    // delete the original artifact without breaking an already-published
+    // library snapshot (the bytes are held by source_blob_key).
+    source_artifact_id: text("source_artifact_id").notNull(),
+    source_version: integer("source_version").notNull(),
+    source_blob_key: text("source_blob_key").notNull(),
+    source_content_type: text("source_content_type").notNull(),
+    kind: text("kind").$type<TemplateEntryKind>().notNull(),
+    category: text("category").notNull(),
+    format: text("format").$type<TemplateEntryFormat>().notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    outcome: text("outcome").notNull(),
+    sections_json: text("sections_json").notNull().default("[]"),
+    inputs_json: text("inputs_json").notNull().default("[]"),
+    tags_json: text("tags_json").notNull().default("[]"),
+    theme_mode: text("theme_mode").$type<TemplateEntryThemeMode>().notNull().default("fixed"),
+    created_by: text("created_by").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [index("template_library_entry_library").on(t.library_id, t.created_at)],
+)
+
 // A GitHub repo mirrored into a collection, one-way. `files` is a JSON path→
 // {artifact_id, sha} map so a re-sync skips unchanged files and tombstones gone ones.
 export const repoSource = sqliteTable("repo_source", {
@@ -1243,6 +1294,8 @@ const TABLES = [
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   orgSettings,
   subscription,

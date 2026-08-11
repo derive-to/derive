@@ -31,6 +31,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
+import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as ContextsNewRouteImport } from './routes/contexts.new'
@@ -151,6 +152,11 @@ const UsersHandleRoute = UsersHandleRouteImport.update({
   path: '/users/$handle',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TemplateLibrariesIdRoute = TemplateLibrariesIdRouteImport.update({
+  id: '/template-libraries/$id',
+  path: '/template-libraries/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsSectionRoute = SettingsSectionRouteImport.update({
   id: '/$section',
   path: '/$section',
@@ -224,6 +230,7 @@ export interface FileRoutesByFullPath {
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/users/$handle': typeof UsersHandleRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -256,6 +263,7 @@ export interface FileRoutesByTo {
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/users/$handle': typeof UsersHandleRoute
   '/contexts': typeof ContextsIndexRoute
   '/settings': typeof SettingsIndexRoute
@@ -290,6 +298,7 @@ export interface FileRoutesById {
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/users/$handle': typeof UsersHandleRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
@@ -325,6 +334,7 @@ export interface FileRouteTypes {
     | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
+    | '/template-libraries/$id'
     | '/users/$handle'
     | '/contexts/'
     | '/settings/'
@@ -357,6 +367,7 @@ export interface FileRouteTypes {
     | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
+    | '/template-libraries/$id'
     | '/users/$handle'
     | '/contexts'
     | '/settings'
@@ -390,6 +401,7 @@ export interface FileRouteTypes {
     | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
+    | '/template-libraries/$id'
     | '/users/$handle'
     | '/contexts/'
     | '/settings/'
@@ -423,6 +435,7 @@ export interface RootRouteChildren {
   ContextsIdRoute: typeof ContextsIdRoute
   ContextsNewRoute: typeof ContextsNewRoute
   InviteTokenRoute: typeof InviteTokenRoute
+  TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   UsersHandleRoute: typeof UsersHandleRoute
   ContextsIndexRoute: typeof ContextsIndexRoute
   InviteATokenRoute: typeof InviteATokenRoute
@@ -585,6 +598,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsersHandleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/template-libraries/$id': {
+      id: '/template-libraries/$id'
+      path: '/template-libraries/$id'
+      fullPath: '/template-libraries/$id'
+      preLoaderRoute: typeof TemplateLibrariesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/$section': {
       id: '/settings/$section'
       path: '/$section'
@@ -691,6 +711,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContextsIdRoute: ContextsIdRoute,
   ContextsNewRoute: ContextsNewRoute,
   InviteTokenRoute: InviteTokenRoute,
+  TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   UsersHandleRoute: UsersHandleRoute,
   ContextsIndexRoute: ContextsIndexRoute,
   InviteATokenRoute: InviteATokenRoute,

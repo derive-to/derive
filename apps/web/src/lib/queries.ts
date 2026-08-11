@@ -60,6 +60,12 @@ export const collectionFoldersQuery = (collectionId: string) =>
     queryFn: () => api.collectionFolders(collectionId),
   })
 
+export const templateLibrariesQuery = () =>
+  queryOptions({
+    queryKey: ["template-libraries"] as const,
+    queryFn: () => api.listTemplateLibraries().then((r) => r.libraries),
+  })
+
 // Workspaces only change via create/switch/delete — all of which hard-reload — so
 // this is effectively fetch-once per session.
 export const workspacesQuery = () =>

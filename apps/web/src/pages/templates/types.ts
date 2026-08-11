@@ -8,7 +8,7 @@ export type {
   ThemeMode,
 } from "@derive-to/templates"
 
-export type TemplateTab = "artifacts" | "contexts" | "themes"
+export type TemplateTab = "artifacts" | "contexts" | "libraries" | "themes"
 
 export type ThemeMotif = "editorial" | "operator" | "field" | "institutional" | "signal"
 
@@ -28,12 +28,15 @@ export type TemplatesSearch = {
   selected?: string
   theme?: string
   derive?: boolean
+  library?: string
 }
 
 export type NewArtifactSearch = {
   template?: string
   theme?: string
   source?: string
+  library?: string
+  entry?: string
   next?: "context"
   contextName?: string
 }

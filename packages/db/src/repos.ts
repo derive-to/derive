@@ -70,6 +70,8 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewSlackSubscription,
+  NewTemplateLibrary,
+  NewTemplateLibraryEntry,
   NewVersion,
   NewVersionData,
   NewWebhook,
@@ -104,6 +106,9 @@ import type {
   SortMode,
   SubscriptionRecord,
   TakedownInput,
+  TemplateLibraryEntryRecord,
+  TemplateLibraryRecord,
+  TemplateLibraryScope,
   UserNotificationPrefRecord,
   UserProfile,
   VersionDataRecord,
@@ -195,6 +200,8 @@ import {
   slackThreadLink,
   slackUserLink,
   subscription,
+  templateLibrary,
+  templateLibraryEntry,
   userNotificationPref,
   version,
   versionData,
@@ -378,6 +385,8 @@ export const schema = {
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   githubApp,
   githubInstallation,
@@ -424,6 +433,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   folder: true,
+  templateLibrary: true,
+  templateLibraryEntry: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -2621,6 +2632,74 @@ export function makeRepos(db: SqliteDb) {
     const out: Record<string, Role> = {}
     for (const r of [...explicit, ...seat]) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
+  }
+
+  // ---- Template libraries ------------------------------------------------
+  const createTemplateLibrary = async (x: NewTemplateLibrary): Promise<TemplateLibraryRecord> =>
+    (await db.insert(templateLibrary).values(x).returning().get()) as TemplateLibraryRecord
+  const getTemplateLibrary = async (id: string): Promise<TemplateLibraryRecord | null> =>
+    (await db.select().from(templateLibrary).where(eq(templateLibrary.id, id)).get()) ?? null
+  const listTemplateLibraries = async (opts?: {
+    orgId?: string
+    scope?: TemplateLibraryScope
+    createdBy?: string
+  }): Promise<TemplateLibraryRecord[]> => {
+    const rows = await db
+      .select()
+      .from(templateLibrary)
+      .where(
+        and(
+          opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
+          opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
+          opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibrary.created_at))
+      .all()
+    return rows
+  }
+  const updateTemplateLibrary = async (
+    id: string,
+    fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibraryRecord | null> => {
+    if (Object.keys(fields).length === 0) return getTemplateLibrary(id)
+    return (
+      (await db
+        .update(templateLibrary)
+        .set({ ...fields, updated_at: new Date().toISOString() })
+        .where(eq(templateLibrary.id, id))
+        .returning()
+        .get()) ?? null
+    )
+  }
+  // Explicit cascade keeps SQLite/D1 and Postgres behavior identical without
+  // relying on every deployment's foreign-key pragma/default.
+  const deleteTemplateLibrary = async (id: string): Promise<void> => {
+    await db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.library_id, id)).run()
+    await db.delete(templateLibrary).where(eq(templateLibrary.id, id)).run()
+  }
+  const createTemplateLibraryEntry = async (
+    x: NewTemplateLibraryEntry,
+  ): Promise<TemplateLibraryEntryRecord> =>
+    (await db
+      .insert(templateLibraryEntry)
+      .values(x)
+      .returning()
+      .get()) as TemplateLibraryEntryRecord
+  const getTemplateLibraryEntry = async (id: string): Promise<TemplateLibraryEntryRecord | null> =>
+    (await db.select().from(templateLibraryEntry).where(eq(templateLibraryEntry.id, id)).get()) ??
+    null
+  const listTemplateLibraryEntries = async (
+    libraryId: string,
+  ): Promise<TemplateLibraryEntryRecord[]> =>
+    db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.library_id, libraryId))
+      .orderBy(desc(templateLibraryEntry.created_at))
+      .all()
+  const deleteTemplateLibraryEntry = async (id: string): Promise<void> => {
+    await db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id)).run()
   }
 
   // ---- GitHub sync sources -----------------------------------------------
@@ -4933,6 +5012,15 @@ export function makeRepos(db: SqliteDb) {
     collectionRolesForArtifact,
     collectionRolesForUser,
     collectionMemberCounts,
+    createTemplateLibrary,
+    getTemplateLibrary,
+    listTemplateLibraries,
+    updateTemplateLibrary,
+    deleteTemplateLibrary,
+    createTemplateLibraryEntry,
+    getTemplateLibraryEntry,
+    listTemplateLibraryEntries,
+    deleteTemplateLibraryEntry,
     createRepoSource,
     getRepoSource,
     listRepoSources,

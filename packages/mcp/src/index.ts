@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 import { fallbackFilename } from "./filename"
+import { registerTemplateResources, registerWorkspaceTemplateResources } from "./template-resources"
 
 // Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
 // the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME tools as the remote /mcp
@@ -1038,6 +1039,9 @@ for (const [name, body] of Object.entries(GUIDE_REFERENCES)) {
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: body }] }),
   )
 }
+
+registerTemplateResources(server)
+await registerWorkspaceTemplateResources(server, client)
 
 // Every account/workspace signed in on THIS machine, with the local `description`
 // each was given via `derive workspace describe` — the context a bare name can't

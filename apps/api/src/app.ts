@@ -52,6 +52,7 @@ import { sharingRoutes } from "./routes/sharing"
 import { slackRoutes } from "./routes/slack"
 import { syncRoutes } from "./routes/sync"
 import { systemRoutes } from "./routes/system"
+import { templateLibraryRoutes } from "./routes/template-libraries"
 import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
 import { workspaceRoutes } from "./routes/workspace"
@@ -442,6 +443,7 @@ export function createApp(deps: AppDeps): Hono {
     reworkRoutes,
     commentRoutes,
     contextRoutes,
+    templateLibraryRoutes,
     realtimeRoutes,
     analyticsRoutes,
     notificationRoutes,

@@ -211,7 +211,10 @@ async function buildServer(
         `list_workspaces, then pass \`workspace\`.\n\n` +
         `CORE SKILLS carry the procedure for each intent. Read the matching one before you act ` +
         `(a resource, or read("derive://skills/<name>")):\n${skillsIndex}\n\n` +
-        `Team procedures exist too: find skills:true, then read.` +
+        `Team procedures exist too: find skills:true, then read. ` +
+        `Templates reuse the same resource and publish concepts: read derive://templates/catalog ` +
+        `for built-ins or derive://template-libraries for authored libraries, read an entry for ` +
+        `its pinned starter source, then pass that source to publish. ` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),
     },
@@ -383,6 +386,184 @@ async function buildServer(
         contents: [{ uri: uri.href, mimeType: "text/markdown", text: skill.body }],
       }),
     )
+  }
+
+  // Workspace-authored libraries use the same resource-only discovery model as
+  // the built-ins: no template-specific tool to learn, and the existing publish
+  // tool remains the only way an agent creates the independent artifact. A
+  // session is scoped to its default workspace, so private/workspace libraries
+  // are registered only when that connection can read them; public libraries can
+  // be discovered from any connected workspace.
+  const [publicTemplateLibraries, workspaceTemplateLibraries, personalTemplateLibraries] =
+    await Promise.all([
+      ctx.meta.listTemplateLibraries({ scope: "public" }),
+      ctx.meta.listTemplateLibraries({ orgId: agent.org_id, scope: "workspace" }),
+      ownerId
+        ? ctx.meta.listTemplateLibraries({
+            orgId: agent.org_id,
+            scope: "private",
+            createdBy: ownerId,
+          })
+        : [],
+    ])
+  const templateLibraries = [...personalTemplateLibraries, ...workspaceTemplateLibraries]
+    .concat(publicTemplateLibraries)
+    .filter(
+      (library, index, all) => all.findIndex((candidate) => candidate.id === library.id) === index,
+    )
+  const templateEntryJson = (entry: {
+    id: string
+    library_id: string
+    source_artifact_id: string
+    source_version: number
+    kind: string
+    category: string
+    format: string
+    title: string
+    description: string
+    outcome: string
+    sections_json: string
+    inputs_json: string
+    tags_json: string
+    theme_mode: string
+    created_at: string
+  }) => {
+    const parse = (raw: string) => {
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return []
+      }
+    }
+    return {
+      id: entry.id,
+      library_id: entry.library_id,
+      source_artifact_id: entry.source_artifact_id,
+      source_version: entry.source_version,
+      kind: entry.kind,
+      category: entry.category,
+      format: entry.format,
+      title: entry.title,
+      description: entry.description,
+      outcome: entry.outcome,
+      sections: parse(entry.sections_json),
+      inputs: parse(entry.inputs_json),
+      tags: parse(entry.tags_json),
+      theme_mode: entry.theme_mode,
+      created_at: entry.created_at,
+    }
+  }
+  const templateLibraryCatalog = async () =>
+    Promise.all(
+      templateLibraries.map(async (library) => ({
+        id: library.id,
+        title: library.title,
+        description: library.description,
+        scope: library.scope,
+        created_at: library.created_at,
+        entry_count: (await ctx.meta.listTemplateLibraryEntries(library.id)).length,
+        uri: `derive://template-libraries/${library.id}`,
+      })),
+    )
+  server.registerResource(
+    "template-libraries:catalog",
+    "derive://template-libraries",
+    {
+      title: "Derive template libraries",
+      description:
+        "Built-ins plus accessible public, workspace, and personal template libraries. Read a library URI for entries, then an entry URI for its pinned starter source.",
+      mimeType: "application/json",
+      annotations: { audience: ["assistant"], priority: 0.82 },
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({ libraries: await templateLibraryCatalog() }, null, 2),
+        },
+      ],
+    }),
+  )
+  for (const library of templateLibraries) {
+    const libraryUri = `derive://template-libraries/${library.id}`
+    server.registerResource(
+      `template-library:${library.id}`,
+      libraryUri,
+      {
+        title: library.title,
+        description: library.description || "Reusable Derive starters.",
+        mimeType: "application/json",
+        annotations: { audience: ["assistant"], priority: 0.76 },
+      },
+      async (uri) => {
+        const entries = await ctx.meta.listTemplateLibraryEntries(library.id)
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              mimeType: "application/json",
+              text: JSON.stringify(
+                {
+                  id: library.id,
+                  title: library.title,
+                  description: library.description,
+                  scope: library.scope,
+                  entries: entries.map((entry) => ({
+                    ...templateEntryJson(entry),
+                    uri: `derive://template-libraries/${library.id}/${entry.id}`,
+                  })),
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        }
+      },
+    )
+    const entries = await ctx.meta.listTemplateLibraryEntries(library.id)
+    for (const entry of entries) {
+      const entryUri = `derive://template-libraries/${library.id}/${entry.id}`
+      server.registerResource(
+        `template-library-entry:${library.id}:${entry.id}`,
+        entryUri,
+        {
+          title: `${library.title} · ${entry.title}`,
+          description:
+            "Pinned starter source. Publish it as a new independent artifact; never edit in place.",
+          mimeType: "application/json",
+          annotations: { audience: ["assistant"], priority: 0.74 },
+        },
+        async (uri) => {
+          const source = await ctx.sourceText({
+            blob_key: entry.source_blob_key,
+            content_type: entry.source_content_type,
+          })
+          return {
+            contents: [
+              {
+                uri: uri.href,
+                mimeType: "application/json",
+                text: JSON.stringify(
+                  {
+                    ...templateEntryJson(entry),
+                    starter: {
+                      source: source ?? "",
+                      filename: `${entry.id}.${entry.format}`,
+                      mime_type: entry.format === "md" ? "text/markdown" : "text/html",
+                      message: `Created from ${library.title}/${entry.title} · source v${entry.source_version}`,
+                    },
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          }
+        },
+      )
+    }
   }
 
   const defaultOrg = agent.org_id

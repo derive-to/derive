@@ -140,6 +140,8 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
   `CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id)`,
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
+  `CREATE INDEX IF NOT EXISTS template_library_org_scope ON template_library (org_id, scope, created_at)`,
+  `CREATE INDEX IF NOT EXISTS template_library_owner ON template_library (created_by, created_at)`,
   `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
   `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,
