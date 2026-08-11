@@ -111,6 +111,26 @@ export function mcpAudiences(baseUrl: string): string[] {
   return [...new Set([baseUrl, origin, `${origin}/`, `${origin}/mcp`, `${origin}/mcp/`])]
 }
 
+/**
+ * The OAuth issuer identifier: the bare ORIGIN of `baseUrl`. Sibling to mcpAudiences —
+ * another value the AS and RS sides must derive identically or tokens stop verifying.
+ *
+ * RFC 9207 makes it a byte-for-byte contract: the `iss` on an authorization response must
+ * equal the `issuer` in the metadata the client discovered. Three sites produce it —
+ * routes/oauth.ts advertises it, the jwt plugin stamps it, lib/oauth-agent.ts verifies it
+ * — so it lives in one function rather than three expressions. It drifted once already:
+ * the plugin defaulted to Better Auth's baseURL, which carries the /api/auth basePath,
+ * and clients that check the claim could not complete a callback.
+ *
+ * Not the basePath form, deliberately. RFC 8414 derives the metadata URL from the issuer,
+ * so `${origin}/api/auth` would belong at /.well-known/oauth-authorization-server/api/auth
+ * rather than where we serve it. Endpoints keep the basePath; the identifier does not.
+ *
+ * Assumes `baseUrl` is the origin clients actually reach — the same assumption
+ * mcpAudiences and the passkey rpID already make.
+ */
+export const oauthIssuerFor = (baseUrl: string): string => originOf(baseUrl)
+
 /** Whatever Better Auth accepts as its datastore: a better-sqlite3 / pg handle on
  *  Node, or a Kysely dialect config (`{ dialect, type }`) on the edge (D1). */
 export type AuthDb = BetterAuthOptions["database"]
@@ -450,7 +470,11 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       // What still works, because none of it runs through this hook: GET /api/auth/jwks,
       // id-token + JWS-access-token signing at token-mint time (oauthProvider), and our own
       // verifier in lib/oauth-agent.ts, which fetches and caches JWKS per isolate.
-      jwt({ disableSettingJwtHeader: true }),
+      //
+      // `jwt.issuer` must be set. Left unset the plugin falls back to Better Auth's
+      // baseURL, which carries the /api/auth basePath and so contradicts the issuer the
+      // metadata advertises; see oauthIssuerFor for the contract and who else depends on it.
+      jwt({ disableSettingJwtHeader: true, jwt: { issuer: oauthIssuerFor(baseUrl) } }),
       // Derive as an OAuth 2.1 authorization server: agents (MCP clients) authenticate
       // via a browser consent instead of a pasted token, and get a scoped, expiring
       // access token. Endpoints land under /api/auth/oauth2/*; the consent screen is

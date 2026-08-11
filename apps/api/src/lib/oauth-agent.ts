@@ -1,6 +1,6 @@
 import { type AgentRecord, capRole, type MetaStore, type Role } from "@derive/core"
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
-import type { Auth } from "../auth-config"
+import { type Auth, oauthIssuerFor } from "../auth-config"
 import { sha256 } from "./crypto"
 
 /** What a valid OAuth access token resolves to: the synthetic agent record (a workspace
@@ -88,11 +88,14 @@ export function makeOauthAgent({
     return { org, memberRole: "owner", bound }
   }
 
+  // The RS side of the issuer contract: what we require on every JWS access token, and
+  // the same derivation the AS stamps them with (see oauthIssuerFor).
+  const oauthIssuer = oauthIssuerFor(baseUrl)
+
   // Our own JWKS (served by the jwt plugin at /api/auth/jwks), read straight from
   // Better Auth's store on this instance — NOT an HTTP self-fetch, which a
   // Cloudflare Worker can't do against its own hostname. The local key set is
   // cached per isolate, rebuilt on a verify miss (a rotated signing key).
-  const oauthIssuer = new URL("/api/auth", baseUrl).toString()
   let jwksCache: ReturnType<typeof createLocalJWKSet> | null = null
   const loadJwks = async () => {
     const res = (await auth?.api.getJwks()) as Parameters<typeof createLocalJWKSet>[0] | undefined

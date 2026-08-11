@@ -3278,7 +3278,11 @@ describe("remote MCP endpoint (/mcp)", () => {
       new SignJWT({ scope: "openid derive:read derive:publish", azp: "cli", ...over })
         .setProtectedHeader({ alg: "EdDSA", kid })
         .setSubject("u_jwt")
-        .setIssuer("http://derive.test/api/auth")
+        // The ORIGIN, not origin + /api/auth: what the AS metadata advertises, what the
+        // jwt plugin is pinned to, and what oauth-agent verifies (RFC 9207). This line
+        // read `${origin}/api/auth` while the metadata said `${origin}`, and strict OAuth
+        // clients refused the callback over exactly that gap.
+        .setIssuer("http://derive.test")
         .setAudience("http://derive.test/mcp")
         .setExpirationTime("1h")
         .sign(privateKey)
@@ -3295,7 +3299,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const wrongIss = await new SignJWT({ scope: "openid derive:read", azp: "cli" })
       .setProtectedHeader({ alg: "EdDSA", kid })
       .setSubject("u_jwt")
-      .setIssuer("http://evil.test/api/auth")
+      .setIssuer("http://evil.test")
       .setAudience("http://derive.test/mcp")
       .setExpirationTime("1h")
       .sign(privateKey)
