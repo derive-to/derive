@@ -13,9 +13,16 @@ import type { ArtifactRecord, BlobStore, CommentRecord, MetaStore } from "@deriv
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
 import { log } from "../log"
-import { isCollaboratorAuthor, type Mention, mentionsDerive, quoteOf } from "./comments"
+import {
+  DERIVE_AUTHOR_ID,
+  isCollaboratorAuthor,
+  type Mention,
+  mentionsDerive,
+  parseMeta,
+  quoteOf,
+} from "./comments"
 import { enqueueGithubPrComment } from "./github-comments"
-import { notifyMentions } from "./mentions"
+import { notifyMentions, notifyThreadReplyAgents } from "./mentions"
 import { notifyCommentBells } from "./notify-comment"
 import { enqueueCommentEmails } from "./notify-email"
 import { enqueueSlackComment } from "./slack-comments"
@@ -49,8 +56,9 @@ export interface CommentActionDeps {
  * comment.mention when anyone was reached), mention DMs, notification bells, email, the GitHub
  * PR mirror and the Slack channel mirror.
  *
- * Best-effort by contract — callers run it off the response path (the HTTP route's
- * `background()`), so a lookup failure here must never reach the request.
+ * Best-effort by contract. Each delivery branch is isolated: a failed webhook, notification
+ * write, or connected-channel enqueue is logged, but can neither undo the durable comment nor
+ * prevent a later branch (especially a waiting @derive continuation) from running.
  *
  * The per-workspace Settings toggles gate the noisy channels, and the GitHub + Slack mirrors
  * additionally require a *collaborator* author. Note what that gate does and does NOT do:
@@ -85,36 +93,65 @@ export const commentCreatedAction = async (
   const { meta, bus, blobs, baseUrl, notify } = deps
   const { mentions, actorId, onBehalfOf } = opts
   const mentionIds = new Set(mentions.map((m) => m.id))
+  const fanOut = async <T>(surface: string, work: () => Promise<T>): Promise<T | undefined> => {
+    try {
+      return await work()
+    } catch (err) {
+      log.warn("comment fan-out failed", {
+        artifact: artifact.id,
+        comment: comment.id,
+        surface,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return undefined
+    }
+  }
 
-  await notify(artifact, "comment.created", {
-    author: comment.author,
-    body: comment.body_md,
-    quote: quoteOf(comment.anchor),
-    thread_id: comment.thread_id,
-  })
-  const notified = await notifyMentions({ meta, bus }, artifact, comment, mentions, actorId)
-  if (notified.length) {
-    await notify(artifact, "comment.mention", {
+  await fanOut("webhook:comment.created", () =>
+    notify(artifact, "comment.created", {
       author: comment.author,
-      mentioned: notified,
       body: comment.body_md,
       quote: quoteOf(comment.anchor),
       thread_id: comment.thread_id,
-    })
+    }),
+  )
+  const notified =
+    (await fanOut("mentions", () =>
+      notifyMentions({ meta, bus }, artifact, comment, mentions, actorId),
+    )) ?? []
+  if (notified.length) {
+    await fanOut("webhook:comment.mention", () =>
+      notify(artifact, "comment.mention", {
+        author: comment.author,
+        mentioned: notified,
+        body: comment.body_md,
+        quote: quoteOf(comment.anchor),
+        thread_id: comment.thread_id,
+      }),
+    )
     // DM opted-in teammates who were mentioned (recipient resolved at delivery time).
-    await enqueueSlackMentionDms(
-      { meta, baseUrl },
-      artifact,
-      comment,
-      mentions.filter((m) => m.id !== actorId),
+    await fanOut("slack:mention-dm", () =>
+      enqueueSlackMentionDms(
+        { meta, baseUrl },
+        artifact,
+        comment,
+        mentions.filter((m) => m.id !== actorId),
+      ),
     )
   }
+  await fanOut("agent:thread-reply", () =>
+    notifyThreadReplyAgents({ meta, bus }, artifact, comment, actorId, mentionIds),
+  )
   // Bell the comment's natural audience — thread participants + the artifact's owners.
-  await notifyCommentBells({ meta, bus }, artifact, comment, { mentionIds, actorId })
+  await fanOut("bells", () =>
+    notifyCommentBells({ meta, bus }, artifact, comment, { mentionIds, actorId }),
+  )
   // Channel fan-out is gated per workspace (Settings -> Integrations toggles).
-  const settings = await meta.getOrgSettings(artifact.org_id)
-  if (settings.emailNotifications)
-    await enqueueCommentEmails({ meta, baseUrl }, artifact, comment, { mentionIds, actorId })
+  const settings = await fanOut("settings", () => meta.getOrgSettings(artifact.org_id))
+  if (settings?.emailNotifications)
+    await fanOut("email", () =>
+      enqueueCommentEmails({ meta, baseUrl }, artifact, comment, { mentionIds, actorId }),
+    )
   // The mirrors need a collaborator author — which excludes a signed-in holder of a
   // commenter/editor LINK (no share, no seat), not an anonymous visitor: those can't comment at
   // all. The author counts if it is itself a collaborator, or acting for one (see `onBehalfOf`).
@@ -122,8 +159,12 @@ export const commentCreatedAction = async (
   // the synthetic author id misses three lookups (membership, artifact member, then a full
   // listAgents scan) before failing.
   const trustedAuthor =
-    (!!onBehalfOf && (await isCollaboratorAuthor(meta, artifact, onBehalfOf))) ||
-    (await isCollaboratorAuthor(meta, artifact, actorId))
+    (await fanOut(
+      "collaborator-check",
+      async () =>
+        (!!onBehalfOf && (await isCollaboratorAuthor(meta, artifact, onBehalfOf))) ||
+        (await isCollaboratorAuthor(meta, artifact, actorId)),
+    )) ?? false
   // A refusal here is a deliberate policy outcome, but an INVISIBLE one: the comment saves, the
   // response is 201, and the mirrors simply never fire. Nothing distinguishes "correctly
   // withheld" from "broken" without reading the source, which is a bad place to be at the point
@@ -138,12 +179,17 @@ export const commentCreatedAction = async (
       actorId,
       onBehalfOf: onBehalfOf ?? null,
     })
-  if (trustedAuthor && settings.githubPostComments)
-    await enqueueGithubPrComment({ meta, blobs, baseUrl }, artifact, comment)
+  if (trustedAuthor && settings?.githubPostComments)
+    await fanOut("github", () =>
+      enqueueGithubPrComment({ meta, blobs, baseUrl }, artifact, comment),
+    )
   // No global on/off any more: a channel subscription is the switch, and resolveChannels
   // applies its event + author filters.
-  if (trustedAuthor) await enqueueSlackComment({ meta, baseUrl }, artifact, comment)
-  deps.pokeWebhooks?.()
+  if (trustedAuthor)
+    await fanOut("slack:channel-mirror", () =>
+      enqueueSlackComment({ meta, baseUrl }, artifact, comment),
+    )
+  await fanOut("outbox-poke", () => Promise.resolve(deps.pokeWebhooks?.()))
 
   // @derive — LAST, and deliberately here rather than in each route.
   //
@@ -156,7 +202,27 @@ export const commentCreatedAction = async (
   // The gates, the recursion guard and the model all live behind `answerDeriveMention`, because
   // whether a mention should be answered is a question about the workspace and the deploy, not
   // about this comment.
-  if (deps.answerDeriveMention && mentionsDerive(comment, mentions))
+  let resumesDerive = false
+  if (
+    deps.answerDeriveMention &&
+    actorId &&
+    actorId !== DERIVE_AUTHOR_ID &&
+    !mentionsDerive(comment, mentions)
+  ) {
+    const prior = (await meta.listComments(artifact.id, { threadId: comment.thread_id }))
+      .filter((c) => c.id !== comment.id && c.author_id === DERIVE_AUTHOR_ID)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+    if (prior && parseMeta(prior.meta).awaiting_reply) {
+      // Consume the explicit waiting marker before starting the next turn. A Slack delivery can
+      // retry after a crash; clearing it makes the replay a harmless no-op instead of a second
+      // model conversation. (The reply itself remains in the transcript.)
+      const md = parseMeta(prior.meta)
+      md.awaiting_reply = false
+      await meta.updateComment(prior.id, { meta: JSON.stringify(md) })
+      resumesDerive = true
+    }
+  }
+  if (deps.answerDeriveMention && (mentionsDerive(comment, mentions) || resumesDerive))
     await deps
       .answerDeriveMention(
         artifact,

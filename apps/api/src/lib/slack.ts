@@ -204,7 +204,16 @@ export const isSlackAuthError = (code: string): boolean => SLACK_AUTH_ERRORS.has
  *  Throws SlackApiError(code) on a Slack-level failure. */
 export const postSlackMessage = async (
   token: string,
-  args: { channel: string; text: string; blocks?: unknown; threadTs?: string },
+  args: {
+    channel: string
+    text: string
+    blocks?: unknown
+    threadTs?: string
+    /** Typed Slack Work Object entities for app-authored notifications.  Unlike a link
+     *  unfurl this lives on the message itself, which makes a personal DM searchable and
+     *  gives its root a first-class flexpane without inventing a second notification path. */
+    metadata?: Record<string, unknown>
+  },
 ): Promise<SlackPostResult> => {
   const res = await fetch(`${API}/chat.postMessage`, {
     method: "POST",
@@ -224,6 +233,7 @@ export const postSlackMessage = async (
       unfurl_media: false,
       ...(args.blocks ? { blocks: args.blocks } : {}),
       ...(args.threadTs ? { thread_ts: args.threadTs } : {}),
+      ...(args.metadata ? { metadata: args.metadata } : {}),
     }),
   })
   const data = (await res.json()) as { ok: boolean; error?: string; ts?: string; channel?: string }

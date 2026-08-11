@@ -160,7 +160,8 @@ export function slackSetupHTML(baseUrl: string): string {
     <ol class="steps">
       <li>Open <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> → <strong>Create New App</strong> → <strong>From a manifest</strong>, and pick your workspace.</li>
       <li>Paste the manifest below (already pointed at this instance) and create the app.</li>
-      <li>On <strong>Basic Information</strong>, copy the <strong>Client ID</strong>, <strong>Client Secret</strong> and <strong>Signing Secret</strong> into <code>SLACK_CLIENT_ID</code>, <code>SLACK_CLIENT_SECRET</code> and <code>SLACK_SIGNING_SECRET</code>, then restart Derive.</li>
+      <li>On <strong>Basic Information</strong>, enable <strong>Work Object Previews</strong> and select <strong>Content item</strong>. That enables the rich document/question cards and their reply panel; Derive still falls back to a normal Slack card when it is unavailable.</li>
+      <li>Copy the <strong>Client ID</strong>, <strong>Client Secret</strong> and <strong>Signing Secret</strong> into <code>SLACK_CLIENT_ID</code>, <code>SLACK_CLIENT_SECRET</code> and <code>SLACK_SIGNING_SECRET</code>, then restart Derive.</li>
       <li>Come back to <strong>Settings → Integrations</strong> and click <strong>Add to Slack</strong>.</li>
     </ol>
     <div class="code">

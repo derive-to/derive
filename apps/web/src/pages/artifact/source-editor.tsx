@@ -37,6 +37,7 @@ export function SourceEditor({
   onTitle,
   placeholder,
   publishing,
+  shortId,
 }: {
   canPublish: boolean
   title: string
@@ -58,6 +59,8 @@ export function SourceEditor({
   // True while the parent's publish/propose mutation is in flight — disables the toolbar
   // buttons and shows a spinner, so a double-click can't duplicate a version.
   publishing?: boolean
+  /** Existing artifact id used to scope the source editor's @mention directory. */
+  shortId?: string
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -222,7 +225,13 @@ export function SourceEditor({
               />
             }
           >
-            <CodeEditor value={src} format={format} onChange={onSrc} placeholder={placeholder} />
+            <CodeEditor
+              value={src}
+              format={format}
+              onChange={onSrc}
+              placeholder={placeholder}
+              shortId={shortId}
+            />
           </Suspense>
         </div>
         <div

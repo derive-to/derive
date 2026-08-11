@@ -4131,7 +4131,11 @@ export function makeRepos(db: SqliteDb) {
       .run()
   }
   const createAgentMention = async (m: NewAgentMention): Promise<void> => {
-    await db.insert(agentMention).values(m).run()
+    // A Slack outbox delivery may be reclaimed after its Derive comment committed but before
+    // its wake-up side effects ran. Thread-reply inbox rows use a stable id in that path, so
+    // accepting the same row again makes recovery safe instead of manufacturing duplicate work
+    // for an agent.
+    await db.insert(agentMention).values(m).onConflictDoNothing().run()
   }
 
   // ---- Workspace invitations ---------------------------------------------

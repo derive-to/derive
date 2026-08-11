@@ -19,9 +19,12 @@
 // referenced it, both keyed on `external_ref.id` — which is why that id must stay the artifact's
 // stable short id and never a slug.
 
-import type { ArtifactRecord, UnfurlInfo } from "@derive/core"
+import type { ArtifactRecord, CommentRecord, UnfurlInfo } from "@derive/core"
 import { unfurlDescription } from "@derive/core"
 import { type ArtifactStatus, agoLabel, statusPhrase } from "./artifact-status"
+import { commentDeepLink } from "./comments"
+import { mrkdwnBody } from "./slack-cards"
+import { encodeQuestionReply, SLACK_QUESTION_REPLY_ACTION } from "./slack-question"
 
 /** The interactivity `action_id`s a Work Object's buttons carry. Routed as ordinary
  *  `block_actions`, so they land beside the thread and proposal handlers. */
@@ -51,6 +54,68 @@ export const decodeReviewAction = (value: string): string | null => {
 /** `external_ref.type` — the namespace half of the key Slack stores. Stable forever: changing it
  *  orphans every previously-unfurled card from its related conversations and search entries. */
 export const DERIVE_ENTITY_TYPE = "artifact"
+/** A conversation, rather than the whole document.  It is intentionally a separate stable
+ * namespace: a Slack DM about one question should aggregate its replies, not every discussion
+ * that happens to reference the artifact. */
+export const DERIVE_COMMENT_THREAD_ENTITY_TYPE = "comment_thread"
+
+/** Work Object metadata for one open Derive conversation. Used on the first personal mention
+ * DM and for a pasted deep link to an exact question. Subsequent activity is a normal Slack
+ * thread reply, so recipients get one durable object rather than a fresh rich card per ping. */
+export const commentThreadEntity = (args: {
+  baseUrl: string
+  artifact: Pick<ArtifactRecord, "id" | "short_id" | "title">
+  comment: Pick<CommentRecord, "thread_id" | "body_md" | "author" | "state">
+  /** Already rendered by the notification builder when its durable payload must not retain raw
+   * user prose. `comment.body_md` remains the normal path for a live DB comment / unfurl. */
+  bodyMrkdwn?: string
+  iconUrl: string
+  /** `chat.unfurl` must name the exact source URL. A DM's Work Object is already the source,
+   * so it deliberately omits this field. */
+  pastedUrl?: string
+}): Record<string, unknown> => {
+  const { artifact, comment } = args
+  const link = commentDeepLink(args.baseUrl, artifact, comment.thread_id)
+  return {
+    ...(args.pastedUrl ? { app_unfurl_url: args.pastedUrl } : {}),
+    url: link,
+    external_ref: { id: comment.thread_id, type: DERIVE_COMMENT_THREAD_ENTITY_TYPE },
+    entity_type: "slack#/entities/content_item",
+    entity_payload: {
+      actions: {
+        primary_actions: [
+          {
+            text: "Reply",
+            action_id: SLACK_QUESTION_REPLY_ACTION,
+            // Work Object interactions usually round-trip `external_ref`, but value is a
+            // documented action field and gives the reply path a safe fallback when Slack
+            // omits entity context (for example from a future notification surface).
+            value: encodeQuestionReply({ artifactId: artifact.id, threadId: comment.thread_id }),
+            style: "primary",
+          },
+        ],
+      },
+      attributes: {
+        title: { text: `${artifact.title ?? artifact.short_id} · Question` },
+        display_type: "Derive question",
+        product_name: "Derive",
+        product_icon: { url: args.iconUrl, alt_text: "Derive" },
+      },
+      fields: {
+        description: {
+          value: args.bodyMrkdwn ?? mrkdwnBody(comment.body_md, 700),
+          format: "markdown",
+        },
+      },
+      custom_fields: [
+        // The rich card is sent once, while Resolve/Reopen currently updates only mirrored
+        // channel cards. Do not show a status that can become stale in a personal DM; the
+        // exact Derive link remains the canonical live state.
+        { key: "asked_by", label: "Asked by", value: comment.author, type: "string" },
+      ],
+    },
+  }
+}
 
 /** The review state as a short label.
  *

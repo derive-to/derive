@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto"
 import {
   type CommentRecord,
   DEFAULT_ORG_SETTINGS,
+  type DeliveryRecord,
   type MetaStore,
   type NewComment,
   newId,
@@ -9,6 +10,7 @@ import {
 } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret, signState } from "../src/lib/crypto"
+import { notifyThreadReplyAgents } from "../src/lib/mentions"
 import {
   ingestSlackReply,
   makeSlackIngestSender,
@@ -565,6 +567,86 @@ describe("slack events endpoint", () => {
     expect(JSON.parse(inserts[0]?.meta ?? "{}")).toMatchObject({
       slack: { ts: "222.2", channel: "C1" },
     })
+  })
+
+  it("repairs an agent wake when an ingest retry finds the already-committed Slack answer", async () => {
+    const { meta } = make("slack-ingest-recover-wake")
+    const artifact = await seedThread(meta, {
+      artifact: "a-slack-recover-wake",
+      short: "slkwake",
+      thread: "t-wake",
+      ts: "555.1",
+    })
+    const agent = await meta.createAgent({
+      id: "ag-slack-wake",
+      org_id: "default",
+      name: "Research agent",
+      token: "agent-token",
+      role: "editor",
+      created_by: owner.id,
+    })
+    await meta.createComment({
+      id: "c-agent-question",
+      artifact_id: artifact.id,
+      thread_id: "t-wake",
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "Could you confirm this?",
+      author: agent.name,
+      author_id: agent.id,
+    })
+    // This simulates the crash window: the comment INSERT committed, but the process died
+    // before it made the agent's inbox row. The retried delivery must recover that wake.
+    const answer = await meta.createComment({
+      id: "c-slack-answer",
+      artifact_id: artifact.id,
+      thread_id: "t-wake",
+      base_version: 0,
+      path: null,
+      anchor: null,
+      body_md: "Yes, confirmed.",
+      author: editor.name ?? "Editor",
+      author_id: editor.id,
+      meta: JSON.stringify({ slack: { ts: "555.2", channel: "C1" } }),
+    })
+    await meta.setSlackUserLink({
+      id: "sul-editor-wake",
+      org_id: "default",
+      user_id: editor.id,
+      team_id: "T1",
+      slack_user_id: "UEDITOR",
+      origin: "oauth",
+      checked_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ ok: true, user: { profile: {} } }))),
+    )
+    const publish = vi.fn()
+    const send = makeSlackIngestSender(meta, KEY, { publish })
+    const result = await send({
+      payload: JSON.stringify({
+        channel: "C1",
+        threadTs: "555.1",
+        userId: "UEDITOR",
+        text: answer.body_md,
+        ts: "555.2",
+      }),
+    } as DeliveryRecord)
+
+    expect(result).toMatchObject({ ok: true, status: "skipped: own or duplicate" })
+    const inbox = await meta.listPendingAgentMentions(agent.id, 10)
+    expect(inbox).toMatchObject([
+      { comment_id: answer.id, kind: "thread_reply", body: "Yes, confirmed." },
+    ])
+    expect(publish).toHaveBeenCalledWith(artifact.id, { type: "comment.created" })
+
+    // Repeating the recovery is safe: stable inbox identity + conflict-ignore gives the agent
+    // one item, not a duplicate task.
+    await notifyThreadReplyAgents({ meta, bus: { publish } }, artifact, answer, editor.id)
+    expect(await meta.listPendingAgentMentions(agent.id, 10)).toHaveLength(1)
   })
 
   it("the deferred ingest ignores our own bot's messages (loop prevention)", async () => {
@@ -2230,6 +2312,126 @@ describe("Save to Derive", () => {
     const r = await postInteract(app, submission(artifact.id))
     expect(JSON.stringify(await r.json())).toContain("Connect your Derive account")
     expect(await meta.listComments(artifact.id)).toHaveLength(0)
+  })
+})
+
+// A pasted question link and a personal mention DM share this reply path. The action only names
+// a thread; the route re-authorizes the current Slack/Derive account before opening the modal,
+// then makes the view submission idempotent because Slack can replay it after a lost ack.
+describe("question Reply actions", () => {
+  const setup = async (name: string, opts: { link?: boolean } = {}) => {
+    const { app, meta } = make(name)
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T1",
+      team_name: "Acme",
+      bot_token: encryptSecret("xoxb-1", KEY),
+      bot_user_id: "UBOT",
+      created_at: new Date().toISOString(),
+    })
+    if (opts.link !== false)
+      await meta.setSlackUserLink({
+        id: newId("sul"),
+        org_id: "default",
+        user_id: owner.id,
+        team_id: "T1",
+        slack_user_id: "U1",
+        origin: "oauth" as const,
+        checked_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      })
+    const artifact = await meta.createArtifact({
+      id: `a-question-${name}`,
+      short_id: `q${name}`.slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "The question doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    const threadId = newId("c")
+    const root = await meta.createComment({
+      id: threadId,
+      artifact_id: artifact.id,
+      // Every new thread's root id IS its thread id; `getComment` then provides the indexed
+      // lookup the Work Object action needs without scanning every comment on the artifact.
+      thread_id: threadId,
+      base_version: artifact.current_version,
+      path: null,
+      anchor: null,
+      body_md: "Which rollout should we choose?",
+      author: "Derive",
+      author_id: "derive",
+    })
+    return { app, meta, artifact, threadId: root.id }
+  }
+
+  const action = (artifactId: string, threadId: string) => ({
+    type: "block_actions",
+    trigger_id: "question-trigger",
+    team: { id: "T1" },
+    user: { id: "U1" },
+    actions: [
+      {
+        action_id: "derive_question_reply",
+        value: JSON.stringify({ artifactId, threadId }),
+      },
+    ],
+  })
+
+  it("opens a reply modal and de-duplicates a replayed view submission", async () => {
+    const { app, meta, artifact, threadId } = await setup("question-reply")
+    const opened: Record<string, unknown>[] = []
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (url.endsWith("/views.open")) opened.push(JSON.parse(String(init.body)))
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+
+    expect((await postInteract(app, action(artifact.id, threadId))).status).toBe(200)
+    const modal = opened[0]?.view as { private_metadata?: string } | undefined
+    const replyMeta = JSON.parse(modal?.private_metadata ?? "{}") as Record<string, string>
+    expect(replyMeta).toMatchObject({ artifactId: artifact.id, threadId })
+    expect(replyMeta.submissionId).toBeTruthy()
+
+    const submission = {
+      type: "view_submission",
+      team: { id: "T1" },
+      user: { id: "U1" },
+      view: {
+        callback_id: "derive_question_reply",
+        private_metadata: JSON.stringify(replyMeta),
+        state: {
+          values: {
+            derive_question_reply_body: {
+              derive_question_reply_input: { value: "Ship the smaller rollout." },
+            },
+          },
+        },
+      },
+    }
+    const first = await postInteract(app, submission)
+    expect(JSON.stringify(await first.json())).toContain("Reply added")
+    const second = await postInteract(app, submission)
+    expect(JSON.stringify(await second.json())).toContain("Reply already added")
+
+    const comments = await meta.listComments(artifact.id)
+    expect(comments.filter((cm) => cm.thread_id === threadId)).toHaveLength(2)
+    expect(comments.find((cm) => cm.body_md.includes("smaller rollout"))?.author_id).toBe(owner.id)
+  })
+
+  it("explains how to connect when a DM recipient has not linked their Slack account", async () => {
+    const { app, artifact, threadId } = await setup("question-unlinked", { link: false })
+    const opened: Record<string, unknown>[] = []
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      if (url.endsWith("/views.open")) opened.push(JSON.parse(String(init.body)))
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+
+    expect((await postInteract(app, action(artifact.id, threadId))).status).toBe(200)
+    expect(JSON.stringify(opened[0])).toContain("Connect your Derive account")
   })
 })
 

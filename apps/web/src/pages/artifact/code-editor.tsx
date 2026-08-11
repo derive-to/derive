@@ -7,7 +7,7 @@ import {
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language"
-import { EditorState } from "@codemirror/state"
+import { EditorState, StateEffect } from "@codemirror/state"
 import {
   placeholder as cmPlaceholder,
   drawSelection,
@@ -48,12 +48,16 @@ export function CodeEditor({
   format,
   onChange,
   placeholder,
+  shortId,
 }: {
   value: string
   format: "md" | "html"
   onChange: (v: string) => void
   /** First-use hint shown in the empty editor (the /new flow); omitted when editing. */
   placeholder?: string
+  /** The existing artifact scopes people search to its collaborators. New docs use the active
+   * workspace directory; the publish-time gate remains the authority in both cases. */
+  shortId?: string
 }) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
@@ -73,8 +77,8 @@ export function CodeEditor({
         extensions: [
           // A curated set instead of CodeMirror's basicSetup: the editing niceties
           // (line numbers, active line, undo, bracket matching, syntax highlight,
-          // indent-on-input) without autocomplete / search / lint / folding — keeps
-          // this lazy chunk lighter, which matters on a phone.
+          // indent-on-input) without search / lint / folding. @mention completion is the one
+          // exception: it makes a live-body handoff discoverable and writes a portable handle.
           lineNumbers(),
           highlightActiveLineGutter(),
           highlightActiveLine(),
@@ -113,11 +117,23 @@ export function CodeEditor({
       }),
     })
     view.current = view_
+    // Directory lookup is valuable once a writer starts composing a mention, but
+    // CodeMirror is already our largest lazy chunk. Load its completion grammar
+    // separately so opening source keeps its existing performance budget; the
+    // editor stays fully usable if that optional affordance cannot load.
+    void import("./source-mention-completion")
+      .then(({ sourceMentionCompletion }) => {
+        if (view.current !== view_) return
+        view_.dispatch({ effects: StateEffect.appendConfig.of(sourceMentionCompletion(shortId)) })
+      })
+      .catch(() => {
+        // Source editing remains safe and publishable without the optional picker.
+      })
     return () => {
       view_.destroy()
       view.current = null
     }
-  }, [format])
+  }, [format, shortId])
 
   // Sync external value changes (initial load, programmatic resets) without
   // disturbing the user mid-type: only dispatch when the value truly differs.

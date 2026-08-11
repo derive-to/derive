@@ -15,9 +15,11 @@ import {
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
+import { log } from "../log"
 import type { Summarizer } from "../summarizer"
 import { releaseAddressed } from "./addressed"
 import { emitVersionBump } from "./after-publish"
+import { fanOutNewContentMentions } from "./content-mentions"
 
 export interface ProposalActionDeps {
   meta: MetaStore
@@ -33,6 +35,10 @@ export interface ProposalActionDeps {
   /** Likewise the summarizer: approving a proposal publishes new content, so its card should
    *  describe what the new version says rather than what the old one did. */
   summarize?: Summarizer
+  /** Keep the body-mention side effect off an HTTP/Slack approval response. */
+  background?: (work: Promise<unknown>) => Promise<void>
+  /** The document origin for body-mention emails. */
+  baseUrl?: string
 }
 
 /** Approve: the proposed content becomes the new live version. Mirrors the approve route. */
@@ -56,6 +62,22 @@ export const approveProposalAction = async (
     artifact,
     version,
   )
+  // A proposal approval is a live body edit too. Its author is the person who proposed the
+  // bytes (not the reviewer clicking Approve), so compare against version attribution here.
+  const mentionWork = fanOutNewContentMentions(
+    { meta, blobs, bus, baseUrl: deps.baseUrl },
+    artifact,
+    version,
+    version.author_id,
+  ).catch((err) =>
+    log.warn("content mention fan-out failed", {
+      artifact: artifact.id,
+      version: version.n,
+      surface: "proposal-approve",
+      error: err instanceof Error ? err.message : String(err),
+    }),
+  )
+  await (deps.background ? deps.background(mentionWork) : mentionWork)
   // Threads this proposal addressed are now settled.
   for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "resolved"))
     bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "resolved" })

@@ -43,6 +43,71 @@ const comment = (
   )
 
 describe("comment channel fan-out", () => {
+  it("keeps an @derive continuation alive when notification delivery fails", async () => {
+    const { app, meta } = makeAuthedApp("fanout-failure-isolation", [owner, editor], "editor")
+    const shortId = await newArtifact(app)
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact) throw new Error("published artifact missing")
+    const created = await meta.createComment({
+      id: newId("c"),
+      artifact_id: artifact.id,
+      thread_id: newId("th"),
+      base_version: 1,
+      path: null,
+      anchor: null,
+      body_md: "Can @Derive take a look?",
+      author: editor.name ?? "Ed",
+      author_id: editor.id,
+    })
+    const answerDeriveMention = vi.fn(async () => {})
+    // This is the durable bell-row write, not a mock notification transport. A storage hiccup
+    // must not turn a saved comment into a lost agent question.
+    // `makeAuthedApp` intentionally exposes a deferred Proxy on its Postgres lane, so Vitest
+    // cannot replace one of its methods with `spyOn` (there is no own property to patch). Wrap
+    // the same store instead: all reads still hit the real store, while the bulk bell write
+    // deterministically fails on both SQLite and Postgres.
+    const notificationWrite = vi.fn(async () => {
+      throw new Error("notification store unavailable")
+    })
+    const failingMeta = new Proxy(meta, {
+      get(target, prop, receiver) {
+        if (prop === "createNotifications") return notificationWrite
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+
+    await expect(
+      commentCreatedAction(
+        {
+          meta: failingMeta,
+          bus: { publish: () => {}, subscribe: () => () => {} } as never,
+          blobs: {} as never,
+          baseUrl: "http://derive.test",
+          notify: async () => {
+            throw new Error("webhook enqueue unavailable")
+          },
+          answerDeriveMention,
+        },
+        artifact,
+        created,
+        {
+          mentions: [
+            { id: owner.id, name: owner.name ?? "Owner" },
+            { id: "derive", name: "Derive" },
+          ],
+          actorId: editor.id,
+        },
+      ),
+    ).resolves.toBeUndefined()
+
+    expect(notificationWrite).toHaveBeenCalled()
+    expect(answerDeriveMention).toHaveBeenCalledWith(
+      artifact,
+      created,
+      expect.objectContaining({ id: editor.id }),
+    )
+  })
+
   it("a plain comment emails NO ONE — not even workspace owners", async () => {
     // The old policy blasted every workspace owner on every comment; with agents
     // multiplying comment volume that made admins' inboxes the firehose. Owners
@@ -91,6 +156,21 @@ describe("comment channel fan-out", () => {
     const emails = (await claim(meta)).filter((d) => d.kind === "email")
     expect(emails).toHaveLength(1)
     expect(emails[0]?.payload).toContain(owner.email)
+  })
+
+  it("does not page a workspace seat from an invite-only document", async () => {
+    const { app, meta } = makeAuthedApp("fanout-invite-only-mention", [owner, editor], "editor")
+    const made = await pub(
+      app,
+      "# Private",
+      { workspace_access: "none", link_role: "none", listed: "none" },
+      undefined,
+      as(owner.email),
+    )
+    const shortId = (await made.json()).short_id as string
+    const res = await comment(app, shortId, owner.email, [{ id: editor.id, name: "Ed" }])
+    expect(res.status).toBe(201)
+    expect(await meta.listNotifications(editor.id, 10)).toEqual([])
   })
 
   it("does not email a mention when the email toggle is off", async () => {

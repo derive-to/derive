@@ -9,6 +9,7 @@ export const USERNAME_MIN = 2
 export const USERNAME_MAX = 30
 
 const USERNAME_RE = /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/
+const USERNAME_QUERY_RE = /^[a-z0-9_-]{0,30}$/i
 
 const RESERVED = new Set([
   "admin",
@@ -88,6 +89,14 @@ const RESERVED = new Set([
 ])
 
 export const normalizeUsername = (raw: string): string => raw.trim().toLowerCase()
+
+/** Safe incomplete text for a mention picker; canonical handles still use usernameError. */
+export const isUsernameQuery = (value: unknown): value is string =>
+  typeof value === "string" && USERNAME_QUERY_RE.test(value)
+
+/** Runtime mirror for places that receive a handle over postMessage rather than from the API. */
+export const isValidUsername = (value: unknown): value is string =>
+  typeof value === "string" && usernameError(value) === null
 
 /** null when legal + available-shaped, else a short human message. */
 export const usernameError = (raw: string): string | null => {

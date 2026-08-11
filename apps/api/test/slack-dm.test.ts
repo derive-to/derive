@@ -1,6 +1,7 @@
 import { type ArtifactRecord, type CommentRecord, type DeliveryRecord, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
+  enqueueSlackArtifactMentionDms,
   enqueueSlackMentionDms,
   enqueueSlackReviewRequestedDm,
   enqueueSlackShareDm,
@@ -146,6 +147,7 @@ describe("enqueueSlackMentionDms (gate)", () => {
     // raw `<`/`>` allowed are the `<url|...>` link delimiters we build.
     expect(payload.text).not.toContain("<!channel>")
     expect(payload.text).toContain("&lt;!channel&gt;")
+    expect(payload.text).toContain("&lt;!here&gt;")
     expect(serialized).not.toContain("<@U999>")
     expect(serialized).not.toContain("<!here>")
     expect(serialized).toContain("&lt;@U999&gt;")
@@ -181,6 +183,31 @@ describe("enqueueSlackMentionDms (gate)", () => {
     // ...while a hand-written Slack link stays inert text.
     expect(serialized).not.toContain("<https://evil.example|Support>")
     expect(serialized).toContain("&lt;https://evil.example|Support&gt;")
+  })
+})
+
+describe("enqueueSlackArtifactMentionDms", () => {
+  it("sends a contextual open-only DM and honors the recipient preference", async () => {
+    const meta = make("slack-dm-artifact-mention")
+    await connect(meta)
+    const artifact = await makeArtifact(meta)
+    await optOut(meta, optout.id)
+    await enqueueSlackArtifactMentionDms(
+      { meta, baseUrl },
+      artifact,
+      [
+        { id: linked.id, excerpt: "@lin, please decide before Friday." },
+        { id: optout.id, excerpt: "@opt, this should stay quiet." },
+      ],
+      { author: "Ada", excerpt: "fallback context" },
+    )
+    const dms = (await claim(meta)).filter((delivery) => delivery.kind === "slack_dm")
+    expect(dms).toHaveLength(1)
+    const payload = JSON.parse(dms[0]?.payload ?? "{}") as Record<string, unknown>
+    expect(payload.userId).toBe(linked.id)
+    expect(JSON.stringify(payload)).toContain("please decide before Friday")
+    // There is no synthetic Slack thread to reply into for a document-body mention.
+    expect(payload.mention).toBeUndefined()
   })
 })
 
@@ -309,6 +336,117 @@ describe("makeSlackDmSender (delivery)", () => {
     expect(calls.some((c) => c.url.includes("/users.lookupByEmail"))).toBe(false)
     const open = calls.find((c) => c.url.endsWith("/conversations.open"))
     expect(JSON.stringify(open?.body)).toContain("U-LINKED")
+  })
+
+  it("posts one rich mention-DM root and threads later pings beneath it", async () => {
+    const meta = make("slack-dm-threaded-mentions")
+    await connect(meta)
+    await meta.setSlackUserLink({
+      id: "sul-threaded",
+      org_id: "default",
+      user_id: linked.id,
+      team_id: "T1",
+      slack_user_id: "U-LINKED",
+      origin: "oauth" as const,
+      checked_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    })
+    const { artifact, comment } = await artifactAndComment(meta)
+    const posts: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: { body?: string }) => {
+        const body = JSON.parse(init?.body ?? "{}") as Record<string, unknown>
+        if (url.endsWith("/conversations.open"))
+          return new Response(JSON.stringify({ ok: true, channel: { id: "D-thread" } }))
+        if (url.endsWith("/chat.postMessage")) {
+          posts.push(body)
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              ts: posts.length === 1 ? "1.1" : "1.2",
+              channel: "D-thread",
+            }),
+          )
+        }
+        return new Response(JSON.stringify({ ok: false, error: "unexpected" }))
+      }),
+    )
+
+    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
+      { id: linked.id, name: "Lin" },
+    ])
+    const [first] = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    if (!first) throw new Error("no first mention delivery")
+    expect((await makeSlackDmSender(meta, KEY)(first)).ok).toBe(true)
+    expect((posts[0]?.metadata as { entities?: unknown[] }).entities).toHaveLength(1)
+    expect(posts[0]?.thread_ts).toBeUndefined()
+    const route = (await meta.listSlackThreadLinksByThread(comment.thread_id)).find(
+      (l) => l.surface === "mention_dm",
+    )
+    expect(route?.recipient_user_id).toBe(linked.id)
+    expect(route?.slack_user_id).toBe("U-LINKED")
+
+    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
+      { id: linked.id, name: "Lin" },
+    ])
+    const [second] = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    if (!second) throw new Error("no second mention delivery")
+    expect((await makeSlackDmSender(meta, KEY)(second)).ok).toBe(true)
+    expect(posts[1]?.thread_ts).toBe("1.1")
+    expect(posts[1]?.metadata).toBeUndefined()
+  })
+
+  it("starts a fresh DM root when the recipient has re-linked a different Slack account", async () => {
+    const meta = make("slack-dm-relinked")
+    await connect(meta)
+    await meta.setSlackUserLink({
+      id: "sul-relinked",
+      org_id: "default",
+      user_id: linked.id,
+      team_id: "T1",
+      slack_user_id: "U-NEW",
+      origin: "oauth",
+      checked_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    })
+    const { artifact, comment } = await artifactAndComment(meta)
+    // An old route points at a different Slack identity. Its message ts is not valid in the
+    // newly opened DM, so reusing it would turn this mention into a thread_not_found retry.
+    await meta.setSlackThreadLink({
+      id: "stl-old-identity",
+      org_id: "default",
+      artifact_id: artifact.id,
+      thread_id: comment.thread_id,
+      channel: "D-OLD",
+      message_ts: "1.1",
+      surface: "mention_dm",
+      recipient_user_id: linked.id,
+      slack_user_id: "U-OLD",
+      created_at: new Date().toISOString(),
+    })
+    const posts: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: { body?: string }) => {
+        const body = JSON.parse(init?.body ?? "{}") as Record<string, unknown>
+        if (url.endsWith("/conversations.open"))
+          return new Response(JSON.stringify({ ok: true, channel: { id: "D-NEW" } }))
+        if (url.endsWith("/chat.postMessage")) {
+          posts.push(body)
+          return new Response(JSON.stringify({ ok: true, ts: "2.1", channel: "D-NEW" }))
+        }
+        return new Response(JSON.stringify({ ok: false, error: "unexpected" }))
+      }),
+    )
+    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
+      { id: linked.id, name: "Lin" },
+    ])
+    const [row] = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    if (!row) throw new Error("no mention delivery")
+    expect((await makeSlackDmSender(meta, KEY)(row)).ok).toBe(true)
+    expect(posts[0]?.thread_ts).toBeUndefined()
+    expect((posts[0]?.metadata as { entities?: unknown[] }).entities).toHaveLength(1)
   })
 
   it("is a delivered no-op when the email has no matching Slack account", async () => {

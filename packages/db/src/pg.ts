@@ -5128,7 +5128,8 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(agent).where(and(eq(agent.id, id), eq(agent.org_id, orgId)))
   }
   async createAgentMention(m: NewAgentMention): Promise<void> {
-    await this.db.insert(agentMention).values(m)
+    // See the SQLite store: a stable thread-reply id makes an outbox recovery idempotent.
+    await this.db.insert(agentMention).values(m).onConflictDoNothing()
   }
   // ---- Workspace invitations ---------------------------------------------
   async createInvitation(i: NewInvitation): Promise<InvitationRecord> {

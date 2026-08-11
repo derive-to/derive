@@ -38,6 +38,7 @@ import { ActionsCtx } from "./comment-actions"
 import { DerivedFromBanner } from "./derived-from-banner"
 import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
+import { InlineMentionMenu } from "./inline-mention-menu"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
@@ -397,6 +398,7 @@ export function Artifact() {
     setHoverThread,
     setActiveThread,
     setPanel,
+    onOpenComments: () => setRail("comments"),
     onNavigate: (ref, newTab) => {
       // Same-origin SPA route. A modified/middle click opens it un-sandboxed in a new
       // tab (the frame's own new tab would inherit the sandbox and break the app).
@@ -520,6 +522,7 @@ export function Artifact() {
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
     onLoginBounce: () => nav({ to: "/login", search: artifactLoginSearch(window.location) }),
     onOpenReview: (proposalId: string) => setReviewing({ proposalId }),
+    onOpenComments: () => setRail("comments"),
     post,
     setPanel,
     setActiveThread,
@@ -1132,9 +1135,13 @@ export function Artifact() {
                 onPublish={publishEdit}
                 onPropose={proposeEdit}
                 publishing={publishing}
+                shortId={shortId}
               />
             ) : (
               documentEl
+            )}
+            {inlineEdit.mention && !editing && (
+              <InlineMentionMenu menu={inlineEdit.mention} onChoose={inlineEdit.chooseMention} />
             )}
             {/* On desktop, only when there ARE open comments — a zero-count pill is
                 noise there, since the top-bar Comments toggle (and `c`) already opens

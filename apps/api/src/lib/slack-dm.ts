@@ -16,14 +16,16 @@ import {
   type CommentRecord,
   type DeliveryRecord,
   type MetaStore,
+  newId,
+  type SlackThreadLinkRecord,
 } from "@derive/core"
 import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
-import { commentDeepLink, type Mention } from "./comments"
+import { commentDeepLink, type Mention, previewOf } from "./comments"
 import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
 import { actionButton, actions, mrkdwnBody, mrkdwnLabel, openButton, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
-import { encodeReviewAction, SLACK_REVIEW_ACTION } from "./slack-work-object"
+import { commentThreadEntity, encodeReviewAction, SLACK_REVIEW_ACTION } from "./slack-work-object"
 
 /** The self-contained payload a slack_dm delivery carries. */
 interface SlackDmPayload {
@@ -31,6 +33,19 @@ interface SlackDmPayload {
   userId: string
   text: string
   blocks: unknown[]
+  /** Present only for an @mention. It gives the delivery worker enough durable context to make
+   *  the first DM a Work Object and to thread every later ping under that one root. */
+  mention?: {
+    artifactId: string
+    artifactShortId: string
+    artifactTitle: string | null
+    threadId: string
+    commentId: string
+    author: string
+    /** Safe Slack mrkdwn, rendered before writing this durable outbox payload. */
+    bodyMrkdwn: string
+    link: string
+  }
 }
 
 /** Whether a user wants Slack DMs for interrupts (mentions, review requests, shares —
@@ -62,6 +77,9 @@ export const enqueueSlackMentionDms = async (
   if (!install) return
   const link = commentDeepLink(baseUrl, artifact, cm.thread_id)
   const t = title(artifact)
+  // Slack uses top-level `text` for notifications and assistive technology rather than reading
+  // the Block Kit body. Keep a bounded, fully escaped excerpt there as well as on the rich card.
+  const fallbackText = `${mrkdwnLabel(cm.author)} mentioned you on ${mrkdwnLabel(t)}: ${mrkdwnLabel(previewOf(cm.body_md), 300)}`
   const seen = new Set<string>()
   for (const m of mentions) {
     if (seen.has(m.id)) continue
@@ -77,7 +95,56 @@ export const enqueueSlackMentionDms = async (
     await enqueueChannelDelivery(meta, "slack_dm", "comment.mention", {
       orgId: artifact.org_id,
       userId: m.id,
-      text: `${mrkdwnLabel(cm.author)} mentioned you on ${mrkdwnLabel(t)}`,
+      text: fallbackText,
+      blocks,
+      mention: {
+        artifactId: artifact.id,
+        artifactShortId: artifact.short_id,
+        artifactTitle: artifact.title,
+        threadId: cm.thread_id,
+        commentId: cm.id,
+        author: mrkdwnLabel(cm.author),
+        bodyMrkdwn: mrkdwnBody(cm.body_md, 700),
+        link,
+      },
+    } satisfies SlackDmPayload)
+  }
+}
+
+/**
+ * A live-document mention has no canonical comment thread yet, so its Slack DM is
+ * deliberately an interrupt with contextual prose and one Open action — never a
+ * pseudo-reply surface that cannot be mirrored safely back into Derive.
+ */
+export const enqueueSlackArtifactMentionDms = async (
+  deps: { meta: MetaStore; baseUrl: string },
+  artifact: ArtifactRecord,
+  recipients: Array<{ id: string; excerpt?: string }>,
+  input: { author: string; excerpt: string },
+): Promise<void> => {
+  const { meta, baseUrl } = deps
+  const install = await meta.getSlackInstall(artifact.org_id)
+  if (!install) return
+  const link = artifactUrl(baseUrl, artifact)
+  const t = title(artifact)
+  const seen = new Set<string>()
+  for (const recipient of recipients) {
+    if (seen.has(recipient.id)) continue
+    seen.add(recipient.id)
+    const pref = await meta.getUserNotificationPref(artifact.org_id, recipient.id)
+    if (!wantsSlackDm(pref?.prefs)) continue
+    const excerpt = recipient.excerpt ?? input.excerpt
+    const blocks = [
+      section(
+        `:wave: *${mrkdwnLabel(input.author)}* mentioned you in <${link}|${mrkdwnLabel(t)}>.`,
+      ),
+      ...(excerpt ? [section(`> ${mrkdwnBody(excerpt, 600)}`)] : []),
+      actions([openButton(link)]),
+    ]
+    await enqueueChannelDelivery(meta, "slack_dm", "artifact.mention", {
+      orgId: artifact.org_id,
+      userId: recipient.id,
+      text: `${mrkdwnLabel(input.author)} mentioned you in ${mrkdwnLabel(t)}: ${mrkdwnLabel(excerpt, 300)}`,
       blocks,
     } satisfies SlackDmPayload)
   }
@@ -213,5 +280,75 @@ export const makeSlackDmSender =
     } catch (err) {
       return slackFailure(meta, p.orgId, err)
     }
-    return postWithRecovery(meta, p.orgId, bot.token, { channel, text: p.text, blocks: p.blocks })
+    // A mention has one personal Slack root per recipient and Derive thread. Re-mentions post
+    // compactly beneath it, which preserves a place to reply without repeatedly shoving a large
+    // card into someone's DM timeline.
+    const existing = p.mention
+      ? (await meta.listSlackThreadLinksByThread(p.mention.threadId)).find(
+          (l) =>
+            l.surface === "mention_dm" &&
+            l.recipient_user_id === p.userId &&
+            l.channel === channel &&
+            l.slack_user_id === slackUserId,
+        )
+      : undefined
+    const blocks =
+      existing && p.mention
+        ? [
+            section(
+              `:speech_balloon: *${p.mention.author}* mentioned you again\n> ${p.mention.bodyMrkdwn}`,
+            ),
+          ]
+        : p.blocks
+    const metadata =
+      p.mention && !existing
+        ? {
+            entities: [
+              commentThreadEntity({
+                baseUrl: p.mention.link.replace(/\/artifacts\/.*/, ""),
+                artifact: {
+                  id: p.mention.artifactId,
+                  short_id: p.mention.artifactShortId,
+                  title: p.mention.artifactTitle,
+                },
+                comment: {
+                  thread_id: p.mention.threadId,
+                  body_md: "",
+                  author: p.mention.author,
+                  state: "open",
+                },
+                bodyMrkdwn: p.mention.bodyMrkdwn,
+                iconUrl: new URL("/icon.png", p.mention.link).toString(),
+              }),
+            ],
+          }
+        : undefined
+    const res = await postWithRecovery(
+      meta,
+      p.orgId,
+      bot.token,
+      {
+        channel,
+        text: p.text,
+        blocks,
+        threadTs: existing?.message_ts,
+        metadata,
+      },
+      { metadataFallback: true },
+    )
+    if (res.ok && p.mention && !existing && res.ts && res.channel) {
+      await meta.setSlackThreadLink({
+        id: newId("stl"),
+        org_id: p.orgId,
+        artifact_id: p.mention.artifactId,
+        thread_id: p.mention.threadId,
+        channel: res.channel,
+        message_ts: res.ts,
+        surface: "mention_dm",
+        recipient_user_id: p.userId,
+        slack_user_id: slackUserId,
+        created_at: new Date().toISOString(),
+      } satisfies SlackThreadLinkRecord)
+    }
+    return res
   }

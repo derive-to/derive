@@ -1,8 +1,10 @@
 import { type RefObject, useEffect, useRef, useState } from "react"
-import { ApiError, type Artifact, api, type InlineEditInput } from "@/api"
+import { ApiError, type Artifact, api, type DirUser, type InlineEditInput } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { canPublishArtifact } from "@/lib/artifact"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { isUsernameQuery, isValidUsername, normalizeUsername } from "@/lib/username"
+import { mentionCandidates } from "./mention-candidates"
 
 const clip = (s: string, n = 28): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
@@ -29,6 +31,25 @@ const editMessage = (edits: InlineEditInput[]): string => {
 }
 
 type SaveOutcome = { kind: "published"; version: number } | { kind: "proposed" } | null
+
+export type InlineMentionMenuState = {
+  query: string
+  users: DirUser[]
+  active: number
+  loading: boolean
+  position: { left: number; top: number }
+}
+
+type FrameMentionRect = { left: number; right: number; top: number; bottom: number }
+const validMentionQuery = (value: unknown): value is string => isUsernameQuery(value)
+const validMentionHandle = (value: unknown): value is string => isValidUsername(value)
+const validMentionRect = (value: unknown): value is FrameMentionRect => {
+  if (!value || typeof value !== "object") return false
+  const r = value as Record<string, unknown>
+  return [r.left, r.right, r.top, r.bottom].every(
+    (n) => typeof n === "number" && Number.isFinite(n),
+  )
+}
 
 /** Why the document refused a gesture, in words a reader can act on. The frame
  *  names the reason; the copy lives here so every refusal reads the same way. */
@@ -100,6 +121,13 @@ export function useInlineEdit(p: {
   const active = frozenVersion !== null
   const activeRef = useRef(false)
   activeRef.current = active
+  const [mention, setMention] = useState<InlineMentionMenuState | null>(null)
+  const mentionRef = useRef<InlineMentionMenuState | null>(null)
+  mentionRef.current = mention
+  // A directory response can arrive after the caret moved on. Its number is local
+  // to this edit session, so stale results can never replace the current token's menu.
+  const mentionRequest = useRef(0)
+  const mentionRenderRequest = useRef(0)
   const dirtyRef = useRef(0)
   dirtyRef.current = dirty
   const collectWait = useRef<{
@@ -117,6 +145,9 @@ export function useInlineEdit(p: {
   // current closures.
   const startRef = useRef<(entry?: { fromPointer?: boolean }) => void>(() => {})
   const swapImageRef = useRef<(src: string) => void>(() => {})
+  const mentionQueryRef = useRef<(query: string, rect: FrameMentionRect) => void>(() => {})
+  const mentionKeyRef = useRef<(key: string) => void>(() => {})
+  const renderMentionHandlesRef = useRef<(handles: unknown) => void>(() => {})
   const canEditRef = useRef(false)
   canEditRef.current = p.canEdit
 
@@ -129,6 +160,9 @@ export function useInlineEdit(p: {
   //               wording for the beat before the version swap reloads the frame.
   //   "none"    — the frame is already gone (reload); there is nothing to talk to.
   const exit = (frame: "restore" | "settle" | "none") => {
+    mentionRequest.current++
+    mentionRenderRequest.current++
+    setMention(null)
     setFrozenVersion(null)
     setDirty(0)
     setTools({
@@ -149,8 +183,11 @@ export function useInlineEdit(p: {
   // its shown version to a number from a different document.
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the artifact change.
   useEffect(() => {
+    mentionRequest.current++
+    mentionRenderRequest.current++
     setFrozenVersion(null)
     setDirty(0)
+    setMention(null)
   }, [p.shortId])
 
   // The frame's edit-* messages ride the same postMessage channel as the anchor
@@ -223,6 +260,16 @@ export function useInlineEdit(p: {
         if (canEditRef.current && !activeRef.current) startRef.current({ fromPointer: true })
       } else if (d.type === "edit-image") {
         if (canEditRef.current && typeof d.src === "string") swapImageRef.current(d.src)
+      } else if (d.type === "edit-mention-query") {
+        if (activeRef.current && validMentionQuery(d.query) && validMentionRect(d.rect))
+          mentionQueryRef.current(d.query, d.rect)
+      } else if (d.type === "edit-mention-key") {
+        if (activeRef.current && typeof d.key === "string") mentionKeyRef.current(d.key)
+      } else if (d.type === "edit-mention-close") {
+        mentionRequest.current++
+        setMention(null)
+      } else if (d.type === "mention-resolve") {
+        renderMentionHandlesRef.current(d.handles)
       } else if (d.type === "edit-blocked") {
         // A click landed somewhere inline editing can't reach. Quiet + deduped —
         // information, not an alarm.
@@ -248,6 +295,108 @@ export function useInlineEdit(p: {
       p.post({ type: "edit-collect", nonce })
     })
 
+  const dismissMention = () => {
+    mentionRequest.current++
+    setMention(null)
+    p.post({ type: "edit-mention-close" })
+  }
+  const chooseMention = (user: DirUser) => {
+    const handle = user.handle
+    if (!validMentionHandle(handle)) return
+    mentionRequest.current++
+    setMention(null)
+    p.post({ type: "edit-mention-insert", handle })
+  }
+  const positionMention = (rect: FrameMentionRect): { left: number; top: number } | null => {
+    const frame = p.frameRef.current?.getBoundingClientRect()
+    if (!frame) return null
+    // Fixed coordinates in the host viewport. Keep the menu fully visible on a
+    // narrow screen; the caret remains visible in the iframe directly beneath it.
+    return {
+      left: Math.max(8, Math.min(window.innerWidth - 296, frame.left + rect.left)),
+      top: Math.max(8, Math.min(window.innerHeight - 230, frame.top + rect.bottom + 8)),
+    }
+  }
+  mentionQueryRef.current = (query, rect) => {
+    const position = positionMention(rect)
+    if (!position) return
+    const request = ++mentionRequest.current
+    setMention({ query, users: [], active: 0, loading: true, position })
+    // A directory failure is intentionally cosmetic: the raw handle remains in the
+    // document and publish-time resolution still has its normal safe behavior.
+    mentionCandidates(query, p.shortId)
+      .then((users) => {
+        if (request !== mentionRequest.current || !activeRef.current) return
+        setMention({
+          query,
+          users,
+          active: 0,
+          loading: false,
+          position,
+        })
+      })
+      .catch(() => {
+        if (request !== mentionRequest.current || !activeRef.current) return
+        setMention((current) =>
+          current?.query === query ? { ...current, users: [], loading: false } : current,
+        )
+      })
+  }
+  renderMentionHandlesRef.current = (value) => {
+    if (!Array.isArray(value)) return
+    const requested = new Set(
+      value.filter(validMentionHandle).map((handle) => normalizeUsername(handle)),
+    )
+    if (!requested.size) {
+      p.post({ type: "mention-render", handles: [] })
+      return
+    }
+    const request = ++mentionRenderRequest.current
+    // Resolve once per document frame. The endpoint returns only handles already
+    // present in this artifact, rather than exposing a workspace roster to a
+    // public-link reader; the iframe has no authenticated directory access itself.
+    api
+      .artifactMentionHandles(p.shortId)
+      .then(({ handles }) => {
+        if (request !== mentionRenderRequest.current) return
+        p.post({
+          type: "mention-render",
+          handles: handles
+            .filter(validMentionHandle)
+            .map((handle) => normalizeUsername(handle))
+            .filter((handle) => requested.has(handle)),
+        })
+      })
+      .catch(() => {
+        if (request === mentionRenderRequest.current)
+          p.post({ type: "mention-render", handles: [] })
+      })
+  }
+  mentionKeyRef.current = (key) => {
+    const current = mentionRef.current
+    if (!current) return
+    if (key === "Escape") {
+      dismissMention()
+      return
+    }
+    if (!current.users.length) return
+    if (key === "ArrowDown") {
+      setMention({ ...current, active: (current.active + 1) % current.users.length })
+      return
+    }
+    if (key === "ArrowUp") {
+      setMention({
+        ...current,
+        active: (current.active - 1 + current.users.length) % current.users.length,
+      })
+      return
+    }
+    if (key === "Enter" || key === "Tab") {
+      const user = current.users[current.active]
+      if (user) chooseMention(user)
+    }
+  }
+
   /** Open the mode. `entry` names the gesture that opened it — the frame's own
    *  double-click (whose target the client already captured) or the live selection
    *  (the Edit verb on a selection) — so the caret lands on the words the user was
@@ -256,6 +405,8 @@ export function useInlineEdit(p: {
   const start = (entry?: { fromPointer?: boolean; fromSelection?: boolean }) => {
     if (!p.art || active) return
     p.onEnter?.()
+    mentionRequest.current++
+    setMention(null)
     setDirty(0)
     setFrozenVersion(p.art.current_version)
     p.post({ type: "edit-mode", on: true, elementEdits: p.allowElementEdits, ...entry })
@@ -295,6 +446,8 @@ export function useInlineEdit(p: {
   const onFrameGone = () => {
     // A fresh document boots un-armed whatever the host last said, so re-state it.
     p.post({ type: "edit-armed", on: canEditRef.current && !activeRef.current })
+    mentionRequest.current++
+    setMention(null)
     if (!activeRef.current) return
     const hadEdits = dirtyRef.current > 0
     exit("none") // the frame is a fresh document; there is nothing to restore
@@ -470,6 +623,9 @@ export function useInlineEdit(p: {
     requestExit,
     confirmExit,
     cancelExit,
+    mention,
+    chooseMention,
+    dismissMention,
     onFrameGone,
     save: () => save.mutate(),
   }

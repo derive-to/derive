@@ -13,6 +13,7 @@ import {
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import { type Mention, previewOf } from "./comments"
+import { eligibleMentionRecipientIds } from "./mention-access"
 
 export const notifyMentions = async (
   deps: { meta: MetaStore; bus: Backplane },
@@ -28,16 +29,9 @@ export const notifyMentions = async (
   // Registered agents are mentionable too; a mention of an agent lands in its
   // pull inbox instead of a notification bell.
   const agentIds = new Set((await meta.listAgents(a.org_id)).map((ag) => ag.id))
-  // A mention only notifies someone who can actually SEE the artifact: a member of its
-  // workspace or an explicit share recipient. The `mentions[]` array is caller-supplied,
-  // so without this gate any caller could push a notification carrying attacker-controlled
-  // title/preview to ANY other user — cross-workspace spam/phishing into the bell + SSE.
-  // "Could view a public artifact" is intentionally NOT enough; a real collaboration
-  // mention means a member/share, not a stranger.
-  const collaborators = new Set<string>([
-    ...(await meta.listMemberships(a.org_id)).map((m) => m.user_id),
-    ...(await meta.listArtifactMembers(a.id)).map((r) => r.user_id),
-  ])
+  // A public link is never enough to page somebody: recipient eligibility is shared
+  // with live-source mentions and includes only workspace/direct/collection standing.
+  const collaborators = await eligibleMentionRecipientIds(meta, a, real)
   const preview = previewOf(cm.body_md)
   // Collect the human-mention bell rows so the whole fan-out is ONE bulk insert; agent
   // mentions land in their own table (a pull inbox), still one row each.
@@ -69,6 +63,7 @@ export const notifyMentions = async (
         thread_id: cm.thread_id,
         body: cm.body_md,
         author: cm.author,
+        kind: "mention",
       })
       // Wake a session that's long-polling this agent's inbox (check_requests's
       // `wait`). Signal-only, mirroring the human bell path above — no body on the
@@ -91,4 +86,50 @@ export const notifyMentions = async (
       })
   }
   return notified
+}
+
+/** Wake registered agents that already participated in this thread when a real human replies.
+ * This is deliberately separate from an @mention: it represents "the answer to work you left
+ * here", so the agent's inbox can resume the right task without making a human repeat its name.
+ * An explicit mention wins and is not duplicated as a thread-reply row. */
+export const notifyThreadReplyAgents = async (
+  deps: { meta: MetaStore; bus: Pick<Backplane, "publish"> },
+  artifact: ArtifactRecord,
+  comment: CommentRecord,
+  actorId: string | null,
+  mentionedIds: Set<string> = new Set(),
+): Promise<void> => {
+  if (!actorId) return
+  // Never treat an opaque Slack identity, another agent, or a deleted account as a human answer.
+  if (!(await deps.meta.getUsers([actorId]))[0]) return
+  const agents = new Map((await deps.meta.listAgents(artifact.org_id)).map((a) => [a.id, a]))
+  const participants = await deps.meta.listComments(artifact.id, { threadId: comment.thread_id })
+  const recipients = new Set(
+    participants
+      .map((c) => c.author_id)
+      .filter(
+        (id): id is string => !!id && id !== actorId && agents.has(id) && !mentionedIds.has(id),
+      ),
+  )
+  for (const id of recipients) {
+    await deps.meta.createAgentMention({
+      // This is a durable wake-up, reached through an at-least-once Slack outbox. A stable
+      // primary key means a retry after the comment write repairs a missed wake-up without
+      // giving the agent two copies of the same human answer.
+      id: `amr_${comment.id}_${id}`,
+      agent_id: id,
+      artifact_id: artifact.id,
+      artifact_short_id: artifact.short_id,
+      comment_id: comment.id,
+      thread_id: comment.thread_id,
+      body: comment.body_md,
+      author: comment.author,
+      kind: "thread_reply",
+    })
+    deps.bus.publish(`u:${id}`, {
+      type: "request.created",
+      artifact: artifact.short_id,
+      thread_id: comment.thread_id,
+    })
+  }
 }

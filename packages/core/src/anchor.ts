@@ -1,5 +1,6 @@
 import { findQuoteWithContext } from "./anchor-shared"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
+import { MENTION_NON_PROSE_TAGS } from "./mention-shared"
 import type { CommentState } from "./ports"
 
 /** A W3C Web Annotation TextQuoteSelector — survives republishing. */
@@ -216,7 +217,10 @@ const pushTextRun = (
  * literal text. Each stripped construct collapses to one space; entities in text
  * runs decode via {@link decodeEntities}.
  */
-export function pageTextParts(html: string): PageTextParts {
+export function pageTextParts(
+  html: string,
+  omitContentsOf: readonly string[] = INVISIBLE_NAMES,
+): PageTextParts {
   const lower = html.toLowerCase()
   const findRaw = makeFinder(html)
   const findLower = makeFinder(lower)
@@ -230,7 +234,7 @@ export function pageTextParts(html: string): PageTextParts {
       if (close >= 0) return close + 3
     }
     // <script|style|noscript ...> ... </same>
-    for (const name of INVISIBLE_NAMES) {
+    for (const name of omitContentsOf) {
       if (!lower.startsWith(name, i + 1)) continue
       const after = i + 1 + name.length
       if (after < html.length && isWordChar(html[after] as string)) continue // \b
@@ -281,6 +285,15 @@ export function pageTextParts(html: string): PageTextParts {
  */
 export function pageText(html: string): string {
   return pageTextParts(html).text
+}
+
+/**
+ * Reader prose for document-body mention detection. It intentionally omits code,
+ * templates, form labels, and head metadata in addition to ordinary invisible
+ * markup, matching the in-frame mention decorator's DOM filter.
+ */
+export function mentionText(html: string): string {
+  return pageTextParts(html, MENTION_NON_PROSE_TAGS).text
 }
 
 // The comment-anchor client that runs inside the sandboxed artifact iframe. It is real,

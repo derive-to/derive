@@ -42,18 +42,25 @@ export const notifyCommentBells = async (
   if (opts.actorId) recipients.delete(opts.actorId)
   for (const id of opts.mentionIds) recipients.delete(id)
 
-  const rows = [...recipients].map((uid) => ({
-    id: newId("n"),
-    user_id: uid,
-    actor: comment.author,
-    kind: "comment" as const,
-    artifact_id: artifact.id,
-    artifact_short_id: artifact.short_id,
-    artifact_title: artifact.title,
-    thread_id: comment.thread_id,
-    comment_id: comment.id,
-    preview: previewOf(comment.body_md),
-  }))
+  // Thread participants can include registered agents. Those wake through the agent inbox
+  // (`notifyThreadReplyAgents`), not the human Notification table, which powers the bell UI and
+  // assumes an account that can read it.
+  const humanIds = new Set((await meta.getUsers([...recipients])).map((u) => u.id))
+
+  const rows = [...recipients]
+    .filter((uid) => humanIds.has(uid))
+    .map((uid) => ({
+      id: newId("n"),
+      user_id: uid,
+      actor: comment.author,
+      kind: "comment" as const,
+      artifact_id: artifact.id,
+      artifact_short_id: artifact.short_id,
+      artifact_title: artifact.title,
+      thread_id: comment.thread_id,
+      comment_id: comment.id,
+      preview: previewOf(comment.body_md),
+    }))
   // One bulk insert for the whole fan-out; the realtime bell stays one event per user.
   await meta.createNotifications(rows)
   for (const row of rows)

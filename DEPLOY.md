@@ -321,18 +321,24 @@ runs the same rebuild guarded at boot. Check whether you need it with:
 wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='context_session'"
 ```
 
-An existing D1 database also still keys `slack_thread_link` on `thread_id` alone. A Derive
-comment thread now mirrors into every channel subscribed to its artifact, so one thread has one
-Slack message **per channel** — the old constraint rejects the second one, and only once someone
-actually subscribes a second channel. Re-key it once:
+An existing D1 database also needs the inline-mention columns before it can store personal Slack
+DM reply routes and agent thread-reply wakes. Apply this one-time additive migration first:
+
+```
+wrangler d1 execute <db> --remote --file=deploy/add-inline-mention-columns-d1.sql
+```
+
+Then re-key `slack_thread_link`, which lets a Derive thread mirror into every subscribed channel
+(one Slack message **per channel** rather than the old one-thread/one-channel constraint):
 
 ```
 wrangler d1 execute <db> --remote --file=deploy/rekey-slack-thread-link-d1.sql
 ```
 
-Safe to re-run, and unnecessary on a new database. Postgres and self-host SQLite need no manual
-step here either: the former swaps the constraint during `deploy:pg-schema` (only when the stale
-one is present), the latter rebuilds the table guarded at boot. Check with:
+The re-key is safe to re-run; the additive migration is not, so skip both on a new database.
+Postgres and self-host SQLite need no manual step here either: the former swaps the constraint
+during `deploy:pg-schema` (only when the stale one is present), the latter rebuilds the table
+guarded at boot. Check with:
 
 ```
 wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE name='slack_thread_link'"

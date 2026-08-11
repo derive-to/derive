@@ -3,6 +3,7 @@ import {
   type AnchorThread,
   anchorContentFor,
   isAnchored,
+  mentionText,
   pageText,
   planAnchorSweep,
   type QuoteSelector,
@@ -141,6 +142,22 @@ describe("pageText — visible text for HTML quote matching", () => {
     expect(t).toContain("A & B")
     expect(t).not.toContain("color:red")
     expect(t).not.toContain("ignore me")
+  })
+})
+
+describe("mentionText — document prose for @mentions", () => {
+  it("drops non-prose HTML while retaining the visible body", () => {
+    expect(
+      mentionText(
+        "<head><title>@title</title></head><template>@template</template><pre>@code</pre><p>Hello @reader</p>",
+      ),
+    ).toContain("Hello @reader")
+    const text = mentionText(
+      "<head><title>@title</title></head><template>@template</template><pre>@code</pre><p>Hello @reader</p>",
+    )
+    expect(text).not.toContain("@title")
+    expect(text).not.toContain("@template")
+    expect(text).not.toContain("@code")
   })
 })
 

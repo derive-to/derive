@@ -1,7 +1,7 @@
 -- One-shot re-key of slack_thread_link for D1, from UNIQUE(thread_id) to
--- UNIQUE(thread_id, channel). Run ONCE per existing D1 database; new databases already create
--- the right shape from deploy/d1-schema.sql and do not need it (running it anyway is harmless —
--- see IDEMPOTENCE below).
+-- UNIQUE(thread_id, channel). Run after add-inline-mention-columns-d1.sql on an existing D1
+-- database; new databases already create the right shape from deploy/d1-schema.sql and need
+-- neither script (running this re-key again is harmless — see IDEMPOTENCE below).
 --
 --   D1 (edge):  wrangler d1 execute <db> --remote --file=deploy/rekey-slack-thread-link-d1.sql
 --
@@ -37,14 +37,17 @@ CREATE TABLE IF NOT EXISTS slack_thread_link__new (
   thread_id TEXT NOT NULL,
   channel TEXT NOT NULL,
   message_ts TEXT NOT NULL,
+  surface TEXT NOT NULL DEFAULT 'channel_mirror',
+  recipient_user_id TEXT,
+  slack_user_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (thread_id, channel),
   UNIQUE (channel, message_ts)
 );
 
 INSERT OR IGNORE INTO slack_thread_link__new
-  (id, org_id, artifact_id, thread_id, channel, message_ts, created_at)
-  SELECT id, org_id, artifact_id, thread_id, channel, message_ts, created_at
+  (id, org_id, artifact_id, thread_id, channel, message_ts, surface, recipient_user_id, slack_user_id, created_at)
+  SELECT id, org_id, artifact_id, thread_id, channel, message_ts, surface, recipient_user_id, slack_user_id, created_at
   FROM slack_thread_link;
 
 DROP TABLE slack_thread_link;

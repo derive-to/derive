@@ -25,6 +25,7 @@ import type { WebhookEvent } from "../events"
 import { log } from "../log"
 import { type Summarizer, sanitizeSummary, summaryInput } from "../summarizer"
 import { publishSweepEvents } from "./anchor-sweep"
+import { fanOutNewContentMentions } from "./content-mentions"
 import { indexArtifactVersion, isTextType } from "./search"
 
 /** The realtime + render + re-anchor core shared by every version bump (publish, restore,
@@ -323,6 +324,9 @@ export interface AfterPublishDeps extends VersionBumpDeps {
   notify: (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) => Promise<void>
   /** Run after-response work off the hot path (webhook enqueue, follower fan-out). */
   background: (work: Promise<unknown>) => Promise<void>
+  /** The deployment origin for document-body mention emails. Optional only for focused
+   * store-level callers; every app entry point supplies it. */
+  baseUrl?: string
 }
 
 export interface AfterPublishOpts {
@@ -380,6 +384,24 @@ export const afterPublish = async (
     resolved.push(threadId)
   }
   await emitVersionBump(deps, artifact, version)
+  // Source mentions are derived from the just-published bytes, never trusted from a client
+  // payload. Run after the canonical version bump and isolate every delivery branch inside the
+  // fan-out, so an outage cannot fail, roll back, or delay a live document edit.
+  await background(
+    fanOutNewContentMentions(
+      { meta, blobs: deps.blobs, bus, baseUrl: deps.baseUrl },
+      artifact,
+      version,
+      opts.actorId ?? null,
+    ).catch((err) =>
+      log.warn("content mention fan-out failed", {
+        artifact: artifact.id,
+        version: version.n,
+        surface: "prepare",
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    ),
+  )
   return { resolved }
 }
 

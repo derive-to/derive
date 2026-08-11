@@ -1505,6 +1505,8 @@ export const api = {
     const qs = p.toString()
     return f(`/v1/users${qs ? `?${qs}` : ""}`, opts()).then(j)
   },
+  artifactMentionHandles: (shortId: string): Promise<{ handles: string[] }> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/mentions`, opts()).then(j),
   notifications: (init?: FetchInit): Promise<{ notifications: Notification[]; unread: number }> =>
     f("/v1/notifications", opts(undefined, init)).then(j),
   markNotificationsRead: (sel: { ids: string[] } | { all: true }): Promise<{ unread: number }> =>

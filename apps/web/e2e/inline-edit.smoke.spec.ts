@@ -92,6 +92,51 @@ test("discard reverts the text and publishes nothing", async ({ owner }) => {
   expect(await versionOf(owner, shortId)).toBe(1)
 })
 
+test("a resolved collaborator becomes a portable chip; code and unknown handles stay plain", async ({
+  owner,
+  secondUser,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "mentions.html",
+    '<p id="one">Ask the team.</p><pre>@example-code</pre><p id="ambient">Follow @not-a-real-user</p>',
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  // Syntax alone must not impersonate a directed Derive mention in the reader.
+  await expect(doc(owner).locator("[data-derive-mention]")).toHaveCount(0)
+
+  await shareArtifact(owner.request, shortId, secondUser.email, "viewer")
+  const directory = await owner.request.get(`/v1/users?artifact=${shortId}&query=second`)
+  expect(directory.ok()).toBeTruthy()
+  const users = (await directory.json()) as {
+    users: { handle: string | null; name: string | null }[]
+  }
+  const handle = users.users.find((user) => user.name === "Second User")?.handle
+  expect(handle).toBeTruthy()
+  if (!handle) throw new Error("shared collaborator missing from mention directory")
+
+  await enterEditMode(owner)
+  await doc(owner).locator("#one").click()
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(` @${handle}`)
+  await expect(owner.getByTestId("inline-mention-menu")).toBeVisible()
+  await expect(owner.getByTestId("inline-mention-option")).toHaveCount(1)
+  await owner.keyboard.press("Enter")
+  await expect(doc(owner).locator("[data-derive-mention]")).toHaveText(`@${handle}`)
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    const stored = await contentOf(owner, shortId)
+    expect(stored).toContain(`@${handle}`)
+    expect(stored).not.toContain("derive-mention")
+  }).toPass({ timeout: 10_000 })
+  // The newly loaded reader resolves the persisted handle again; the chip survives
+  // without storing framework markup in the document.
+  await expect(doc(owner).locator("[data-derive-mention]")).toHaveText(`@${handle}`)
+})
+
 test("escape leaves a clean session, and asks before dropping a dirty one", async ({ owner }) => {
   await seed(owner)
   await enterEditMode(owner)

@@ -65,6 +65,11 @@ export const runCommentTurn = async (
   const { artifact, comment, thread, asker } = input
 
   const reply = async (body: string) => {
+    // This is a model protocol, not a heuristic: a normal question mark must never turn every
+    // later thread reply into an expensive model call. The marker is stripped before anyone sees
+    // the comment, leaving a natural question in the thread.
+    const awaiting = /^\[awaiting-input\]\s*/i.test(body)
+    const visible = awaiting ? body.replace(/^\[awaiting-input\]\s*/i, "") : body
     const created = await meta.createComment({
       id: newId("c"),
       artifact_id: artifact.id,
@@ -74,9 +79,10 @@ export const runCommentTurn = async (
       // The REPLY carries no anchor of its own: it belongs to the thread, and a second
       // highlight over the same span would double-underline the document.
       anchor: null,
-      body_md: body,
+      body_md: visible,
       author: "Derive",
       author_id: DERIVE_AUTHOR_ID,
+      ...(awaiting ? { meta: JSON.stringify({ awaiting_reply: true }) } : {}),
     })
     // The SAME fan-out any other comment runs — which is what puts this answer in the Slack
     // mirror, the GitHub mirror, the bells and the webhooks for free. Recursion is not a risk:
@@ -113,6 +119,10 @@ the document, reply with the revision block described below; ${
       ? "it will be filed as a proposal for a human to approve."
       : "you may not write to this document, so explain rather than attempting a revision."
   }
+
+If you need a human answer before you can continue, begin the reply with the exact marker
+"[awaiting-input]" followed by your single, concrete question. Use that marker only when you
+are actually blocked on their answer; do not use it for rhetorical questions or ordinary advice.
 
 ${contract.text}
 

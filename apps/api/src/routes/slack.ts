@@ -12,7 +12,7 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { type ArtifactStatus, artifactStatus } from "../lib/artifact-status"
 import { commentCreatedAction } from "../lib/comment-actions"
-import { commentDeepLink } from "../lib/comments"
+import { commentDeepLink, parseMeta } from "../lib/comments"
 import { encryptSecret, signState, verifyState } from "../lib/crypto"
 import { bail, fail, readJson } from "../lib/http"
 import { OG_TOKEN_TTL_MS, signOgToken } from "../lib/og-token"
@@ -69,16 +69,35 @@ import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { isVerifiedLink, linkToActMessage } from "../lib/slack-identity"
 import { handleSlackMention } from "../lib/slack-mention"
 import { runSlackProposalAction } from "../lib/slack-proposal"
+import {
+  decodeQuestionReply,
+  type QuestionReplyMeta,
+  questionReplyModal,
+  questionReplyNoticeModal,
+  questionReplyResultModal,
+  questionUnfurlBlocks,
+  SLACK_QUESTION_REPLY_ACTION,
+  SLACK_QUESTION_REPLY_BLOCK,
+  SLACK_QUESTION_REPLY_CALLBACK,
+  SLACK_QUESTION_REPLY_INPUT,
+} from "../lib/slack-question"
 import { runSlackReviewAction } from "../lib/slack-review"
 import {
   channelIsSubscribed,
   SLACK_SUBSCRIBABLE_EVENTS,
   subscribableEvents,
 } from "../lib/slack-subscriptions"
-import { artifactRefFromUrl, decideUnfurl, type UnfurlDecision } from "../lib/slack-unfurl"
+import {
+  artifactRefFromUrl,
+  decideUnfurl,
+  questionThreadFromUrl,
+  type UnfurlDecision,
+} from "../lib/slack-unfurl"
 import {
   artifactDetails,
   artifactEntity,
+  commentThreadEntity,
+  DERIVE_COMMENT_THREAD_ENTITY_TYPE,
   DERIVE_ENTITY_TYPE,
   decodeReviewAction,
   SLACK_REVIEW_ACTION,
@@ -238,8 +257,26 @@ export const slackRoutes = (ctx: AppContext) => {
         })
         continue
       }
-      unfurls[d.url] = { blocks: d.blocks }
-      entities.push(await entityFor(d, l.url))
+      // A deep link to an exact question is more useful than an artifact inventory card. The
+      // whole channel may see this, so only upgrade the already-broadcast-safe `card` branch;
+      // a private (`locked`) artifact stays title-less even if its URL carried a thread id.
+      const question =
+        d.kind === "card" ? await questionThreadFromUrl(meta, d.artifact, l.url) : null
+      if (question && d.kind === "card") {
+        unfurls[d.url] = { blocks: questionUnfurlBlocks(deps.baseUrl, d.artifact, question) }
+        entities.push(
+          commentThreadEntity({
+            baseUrl: deps.baseUrl,
+            artifact: d.artifact,
+            comment: question,
+            pastedUrl: l.url,
+            iconUrl: new URL("/icon.png", deps.baseUrl).toString(),
+          }),
+        )
+      } else {
+        unfurls[d.url] = { blocks: d.blocks }
+        entities.push(await entityFor(d, l.url))
+      }
     }
     if (!Object.keys(unfurls).length) return why("no link produced a card", { links: links.length })
 
@@ -402,6 +439,44 @@ export const slackRoutes = (ctx: AppContext) => {
         { kind: "auth", url: new URL("/v1/slack/link", deps.baseUrl).toString() },
         "not linked",
       )
+
+    // A personal mention DM (and an exact-question link unfurl) identifies a COMMENT THREAD,
+    // not an artifact short id. Resolve that first, then apply the same per-viewer standing
+    // check the artifact flexpane does before returning its typed details.
+    if (ev.external_ref?.type === DERIVE_COMMENT_THREAD_ENTITY_TYPE) {
+      const root = await meta.getComment(ref)
+      const artifact = root ? await meta.getArtifactById(root.artifact_id) : null
+      if (!root || !artifact || artifact.removed_at || artifact.org_id !== install.org_id)
+        return say(
+          {
+            kind: "restricted",
+            title: "Not available",
+            message: "This question no longer exists.",
+          },
+          "question gone",
+        )
+      if (!(await authorizeUserStanding(userLink.user_id, "read", artifact)))
+        return say(
+          {
+            kind: "restricted",
+            title: "No access",
+            message: "You don't have access to this question in Derive.",
+          },
+          "question no access",
+        )
+      return say(
+        {
+          kind: "details",
+          metadata: commentThreadEntity({
+            baseUrl: deps.baseUrl,
+            artifact,
+            comment: root,
+            iconUrl,
+          }),
+        },
+        "question details",
+      )
+    }
 
     let artifact: ArtifactRecord | null = null
     for (const id of candidateShortIds(ref)) {
@@ -721,6 +796,33 @@ export const slackRoutes = (ctx: AppContext) => {
       runAfterAck(unfurlSharedLinks(body.team_id, ev))
       return c.json({ ok: true })
     }
+    // A reply beneath a known Derive thread is canonical collaboration input, even when the
+    // conversation happens to be a DM and even when the reply @mentions the bot. Route it
+    // before the generic DM / app_mention chat lanes: otherwise an answer to an agent's
+    // question starts an unrelated workspace-chat turn instead of landing in the document.
+    if (
+      body.type === "event_callback" &&
+      ev?.type === "message" &&
+      !ev.bot_id &&
+      !ev.subtype &&
+      ev.thread_ts &&
+      ev.channel &&
+      ev.user &&
+      ev.text
+    ) {
+      const link = await meta.getSlackThreadLinkByTs(ev.channel, ev.thread_ts)
+      if (link) {
+        await enqueueSlackReplyIngest(meta, {
+          channel: ev.channel,
+          threadTs: ev.thread_ts,
+          userId: ev.user,
+          text: ev.text,
+          ts: ev.ts ?? "",
+        })
+        deps.pokeWebhooks?.()
+        return c.json({ ok: true })
+      }
+    }
     // @Derive, anywhere the bot is invited. Deferred behind the ack like every other slow path:
     // a turn takes seconds and Slack wants a reply inside three.
     //
@@ -772,10 +874,9 @@ export const slackRoutes = (ctx: AppContext) => {
     // already copes with (questionFrom leaves un-mentioned text alone, and a DM channel threads
     // the same way).
     //
-    // Ordered BEFORE the thread-reply branch because a DM can carry a thread_ts too, and that
-    // branch would otherwise try to mirror it as a comment on a document it has nothing to do
-    // with. The bot_id and subtype guards are what stop OUR OWN reply arriving back here as a new
-    // question, which is how a bot ends up talking to itself for ever.
+    // Known thread replies have already returned above. A DM with an unrelated `thread_ts` is
+    // still ordinary chat, and the bot_id/subtype guards stop our own reply arriving back here
+    // as a new question.
     if (
       body.type === "event_callback" &&
       ev?.type === "message" &&
@@ -823,11 +924,8 @@ export const slackRoutes = (ctx: AppContext) => {
       ev.user &&
       ev.text
     ) {
-      // Gate on a cheap indexed lookup (only replies under a message we posted map to a
-      // Derive thread) so channel chatter never floods the outbox, then defer the slow work
-      // — users.info + the comment write — to the worker. That keeps this handler well under
-      // Slack's 3s ack deadline, and the outbox retries a transient failure instead of
-      // dropping the reply (the old inline path did all of it before acking).
+      // The known-link route above normally returned already. Keep this branch as a defensive
+      // fallback for a future event subtype that reaches here through a new route order.
       const link = await meta.getSlackThreadLinkByTs(ev.channel, ev.thread_ts)
       if (link) {
         await enqueueSlackReplyIngest(meta, {
@@ -949,23 +1047,197 @@ export const slackRoutes = (ctx: AppContext) => {
     if (!(await authorizeUserStanding(actor.user.id, "comment", artifact)))
       return c.json(captureResultModal("You don't have permission to comment on that doc."))
 
+    // Slack may replay a view_submission when its acknowledgement is lost. The source message
+    // is the durable idempotency key for a capture: a second delivery must not make a second
+    // comment just because the first response never reached Slack.
+    const alreadyCaptured = (await meta.listComments(artifact.id)).find((cm) => {
+      const origin = parseMeta(cm.meta).slack
+      return origin?.ts === m.ts && origin.channel === m.channel
+    })
+    if (alreadyCaptured) {
+      const link = commentDeepLink(deps.baseUrl, artifact, alreadyCaptured.thread_id)
+      return c.json(captureResultModal(`This message is already saved in <${link}|Derive>.`))
+    }
+
     const comment = await writeCaptureComment(meta, artifact, m, note, {
       id: actor.user.id,
       name: actor.user.name ?? "Someone",
     })
+    bus.publish(artifact.id, { type: "comment.created" })
     // The same fan-out a comment posted in the app runs — bells, webhooks, email. The channel
     // mirror skips it on the Slack origin marker, so saving a message doesn't post it back out.
-    await commentCreatedAction(
-      { meta, bus, blobs, baseUrl: deps.baseUrl, notify },
-      artifact,
-      comment,
-      { mentions: [], actorId: actor.user.id },
+    // Deliver it after the modal acknowledgement: Slack gives view submissions three seconds,
+    // while a fan-out can involve slow webhook lookups and retrying outbox writes.
+    runAfterAck(
+      commentCreatedAction(
+        { meta, bus, blobs, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+        artifact,
+        comment,
+        { mentions: [], actorId: actor.user.id },
+      ),
     )
-    deps.pokeWebhooks?.()
     const link = commentDeepLink(deps.baseUrl, artifact, comment.thread_id)
     return c.json(
       captureResultModal(`Saved to <${link}|${mrkdwnLabel(artifact.title ?? artifact.short_id)}>.`),
     )
+  }
+
+  /** Open the small reply modal for a question-specific unfurl. The target is never trusted:
+   * the button value / Work Object ref only names a row, then we bind the clicker to a verified
+   * Slack identity, its connected Derive workspace, and current comment standing. */
+  const openQuestionReply = async (c: Context, payload: SlackInteractionPayload) => {
+    const action = payload.actions?.[0]
+    const workObjectThread =
+      payload.entity?.external_ref?.type === DERIVE_COMMENT_THREAD_ENTITY_TYPE
+        ? payload.entity.external_ref.id
+        : null
+    const byValue = action?.value ? decodeQuestionReply(action.value) : null
+    const threadId = workObjectThread ?? byValue?.threadId
+    if (!threadId || (workObjectThread && byValue && byValue.threadId !== workObjectThread))
+      return c.json({ ok: true })
+    const root = await meta.getComment(threadId)
+    const artifact = root ? await meta.getArtifactById(root.artifact_id) : null
+    if (!root || !artifact || !payload.trigger_id) return c.json({ ok: true })
+    if (
+      root.thread_id !== threadId ||
+      (byValue && (byValue.artifactId !== artifact.id || byValue.threadId !== root.thread_id))
+    )
+      return c.json({ ok: true })
+    const actor = await captureActor(payload)
+    // A mention DM can be delivered by email matching before someone has completed the stronger
+    // Slack account link required to write. Make that state actionable rather than presenting a
+    // Reply action that silently does nothing.
+    if (!actor || artifact.org_id !== actor.orgId) {
+      const install = await meta.getSlackInstall(artifact.org_id)
+      if (!install || install.team_id !== payload.team?.id) return c.json({ ok: true })
+      const bot = await resolveBotToken(meta, artifact.org_id, deps.encryptionKey)
+      if (!bot) return c.json({ ok: true })
+      try {
+        await openSlackView(
+          bot.token,
+          payload.trigger_id,
+          questionReplyNoticeModal(
+            `Connect your Derive account first, so the reply is saved as *you*.\n\n<${deps.baseUrl}/settings/integrations|Connect Derive and Slack>`,
+          ),
+        )
+      } catch {
+        // The trigger is short-lived; they can use the existing Derive link if it expires.
+      }
+      return c.json({ ok: true })
+    }
+    const bot = await resolveBotToken(meta, actor.orgId, deps.encryptionKey)
+    if (!bot) return c.json({ ok: true })
+    if (!(await authorizeUserStanding(actor.user.id, "comment", artifact))) {
+      try {
+        await openSlackView(
+          bot.token,
+          payload.trigger_id,
+          questionReplyNoticeModal("You don't have permission to reply on this Derive document."),
+        )
+      } catch {
+        // The click is harmless; lack of access never becomes a write.
+      }
+      return c.json({ ok: true })
+    }
+    try {
+      await openSlackView(
+        bot.token,
+        payload.trigger_id,
+        questionReplyModal(
+          { artifactId: artifact.id, threadId: root.thread_id, submissionId: newId("sqm") },
+          artifact.title ?? artifact.short_id,
+        ),
+      )
+    } catch {
+      // A trigger is one-shot and expires quickly. The user can click Reply again; no write has
+      // happened, so there is no stale state to repair.
+    }
+    return c.json({ ok: true })
+  }
+
+  const submitQuestionReply = async (c: Context, payload: SlackInteractionPayload) => {
+    const actor = await captureActor(payload)
+    if (!actor)
+      return c.json(questionReplyResultModal("Connect your verified Derive account and try again."))
+    let target: QuestionReplyMeta
+    try {
+      target = JSON.parse(payload.view?.private_metadata ?? "") as QuestionReplyMeta
+    } catch {
+      return c.json(questionReplyResultModal("Something went wrong reading that question."))
+    }
+    if (
+      typeof target.artifactId !== "string" ||
+      target.artifactId.length === 0 ||
+      typeof target.threadId !== "string" ||
+      target.threadId.length === 0 ||
+      typeof target.submissionId !== "string" ||
+      target.submissionId.length === 0 ||
+      target.submissionId.length > 128
+    )
+      return c.json(questionReplyResultModal("That question is no longer available."))
+    const artifact = await meta.getArtifactById(target.artifactId)
+    const root = await meta.getComment(target.threadId)
+    if (
+      !artifact ||
+      !root ||
+      root.artifact_id !== artifact.id ||
+      root.thread_id !== target.threadId ||
+      artifact.org_id !== actor.orgId
+    )
+      return c.json(questionReplyResultModal("That question is no longer available."))
+    if (!(await authorizeUserStanding(actor.user.id, "comment", artifact)))
+      return c.json(questionReplyResultModal("You don't have permission to reply on that doc."))
+    const body =
+      payload.view?.state?.values?.[SLACK_QUESTION_REPLY_BLOCK]?.[
+        SLACK_QUESTION_REPLY_INPUT
+      ]?.value?.trim() ?? ""
+    if (!body) return c.json(questionReplyResultModal("Write a reply before sending it."))
+    const slackOrigin = { ts: `modal:${target.submissionId}`, channel: payload.channel?.id ?? "" }
+    const duplicate = (await meta.listComments(artifact.id)).some((cm) => {
+      const origin = parseMeta(cm.meta).slack
+      return origin?.ts === slackOrigin.ts && origin.channel === slackOrigin.channel
+    })
+    if (duplicate) {
+      const link = commentDeepLink(deps.baseUrl, artifact, root.thread_id)
+      return c.json(questionReplyResultModal(`Reply already added to <${link}|Derive>.`))
+    }
+    const comment = await meta.createComment({
+      id: newId("c"),
+      artifact_id: artifact.id,
+      thread_id: root.thread_id,
+      base_version: artifact.current_version,
+      path: null,
+      anchor: null,
+      body_md: body,
+      author: actor.user.name ?? actor.user.username ?? "Someone",
+      author_id: actor.user.id,
+      // Modal submissions have no Slack message to echo under. Marking the origin prevents an
+      // unrelated subscribed channel from receiving a duplicate copy while still letting the
+      // canonical comment action wake agents, bells, email and a waiting @derive turn.
+      meta: JSON.stringify({ slack: slackOrigin }),
+    })
+    bus.publish(artifact.id, { type: "comment.created" })
+    // The comment itself is durable before acknowledging Slack. Fan-out and a potential
+    // waiting-@derive continuation happen after the acknowledgement so neither can make Slack
+    // retry this view submission and duplicate a human answer.
+    runAfterAck(
+      commentCreatedAction(
+        {
+          meta,
+          bus,
+          blobs,
+          baseUrl: deps.baseUrl,
+          notify,
+          pokeWebhooks: deps.pokeWebhooks,
+          answerDeriveMention: ctx.answerDeriveMention,
+        },
+        artifact,
+        comment,
+        { mentions: [], actorId: actor.user.id },
+      ),
+    )
+    const link = commentDeepLink(deps.baseUrl, artifact, root.thread_id)
+    return c.json(questionReplyResultModal(`Reply added to <${link}|Derive>.`))
   }
 
   // Block Kit interactivity: a button on a comment card resolves / reopens that thread. Trust,
@@ -1004,6 +1276,11 @@ export const slackRoutes = (ctx: AppContext) => {
     // …and the Save button.
     if (payload.type === "view_submission" && payload.view?.callback_id === SLACK_CAPTURE_CALLBACK)
       return submitCapture(c, payload)
+    if (
+      payload.type === "view_submission" &&
+      payload.view?.callback_id === SLACK_QUESTION_REPLY_CALLBACK
+    )
+      return submitQuestionReply(c, payload)
 
     const action = payload.actions?.[0]
     // A `value` is required by the thread and proposal buttons, which encode their target in
@@ -1011,6 +1288,8 @@ export const slackRoutes = (ctx: AppContext) => {
     // target is `external_ref`. Requiring it here made every Work Object button a no-op on
     // click: the handler returned ok before reaching the branch that handles them.
     if (payload.type !== "block_actions" || !action?.action_id) return c.json({ ok: true })
+
+    if (action.action_id === SLACK_QUESTION_REPLY_ACTION) return openQuestionReply(c, payload)
 
     // A Work Object review button. The artifact comes from the card's external_ref rather than a
     // button value — Slack round-trips the entity, so there is no attacker-supplied id to bind.
@@ -1068,7 +1347,17 @@ export const slackRoutes = (ctx: AppContext) => {
       if (pt && payload.team?.id && payload.user?.id) {
         runAfterAck(
           runSlackProposalAction(
-            { meta, blobs, bus, notify, notifyRender, search, billingBlocked },
+            {
+              meta,
+              blobs,
+              bus,
+              notify,
+              notifyRender,
+              search,
+              background,
+              baseUrl: deps.baseUrl,
+              billingBlocked,
+            },
             {
               teamId: payload.team.id,
               slackUserId: payload.user.id,
