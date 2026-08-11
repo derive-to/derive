@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { Bot } from "lucide-react"
 import { useState } from "react"
 import { type Agent, api, type Role } from "@/api"
@@ -7,6 +8,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SecretReveal } from "@/components/shared/secret-reveal"
+import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -72,21 +74,21 @@ export function AgentsSection({ meId }: { meId: string }) {
       )}
 
       {/* How agent runs get billed, in order: the person who triggered the run (their own
-          plan, below), then the agent OWNER's plan (only for agents lent above), then the
-          shared workspace pool. Both plan surfaces live here so it's one place to reason
-          about; your own plan also lives under Account → Model plans. */}
+          plan), then the agent OWNER's plan (only for agents lent above), then the shared
+          workspace pool. The personal plan lives under You → Model plans and is linked
+          here; only the workspace pool is managed in place. */}
       <div className="flex flex-col gap-5">
-        <SettingsGroup
-          title="Your plan"
-          description="Runs you start bill your own connected plan first. Same plan as Account → Model plans; connect it here or there."
-        >
-          {/* One padding-neutral wrapper: SettingsGroup strips its first/last
-              child's vertical padding (a row contract) and divides siblings,
-              which would shave the connect well's p-4 and draw a stray hairline
-              through the manager's fragment. */}
-          <div>
-            <ModelPlanManager scope="personal" />
-          </div>
+        <SettingsGroup title="Your plan" description="Managed under You → Model plans.">
+          <SettingRow
+            label="Your plan"
+            description="Runs you start bill your own connected plan first."
+          >
+            <Button data-testid="agents-manage-plans" variant="outline" size="sm" asChild>
+              <Link to="/settings/$section" params={{ section: "model-plans" }}>
+                Manage in Model plans
+              </Link>
+            </Button>
+          </SettingRow>
         </SettingsGroup>
 
         <SettingsGroup
@@ -257,7 +259,7 @@ function AgentRow({
               />
               {hasPersonalPlan
                 ? "Fall back to my plan when a run has none of its own"
-                : "Connect your plan under Account → Model plans to lend it here"}
+                : "Connect your plan under You → Model plans to lend it here"}
             </label>
           )}
           {rotated && (

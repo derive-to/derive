@@ -51,11 +51,12 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | --- | --- |
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
+| `/settings/notifications` | Your own notifications — Slack DMs, account linking, what opens automatically. |
 | `/settings/model-plans` | Their own model login, so their agent runs on their key. |
 | `/settings/appearance` | Theme. |
 | `/settings/general` | Workspace name and its defaults. |
 | `/settings/members` | Invite people, change roles, remove them. Admin only. |
-| `/settings/people` | Directory settings for the workspace. |
+| `/people` | Who is in the workspace — the people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
 | `/settings/integrations` | Slack, email notifications, GitHub comment mirroring. |
 | `/settings/sources` | Connect an MCP server so an agent can read from it. |
@@ -124,7 +125,8 @@ any version can be restored.
 `/following`.
 
 **Get notified in Slack.** `/settings/integrations` connects Slack; channel routing is per-channel
-on that same screen. Derive can also DM them.
+on that same screen. Derive can also DM them — that is their own switch, at
+`/settings/notifications`.
 
 **Put pages on our own domain.** `/settings/domains`.
 
