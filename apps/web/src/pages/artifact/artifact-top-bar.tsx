@@ -101,13 +101,13 @@ export function ArtifactTopBar(props: {
         {/* Inline editing leads the cluster as a labeled ghost verb — the calm
             counterpart to the filled Share. Editors see Edit; commenters (and
             locked artifacts) see Suggest edits, which lands as a proposal.
-            It is no longer the only way in (double-click the text, or `e`), but it
+            It is no longer the only way in (`e`, or Edit on a selection), but it
             stays: it's what tells a first-time reader the document is editable. */}
         {props.showInlineEdit && (
           <Button
             variant="ghost"
             size="sm"
-            title={`${props.inlineEditLabel} (e) — or double-click any text`}
+            title={`${props.inlineEditLabel} (e)`}
             data-testid="artifact-inline-edit"
             onClick={props.onInlineEdit}
           >

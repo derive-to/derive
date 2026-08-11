@@ -94,8 +94,8 @@ export function useInlineEdit(p: {
   /** Clear selection/composer state the moment edit mode opens. */
   onEnter?: () => void
   /** This viewer could open the mode right now (permission, current version, not a
-   *  bundle, not GitHub-managed). Arms the document's own entry gesture: a
-   *  double-click asks to edit there. A reader who can't save never fires one. */
+   *  bundle, not GitHub-managed). Gates every entry point — the header button, the
+   *  `e` shortcut, and the Edit verb on a selection. */
   canEdit: boolean
   /** The stored source can carry selector-scoped element operations. Markdown is
    *  rendered as HTML in the frame, but does not support that source operation. */
@@ -140,10 +140,8 @@ export function useInlineEdit(p: {
   // bridges the two without re-subscribing the listener on every render.
   const saveRef = useRef<() => void>(() => {})
   const savingRef = useRef(false)
-  // Same bridge for the inbound entry request (see `start` below) and for an image
-  // click (see `swapImage`) — the listener is registered once and must reach the
-  // current closures.
-  const startRef = useRef<(entry?: { fromPointer?: boolean }) => void>(() => {})
+  // Same bridge for an image click (see `swapImage`) — the listener is registered
+  // once and must reach the current closures.
   const swapImageRef = useRef<(src: string) => void>(() => {})
   const mentionQueryRef = useRef<(query: string, rect: FrameMentionRect) => void>(() => {})
   const mentionKeyRef = useRef<(key: string) => void>(() => {})
@@ -252,12 +250,6 @@ export function useInlineEdit(p: {
         // all. A save with nothing to collect is a no-op (see onSuccess), and the
         // in-flight guard is what stops key-repeat from stacking versions.
         if (activeRef.current && !savingRef.current) saveRef.current()
-      } else if (d.type === "edit-request") {
-        // A double-click on the text: the document asking to become editable there.
-        // Re-checked against the CURRENT permission rather than trusting the arming
-        // that let the frame speak, because a stale armed flag (a version swap, a
-        // lock landing over SSE) must not open a mode this viewer can't save from.
-        if (canEditRef.current && !activeRef.current) startRef.current({ fromPointer: true })
       } else if (d.type === "edit-image") {
         if (canEditRef.current && typeof d.src === "string") swapImageRef.current(d.src)
       } else if (d.type === "edit-mention-query") {
@@ -397,12 +389,11 @@ export function useInlineEdit(p: {
     }
   }
 
-  /** Open the mode. `entry` names the gesture that opened it — the frame's own
-   *  double-click (whose target the client already captured) or the live selection
-   *  (the Edit verb on a selection) — so the caret lands on the words the user was
-   *  already looking at instead of making them click again. Omitted for the header
-   *  button: the mode opens, and the first click chooses the block. */
-  const start = (entry?: { fromPointer?: boolean; fromSelection?: boolean }) => {
+  /** Open the mode. `entry` names the gesture that opened it — the Edit verb on a
+   *  live selection — so the caret lands on the words the user was already looking
+   *  at instead of making them click again. Omitted for the header button and the
+   *  `e` shortcut: the mode opens, and the first click chooses the block. */
+  const start = (entry?: { fromSelection?: boolean }) => {
     if (!p.art || active) return
     p.onEnter?.()
     mentionRequest.current++
@@ -411,15 +402,6 @@ export function useInlineEdit(p: {
     setFrozenVersion(p.art.current_version)
     p.post({ type: "edit-mode", on: true, elementEdits: p.allowElementEdits, ...entry })
   }
-  startRef.current = start
-  // Tell the frame whether the document's own entry gesture is live. Re-posted on
-  // every change AND after a frame (re)load, because a fresh document boots with the
-  // flag off and would otherwise stay un-armed until something else changed.
-  const armed = p.canEdit && !active
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `post` is recreated per render by design; the flag is what this syncs.
-  useEffect(() => {
-    p.post({ type: "edit-armed", on: armed })
-  }, [armed])
   // Done only ever exits CLEAN (the bar swaps to Discard/Save once dirty); the
   // frame-side mode-off also restores any stragglers as a belt-and-suspenders.
   /** Leave the mode. With unsaved edits this asks first — Escape and Done both land
@@ -444,8 +426,6 @@ export function useInlineEdit(p: {
   /** The frame reloaded (version swap, retry, source editor) — the edit session
    *  died with it. Exit and say so if anything was pending. */
   const onFrameGone = () => {
-    // A fresh document boots un-armed whatever the host last said, so re-state it.
-    p.post({ type: "edit-armed", on: canEditRef.current && !activeRef.current })
     mentionRequest.current++
     setMention(null)
     if (!activeRef.current) return
