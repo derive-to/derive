@@ -1,6 +1,6 @@
 ---
 name: loop
-summary: catch up on an artifact, work a review round, respond to feedback, and pull queued work (catch_up, comment)
+summary: catch up on an artifact, work a review round, respond to feedback, and pull queued work (catch_up, comment, clear_queue)
 order: 1
 ---
 # The Derive working loop
@@ -53,11 +53,12 @@ by @mentioning you in a comment (the ask-agent and Rework buttons land here). Ea
 names the artifact, the comment thread, and what to do. (A connection with no @mentionable
 inbox — an OAuth grant — gets an explicit note instead of a queue.)
 
-- **Handle then ack.** Work a request on its artifact — usually read it, do the asked
-  revision, and publish with the thread id in `addresses` — then call catch_up (no short_id)
-  again with `ack:[id,…]` to clear what you finished. Ack AFTER the work lands (a publish or
-  a reply), not on read; an unknown or already-acked id is skipped, never an error. Unacked
-  requests stay queued for your next session.
+- **Handle then clear.** Work a request on its artifact — usually read it, do the asked
+  revision, and publish with the thread id in `addresses` — then call `clear_queue` with
+  `ack:[id,…]` to clear what you finished. Clear AFTER the work lands (a publish or a
+  reply), not on read; an unknown or already-acked id is skipped, never an error. Unacked
+  requests stay queued for your next session. (Clearing is a separate tool so `catch_up`
+  itself never writes, which is what lets planning-mode clients run it without a prompt.)
 - **Wait (long-poll).** WAITING FOR WORK? Pass `wait` (seconds, max 50): when the queue is
   empty the call blocks until a new request lands (or the time runs out), then returns it —
   chain `wait` calls to react in seconds instead of polling on a cadence.

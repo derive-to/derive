@@ -79,6 +79,7 @@ import { registerAutomateTool } from "./mcp-tools/automate"
 import { registerCallTool } from "./mcp-tools/call"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
+import { registerClearQueueTool } from "./mcp-tools/clear-queue"
 import { registerCodeTool } from "./mcp-tools/code"
 import { registerCommentTool } from "./mcp-tools/comment"
 import { registerFindTool } from "./mcp-tools/find"
@@ -488,6 +489,7 @@ export function registerToolSurface(
   if (wanted("read")) registerReadTool(tc)
   if (wanted("organize")) registerOrganizeTool(tc)
   if (wanted("catch_up")) registerCatchUpTool(tc)
+  if (wanted("clear_queue")) registerClearQueueTool(tc)
   if (wanted("comment")) registerCommentTool(tc)
   if (wanted("stage")) registerStageTool(tc)
   if (wanted("publish")) registerPublishTool(tc)
