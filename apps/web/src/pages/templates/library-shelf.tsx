@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useDeferredValue, useState } from "react"
 import {
+  type Artifact,
   api,
   type TemplateLibrary,
   type TemplateLibraryEntry,
@@ -9,6 +10,7 @@ import {
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SearchField } from "@/components/shared/search-field"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -63,6 +65,85 @@ const inputsFromLines = (value: string) =>
 const matches = (query: string, values: Array<string | undefined>) => {
   const needle = query.trim().toLocaleLowerCase()
   return !needle || values.some((value) => value?.toLocaleLowerCase().includes(needle))
+}
+
+function ArtifactSourcePicker({
+  value,
+  onChange,
+  onSelect,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onSelect: (artifact: Artifact) => void
+}) {
+  const [query, setQuery] = useState("")
+  const deferredQuery = useDeferredValue(query)
+  const artifacts = useQuery({
+    queryKey: ["template-library-source-picker", deferredQuery] as const,
+    queryFn: () => api.listArtifacts({ q: deferredQuery.trim() || undefined, limit: 8 }),
+  })
+  const items = artifacts.data?.artifacts ?? []
+  return (
+    <fieldset className="grid gap-2">
+      <legend className="text-sm font-medium text-foreground">Choose an artifact</legend>
+      <p className="text-xs text-muted-foreground">
+        Search readable work in this workspace. The current version is captured when you publish the
+        starter.
+      </p>
+      <SearchField
+        value={query}
+        onValueChange={setQuery}
+        loading={artifacts.isFetching}
+        placeholder="Search recent artifacts"
+        aria-label="Search recent artifacts"
+        testId="template-library-source-search"
+      />
+      {items.length > 0 && (
+        <div className="grid max-h-48 gap-1 overflow-y-auto rounded-lg border bg-background p-1.5">
+          {items.map((artifact) => {
+            const selected = value === artifact.short_id
+            return (
+              <button
+                key={artifact.short_id}
+                type="button"
+                onClick={() => onSelect(artifact)}
+                className={`flex min-w-0 items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+                  selected ? "bg-secondary" : "hover:bg-secondary/70"
+                }`}
+                data-testid={`template-library-source-select-${artifact.short_id}`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-foreground">
+                    {artifact.title || "Untitled artifact"}
+                  </span>
+                  <span className="font-mono text-2xs text-muted-foreground">
+                    {artifact.short_id} · v{artifact.current_version}
+                  </span>
+                </span>
+                <Badge variant="outline" shape="pill">
+                  {artifact.current_content_type === "text/markdown" ? "Markdown" : "HTML"}
+                </Badge>
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {artifacts.isSuccess && items.length === 0 && (
+        <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          No readable artifacts match this search. You can still paste a Derive link below.
+        </p>
+      )}
+      <label className="grid gap-1.5 text-sm font-medium text-foreground">
+        Or paste a Derive link or short ID
+        <Input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="decision-memo-ab12cd34@v4"
+          aria-label="Paste a Derive link or short ID"
+        />
+      </label>
+    </fieldset>
+  )
 }
 
 function ScopePicker({
@@ -325,6 +406,13 @@ function AddEntryDialog({
       onOpenChange(false)
     },
   })
+  const chooseSource = (artifact: Artifact) => {
+    setSource(artifact.short_id)
+    if (!title.trim()) setTitle(artifact.title || "Reusable starter")
+    const nextFormat = artifact.current_content_type === "text/markdown" ? "md" : "html"
+    setFormat(nextFormat)
+    if (category === "Doc" && nextFormat === "html") setCategory("Site")
+  }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
@@ -343,15 +431,7 @@ function AddEntryDialog({
           }}
         >
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Source artifact ID or Derive link
-              <Input
-                value={source}
-                onChange={(event) => setSource(event.target.value)}
-                placeholder="decision-memo-ab12cd34@v4"
-                autoFocus
-              />
-            </label>
+            <ArtifactSourcePicker value={source} onChange={setSource} onSelect={chooseSource} />
             <label className="grid gap-1.5 text-sm font-medium text-foreground">
               Display name
               <Input
@@ -715,10 +795,18 @@ export function LibraryShelf({
   const libraries = useQuery(templateLibrariesQuery())
   const [createOpen, setCreateOpen] = useState(false)
   const [query, setQuery] = useState("")
+  const [scope, setScope] = useState<"all" | TemplateLibraryScope>("all")
   if (selectedId)
     return <LibraryDetail libraryId={selectedId} onBack={() => onSelect(undefined)} onUse={onUse} />
-  const visibleLibraries = (libraries.data ?? []).filter((library) =>
-    matches(query, [library.title, library.description, library.scope]),
+  const visibleLibraries = (libraries.data ?? []).filter(
+    (library) =>
+      (scope === "all" || library.scope === scope) &&
+      matches(query, [
+        library.title,
+        library.description,
+        library.scope,
+        library.publisher.name ?? undefined,
+      ]),
   )
   return (
     <section className="flex flex-col gap-5" data-testid="template-libraries">
@@ -751,6 +839,28 @@ export function LibraryShelf({
             <Icon name="plus" /> New library
           </Button>
         </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <fieldset className="flex flex-wrap gap-1.5">
+          <legend className="sr-only">Library visibility</legend>
+          {(["all", "private", "workspace", "public"] as const).map((value) => (
+            <Button
+              key={value}
+              type="button"
+              size="xs"
+              variant={scope === value ? "default" : "outline"}
+              onClick={() => setScope(value)}
+              data-testid={`template-library-scope-${value}`}
+            >
+              {value === "all" ? "All" : scopeCopy[value].label}
+            </Button>
+          ))}
+        </fieldset>
+        <Button asChild variant="ghost" size="sm">
+          <a href="/template-libraries">
+            <Icon name="globe" /> Explore public libraries
+          </a>
+        </Button>
       </div>
       {libraries.isPending ? (
         <div className="grid min-h-64 place-items-center border-y text-sm text-muted-foreground">
@@ -794,6 +904,11 @@ export function LibraryShelf({
                   {library.description || "Reusable Derive starters."}
                 </p>
               </div>
+              {(library.publisher.name || library.publisher.username) && (
+                <span className="text-xs text-muted-foreground">
+                  Published by {library.publisher.name ?? `@${library.publisher.username}`}
+                </span>
+              )}
               <span className="mt-auto text-sm font-medium text-foreground">
                 Browse starters <Icon name="arrow" className="inline size-3.5" />
               </span>

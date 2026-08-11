@@ -74,7 +74,19 @@ describe("template libraries: pinned reusable starters", () => {
     ).toBe(200)
     const anonymous = await app.request(`/v1/template-libraries/${library.id}`)
     expect(anonymous.status).toBe(200)
-    expect((await anonymous.json()).entries).toHaveLength(1)
+    const publicLibrary = await anonymous.json()
+    expect(publicLibrary.entries).toHaveLength(1)
+    expect(publicLibrary.publisher).toMatchObject({ name: owner.name })
+    const publicCatalog = await app.request("/v1/template-libraries")
+    expect(publicCatalog.status).toBe(200)
+    expect((await publicCatalog.json()).libraries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: library.id,
+          publisher: expect.objectContaining({ name: owner.name }),
+        }),
+      ]),
+    )
     const publicStarter = await app.request(
       `/v1/template-libraries/${library.id}/entries/${entry.id}/starter`,
     )

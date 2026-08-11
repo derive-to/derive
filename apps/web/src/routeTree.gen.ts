@@ -28,6 +28,7 @@ import { Route as ChatRouteImport } from './routes/chat'
 import { Route as BrandprintRouteImport } from './routes/brandprint'
 import { Route as ArchivedRouteImport } from './routes/archived'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
@@ -137,6 +138,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TemplateLibrariesIndexRoute = TemplateLibrariesIndexRouteImport.update({
+  id: '/template-libraries/',
+  path: '/template-libraries/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -234,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/users/$handle': typeof UsersHandleRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
@@ -267,6 +274,7 @@ export interface FileRoutesByTo {
   '/users/$handle': typeof UsersHandleRoute
   '/contexts': typeof ContextsIndexRoute
   '/settings': typeof SettingsIndexRoute
+  '/template-libraries': typeof TemplateLibrariesIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
@@ -302,6 +310,7 @@ export interface FileRoutesById {
   '/users/$handle': typeof UsersHandleRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
@@ -338,6 +347,7 @@ export interface FileRouteTypes {
     | '/users/$handle'
     | '/contexts/'
     | '/settings/'
+    | '/template-libraries/'
     | '/invite/a/$token'
     | '/invite/c/$token'
   fileRoutesByTo: FileRoutesByTo
@@ -371,6 +381,7 @@ export interface FileRouteTypes {
     | '/users/$handle'
     | '/contexts'
     | '/settings'
+    | '/template-libraries'
     | '/invite/a/$token'
     | '/invite/c/$token'
   id:
@@ -405,6 +416,7 @@ export interface FileRouteTypes {
     | '/users/$handle'
     | '/contexts/'
     | '/settings/'
+    | '/template-libraries/'
     | '/invite/a/$token'
     | '/invite/c/$token'
   fileRoutesById: FileRoutesById
@@ -438,6 +450,7 @@ export interface RootRouteChildren {
   TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   UsersHandleRoute: typeof UsersHandleRoute
   ContextsIndexRoute: typeof ContextsIndexRoute
+  TemplateLibrariesIndexRoute: typeof TemplateLibrariesIndexRoute
   InviteATokenRoute: typeof InviteATokenRoute
   InviteCTokenRoute: typeof InviteCTokenRoute
 }
@@ -577,6 +590,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/template-libraries/': {
+      id: '/template-libraries/'
+      path: '/template-libraries'
+      fullPath: '/template-libraries/'
+      preLoaderRoute: typeof TemplateLibrariesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/': {
       id: '/settings/'
       path: '/'
@@ -714,6 +734,7 @@ const rootRouteChildren: RootRouteChildren = {
   TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   UsersHandleRoute: UsersHandleRoute,
   ContextsIndexRoute: ContextsIndexRoute,
+  TemplateLibrariesIndexRoute: TemplateLibrariesIndexRoute,
   InviteATokenRoute: InviteATokenRoute,
   InviteCTokenRoute: InviteCTokenRoute,
 }

@@ -50,7 +50,7 @@ test("a library pins an artifact starter and opens an independent draft", async 
   const source = await publishArtifact(
     owner,
     "trusted-decision.md",
-    "# Trusted decision\n\nThis exact source is the reusable starting point.",
+    "# {{Decision owner}} decision\n\nAudience: {{Audience}}\n\nThis exact source is the reusable starting point.",
   )
   await owner.goto("/templates?tab=libraries")
   await owner.getByTestId("template-library-new").click()
@@ -58,12 +58,15 @@ test("a library pins an artifact starter and opens an independent draft", async 
   await owner.getByLabel("What belongs here?").fill("The documents our team trusts.")
   await owner.getByTestId("template-library-create").click()
   await expect(owner.getByTestId("template-library-detail")).toBeVisible()
+  const libraryId = new URL(owner.url()).searchParams.get("library")
+  if (!libraryId) throw new Error("created template library is missing its route id")
   await owner.getByRole("button", { name: "Library settings" }).click()
   await owner.getByRole("button", { name: /Public Discoverable by anyone and MCP/ }).click()
   await owner.getByRole("button", { name: "Save settings" }).click()
   await expect(owner.getByRole("link", { name: "Public page" })).toBeVisible()
   await owner.getByText("Add starter", { exact: true }).click()
-  await owner.getByLabel("Source artifact ID or Derive link").fill(`trusted-decision-${source}`)
+  await expect(owner.getByTestId(`template-library-source-select-${source}`)).toBeVisible()
+  await owner.getByTestId(`template-library-source-select-${source}`).click()
   await owner.getByLabel("Display name").fill("Trusted decision")
   await owner.getByLabel("Description").fill("A decision-ready starting point.")
   await owner
@@ -74,9 +77,33 @@ test("a library pins an artifact starter and opens an independent draft", async 
   await expect(owner.getByText(/Needs: Decision owner · required · Audience/)).toBeVisible()
   await owner.getByRole("button", { name: "Use starter" }).click()
   await expect(owner).toHaveURL(/\/new\?library=.*&entry=/)
+  await expect(owner.getByText("Set the starting brief")).toBeVisible()
+  await owner.getByTestId("template-start-brief-continue").click()
+  await expect(owner.getByText("Add Decision owner to start this draft.")).toBeVisible()
+  await owner.getByRole("textbox", { name: /Decision owner/ }).fill("Rina")
+  await owner.getByRole("textbox", { name: "Audience" }).fill("Product leadership")
+  await owner.getByTestId("template-start-brief-continue").click()
+  await expect(owner.getByTestId("template-start-brief")).toContainText("Rina")
+  await expect(owner.getByTestId("artifact-source-editor")).toContainText("Rina decision")
+  await expect(owner.getByTestId("artifact-source-editor")).toContainText(
+    "Audience: Product leadership",
+  )
   await expect(owner.getByTestId("artifact-source-editor")).toContainText(
     "This exact source is the reusable starting point.",
   )
+  await owner.goto("/templates?tab=libraries")
+  await owner.getByTestId("template-library-scope-public").click()
+  const libraryCard = owner.getByTestId(`template-library-card-${libraryId}`)
+  await expect(libraryCard).toContainText("Published by E2E Tester")
+  await owner.getByRole("link", { name: "Explore public libraries" }).click()
+  await expect(owner).toHaveURL(/\/template-libraries/)
+  await expect(
+    owner.getByRole("heading", { name: "Useful beginnings, shared openly." }),
+  ).toBeVisible()
+  await owner.goto(`/template-libraries/${libraryId}`)
+  await expect(owner.getByText("Published starter kit")).toBeVisible()
+  await expect(owner.getByRole("link", { name: /View @/ })).toBeVisible()
+  await expect(owner.getByRole("button", { name: "Copy library link" })).toBeVisible()
 })
 
 test("a manager can retire a library without deleting its source artifact", async ({ owner }) => {

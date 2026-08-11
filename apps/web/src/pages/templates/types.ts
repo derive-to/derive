@@ -32,6 +32,7 @@ export type TemplatesSearch = {
 }
 
 export type NewArtifactSearch = {
+  start?: "deck"
   template?: string
   theme?: string
   source?: string

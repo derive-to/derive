@@ -1,13 +1,17 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link } from "@tanstack/react-router"
+import { useState } from "react"
 import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
+import { AuthorChip } from "@/components/shared/author-chip"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageShell } from "@/components/shared/page-shell"
 import { PublicFrame } from "@/components/shared/public-frame"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { useDocumentTitle } from "@/lib/use-document-title"
 
@@ -18,6 +22,135 @@ export function PublicTemplateLibrary() {
   const { me } = useAuth()
   const inner = <PublicTemplateLibraryInner id={id} />
   return me ? inner : <PublicFrame returnTo={`/template-libraries/${id}`}>{inner}</PublicFrame>
+}
+
+export function PublicTemplateLibraryCatalog() {
+  const { me } = useAuth()
+  const inner = <PublicTemplateLibraryCatalogInner />
+  return me ? inner : <PublicFrame returnTo="/template-libraries">{inner}</PublicFrame>
+}
+
+function PublicTemplateLibraryCatalogInner() {
+  const [query, setQuery] = useState("")
+  const libraries = useQuery({
+    queryKey: ["public-template-libraries"] as const,
+    queryFn: () => api.listTemplateLibraries(),
+  })
+  useDocumentTitle("Public template libraries")
+  if (libraries.isPending)
+    return (
+      <PageShell className="grid min-h-full place-items-center text-sm text-muted-foreground">
+        Opening public libraries…
+      </PageShell>
+    )
+  if (libraries.isError)
+    return (
+      <PageShell className="grid min-h-full place-items-center">
+        <StatusPanel
+          tone="danger"
+          title="Couldn’t load public libraries"
+          description="This is usually temporary."
+          action={
+            <Button variant="outline" onClick={() => libraries.refetch()}>
+              Try again
+            </Button>
+          }
+        />
+      </PageShell>
+    )
+  const needle = query.trim().toLocaleLowerCase()
+  const publicLibraries = (libraries.data?.libraries ?? []).filter(
+    (library) =>
+      library.scope === "public" &&
+      (!needle ||
+        [
+          library.title,
+          library.description,
+          library.publisher.name,
+          library.publisher.username,
+        ].some((value) => value?.toLocaleLowerCase().includes(needle))),
+  )
+  return (
+    <PageShell width="wide" className="flex flex-col gap-8">
+      <section className="border-b pb-7">
+        <Badge variant="outline" shape="pill">
+          <Icon name="globe" size={12} /> Public template libraries
+        </Badge>
+        <h1 className="mt-4 max-w-3xl font-serif text-4xl font-medium leading-tight tracking-tight text-foreground sm:text-5xl">
+          Useful beginnings, shared openly.
+        </h1>
+        <p className="mt-3 max-w-2xl text-base text-pretty text-muted-foreground">
+          Browse version-pinned starters from the Derive community. Starting one always creates your
+          own editable work.
+        </p>
+        <label className="mt-5 block max-w-md">
+          <span className="sr-only">Search public libraries</span>
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search libraries, publishers, or topics"
+            aria-label="Search public libraries"
+          />
+        </label>
+      </section>
+      {publicLibraries.length ? (
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {publicLibraries.map((library) => (
+            <article
+              key={library.id}
+              className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <Badge variant="outline" shape="pill">
+                  <Icon name="globe" size={12} /> Public
+                </Badge>
+                <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                  {library.entry_count} starters
+                </span>
+              </div>
+              <div>
+                <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+                  {library.title}
+                </h2>
+                <p className="mt-1 text-sm text-pretty text-muted-foreground">
+                  {library.description || "Reusable Derive starters."}
+                </p>
+              </div>
+              <AuthorChip
+                name={library.publisher.name}
+                login={null}
+                avatar={library.publisher.image}
+                handle={library.publisher.username}
+                size="xs"
+              />
+              <Button asChild className="mt-auto">
+                <Link to="/template-libraries/$id" params={{ id: library.id }}>
+                  Browse starters <Icon name="arrow" />
+                </Link>
+              </Button>
+            </article>
+          ))}
+        </section>
+      ) : needle ? (
+        <EmptyState
+          icon="templates"
+          title="No public libraries match that search"
+          description="Try a broader topic, library name, or publisher."
+          action={
+            <Button variant="outline" onClick={() => setQuery("")}>
+              Clear search
+            </Button>
+          }
+        />
+      ) : (
+        <EmptyState
+          icon="templates"
+          title="No public libraries yet"
+          description="The first public starter kit will appear here."
+        />
+      )}
+    </PageShell>
+  )
 }
 
 function PublicTemplateLibraryInner({ id }: { id: string }) {
@@ -60,6 +193,14 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
       </PageShell>
     )
   const data = library.data
+  const copyPublicLink = async () => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/template-libraries/${data.id}`)
+      toast.success("Public library link copied")
+    } catch {
+      toast.error("Couldn't copy the public library link")
+    }
+  }
   const start = (entry: { id: string; kind: "artifact" | "context"; title: string }) => {
     const target = `/new?library=${encodeURIComponent(data.id)}&entry=${encodeURIComponent(entry.id)}${entry.kind === "context" ? `&next=context&contextName=${encodeURIComponent(entry.title)}` : ""}`
     return me ? target : `/login?signup=true&return_to=${encodeURIComponent(target)}`
@@ -81,10 +222,29 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
         <p className="mt-3 max-w-2xl text-base text-pretty text-muted-foreground">
           {data.description || "A reusable collection of Derive starters."}
         </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <AuthorChip
+            name={data.publisher.name}
+            login={null}
+            avatar={data.publisher.image}
+            handle={data.publisher.username}
+          />
+          <span className="text-sm text-muted-foreground">Published starter kit</span>
+        </div>
         <p className="mt-4 max-w-2xl text-sm text-muted-foreground">
           Every starter begins as an independent copy. Its source version is pinned for provenance;
           the original artifact never changes when someone uses it.
         </p>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <a href="/template-libraries">
+              <Icon name="templates" /> Browse public libraries
+            </a>
+          </Button>
+          <Button variant="outline" size="sm" onClick={copyPublicLink}>
+            <Icon name="link" /> Copy library link
+          </Button>
+        </div>
       </section>
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {(data.entries ?? []).map((entry) => (

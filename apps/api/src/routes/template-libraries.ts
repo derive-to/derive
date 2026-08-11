@@ -62,6 +62,12 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     })
     .openapi("TemplateLibraryEntry")
 
+  const Publisher = z.object({
+    name: z.string().nullable(),
+    username: z.string().nullable(),
+    image: z.string().nullable(),
+  })
+
   const Library = z
     .object({
       id: z.string(),
@@ -76,6 +82,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       updated_at: z.string().nullable(),
       entry_count: z.number(),
       entries: z.array(Entry).optional(),
+      publisher: Publisher,
       can_manage: z.boolean().optional(),
     })
     .openapi("TemplateLibrary")
@@ -146,13 +153,23 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
   const libraryJson = async (
     c: Context,
     library: TemplateLibraryRecord,
-    opts?: { entries?: TemplateLibraryEntryRecord[] },
+    opts?: {
+      entries?: TemplateLibraryEntryRecord[]
+      publisher?: { name: string | null; username: string | null; image: string | null }
+    },
   ) => {
     const entries = opts?.entries ?? (await meta.listTemplateLibraryEntries(library.id))
+    const publisher = opts?.publisher ??
+      (await meta.getUsers([library.created_by]))[0] ?? { name: null, username: null, image: null }
     return {
       ...library,
       entry_count: entries.length,
       ...(opts?.entries ? { entries: entries.map(entryJson) } : {}),
+      publisher: {
+        name: publisher.name ?? publisher.username ?? null,
+        username: publisher.username ?? null,
+        image: publisher.image ?? null,
+      },
       can_manage: await canManage(c, library),
     }
   }
@@ -201,8 +218,18 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
           return true
         })
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      const publishers = new Map(
+        (await meta.getUsers(libraries.map((library) => library.created_by))).map((user) => [
+          user.id,
+          user,
+        ]),
+      )
       return c.json({
-        libraries: await Promise.all(libraries.map((library) => libraryJson(c, library))),
+        libraries: await Promise.all(
+          libraries.map((library) =>
+            libraryJson(c, library, { publisher: publishers.get(library.created_by) }),
+          ),
+        ),
       })
     },
   )
