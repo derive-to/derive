@@ -3,8 +3,8 @@ import { Link } from "@tanstack/react-router"
 import { FileText, FolderOpen, Hash, Plug, Plus, X } from "lucide-react"
 import { type ReactNode, useMemo, useState } from "react"
 import { type Automation, type AutomationRef, type AutomationTrigger, api } from "@/api"
+import { SecretReveal } from "@/components/shared/secret-reveal"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { copyText } from "@/lib/clipboard"
 import {
   agentsQuery,
   artifactQuery,
@@ -613,38 +612,15 @@ export function AutomationForm({
 
       {mintedToken && (
         <div data-testid="automation-agent-token">
-          <StatusPanel
-            tone="warning"
-            layout="inline"
+          <SecretReveal
             title="Runner token for this automation — copy it now, it won't be shown again."
-            description={
-              <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
-                {mintedToken}
-              </code>
-            }
-            action={
-              <div className="flex items-center gap-2">
-                <Button
-                  data-testid="automation-agent-token-copy"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void copyText(mintedToken, { success: "Token copied" })}
-                >
-                  Copy
-                </Button>
-                <Button
-                  data-testid="automation-agent-token-done"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setMintedToken(null)
-                    onDone()
-                  }}
-                >
-                  Done
-                </Button>
-              </div>
-            }
+            secret={mintedToken}
+            onDone={() => {
+              setMintedToken(null)
+              onDone()
+            }}
+            copyTestId="automation-agent-token-copy"
+            doneTestId="automation-agent-token-done"
           />
         </div>
       )}

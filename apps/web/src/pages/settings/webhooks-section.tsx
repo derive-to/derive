@@ -4,9 +4,11 @@ import { api, type Webhook } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { fieldError } from "@/components/shared/field-error"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
+import { StatusBadge, type StatusTone } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -20,6 +22,7 @@ import {
 } from "@/components/ui/select"
 import { webhookDeliveriesQuery, webhooksQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { AddForm } from "./add-form"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -112,66 +115,61 @@ function NewWebhook({
     if (valid) create.mutate()
   }
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Select value={kind} onValueChange={(v) => setKind(v as "generic" | "slack")}>
-          <SelectTrigger data-testid="webhook-kind" aria-label="Webhook type" className="w-27.5">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="generic">Webhook</SelectItem>
-            <SelectItem value="slack">Slack</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input
-          data-testid="webhook-url"
-          aria-label="Endpoint URL"
-          {...urlField.aria}
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder={
-            kind === "slack"
-              ? "Slack incoming-webhook URL"
-              : "https://your-endpoint.example.com/hook"
-          }
-          className="min-w-60 flex-1"
-        />
-        <Button
-          data-testid="webhook-add"
-          variant="secondary"
-          size="sm"
-          onClick={add}
-          loading={create.isPending}
-          disabled={create.isPending || !valid}
-        >
-          {create.isPending ? "Adding…" : "Add"}
-        </Button>
-      </div>
-      {urlField.node}
-      <div className="flex flex-wrap gap-3.5">
-        {eventOptions.map((e) => (
-          <label
-            key={e}
-            className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground"
-          >
-            <Checkbox
-              data-testid={`webhook-event-${e}`}
-              checked={selected.includes(e)}
-              onCheckedChange={() => toggle(e)}
-            />
-            {e}
-          </label>
-        ))}
-      </div>
-    </div>
+    <AddForm
+      onSubmit={add}
+      submitLabel="Add"
+      submitTestId="webhook-add"
+      pending={create.isPending}
+      disabled={!valid}
+      after={
+        <>
+          {urlField.node}
+          <div className="flex flex-wrap gap-3.5">
+            {eventOptions.map((e) => (
+              <label
+                key={e}
+                className="flex items-center gap-1.5 font-mono text-2xs text-muted-foreground"
+              >
+                <Checkbox
+                  data-testid={`webhook-event-${e}`}
+                  checked={selected.includes(e)}
+                  onCheckedChange={() => toggle(e)}
+                />
+                {e}
+              </label>
+            ))}
+          </div>
+        </>
+      }
+    >
+      <Select value={kind} onValueChange={(v) => setKind(v as "generic" | "slack")}>
+        <SelectTrigger data-testid="webhook-kind" aria-label="Webhook type" className="w-27.5">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="generic">Webhook</SelectItem>
+          <SelectItem value="slack">Slack</SelectItem>
+        </SelectContent>
+      </Select>
+      <Input
+        data-testid="webhook-url"
+        aria-label="Endpoint URL"
+        {...urlField.aria}
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder={
+          kind === "slack" ? "Slack incoming-webhook URL" : "https://your-endpoint.example.com/hook"
+        }
+        className="min-w-60 flex-1"
+      />
+    </AddForm>
   )
 }
 
-// Delivery outcome → badge tone: delivered is a quiet success, dead (gave up
-// retrying) is destructive, anything in flight (pending/retrying) stays neutral.
-const deliveryBadge = (status: string): "success" | "destructive" | "default" =>
-  status === "delivered" ? "success" : status === "dead" ? "destructive" : "default"
+// Delivery outcome → tone: delivered is a quiet success, dead means the server
+// gave up retrying, anything in flight (pending/retrying) stays muted.
+const deliveryTone = (status: string): StatusTone =>
+  status === "delivered" ? "ok" : status === "dead" ? "error" : "muted"
 
 function WebhookRow({ hook, onDone }: { hook: Webhook; onDone: () => void }) {
   const qc = useQueryClient()
@@ -201,70 +199,83 @@ function WebhookRow({ hook, onDone }: { hook: Webhook; onDone: () => void }) {
     onSuccess: () => onDone(),
   })
   return (
-    <div data-testid={`webhook-row-${hook.id}`} className="flex flex-col gap-2 py-3">
-      <div className="flex items-center gap-2.5">
-        <Badge>{hook.kind === "slack" ? "Slack" : "Webhook"}</Badge>
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-mono text-sm text-foreground">{hook.url}</div>
-          <div className="mt-px font-mono text-2xs text-muted-foreground">
-            {hook.events === "*" ? "all events" : hook.events.split(",").join(" · ")}
-          </div>
-        </div>
-        <Button data-testid={`webhook-log-${hook.id}`} variant="ghost" size="sm" onClick={showLog}>
-          {open ? "Hide" : "Log"}
-        </Button>
-        <Button
-          data-testid={`webhook-test-${hook.id}`}
-          variant="ghost"
-          size="sm"
-          onClick={() => test.mutate()}
-          loading={test.isPending}
-        >
-          Test
-        </Button>
-        <Button
-          data-testid={`webhook-remove-${hook.id}`}
-          variant="destructive-ghost"
-          size="sm"
-          onClick={() => setConfirming(true)}
-        >
-          Remove
-        </Button>
-      </div>
-      <ConfirmDialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title="Remove this webhook?"
-        description={`Deliveries to ${hook.url} stop immediately.`}
-        confirmLabel="Remove"
-        onConfirm={() => remove.mutate()}
-      />
-      {open && (
-        <div className="rounded-lg bg-secondary px-3 py-2">
-          {isPending ? (
-            <div className="flex justify-center py-2">
-              <Spinner />
+    <ListRow
+      data-testid={`webhook-row-${hook.id}`}
+      leading={<Badge>{hook.kind === "slack" ? "Slack" : "Webhook"}</Badge>}
+      mono
+      title={hook.url}
+      meta={
+        <span className="block truncate font-mono">
+          {hook.events === "*" ? "all events" : hook.events.split(",").join(" · ")}
+        </span>
+      }
+      actions={
+        <>
+          <Button
+            data-testid={`webhook-log-${hook.id}`}
+            variant="ghost"
+            size="sm"
+            onClick={showLog}
+          >
+            {open ? "Hide" : "Log"}
+          </Button>
+          <Button
+            data-testid={`webhook-test-${hook.id}`}
+            variant="ghost"
+            size="sm"
+            onClick={() => test.mutate()}
+            loading={test.isPending}
+          >
+            Test
+          </Button>
+          <Button
+            data-testid={`webhook-remove-${hook.id}`}
+            variant="destructive-ghost"
+            size="sm"
+            onClick={() => setConfirming(true)}
+          >
+            Remove
+          </Button>
+        </>
+      }
+      below={
+        <>
+          <ConfirmDialog
+            open={confirming}
+            onOpenChange={setConfirming}
+            title="Remove this webhook?"
+            description={`Deliveries to ${hook.url} stop immediately.`}
+            confirmLabel="Remove"
+            onConfirm={() => remove.mutate()}
+          />
+          {open && (
+            <div className="rounded-lg bg-secondary px-3 py-2">
+              {isPending ? (
+                <div className="flex justify-center py-2">
+                  <Spinner />
+                </div>
+              ) : !deliveries || deliveries.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No deliveries yet. Hit Test.</div>
+              ) : (
+                deliveries.map((d) => (
+                  <div key={d.id} className="flex items-center gap-2 py-0.5 text-2xs">
+                    <StatusBadge tone={deliveryTone(d.status)}>{d.status}</StatusBadge>
+                    <span className="font-mono text-muted-foreground">{d.event_type}</span>
+                    {d.attempts > 1 && (
+                      <span className="font-mono text-muted-foreground tabular-nums">
+                        · {d.attempts} tries
+                      </span>
+                    )}
+                    {d.last_error && (
+                      <span className="truncate font-mono text-destructive">· {d.last_error}</span>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
-          ) : !deliveries || deliveries.length === 0 ? (
-            <div className="text-sm text-muted-foreground">No deliveries yet. Hit Test.</div>
-          ) : (
-            deliveries.map((d) => (
-              <div key={d.id} className="flex items-center gap-2 py-0.5 text-2xs">
-                <Badge variant={deliveryBadge(d.status)}>{d.status}</Badge>
-                <span className="font-mono text-muted-foreground">{d.event_type}</span>
-                {d.attempts > 1 && (
-                  <span className="font-mono text-muted-foreground tabular-nums">
-                    · {d.attempts} tries
-                  </span>
-                )}
-                {d.last_error && (
-                  <span className="truncate font-mono text-destructive">· {d.last_error}</span>
-                )}
-              </div>
-            ))
           )}
-        </div>
-      )}
-    </div>
+        </>
+      }
+    />
   )
 }

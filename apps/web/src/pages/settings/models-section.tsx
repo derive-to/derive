@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { modelLibraryQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
+import { AddForm } from "./add-form"
 import { SettingsSection } from "./settings-section"
 
 // THE MODEL LIBRARY — which models this deployment can answer with, which one serves which lane,
@@ -210,13 +211,18 @@ export function ModelsSection() {
               />
             ))}
             {data?.can_add && (
-              <form
-                className="flex flex-wrap items-center gap-2 py-3"
-                onSubmit={(e) => {
-                  e.preventDefault()
+              <AddForm
+                className="py-3.5"
+                onSubmit={() => {
                   const id = newId.trim()
                   if (id) add.mutate(id)
                 }}
+                // It is probed before it is saved, so the wait is a real call to the provider
+                // and saying "Add" alone would under-describe what is happening.
+                submitLabel="Add and probe"
+                submitTestId="add-model"
+                pending={add.isPending}
+                disabled={!newId.trim()}
               >
                 <Input
                   value={newId}
@@ -227,17 +233,7 @@ export function ModelsSection() {
                   className="min-w-56 flex-1 font-mono text-xs"
                   data-testid="add-model-id"
                 />
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={!newId.trim() || add.isPending}
-                  data-testid="add-model"
-                >
-                  {/* It is probed before it is saved, so the wait is a real call to the provider
-                      and saying "Add" alone would under-describe what is happening. */}
-                  {add.isPending ? "Probing…" : "Add and probe"}
-                </Button>
-              </form>
+              </AddForm>
             )}
           </SettingsGroup>
         </>
@@ -320,7 +316,7 @@ function Row({
   const [editing, setEditing] = useState(false)
   const [label, setLabel] = useState(model.label)
   return (
-    <div className="flex flex-wrap items-start gap-3 py-3">
+    <div className="flex flex-wrap items-start gap-3 py-3.5">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-foreground">
           {editing ? (
@@ -403,7 +399,7 @@ function Row({
         {model.removable && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="destructive-ghost"
             disabled={busy}
             onClick={onRemove}
             data-testid={`remove-model-${model.id}`}

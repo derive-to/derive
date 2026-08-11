@@ -4,7 +4,6 @@ import { api } from "@/api"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { Button } from "@/components/ui/button"
 import {
   Select,
   SelectContent,
@@ -14,6 +13,7 @@ import {
 } from "@/components/ui/select"
 import { collectionsQuery, slackChannelsQuery, slackSubscriptionsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { AddForm } from "./add-form"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SlackSubscriptionRow } from "./slack-subscription-row"
 
@@ -84,7 +84,20 @@ function NewSubscription({ onCreated }: { onCreated: () => void }) {
   })
 
   return (
-    <div className="flex flex-wrap items-center gap-2 py-3">
+    <AddForm
+      className="py-3"
+      onSubmit={() => create.mutate()}
+      submitLabel="Subscribe"
+      submitTestId="slack-sub-add"
+      pending={create.isPending}
+      disabled={!channel || channel.startsWith("__")}
+      after={
+        <p className="w-full text-sm text-muted-foreground">
+          Invite the Derive app to a private channel before subscribing it — it can join public
+          channels itself.
+        </p>
+      }
+    >
       <Select value={channel} onValueChange={setChannel} onOpenChange={setOpen}>
         <SelectTrigger
           data-testid="slack-sub-channel"
@@ -136,20 +149,6 @@ function NewSubscription({ onCreated }: { onCreated: () => void }) {
           </SelectContent>
         </Select>
       ) : null}
-      <Button
-        data-testid="slack-sub-add"
-        variant="secondary"
-        size="sm"
-        onClick={() => create.mutate()}
-        loading={create.isPending}
-        disabled={create.isPending || !channel || channel.startsWith("__")}
-      >
-        {create.isPending ? "Adding…" : "Subscribe"}
-      </Button>
-      <p className="w-full text-sm text-muted-foreground">
-        Invite the Derive app to a private channel before subscribing it — it can join public
-        channels itself.
-      </p>
-    </div>
+    </AddForm>
   )
 }

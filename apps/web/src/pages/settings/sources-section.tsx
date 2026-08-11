@@ -3,14 +3,18 @@ import { useEffect, useState } from "react"
 import { api, type Connection } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { connectionsQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
@@ -33,20 +37,15 @@ export function SourcesSection() {
   const qc = useQueryClient()
   const { data: connections, isPending, isError, refetch } = useQuery(connectionsQuery())
   const reload = () => qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
-  const [justConnected, setJustConnected] = useState(false)
 
   // ?connected=1 lands here fresh back from a provider's consent screen. The cached connections
   // query predates the callback that flipped the row active, so consume + strip the param (the
-  // same one-shot idiom as billing's ?checkout=success) and refetch.
+  // shared one-shot idiom) and refetch.
+  const { connected } = useOneShotParams("connected")
+  const justConnected = connected === "1"
   useEffect(() => {
-    const url = new URL(window.location.href)
-    if (url.searchParams.get("connected") === "1") {
-      url.searchParams.delete("connected")
-      window.history.replaceState(null, "", url)
-      setJustConnected(true)
-      void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
-    }
-  }, [qc])
+    if (justConnected) void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
+  }, [justConnected, qc])
   // MCP only, to match what this screen can actually add and explain. A GitHub App or Slack row
   // listed here has its own setup flow elsewhere, no server URL to show, and a `scopes_label`
   // that is an account name — which the row below would caption as "· token acme-corp".
@@ -147,8 +146,17 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
   // reader sees (`source-error`, in the server's own words).
   const ready = name.trim().length > 0 && url.trim().length > 0
 
+  // A real <form> (Enter in any field submits), but NOT AddForm: this composer is a stacked
+  // grid of labelled fields, not AddForm's one-line flex-wrap of controls.
   return (
-    <div className="mb-6 space-y-3" data-testid="sources-add">
+    <form
+      className="mb-6 space-y-3"
+      data-testid="sources-add"
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (ready && !connect.isPending) connect.mutate()
+      }}
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <label htmlFor="source-name" className="text-sm font-medium">
@@ -206,13 +214,16 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
         </p>
       ) : null}
       <Button
+        type="submit"
         data-testid="source-connect"
+        variant="secondary"
+        size="sm"
+        loading={connect.isPending}
         disabled={!ready || connect.isPending}
-        onClick={() => connect.mutate()}
       >
-        {connect.isPending ? "Connecting…" : "Connect"}
+        Connect
       </Button>
-    </div>
+    </form>
   )
 }
 
@@ -249,86 +260,97 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
   const needsSignIn = conn.status === "pending"
 
   return (
-    <div className="flex items-center justify-between gap-4 py-3" data-testid="source-row">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">{conn.toolkit}</span>
+    <ListRow
+      data-testid="source-row"
+      title={
+        <span className="flex items-center gap-2">
+          {conn.toolkit}
           {conn.kind === "mcp" ? <Badge variant="secondary">MCP</Badge> : null}
           {conn.status === "active" ? (
             <Badge variant="outline">Connected</Badge>
           ) : needsSignIn ? (
-            <Badge variant="outline">Needs sign-in</Badge>
+            <StatusBadge tone="attention">Needs sign-in</StatusBadge>
           ) : (
-            <Badge variant="outline">{conn.status}</Badge>
+            <StatusBadge tone="muted">{conn.status}</StatusBadge>
           )}
-        </div>
-        <p className="text-muted-foreground truncate text-xs">
-          {needsSignIn
-            ? "Sign in with this server to finish connecting. Nothing can read from it until you do."
-            : (conn.base_url ?? "—")}
-          {/* A signed-in connection has no token to caption, and "token signed in" is what the
-              generic form produced. The label says which of the two ways this one authenticates. */}
-          {!needsSignIn && conn.scopes_label
-            ? conn.scopes_label === SIGNED_IN_LABEL
-              ? " · signed in"
-              : ` · token ${conn.scopes_label}`
-            : ""}
-        </p>
-        {error ? (
-          <p className="text-destructive text-xs" data-testid={`source-signin-error-${conn.id}`}>
-            {error}
-          </p>
-        ) : null}
-      </div>
-      {/* OFF by default, and per source: a workspace connecting a server has not thereby handed
-          every conversation a live tool. A PERSONAL source stays yours even when on — chat
-          reaches it for you and for nobody else, which is what its scope already means. */}
-      {!needsSignIn ? (
-        <label className="flex shrink-0 items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            checked={inChat}
-            disabled={setChat.isPending}
-            onChange={(e) => setChat.mutate(e.target.checked)}
-            data-testid={`source-chat-${conn.id}`}
-          />
-          <span className="text-muted-foreground">
-            {conn.scope === "workspace" ? "Chat (everyone)" : "Chat (just me)"}
+        </span>
+      }
+      meta={
+        <>
+          <span className="block truncate">
+            {needsSignIn
+              ? "Sign in with this server to finish connecting. Nothing can read from it until you do."
+              : (conn.base_url ?? "—")}
+            {/* A signed-in connection has no token to caption, and "token signed in" is what the
+                generic form produced. The label says which of the two ways this one authenticates. */}
+            {!needsSignIn && conn.scopes_label
+              ? conn.scopes_label === SIGNED_IN_LABEL
+                ? " · signed in"
+                : ` · token ${conn.scopes_label}`
+              : ""}
           </span>
-        </label>
-      ) : null}
-      {needsSignIn ? (
-        <Button
-          size="sm"
-          data-testid={`source-signin-${conn.id}`}
-          disabled={signIn.isPending}
-          onClick={() => {
-            setError(null)
-            signIn.mutate()
+          {error ? (
+            <span className="block text-destructive" data-testid={`source-signin-error-${conn.id}`}>
+              {error}
+            </span>
+          ) : null}
+        </>
+      }
+      actions={
+        <>
+          {/* OFF by default, and per source: a workspace connecting a server has not thereby handed
+              every conversation a live tool. A PERSONAL source stays yours even when on — chat
+              reaches it for you and for nobody else, which is what its scope already means. */}
+          {!needsSignIn ? (
+            <label className="flex shrink-0 items-center gap-2 text-xs">
+              <Checkbox
+                checked={inChat}
+                disabled={setChat.isPending}
+                onCheckedChange={(v) => setChat.mutate(v === true)}
+                data-testid={`source-chat-${conn.id}`}
+              />
+              <span className="text-muted-foreground">
+                {conn.scope === "workspace" ? "Chat (everyone)" : "Chat (just me)"}
+              </span>
+            </label>
+          ) : null}
+          {needsSignIn ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid={`source-signin-${conn.id}`}
+              disabled={signIn.isPending}
+              onClick={() => {
+                setError(null)
+                signIn.mutate()
+              }}
+            >
+              {signIn.isPending ? "Opening…" : "Sign in"}
+            </Button>
+          ) : null}
+          <Button
+            variant="destructive-ghost"
+            size="sm"
+            data-testid={`source-revoke-${conn.id}`}
+            onClick={() => setConfirming(true)}
+          >
+            Disconnect
+          </Button>
+        </>
+      }
+      below={
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title={`Disconnect ${conn.toolkit}?`}
+          description="Runs bound to this source stop being able to read from it. Nothing already written changes."
+          confirmLabel="Disconnect"
+          onConfirm={() => {
+            revoke.mutate()
+            setConfirming(false)
           }}
-        >
-          {signIn.isPending ? "Opening…" : "Sign in"}
-        </Button>
-      ) : null}
-      <Button
-        variant="ghost"
-        size="sm"
-        data-testid={`source-revoke-${conn.id}`}
-        onClick={() => setConfirming(true)}
-      >
-        Disconnect
-      </Button>
-      <ConfirmDialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title={`Disconnect ${conn.toolkit}?`}
-        description="Runs bound to this source stop being able to read from it. Nothing already written changes."
-        confirmLabel="Disconnect"
-        onConfirm={() => {
-          revoke.mutate()
-          setConfirming(false)
-        }}
-      />
-    </div>
+        />
+      }
+    />
   )
 }

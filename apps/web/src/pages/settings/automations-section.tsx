@@ -3,11 +3,14 @@ import { Link } from "@tanstack/react-router"
 import { Zap } from "lucide-react"
 import { useState } from "react"
 import { type Automation, api, type Run } from "@/api"
+import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -55,9 +58,7 @@ export function AutomationsSection() {
           <AutomationForm onDone={reload} />
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          Only a workspace Admin can create automations. Ask an Admin to set one up.
-        </p>
+        <AdminNote can="create automations" />
       )}
 
       {isPending ? (
@@ -121,13 +122,19 @@ function AutomationRow({
     onSuccess: () => onDone(),
   })
   const summary = targetSummary(automation.refs)
+  const mode = automation.refs.some((r) => r.mode === "publish")
+    ? "Publishes live"
+    : "Proposes for review"
   return (
-    <div data-testid={`automation-row-${automation.id}`} className="flex items-center gap-3 py-3">
-      <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent">
-        <Zap className="size-4 text-muted-foreground" aria-hidden />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+    <ListRow
+      data-testid={`automation-row-${automation.id}`}
+      leading={
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent">
+          <Zap className="size-4 text-muted-foreground" aria-hidden />
+        </div>
+      }
+      title={
+        <span className="flex items-center gap-1.5">
           <span className="truncate">{automation.instruction}</span>
           <Badge variant="outline">
             {automation.provider === "codex" ? "Codex" : "Claude Code"}
@@ -136,89 +143,86 @@ function AutomationRow({
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Paused</Badge>}
           <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
-        </div>
-        <div className="truncate text-sm text-muted-foreground">
-          {automation.refs.some((r) => r.mode === "publish")
-            ? "Publishes live"
-            : "Proposes for review"}
-          {summary && ` · ${summary}`}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        {canRun && automation.enabled && (
-          <Button
-            data-testid={`automation-run-${automation.id}`}
-            variant="secondary"
-            size="sm"
-            onClick={() => run.mutate()}
-            loading={run.isPending}
-            disabled={run.isPending}
-          >
-            Run now
-          </Button>
-        )}
-        {canRemove && (
-          <Button
-            data-testid={`automation-edit-${automation.id}`}
-            variant="ghost"
-            size="sm"
-            onClick={() => setEditing(true)}
-          >
-            Edit
-          </Button>
-        )}
-        {canRemove && (
-          <Button
-            data-testid={`automation-pause-${automation.id}`}
-            variant="ghost"
-            size="sm"
-            onClick={() => pause.mutate()}
-            loading={pause.isPending}
-            disabled={pause.isPending}
-          >
-            {automation.enabled ? "Pause" : "Resume"}
-          </Button>
-        )}
-        {canRemove && (
-          <Button
-            data-testid={`automation-remove-${automation.id}`}
-            variant="destructive-ghost"
-            size="sm"
-            onClick={() => setConfirming(true)}
-          >
-            Remove
-          </Button>
-        )}
-      </div>
-      <Dialog open={editing} onOpenChange={setEditing}>
-        <DialogContent
-          data-testid="automation-edit-dialog"
-          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
-        >
-          <DialogHeader>
-            <DialogTitle>Edit automation</DialogTitle>
-          </DialogHeader>
-          {/* Remount per open so stale state never leaks between edit sessions. */}
-          {editing && (
-            <AutomationForm
-              automation={automation}
-              onDone={() => {
-                setEditing(false)
-                onDone()
-              }}
-            />
+        </span>
+      }
+      meta={summary ? `${mode} · ${summary}` : mode}
+      actions={
+        <>
+          {canRun && automation.enabled && (
+            <Button
+              data-testid={`automation-run-${automation.id}`}
+              variant="secondary"
+              size="sm"
+              onClick={() => run.mutate()}
+              loading={run.isPending}
+              disabled={run.isPending}
+            >
+              Run now
+            </Button>
           )}
-        </DialogContent>
-      </Dialog>
-      <ConfirmDialog
-        open={confirming}
-        onOpenChange={setConfirming}
-        title="Remove this automation?"
-        description="Its queued runs are cancelled. Past runs stay in the activity."
-        confirmLabel="Remove"
-        onConfirm={() => remove.mutate()}
-      />
-    </div>
+          {canRemove && (
+            <Button
+              data-testid={`automation-edit-${automation.id}`}
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </Button>
+          )}
+          {canRemove && (
+            <Button
+              data-testid={`automation-pause-${automation.id}`}
+              variant="ghost"
+              size="sm"
+              onClick={() => pause.mutate()}
+              loading={pause.isPending}
+              disabled={pause.isPending}
+            >
+              {automation.enabled ? "Pause" : "Resume"}
+            </Button>
+          )}
+          {canRemove && (
+            <Button
+              data-testid={`automation-remove-${automation.id}`}
+              variant="destructive-ghost"
+              size="sm"
+              onClick={() => setConfirming(true)}
+            >
+              Remove
+            </Button>
+          )}
+          <Dialog open={editing} onOpenChange={setEditing}>
+            <DialogContent
+              data-testid="automation-edit-dialog"
+              className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+            >
+              <DialogHeader>
+                <DialogTitle>Edit automation</DialogTitle>
+              </DialogHeader>
+              {/* Remount per open so stale state never leaks between edit sessions. */}
+              {editing && (
+                <AutomationForm
+                  automation={automation}
+                  onDone={() => {
+                    setEditing(false)
+                    onDone()
+                  }}
+                />
+              )}
+            </DialogContent>
+          </Dialog>
+          <ConfirmDialog
+            open={confirming}
+            onOpenChange={setConfirming}
+            title="Remove this automation?"
+            description="Its queued runs are cancelled. Past runs stay in the activity."
+            confirmLabel="Remove"
+            onConfirm={() => remove.mutate()}
+          />
+        </>
+      }
+    />
   )
 }
 
@@ -238,7 +242,7 @@ function Activity() {
           <li
             key={r.id}
             data-testid={`run-row-${r.id}`}
-            className="flex flex-col gap-1 border-b py-2.5 text-sm last:border-0"
+            className="flex flex-col gap-1 border-b py-3 text-sm last:border-0"
           >
             <div className="flex items-center gap-3">
               <RunStatus status={r.status} />
@@ -313,18 +317,18 @@ function RunWrites({ meta }: { meta: string | null }) {
 }
 
 function RunStatus({ status }: { status: Run["status"] }) {
-  const variant =
+  const tone =
     status === "succeeded"
-      ? "success"
+      ? "ok"
       : status === "failed"
-        ? "destructive"
+        ? "error"
         : status === "running"
-          ? "brand"
-          : "secondary"
+          ? "busy"
+          : "muted"
   return (
-    <Badge variant={variant} shape="pill">
+    <StatusBadge tone={tone} shape="pill">
       {runStatusLabel(status)}
-    </Badge>
+    </StatusBadge>
   )
 }
 
@@ -336,8 +340,8 @@ function ExecutorBadge({ seenAt }: { seenAt: string | null }) {
   const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
   if (seenAt && age < 600_000) return null
   return (
-    <Badge variant="outline" className="border-warning/40 text-warning">
+    <StatusBadge tone="attention">
       {seenAt ? `Executor offline · seen ${ago(seenAt)}` : "No executor"}
-    </Badge>
+    </StatusBadge>
   )
 }

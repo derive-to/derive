@@ -2,7 +2,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useRef, useState } from "react"
 import { type ArtifactMember, api, type BillingInfo, type Role } from "@/api"
+import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { SettingsGroup } from "@/components/shared/settings-group"
@@ -21,6 +23,7 @@ import { copyText } from "@/lib/clipboard"
 import { getInitials } from "@/lib/initials"
 import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { AddForm } from "./add-form"
 import { FREE_SEAT_LIMIT, needsSeatConfirm, PLANS, unitPrice } from "./billing-plans"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -97,8 +100,7 @@ export function MembersSection({ meId }: { meId: string }) {
       },
     )
   }
-  const addMember = (e: React.FormEvent) => {
-    e.preventDefault()
+  const addMember = () => {
     if (addingRef.current || invite.isPending) return
     const em = email.trim()
     if (!em) return
@@ -165,8 +167,14 @@ export function MembersSection({ meId }: { meId: string }) {
       title="Members"
       description="Who's in this workspace and what they can do. Admins add people, Creators publish artifacts, Viewers read and comment."
     >
-      {isAdmin && (
-        <form onSubmit={addMember} className="flex flex-wrap gap-2">
+      {isAdmin ? (
+        <AddForm
+          onSubmit={addMember}
+          submitLabel="Add"
+          submitTestId="member-add"
+          pending={invite.isPending}
+          disabled={!email.trim()}
+        >
           <PersonSearchInput
             value={email}
             onChange={setEmail}
@@ -191,17 +199,9 @@ export function MembersSection({ meId }: { meId: string }) {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            data-testid="member-add"
-            type="submit"
-            variant="secondary"
-            size="sm"
-            loading={invite.isPending}
-            disabled={invite.isPending || !email.trim()}
-          >
-            {invite.isPending ? "Adding…" : "Add"}
-          </Button>
-        </form>
+        </AddForm>
+      ) : (
+        <AdminNote can="invite people" />
       )}
 
       {billing &&
@@ -230,62 +230,70 @@ export function MembersSection({ meId }: { meId: string }) {
       ) : ws ? (
         <SettingsGroup>
           {ws.members.map((m) => (
-            <div
+            <ListRow
               key={m.user_id}
               data-testid={`member-row-${m.user_id}`}
-              className="flex items-center gap-3 py-3"
-            >
-              <Avatar className="size-7 shrink-0">
-                <AvatarFallback>{getInitials(m.name ?? m.handle ?? m.user_id)}</AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-foreground">
+              leading={
+                <Avatar className="size-7 shrink-0">
+                  <AvatarFallback>{getInitials(m.name ?? m.handle ?? m.user_id)}</AvatarFallback>
+                </Avatar>
+              }
+              title={
+                // block+truncate: a node title opts out of ListRow's string-only
+                // truncation, and the user_id fallback is one unbroken token.
+                <span className="block truncate">
                   {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
                   {m.user_id === meId && (
                     <span className="font-normal text-muted-foreground"> (you)</span>
                   )}
-                </div>
-                {m.handle && m.name && (
-                  <div className="truncate font-mono text-2xs text-muted-foreground">
+                </span>
+              }
+              meta={
+                m.handle && m.name ? (
+                  <span className="block truncate font-mono">
                     @{m.handle}
                     {m.profession ? ` · ${m.profession}` : ""}
-                  </div>
-                )}
-              </div>
-              {isAdmin ? (
-                <Select
-                  value={roleValue(m.role)}
-                  onValueChange={(v) => requestRoleChange(m, v as Role)}
-                >
-                  <SelectTrigger
-                    data-testid={`member-role-${m.user_id}`}
-                    aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                    className="w-32.5 shrink-0"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {WS_ROLES.map((r) => (
-                      <SelectItem key={r.value} value={r.value}>
-                        {r.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Badge variant="secondary">{roleLabel(m.role)}</Badge>
-              )}
-              {isAdmin && (
-                <Button
-                  data-testid={`member-remove-${m.user_id}`}
-                  variant="destructive-ghost"
-                  size="sm"
-                  onClick={() => setRemoving(m)}
-                >
-                  Remove
-                </Button>
-              )}
-            </div>
+                  </span>
+                ) : undefined
+              }
+              actions={
+                <>
+                  {isAdmin ? (
+                    <Select
+                      value={roleValue(m.role)}
+                      onValueChange={(v) => requestRoleChange(m, v as Role)}
+                    >
+                      <SelectTrigger
+                        data-testid={`member-role-${m.user_id}`}
+                        aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
+                        className="w-32.5 shrink-0"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {WS_ROLES.map((r) => (
+                          <SelectItem key={r.value} value={r.value}>
+                            {r.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant="secondary">{roleLabel(m.role)}</Badge>
+                  )}
+                  {isAdmin && (
+                    <Button
+                      data-testid={`member-remove-${m.user_id}`}
+                      variant="destructive-ghost"
+                      size="sm"
+                      onClick={() => setRemoving(m)}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </>
+              }
+            />
           ))}
         </SettingsGroup>
       ) : null}
@@ -354,31 +362,28 @@ function PendingInvites() {
   if (!invites || invites.length === 0) return null
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="text-sm font-medium text-muted-foreground">Pending invitations</div>
-      <SettingsGroup>
-        {invites.map((inv) => (
-          <div
-            key={inv.id}
-            data-testid={`invite-row-${inv.id}`}
-            className="flex items-center gap-3 py-3"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-foreground">{inv.email}</div>
-              <div className="text-2xs text-muted-foreground">Invited as {roleLabel(inv.role)}</div>
-            </div>
-            <Badge variant="outline">Pending</Badge>
-            <Button
-              data-testid={`invite-revoke-${inv.id}`}
-              variant="destructive-ghost"
-              size="sm"
-              onClick={() => revoke(inv.id)}
-            >
-              Revoke
-            </Button>
-          </div>
-        ))}
-      </SettingsGroup>
-    </div>
+    <SettingsGroup title="Pending invitations">
+      {invites.map((inv) => (
+        <ListRow
+          key={inv.id}
+          data-testid={`invite-row-${inv.id}`}
+          title={inv.email}
+          meta={`Invited as ${roleLabel(inv.role)}`}
+          actions={
+            <>
+              <Badge variant="outline">Pending</Badge>
+              <Button
+                data-testid={`invite-revoke-${inv.id}`}
+                variant="destructive-ghost"
+                size="sm"
+                onClick={() => revoke(inv.id)}
+              >
+                Revoke
+              </Button>
+            </>
+          }
+        />
+      ))}
+    </SettingsGroup>
   )
 }

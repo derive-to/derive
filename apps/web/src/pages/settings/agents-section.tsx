@@ -4,9 +4,10 @@ import { useState } from "react"
 import { type Agent, api, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { SecretReveal } from "@/components/shared/secret-reveal"
 import { SettingsGroup } from "@/components/shared/settings-group"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -19,9 +20,9 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { copyText } from "@/lib/clipboard"
 import { agentsQuery, modelCredentialsQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { AddForm } from "./add-form"
 import { ModelPlanManager } from "./model-plan-manager"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -74,29 +75,28 @@ export function AgentsSection({ meId }: { meId: string }) {
           plan, below), then the agent OWNER's plan (only for agents lent above), then the
           shared workspace pool. Both plan surfaces live here so it's one place to reason
           about; your own plan also lives under Account → Model plans. */}
-      <div className="mt-6 flex flex-col gap-5 border-t pt-6">
-        <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-5">
+        <SettingsGroup
+          title="Your plan"
+          description="Runs you start bill your own connected plan first. Same plan as Account → Model plans; connect it here or there."
+        >
+          {/* One padding-neutral wrapper: SettingsGroup strips its first/last
+              child's vertical padding (a row contract) and divides siblings,
+              which would shave the connect well's p-4 and draw a stray hairline
+              through the manager's fragment. */}
           <div>
-            <div className="text-sm font-medium text-foreground">Your plan</div>
-            <p className="mt-0.5 text-2xs text-muted-foreground">
-              Runs you start bill your own connected plan first. Same plan as Account → Model plans;
-              connect it here or there.
-            </p>
+            <ModelPlanManager scope="personal" />
           </div>
-          <ModelPlanManager scope="personal" />
-        </div>
+        </SettingsGroup>
 
-        <div className="flex flex-col gap-3">
+        <SettingsGroup
+          title="Workspace model plan pool"
+          description="A shared plan billed when a run's initiator has no plan of their own and the agent isn't lent its owner's. Optional — leave it empty to require everyone to bring their own."
+        >
           <div>
-            <div className="text-sm font-medium text-foreground">Workspace model plan pool</div>
-            <p className="mt-0.5 text-2xs text-muted-foreground">
-              A shared plan billed when a run's initiator has no plan of their own and the agent
-              isn't lent its owner's. Optional — leave it empty to require everyone to bring their
-              own.
-            </p>
+            <ModelPlanManager scope="pool" />
           </div>
-          <ModelPlanManager scope="pool" />
-        </div>
+        </SettingsGroup>
       </div>
     </SettingsSection>
   )
@@ -116,20 +116,21 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
       onCreated()
     },
   })
-  const add = () => {
-    if (name.trim()) create.mutate()
-  }
-
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-2">
+      <AddForm
+        onSubmit={() => create.mutate()}
+        submitLabel="Add agent"
+        submitTestId="agent-add"
+        pending={create.isPending}
+        disabled={!name.trim()}
+      >
         <Input
           data-testid="agent-name"
           aria-label="Agent name"
           placeholder="Agent name (e.g. Claude)"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
           className="min-w-45 flex-1"
         />
         <Select value={role} onValueChange={(v) => setRole(v as Role)}>
@@ -141,50 +142,18 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
             <SelectItem value="editor">Editor (publish)</SelectItem>
           </SelectContent>
         </Select>
-        <Button
-          data-testid="agent-add"
-          variant="secondary"
-          size="sm"
-          onClick={add}
-          loading={create.isPending}
-          disabled={create.isPending || !name.trim()}
-        >
-          {create.isPending ? "Adding…" : "Add agent"}
-        </Button>
-      </div>
+      </AddForm>
       {/* The token is shown exactly once, right after creation — a safety-orange
-          warning moment, never the accent. */}
+          warning moment, never the accent. Below the form, not inside it: the
+          reveal outlives the submit that produced it. */}
       {created && (
         <div data-testid="agent-token">
-          <StatusPanel
-            tone="warning"
-            layout="inline"
+          <SecretReveal
             title={`Token for ${created.name} — copy it now, it won't be shown again.`}
-            description={
-              <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
-                {created.token}
-              </code>
-            }
-            action={
-              <div className="flex items-center gap-2">
-                <Button
-                  data-testid="agent-token-copy"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void copyText(created.token, { success: "Token copied" })}
-                >
-                  Copy
-                </Button>
-                <Button
-                  data-testid="agent-token-done"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setCreated(null)}
-                >
-                  Done
-                </Button>
-              </div>
-            }
+            secret={created.token}
+            onDone={() => setCreated(null)}
+            copyTestId="agent-token-copy"
+            doneTestId="agent-token-done"
           />
         </div>
       )}
@@ -226,100 +195,84 @@ function AgentRow({
     onSuccess: () => onDone(),
   })
   return (
-    <div data-testid={`agent-row-${agent.id}`} className="flex flex-col py-3">
-      <div className="flex items-center gap-3">
+    <ListRow
+      data-testid={`agent-row-${agent.id}`}
+      leading={
         <Avatar className="size-7 shrink-0">
           <AvatarFallback>
             <Bot className="size-4" aria-hidden />
           </AvatarFallback>
         </Avatar>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-sm font-medium text-foreground">
-            @{agent.name}
-            <Badge variant="secondary">{agent.role}</Badge>
-          </div>
-          <div className="text-sm text-muted-foreground">
-            Mention it in any thread to send it work.
-          </div>
-        </div>
-        <Button
-          data-testid={`agent-rotate-${agent.id}`}
-          variant="ghost"
-          size="sm"
-          onClick={() => rotate.mutate()}
-          loading={rotate.isPending}
-          disabled={rotate.isPending}
-        >
-          Rotate token
-        </Button>
-        <Button
-          data-testid={`agent-remove-${agent.id}`}
-          variant="destructive-ghost"
-          size="sm"
-          onClick={() => setConfirming(true)}
-        >
-          Remove
-        </Button>
-        <ConfirmDialog
-          open={confirming}
-          onOpenChange={setConfirming}
-          title={`Remove @${agent.name}?`}
-          description="Its token stops working immediately."
-          confirmLabel="Remove"
-          onConfirm={() => remove.mutate()}
-        />
-      </div>
-      {isOwner && (
-        <label
-          htmlFor={`agent-lend-${agent.id}`}
-          className="mt-2 flex items-center gap-2 pl-10 text-2xs text-muted-foreground"
-        >
-          <Switch
-            id={`agent-lend-${agent.id}`}
-            data-testid={`agent-lend-${agent.id}`}
-            checked={agent.owner_lend}
-            onCheckedChange={(v) => lend.mutate(v)}
-            disabled={lend.isPending || !hasPersonalPlan}
+      }
+      title={
+        <span className="flex items-center gap-1.5">
+          @{agent.name}
+          <Badge variant="secondary">{agent.role}</Badge>
+        </span>
+      }
+      meta="Mention it in any thread to send it work."
+      actions={
+        <>
+          <Button
+            data-testid={`agent-rotate-${agent.id}`}
+            variant="ghost"
+            size="sm"
+            onClick={() => rotate.mutate()}
+            loading={rotate.isPending}
+            disabled={rotate.isPending}
+          >
+            Rotate token
+          </Button>
+          <Button
+            data-testid={`agent-remove-${agent.id}`}
+            variant="destructive-ghost"
+            size="sm"
+            onClick={() => setConfirming(true)}
+          >
+            Remove
+          </Button>
+          <ConfirmDialog
+            open={confirming}
+            onOpenChange={setConfirming}
+            title={`Remove @${agent.name}?`}
+            description="Its token stops working immediately."
+            confirmLabel="Remove"
+            onConfirm={() => remove.mutate()}
           />
-          {hasPersonalPlan
-            ? "Fall back to my plan when a run has none of its own"
-            : "Connect your plan under Account → Model plans to lend it here"}
-        </label>
-      )}
-      {rotated && (
-        <div data-testid={`agent-rotated-${agent.id}`} className="mt-2">
-          <StatusPanel
-            tone="warning"
-            layout="inline"
-            title={`New token for ${agent.name} — copy it now, it won't be shown again. The old one is dead.`}
-            description={
-              <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
-                {rotated}
-              </code>
-            }
-            action={
-              <div className="flex items-center gap-2">
-                <Button
-                  data-testid={`agent-rotated-copy-${agent.id}`}
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void copyText(rotated, { success: "Token copied" })}
-                >
-                  Copy
-                </Button>
-                <Button
-                  data-testid={`agent-rotated-done-${agent.id}`}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setRotated(null)}
-                >
-                  Done
-                </Button>
-              </div>
-            }
-          />
-        </div>
-      )}
-    </div>
+        </>
+      }
+      below={
+        <>
+          {isOwner && (
+            <label
+              htmlFor={`agent-lend-${agent.id}`}
+              className="flex items-center gap-2 pl-10 text-2xs text-muted-foreground"
+            >
+              <Switch
+                id={`agent-lend-${agent.id}`}
+                data-testid={`agent-lend-${agent.id}`}
+                checked={agent.owner_lend}
+                onCheckedChange={(v) => lend.mutate(v)}
+                disabled={lend.isPending || !hasPersonalPlan}
+              />
+              {hasPersonalPlan
+                ? "Fall back to my plan when a run has none of its own"
+                : "Connect your plan under Account → Model plans to lend it here"}
+            </label>
+          )}
+          {rotated && (
+            <div data-testid={`agent-rotated-${agent.id}`}>
+              <SecretReveal
+                title={`New token for ${agent.name} — copy it now, it won't be shown again. The old one is dead.`}
+                secret={rotated}
+                onDone={() => setRotated(null)}
+                copyTestId={`agent-rotated-copy-${agent.id}`}
+                doneTestId={`agent-rotated-done-${agent.id}`}
+              />
+            </div>
+          )}
+        </>
+      }
+    />
   )
 }
