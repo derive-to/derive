@@ -4,12 +4,12 @@ import { QRCodeSVG } from "qrcode.react"
 import { useEffect, useState } from "react"
 import { type AuthCapabilities, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SecretReveal } from "@/components/shared/secret-reveal"
 import { SettingRow } from "@/components/shared/setting-row"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
@@ -201,9 +201,12 @@ function DeleteAccount() {
 
   return (
     <SettingsGroup title="Danger zone">
+      {/* The group header carries the danger; the label states the thing and the
+          button is the verb. Saying "Delete account" in red twice on one row —
+          once as a label, once as the button — is emphasis eating itself. */}
       <SettingRow
-        label={<span className="font-medium text-destructive">Delete account</span>}
-        description="Permanently delete your account and remove you from every workspace. This can't be undone."
+        label="Delete this account"
+        description="Permanently deletes your account and removes you from every workspace. This can't be undone."
       >
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
@@ -729,9 +732,9 @@ function Passkeys() {
         </div>
       ) : !passkeys || passkeys.length === 0 ? (
         <div>
-          <EmptyState>
+          <SettingsEmpty>
             No passkeys yet. Add one for a phishing-resistant, one-tap sign-in.
-          </EmptyState>
+          </SettingsEmpty>
         </div>
       ) : (
         passkeys.map((p) => (

@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { api, type GithubSyncStatus } from "@/api"
-import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { toast } from "@/components/ui/sonner"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
@@ -98,9 +98,9 @@ export function GithubSection() {
       {status !== null &&
         (status.sources.length === 0 ? (
           appConfigured && (
-            <EmptyState>
+            <SettingsEmpty>
               No repos mirrored yet — install the app on a repo above, then pick it here.
-            </EmptyState>
+            </SettingsEmpty>
           )
         ) : (
           <SettingsGroup title="Mirrored repositories">

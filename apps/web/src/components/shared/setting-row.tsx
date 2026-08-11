@@ -34,7 +34,21 @@ export function SettingRow({
         className,
       )}
     >
-      <div className="flex min-w-0 flex-col gap-0.5">
+      {/* flex-1, NOT auto-width: the text column has to shrink and wrap its own
+          sentences instead of pushing the control onto a second line. Without it,
+          a long description silently moved the control below the text — so a row's
+          switch sat left-aligned under its paragraph while every short-description
+          row beside it kept its switch on the right.
+          A described row also takes basis-64, so a narrow pane wraps it deliberately
+          rather than squeezing prose to a ribbon. A bare label keeps flex-1's own
+          0 basis: reserving 256px for two words is what pushes a wide control
+          (an arbitrary-length select) onto its own line — the same bug, moved. */}
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 flex-col gap-0.5",
+          description !== undefined && "basis-64",
+        )}
+      >
         {htmlFor ? (
           <Label htmlFor={htmlFor} className="text-foreground">
             {label}

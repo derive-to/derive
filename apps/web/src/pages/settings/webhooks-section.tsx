@@ -2,10 +2,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type Webhook } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { EmptyState } from "@/components/shared/empty-state"
 import { fieldError } from "@/components/shared/field-error"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusBadge, type StatusTone } from "@/components/shared/status-badge"
@@ -62,7 +62,7 @@ export function WebhooksSection() {
           onRetry={() => refetch()}
         />
       ) : !hooks || hooks.length === 0 ? (
-        <EmptyState>No webhooks yet. Add one above.</EmptyState>
+        <SettingsEmpty>No webhooks yet — nothing is being sent anywhere.</SettingsEmpty>
       ) : (
         <SettingsGroup>
           {hooks.map((w) => (

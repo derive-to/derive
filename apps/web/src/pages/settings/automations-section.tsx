@@ -5,10 +5,10 @@ import { useState } from "react"
 import { type Automation, api, type Run } from "@/api"
 import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { EmptyState } from "@/components/shared/empty-state"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
@@ -70,9 +70,11 @@ export function AutomationsSection() {
           onRetry={() => refetch()}
         />
       ) : !automations || automations.length === 0 ? (
-        <EmptyState>
-          {isAdmin ? "No automations yet. Create one above." : "No automations yet."}
-        </EmptyState>
+        <SettingsEmpty>
+          {isAdmin
+            ? "No automations yet — nothing runs on a schedule or trigger."
+            : "No automations yet."}
+        </SettingsEmpty>
       ) : (
         <SettingsGroup>
           {automations.map((a) => (

@@ -2,9 +2,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { api, type Connection } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
-import { EmptyState } from "@/components/shared/empty-state"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -54,14 +54,10 @@ export function SourcesSection() {
   return (
     <SettingsSection
       title="Sources"
-      description={
-        <>
-          Connect a Model Context Protocol server and your agents can read from it during a run. The
-          server's tools are recorded when you connect, and if that list later changes the
-          connection goes quiet until you reconnect — so a server cannot rewrite what your agent
-          reads after you have approved it.
-        </>
-      }
+      // The second sentence is not decoration: a server that changes its tool list
+      // goes quiet, and the row still reads "Connected" while runs read nothing
+      // from it. This page is the only place that fact is stated.
+      description="Connect an MCP server and your agents can read from it during a run. Its tools are recorded when you connect; if that list changes later, the source goes quiet until you reconnect."
     >
       {justConnected ? (
         <StatusPanel
@@ -83,10 +79,9 @@ export function SourcesSection() {
           onRetry={() => refetch()}
         />
       ) : sources.length === 0 ? (
-        <EmptyState
-          title="No sources connected"
-          description="Add an MCP server above to give your agents something to read."
-        />
+        <SettingsEmpty>
+          No sources connected — your agents have nothing extra to read.
+        </SettingsEmpty>
       ) : (
         <SettingsGroup>
           {sources.map((c) => (
@@ -203,9 +198,8 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
           onChange={(e) => setSecret(e.target.value)}
         />
         <p className="text-muted-foreground text-xs">
-          Leave this empty unless the server has no sign-in. If it asks you to authorize, Connect
-          takes you there. A token you do paste is encrypted, spent on the server, and never shown
-          again — you will only ever see its last four characters.
+          Leave empty unless the server has no sign-in. A pasted token is encrypted and never shown
+          again.
         </p>
       </div>
       {error ? (
