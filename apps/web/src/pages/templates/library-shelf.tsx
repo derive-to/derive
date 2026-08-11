@@ -7,6 +7,7 @@ import {
   type TemplateLibraryScope,
 } from "@/api"
 import { Icon } from "@/components/icons"
+import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -37,6 +38,32 @@ const csv = (value: string) =>
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean)
+
+// Inputs are optional today, but they are useful context for anyone choosing a
+// starter. One line keeps library publishing quick: `*Project name — used in
+// the title`; a leading `*` marks the input as required.
+const inputsFromLines = (value: string) =>
+  value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const required = line.startsWith("*")
+      const [name = "", ...description] = (required ? line.slice(1) : line)
+        .split(/\s*(?:—|–|:)\s*/)
+        .map((part) => part.trim())
+      return {
+        name,
+        description: description.join(" — ") || "Use this before drafting.",
+        required,
+      }
+    })
+    .filter((input) => input.name)
+
+const matches = (query: string, values: Array<string | undefined>) => {
+  const needle = query.trim().toLocaleLowerCase()
+  return !needle || values.some((value) => value?.toLocaleLowerCase().includes(needle))
+}
 
 function ScopePicker({
   value,
@@ -74,9 +101,11 @@ function ScopePicker({
 function CreateLibraryDialog({
   open,
   onOpenChange,
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCreated: (library: TemplateLibrary) => void
 }) {
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
@@ -86,11 +115,12 @@ function CreateLibraryDialog({
       api.createTemplateLibrary({ title: title.trim(), description: description.trim(), scope }),
     invalidate: [["template-libraries"]],
     success: "Template library created",
-    onSuccess: () => {
+    onSuccess: (library) => {
       setTitle("")
       setDescription("")
       setScope("workspace")
       onOpenChange(false)
+      onCreated(library)
     },
   })
   return (
@@ -153,14 +183,17 @@ function LibrarySettingsDialog({
   library,
   open,
   onOpenChange,
+  onDeleted,
 }: {
   library: TemplateLibrary
   open: boolean
   onOpenChange: (open: boolean) => void
+  onDeleted: () => void
 }) {
   const [title, setTitle] = useState(library.title)
   const [description, setDescription] = useState(library.description)
   const [scope, setScope] = useState<TemplateLibraryScope>(library.scope)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const update = useApiMutation({
     mutationFn: () =>
       api.updateTemplateLibrary(library.id, {
@@ -172,49 +205,74 @@ function LibrarySettingsDialog({
     success: "Library settings saved",
     onSuccess: () => onOpenChange(false),
   })
+  const remove = useApiMutation({
+    mutationFn: () => api.deleteTemplateLibrary(library.id),
+    invalidate: [["template-libraries"]],
+    success: "Template library deleted",
+    onSuccess: () => {
+      onOpenChange(false)
+      onDeleted()
+    },
+  })
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Library settings</DialogTitle>
-          <DialogDescription>
-            Change how this reusable collection is named and discovered. Existing starter versions
-            remain pinned.
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="grid gap-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (title.trim()) update.mutate()
-          }}
-        >
-          <label className="grid gap-1.5 text-sm font-medium text-foreground">
-            Name
-            <Input value={title} onChange={(event) => setTitle(event.target.value)} autoFocus />
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium text-foreground">
-            Description
-            <Textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </label>
-          <div className="grid gap-1.5">
-            <p className="text-sm font-medium text-foreground">Who can find it?</p>
-            <ScopePicker value={scope} onChange={setScope} />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!title.trim() || update.isPending}>
-              Save settings
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open && !deleteOpen} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Library settings</DialogTitle>
+            <DialogDescription>
+              Change how this reusable collection is named and discovered. Existing starter versions
+              remain pinned.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (title.trim()) update.mutate()
+            }}
+          >
+            <label className="grid gap-1.5 text-sm font-medium text-foreground">
+              Name
+              <Input value={title} onChange={(event) => setTitle(event.target.value)} autoFocus />
+            </label>
+            <label className="grid gap-1.5 text-sm font-medium text-foreground">
+              Description
+              <Textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+              />
+            </label>
+            <div className="grid gap-1.5">
+              <p className="text-sm font-medium text-foreground">Who can find it?</p>
+              <ScopePicker value={scope} onChange={setScope} />
+            </div>
+            <DialogFooter className="gap-2 sm:justify-between">
+              <Button type="button" variant="ghost" onClick={() => setDeleteOpen(true)}>
+                <Icon name="delete" /> Delete library
+              </Button>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={!title.trim() || update.isPending}>
+                  Save settings
+                </Button>
+              </div>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete ${library.title}?`}
+        description="This removes the library and its published starters. Source artifacts and adopted work stay untouched."
+        confirmLabel="Delete library"
+        onConfirm={() => remove.mutateAsync()}
+        confirmTestId="template-library-delete-confirm"
+      />
+    </>
   )
 }
 
@@ -234,6 +292,7 @@ function AddEntryDialog({
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const [outcome, setOutcome] = useState("")
+  const [inputs, setInputs] = useState("")
   const [sections, setSections] = useState("")
   const [tags, setTags] = useState("")
   const [themeMode, setThemeMode] = useState<"native" | "adaptable" | "fixed">("fixed")
@@ -249,7 +308,7 @@ function AddEntryDialog({
         description: description.trim(),
         outcome: outcome.trim(),
         sections: csv(sections),
-        inputs: [],
+        inputs: inputsFromLines(inputs),
         tags: csv(tags),
         theme_mode: themeMode,
       }),
@@ -260,6 +319,7 @@ function AddEntryDialog({
       setTitle("")
       setDescription("")
       setOutcome("")
+      setInputs("")
       setSections("")
       setTags("")
       onOpenChange(false)
@@ -340,6 +400,17 @@ function AddEntryDialog({
               onChange={(event) => setDescription(event.target.value)}
               placeholder="The repeatable shape and when to use it."
             />
+          </label>
+          <label className="grid gap-1.5 text-sm font-medium text-foreground">
+            Inputs <span className="font-normal text-muted-foreground">(optional)</span>
+            <Textarea
+              value={inputs}
+              onChange={(event) => setInputs(event.target.value)}
+              placeholder={"*Project name — used in the title\nAudience — who this is for"}
+            />
+            <span className="text-xs font-normal text-muted-foreground">
+              One per line. Prefix a required input with *.
+            </span>
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1.5 text-sm font-medium text-foreground">
@@ -437,6 +508,14 @@ function EntryCard({
         </h3>
         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{entry.description}</p>
       </div>
+      {entry.inputs.length > 0 && (
+        <p className="line-clamp-1 text-xs text-muted-foreground">
+          Needs:{" "}
+          {entry.inputs
+            .map((input) => `${input.name}${input.required ? " · required" : ""}`)
+            .join(" · ")}
+        </p>
+      )}
       {entry.sections.length > 0 && (
         <p className="line-clamp-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
           {entry.sections.join(" · ")}
@@ -482,6 +561,7 @@ function LibraryDetail({
   })
   const [addOpen, setAddOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [query, setQuery] = useState("")
   const remove = useApiMutation({
     mutationFn: (entry: TemplateLibraryEntry) =>
       api.deleteTemplateLibraryEntry(libraryId, entry.id),
@@ -508,6 +588,19 @@ function LibraryDetail({
       />
     )
   const library = detail.data
+  const allEntries = library.entries ?? []
+  const entries = allEntries.filter((entry) =>
+    matches(query, [
+      entry.title,
+      entry.description,
+      entry.outcome,
+      entry.category,
+      entry.kind,
+      ...entry.sections,
+      ...entry.tags,
+      ...entry.inputs.flatMap((input) => [input.name, input.description]),
+    ]),
+  )
   return (
     <section className="flex flex-col gap-5" data-testid="template-library-detail">
       <div className="flex flex-wrap items-start gap-3 border-b pb-5">
@@ -551,8 +644,19 @@ function LibraryDetail({
           )}
         </div>
       </div>
+      {allEntries.length > 1 && (
+        <label className="max-w-sm">
+          <span className="sr-only">Filter starters</span>
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter starters"
+            aria-label="Filter starters"
+          />
+        </label>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {(library.entries ?? []).map((entry) => (
+        {entries.map((entry) => (
           <EntryCard
             key={entry.id}
             entry={entry}
@@ -562,7 +666,7 @@ function LibraryDetail({
           />
         ))}
       </div>
-      {(library.entries ?? []).length === 0 && (
+      {allEntries.length === 0 && (
         <EmptyState
           icon="templates"
           title="No starters yet"
@@ -573,6 +677,18 @@ function LibraryDetail({
           }
         />
       )}
+      {allEntries.length > 0 && entries.length === 0 && (
+        <EmptyState
+          icon="templates"
+          title="No matching starters"
+          description="Try a broader word or clear the current filter."
+          action={
+            <Button variant="outline" onClick={() => setQuery("")}>
+              Clear filter
+            </Button>
+          }
+        />
+      )}
       <AddEntryDialog libraryId={libraryId} open={addOpen} onOpenChange={setAddOpen} />
       {settingsOpen && (
         <LibrarySettingsDialog
@@ -580,6 +696,7 @@ function LibraryDetail({
           library={library}
           open={settingsOpen}
           onOpenChange={setSettingsOpen}
+          onDeleted={onBack}
         />
       )}
     </section>
@@ -597,8 +714,12 @@ export function LibraryShelf({
 }) {
   const libraries = useQuery(templateLibrariesQuery())
   const [createOpen, setCreateOpen] = useState(false)
+  const [query, setQuery] = useState("")
   if (selectedId)
     return <LibraryDetail libraryId={selectedId} onBack={() => onSelect(undefined)} onUse={onUse} />
+  const visibleLibraries = (libraries.data ?? []).filter((library) =>
+    matches(query, [library.title, library.description, library.scope]),
+  )
   return (
     <section className="flex flex-col gap-5" data-testid="template-libraries">
       <div className="flex flex-wrap items-end justify-between gap-4 border-y py-5">
@@ -614,9 +735,22 @@ export function LibraryShelf({
             provenance intact.
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} data-testid="template-library-new">
-          <Icon name="plus" /> New library
-        </Button>
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:flex-nowrap">
+          {(libraries.data?.length ?? 0) > 1 && (
+            <label className="min-w-48 flex-1 sm:w-56 sm:flex-none">
+              <span className="sr-only">Search libraries</span>
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search libraries"
+                aria-label="Search libraries"
+              />
+            </label>
+          )}
+          <Button onClick={() => setCreateOpen(true)} data-testid="template-library-new">
+            <Icon name="plus" /> New library
+          </Button>
+        </div>
       </div>
       {libraries.isPending ? (
         <div className="grid min-h-64 place-items-center border-y text-sm text-muted-foreground">
@@ -633,9 +767,9 @@ export function LibraryShelf({
             </Button>
           }
         />
-      ) : libraries.data?.length ? (
+      ) : libraries.data?.length && visibleLibraries.length ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {libraries.data.map((library) => (
+          {visibleLibraries.map((library) => (
             <button
               key={library.id}
               type="button"
@@ -666,6 +800,17 @@ export function LibraryShelf({
             </button>
           ))}
         </div>
+      ) : libraries.data?.length ? (
+        <EmptyState
+          icon="templates"
+          title="No matching libraries"
+          description="Try a broader word or clear the current search."
+          action={
+            <Button variant="outline" onClick={() => setQuery("")}>
+              Clear search
+            </Button>
+          }
+        />
       ) : (
         <EmptyState
           icon="templates"
@@ -673,7 +818,11 @@ export function LibraryShelf({
           description="Turn a trusted artifact into a library entry, then share it privately, with your workspace, or publicly."
         />
       )}
-      <CreateLibraryDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <CreateLibraryDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(library) => onSelect(library.id)}
+      />
     </section>
   )
 }

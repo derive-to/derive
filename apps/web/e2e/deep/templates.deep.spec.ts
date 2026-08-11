@@ -57,7 +57,7 @@ test("a library pins an artifact starter and opens an independent draft", async 
   await owner.getByLabel("Name").fill("Product team starters")
   await owner.getByLabel("What belongs here?").fill("The documents our team trusts.")
   await owner.getByTestId("template-library-create").click()
-  await owner.getByText("Product team starters", { exact: true }).click()
+  await expect(owner.getByTestId("template-library-detail")).toBeVisible()
   await owner.getByRole("button", { name: "Library settings" }).click()
   await owner.getByRole("button", { name: /Public Discoverable by anyone and MCP/ }).click()
   await owner.getByRole("button", { name: "Save settings" }).click()
@@ -66,11 +66,36 @@ test("a library pins an artifact starter and opens an independent draft", async 
   await owner.getByLabel("Source artifact ID or Derive link").fill(`trusted-decision-${source}`)
   await owner.getByLabel("Display name").fill("Trusted decision")
   await owner.getByLabel("Description").fill("A decision-ready starting point.")
+  await owner
+    .getByLabel(/Inputs/)
+    .fill("*Decision owner — makes the call\nAudience — needs the record")
   await owner.getByTestId("template-library-entry-create").click()
   await expect(owner.getByText("Trusted decision", { exact: true })).toBeVisible()
+  await expect(owner.getByText(/Needs: Decision owner · required · Audience/)).toBeVisible()
   await owner.getByRole("button", { name: "Use starter" }).click()
   await expect(owner).toHaveURL(/\/new\?library=.*&entry=/)
   await expect(owner.getByTestId("artifact-source-editor")).toContainText(
     "This exact source is the reusable starting point.",
   )
+})
+
+test("a manager can retire a library without deleting its source artifact", async ({ owner }) => {
+  const source = await publishArtifact(
+    owner,
+    "retired-starter.md",
+    "# Retired starter\n\nThe source should remain after library retirement.",
+  )
+  await owner.goto("/templates?tab=libraries")
+  await owner.getByTestId("template-library-new").click()
+  await owner.getByLabel("Name").fill("Retired starters")
+  await owner.getByTestId("template-library-create").click()
+  await expect(owner.getByTestId("template-library-detail")).toBeVisible()
+  await owner.getByRole("button", { name: "Library settings" }).click()
+  await owner.getByRole("button", { name: "Delete library" }).click()
+  await expect(owner.getByText("Delete Retired starters?")).toBeVisible()
+  await owner.getByTestId("template-library-delete-confirm").click()
+  await expect(owner).toHaveURL(/\/templates\?tab=libraries/)
+
+  const response = await owner.request.get(`/v1/artifacts/${source}`)
+  expect(response.ok()).toBeTruthy()
 })

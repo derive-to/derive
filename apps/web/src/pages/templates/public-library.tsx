@@ -111,6 +111,14 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
                 {entry.sections.join(" · ")}
               </p>
             )}
+            {entry.inputs.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Needs:{" "}
+                {entry.inputs
+                  .map((input) => `${input.name}${input.required ? " · required" : ""}`)
+                  .join(" · ")}
+              </p>
+            )}
             <Button asChild className="mt-auto">
               <Link to={start(entry)}>
                 {entry.kind === "context" ? "Create manifest" : "Start with this"}
