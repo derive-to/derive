@@ -118,6 +118,7 @@ describe("remote MCP endpoint (/mcp)", () => {
       "automate",
       "catch_up",
       "checkpoint",
+      "clear_queue",
       "comment",
       "find",
       "list_workspaces",
@@ -130,9 +131,11 @@ describe("remote MCP endpoint (/mcp)", () => {
     // The read path advertises readOnlyHint — annotation-honoring clients (Claude Code
     // plan mode gates on exactly this) run it without an approval prompt. Every mutating
     // tool carries an explicit readOnlyHint:false instead (see the annotations test
-    // below), so a client never has to guess. catch_up carries the true hint although
-    // its `ack` parameter clears handled requests off the queue: it is otherwise pure
-    // state-reading, and re-acking is itself idempotent.
+    // below), so a client never has to guess. catch_up's hint is now unconditional: the
+    // queue's write half is `clear_queue`, so nothing under catch_up mutates. It used to
+    // carry the true hint WITH an `ack` parameter that cleared handled requests, excused
+    // as "otherwise pure state-reading, and re-acking is idempotent" — but idempotent is
+    // not read-only, and directory review reads this annotation literally.
     type ListedTool = { name: string; annotations?: { readOnlyHint?: boolean } }
     const listed = (list.parsed?.result as { tools?: ListedTool[] } | undefined)?.tools ?? []
     const readOnly = listed.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name)
@@ -3704,7 +3707,7 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
     expect(oinst).not.toContain("pending request")
   })
 
-  it("catch_up (no short_id) lists the work queue; ack clears exactly what was handled", async () => {
+  it("catch_up (no short_id) lists the work queue; clear_queue clears exactly what was handled", async () => {
     const { app, agentToken, shortId } = await seedInbox("inboxack")
     const listed = await call(app, agentToken, "catch_up")
     const first = JSON.parse(toolText(listed))
@@ -3717,16 +3720,23 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
     })
     expect(first.pending[0].request).toContain("Rework this artifact")
 
-    const acked = await call(app, agentToken, "catch_up", { ack: ["amn_inboxack"] })
+    // The write half is its own tool, so catch_up above stayed honestly read-only.
+    const acked = await call(app, agentToken, "clear_queue", { ack: ["amn_inboxack"] })
     const after = JSON.parse(toolText(acked))
     expect(after.acked).toBe(1)
     expect(after.pending).toHaveLength(0)
 
     // Repeated or unknown ids are a no-op, never an error — an agent can retry safely.
-    const again = await call(app, agentToken, "catch_up", {
+    // This is what idempotentHint claims on clear_queue, and it is a different claim
+    // from readOnly; conflating them is what put the wrong hint on catch_up.
+    const again = await call(app, agentToken, "clear_queue", {
       ack: ["amn_inboxack", "amn_nope"],
     })
     expect(JSON.parse(toolText(again)).acked).toBe(0)
+
+    // catch_up can no longer be handed an ack at all — the schema has no such param.
+    const stillEmpty = JSON.parse(toolText(await call(app, agentToken, "catch_up")))
+    expect(stillEmpty.pending).toHaveLength(0)
   })
 
   it("a human-grant connection has an empty queue with a no-inbox note, not an error", async () => {

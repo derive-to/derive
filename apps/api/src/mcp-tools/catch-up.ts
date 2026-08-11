@@ -20,11 +20,11 @@ export function registerCatchUpTool(tc: ToolContext): void {
     "catch_up",
     {
       description:
-        "START HERE on an artifact: its state in one call (versions since `since_version`, open comment threads, the review round). WITHOUT a short_id, your WORK QUEUE; `ack` clears finished items. `wait` long-polls instead of sleeping. See derive://skills/loop.",
-      // Read-only except `ack`, which clears handled requests off the queue. The hint
-      // stays true so planning-mode clients don't gate the start-here call on approval.
-      // `ack` is itself idempotent (an unknown or already-acked id is skipped, never an
-      // error), so the tool stays idempotent overall.
+        "START HERE on an artifact: its state in one call (versions since `since_version`, open comment threads, the review round). WITHOUT a short_id, your WORK QUEUE. `wait` long-polls instead of sleeping. See derive://skills/loop.",
+      // Genuinely read-only now: the queue's write half moved to `clear_queue`. The hint
+      // was true-with-an-asterisk while `ack` lived here, kept that way so planning-mode
+      // clients don't gate the start-here call on approval. That goal is unchanged and
+      // now honestly met — nothing under this handler writes.
       annotations: {
         title: "Catch up on changes",
         readOnlyHint: true,
@@ -36,10 +36,6 @@ export function registerCatchUpTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("The artifact to catch up on. Omit it to pull your work queue instead."),
-        ack: z
-          .array(z.string())
-          .optional()
-          .describe("Work-queue mode: request ids you have HANDLED, to clear them off the queue."),
         since_version: z.coerce.number().optional(),
         to_version: z.coerce.number().optional(),
         comments: z
@@ -66,19 +62,11 @@ export function registerCatchUpTool(tc: ToolContext): void {
         workspace: wsArg,
       },
     },
-    async ({
-      short_id,
-      ack,
-      since_version,
-      to_version,
-      comments,
-      response_format,
-      wait,
-      workspace,
-    }) => {
+    async ({ short_id, since_version, to_version, comments, response_format, wait, workspace }) => {
       // No short_id ⇒ the WORK QUEUE mode (absorbs the former check_requests): the
-      // @mention inbox, its ack, and its own request.created long-poll.
-      if (!short_id) return workQueue(ack, wait)
+      // @mention inbox and its own request.created long-poll. Reading only — clearing
+      // handled items is `clear_queue`.
+      if (!short_id) return workQueue(undefined, wait)
       const r = await reach(short_id, workspace)
       if (r && "error" in r) return err(r.error)
       if (!r) return notFound(short_id)
