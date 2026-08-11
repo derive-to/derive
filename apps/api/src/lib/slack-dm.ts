@@ -111,6 +111,45 @@ export const enqueueSlackMentionDms = async (
   }
 }
 
+/**
+ * A live-document mention has no canonical comment thread yet, so its Slack DM is
+ * deliberately an interrupt with contextual prose and one Open action — never a
+ * pseudo-reply surface that cannot be mirrored safely back into Derive.
+ */
+export const enqueueSlackArtifactMentionDms = async (
+  deps: { meta: MetaStore; baseUrl: string },
+  artifact: ArtifactRecord,
+  recipients: Array<{ id: string; excerpt?: string }>,
+  input: { author: string; excerpt: string },
+): Promise<void> => {
+  const { meta, baseUrl } = deps
+  const install = await meta.getSlackInstall(artifact.org_id)
+  if (!install) return
+  const link = artifactUrl(baseUrl, artifact)
+  const t = title(artifact)
+  const seen = new Set<string>()
+  for (const recipient of recipients) {
+    if (seen.has(recipient.id)) continue
+    seen.add(recipient.id)
+    const pref = await meta.getUserNotificationPref(artifact.org_id, recipient.id)
+    if (!wantsSlackDm(pref?.prefs)) continue
+    const excerpt = recipient.excerpt ?? input.excerpt
+    const blocks = [
+      section(
+        `:wave: *${mrkdwnLabel(input.author)}* mentioned you in <${link}|${mrkdwnLabel(t)}>.`,
+      ),
+      ...(excerpt ? [section(`> ${mrkdwnBody(excerpt, 600)}`)] : []),
+      actions([openButton(link)]),
+    ]
+    await enqueueChannelDelivery(meta, "slack_dm", "artifact.mention", {
+      orgId: artifact.org_id,
+      userId: recipient.id,
+      text: `${mrkdwnLabel(input.author)} mentioned you in ${mrkdwnLabel(t)}: ${mrkdwnLabel(excerpt, 300)}`,
+      blocks,
+    } satisfies SlackDmPayload)
+  }
+}
+
 /** DM the human a review is blocked on — the one event that most deserves to interrupt
  *  (same rationale as buildReviewEmail): the loop is waiting on them and they may have no
  *  tab open. Never for your own request on yourself; caller already enforces that. */

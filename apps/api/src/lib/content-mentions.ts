@@ -8,22 +8,20 @@ import {
   type BlobStore,
   isHtmlLike,
   type MetaStore,
+  mentionText,
+  mentionTokens,
   newId,
   normalizeUsername,
-  pageText,
   type VersionRecord,
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import { log } from "../log"
 import { enqueueChannelDelivery } from "../webhooks"
 import { buildArtifactMentionEmail } from "./email"
+import { eligibleMentionRecipientIds } from "./mention-access"
+import { enqueueSlackArtifactMentionDms } from "./slack-dm"
 import { truncate } from "./text"
 
-/** Match the actual account-handle grammar, with email/URL boundaries excluded. */
-// A period ends ordinary prose (`@alex.`) but a period followed by an alphanumeric continues
-// an email/domain token (`alex@company.test`), which must not become an @mention.
-const HANDLE_MENTION =
-  /(^|[^a-z0-9._@-])@([a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29})(?![a-z0-9_-]|\.[a-z0-9])/gi
 const MAX_CONTENT_MENTIONS = 50
 
 export type ContentMentionTarget = {
@@ -54,22 +52,23 @@ const markdownProse = (source: string): string => {
     }
     if (!fence) lines.push(line)
   }
-  return (
-    lines
-      .join("\n")
-      // Inline code does not render as document prose either.
-      .replace(/`[^`\r\n]*`/g, " ")
-      // Preserve the rendered labels of Markdown links while dropping their URL targets.
-      .replace(/!?\[([^\]]*)\]\([^\s)]+(?:\s+[^)]*)?\)/g, "$1")
-      .replace(/<!--[\s\S]*?-->/g, " ")
-  )
+  const markdown = lines
+    .join("\n")
+    // Inline code does not render as document prose either.
+    .replace(/`[^`\r\n]*`/g, " ")
+    // Preserve the rendered labels of Markdown links while dropping their URL targets.
+    .replace(/!?\[([^\]]*)\]\([^\s)]+(?:\s+[^)]*)?\)/g, "$1")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+  // Markdown accepts inline HTML. Run the same non-prose projection over that
+  // residual markup so `<code>@alex</code>` behaves like backtick code.
+  return mentionText(markdown)
 }
 
 /** What a reader can see, reduced to text for mention matching and notification excerpts. A URL
  * can visibly contain `/@handle`; it names a route, not a teammate, so remove URL tokens before
  * the mention matcher sees them. */
 export const contentMentionText = (source: string, contentType: string): string =>
-  (isHtmlLike(contentType) ? pageText(source) : markdownProse(source))
+  (isHtmlLike(contentType) ? mentionText(source) : markdownProse(source))
     .replace(/\b(?:https?:\/\/|mailto:|www\.)[^\s<]+/gi, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -79,11 +78,8 @@ export const contentMentionHandles = (source: string, contentType: string): stri
   const text = contentMentionText(source, contentType)
   const out: string[] = []
   const seen = new Set<string>()
-  HANDLE_MENTION.lastIndex = 0
-  for (const match of text.matchAll(HANDLE_MENTION)) {
-    const raw = match[2]
-    if (!raw) continue
-    const handle = normalizeUsername(raw)
+  for (const token of mentionTokens(text)) {
+    const handle = normalizeUsername(token.handle)
     if (seen.has(handle)) continue
     seen.add(handle)
     out.push(handle)
@@ -119,26 +115,17 @@ export const resolveContentMentionTargets = async (
   actorId: string | null,
 ): Promise<ContentMentionTarget[]> => {
   if (!handles.length) return []
-  const workspaceMembers = new Set(
-    (await meta.listMemberships(artifact.org_id)).map((membership) => membership.user_id),
+  const profiles = await Promise.all(
+    handles.map(async (handle) => ({ handle, profile: await meta.getUserByUsername(handle) })),
   )
-  const explicitlyShared = new Set(
-    (await meta.listArtifactMembers(artifact.id)).map((member) => member.user_id),
+  const eligible = await eligibleMentionRecipientIds(
+    meta,
+    artifact,
+    profiles.flatMap(({ profile }) => (profile ? [profile.id] : [])),
   )
   const targets: ContentMentionTarget[] = []
-  for (const handle of handles) {
-    const profile = await meta.getUserByUsername(handle)
-    if (!profile || profile.id === actorId) continue
-    const seatCanRead = artifact.workspace_access === "member" && workspaceMembers.has(profile.id)
-    const directlyShared = explicitlyShared.has(profile.id)
-    // Collection access is uncommon; only pay that per-user read when the ordinary workspace
-    // and direct-share grants did not already answer the question.
-    const collectionShared =
-      !seatCanRead &&
-      !directlyShared &&
-      (await meta.collectionRolesForArtifact(artifact.id, profile.id)).length > 0
-    const canRead = directlyShared || collectionShared || seatCanRead
-    if (!canRead) continue
+  for (const { handle, profile } of profiles) {
+    if (!profile || profile.id === actorId || !eligible.has(profile.id)) continue
     targets.push({
       id: profile.id,
       name: profile.name ?? profile.username ?? handle,
@@ -177,8 +164,8 @@ export const notifyContentMentions = async (
     })
 }
 
-/** Content mention email is intentionally an open-and-read notification, not a reply surface:
- * only a canonical comment thread can safely mirror a future reply back into Derive. */
+/** Body mentions are open-and-read notifications, not reply surfaces: only a canonical comment
+ * thread can safely mirror a future email or Slack reply back into Derive. */
 export const enqueueContentMentionEmails = async (
   deps: { meta: MetaStore; baseUrl: string },
   artifact: ArtifactRecord,
@@ -294,4 +281,12 @@ export const fanOutNewContentMentions = async (
         },
       ),
     )
+  await safely("slack:mention-dm", () =>
+    enqueueSlackArtifactMentionDms(
+      { meta: deps.meta, baseUrl: deps.baseUrl as string },
+      artifact,
+      resolved,
+      { author: version.author, excerpt },
+    ),
+  )
 }

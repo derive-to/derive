@@ -3,6 +3,8 @@ import { ApiError, type Artifact, api, type DirUser, type InlineEditInput } from
 import { toast } from "@/components/ui/sonner"
 import { canPublishArtifact } from "@/lib/artifact"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { isUsernameQuery, isValidUsername, normalizeUsername } from "@/lib/username"
+import { mentionCandidates } from "./mention-candidates"
 
 const clip = (s: string, n = 28): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
 
@@ -39,10 +41,8 @@ export type InlineMentionMenuState = {
 }
 
 type FrameMentionRect = { left: number; right: number; top: number; bottom: number }
-const validMentionQuery = (value: unknown): value is string =>
-  typeof value === "string" && value.length <= 30 && /^[a-z0-9_-]*$/i.test(value)
-const validMentionHandle = (value: unknown): value is string =>
-  typeof value === "string" && /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/i.test(value)
+const validMentionQuery = (value: unknown): value is string => isUsernameQuery(value)
+const validMentionHandle = (value: unknown): value is string => isValidUsername(value)
 const validMentionRect = (value: unknown): value is FrameMentionRect => {
   if (!value || typeof value !== "object") return false
   const r = value as Record<string, unknown>
@@ -127,6 +127,7 @@ export function useInlineEdit(p: {
   // A directory response can arrive after the caret moved on. Its number is local
   // to this edit session, so stale results can never replace the current token's menu.
   const mentionRequest = useRef(0)
+  const mentionRenderRequest = useRef(0)
   const dirtyRef = useRef(0)
   dirtyRef.current = dirty
   const collectWait = useRef<{
@@ -146,6 +147,7 @@ export function useInlineEdit(p: {
   const swapImageRef = useRef<(src: string) => void>(() => {})
   const mentionQueryRef = useRef<(query: string, rect: FrameMentionRect) => void>(() => {})
   const mentionKeyRef = useRef<(key: string) => void>(() => {})
+  const renderMentionHandlesRef = useRef<(handles: unknown) => void>(() => {})
   const canEditRef = useRef(false)
   canEditRef.current = p.canEdit
 
@@ -159,6 +161,7 @@ export function useInlineEdit(p: {
   //   "none"    — the frame is already gone (reload); there is nothing to talk to.
   const exit = (frame: "restore" | "settle" | "none") => {
     mentionRequest.current++
+    mentionRenderRequest.current++
     setMention(null)
     setFrozenVersion(null)
     setDirty(0)
@@ -181,6 +184,7 @@ export function useInlineEdit(p: {
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the artifact change.
   useEffect(() => {
     mentionRequest.current++
+    mentionRenderRequest.current++
     setFrozenVersion(null)
     setDirty(0)
     setMention(null)
@@ -264,6 +268,8 @@ export function useInlineEdit(p: {
       } else if (d.type === "edit-mention-close") {
         mentionRequest.current++
         setMention(null)
+      } else if (d.type === "mention-resolve") {
+        renderMentionHandlesRef.current(d.handles)
       } else if (d.type === "edit-blocked") {
         // A click landed somewhere inline editing can't reach. Quiet + deduped —
         // information, not an alarm.
@@ -318,15 +324,12 @@ export function useInlineEdit(p: {
     setMention({ query, users: [], active: 0, loading: true, position })
     // A directory failure is intentionally cosmetic: the raw handle remains in the
     // document and publish-time resolution still has its normal safe behavior.
-    api
-      .users(query, p.shortId)
-      .then(({ users }) => {
+    mentionCandidates(query, p.shortId)
+      .then((users) => {
         if (request !== mentionRequest.current || !activeRef.current) return
         setMention({
           query,
-          users: users
-            .filter((user) => user.kind !== "agent" && validMentionHandle(user.handle))
-            .slice(0, 6),
+          users,
           active: 0,
           loading: false,
           position,
@@ -337,6 +340,36 @@ export function useInlineEdit(p: {
         setMention((current) =>
           current?.query === query ? { ...current, users: [], loading: false } : current,
         )
+      })
+  }
+  renderMentionHandlesRef.current = (value) => {
+    if (!Array.isArray(value)) return
+    const requested = new Set(
+      value.filter(validMentionHandle).map((handle) => normalizeUsername(handle)),
+    )
+    if (!requested.size) {
+      p.post({ type: "mention-render", handles: [] })
+      return
+    }
+    const request = ++mentionRenderRequest.current
+    // Resolve once per document frame. The endpoint returns only handles already
+    // present in this artifact, rather than exposing a workspace roster to a
+    // public-link reader; the iframe has no authenticated directory access itself.
+    api
+      .artifactMentionHandles(p.shortId)
+      .then(({ handles }) => {
+        if (request !== mentionRenderRequest.current) return
+        p.post({
+          type: "mention-render",
+          handles: handles
+            .filter(validMentionHandle)
+            .map((handle) => normalizeUsername(handle))
+            .filter((handle) => requested.has(handle)),
+        })
+      })
+      .catch(() => {
+        if (request === mentionRenderRequest.current)
+          p.post({ type: "mention-render", handles: [] })
       })
   }
   mentionKeyRef.current = (key) => {

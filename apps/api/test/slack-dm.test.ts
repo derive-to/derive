@@ -1,6 +1,7 @@
 import { type ArtifactRecord, type CommentRecord, type DeliveryRecord, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
+  enqueueSlackArtifactMentionDms,
   enqueueSlackMentionDms,
   enqueueSlackReviewRequestedDm,
   enqueueSlackShareDm,
@@ -182,6 +183,31 @@ describe("enqueueSlackMentionDms (gate)", () => {
     // ...while a hand-written Slack link stays inert text.
     expect(serialized).not.toContain("<https://evil.example|Support>")
     expect(serialized).toContain("&lt;https://evil.example|Support&gt;")
+  })
+})
+
+describe("enqueueSlackArtifactMentionDms", () => {
+  it("sends a contextual open-only DM and honors the recipient preference", async () => {
+    const meta = make("slack-dm-artifact-mention")
+    await connect(meta)
+    const artifact = await makeArtifact(meta)
+    await optOut(meta, optout.id)
+    await enqueueSlackArtifactMentionDms(
+      { meta, baseUrl },
+      artifact,
+      [
+        { id: linked.id, excerpt: "@lin, please decide before Friday." },
+        { id: optout.id, excerpt: "@opt, this should stay quiet." },
+      ],
+      { author: "Ada", excerpt: "fallback context" },
+    )
+    const dms = (await claim(meta)).filter((delivery) => delivery.kind === "slack_dm")
+    expect(dms).toHaveLength(1)
+    const payload = JSON.parse(dms[0]?.payload ?? "{}") as Record<string, unknown>
+    expect(payload.userId).toBe(linked.id)
+    expect(JSON.stringify(payload)).toContain("please decide before Friday")
+    // There is no synthetic Slack thread to reply into for a document-body mention.
+    expect(payload.mention).toBeUndefined()
   })
 })
 

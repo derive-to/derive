@@ -13,6 +13,7 @@ import {
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import { type Mention, previewOf } from "./comments"
+import { eligibleMentionRecipientIds } from "./mention-access"
 
 export const notifyMentions = async (
   deps: { meta: MetaStore; bus: Backplane },
@@ -28,16 +29,9 @@ export const notifyMentions = async (
   // Registered agents are mentionable too; a mention of an agent lands in its
   // pull inbox instead of a notification bell.
   const agentIds = new Set((await meta.listAgents(a.org_id)).map((ag) => ag.id))
-  // A mention only notifies someone who can actually SEE the artifact: a member of its
-  // workspace or an explicit share recipient. The `mentions[]` array is caller-supplied,
-  // so without this gate any caller could push a notification carrying attacker-controlled
-  // title/preview to ANY other user — cross-workspace spam/phishing into the bell + SSE.
-  // "Could view a public artifact" is intentionally NOT enough; a real collaboration
-  // mention means a member/share, not a stranger.
-  const collaborators = new Set<string>([
-    ...(await meta.listMemberships(a.org_id)).map((m) => m.user_id),
-    ...(await meta.listArtifactMembers(a.id)).map((r) => r.user_id),
-  ])
+  // A public link is never enough to page somebody: recipient eligibility is shared
+  // with live-source mentions and includes only workspace/direct/collection standing.
+  const collaborators = await eligibleMentionRecipientIds(meta, a, real)
   const preview = previewOf(cm.body_md)
   // Collect the human-mention bell rows so the whole fan-out is ONE bulk insert; agent
   // mentions land in their own table (a pull inbox), still one row each.

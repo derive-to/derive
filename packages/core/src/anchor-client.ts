@@ -24,6 +24,12 @@
  */
 
 import { findQuoteWithContext, fingerprintFrom, normWs } from "./anchor-shared"
+import {
+  isMentionHandle,
+  MENTION_NON_PROSE_SELECTOR,
+  mentionQueryAtEnd,
+  mentionTokens,
+} from "./mention-shared"
 
 // The element-anchor selector as it arrives from the host (mirrors core's ElementSelector).
 interface ElWire {
@@ -1041,9 +1047,6 @@ interface ElReg {
      mode entry would invalidate the captured caret before the host has armed the
      editable block. The save serializer already reduces unknown editor spans back to
      their text, so the visual wrapper can never leak into source. */
-  const HANDLE_TOKEN = /^[a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29}$/i
-  const HANDLE_MENTION =
-    /(^|[^a-z0-9._@-])@([a-z0-9](?:[a-z0-9]|[-_](?=[a-z0-9])){1,29})(?![a-z0-9_-]|\.[a-z0-9])/gi
   const mentionChip = (handle: string, fresh = false): HTMLSpanElement => {
     const chip = document.createElement("span")
     chip.className = "derive-mention"
@@ -1060,30 +1063,31 @@ interface ElReg {
     // Source code and controls are not reader prose. Aside from preserving their
     // intended styling, skipping them matches the notification parser's promise not
     // to turn examples, forms, or scripts into actual body mentions.
-    return !parent?.closest(
-      "script,style,noscript,template,code,pre,textarea,input,button,select,option,.derive-edit-ui",
-    )
+    return !parent?.closest(`${MENTION_NON_PROSE_SELECTOR},.derive-edit-ui`)
   }
-  const decorateMentions = () => {
+  const mentionHandlesInDocument = (): string[] => {
+    const handles = new Set<string>()
+    for (const node of textNodes(document.body)) {
+      if (!node.isConnected || !canDecorateMention(node)) continue
+      for (const token of mentionTokens(node.nodeValue ?? ""))
+        handles.add(token.handle.toLowerCase())
+    }
+    return [...handles].slice(0, 50)
+  }
+  const decorateMentions = (resolved: ReadonlySet<string>) => {
     if (!document.body) return
     for (const node of textNodes(document.body)) {
       if (!node.isConnected || !canDecorateMention(node)) continue
       const value = node.nodeValue ?? ""
-      HANDLE_MENTION.lastIndex = 0
-      let match: RegExpExecArray | null
       let last = 0
       let fragment: DocumentFragment | null = null
-      // biome-ignore lint/suspicious/noAssignInExpressions: standard RegExp iteration.
-      while ((match = HANDLE_MENTION.exec(value))) {
-        const boundary = match[1] ?? ""
-        const handle = match[2]
-        if (!handle) continue
-        const start = match.index + boundary.length
-        const end = start + handle.length + 1 // `@` + handle
+      for (const token of mentionTokens(value)) {
+        if (!resolved.has(token.handle.toLowerCase())) continue
         if (!fragment) fragment = document.createDocumentFragment()
-        if (start > last) fragment.appendChild(document.createTextNode(value.slice(last, start)))
-        fragment.appendChild(mentionChip(handle))
-        last = end
+        if (token.start > last)
+          fragment.appendChild(document.createTextNode(value.slice(last, token.start)))
+        fragment.appendChild(mentionChip(token.handle))
+        last = token.end
       }
       if (!fragment) continue
       if (last < value.length) fragment.appendChild(document.createTextNode(value.slice(last)))
@@ -1900,18 +1904,16 @@ interface ElReg {
     const text = before.toString()
     // Mirrors the live-content parser's boundary rule: an @ after a word, dot,
     // hyphen, or another @ is an email / URL / identifier, not a person mention.
-    const match = /(^|[^a-z0-9._@-])@([a-z0-9_-]{0,30})$/i.exec(text)
-    if (!match) {
+    const trailing = mentionQueryAtEnd(text)
+    if (!trailing) {
       if (editMention) {
         clearEditMention()
         post({ type: "edit-mention-close" })
       }
       return
     }
-    const prefix = match[1] ?? ""
-    const query = match[2] ?? ""
-    const start = text.length - match[0].length + prefix.length
-    const token = textOffsetRange(block, start, text.length)
+    const { query } = trailing
+    const token = textOffsetRange(block, trailing.start, trailing.end)
     if (!token) return
     // Re-query on every changed token. The host's request token discards late
     // directory responses, so a slow `@a` cannot paint over a later `@alex`.
@@ -1932,7 +1934,7 @@ interface ElReg {
     })
   }
   const insertEditMention = (handle: string) => {
-    if (!HANDLE_TOKEN.test(handle)) return
+    if (!isMentionHandle(handle)) return
     const mention = editMention
     if (!mention?.token.startContainer.isConnected || !mention.token.endContainer.isConnected)
       return
@@ -3521,6 +3523,13 @@ interface ElReg {
       )
     else if (d.type === "edit-mention-insert") insertEditMention(String(d.handle || ""))
     else if (d.type === "edit-mention-close") clearEditMention()
+    else if (d.type === "mention-render" && Array.isArray(d.handles)) {
+      const handles: unknown[] = d.handles
+      const resolved = new Set<string>(
+        handles.filter(isMentionHandle).map((handle) => handle.toLowerCase()),
+      )
+      decorateMentions(resolved)
+    }
     // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
     // `deck` message, which it answers itself.
     else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)
@@ -3560,7 +3569,8 @@ interface ElReg {
   })
 
   // Last on purpose: the document is fully parsed, our own overlay vocabulary is
-  // established, and no edit mode is active yet. The wrappers are purely local to
-  // this rendered frame; saving always serializes their text content.
-  decorateMentions()
+  // established, and no edit mode is active yet. The host resolves only genuine,
+  // eligible collaborators before asking us to wrap them, so ambient @handles do
+  // not impersonate a Derive mention.
+  post({ type: "mention-resolve", handles: mentionHandlesInDocument() })
 })()

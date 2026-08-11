@@ -16,7 +16,7 @@ const claim = (meta: Awaited<ReturnType<typeof makeAuthedApp>>["meta"]) =>
   )
 
 describe("live artifact content mentions", () => {
-  it("recognizes visible prose only, not code, email addresses, or HTML script content", () => {
+  it("recognizes visible prose only, not code, email addresses, or HTML non-prose content", () => {
     expect(
       contentMentionHandles(
         "# Please ask @EDD\n\n`@own is an example`\n\n```ts\nconst person = '@out'\n```\n\nmail own@x.test https://derive.test/users/@out",
@@ -25,10 +25,13 @@ describe("live artifact content mentions", () => {
     ).toEqual(["edd"])
     expect(
       contentMentionHandles(
-        '<script>const person = "@edd"</script><p>Review with @edd.</p><a href="mailto:@out">mail</a> https://derive.test/users/@out',
+        '<head><title>@own</title></head><script>const person = "@edd"</script><template>@out</template><pre>@out</pre><p>Review with @edd.</p><a href="mailto:@out">mail</a> https://derive.test/users/@out',
         "text/html",
       ),
     ).toEqual(["edd"])
+    expect(contentMentionHandles("<code>@own</code> Please ask @edd.", "text/markdown")).toEqual([
+      "edd",
+    ])
   })
 
   it("notifies a collaborator only when a live edit introduces their handle, and emails the body context", async () => {
@@ -45,6 +48,14 @@ describe("live artifact content mentions", () => {
     )
     expect(made.status).toBe(201)
     const { short_id: shortId } = (await made.json()) as { short_id: string }
+    await meta.setSlackInstall({
+      org_id: "default",
+      team_id: "T-content-mention",
+      team_name: "Content mentions",
+      bot_token: "xoxb-content-mention",
+      bot_user_id: "U-content-mention",
+      created_at: new Date().toISOString(),
+    })
 
     const introduced = await pub(
       app,
@@ -65,6 +76,11 @@ describe("live artifact content mentions", () => {
     })
     expect(first[0]?.preview).toContain("@edd")
     expect(await meta.listNotifications(outsider.id, 20)).toHaveLength(0)
+    const rendered = await app.request(`/v1/artifacts/${shortId}/mentions`, {
+      headers: as(owner.email),
+    })
+    expect(rendered.status).toBe(200)
+    expect(await rendered.json()).toEqual({ handles: ["edd"] })
 
     // Retaining a handle during a later edit is ordinary document maintenance, not a second ping.
     const retained = await pub(
@@ -77,11 +93,16 @@ describe("live artifact content mentions", () => {
     expect(retained.status).toBe(201)
     expect(await meta.listNotifications(editor.id, 20)).toHaveLength(1)
 
-    const emails = (await claim(meta)).filter((delivery) => delivery.kind === "email")
+    const deliveries = await claim(meta)
+    const emails = deliveries.filter((delivery) => delivery.kind === "email")
     expect(emails).toHaveLength(1)
     expect(emails[0]?.payload).toContain(editor.email)
     expect(emails[0]?.payload).toContain("mentioned you in Live content mention")
     expect(emails[0]?.payload).toContain("review this live body")
+    const slackDm = deliveries.find((delivery) => delivery.kind === "slack_dm")
+    expect(slackDm?.payload).toContain(editor.id)
+    expect(slackDm?.payload).toContain("review this live body")
+    expect(slackDm?.payload).not.toContain('"mention"')
   })
 
   it("does not leak an invite-only document mention to a workspace seat without document access", async () => {

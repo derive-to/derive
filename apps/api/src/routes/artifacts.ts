@@ -56,6 +56,7 @@ import {
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { cleanPath, manifestOf } from "../lib/bundle"
 import { signClaimToken, verifyClaimToken } from "../lib/claim-token"
+import { contentMentionHandles, resolveContentMentionTargets } from "../lib/content-mentions"
 import {
   bucketedNow,
   hashPassword,
@@ -2193,6 +2194,30 @@ export const artifactRoutes = (ctx: AppContext) => {
       )
     },
   )
+
+  // Resolve only the handles already present in this artifact's current source for
+  // the sandboxed reader. Unlike the people directory, this is safe for a
+  // public-link reader: it reveals no roster and no new handle oracle, only which
+  // visible document tokens are real collaborators eligible for a mention.
+  app.get("/v1/artifacts/:shortId/mentions", async (c) => {
+    const artifact = await meta.getByShortId(c.req.param("shortId"))
+    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
+      return fail(c, 404, "not found")
+    if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
+    const version = await meta.getVersion(artifact.id, artifact.current_version)
+    if (!version) return fail(c, 404, "version not found")
+    if (version.content_type !== "text/markdown" && !isHtmlLike(version.content_type))
+      return c.json({ handles: [] })
+    const source = await sourceText(version)
+    if (source === null) return fail(c, 500, "blob missing")
+    const targets = await resolveContentMentionTargets(
+      meta,
+      artifact,
+      contentMentionHandles(source, version.content_type),
+      null,
+    )
+    return c.json({ handles: targets.map((target) => target.handle) })
+  })
 
   // Source read-back for machines: returns an artifact's text content for any
   // version, as plain text (?v=N selects a version; defaults to current).

@@ -158,6 +158,21 @@ describe("comment channel fan-out", () => {
     expect(emails[0]?.payload).toContain(owner.email)
   })
 
+  it("does not page a workspace seat from an invite-only document", async () => {
+    const { app, meta } = makeAuthedApp("fanout-invite-only-mention", [owner, editor], "editor")
+    const made = await pub(
+      app,
+      "# Private",
+      { workspace_access: "none", link_role: "none", listed: "none" },
+      undefined,
+      as(owner.email),
+    )
+    const shortId = (await made.json()).short_id as string
+    const res = await comment(app, shortId, owner.email, [{ id: editor.id, name: "Ed" }])
+    expect(res.status).toBe(201)
+    expect(await meta.listNotifications(editor.id, 10)).toEqual([])
+  })
+
   it("does not email a mention when the email toggle is off", async () => {
     const { app, meta } = makeAuthedApp("fanout-email-off", [owner, editor], "editor")
     await meta.setOrgSettings("default", {
