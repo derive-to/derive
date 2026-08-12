@@ -1,4 +1,5 @@
 import {
+  type ArtifactRecord,
   newId,
   parseRef,
   type TemplateLibraryEntryRecord,
@@ -10,6 +11,8 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson } from "../lib/http"
+import { likelySecrets } from "../lib/secret-scan"
+import { canReadTemplateLibrary } from "../lib/template-library-access"
 
 /**
  * Reusable template libraries.
@@ -24,10 +27,13 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
   const {
     activeWorkspace,
     authorize,
+    authorizeStanding,
     isToken,
+    limited,
     managementPrincipal,
     membershipOf,
     meta,
+    publishLimiter,
     sourceText,
     workspaceCan,
   } = ctx
@@ -46,7 +52,6 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     .object({
       id: z.string(),
       library_id: z.string(),
-      source_artifact_id: z.string().describe("Provenance source; never used to read the starter."),
       source_version: z.number().describe("Pinned source version captured on publication."),
       kind: EntryKind,
       category: z.string(),
@@ -57,7 +62,6 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       sections: z.array(z.string()),
       inputs: z.array(Input),
       tags: z.array(z.string()),
-      created_by: z.string(),
       created_at: z.string(),
     })
     .openapi("TemplateLibraryEntry")
@@ -71,13 +75,11 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
   const Library = z
     .object({
       id: z.string(),
-      org_id: z.string(),
       title: z.string(),
       description: z.string(),
       scope: Scope.describe(
         "private = owner only; workspace = workspace members; public = anyone with the library URL or catalog.",
       ),
-      created_by: z.string(),
       created_at: z.string(),
       updated_at: z.string().nullable(),
       entry_count: z.number(),
@@ -100,7 +102,6 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
   const entryJson = (entry: TemplateLibraryEntryRecord) => ({
     id: entry.id,
     library_id: entry.library_id,
-    source_artifact_id: entry.source_artifact_id,
     source_version: entry.source_version,
     kind: entry.kind,
     category: entry.category,
@@ -120,29 +121,21 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
           typeof (value as { required?: unknown }).required === "boolean"),
     ),
     tags: array(entry.tags_json, (value): value is string => typeof value === "string"),
-    created_by: entry.created_by,
     created_at: entry.created_at,
   })
 
   const ownerFor = async (c: Context): Promise<string | null> =>
     (await managementPrincipal(c)) ?? (isToken(c) ? "token" : null)
 
-  // Context templates are portable manifests, never secret containers. Permit
-  // descriptive prose and {{PLACEHOLDER}} bindings, but refuse values that look
-  // like an actual bearer/API/client secret before a library can distribute it.
-  const hasContextCredential = (source: string) =>
-    /\b(?:api[_-]?key|client[_-]?secret|access[_-]?token|refresh[_-]?token|authorization)\b\s*[:=]\s*["']?(?!\{\{)[A-Za-z0-9_\-/+=]{12,}/i.test(
-      source,
-    )
-
   const canRead = async (c: Context, library: TemplateLibraryRecord): Promise<boolean> => {
-    if (library.scope === "public" || isToken(c)) return true
-    // A workspace library has no cross-workspace ACL by design. The active
-    // workspace check also makes an OAuth/MCP connection respect its selected
-    // workspace rather than using a browser-session-only membership check.
-    if ((await activeWorkspace(c)) !== library.org_id || !(await workspaceCan(c, "read")))
-      return false
-    return library.scope === "workspace" || library.created_by === (await ownerFor(c))
+    const workspaceReachable =
+      (await activeWorkspace(c)) === library.org_id && (await workspaceCan(c, "read"))
+    return canReadTemplateLibrary(library, {
+      ownerId: await ownerFor(c),
+      workspaceReachable,
+      isMember: workspaceReachable,
+      isOperator: isToken(c),
+    })
   }
   const canManage = async (c: Context, library: TemplateLibraryRecord): Promise<boolean> => {
     const owner = await ownerFor(c)
@@ -152,21 +145,77 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     return !!owner && (await membershipOf(c, library.org_id, owner))?.role === "owner"
   }
 
+  /** Copying a pinned source into a wider library is a share operation, not merely a read. */
+  const canDistribute = async (
+    c: Context,
+    source: ArtifactRecord,
+    scope: "private" | "workspace" | "public",
+    targetOrg: string,
+  ): Promise<boolean> => {
+    if (scope === "private" || isToken(c)) return true
+    if (
+      scope === "workspace" &&
+      source.org_id === targetOrg &&
+      source.workspace_access === "member"
+    )
+      return true
+    if (scope === "public" && source.link_role !== "none" && !source.password_hash) return true
+    return authorizeStanding(c, "share", source)
+  }
+
+  const scopeCanDistributeEntries = async (
+    c: Context,
+    library: TemplateLibraryRecord,
+    scope: "private" | "workspace" | "public",
+  ): Promise<boolean> => {
+    if (scope === "private") return true
+    const entries = await meta.listTemplateLibraryEntries(library.id)
+    for (const entry of entries) {
+      const source = await meta.getArtifactById(entry.source_artifact_id)
+      const starter =
+        scope === "public"
+          ? await sourceText({
+              blob_key: entry.source_blob_key,
+              content_type: entry.source_content_type,
+            })
+          : ""
+      if (
+        !source ||
+        source.removed_at ||
+        (scope === "public" && (starter === null || likelySecrets(starter).length > 0)) ||
+        !(await canDistribute(c, source, scope, library.org_id))
+      )
+        return false
+    }
+    return true
+  }
+
   const libraryJson = async (
     c: Context,
     library: TemplateLibraryRecord,
     opts?: {
       entries?: TemplateLibraryEntryRecord[]
+      entryCount?: number
       publisher?: { name: string | null; username: string | null; image: string | null }
     },
   ) => {
-    const entries = opts?.entries ?? (await meta.listTemplateLibraryEntries(library.id))
+    const entries = opts?.entries
+    const entryCount =
+      opts?.entryCount ??
+      entries?.length ??
+      (await meta.countTemplateLibraryEntries([library.id]))[library.id] ??
+      0
     const publisher = opts?.publisher ??
       (await meta.getUsers([library.created_by]))[0] ?? { name: null, username: null, image: null }
     return {
-      ...library,
-      entry_count: entries.length,
-      ...(opts?.entries ? { entries: entries.map(entryJson) } : {}),
+      id: library.id,
+      title: library.title,
+      description: library.description,
+      scope: library.scope,
+      created_at: library.created_at,
+      updated_at: library.updated_at,
+      entry_count: entryCount,
+      ...(entries ? { entries: entries.map(entryJson) } : {}),
       publisher: {
         name: publisher.name ?? publisher.username ?? null,
         username: publisher.username ?? null,
@@ -199,7 +248,11 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
         200: {
           description:
             "Libraries the caller can discover. Public libraries are available anonymously.",
-          content: { "application/json": { schema: z.object({ libraries: z.array(Library) }) } },
+          content: {
+            "application/json": {
+              schema: z.object({ libraries: z.array(Library), truncated: z.boolean() }),
+            },
+          },
         },
       },
     }),
@@ -208,18 +261,26 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       const orgId = await activeWorkspace(c)
       const canReadWorkspace = await workspaceCan(c, "read")
       const [publicLibraries, workspaceLibraries, personalLibraries] = await Promise.all([
-        meta.listTemplateLibraries({ scope: "public" }),
-        canReadWorkspace ? meta.listTemplateLibraries({ orgId, scope: "workspace" }) : [],
-        owner ? meta.listTemplateLibraries({ orgId, scope: "private", createdBy: owner }) : [],
+        meta.listTemplateLibraries({ scope: "public", limit: 101 }),
+        canReadWorkspace
+          ? meta.listTemplateLibraries({ orgId, scope: "workspace", limit: 101 })
+          : [],
+        owner
+          ? meta.listTemplateLibraries({ orgId, scope: "private", createdBy: owner, limit: 101 })
+          : [],
       ])
       const seen = new Set<string>()
-      const libraries = [...personalLibraries, ...workspaceLibraries, ...publicLibraries]
+      const allLibraries = [...personalLibraries, ...workspaceLibraries, ...publicLibraries]
         .filter((library) => {
           if (seen.has(library.id)) return false
           seen.add(library.id)
           return true
         })
         .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      const libraries = allLibraries.slice(0, 100)
+      const entryCounts = await meta.countTemplateLibraryEntries(
+        libraries.map((library) => library.id),
+      )
       const publishers = new Map(
         (await meta.getUsers(libraries.map((library) => library.created_by))).map((user) => [
           user.id,
@@ -229,9 +290,13 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       return c.json({
         libraries: await Promise.all(
           libraries.map((library) =>
-            libraryJson(c, library, { publisher: publishers.get(library.created_by) }),
+            libraryJson(c, library, {
+              entryCount: entryCounts[library.id] ?? 0,
+              publisher: publishers.get(library.created_by),
+            }),
           ),
         ),
+        truncated: allLibraries.length > libraries.length,
       })
     },
   )
@@ -251,8 +316,13 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       if (!(await workspaceCan(c, "publish"))) return bail(fail(c, 403, "forbidden"))
+      const rateLimited = await limited(c, publishLimiter)
+      if (rateLimited) return bail(rateLimited)
       const owner = await ownerFor(c)
       if (!owner) return bail(fail(c, 401, "unauthenticated"))
+      const orgId = await activeWorkspace(c)
+      if ((await meta.listTemplateLibraries({ orgId, createdBy: owner, limit: 100 })).length >= 100)
+        return bail(fail(c, 409, "template library limit reached for this workspace"))
       const body = await readJson(
         c,
         z.object({
@@ -264,7 +334,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       if (body instanceof Response) return bail(body)
       const library = await meta.createTemplateLibrary({
         id: newId("tlb"),
-        org_id: await activeWorkspace(c),
+        org_id: orgId,
         title: body.title,
         description: body.description ?? "",
         scope: body.scope ?? "private",
@@ -316,6 +386,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     async (c) => {
       const library = await requireManagedLibrary(c)
       if (library instanceof Response) return bail(library)
+      const rateLimited = await limited(c, publishLimiter)
+      if (rateLimited) return bail(rateLimited)
       const body = await readJson(
         c,
         z.object({
@@ -325,6 +397,18 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
         }),
       )
       if (body instanceof Response) return bail(body)
+      if (
+        body.scope &&
+        body.scope !== library.scope &&
+        !(await scopeCanDistributeEntries(c, library, body.scope))
+      )
+        return bail(
+          fail(
+            c,
+            403,
+            "one or more starters cannot be shared at that library scope; change their access or remove them first",
+          ),
+        )
       const updated = await meta.updateTemplateLibrary(library.id, body)
       if (!updated) return bail(fail(c, 404, "not found"))
       return c.json(await libraryJson(c, updated))
@@ -343,6 +427,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     async (c) => {
       const library = await requireManagedLibrary(c)
       if (library instanceof Response) return bail(library)
+      const rateLimited = await limited(c, publishLimiter)
+      if (rateLimited) return bail(rateLimited)
       await meta.deleteTemplateLibrary(library.id)
       return c.body(null, 204)
     },
@@ -365,6 +451,10 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     async (c) => {
       const library = await requireManagedLibrary(c)
       if (library instanceof Response) return bail(library)
+      const rateLimited = await limited(c, publishLimiter)
+      if (rateLimited) return bail(rateLimited)
+      if (((await meta.countTemplateLibraryEntries([library.id]))[library.id] ?? 0) >= 200)
+        return bail(fail(c, 409, "this template library already has 200 starters"))
       const body = await readJson(
         c,
         z.object({
@@ -386,7 +476,16 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       // extracting the id; its explicit source_version still wins if supplied.
       const sourceRef = parseRef(body.source_short_id)
       const source = await meta.getByShortId(sourceRef.shortId)
-      if (!source || !(await authorize(c, "read", source))) return bail(fail(c, 404, "not found"))
+      if (!source || source.removed_at || !(await authorize(c, "read", source)))
+        return bail(fail(c, 404, "not found"))
+      if (!(await canDistribute(c, source, library.scope, library.org_id)))
+        return bail(
+          fail(
+            c,
+            403,
+            "you can read this source, but you cannot distribute it at this library scope",
+          ),
+        )
       const versionNumber = body.source_version ?? sourceRef.version ?? source.current_version
       const version = await meta.getVersion(source.id, versionNumber)
       if (!version) return bail(fail(c, 404, "not found"))
@@ -426,12 +525,14 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
             ),
           )
       }
-      if (body.kind === "context" && hasContextCredential(starter))
+      const secrets =
+        body.kind === "context" || library.scope === "public" ? likelySecrets(starter) : []
+      if (secrets.length)
         return bail(
           fail(
             c,
             422,
-            "context templates cannot contain credentials; use a named binding or {{PLACEHOLDER}} instead",
+            `context template looks like it contains ${secrets.join(", ")}; replace credentials with named bindings such as {{API_KEY}}`,
           ),
         )
       const owner = await ownerFor(c)
@@ -470,6 +571,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     async (c) => {
       const library = await requireManagedLibrary(c)
       if (library instanceof Response) return bail(library)
+      const rateLimited = await limited(c, publishLimiter)
+      if (rateLimited) return bail(rateLimited)
       const entry = await meta.getTemplateLibraryEntry(c.req.param("entryId"))
       if (!entry || entry.library_id !== library.id) return bail(fail(c, 404, "not found"))
       await meta.deleteTemplateLibraryEntry(entry.id)

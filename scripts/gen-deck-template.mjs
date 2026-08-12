@@ -28,6 +28,8 @@ const SRC = join(ROOT, "packages/core/src/deck-template.html")
 // The title the starter names itself with, swapped by deckTemplate(title). It appears in
 // <title>, the opening eyebrow, and the <h1> — all three are the deck naming itself.
 const TITLE_SENTINEL = "New deck"
+const SLIDES_START = "<!-- derive:slides:start -->"
+const SLIDES_END = "<!-- derive:slides:end -->"
 
 /** The load-bearing contract. Each entry: what to find, and what breaks without it. */
 const CONTRACT = [
@@ -43,6 +45,8 @@ const html = readFileSync(SRC, "utf8")
 const problems = []
 for (const [needle, why] of CONTRACT)
   if (!html.includes(needle)) problems.push(`missing ${needle} — ${why}`)
+if (html.split(SLIDES_START).length !== 2 || html.split(SLIDES_END).length !== 2)
+  problems.push("the canonical deck needs exactly one stable slide-slot marker pair")
 // The same count the runtime uses (packages/core/src/decks.ts): real slide tags only, and
 // HTML comments stripped first — this file's own annotated header describes a slide element
 // in prose, and prose about decks must never count as one. Comment stripping mirrors the
@@ -87,6 +91,8 @@ const BANNER = (lang) =>
   `// imports, safe in every build.\n`
 
 const DOC = `/** The canonical deck starter, with its own title. Pass the deck's title to name it. */`
+const SLOT_DOC = `/** Put authored slide sections into the canonical deck's supported slide slot. */`
+const generatedInterpolation = (expression) => `\${${expression}}`
 
 /** The generated module text for a target. `lang` is "ts" or "js". */
 const moduleFor = (lang) => {
@@ -94,7 +100,14 @@ const moduleFor = (lang) => {
   return (
     `${BANNER(lang)}\nexport const DECK_TEMPLATE${typed ? ": string" : ""} = ${JSON.stringify(html)}\n\n` +
     `${DOC}\nexport const deckTemplate = (title${typed ? ": string" : ""})${typed ? ": string" : ""} =>\n` +
-    `  DECK_TEMPLATE.replaceAll(${JSON.stringify(TITLE_SENTINEL)}, title)\n`
+    `  DECK_TEMPLATE.replaceAll(${JSON.stringify(TITLE_SENTINEL)}, title)\n\n` +
+    `${SLOT_DOC}\nexport const deckTemplateWithSlides = (title${typed ? ": string" : ""}, slides${typed ? ": string" : ""})${typed ? ": string" : ""} => {\n` +
+    `  const deck = deckTemplate(title)\n` +
+    `  const start = deck.indexOf(${JSON.stringify(SLIDES_START)})\n` +
+    `  const end = deck.indexOf(${JSON.stringify(SLIDES_END)})\n` +
+    `  if (start < 0 || end <= start) throw new Error("canonical deck slide slot is missing")\n` +
+    `  return \`${generatedInterpolation(`deck.slice(0, start + ${SLIDES_START.length})`)}\n${generatedInterpolation("slides.trim()")}\n${generatedInterpolation("deck.slice(end)")}\`\n` +
+    `}\n`
   )
 }
 

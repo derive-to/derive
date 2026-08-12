@@ -253,33 +253,38 @@ export function registerFindTool(tc: ToolContext): void {
           uri: `derive://templates/${template.id}`,
         }))
         const [publicLibraries, workspaceLibraries, privateLibraries] = await Promise.all([
-          ctx.meta.listTemplateLibraries({ scope: "public" }),
-          ctx.meta.listTemplateLibraries({ orgId: t.org, scope: "workspace" }),
+          ctx.meta.listTemplateLibraries({ scope: "public", limit: 101 }),
+          ctx.meta.listTemplateLibraries({ orgId: t.org, scope: "workspace", limit: 101 }),
           ownerId
             ? ctx.meta.listTemplateLibraries({
                 orgId: t.org,
                 scope: "private",
                 createdBy: ownerId,
+                limit: 101,
               })
             : [],
         ])
-        const libraries = [...privateLibraries, ...workspaceLibraries, ...publicLibraries].filter(
+        const allLibraries = [
+          ...privateLibraries,
+          ...workspaceLibraries,
+          ...publicLibraries,
+        ].filter(
           (library, index, all) =>
             all.findIndex((candidate) => candidate.id === library.id) === index,
         )
-        const authored = (
-          await Promise.all(
-            libraries.map(async (library) =>
-              (
-                await ctx.meta.listTemplateLibraryEntries(library.id)
-              ).map((entry) => ({
-                library,
-                entry,
-              })),
-            ),
-          )
+        const libraries = allLibraries
+          .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          .slice(0, 100)
+        const libraryById = new Map(libraries.map((library) => [library.id, library]))
+        const entries = await ctx.meta.listTemplateLibraryEntriesForLibraries(
+          libraries.map((library) => library.id),
+          1_000,
         )
-          .flat()
+        const authoredAll = entries
+          .flatMap((entry) => {
+            const library = libraryById.get(entry.library_id)
+            return library ? [{ library, entry }] : []
+          })
           .filter(({ library, entry }) => {
             if (!needle) return true
             return [
@@ -294,24 +299,28 @@ export function registerFindTool(tc: ToolContext): void {
               .toLowerCase()
               .includes(needle)
           })
-          .map(({ library, entry }) => ({
-            type: "template" as const,
-            source: "library" as const,
-            id: entry.id,
-            title: entry.title,
-            description: entry.description,
-            kind: entry.kind,
-            category: entry.category,
-            format: entry.format,
-            library: { id: library.id, title: library.title, scope: library.scope },
-            uri: `derive://template-libraries/${library.id}/${entry.id}`,
-          }))
+        const authored = authoredAll.slice(0, 100).map(({ library, entry }) => ({
+          type: "template" as const,
+          source: "library" as const,
+          id: entry.id,
+          title: entry.title,
+          description: entry.description,
+          kind: entry.kind,
+          category: entry.category,
+          format: entry.format,
+          library: { id: library.id, title: library.title, scope: library.scope },
+          uri: `derive://template-libraries/${library.id}/${entry.id}`,
+        }))
         return json({
           workspace: t.org,
           ...(query ? { query } : {}),
           count: builtIns.length + authored.length,
           results: [...builtIns, ...authored],
-          next: "Read a result's uri for exact pinned source, then pass that source to publish.",
+          truncated:
+            allLibraries.length > libraries.length ||
+            entries.length === 1_000 ||
+            authoredAll.length > authored.length,
+          next: "Read a result's uri, adapt its starter to the person's request, publish with lineage, then inspect the render.",
         })
       }
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with

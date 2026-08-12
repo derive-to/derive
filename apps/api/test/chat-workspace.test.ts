@@ -29,7 +29,7 @@ const setup = async (
 ) => {
   const users = [{ id: "u-ws", email: "ws@x.com", name: "Wes" }, ...(opts?.extraUsers ?? [])]
   const seen: { system: string; tools: string[] }[] = []
-  const { app, meta } = makeAuthedApp(name, users, undefined, {
+  const { app, meta, ctx } = makeAuthedApp(name, users, undefined, {
     deps: {
       callModel: async (req) => {
         seen.push({ system: req.system, tools: req.tools.map((t) => t.name) })
@@ -67,7 +67,7 @@ const setup = async (
     // is closed (and the flag-off case below proves the gate).
     chatBeta: opts?.chatBeta ?? true,
   })
-  return { app, meta, seen }
+  return { app, meta, blobs: ctx.blobs, seen }
 }
 
 /** Open a workspace chat and wait for the reply to land. `serveAttended` is detached, so the
@@ -190,8 +190,12 @@ describe("the workspace chat", () => {
     let turn = 0
     let sawTemplateBody = false
     let sawWorkspaceEvidence = false
+    let sawRenderPixels = false
+    let renderMessage = ""
     let evidenceShortId = ""
-    const { app, meta, seen } = await setup("ws-template-agent", async (req) => {
+    let testMeta: Awaited<ReturnType<typeof setup>>["meta"]
+    let testBlobs: Awaited<ReturnType<typeof setup>>["blobs"]
+    const setupResult = await setup("ws-template-agent", async (req) => {
       turn++
       if (turn === 1)
         return {
@@ -251,6 +255,36 @@ describe("the workspace chat", () => {
           done: false,
         }
       }
+      if (turn === 4) {
+        const result = (await testMeta.listArtifacts({ orgId: "default" })).find(
+          (artifact) => artifact.title === "Acme onboarding narrative",
+        )
+        if (result) {
+          const previewKey = await testBlobs.put(
+            new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]),
+          )
+          await testMeta.setVersionPreview(result.id, result.current_version, {
+            preview_status: "ready",
+            preview_key: previewKey,
+          })
+          return {
+            text: "",
+            toolUses: [
+              {
+                id: "inspect-render",
+                name: "read",
+                input: { short_id: result.short_id, render: "top", wait: 1 },
+              },
+            ],
+            costUsd: null,
+            done: false,
+          }
+        }
+      }
+      if (turn === 5) {
+        renderMessage = JSON.stringify(req.messages.at(-1)?.content)
+        sawRenderPixels = renderMessage.includes("image-data")
+      }
       return {
         text: "I made and published your tailored onboarding narrative. Open the draft to review it.",
         toolUses: [],
@@ -258,6 +292,9 @@ describe("the workspace chat", () => {
         done: true,
       }
     })
+    const { app, meta, blobs, seen } = setupResult
+    testMeta = meta
+    testBlobs = blobs
 
     const evidence = await publishAs(
       app,
@@ -274,7 +311,7 @@ describe("the workspace chat", () => {
       {
         template_start: {
           uri: "derive://templates/narrative-pitch",
-          title: "Narrative pitch",
+          title: "Spoofed client title",
           kind: "artifact",
         },
       },
@@ -285,9 +322,14 @@ describe("the workspace chat", () => {
     expect(opened.messages[0]?.body_md).toContain("customer-onboarding story")
     expect(opened.messages[0]?.meta).toBeNull()
     expect(seen[0]?.system).toContain("derive://templates/narrative-pitch")
+    expect(seen[0]?.system).toContain("Narrative pitch")
+    expect(seen[0]?.system).not.toContain("Spoofed client title")
     expect(seen[0]?.system).toContain("Never expose raw source")
     expect(sawTemplateBody).toBe(true)
     expect(sawWorkspaceEvidence).toBe(true)
+    expect(renderMessage).toContain("image-data")
+    expect(sawRenderPixels).toBe(true)
+    expect(turn).toBe(5)
     expect(msgs.at(-1)?.body_md).toContain("published")
     const artifacts = await meta.listArtifacts({ orgId: "default" })
     const result = artifacts.find((artifact) => artifact.title === "Acme onboarding narrative")
@@ -309,6 +351,26 @@ describe("the workspace chat", () => {
       },
     })
     expect(res.status).toBe(400)
+    expect(seen).toHaveLength(0)
+
+    const missing = await ask(app, meta, "make it mine", {
+      template_start: {
+        uri: "derive://templates/not-a-real-template",
+        title: "Plausible but missing",
+        kind: "artifact",
+      },
+    })
+    expect(missing.res.status).toBe(404)
+    expect(seen).toHaveLength(0)
+
+    const wrongKind = await ask(app, meta, "make it mine", {
+      template_start: {
+        uri: "derive://templates/narrative-pitch",
+        title: "Narrative pitch",
+        kind: "context",
+      },
+    })
+    expect(wrongKind.res.status).toBe(422)
     expect(seen).toHaveLength(0)
   })
 

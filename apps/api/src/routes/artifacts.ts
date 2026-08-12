@@ -105,6 +105,7 @@ import {
 } from "../lib/search"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
 import { normalizeTags, parseTagsField } from "../lib/tags"
+import { canReadTemplateLibrary } from "../lib/template-library-access"
 import { log } from "../log"
 import { Artifact } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
@@ -660,11 +661,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       const callerId = tokenUser?.id ?? (await actingUser(c))?.id ?? null
       const workspaceReadable =
         library.org_id === org && (tokenAuth ? true : await workspaceCan(c, "read"))
-      const libraryReadable =
-        library.scope === "public" ||
-        (workspaceReadable &&
-          (library.scope === "workspace" ||
-            (library.scope === "private" && library.created_by === callerId)))
+      const member = callerId ? await meta.getMembership(library.org_id, callerId) : null
+      const libraryReadable = canReadTemplateLibrary(library, {
+        ownerId: callerId,
+        workspaceReachable: workspaceReadable,
+        isMember: !!member,
+        isOperator: isToken(c),
+      })
       if (!libraryReadable) return fail(c, 404, "template entry not found")
       derivedFromId = entry.source_artifact_id
     }

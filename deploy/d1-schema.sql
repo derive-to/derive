@@ -778,6 +778,8 @@ CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)
 
 CREATE INDEX IF NOT EXISTS template_library_org_scope ON template_library (org_id, scope, created_at);
 
+CREATE INDEX IF NOT EXISTS template_library_scope_time ON template_library (scope, created_at, id);
+
 CREATE INDEX IF NOT EXISTS template_library_owner ON template_library (created_by, created_at);
 
 CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);

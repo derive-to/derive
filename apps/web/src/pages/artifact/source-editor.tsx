@@ -280,7 +280,8 @@ export function SourceEditor({
               <Icon name="lock" size={16} className="text-warning" />
               <span className="font-medium text-warning">Interactions paused</span>
               <span className="min-w-48 flex-1 text-muted-foreground">
-                The visual is safe to inspect. Run interactions only when you trust this starter.
+                Scripts, forms, and popups are paused. External images or fonts may still load. Run
+                interactions only when you trust the source.
               </span>
               {onEnableInteractivePreview && (
                 <Button

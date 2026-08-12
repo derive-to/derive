@@ -3057,9 +3057,6 @@
           "id": {
             "type": "string"
           },
-          "org_id": {
-            "type": "string"
-          },
           "title": {
             "type": "string"
           },
@@ -3074,9 +3071,6 @@
               "public"
             ],
             "description": "private = owner only; workspace = workspace members; public = anyone with the library URL or catalog."
-          },
-          "created_by": {
-            "type": "string"
           },
           "created_at": {
             "type": "string"
@@ -3122,11 +3116,9 @@
         },
         "required": [
           "id",
-          "org_id",
           "title",
           "description",
           "scope",
-          "created_by",
           "created_at",
           "updated_at",
           "entry_count",
@@ -3141,10 +3133,6 @@
           },
           "library_id": {
             "type": "string"
-          },
-          "source_artifact_id": {
-            "type": "string",
-            "description": "Provenance source; never used to read the starter."
           },
           "source_version": {
             "type": "number",
@@ -3213,9 +3201,6 @@
               "type": "string"
             }
           },
-          "created_by": {
-            "type": "string"
-          },
           "created_at": {
             "type": "string"
           }
@@ -3223,7 +3208,6 @@
         "required": [
           "id",
           "library_id",
-          "source_artifact_id",
           "source_version",
           "kind",
           "category",
@@ -3234,7 +3218,6 @@
           "sections",
           "inputs",
           "tags",
-          "created_by",
           "created_at"
         ]
       },
@@ -9672,10 +9655,14 @@
                       "items": {
                         "$ref": "#/components/schemas/TemplateLibrary"
                       }
+                    },
+                    "truncated": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
-                    "libraries"
+                    "libraries",
+                    "truncated"
                   ]
                 }
               }

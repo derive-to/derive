@@ -52,7 +52,7 @@ import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
-import { TemplateStartSchema } from "../lib/template-start"
+import { resolveTemplateStart, TemplateStartSchema } from "../lib/template-start"
 import { log } from "../log"
 
 /**
@@ -2102,6 +2102,26 @@ export const contextRoutes = (ctx: AppContext) => {
       // that opens and then answers with something they did not choose.
       if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
+      const templateStart = b.template_start
+        ? await resolveTemplateStart(b.template_start, {
+            meta,
+            userId: me.id,
+            workspaceId: b.workspace,
+            canReadArtifact: (artifact) => authorize(c, "read", artifact),
+            sourceText,
+            membership: (orgId, userId) => meta.getMembership(orgId, userId),
+          })
+        : null
+      if (templateStart && !templateStart.ok)
+        return bail(
+          fail(
+            c,
+            templateStart.reason === "kind_mismatch" ? 422 : 404,
+            templateStart.reason === "kind_mismatch"
+              ? "this starter is not the requested template kind"
+              : "template starter not found or unavailable",
+          ),
+        )
       const created = await meta.createSessionWithMessage(
         {
           id: newId("ses"),
@@ -2117,7 +2137,7 @@ export const contextRoutes = (ctx: AppContext) => {
           author_kind: "asker",
           author_id: me.id,
           body_md: b.body_md,
-          meta: b.template_start ? JSON.stringify({ template_start: b.template_start }) : null,
+          meta: templateStart?.ok ? JSON.stringify({ template_start: templateStart.value }) : null,
         },
         "open",
       )

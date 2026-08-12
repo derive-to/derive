@@ -2659,6 +2659,7 @@ export function makeRepos(db: SqliteDb) {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    limit?: number
   }): Promise<TemplateLibraryRecord[]> => {
     const rows = await db
       .select()
@@ -2671,6 +2672,7 @@ export function makeRepos(db: SqliteDb) {
         ),
       )
       .orderBy(desc(templateLibrary.created_at))
+      .limit(Math.min(Math.max(opts?.limit ?? 1_000, 1), 1_000))
       .all()
     return rows
   }
@@ -2714,6 +2716,31 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(templateLibraryEntry.library_id, libraryId))
       .orderBy(desc(templateLibraryEntry.created_at))
       .all()
+  const listTemplateLibraryEntriesForLibraries = async (
+    libraryIds: string[],
+    limit: number,
+  ): Promise<TemplateLibraryEntryRecord[]> =>
+    libraryIds.length
+      ? db
+          .select()
+          .from(templateLibraryEntry)
+          .where(inArray(templateLibraryEntry.library_id, libraryIds))
+          .orderBy(desc(templateLibraryEntry.created_at))
+          .limit(Math.min(Math.max(limit, 1), 1_000))
+          .all()
+      : []
+  const countTemplateLibraryEntries = async (
+    libraryIds: string[],
+  ): Promise<Record<string, number>> => {
+    if (!libraryIds.length) return {}
+    const rows = await db
+      .select({ library_id: templateLibraryEntry.library_id, total: count() })
+      .from(templateLibraryEntry)
+      .where(inArray(templateLibraryEntry.library_id, libraryIds))
+      .groupBy(templateLibraryEntry.library_id)
+      .all()
+    return Object.fromEntries(rows.map((row) => [row.library_id, Number(row.total)]))
+  }
   const deleteTemplateLibraryEntry = async (id: string): Promise<void> => {
     await db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id)).run()
   }
@@ -4705,6 +4732,13 @@ export function makeRepos(db: SqliteDb) {
         )
         .run()
     }
+    // The user may have contributed an entry to a library owned by somebody else.
+    // The library survives, but account deletion must still scrub that attribution.
+    await db
+      .update(templateLibraryEntry)
+      .set({ created_by: "__deleted_template_library_owner__" })
+      .where(eq(templateLibraryEntry.created_by, userId))
+      .run()
     // The user's own association rows go entirely.
     await db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId)).run()
     await db.delete(membership).where(eq(membership.user_id, userId)).run()
@@ -5083,6 +5117,8 @@ export function makeRepos(db: SqliteDb) {
     createTemplateLibraryEntry,
     getTemplateLibraryEntry,
     listTemplateLibraryEntries,
+    listTemplateLibraryEntriesForLibraries,
+    countTemplateLibraryEntries,
     deleteTemplateLibraryEntry,
     createRepoSource,
     getRepoSource,

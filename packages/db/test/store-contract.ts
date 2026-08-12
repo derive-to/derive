@@ -4209,6 +4209,13 @@ export function runStoreContract(
         scope: "public",
         created_by: leaver,
       })
+      const otherOwnedLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Other member's library",
+        scope: "workspace",
+        created_by: other,
+      })
       const entryFor = async (libraryId: string) =>
         store.createTemplateLibraryEntry({
           id: uuid(),
@@ -4231,6 +4238,7 @@ export function runStoreContract(
       const privateEntry = await entryFor(privateLibrary.id)
       const sharedEntry = await entryFor(sharedLibrary.id)
       const personalEntry = await entryFor(personalLibrary.id)
+      const contributedEntry = await entryFor(otherOwnedLibrary.id)
 
       await store.deleteUserData(leaver)
 
@@ -4251,6 +4259,12 @@ export function runStoreContract(
       expect(await store.getTemplateLibrary(sharedLibrary.id)).toMatchObject({ created_by: other })
       expect(await store.getTemplateLibraryEntry(sharedEntry.id)).toMatchObject({
         created_by: other,
+      })
+      expect(await store.getTemplateLibrary(otherOwnedLibrary.id)).toMatchObject({
+        created_by: other,
+      })
+      expect(await store.getTemplateLibraryEntry(contributedEntry.id)).toMatchObject({
+        created_by: "__deleted_template_library_owner__",
       })
       // Associations cleared.
       expect(await store.listUserFavoriteIds(leaver)).toEqual([])

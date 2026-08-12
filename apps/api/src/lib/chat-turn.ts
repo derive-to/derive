@@ -12,7 +12,7 @@
 
 import { type Role, type SessionMessageRecord, type SessionRecord, toMicroUsd } from "@derive/core"
 import { log } from "../log"
-import type { AgentLoopInput } from "./agent-loop"
+import type { AgentLoopInput, ReplyContract } from "./agent-loop"
 import type { ChatToolSurface } from "./chat-tools"
 import { CONTEXT_BUILDER_PROMPT } from "./context-builder-prompt"
 import type { ResolvedChatModel } from "./model-catalog"
@@ -169,18 +169,109 @@ export const runChatTurn = async (
 ): Promise<ChatTurnResult> => {
   const model = { id: deps.model.id, label: deps.model.label }
   const used: string[] = []
+  const artifactTemplateJob = input.templateStart?.kind === "artifact" && !input.purpose
+  let readStarter = false
+  let publishedShortId: string | null = null
+  let inspectedRender = false
+  const failedToolResult = (value: unknown): boolean =>
+    !!value && typeof value === "object" && typeof (value as { error?: unknown }).error === "string"
+  const richToolResult = (
+    value: unknown,
+  ): { type: "content"; value: Array<{ type?: string; text?: string }> } | null =>
+    value &&
+    typeof value === "object" &&
+    (value as { type?: unknown }).type === "content" &&
+    Array.isArray((value as { value?: unknown }).value)
+      ? (value as {
+          type: "content"
+          value: Array<{ type?: string; text?: string }>
+        })
+      : null
+  const publishReceipt = (value: unknown): { published?: unknown; short_id?: unknown } => {
+    if (value && typeof value === "object" && (value as { published?: unknown }).published)
+      return value as { published?: unknown; short_id?: unknown }
+    const text =
+      typeof value === "string"
+        ? value
+        : richToolResult(value)?.value.find((part) => part.type === "text")?.text
+    if (!text) return {}
+    try {
+      return JSON.parse(text) as { published?: unknown; short_id?: unknown }
+    } catch {
+      return {}
+    }
+  }
+  const templateContract: ReplyContract = artifactTemplateJob
+    ? {
+        text: "",
+        read: (text) => {
+          if (!publishedShortId)
+            return {
+              miss: {
+                detail: "the template job finished without publishing an adapted artifact",
+                nudge:
+                  "Finish the template job now: read the exact starter if needed, adapt it to the person's request and workspace evidence, and publish a new artifact. Do not merely describe what you would make.",
+              },
+            }
+          if (!inspectedRender)
+            return {
+              miss: {
+                detail: "the template job finished without inspecting its rendered artifact",
+                nudge: `Before answering, visually inspect the published artifact with read({short_id:${JSON.stringify(publishedShortId)}, render:"top", wait:30}). If the render exposes a visual problem, revise it and inspect again.`,
+              },
+            }
+          return proseContract.read(text)
+        },
+      }
+    : proseContract
   const out = await runTurn({
     system: systemPrompt(input),
     messages: asTurns(input.transcript, (m) => ({
       fromAgent: m.author_kind !== "asker",
       body: m.body_md,
     })),
-    contract: proseContract,
+    contract: templateContract,
     callModel: deps.model.callModel as AgentLoopInput["callModel"],
     tools: input.tools.tools,
     executeTool: async (name, args) => {
       if (!used.includes(name)) used.push(name)
-      return input.tools.execute(name, args)
+      const values =
+        args && typeof args === "object" ? { ...(args as Record<string, unknown>) } : {}
+      if (
+        artifactTemplateJob &&
+        name === "publish" &&
+        values.short_id === undefined &&
+        input.templateStart &&
+        !input.templateStart.uri.startsWith("derive://templates/")
+      )
+        // Authored starters always retain exact lineage. This is product state, not a prompt
+        // suggestion that template content can override.
+        values.derived_from = input.templateStart.uri
+      if (artifactTemplateJob && name === "publish" && !readStarter)
+        return {
+          error: `Read the selected starter first with read({short_id:${JSON.stringify(input.templateStart?.uri)}}), then adapt it.`,
+        }
+      const result = await input.tools.execute(name, values)
+      if (!failedToolResult(result)) {
+        if (artifactTemplateJob && name === "read" && values.short_id === input.templateStart?.uri)
+          readStarter = true
+        if (artifactTemplateJob && name === "publish") {
+          const published = publishReceipt(result)
+          if (published.published === true && typeof published.short_id === "string") {
+            publishedShortId = published.short_id
+            inspectedRender =
+              richToolResult(result)?.value.some((part) => part.type === "image-data") === true
+          }
+        }
+        if (
+          artifactTemplateJob &&
+          name === "read" &&
+          typeof values.render === "string" &&
+          values.short_id === publishedShortId
+        )
+          inspectedRender = true
+      }
+      return result
     },
     // The gate cannot fire: proseContract never yields a revision, so decideWrite is never
     // consulted and `land` is unreachable. Stated with the safest values rather than omitted,

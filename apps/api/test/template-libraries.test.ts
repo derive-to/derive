@@ -1,3 +1,4 @@
+import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -246,5 +247,69 @@ describe("template libraries: pinned reusable starters", () => {
     )
     expect(duplicateInputs.status).toBe(422)
     expect(await duplicateInputs.text()).toMatch(/unique/i)
+  })
+
+  it("does not let read-only access widen a private source through a library", async () => {
+    const sourceJson = await (
+      await publishAs(
+        app,
+        "# Invite-only strategy",
+        { workspace_access: "none", link_role: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const source = await meta.getByShortId(sourceJson.short_id)
+    if (!source) throw new Error("missing private source")
+    await meta.setArtifactMember({
+      id: newId("am"),
+      artifact_id: source.id,
+      user_id: teammate.id,
+      role: "viewer",
+    })
+
+    const privateLibrary = await (
+      await app.request(
+        "/v1/template-libraries",
+        jsonAs(as(teammate.email), { title: "My private references", scope: "private" }),
+      )
+    ).json()
+    const entryBody = {
+      source_short_id: source.short_id,
+      kind: "artifact",
+      category: "Doc",
+      title: "Private strategy",
+      description: "A privately reusable reference.",
+      outcome: "A tailored strategy.",
+      sections: [],
+      inputs: [],
+      tags: [],
+    }
+    expect(
+      (
+        await app.request(
+          `/v1/template-libraries/${privateLibrary.id}/entries`,
+          jsonAs(as(teammate.email), entryBody),
+        )
+      ).status,
+    ).toBe(201)
+    const widen = await app.request(`/v1/template-libraries/${privateLibrary.id}`, {
+      method: "PATCH",
+      headers: { ...as(teammate.email), "content-type": "application/json" },
+      body: JSON.stringify({ scope: "public" }),
+    })
+    expect(widen.status).toBe(403)
+
+    const publicLibrary = await (
+      await app.request(
+        "/v1/template-libraries",
+        jsonAs(as(teammate.email), { title: "Public references", scope: "public" }),
+      )
+    ).json()
+    const distribute = await app.request(
+      `/v1/template-libraries/${publicLibrary.id}/entries`,
+      jsonAs(as(teammate.email), entryBody),
+    )
+    expect(distribute.status).toBe(403)
+    expect(await distribute.text()).toMatch(/cannot distribute/i)
   })
 })

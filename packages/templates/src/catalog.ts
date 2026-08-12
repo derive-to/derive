@@ -783,14 +783,14 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     title: "Brand guardian",
     defaultTitle: "Brand guardian manifest",
     description:
-      "Loads Brandprint and approved assets, reviews outputs, and proposes a compatible Theme.",
+      "Loads Brandprint and approved assets, reviews outputs, and proposes a compatible visual direction.",
     outcome: "Make brand guidance useful at creation time without turning it into a gatekeeper.",
     sections: [
       "Purpose",
       "Brandprint",
       "Approved assets",
       "Review method",
-      "Theme guidance",
+      "Visual direction",
       "Output",
       "Boundaries",
     ],
@@ -802,7 +802,7 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
     tags: ["brand", "review", "context"],
     starterPrompts: [
       "Review this against our Brandprint.",
-      "Propose a Theme for this artifact.",
+      "Propose a visual direction for this artifact.",
       "What is off-brand, and why?",
     ],
   },

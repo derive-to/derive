@@ -47,7 +47,7 @@ export function TemplateCard({
               </span>
             )}
           </span>
-          <span className="font-serif text-lg font-medium leading-tight tracking-tight text-foreground">
+          <span className="font-serif text-lg font-medium leading-tight tracking-tight text-foreground [overflow-wrap:anywhere]">
             {template.title}
           </span>
           <span className="line-clamp-2 text-sm text-pretty text-muted-foreground">
@@ -55,7 +55,7 @@ export function TemplateCard({
           </span>
         </span>
       </button>
-      <div className="border-t p-2 lg:hidden">
+      <div className="border-t p-2">
         <Button className="w-full" size="sm" onClick={onUse} data-testid="template-card-use">
           <Icon name="sparkles" /> {template.kind === "context" ? "Set up" : "Make it mine"}
         </Button>

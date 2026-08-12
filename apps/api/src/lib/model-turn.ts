@@ -136,6 +136,29 @@ interface ToolResultBlock {
   content?: unknown
 }
 
+const isToolResultOutput = (
+  value: unknown,
+): value is {
+  type: "content"
+  value: Array<
+    { type: "text"; text: string } | { type: "image-data"; data: string; mediaType: string }
+  >
+} =>
+  !!value &&
+  typeof value === "object" &&
+  (value as { type?: unknown }).type === "content" &&
+  Array.isArray((value as { value?: unknown }).value) &&
+  (value as { value: unknown[] }).value.every(
+    (part) =>
+      !!part &&
+      typeof part === "object" &&
+      (((part as { type?: unknown }).type === "text" &&
+        typeof (part as { text?: unknown }).text === "string") ||
+        ((part as { type?: unknown }).type === "image-data" &&
+          typeof (part as { data?: unknown }).data === "string" &&
+          typeof (part as { mediaType?: unknown }).mediaType === "string")),
+  )
+
 const isToolUse = (b: unknown): b is ToolUseBlock =>
   !!b && typeof b === "object" && "id" in b && "name" in b
 const isToolResult = (b: unknown): b is ToolResultBlock =>
@@ -161,10 +184,12 @@ export const asMessages = (system: string, messages: ModelMessage[]): SdkMessage
           // Falls back rather than throwing: a result whose call we never saw is still the
           // model's own answer coming back, and dropping it is the failure described above.
           toolName: nameById.get(r.tool_use_id) ?? "tool",
-          output: {
-            type: "text",
-            value: typeof r.content === "string" ? r.content : JSON.stringify(r.content ?? ""),
-          },
+          output: isToolResultOutput(r.content)
+            ? r.content
+            : {
+                type: "text",
+                value: typeof r.content === "string" ? r.content : JSON.stringify(r.content ?? ""),
+              },
         })),
       })
       continue

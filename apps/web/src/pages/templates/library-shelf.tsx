@@ -675,7 +675,7 @@ function EntryCard({
         </Badge>
       </div>
       <div className="min-w-0">
-        <h3 className="font-serif text-xl font-medium tracking-tight text-foreground">
+        <h3 className="font-serif text-xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
           {entry.title}
         </h3>
         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{entry.description}</p>
@@ -790,7 +790,7 @@ function LibraryDetail({
               {library.entry_count} starters · immutable versions
             </span>
           </div>
-          <h2 className="mt-3 font-serif text-3xl font-medium tracking-tight text-foreground">
+          <h2 className="mt-3 font-serif text-3xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
             {library.title}
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-pretty text-muted-foreground">
@@ -1005,7 +1005,7 @@ export function LibraryShelf({
                 </span>
               </div>
               <div>
-                <h3 className="font-serif text-xl font-medium tracking-tight text-foreground">
+                <h3 className="font-serif text-xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
                   {library.title}
                 </h3>
                 <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">

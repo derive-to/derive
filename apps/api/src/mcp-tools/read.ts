@@ -30,6 +30,7 @@ import { pickVariant } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
+import { canReadTemplateLibrary } from "../lib/template-library-access"
 import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -348,46 +349,53 @@ export function registerReadTool(tc: ToolContext): void {
       }
       const AUTHORED_TEMPLATES = "derive://template-libraries"
       if (short_id === AUTHORED_TEMPLATES || short_id.startsWith(`${AUTHORED_TEMPLATES}/`)) {
-        const canReadLibrary = async (library: {
-          org_id: string
-          scope: "private" | "workspace" | "public"
-          created_by: string
-        }) => {
-          if (library.scope === "public") return true
-          if (!ownerId || !inGrant(library.org_id)) return false
-          const member = await ctx.meta.getMembership(library.org_id, ownerId)
-          return !!member && (library.scope === "workspace" || library.created_by === ownerId)
+        const canReadLibrary = async (library: Parameters<typeof canReadTemplateLibrary>[0]) => {
+          const workspaceReachable = !!ownerId && inGrant(library.org_id)
+          const member = workspaceReachable
+            ? await ctx.meta.getMembership(library.org_id, ownerId as string)
+            : null
+          return canReadTemplateLibrary(library, {
+            ownerId,
+            workspaceReachable,
+            isMember: !!member,
+          })
         }
         if (short_id === AUTHORED_TEMPLATES) {
           const ws = await resolveWs(workspace)
           if ("error" in ws) return err(ws.error)
           const [publicLibraries, workspaceLibraries, privateLibraries] = await Promise.all([
-            ctx.meta.listTemplateLibraries({ scope: "public" }),
-            ctx.meta.listTemplateLibraries({ orgId: ws.org, scope: "workspace" }),
+            ctx.meta.listTemplateLibraries({ scope: "public", limit: 101 }),
+            ctx.meta.listTemplateLibraries({ orgId: ws.org, scope: "workspace", limit: 101 }),
             ownerId
               ? ctx.meta.listTemplateLibraries({
                   orgId: ws.org,
                   scope: "private",
                   createdBy: ownerId,
+                  limit: 101,
                 })
               : [],
           ])
-          const libraries = [...privateLibraries, ...workspaceLibraries, ...publicLibraries].filter(
-            (library, index, all) =>
-              all.findIndex((candidate) => candidate.id === library.id) === index,
+          const allLibraries = [...privateLibraries, ...workspaceLibraries, ...publicLibraries]
+            .filter(
+              (library, index, all) =>
+                all.findIndex((candidate) => candidate.id === library.id) === index,
+            )
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          const libraries = allLibraries.slice(0, 100)
+          const counts = await ctx.meta.countTemplateLibraryEntries(
+            libraries.map((library) => library.id),
           )
           return json({
             uri: short_id,
-            libraries: await Promise.all(
-              libraries.map(async (library) => ({
-                id: library.id,
-                title: library.title,
-                description: library.description,
-                scope: library.scope,
-                entry_count: (await ctx.meta.listTemplateLibraryEntries(library.id)).length,
-                read: `${AUTHORED_TEMPLATES}/${library.id}`,
-              })),
-            ),
+            truncated: allLibraries.length > libraries.length,
+            libraries: libraries.map((library) => ({
+              id: library.id,
+              title: library.title,
+              description: library.description,
+              scope: library.scope,
+              entry_count: counts[library.id] ?? 0,
+              read: `${AUTHORED_TEMPLATES}/${library.id}`,
+            })),
           })
         }
         const [libraryId = "", entryId] = short_id.slice(AUTHORED_TEMPLATES.length + 1).split("/")

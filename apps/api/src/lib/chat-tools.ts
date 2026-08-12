@@ -143,8 +143,24 @@ const unwrap = (result: unknown): unknown => {
   if (!result || typeof result !== "object") return result
   const r = result as {
     structuredContent?: unknown
-    content?: { type?: string; text?: string }[]
+    content?: { type?: string; text?: string; data?: string; mimeType?: string }[]
     isError?: boolean
+  }
+  if (Array.isArray(r.content)) {
+    const rich = r.content.filter(
+      (c) =>
+        (c?.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string") ||
+        (c?.type === "text" && typeof c.text === "string"),
+    )
+    if (rich.some((c) => c.type === "image"))
+      return {
+        type: "content",
+        value: rich.map((c) =>
+          c.type === "image"
+            ? { type: "image-data", data: c.data as string, mediaType: c.mimeType as string }
+            : { type: "text", text: c.text as string },
+        ),
+      }
   }
   if (r.structuredContent !== undefined) return r.structuredContent
   if (Array.isArray(r.content)) {

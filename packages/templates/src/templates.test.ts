@@ -41,6 +41,19 @@ describe("Derive built-in Templates catalog", () => {
     expect(first?.message).toBe("Created from derive/built-ins/narrative-pitch catalog v1")
   })
 
+  it("renders every deck through the canonical supported slide slot", () => {
+    for (const template of ARTIFACT_TEMPLATES.filter((item) => item.category === "Deck")) {
+      const draft = renderTemplate(template.id)
+      expect(draft?.source, template.id).toContain("<!-- derive:slides:start -->")
+      expect(draft?.source, template.id).toContain("<!-- derive:slides:end -->")
+      expect(
+        draft?.source.match(/^\s*<section class="slide" data-derive-slide=/gm),
+        template.id,
+      ).toHaveLength(template.sections.length)
+      expect(draft?.source, template.id).toContain('source: "derive-deck"')
+    }
+  })
+
   it("renders a supplied brief into built-in artifacts without exposing source bindings", () => {
     const deck = renderTemplate("narrative-pitch", {
       Audience: "Product and GTM leaders",

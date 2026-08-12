@@ -38,6 +38,7 @@ import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
 import { normalizeTags } from "../lib/tags"
+import { canReadTemplateLibrary } from "../lib/template-library-access"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   err,
@@ -484,12 +485,11 @@ export function registerPublishTool(tc: ToolContext): void {
           return err(`No template starter "${derived_from}" you can reach.`)
         const uid = actingFor?.id ?? ownerId
         const member = uid ? await ctx.meta.getMembership(library.org_id, uid) : null
-        const readable =
-          library.scope === "public" ||
-          (!!uid &&
-            inGrant(library.org_id) &&
-            !!member &&
-            (library.scope === "workspace" || library.created_by === uid))
+        const readable = canReadTemplateLibrary(library, {
+          ownerId: uid,
+          workspaceReachable: !!uid && inGrant(library.org_id),
+          isMember: !!member,
+        })
         if (!readable) return err(`No template starter "${derived_from}" you can reach.`)
         derivedFromId = entry.source_artifact_id
       } else if (derived_from) {

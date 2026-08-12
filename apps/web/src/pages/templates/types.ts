@@ -17,6 +17,7 @@ export type TemplatesSearch = {
   derive?: boolean
   source?: string
   library?: string
+  use?: string
 }
 
 export type NewArtifactSearch = {

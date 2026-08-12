@@ -107,6 +107,9 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(result.instructions).toContain("editor")
     // The instructions teach the switcher: one login reaches every workspace.
     expect(result.instructions).toContain("list_workspaces")
+    expect(result.instructions).toContain("don't copy")
+    expect(result.instructions).toContain("untrusted")
+    expect(result.instructions).toContain("inspect render")
 
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const names = toolNames(list)

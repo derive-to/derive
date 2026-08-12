@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link } from "@tanstack/react-router"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
@@ -115,7 +115,7 @@ function PublicTemplateLibraryCatalogInner() {
                 </span>
               </div>
               <div>
-                <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+                <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
                   {library.title}
                 </h2>
                 <p className="mt-1 text-sm text-pretty text-muted-foreground">
@@ -169,13 +169,32 @@ function PublicTemplateLibraryCatalogInner() {
 
 function PublicTemplateLibraryInner({ id }: { id: string }) {
   const { me } = useAuth()
+  const { use: resumeEntryId } = route.useSearch()
+  const navigate = route.useNavigate()
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
+  const resumed = useRef(false)
   const library = useQuery({
     queryKey: ["public-template-library", id] as const,
     queryFn: () => api.getTemplateLibrary(id),
     retry: false,
   })
   useDocumentTitle(library.data?.title ? `${library.data.title} · Templates` : "Template library")
+  useEffect(() => {
+    if (!me || !resumeEntryId || !library.data || resumed.current) return
+    resumed.current = true
+    const entry = library.data.entries?.find((candidate) => candidate.id === resumeEntryId)
+    if (entry) {
+      setAgentTarget({
+        uri: `derive://template-libraries/${library.data.id}/${entry.id}`,
+        title: entry.title,
+        description: entry.description,
+        kind: entry.kind,
+        category: entry.category,
+        inputs: entry.inputs,
+      })
+    }
+    void navigate({ search: {}, replace: true })
+  }, [library.data, me, navigate, resumeEntryId])
   if (library.isPending)
     return (
       <PageShell className="grid min-h-full place-items-center text-sm text-muted-foreground">
@@ -212,12 +231,20 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
       </PageShell>
     )
   const data = library.data
-  const copyPublicLink = async () => {
+  const scopeLabel =
+    data.scope === "public"
+      ? "Public template library"
+      : data.scope === "workspace"
+        ? "Workspace template library"
+        : "Private template library"
+  const scopeIcon =
+    data.scope === "public" ? "globe" : data.scope === "workspace" ? "workspace" : "lock"
+  const copyLibraryLink = async () => {
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/template-libraries/${data.id}`)
-      toast.success("Public library link copied")
+      toast.success("Library link copied")
     } catch {
-      toast.error("Couldn't copy the public library link")
+      toast.error("Couldn't copy the library link")
     }
   }
   return (
@@ -225,7 +252,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
       <section className="border-b pb-7">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" shape="pill">
-            <Icon name="globe" size={12} /> Public template library
+            <Icon name={scopeIcon} size={12} /> {scopeLabel}
           </Badge>
           <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
             {data.entry_count} pinned starters
@@ -244,7 +271,13 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
             avatar={data.publisher.image}
             handle={data.publisher.username}
           />
-          <span className="text-sm text-muted-foreground">Published starter kit</span>
+          <span className="text-sm text-muted-foreground">
+            {data.scope === "public"
+              ? "Published starter kit"
+              : data.scope === "workspace"
+                ? "Workspace starter kit"
+                : "Private starter kit"}
+          </span>
         </div>
         <p className="mt-4 max-w-2xl text-sm text-muted-foreground">
           Every starter gives Derive an exact, version-pinned shape to work from. You describe the
@@ -264,7 +297,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
           <Button
             variant="outline"
             size="sm"
-            onClick={copyPublicLink}
+            onClick={copyLibraryLink}
             data-testid="public-template-library-copy-link"
           >
             <Icon name="link" /> Copy library link
@@ -286,7 +319,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
               </Badge>
             </div>
             <div>
-              <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+              <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
                 {entry.title}
               </h2>
               <p className="mt-1 text-sm text-pretty text-muted-foreground">{entry.description}</p>
@@ -332,7 +365,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
                   to="/login"
                   search={{
                     signup: true,
-                    return_to: `/template-libraries/${data.id}`,
+                    return_to: `/template-libraries/${data.id}?use=${encodeURIComponent(entry.id)}`,
                   }}
                 >
                   <Icon name="sparkles" /> Make it mine

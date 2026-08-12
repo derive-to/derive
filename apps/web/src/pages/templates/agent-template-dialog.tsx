@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
-import { useEffect, useId, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -38,7 +38,9 @@ const exampleBrief = (target: AgentTemplateTarget) => {
 }
 
 const buildRequest = (target: AgentTemplateTarget, brief: string) =>
-  `Use the ${target.title} template to make this mine: ${brief.trim()}\n\nFind and use relevant evidence from this workspace when it helps. Build a polished first draft, publish it, inspect the rendered result, and show me what you made.`
+  target.kind === "context"
+    ? `Use the ${target.title} template to make this Context ours: ${brief.trim()}\n\nAdapt the setup to this workspace and ask only for decisions you cannot safely infer. Create the Context when the runner, sources, permissions, and credential bindings are clear, then show me what you set up.`
+    : `Use the ${target.title} template to make this mine: ${brief.trim()}\n\nFind and use relevant evidence from this workspace when it helps. Build a polished first draft, publish it, inspect the rendered result, and show me what you made.`
 
 /**
  * The product handoff from a reusable shape to an agent job. The internal URI
@@ -56,9 +58,17 @@ export function AgentTemplateDialog({
   const [brief, setBrief] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
+  const mounted = useRef(true)
   const descriptionId = useId()
   const workspaceState = useQuery(workspaceQuery())
   const workspace = workspaceState.data
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   useEffect(() => {
     if (target) {
@@ -71,8 +81,15 @@ export function AgentTemplateDialog({
   const isContext = target.kind === "context"
 
   return (
-    <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent className="gap-5 sm:max-w-xl" aria-describedby={descriptionId}>
+    <Dialog open onOpenChange={(open) => !submitting && onOpenChange(open)}>
+      <DialogContent
+        className="gap-5 sm:max-w-xl"
+        aria-describedby={descriptionId}
+        aria-busy={submitting || workspaceState.isPending}
+        showCloseButton={!submitting}
+        onEscapeKeyDown={(event) => submitting && event.preventDefault()}
+        onPointerDownOutside={(event) => submitting && event.preventDefault()}
+      >
         <DialogHeader className="pr-7">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <Badge variant="outline" shape="pill">
@@ -82,12 +99,13 @@ export function AgentTemplateDialog({
               {isContext ? "Context" : target.category}
             </span>
           </div>
-          <DialogTitle className="font-serif text-2xl tracking-tight">
+          <DialogTitle className="font-serif text-2xl tracking-tight [overflow-wrap:anywhere]">
             Make {target.title} yours
           </DialogTitle>
           <DialogDescription id={descriptionId} className="max-w-lg">
-            Tell Derive what you need. It will use this template as the shape, find useful workspace
-            evidence, and return a published first draft—not an empty form to fill in.
+            {isContext
+              ? "Tell Derive what this setup should accomplish. It will adapt the template to your workspace and build the Context with you—not hand you a manifest form."
+              : "Tell Derive what you need. It will treat this template as a strong reference, find useful workspace evidence, and return a published first draft—not an empty form to fill in."}
           </DialogDescription>
         </DialogHeader>
 
@@ -124,6 +142,12 @@ export function AgentTemplateDialog({
           />
         ) : null}
 
+        {workspaceState.isPending ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+            <Icon name="derive" className="animate-pulse" /> Connecting to this workspace…
+          </p>
+        ) : null}
+
         <form
           className="grid gap-4"
           onSubmit={async (event) => {
@@ -138,18 +162,20 @@ export function AgentTemplateDialog({
                 ...(isContext ? { purpose: "context_builder" as const } : {}),
                 template_start: { uri: target.uri, title: target.title, kind: target.kind },
               })
+              if (!mounted.current) return
               await navigate({
                 to: "/chat",
                 search: { session: created.session.id, model: undefined, ask: undefined },
               })
             } catch (cause) {
+              if (!mounted.current) return
               setError(
                 cause instanceof Error
                   ? cause.message
                   : "Derive couldn’t start this draft. Please try again.",
               )
             } finally {
-              setSubmitting(false)
+              if (mounted.current) setSubmitting(false)
             }
           }}
         >
@@ -179,9 +205,23 @@ export function AgentTemplateDialog({
 
           <div className="grid gap-2 rounded-xl border border-dashed px-3.5 py-3 sm:grid-cols-3 sm:gap-3">
             {[
-              ["01", "Uses the template", "Keeps its proven structure and visual language."],
-              ["02", "Makes it specific", "Finds relevant facts and adapts them to your brief."],
-              ["03", "Shows real work", "Publishes and inspects a finished first draft."],
+              [
+                "01",
+                "Reads the template",
+                "Understands its structure, interactions, and visual language.",
+              ],
+              [
+                "02",
+                "Makes it yours",
+                "Finds relevant workspace facts and adapts every decision to your brief.",
+              ],
+              [
+                "03",
+                "Shows real work",
+                isContext
+                  ? "Creates the setup when its authority and sources are clear."
+                  : "Publishes and inspects a finished first draft.",
+              ],
             ].map(([step, title, detail]) => (
               <div key={step} className="grid grid-cols-[auto_1fr] gap-2 sm:block">
                 <span className="font-mono text-2xs text-muted-foreground">{step}</span>

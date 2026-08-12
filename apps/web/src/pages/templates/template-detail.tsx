@@ -23,7 +23,7 @@ export function TemplateDetail({
         </Badge>
       </div>
       <div className="flex flex-col gap-2">
-        <h2 className="font-serif text-2xl font-medium leading-tight tracking-tight text-foreground">
+        <h2 className="font-serif text-2xl font-medium leading-tight tracking-tight text-foreground [overflow-wrap:anywhere]">
           {template.title}
         </h2>
         <p className="text-sm text-pretty text-muted-foreground">{template.description}</p>

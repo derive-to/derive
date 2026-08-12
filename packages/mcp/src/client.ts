@@ -188,7 +188,6 @@ export interface ViewStatsJson {
 export interface TemplateLibraryEntryJson {
   id: string
   library_id: string
-  source_artifact_id: string
   source_version: number
   kind: "artifact" | "context"
   category: string
@@ -199,16 +198,13 @@ export interface TemplateLibraryEntryJson {
   sections: string[]
   inputs: { name: string; description: string; required?: boolean }[]
   tags: string[]
-  created_by: string
   created_at: string
 }
 export interface TemplateLibraryJson {
   id: string
-  org_id: string
   title: string
   description: string
   scope: "private" | "workspace" | "public"
-  created_by: string
   created_at: string
   updated_at: string | null
   entry_count: number

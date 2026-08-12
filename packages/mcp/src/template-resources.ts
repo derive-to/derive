@@ -1,28 +1,12 @@
 import { templateResources } from "@derive-to/templates"
+import { type McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js"
 import type { DeriveClient, TemplateLibraryEntryJson, TemplateLibraryJson } from "./client"
-
-type ResourceMetadata = {
-  title: string
-  description: string
-  mimeType: "application/json"
-  annotations: { audience: "assistant"[]; priority: number }
-}
-
-type ResourceRead = (uri: URL) => Promise<{
-  contents: { uri: string; mimeType: "application/json"; text: string }[]
-}>
 
 // Kept deliberately small so the executable stdio entry and its test share the
 // registration contract. The remote server reads the same data directly from the
 // portable package; neither server owns a second catalog.
-export type TemplateResourceRegistrar = {
-  registerResource: (
-    name: string,
-    uri: string,
-    metadata: ResourceMetadata,
-    read: ResourceRead,
-  ) => unknown
-}
+export type TemplateResourceRegistrar = Pick<McpServer, "registerResource">
 
 export function registerTemplateResources(server: TemplateResourceRegistrar): void {
   for (const resource of templateResources()) {
@@ -38,7 +22,7 @@ export function registerTemplateResources(server: TemplateResourceRegistrar): vo
           priority: resource.uri.endsWith("/catalog") ? 0.85 : 0.7,
         },
       },
-      async (uri) => ({
+      async (uri: URL) => ({
         contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text }],
       }),
     )
@@ -50,24 +34,17 @@ const libraryEntry = (library: TemplateLibraryJson, entry: TemplateLibraryEntryJ
   uri: `derive://template-libraries/${library.id}/${entry.id}`,
 })
 
-/**
- * Register accessible authored libraries as read-only MCP resources. The stdio
- * server fetches its catalog once at startup (restart/reconnect to refresh), while
- * each resource read fetches the current metadata/starter. No tools are added:
- * agents still read a resource then use the existing `publish` tool.
- */
+const pathVariable = (variables: Variables, name: string): string => {
+  const value = variables[name]
+  if (typeof value !== "string") throw new Error(`missing URI variable ${name}`)
+  return value
+}
+
+/** Register one lazy catalog plus URI templates; startup cost stays constant. */
 export async function registerWorkspaceTemplateResources(
   server: TemplateResourceRegistrar,
   client: DeriveClient,
 ): Promise<void> {
-  let libraries: TemplateLibraryJson[]
-  try {
-    libraries = await client.listTemplateLibraries()
-  } catch {
-    // An older self-hosted server has no library routes. Built-ins remain
-    // available, preserving a graceful compatibility path.
-    return
-  }
   server.registerResource(
     "template-libraries:catalog",
     "derive://template-libraries",
@@ -78,100 +55,100 @@ export async function registerWorkspaceTemplateResources(
       mimeType: "application/json",
       annotations: { audience: ["assistant"], priority: 0.82 },
     },
-    async (uri) => ({
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: "application/json",
-          text: JSON.stringify(
-            {
-              libraries: libraries.map((library) => ({
-                id: library.id,
-                title: library.title,
-                description: library.description,
-                scope: library.scope,
-                entry_count: library.entry_count,
-                uri: `derive://template-libraries/${library.id}`,
-              })),
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-    }),
-  )
-  for (const library of libraries) {
-    const libraryUri = `derive://template-libraries/${library.id}`
-    server.registerResource(
-      `template-library:${library.id}`,
-      libraryUri,
-      {
-        title: library.title,
-        description: library.description || "Reusable Derive starters.",
-        mimeType: "application/json",
-        annotations: { audience: ["assistant"], priority: 0.76 },
-      },
-      async (uri) => {
-        const current = await client.getTemplateLibrary(library.id)
-        return {
-          contents: [
-            {
-              uri: uri.href,
-              mimeType: "application/json",
-              text: JSON.stringify(
-                {
-                  ...current,
-                  entries: (current.entries ?? []).map((entry) => libraryEntry(current, entry)),
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-        }
-      },
-    )
-    // Registration names must be known up-front, so use the startup snapshot for
-    // entry URIs. A reconnect picks up additions; reads themselves stay fresh.
-    const detail = await client.getTemplateLibrary(library.id).catch(() => null)
-    for (const entry of detail?.entries ?? []) {
-      const entryUri = `derive://template-libraries/${library.id}/${entry.id}`
-      server.registerResource(
-        `template-library-entry:${library.id}:${entry.id}`,
-        entryUri,
-        {
-          title: `${library.title} · ${entry.title}`,
-          description:
-            "Pinned starter source. Publish it as a new independent artifact; never edit in place.",
-          mimeType: "application/json",
-          annotations: { audience: ["assistant"], priority: 0.74 },
-        },
-        async (uri) => {
-          const starter = await client.getTemplateStarter(library.id, entry.id)
-          return {
-            contents: [
+    async (uri: URL) => {
+      const libraries = await client.listTemplateLibraries().catch(() => [])
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json" as const,
+            text: JSON.stringify(
               {
-                uri: uri.href,
-                mimeType: "application/json",
-                text: JSON.stringify(
-                  {
-                    ...starter.entry,
-                    starter: {
-                      source: starter.source,
-                      filename: `${starter.entry.id}.${starter.entry.format}`,
-                      mime_type: starter.entry.format === "md" ? "text/markdown" : "text/html",
-                      message: `Created from ${library.title}/${starter.entry.title} · source v${starter.entry.source_version}`,
-                    },
-                  },
-                  null,
-                  2,
-                ),
+                libraries: libraries.map((library) => ({
+                  id: library.id,
+                  title: library.title,
+                  description: library.description,
+                  scope: library.scope,
+                  entry_count: library.entry_count,
+                  uri: `derive://template-libraries/${library.id}`,
+                })),
               },
-            ],
-          }
-        },
-      )
-    }
-  }
+              null,
+              2,
+            ),
+          },
+        ],
+      }
+    },
+  )
+  server.registerResource(
+    "template-library",
+    new ResourceTemplate("derive://template-libraries/{libraryId}", { list: undefined }),
+    {
+      title: "Derive template library",
+      description: "One accessible authored library and its starter URIs.",
+      mimeType: "application/json",
+      annotations: { audience: ["assistant"], priority: 0.76 },
+    },
+    async (uri, variables) => {
+      const current = await client.getTemplateLibrary(pathVariable(variables, "libraryId"))
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json" as const,
+            text: JSON.stringify(
+              {
+                ...current,
+                entries: (current.entries ?? []).map((entry) => libraryEntry(current, entry)),
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }
+    },
+  )
+  server.registerResource(
+    "template-library-entry",
+    new ResourceTemplate("derive://template-libraries/{libraryId}/{entryId}", {
+      list: undefined,
+    }),
+    {
+      title: "Derive template starter",
+      description: "Pinned source to adapt into a new independent artifact.",
+      mimeType: "application/json",
+      annotations: { audience: ["assistant"], priority: 0.74 },
+    },
+    async (uri, variables) => {
+      const libraryId = pathVariable(variables, "libraryId")
+      const entryId = pathVariable(variables, "entryId")
+      const [library, starter] = await Promise.all([
+        client.getTemplateLibrary(libraryId),
+        client.getTemplateStarter(libraryId, entryId),
+      ])
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json" as const,
+            text: JSON.stringify(
+              {
+                ...starter.entry,
+                starter: {
+                  source: starter.source,
+                  filename: `${starter.entry.id}.${starter.entry.format}`,
+                  mime_type: starter.entry.format === "md" ? "text/markdown" : "text/html",
+                  message: `Created from ${library.title}/${starter.entry.title} · source v${starter.entry.source_version}`,
+                },
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }
+    },
+  )
 }

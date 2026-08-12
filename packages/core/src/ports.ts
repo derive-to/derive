@@ -1723,6 +1723,7 @@ export interface TemplateLibraryStore {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    limit?: number
   }): Promise<TemplateLibraryRecord[]>
   updateTemplateLibrary(
     id: string,
@@ -1732,6 +1733,12 @@ export interface TemplateLibraryStore {
   createTemplateLibraryEntry(x: NewTemplateLibraryEntry): Promise<TemplateLibraryEntryRecord>
   getTemplateLibraryEntry(id: string): Promise<TemplateLibraryEntryRecord | null>
   listTemplateLibraryEntries(libraryId: string): Promise<TemplateLibraryEntryRecord[]>
+  /** Batched catalog operations keep discovery query-count constant as libraries grow. */
+  listTemplateLibraryEntriesForLibraries(
+    libraryIds: string[],
+    limit: number,
+  ): Promise<TemplateLibraryEntryRecord[]>
+  countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>>
   deleteTemplateLibraryEntry(id: string): Promise<void>
 }
 

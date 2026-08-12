@@ -5831,6 +5831,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             libraries: components["schemas"]["TemplateLibrary"][];
+                            truncated: boolean;
                         };
                     };
                 };
@@ -7859,7 +7860,6 @@ export interface components {
         };
         TemplateLibrary: {
             id: string;
-            org_id: string;
             title: string;
             description: string;
             /**
@@ -7867,7 +7867,6 @@ export interface components {
              * @enum {string}
              */
             scope: "private" | "workspace" | "public";
-            created_by: string;
             created_at: string;
             updated_at: string | null;
             entry_count: number;
@@ -7882,8 +7881,6 @@ export interface components {
         TemplateLibraryEntry: {
             id: string;
             library_id: string;
-            /** @description Provenance source; never used to read the starter. */
-            source_artifact_id: string;
             /** @description Pinned source version captured on publication. */
             source_version: number;
             /** @enum {string} */
@@ -7901,7 +7898,6 @@ export interface components {
                 required?: boolean;
             }[];
             tags: string[];
-            created_by: string;
             created_at: string;
         };
         Viewer: {

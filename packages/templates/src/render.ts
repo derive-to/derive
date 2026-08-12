@@ -1,12 +1,11 @@
-import { deckTemplate } from "@derive/core"
+import { deckTemplateWithSlides } from "@derive/core"
 import { getTemplate } from "./catalog"
 import type { BuiltInTemplate, TemplateDraft } from "./types"
 
 type TemplateValues = Readonly<Record<string, string>>
 
-// A deterministic, authored visual recipe. Templates own usable source now; a
-// future Themes capability can transform a copied draft without changing this
-// catalog's structure or provenance contract.
+// A deterministic authored visual recipe. Templates own usable source while
+// preserving a stable catalog and provenance contract.
 const DEFAULT_TEMPLATE_STYLE =
   '--bg:#f4f1e9;--fg:#1c1a17;--mut:#6e675e;--line:#cfc7ba;--accent:#aa3f2b;--display:Georgia,serif;--body:"Helvetica Neue",sans-serif;--radius:0px'
 const esc = (value: string) =>
@@ -105,15 +104,7 @@ function deckDraft(template: BuiltInTemplate, values?: TemplateValues): string {
 </section>`
     })
     .join("\n")
-  const canonical = deckTemplate(template.defaultTitle)
-  const stageStart = canonical.indexOf('<div class="stage" id="stage">')
-  const firstSlide = canonical.indexOf('<section class="slide"', stageStart)
-  const stageClose = canonical.indexOf(
-    '\n</div>\n\n<button type="button" class="zone l"',
-    firstSlide,
-  )
-  if (firstSlide < 0 || stageClose < 0) return canonical
-  return `${canonical.slice(0, firstSlide)}${slides}\n${canonical.slice(stageClose)}`
+  return deckTemplateWithSlides(template.defaultTitle, slides)
 }
 
 function pageDraft(template: BuiltInTemplate, values?: TemplateValues): string {

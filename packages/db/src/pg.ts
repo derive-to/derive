@@ -3286,6 +3286,7 @@ export class PgMetaStore implements MetaStore {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    limit?: number
   }): Promise<TemplateLibraryRecord[]> {
     return this.db
       .select()
@@ -3298,6 +3299,7 @@ export class PgMetaStore implements MetaStore {
         ),
       )
       .orderBy(desc(templateLibrary.created_at))
+      .limit(Math.min(Math.max(opts?.limit ?? 1_000, 1), 1_000))
   }
   async updateTemplateLibrary(
     id: string,
@@ -3336,6 +3338,27 @@ export class PgMetaStore implements MetaStore {
       .from(templateLibraryEntry)
       .where(eq(templateLibraryEntry.library_id, libraryId))
       .orderBy(desc(templateLibraryEntry.created_at))
+  }
+  listTemplateLibraryEntriesForLibraries(
+    libraryIds: string[],
+    limit: number,
+  ): Promise<TemplateLibraryEntryRecord[]> {
+    if (!libraryIds.length) return Promise.resolve([])
+    return this.db
+      .select()
+      .from(templateLibraryEntry)
+      .where(inArray(templateLibraryEntry.library_id, libraryIds))
+      .orderBy(desc(templateLibraryEntry.created_at))
+      .limit(Math.min(Math.max(limit, 1), 1_000))
+  }
+  async countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>> {
+    if (!libraryIds.length) return {}
+    const rows = await this.db
+      .select({ library_id: templateLibraryEntry.library_id, total: count() })
+      .from(templateLibraryEntry)
+      .where(inArray(templateLibraryEntry.library_id, libraryIds))
+      .groupBy(templateLibraryEntry.library_id)
+    return Object.fromEntries(rows.map((row) => [row.library_id, Number(row.total)]))
   }
   async deleteTemplateLibraryEntry(id: string): Promise<void> {
     await this.db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id))
@@ -5683,6 +5706,10 @@ export class PgMetaStore implements MetaStore {
           ),
         )
     }
+    await this.db
+      .update(templateLibraryEntry)
+      .set({ created_by: "__deleted_template_library_owner__" })
+      .where(eq(templateLibraryEntry.created_by, userId))
     await this.db.delete(membership).where(eq(membership.user_id, userId))
     await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
     await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))

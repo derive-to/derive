@@ -47,6 +47,21 @@ export function Templates() {
   const query = useDeferredValue(search.query ?? "")
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
   const sourceArtifact = search.source
+  const requestedTemplate = search.use
+  useEffect(() => {
+    if (!requestedTemplate) return
+    const template = getTemplate(requestedTemplate)
+    void nav({ search: (previous) => ({ ...previous, use: undefined }), replace: true })
+    if (!template) return
+    setAgentTarget({
+      uri: `derive://templates/${template.id}`,
+      title: template.title,
+      description: template.description,
+      kind: template.kind,
+      category: template.category,
+      inputs: template.inputs,
+    })
+  }, [requestedTemplate, nav])
   useEffect(() => {
     if (!sourceArtifact) return
     let active = true
