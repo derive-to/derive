@@ -159,8 +159,10 @@ test.describe("deck", () => {
       .getByTestId("template-agent-brief")
       .fill("Make a launch narrative for product leaders that earns approval for the plan.")
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
-    await expect(page.getByText("Reads the template")).toBeVisible()
-    await expect(page.getByText("Makes it yours")).toBeVisible()
+    await expect(page.getByText("Reads the exact reference")).toBeVisible()
+    await expect(page.getByText("Adapts it to your brief")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Codex" })).toBeEnabled()
+    await expect(page.getByRole("button", { name: "Claude Code" })).toBeEnabled()
   })
 
   /* ── The other half: a deck that announces NOTHING ─────────────────────────

@@ -40,7 +40,8 @@ test.describe("templates", () => {
     await page.getByTestId("template-use").click()
 
     await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
-    await expect(page.getByText("copy a complete handoff", { exact: false })).toBeVisible()
+    await expect(page.getByText("Use your own agent")).toBeVisible()
+    await expect(page.getByText("Open locally")).toBeVisible()
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
     await page
       .getByTestId("template-agent-brief")
@@ -54,11 +55,139 @@ test.describe("templates", () => {
     expect(previewValue).toContain("Use find")
     expect(previewValue).toContain("visually inspect")
     await page.getByTestId("template-agent-copy").click()
-    await expect(page.getByTestId("template-agent-copy")).toContainText("Copied — paste into agent")
     expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
       "derive://templates/narrative-pitch",
     )
     expect(new URL(page.url()).pathname).toBe("/templates")
+  })
+
+  test("an online Context runner picks up the complete template job automatically", async ({
+    owner: page,
+  }) => {
+    const now = new Date().toISOString()
+    let queuedBody: Record<string, unknown> | null = null
+    await page.route("**/v1/contexts", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          contexts: [
+            {
+              id: "ctx_local_codex",
+              name: "My local Codex",
+              agent_id: "ag_local_codex",
+              manifest_short_id: "manifest_local_codex",
+              created_by: "usr_owner",
+              created_at: now,
+              runner_seen_at: now,
+              ask_policy: "workspace",
+              connection_ids: [],
+              description: "Runs template work on this machine.",
+              skills_count: 0,
+              manifest_version: 1,
+            },
+          ],
+        }),
+      }),
+    )
+    await page.route("**/v1/contexts/ctx_local_codex/sessions", async (route) => {
+      if (route.request().method() === "POST") {
+        queuedBody = route.request().postDataJSON() as Record<string, unknown>
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ session: { id: "ses_template_local" }, messages: [] }),
+        })
+        return
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ sessions: [], next_cursor: null }),
+      })
+    })
+    await page.route("**/v1/contexts/ctx_local_codex", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "ctx_local_codex",
+          name: "My local Codex",
+          agent_id: "ag_local_codex",
+          manifest_short_id: "manifest_local_codex",
+          created_by: "usr_owner",
+          created_at: now,
+          runner_seen_at: now,
+          ask_policy: "workspace",
+          connection_ids: [],
+          skills: [],
+        }),
+      }),
+    )
+
+    await page.goto("/templates")
+    await page.getByTestId("template-use").click()
+    await expect(page.getByTestId("template-agent-connected-runner")).toBeVisible()
+    await expect(page.getByTestId("template-agent-run-connected")).toContainText(
+      "Run with My local Codex",
+    )
+    await page
+      .getByTestId("template-agent-brief")
+      .fill("Make an evidence-led onboarding deck for Acme's executive team.")
+    await page.getByTestId("template-agent-run-connected").click()
+
+    await expect(page).toHaveURL(/\/contexts\/ctx_local_codex/)
+    expect(queuedBody).toMatchObject({
+      body_md: expect.stringContaining("derive://templates/narrative-pitch"),
+    })
+    expect(JSON.stringify(queuedBody)).toContain("evidence-led onboarding deck")
+    expect(JSON.stringify(queuedBody)).toContain("Use Derive's read tool")
+  })
+
+  test("automatic pickup explains the one-time model-plan setup instead of leaking a billing error", async ({
+    owner: page,
+  }) => {
+    const now = new Date().toISOString()
+    await page.route("**/v1/contexts", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          contexts: [
+            {
+              id: "ctx_needs_plan",
+              name: "My local Claude",
+              agent_id: "ag_needs_plan",
+              manifest_short_id: "manifest_needs_plan",
+              created_by: "usr_owner",
+              created_at: now,
+              runner_seen_at: now,
+              ask_policy: "workspace",
+              connection_ids: [],
+            },
+          ],
+        }),
+      }),
+    )
+    await page.route("**/v1/contexts/ctx_needs_plan/sessions", (route) =>
+      route.fulfill({
+        status: 402,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "no model plan is connected for this work" }),
+      }),
+    )
+
+    await page.goto("/templates")
+    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-agent-brief").fill("Make a customer proof deck.")
+    await page.getByTestId("template-agent-run-connected").click()
+
+    await expect(
+      page.getByText("This machine is online, but it still needs a model plan."),
+    ).toBeVisible()
+    await expect(page.getByTestId("template-agent-connect-plan")).toBeVisible()
+    await expect(page.getByText("no model plan is connected", { exact: false })).toHaveCount(0)
+    await expect(page.getByTestId("template-agent-open-codex")).toBeEnabled()
   })
 
   test("the local handoff still works when native Build in Derive is unavailable", async ({

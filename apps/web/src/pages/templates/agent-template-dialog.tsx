@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useId, useRef, useState } from "react"
-import { api } from "@/api"
+import { ApiError, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConnectAgentDialogContent } from "@/components/shared/connect-agent"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -15,10 +15,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useCopy } from "@/lib/clipboard"
-import { workspaceQuery } from "@/lib/queries"
-import { type AgentTemplateTarget, localAgentHandoff, nativeTemplateRequest } from "./agent-handoff"
+import { contextSessionsQuery, contextsQuery, workspaceQuery } from "@/lib/queries"
+import { runnerStatus } from "@/pages/context/runner-status"
+import {
+  type AgentTemplateTarget,
+  type LocalAgentKind,
+  localAgentHandoff,
+  localAgentLaunchUrl,
+  nativeTemplateRequest,
+} from "./agent-handoff"
 
 export type { AgentTemplateTarget } from "./agent-handoff"
 
@@ -46,16 +60,28 @@ export function AgentTemplateDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [brief, setBrief] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [dispatching, setDispatching] = useState(false)
   const [error, setError] = useState("")
+  const [planRequired, setPlanRequired] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
   const [connectOpen, setConnectOpen] = useState(false)
+  const [selectedContext, setSelectedContext] = useState("")
+  const [openedAgent, setOpenedAgent] = useState<LocalAgentKind | null>(null)
   const { copied, copy } = useCopy(4000)
   const mounted = useRef(true)
   const descriptionId = useId()
   const workspaceState = useQuery(workspaceQuery())
+  const contextsState = useQuery(contextsQuery())
   const workspace = workspaceState.data
+  const onlineContexts = (contextsState.data ?? []).filter(
+    (context) => runnerStatus(context.runner_seen_at).online,
+  )
+  const selectedRunner =
+    onlineContexts.find((context) => context.id === selectedContext) ?? onlineContexts[0] ?? null
+  const busy = submitting || dispatching
 
   useEffect(() => {
     mounted.current = true
@@ -68,10 +94,17 @@ export function AgentTemplateDialog({
     if (target) {
       setBrief("")
       setError("")
+      setPlanRequired(false)
       setShowHandoff(false)
       setConnectOpen(false)
+      setOpenedAgent(null)
     }
   }, [target])
+
+  useEffect(() => {
+    if (onlineContexts.length && !onlineContexts.some((context) => context.id === selectedContext))
+      setSelectedContext(onlineContexts[0]?.id ?? "")
+  }, [onlineContexts, selectedContext])
 
   if (!target) return null
   const isContext = target.kind === "context"
@@ -79,10 +112,10 @@ export function AgentTemplateDialog({
   const handoff = localAgentHandoff(target, brief)
 
   const copyForLocalAgent = async () => {
-    if (!brief.trim() || submitting) return
+    if (!brief.trim() || busy) return
     setError("")
     const ok = await copy(handoff, {
-      success: "Copied — paste it into Claude Code or Codex",
+      success: "Copied — paste it into your agent",
       error: null,
     })
     if (!ok) {
@@ -91,8 +124,52 @@ export function AgentTemplateDialog({
     }
   }
 
+  const openInLocalAgent = (agent: LocalAgentKind) => {
+    if (!brief.trim() || busy) return
+    const url = localAgentLaunchUrl(agent, target, brief)
+    if (!url) {
+      setShowHandoff(true)
+      setError("This handoff is too detailed for that app’s launch link. Copy it below instead.")
+      return
+    }
+    setError("")
+    setOpenedAgent(agent)
+    window.location.href = url
+  }
+
+  const runOnConnectedMachine = async () => {
+    if (!brief.trim() || !selectedRunner || busy) return
+    setDispatching(true)
+    setError("")
+    setPlanRequired(false)
+    try {
+      await api.askContext(selectedRunner.id, handoff)
+      if (!mounted.current) return
+      await queryClient.invalidateQueries({
+        queryKey: contextSessionsQuery(selectedRunner.id).queryKey,
+      })
+      onOpenChange(false)
+      await navigate({ to: "/contexts/$id", params: { id: selectedRunner.id } })
+      // The context console selects the newest conversation, which is this
+      // durable queued session. Its normal polling/push path owns progress.
+    } catch (cause) {
+      if (!mounted.current) return
+      if (cause instanceof ApiError && cause.status === 402) {
+        setPlanRequired(true)
+        return
+      }
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : `Derive couldn’t send this to ${selectedRunner.name}. Please try again.`,
+      )
+    } finally {
+      if (mounted.current) setDispatching(false)
+    }
+  }
+
   const buildInDerive = async () => {
-    if (!brief.trim() || !workspace || submitting) return
+    if (!brief.trim() || !workspace || busy) return
     setSubmitting(true)
     setError("")
     try {
@@ -121,19 +198,19 @@ export function AgentTemplateDialog({
 
   return (
     <>
-      <Dialog open={!connectOpen} onOpenChange={(open) => !submitting && onOpenChange(open)}>
+      <Dialog open={!connectOpen} onOpenChange={(open) => !busy && onOpenChange(open)}>
         <DialogContent
-          className="gap-4 sm:max-w-xl"
+          className="max-h-[min(92dvh,760px)] gap-4 overflow-y-auto sm:max-w-2xl"
           aria-describedby={descriptionId}
-          aria-busy={submitting}
-          showCloseButton={!submitting}
-          onEscapeKeyDown={(event) => submitting && event.preventDefault()}
-          onPointerDownOutside={(event) => submitting && event.preventDefault()}
+          aria-busy={busy}
+          showCloseButton={!busy}
+          onEscapeKeyDown={(event) => busy && event.preventDefault()}
+          onPointerDownOutside={(event) => busy && event.preventDefault()}
         >
           <DialogHeader className="pr-7">
             <div className="mb-1 flex flex-wrap items-center gap-2">
               <Badge variant="outline" shape="pill">
-                <Icon name="copy" size={12} /> Ready for your agent
+                <Icon name="sparkles" size={12} /> Use your own agent
               </Badge>
               <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 {isContext ? "Context" : target.category}
@@ -144,8 +221,8 @@ export function AgentTemplateDialog({
             </DialogTitle>
             <DialogDescription id={descriptionId} className="max-w-lg">
               {isContext
-                ? "Describe the setup, then copy a complete handoff into Claude Code or Codex. It reads this exact reference and adapts the Context—not a manifest form."
-                : "Describe the outcome, then copy a complete handoff into Claude Code or Codex. It reads this exact reference and returns a published draft—not source or a blank form."}
+                ? "Describe the setup, then run it on a connected machine or open it in the agent you already use. Your agent reads this exact reference and adapts the Context—not a manifest form."
+                : "Describe the outcome, then run it on a connected machine or open it in the agent you already use. Your agent returns a published, inspected draft—not source or a blank form."}
             </DialogDescription>
           </DialogHeader>
 
@@ -167,7 +244,7 @@ export function AgentTemplateDialog({
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault()
-              void copyForLocalAgent()
+              if (selectedRunner) void runOnConnectedMachine()
             }}
           >
             <label className="grid gap-2 text-sm font-medium text-foreground">
@@ -193,6 +270,173 @@ export function AgentTemplateDialog({
                 {error}
               </p>
             )}
+
+            {onlineContexts.length > 0 ? (
+              <section
+                className="grid gap-3 rounded-xl border bg-card p-3.5"
+                aria-label="Automatic local pickup"
+                data-testid="template-agent-connected-runner"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      <span className="size-2 rounded-full bg-success" aria-hidden />
+                      Run automatically
+                    </div>
+                    <p className="mt-1 text-xs text-pretty text-muted-foreground">
+                      A machine you connected is taking work now. Send this job there and follow the
+                      result live in Derive.
+                    </p>
+                  </div>
+                  <Badge variant="outline" shape="pill">
+                    Local
+                  </Badge>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Select
+                    value={selectedRunner?.id ?? ""}
+                    onValueChange={setSelectedContext}
+                    disabled={busy}
+                  >
+                    <SelectTrigger
+                      className="h-10 w-full sm:flex-1"
+                      aria-label="Connected local agent"
+                      data-testid="template-agent-runner-select"
+                    >
+                      <SelectValue placeholder="Choose a connected agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {onlineContexts.map((context) => (
+                        <SelectItem key={context.id} value={context.id}>
+                          {context.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="submit"
+                    size="lg"
+                    loading={dispatching}
+                    disabled={!brief.trim() || busy}
+                    data-testid="template-agent-run-connected"
+                  >
+                    <Icon name="arrow" />
+                    {dispatching ? "Sending…" : `Run with ${selectedRunner?.name ?? "agent"}`}
+                  </Button>
+                </div>
+                {planRequired ? (
+                  <StatusPanel
+                    tone="warning"
+                    layout="inline"
+                    title="This machine is online, but it still needs a model plan."
+                    description="Connect Codex or Claude once, then send this job again. You can still open the task locally below."
+                    action={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          onOpenChange(false)
+                          void navigate({
+                            to: "/settings/$section",
+                            params: { section: "model-plans" },
+                          })
+                        }}
+                        data-testid="template-agent-connect-plan"
+                      >
+                        Connect a plan <Icon name="arrow" />
+                      </Button>
+                    }
+                  />
+                ) : null}
+              </section>
+            ) : (
+              <section
+                className="flex flex-col gap-2 rounded-xl border border-dashed px-3.5 py-3 sm:flex-row sm:items-center"
+                aria-label="Automatic local pickup"
+                data-testid="template-agent-no-runner"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Want automatic pickup?</p>
+                  <p className="mt-0.5 text-xs text-pretty text-muted-foreground">
+                    Connect a Context runner once. Until then, open the ready-to-send task below.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    onOpenChange(false)
+                    void navigate({ to: "/contexts" })
+                  }}
+                  data-testid="template-agent-setup-runner"
+                >
+                  Set up runner <Icon name="arrow" />
+                </Button>
+              </section>
+            )}
+
+            <section className="grid gap-2" aria-label="Open in a local agent">
+              <div className="flex items-end justify-between gap-3 px-0.5">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Open locally</p>
+                  <p className="text-xs text-muted-foreground">
+                    The complete task opens in the composer. Review it, then press Send.
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Button
+                  type="button"
+                  variant={openedAgent === "codex" ? "secondary" : "outline"}
+                  size="lg"
+                  className="justify-between"
+                  disabled={!brief.trim() || busy}
+                  onClick={() => openInLocalAgent("codex")}
+                  data-testid="template-agent-open-codex"
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon name="context" /> Codex
+                  </span>
+                  <Icon name={openedAgent === "codex" ? "check" : "arrow"} />
+                </Button>
+                <Button
+                  type="button"
+                  variant={openedAgent === "claude-code" ? "secondary" : "outline"}
+                  size="lg"
+                  className="justify-between"
+                  disabled={!brief.trim() || busy}
+                  onClick={() => openInLocalAgent("claude-code")}
+                  data-testid="template-agent-open-claude"
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon name="context" /> Claude Code
+                  </span>
+                  <Icon name={openedAgent === "claude-code" ? "check" : "arrow"} />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="lg"
+                  className="justify-between"
+                  disabled={!brief.trim() || busy}
+                  onClick={() => void copyForLocalAgent()}
+                  data-testid="template-agent-copy"
+                >
+                  <span className="flex items-center gap-2">
+                    <Icon name="copy" /> Another agent
+                  </span>
+                  <Icon name={copied ? "check" : "arrow"} />
+                </Button>
+              </div>
+              {openedAgent ? (
+                <p className="px-0.5 text-xs text-success" role="status">
+                  Opened {openedAgent === "codex" ? "Codex" : "Claude Code"} — the task is ready for
+                  you to review and send.
+                </p>
+              ) : null}
+            </section>
 
             {showHandoff ? (
               <div className="grid gap-2" data-testid="template-agent-handoff-preview">
@@ -258,7 +502,7 @@ export function AgentTemplateDialog({
                 size="sm"
                 className="h-auto p-0 text-xs"
                 onClick={() => setShowHandoff((visible) => !visible)}
-                disabled={!brief.trim() || submitting}
+                disabled={!brief.trim() || busy}
                 data-testid="template-agent-preview"
               >
                 {showHandoff ? "Hide handoff" : "Preview what gets copied"}
@@ -269,39 +513,29 @@ export function AgentTemplateDialog({
                 size="sm"
                 className="h-auto p-0 text-xs text-muted-foreground"
                 onClick={() => setConnectOpen(true)}
-                disabled={submitting}
+                disabled={busy}
                 data-testid="template-agent-connect"
               >
                 Need to connect Derive?
               </Button>
             </div>
 
-            <DialogFooter>
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center">
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={!brief.trim() || !workspace || submitting}
-                  onClick={() => void buildInDerive()}
-                  data-testid="template-agent-build-beta"
-                  title={
-                    workspaceState.isError
-                      ? "Build in Derive is unavailable while the workspace cannot be loaded"
-                      : undefined
-                  }
-                >
-                  <Icon name="sparkles" /> {submitting ? "Starting…" : "Build here · Beta"}
-                </Button>
-                <Button
-                  type="submit"
-                  size="lg"
-                  disabled={!brief.trim() || submitting}
-                  data-testid="template-agent-copy"
-                >
-                  <Icon name={copied ? "check" : "copy"} />
-                  {copied ? "Copied — paste into agent" : "Copy for local agent"}
-                </Button>
-              </div>
+            <DialogFooter className="border-t border-border-soft pt-3 sm:justify-between">
+              <p className="text-xs text-muted-foreground">Or use Derive’s hosted agent.</p>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!brief.trim() || !workspace || busy}
+                onClick={() => void buildInDerive()}
+                data-testid="template-agent-build-beta"
+                title={
+                  workspaceState.isError
+                    ? "Build in Derive is unavailable while the workspace cannot be loaded"
+                    : undefined
+                }
+              >
+                <Icon name="sparkles" /> {submitting ? "Starting…" : "Build here · Beta"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

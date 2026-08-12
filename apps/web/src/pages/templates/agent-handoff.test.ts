@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { localAgentHandoff, nativeTemplateRequest } from "./agent-handoff"
+import { localAgentHandoff, localAgentLaunchUrl, nativeTemplateRequest } from "./agent-handoff"
 
 const artifact = {
   uri: "derive://templates/narrative-pitch",
@@ -35,5 +35,24 @@ describe("template agent handoffs", () => {
     const prompt = nativeTemplateRequest(artifact, "  Make the launch story. ")
     expect(prompt).toContain("Make the launch story.")
     expect(prompt).not.toContain(artifact.uri)
+  })
+
+  it("opens Codex and Claude Code with the complete portable handoff prefilled", () => {
+    const brief = "Make the launch story."
+    const handoff = localAgentHandoff(artifact, brief)
+    const codex = new URL(localAgentLaunchUrl("codex", artifact, brief) as string)
+    const claude = new URL(localAgentLaunchUrl("claude-code", artifact, brief) as string)
+
+    expect(codex.protocol).toBe("codex:")
+    expect(codex.hostname).toBe("new")
+    expect(codex.searchParams.get("prompt")).toBe(handoff)
+    expect(claude.protocol).toBe("claude-cli:")
+    expect(claude.hostname).toBe("open")
+    expect(claude.searchParams.get("q")).toBe(handoff)
+  })
+
+  it("refuses to silently truncate a Claude Code deep link", () => {
+    expect(localAgentLaunchUrl("claude-code", artifact, "x".repeat(5_000))).toBeNull()
+    expect(localAgentLaunchUrl("codex", artifact, "x".repeat(5_000))).toContain("codex://new")
   })
 })
