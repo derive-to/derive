@@ -708,6 +708,8 @@ export const templateLibrary = sqliteTable("template_library", {
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().default(now),
   updated_at: text("updated_at"),
+  mutation_token: text("mutation_token"),
+  mutation_started_at: text("mutation_started_at"),
 })
 
 // An entry owns the exact starter bytes it publishes through source_blob_key +

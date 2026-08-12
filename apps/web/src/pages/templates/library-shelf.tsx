@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { useDeferredValue, useState } from "react"
 import {
   type Artifact,
@@ -34,6 +34,16 @@ const scopeCopy: Record<
   workspace: { label: "Workspace", detail: "Visible to this workspace.", icon: "following" },
   public: { label: "Public", detail: "Discoverable by anyone and MCP.", icon: "globe" },
 }
+
+const templateLibraryListKeys = [
+  ["template-libraries"] as const,
+  ["public-template-libraries"] as const,
+]
+const templateLibraryKeys = (id: string) => [
+  ...templateLibraryListKeys,
+  ["template-library", id] as const,
+  ["public-template-library", id] as const,
+]
 
 const csv = (value: string) =>
   value
@@ -200,7 +210,7 @@ function CreateLibraryDialog({
   const create = useApiMutation({
     mutationFn: () =>
       api.createTemplateLibrary({ title: title.trim(), description: description.trim(), scope }),
-    invalidate: [["template-libraries"]],
+    invalidate: [...templateLibraryListKeys],
     success: "Template library created",
     onSuccess: (library) => {
       setTitle("")
@@ -295,13 +305,13 @@ function LibrarySettingsDialog({
         description: description.trim(),
         scope,
       }),
-    invalidate: [["template-libraries"], ["template-library", library.id]],
+    invalidate: templateLibraryKeys(library.id),
     success: "Library settings saved",
     onSuccess: () => onOpenChange(false),
   })
   const remove = useApiMutation({
     mutationFn: () => api.deleteTemplateLibrary(library.id),
-    invalidate: [["template-libraries"]],
+    invalidate: templateLibraryKeys(library.id),
     success: "Template library deleted",
     onSuccess: () => {
       onOpenChange(false)
@@ -423,7 +433,7 @@ function AddEntryDialog({
         inputs: inputsFromLines(inputs),
         tags: csv(tags),
       }),
-    invalidate: [["template-libraries"], ["template-library", libraryId]],
+    invalidate: templateLibraryKeys(libraryId),
     success: "Reusable starter published",
     onSuccess: () => {
       setStep("source")
@@ -738,7 +748,7 @@ function LibraryDetail({
   const remove = useApiMutation({
     mutationFn: (entry: TemplateLibraryEntry) =>
       api.deleteTemplateLibraryEntry(libraryId, entry.id),
-    invalidate: [["template-libraries"], ["template-library", libraryId]],
+    invalidate: templateLibraryKeys(libraryId),
     success: "Starter removed",
   })
   if (detail.isPending)
@@ -895,13 +905,14 @@ export function LibraryShelf({
   onSelect: (id?: string) => void
   onUse: (entry: TemplateLibraryEntry) => void
 }) {
-  const libraries = useQuery(templateLibrariesQuery())
+  const libraries = useInfiniteQuery(templateLibrariesQuery())
+  const libraryRows = libraries.data?.pages.flatMap((page) => page.libraries) ?? []
   const [createOpen, setCreateOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [scope, setScope] = useState<"all" | TemplateLibraryScope>("all")
   if (selectedId)
     return <LibraryDetail libraryId={selectedId} onBack={() => onSelect(undefined)} onUse={onUse} />
-  const visibleLibraries = (libraries.data ?? []).filter(
+  const visibleLibraries = libraryRows.filter(
     (library) =>
       (scope === "all" || library.scope === scope) &&
       matches(query, [
@@ -927,7 +938,7 @@ export function LibraryShelf({
           </p>
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:flex-nowrap">
-          {(libraries.data?.length ?? 0) > 1 && (
+          {libraryRows.length > 1 && (
             <label className="min-w-48 flex-1 sm:w-56 sm:flex-none">
               <span className="sr-only">Search libraries</span>
               <Input
@@ -985,45 +996,59 @@ export function LibraryShelf({
             </Button>
           }
         />
-      ) : libraries.data?.length && visibleLibraries.length ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleLibraries.map((library) => (
-            <button
-              key={library.id}
-              type="button"
-              onClick={() => onSelect(library.id)}
-              className="group flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4 text-left outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              data-testid={`template-library-card-${library.id}`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <Badge variant="outline" shape="pill">
-                  <Icon name={scopeCopy[library.scope].icon} size={12} />{" "}
-                  {scopeCopy[library.scope].label}
-                </Badge>
-                <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-                  {library.entry_count} starters
+      ) : libraryRows.length && visibleLibraries.length ? (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleLibraries.map((library) => (
+              <button
+                key={library.id}
+                type="button"
+                onClick={() => onSelect(library.id)}
+                className="group flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4 text-left outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                data-testid={`template-library-card-${library.id}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <Badge variant="outline" shape="pill">
+                    <Icon name={scopeCopy[library.scope].icon} size={12} />{" "}
+                    {scopeCopy[library.scope].label}
+                  </Badge>
+                  <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+                    {library.entry_count} starters
+                  </span>
+                </div>
+                <div>
+                  <h3 className="font-serif text-xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
+                    {library.title}
+                  </h3>
+                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                    {library.description || "Reusable Derive starters."}
+                  </p>
+                </div>
+                {(library.publisher.name || library.publisher.username) && (
+                  <span className="text-xs text-muted-foreground">
+                    Published by {library.publisher.name ?? `@${library.publisher.username}`}
+                  </span>
+                )}
+                <span className="mt-auto text-sm font-medium text-foreground">
+                  Browse starters <Icon name="arrow" className="inline size-3.5" />
                 </span>
-              </div>
-              <div>
-                <h3 className="font-serif text-xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
-                  {library.title}
-                </h3>
-                <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                  {library.description || "Reusable Derive starters."}
-                </p>
-              </div>
-              {(library.publisher.name || library.publisher.username) && (
-                <span className="text-xs text-muted-foreground">
-                  Published by {library.publisher.name ?? `@${library.publisher.username}`}
-                </span>
-              )}
-              <span className="mt-auto text-sm font-medium text-foreground">
-                Browse starters <Icon name="arrow" className="inline size-3.5" />
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : libraries.data?.length ? (
+              </button>
+            ))}
+          </div>
+          {libraries.hasNextPage && (
+            <div className="flex justify-center">
+              <Button
+                variant="outline"
+                onClick={() => libraries.fetchNextPage()}
+                disabled={libraries.isFetchingNextPage}
+                data-testid="template-libraries-load-more"
+              >
+                {libraries.isFetchingNextPage ? "Loading…" : "Load more libraries"}
+              </Button>
+            </div>
+          )}
+        </>
+      ) : libraryRows.length ? (
         <EmptyState
           icon="templates"
           title="No matching libraries"

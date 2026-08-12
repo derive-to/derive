@@ -321,4 +321,200 @@ describe("template libraries: pinned reusable starters", () => {
     expect(distribute.status).toBe(403)
     expect(await distribute.text()).toMatch(/cannot distribute/i)
   })
+
+  it("serializes scope-sensitive mutations so validation cannot race publication", async () => {
+    const source = await (
+      await publishMarkdown(
+        "# Internal starter\n\napi_key: sk_not_for_publication",
+        {},
+        as(owner.email),
+      )
+    ).json()
+    const library = await (
+      await app.request(
+        "/v1/template-libraries",
+        jsonAs(as(owner.email), { title: "Scope race regression", scope: "private" }),
+      )
+    ).json()
+    const entryBody = {
+      source_short_id: source.short_id,
+      kind: "artifact",
+      category: "Doc",
+      title: "Internal starter",
+      description: "Safe only while private.",
+      outcome: "A private result.",
+      sections: [],
+      inputs: [],
+      tags: [],
+    }
+
+    expect(
+      await meta.acquireTemplateLibraryMutation(
+        library.id,
+        "held-by-test",
+        new Date(Date.now() - 2 * 60_000).toISOString(),
+      ),
+    ).toBe(true)
+    const blockedWiden = await app.request(`/v1/template-libraries/${library.id}`, {
+      method: "PATCH",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ scope: "public" }),
+    })
+    expect(blockedWiden.status).toBe(409)
+    expect(await blockedWiden.text()).toMatch(/changing; retry/i)
+    expect(
+      (
+        await app.request(
+          `/v1/template-libraries/${library.id}/entries`,
+          jsonAs(as(owner.email), entryBody),
+        )
+      ).status,
+    ).toBe(409)
+    await meta.releaseTemplateLibraryMutation(library.id, "held-by-test")
+
+    expect(
+      (
+        await app.request(
+          `/v1/template-libraries/${library.id}/entries`,
+          jsonAs(as(owner.email), entryBody),
+        )
+      ).status,
+    ).toBe(201)
+    const widenAfterEntry = await app.request(`/v1/template-libraries/${library.id}`, {
+      method: "PATCH",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ scope: "public" }),
+    })
+    expect(widenAfterEntry.status).toBe(403)
+  })
+
+  it("paginates the accessible library union with a stable opaque cursor", async () => {
+    for (const title of ["Page A", "Page B", "Page C"])
+      expect(
+        (
+          await app.request(
+            "/v1/template-libraries",
+            jsonAs(as(owner.email), { title, scope: "public" }),
+          )
+        ).status,
+      ).toBe(201)
+
+    const firstResponse = await app.request("/v1/template-libraries?limit=2", {
+      headers: as(owner.email),
+    })
+    expect(firstResponse.status).toBe(200)
+    const first = (await firstResponse.json()) as {
+      libraries: Array<{ id: string }>
+      truncated: boolean
+      next_cursor: string | null
+    }
+    expect(first.libraries).toHaveLength(2)
+    expect(first.truncated).toBe(true)
+    expect(first.next_cursor).toBeTruthy()
+    const secondResponse = await app.request(
+      `/v1/template-libraries?limit=2&cursor=${encodeURIComponent(first.next_cursor ?? "")}`,
+      { headers: as(owner.email) },
+    )
+    expect(secondResponse.status).toBe(200)
+    const second = (await secondResponse.json()) as { libraries: Array<{ id: string }> }
+    expect(second.libraries).toHaveLength(2)
+    expect(second.libraries.map((library) => library.id)).not.toEqual(
+      expect.arrayContaining(first.libraries.map((library) => library.id)),
+    )
+    expect(
+      (
+        await app.request("/v1/template-libraries?cursor=not-a-cursor", {
+          headers: as(owner.email),
+        })
+      ).status,
+    ).toBe(422)
+  })
+
+  it("projects malformed legacy entry metadata defensively", async () => {
+    const library = await meta.createTemplateLibrary({
+      id: newId("tlb"),
+      org_id: "default",
+      title: "Legacy metadata",
+      scope: "private",
+      created_by: owner.id,
+    })
+    await meta.createTemplateLibraryEntry({
+      id: newId("tpl"),
+      library_id: library.id,
+      source_artifact_id: "art_legacy",
+      source_version: 1,
+      source_blob_key: "blob_legacy",
+      source_content_type: "text/markdown",
+      kind: "artifact",
+      category: "Doc",
+      format: "md",
+      title: "Legacy starter",
+      description: "A stored row with damaged optional metadata.",
+      outcome: "Still browseable.",
+      sections_json: "{broken",
+      inputs_json: '[{"name":"Topic","description":"What to cover"},{"name":3}]',
+      tags_json: '["safe",{"must_not_leak":true}]',
+      created_by: owner.id,
+    })
+    const response = await app.request(`/v1/template-libraries/${library.id}`, {
+      headers: as(owner.email),
+    })
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.entries[0]).toMatchObject({
+      sections: [],
+      inputs: [{ name: "Topic", description: "What to cover" }],
+      tags: ["safe"],
+    })
+    expect(JSON.stringify(body)).not.toContain("must_not_leak")
+  })
+
+  it("does not let an unlisted world-link reader publish the source into the public catalog", async () => {
+    const sourceJson = await (
+      await publishAs(
+        app,
+        "# Unlisted launch plan",
+        { workspace_access: "none", listed: "none", link_role: "viewer" },
+        as(owner.email),
+      )
+    ).json()
+
+    // Give the reader a different workspace in which they can publish, then
+    // remove their standing access to the source workspace. Their only remaining
+    // source grant is the unlisted world link.
+    const createWorkspace = await app.request(
+      "/v1/workspaces",
+      jsonAs(as(teammate.email), { name: "Reader workspace" }),
+    )
+    expect(createWorkspace.status).toBe(201)
+    const cookieValue = (createWorkspace.headers.get("set-cookie") ?? "").match(
+      /derive_ws=([^;]+)/,
+    )?.[1]
+    expect(cookieValue).toBeTruthy()
+    await meta.removeMembership("default", teammate.id)
+    const readerHeaders = { ...as(teammate.email), cookie: `derive_ws=${cookieValue}` }
+    const publicLibrary = await (
+      await app.request(
+        "/v1/template-libraries",
+        jsonAs(readerHeaders, { title: "Public link imports", scope: "public" }),
+      )
+    ).json()
+
+    const response = await app.request(
+      `/v1/template-libraries/${publicLibrary.id}/entries`,
+      jsonAs(readerHeaders, {
+        source_short_id: sourceJson.short_id,
+        kind: "artifact",
+        category: "Doc",
+        title: "Unlisted plan",
+        description: "Must remain unlisted.",
+        outcome: "No access widening.",
+        sections: [],
+        inputs: [],
+        tags: [],
+      }),
+    )
+    expect(response.status).toBe(403)
+    expect(await response.text()).toMatch(/cannot distribute/i)
+  })
 })

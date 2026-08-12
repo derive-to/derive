@@ -239,9 +239,6 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.1
         version: 6.43.1
-      '@derive-to/templates':
-        specifier: workspace:*
-        version: link:../../packages/templates
       '@fontsource-variable/geist':
         specifier: ^5.2.9
         version: 5.2.9

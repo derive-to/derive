@@ -198,6 +198,15 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
   > & { close(): void } = {
     ...repos,
 
+    // The shared repo keeps ordering portable, but this destructive pair must
+    // be all-or-nothing on the embedded driver as it already is on Postgres.
+    deleteTemplateLibrary: async (id: string): Promise<void> => {
+      raw.transaction((libraryId: string) => {
+        raw.prepare("DELETE FROM template_library_entry WHERE library_id = ?").run(libraryId)
+        raw.prepare("DELETE FROM template_library WHERE id = ?").run(libraryId)
+      })(id)
+    },
+
     // Synchronous transaction: a concurrent increment can't interleave between
     // the read and the write, so version numbers never collide.
     addVersion: async (artifactId: string, v: NewVersion): Promise<VersionRecord> => {

@@ -9,12 +9,14 @@ import {
   missingBlobAdvisory,
   newId,
   PublishError,
+  parseTemplateLibraryUri,
   propose as proposeChange,
   publishAdvisories,
   publish as publishVersion,
   type Role,
   roleAllows,
   slotShapeDriftAdvisories,
+  TEMPLATE_LIBRARY_CATALOG_URI,
 } from "@derive/core"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
@@ -473,10 +475,14 @@ export function registerPublishTool(tc: ToolContext): void {
       // point. Library entries are immutable snapshots, so the copy can outlive
       // its source; the stored edge points to that source artifact when present.
       let derivedFromId: string | null = null
-      if (derived_from?.startsWith("derive://template-libraries/")) {
-        const [libraryId = "", entryId = ""] = derived_from
-          .slice("derive://template-libraries/".length)
-          .split("/")
+      const authoredTemplate = derived_from ? parseTemplateLibraryUri(derived_from) : null
+      if (
+        derived_from?.startsWith(`${TEMPLATE_LIBRARY_CATALOG_URI}/`) &&
+        !authoredTemplate?.entryId
+      )
+        return err(`No template starter "${derived_from}" you can reach.`)
+      if (authoredTemplate?.entryId) {
+        const { libraryId, entryId } = authoredTemplate
         const [library, entry] = await Promise.all([
           ctx.meta.getTemplateLibrary(libraryId),
           ctx.meta.getTemplateLibraryEntry(entryId),

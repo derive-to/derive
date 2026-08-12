@@ -144,24 +144,23 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-position")).toHaveCount(0)
   })
 
-  test("the library's template path opens the canonical deck as a visual draft", async ({
+  test("the library's deck template path hands the visual reference to the agent", async ({
     owner: page,
   }) => {
-    // The human entry point serves the canonical deck, but its storage format is
-    // never the authoring experience. The rendered deck is the workbench.
+    // The canonical deck is an agent reference, never a source-code editor or
+    // old-school field-by-field WYSIWYG flow.
     await page.goto("/")
     await page.getByTestId("library-new").click()
     await page.getByTestId("library-new-template").click()
     await expect(page).toHaveURL(/\/templates/)
     await page.getByTestId("template-card-narrative-pitch").click()
     await page.getByTestId("template-use").click()
-    await page.getByTestId("template-brief-input-audience").fill("Product leaders")
-    await page.getByTestId("template-brief-input-objective").fill("Approve the launch")
-    await page.getByTestId("template-start-brief-continue").click()
+    await page
+      .getByTestId("template-agent-brief")
+      .fill("Make a launch narrative for product leaders that earns approval for the plan.")
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
-    await expect(
-      page.frameLocator('[data-testid="artifact-preview"]').getByText("Product leaders"),
-    ).toBeVisible()
+    await expect(page.getByText("Reads the template")).toBeVisible()
+    await expect(page.getByText("Makes it yours")).toBeVisible()
   })
 
   /* ── The other half: a deck that announces NOTHING ─────────────────────────

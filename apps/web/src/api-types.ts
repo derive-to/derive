@@ -5854,7 +5854,10 @@ export interface paths {
         /** List public libraries plus libraries accessible in the active workspace. */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    cursor?: string;
+                    limit?: number;
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -5870,6 +5873,7 @@ export interface paths {
                         "application/json": {
                             libraries: components["schemas"]["TemplateLibrary"][];
                             truncated: boolean;
+                            next_cursor: string | null;
                         };
                     };
                 };

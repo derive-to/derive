@@ -9790,6 +9790,27 @@
           "Templates"
         ],
         "summary": "List public libraries plus libraries accessible in the active workspace.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Libraries the caller can discover. Public libraries are available anonymously.",
@@ -9806,11 +9827,16 @@
                     },
                     "truncated": {
                       "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string",
+                      "nullable": true
                     }
                   },
                   "required": [
                     "libraries",
-                    "truncated"
+                    "truncated",
+                    "next_cursor"
                   ]
                 }
               }

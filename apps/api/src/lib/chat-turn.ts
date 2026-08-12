@@ -86,6 +86,10 @@ export interface ChatTurnInput {
   /** A template selected in the product before this conversation opened. It is
    *  trusted navigation metadata, not prose the model has to rediscover by title. */
   templateStart?: TemplateStart
+  /** A prior Context-builder turn already read this exact starter and persisted
+   *  an adapted draft. Confirmation turns may create from that reviewed draft
+   *  without paying to re-read and re-draft the same template. */
+  templatePrepared?: boolean
 }
 
 /** The transcript as plain chat turns, oldest first. */
@@ -170,9 +174,12 @@ export const runChatTurn = async (
   const model = { id: deps.model.id, label: deps.model.label }
   const used: string[] = []
   const artifactTemplateJob = input.templateStart?.kind === "artifact" && !input.purpose
-  let readStarter = false
+  const contextTemplateJob =
+    input.templateStart?.kind === "context" && input.purpose === "context_builder"
+  let readStarter = contextTemplateJob && input.templatePrepared === true
   let publishedShortId: string | null = null
   let inspectedRender = false
+  let draftedContext = contextTemplateJob && input.templatePrepared === true
   const failedToolResult = (value: unknown): boolean =>
     !!value && typeof value === "object" && typeof (value as { error?: unknown }).error === "string"
   const richToolResult = (
@@ -187,6 +194,10 @@ export const runChatTurn = async (
           value: Array<{ type?: string; text?: string }>
         })
       : null
+  const hasRenderedPixels = (value: unknown): boolean =>
+    richToolResult(value)?.value.some(
+      (part) => part.type === "image-data" && typeof (part as { data?: unknown }).data === "string",
+    ) === true
   const publishReceipt = (value: unknown): { published?: unknown; short_id?: unknown } => {
     if (value && typeof value === "object" && (value as { published?: unknown }).published)
       return value as { published?: unknown; short_id?: unknown }
@@ -223,7 +234,29 @@ export const runChatTurn = async (
           return proseContract.read(text)
         },
       }
-    : proseContract
+    : contextTemplateJob
+      ? {
+          text: "",
+          read: (text) => {
+            if (!readStarter)
+              return {
+                miss: {
+                  detail: "the Context template job finished without reading its selected starter",
+                  nudge: `Read the exact selected starter with read({short_id:${JSON.stringify(input.templateStart?.uri)}}), then adapt its useful operating structure to the person's request.`,
+                },
+              }
+            if (!draftedContext)
+              return {
+                miss: {
+                  detail: "the Context template job finished without drafting an adapted Context",
+                  nudge:
+                    "Use draft_manifest now to turn the selected starter and the person's brief into a specific Context setup. Ask only for a decision you genuinely cannot infer.",
+                },
+              }
+            return proseContract.read(text)
+          },
+        }
+      : proseContract
   const out = await runTurn({
     system: systemPrompt(input),
     messages: asTurns(input.transcript, (m) => ({
@@ -251,16 +284,28 @@ export const runChatTurn = async (
         return {
           error: `Read the selected starter first with read({short_id:${JSON.stringify(input.templateStart?.uri)}}), then adapt it.`,
         }
+      if (
+        contextTemplateJob &&
+        (name === "draft_manifest" || name === "create_context_from_draft") &&
+        !readStarter
+      )
+        return {
+          error: `Read the selected starter first with read({short_id:${JSON.stringify(input.templateStart?.uri)}}), then adapt it.`,
+        }
       const result = await input.tools.execute(name, values)
       if (!failedToolResult(result)) {
-        if (artifactTemplateJob && name === "read" && values.short_id === input.templateStart?.uri)
+        if (
+          (artifactTemplateJob || contextTemplateJob) &&
+          name === "read" &&
+          values.short_id === input.templateStart?.uri
+        )
           readStarter = true
+        if (contextTemplateJob && name === "draft_manifest") draftedContext = true
         if (artifactTemplateJob && name === "publish") {
           const published = publishReceipt(result)
           if (published.published === true && typeof published.short_id === "string") {
             publishedShortId = published.short_id
-            inspectedRender =
-              richToolResult(result)?.value.some((part) => part.type === "image-data") === true
+            inspectedRender = hasRenderedPixels(result)
           }
         }
         if (
@@ -269,7 +314,7 @@ export const runChatTurn = async (
           typeof values.render === "string" &&
           values.short_id === publishedShortId
         )
-          inspectedRender = true
+          inspectedRender = hasRenderedPixels(result)
       }
       return result
     },

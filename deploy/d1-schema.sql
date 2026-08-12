@@ -424,7 +424,9 @@ CREATE TABLE IF NOT EXISTS template_library (
   scope TEXT NOT NULL DEFAULT 'private',
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT
+  updated_at TEXT,
+  mutation_token TEXT,
+  mutation_started_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS template_library_entry (

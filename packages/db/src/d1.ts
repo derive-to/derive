@@ -119,6 +119,15 @@ export function createD1Store(d1: D1Database): MetaStore {
       return repos.getVersion(decided.artifact_id, decided.decided_version)
     },
 
+    // D1 batch is transactional. A failed second statement cannot strand an
+    // empty library after its entries were deleted.
+    deleteTemplateLibrary: async (id: string): Promise<void> => {
+      await d1.batch([
+        d1.prepare("DELETE FROM template_library_entry WHERE library_id = ?").bind(id),
+        d1.prepare("DELETE FROM template_library WHERE id = ?").bind(id),
+      ])
+    },
+
     // ---- View analytics (raw SQL) ----------------------------------------
     recordView: async (v: NewView): Promise<void> => {
       await db.run(

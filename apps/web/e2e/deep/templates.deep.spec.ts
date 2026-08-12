@@ -5,7 +5,11 @@ import { expect, publishArtifact, test } from "../fixtures"
 // portable Context manifests that bind authority only after publication.
 test("Quick Create hands a Template to the agent without opening source", async ({ owner }) => {
   await owner.goto("/")
-  await owner.getByTestId("library-quick-decision-memo").click()
+  await owner.getByTestId("library-new").click()
+  await owner.getByTestId("library-new-template").click()
+  await expect(owner).toHaveURL(/\/templates/)
+  await owner.getByTestId("template-card-decision-memo").click()
+  await owner.getByTestId("template-use").click()
   await expect(owner.getByRole("heading", { name: "Make Decision memo yours" })).toBeVisible()
   await expect(owner.getByTestId("template-agent-brief")).toBeVisible()
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
@@ -43,15 +47,16 @@ test("a library pins an artifact starter and hands it to the agent", async ({ ow
   await owner.getByText("Add starter", { exact: true }).click()
   await expect(owner.getByTestId(`template-library-source-select-${source}`)).toBeVisible()
   await owner.getByTestId(`template-library-source-select-${source}`).click()
-  await owner.getByLabel("Display name").fill("Trusted decision")
+  await owner.getByRole("button", { name: "Continue" }).click()
+  await owner.getByLabel("Starter name").fill("Trusted decision")
   await owner.getByLabel("Description").fill("A decision-ready starting point.")
   await owner
-    .getByLabel(/Inputs/)
+    .getByTestId("template-library-starter-inputs")
     .fill("*Decision owner — makes the call\nAudience — needs the record")
   await owner.getByTestId("template-library-entry-create").click()
   await expect(owner.getByText("Trusted decision", { exact: true })).toBeVisible()
   await expect(owner.getByText(/Needs: Decision owner · required · Audience/)).toBeVisible()
-  await owner.getByRole("button", { name: "Use starter" }).click()
+  await owner.getByRole("button", { name: "Make it mine" }).click()
   await expect(owner.getByRole("heading", { name: "Make Trusted decision yours" })).toBeVisible()
   await expect(owner.getByTestId("template-agent-brief")).toBeVisible()
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
@@ -69,6 +74,24 @@ test("a library pins an artifact starter and hands it to the agent", async ({ ow
   await expect(owner.getByText("Published starter kit")).toBeVisible()
   await expect(owner.getByRole("link", { name: /View @/ })).toBeVisible()
   await expect(owner.getByRole("button", { name: "Copy library link" })).toBeVisible()
+
+  const libraryResponse = await owner.request.get(`/v1/template-libraries/${libraryId}`)
+  const publicLibrary = (await libraryResponse.json()) as { entries: Array<{ id: string }> }
+  const entryId = publicLibrary.entries[0]?.id
+  if (!entryId) throw new Error("published library is missing its starter")
+  const browser = owner.context().browser()
+  if (!browser) throw new Error("missing browser")
+  const anonymousContext = await browser.newContext()
+  const anonymous = await anonymousContext.newPage()
+  await anonymous.goto(`/template-libraries/${libraryId}?use=${encodeURIComponent(entryId)}`)
+  const expectedResume = `/template-libraries/${libraryId}?use=${encodeURIComponent(entryId)}`
+  const frameHref = await anonymous.getByTestId("public-make-your-own").getAttribute("href")
+  expect(new URL(frameHref ?? "", anonymous.url()).searchParams.get("return_to")).toBe(
+    expectedResume,
+  )
+  await anonymous.getByTestId(`public-template-library-use-${entryId}`).click()
+  expect(new URL(anonymous.url()).searchParams.get("return_to")).toBe(expectedResume)
+  await anonymousContext.close()
 })
 
 test("a manager can retire a library without deleting its source artifact", async ({ owner }) => {

@@ -4142,6 +4142,33 @@ export function runStoreContract(
       expect((await store.listSlackSubscriptions(org)).map((x) => x.channel_id)).toEqual(["C-keep"])
     })
 
+    it("serializes template-library mutations and only lets the holder release", async () => {
+      const library = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: ORG,
+        title: "Lease-protected starters",
+        scope: "private",
+        created_by: "u-template-owner",
+      })
+      const oldEnough = new Date(Date.now() - 2 * 60_000).toISOString()
+
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-a", oldEnough)).toBe(
+        true,
+      )
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
+        false,
+      )
+      await store.releaseTemplateLibraryMutation(library.id, "not-the-holder")
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
+        false,
+      )
+      await store.releaseTemplateLibraryMutation(library.id, "holder-a")
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
+        true,
+      )
+      await store.releaseTemplateLibraryMutation(library.id, "holder-b")
+    })
+
     it("deleteUserData: removes the user's rows, anonymizes authorship, keeps others' content", async () => {
       const org = `org_del_${uuid()}`
       const leaver = `leaver_${uuid()}`

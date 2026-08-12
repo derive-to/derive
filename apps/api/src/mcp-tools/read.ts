@@ -13,9 +13,12 @@ import {
   newId,
   type OutlineSection,
   outlineOf,
+  parseTemplateLibraryUri,
   refsOf,
   resolveNode,
   sectionOf,
+  TEMPLATE_LIBRARY_CATALOG_URI,
+  templateLibraryUri,
   toMarkdown,
   type VersionDataRecord,
   type VersionRecord,
@@ -31,6 +34,7 @@ import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
+import { templateLibraryEntryJson } from "../lib/template-library-entry"
 import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -347,8 +351,8 @@ export function registerReadTool(tc: ToolContext): void {
           content: JSON.parse(resource.text),
         })
       }
-      const AUTHORED_TEMPLATES = "derive://template-libraries"
-      if (short_id === AUTHORED_TEMPLATES || short_id.startsWith(`${AUTHORED_TEMPLATES}/`)) {
+      const authoredRef = parseTemplateLibraryUri(short_id)
+      if (short_id === TEMPLATE_LIBRARY_CATALOG_URI || authoredRef) {
         const canReadLibrary = async (library: Parameters<typeof canReadTemplateLibrary>[0]) => {
           const workspaceReachable = !!ownerId && inGrant(library.org_id)
           const member = workspaceReachable
@@ -360,7 +364,7 @@ export function registerReadTool(tc: ToolContext): void {
             isMember: !!member,
           })
         }
-        if (short_id === AUTHORED_TEMPLATES) {
+        if (short_id === TEMPLATE_LIBRARY_CATALOG_URI) {
           const ws = await resolveWs(workspace)
           if ("error" in ws) return err(ws.error)
           const [publicLibraries, workspaceLibraries, privateLibraries] = await Promise.all([
@@ -394,11 +398,11 @@ export function registerReadTool(tc: ToolContext): void {
               description: library.description,
               scope: library.scope,
               entry_count: counts[library.id] ?? 0,
-              read: `${AUTHORED_TEMPLATES}/${library.id}`,
+              read: templateLibraryUri(library.id),
             })),
           })
         }
-        const [libraryId = "", entryId] = short_id.slice(AUTHORED_TEMPLATES.length + 1).split("/")
+        const { libraryId, entryId } = authoredRef as NonNullable<typeof authoredRef>
         const library = await ctx.meta.getTemplateLibrary(libraryId)
         if (!library || !(await canReadLibrary(library)))
           return err(
@@ -413,14 +417,8 @@ export function registerReadTool(tc: ToolContext): void {
             description: library.description,
             scope: library.scope,
             entries: entries.map((entry) => ({
-              id: entry.id,
-              title: entry.title,
-              description: entry.description,
-              kind: entry.kind,
-              category: entry.category,
-              format: entry.format,
-              source_version: entry.source_version,
-              read: `${AUTHORED_TEMPLATES}/${library.id}/${entry.id}`,
+              ...templateLibraryEntryJson(entry),
+              read: templateLibraryUri(library.id, entry.id),
             })),
           })
         const entry = entries.find((candidate) => candidate.id === entryId)
@@ -430,28 +428,10 @@ export function registerReadTool(tc: ToolContext): void {
           content_type: entry.source_content_type,
         })
         if (source === null) return err(`Starter "${entry.title}" is unavailable.`)
-        const parse = (raw: string): unknown[] => {
-          try {
-            const value: unknown = JSON.parse(raw)
-            return Array.isArray(value) ? value : []
-          } catch {
-            return []
-          }
-        }
+        const metadata = templateLibraryEntryJson(entry)
         return json({
           uri: short_id,
-          id: entry.id,
-          library_id: library.id,
-          title: entry.title,
-          description: entry.description,
-          outcome: entry.outcome,
-          kind: entry.kind,
-          category: entry.category,
-          format: entry.format,
-          source_version: entry.source_version,
-          sections: parse(entry.sections_json),
-          inputs: parse(entry.inputs_json),
-          tags: parse(entry.tags_json),
+          ...metadata,
           starter: {
             source,
             filename: `${entry.id}.${entry.format}`,

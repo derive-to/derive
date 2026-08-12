@@ -61,9 +61,11 @@ export const collectionFoldersQuery = (collectionId: string) =>
   })
 
 export const templateLibrariesQuery = () =>
-  queryOptions({
+  infiniteQueryOptions({
     queryKey: ["template-libraries"] as const,
-    queryFn: () => api.listTemplateLibraries().then((r) => r.libraries),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => api.listTemplateLibraries({ cursor: pageParam, limit: 30 }),
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
   })
 
 // Workspaces only change via create/switch/delete — all of which hard-reload — so

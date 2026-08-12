@@ -1480,8 +1480,19 @@ export const api = {
   // starters. MCP reads the same records as resources and keeps using publish.
   listBuiltInTemplates: (): Promise<{ templates: BuiltInTemplate[] }> =>
     f("/v1/templates", { credentials: "include" }).then(j),
-  listTemplateLibraries: (): Promise<{ libraries: TemplateLibrary[] }> =>
-    f("/v1/template-libraries", { credentials: "include" }).then(j),
+  listTemplateLibraries: (
+    params: { cursor?: string; limit?: number } = {},
+  ): Promise<{
+    libraries: TemplateLibrary[]
+    truncated: boolean
+    next_cursor: string | null
+  }> => {
+    const query = new URLSearchParams()
+    if (params.cursor) query.set("cursor", params.cursor)
+    if (params.limit) query.set("limit", String(params.limit))
+    const suffix = query.size ? `?${query.toString()}` : ""
+    return f(`/v1/template-libraries${suffix}`, { credentials: "include" }).then(j)
+  },
   getTemplateLibrary: (id: string): Promise<TemplateLibrary> =>
     f(`/v1/template-libraries/${encodeURIComponent(id)}`, { credentials: "include" }).then(j),
   createTemplateLibrary: (body: {

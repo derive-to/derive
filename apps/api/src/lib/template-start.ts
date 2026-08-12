@@ -1,4 +1,9 @@
-import type { ArtifactRecord, MembershipRecord, MetaStore } from "@derive/core"
+import {
+  type ArtifactRecord,
+  type MembershipRecord,
+  type MetaStore,
+  parseTemplateLibraryUri,
+} from "@derive/core"
 import { getTemplate } from "@derive-to/templates"
 import { z } from "zod"
 import { canReadTemplateLibrary } from "./template-library-access"
@@ -12,6 +17,9 @@ export const TemplateStartSchema = z.object({
     ),
   title: z.string().trim().min(1).max(200),
   kind: z.enum(["artifact", "context"]),
+  // Server-resolved structured lineage. Any client-supplied value is ignored
+  // and replaced (or removed) by resolveTemplateStart before persistence.
+  sourceArtifactId: z.string().min(1).max(200).optional(),
 })
 
 export type TemplateStart = z.infer<typeof TemplateStartSchema>
@@ -49,12 +57,9 @@ export async function resolveTemplateStart(
     }
   }
 
-  const libraryMatch = input.uri.match(
-    /^derive:\/\/template-libraries\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_-]+)$/,
-  )
-  if (libraryMatch) {
-    const libraryId = libraryMatch[1] ?? ""
-    const entryId = libraryMatch[2] ?? ""
+  const authoredTemplate = parseTemplateLibraryUri(input.uri)
+  if (authoredTemplate?.entryId) {
+    const { libraryId, entryId } = authoredTemplate
     const [library, entry] = await Promise.all([
       deps.meta.getTemplateLibrary(libraryId),
       deps.meta.getTemplateLibraryEntry(entryId),
@@ -82,7 +87,12 @@ export async function resolveTemplateStart(
       return { ok: false, reason: "unavailable" }
     return {
       ok: true,
-      value: { uri: input.uri, title: entry.title, kind: entry.kind },
+      value: {
+        uri: input.uri,
+        title: entry.title,
+        kind: entry.kind,
+        sourceArtifactId: entry.source_artifact_id,
+      },
     }
   }
 
@@ -99,6 +109,7 @@ export async function resolveTemplateStart(
       uri: artifact.short_id,
       title: artifact.title || "Untitled artifact",
       kind: "artifact",
+      sourceArtifactId: artifact.id,
     },
   }
 }

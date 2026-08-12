@@ -2659,6 +2659,7 @@ export function makeRepos(db: SqliteDb) {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    before?: { createdAt: string; id: string }
     limit?: number
   }): Promise<TemplateLibraryRecord[]> => {
     const rows = await db
@@ -2669,9 +2670,18 @@ export function makeRepos(db: SqliteDb) {
           opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
           opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
           opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+          opts?.before
+            ? or(
+                lt(templateLibrary.created_at, opts.before.createdAt),
+                and(
+                  eq(templateLibrary.created_at, opts.before.createdAt),
+                  lt(templateLibrary.id, opts.before.id),
+                ),
+              )
+            : undefined,
         ),
       )
-      .orderBy(desc(templateLibrary.created_at))
+      .orderBy(desc(templateLibrary.created_at), desc(templateLibrary.id))
       .limit(Math.min(Math.max(opts?.limit ?? 1_000, 1), 1_000))
       .all()
     return rows
@@ -2689,6 +2699,34 @@ export function makeRepos(db: SqliteDb) {
         .returning()
         .get()) ?? null
     )
+  }
+  const acquireTemplateLibraryMutation = async (
+    id: string,
+    token: string,
+    staleBefore: string,
+  ): Promise<boolean> => {
+    const row = await db
+      .update(templateLibrary)
+      .set({ mutation_token: token, mutation_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(templateLibrary.id, id),
+          or(
+            isNull(templateLibrary.mutation_token),
+            lt(templateLibrary.mutation_started_at, staleBefore),
+          ),
+        ),
+      )
+      .returning({ id: templateLibrary.id })
+      .get()
+    return !!row
+  }
+  const releaseTemplateLibraryMutation = async (id: string, token: string): Promise<void> => {
+    await db
+      .update(templateLibrary)
+      .set({ mutation_token: null, mutation_started_at: null })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+      .run()
   }
   // Explicit cascade keeps SQLite/D1 and Postgres behavior identical without
   // relying on every deployment's foreign-key pragma/default.
@@ -2716,19 +2754,45 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(templateLibraryEntry.library_id, libraryId))
       .orderBy(desc(templateLibraryEntry.created_at))
       .all()
-  const listTemplateLibraryEntriesForLibraries = async (
-    libraryIds: string[],
-    limit: number,
-  ): Promise<TemplateLibraryEntryRecord[]> =>
-    libraryIds.length
-      ? db
-          .select()
-          .from(templateLibraryEntry)
-          .where(inArray(templateLibraryEntry.library_id, libraryIds))
-          .orderBy(desc(templateLibraryEntry.created_at))
-          .limit(Math.min(Math.max(limit, 1), 1_000))
-          .all()
-      : []
+  const searchTemplateLibraryEntries = async (opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>> => {
+    const needle = opts.query?.trim().toLowerCase()
+    return db
+      .select({ library: templateLibrary, entry: templateLibraryEntry })
+      .from(templateLibraryEntry)
+      .innerJoin(templateLibrary, eq(templateLibrary.id, templateLibraryEntry.library_id))
+      .where(
+        and(
+          or(
+            eq(templateLibrary.scope, "public"),
+            and(
+              eq(templateLibrary.org_id, opts.orgId),
+              or(
+                eq(templateLibrary.scope, "workspace"),
+                opts.ownerId
+                  ? and(
+                      eq(templateLibrary.scope, "private"),
+                      eq(templateLibrary.created_by, opts.ownerId),
+                    )
+                  : undefined,
+              ),
+            ),
+          ),
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibraryEntry.title} || ' ' || ${templateLibraryEntry.description} || ' ' || ${templateLibraryEntry.outcome} || ' ' || ${templateLibraryEntry.category} || ' ' || ${templateLibraryEntry.tags_json}) like ${`%${needle}%`}`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibraryEntry.created_at), desc(templateLibraryEntry.id))
+      .limit(Math.min(Math.max(opts.limit, 1), 1_000))
+      .all() as Promise<
+      Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>
+    >
+  }
   const countTemplateLibraryEntries = async (
     libraryIds: string[],
   ): Promise<Record<string, number>> => {
@@ -5113,11 +5177,13 @@ export function makeRepos(db: SqliteDb) {
     getTemplateLibrary,
     listTemplateLibraries,
     updateTemplateLibrary,
+    acquireTemplateLibraryMutation,
+    releaseTemplateLibraryMutation,
     deleteTemplateLibrary,
     createTemplateLibraryEntry,
     getTemplateLibraryEntry,
     listTemplateLibraryEntries,
-    listTemplateLibraryEntriesForLibraries,
+    searchTemplateLibraryEntries,
     countTemplateLibraryEntries,
     deleteTemplateLibraryEntry,
     createRepoSource,

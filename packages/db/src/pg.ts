@@ -3286,6 +3286,7 @@ export class PgMetaStore implements MetaStore {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    before?: { createdAt: string; id: string }
     limit?: number
   }): Promise<TemplateLibraryRecord[]> {
     return this.db
@@ -3296,9 +3297,18 @@ export class PgMetaStore implements MetaStore {
           opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
           opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
           opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+          opts?.before
+            ? or(
+                lt(templateLibrary.created_at, opts.before.createdAt),
+                and(
+                  eq(templateLibrary.created_at, opts.before.createdAt),
+                  lt(templateLibrary.id, opts.before.id),
+                ),
+              )
+            : undefined,
         ),
       )
-      .orderBy(desc(templateLibrary.created_at))
+      .orderBy(desc(templateLibrary.created_at), desc(templateLibrary.id))
       .limit(Math.min(Math.max(opts?.limit ?? 1_000, 1), 1_000))
   }
   async updateTemplateLibrary(
@@ -3312,6 +3322,32 @@ export class PgMetaStore implements MetaStore {
       .where(eq(templateLibrary.id, id))
       .returning()
     return rows[0] ?? null
+  }
+  async acquireTemplateLibraryMutation(
+    id: string,
+    token: string,
+    staleBefore: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ mutation_token: token, mutation_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(templateLibrary.id, id),
+          or(
+            isNull(templateLibrary.mutation_token),
+            lt(templateLibrary.mutation_started_at, staleBefore),
+          ),
+        ),
+      )
+      .returning({ id: templateLibrary.id })
+    return rows.length > 0
+  }
+  async releaseTemplateLibraryMutation(id: string, token: string): Promise<void> {
+    await this.db
+      .update(templateLibrary)
+      .set({ mutation_token: null, mutation_started_at: null })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
   }
   async deleteTemplateLibrary(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
@@ -3339,17 +3375,41 @@ export class PgMetaStore implements MetaStore {
       .where(eq(templateLibraryEntry.library_id, libraryId))
       .orderBy(desc(templateLibraryEntry.created_at))
   }
-  listTemplateLibraryEntriesForLibraries(
-    libraryIds: string[],
-    limit: number,
-  ): Promise<TemplateLibraryEntryRecord[]> {
-    if (!libraryIds.length) return Promise.resolve([])
+  async searchTemplateLibraryEntries(opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>> {
+    const needle = opts.query?.trim().toLowerCase()
     return this.db
-      .select()
+      .select({ library: templateLibrary, entry: templateLibraryEntry })
       .from(templateLibraryEntry)
-      .where(inArray(templateLibraryEntry.library_id, libraryIds))
-      .orderBy(desc(templateLibraryEntry.created_at))
-      .limit(Math.min(Math.max(limit, 1), 1_000))
+      .innerJoin(templateLibrary, eq(templateLibrary.id, templateLibraryEntry.library_id))
+      .where(
+        and(
+          or(
+            eq(templateLibrary.scope, "public"),
+            and(
+              eq(templateLibrary.org_id, opts.orgId),
+              or(
+                eq(templateLibrary.scope, "workspace"),
+                opts.ownerId
+                  ? and(
+                      eq(templateLibrary.scope, "private"),
+                      eq(templateLibrary.created_by, opts.ownerId),
+                    )
+                  : undefined,
+              ),
+            ),
+          ),
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibraryEntry.title} || ' ' || ${templateLibraryEntry.description} || ' ' || ${templateLibraryEntry.outcome} || ' ' || ${templateLibraryEntry.category} || ' ' || ${templateLibraryEntry.tags_json}) like ${`%${needle}%`}`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibraryEntry.created_at), desc(templateLibraryEntry.id))
+      .limit(Math.min(Math.max(opts.limit, 1), 1_000))
   }
   async countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>> {
     if (!libraryIds.length) return {}

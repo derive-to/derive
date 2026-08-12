@@ -17,6 +17,7 @@ import {
   storedCardFromMeta,
 } from "./context-builder-card"
 import { ContextConflictError, createContextCore } from "./create-context"
+import type { TemplateStart } from "./template-start"
 
 export type { BuilderCard, ContextDraft, StoredBuilderCard } from "./context-builder-card"
 
@@ -44,10 +45,13 @@ const CANNOT_CREATE =
 const PAUSED =
   "An admin has paused agent changes in this workspace, so nothing can be created right now. Tell them nothing is lost — everything they told you is still here — and that it can be created once that is switched back on."
 
-const manifestDocument = (draft: ContextDraft): Uint8Array =>
+const manifestDocument = (draft: ContextDraft, templateStart?: TemplateStart): Uint8Array =>
   new TextEncoder().encode(
     `<!-- This document is the instruction set for the "${draft.name}" context in Derive.\n` +
       "     Agents read it to learn what the context knows and how it should answer.\n" +
+      (templateStart
+        ? `     Adapted from ${templateStart.uri}; the original remains unchanged.\n`
+        : "") +
       "     Edit it like any document; the context uses the newest version. -->\n\n" +
       draft.manifest_md,
   )
@@ -80,6 +84,7 @@ export const buildContextBuilderTools = (
   ctx: AppContext,
   who: ChatPrincipal,
   seed?: StoredBuilderCard | null,
+  templateStart?: TemplateStart,
 ): BuilderToolSurface => {
   const base = buildChatTools(ctx, who, new Set(["find", "read"]))
   let draft = seed?.draft ?? null
@@ -102,13 +107,14 @@ export const buildContextBuilderTools = (
 
     if (!publishedArtifactId) {
       const published = await publish(ctx.meta, ctx.blobs, {
-        bytes: manifestDocument(draft),
+        bytes: manifestDocument(draft, templateStart),
         filename: "manifest.md",
         isBundle: false,
         orgId: who.org,
         title: `${draft.name} — context instructions`,
         authorId: who.user.id,
         source: "api",
+        derivedFrom: templateStart?.sourceArtifactId,
       })
       publishedArtifactId = published.artifact.id
     }

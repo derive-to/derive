@@ -67,6 +67,31 @@ describe("builder tool surface", () => {
     expect(surface.card()?.created?.context_id).toBe(out.context_id)
   })
 
+  it("persists template lineage on the Context's instruction artifact", async () => {
+    const made = await setupOwner("builder-tools-template-lineage")
+    const surface = buildContextBuilderTools(made.ctx, ownerWho, null, {
+      uri: "derive://template-libraries/tlb_context/tpl_context",
+      title: "Research workflow",
+      kind: "context",
+      sourceArtifactId: "art_context_template_source",
+    })
+    await surface.execute("draft_manifest", draft)
+    const out = (await surface.execute("create_context_from_draft", {})) as {
+      context_id: string
+    }
+    const context = await made.meta.getContext(out.context_id)
+    if (!context) throw new Error("missing context")
+    const manifest = await made.meta.getArtifactById(context.manifest_artifact_id)
+    expect(manifest?.derived_from).toBe("art_context_template_source")
+    const version = manifest
+      ? await made.meta.getVersion(manifest.id, manifest.current_version)
+      : null
+    const source = version ? await made.ctx.sourceText(version) : null
+    expect(source).toContain(
+      "Adapted from derive://template-libraries/tlb_context/tpl_context; the original remains unchanged.",
+    )
+  })
+
   it("create without a draft is a plain error, not a throw", async () => {
     const { surface } = await setupOwner("builder-tools-2")
     const out = await surface.execute("create_context_from_draft", {})

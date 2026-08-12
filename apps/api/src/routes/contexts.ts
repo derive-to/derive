@@ -336,9 +336,10 @@ export const contextRoutes = (ctx: AppContext) => {
     // Seeded with the newest stored card off this transcript, so a confirmation on a LATER turn
     // creates from the draft the person was actually shown rather than one the model writes
     // again from memory (see StoredBuilderCard).
+    const builderSeed = s.subject_ref === BUILDER_SUBJECT ? latestBuilderCard(transcript) : null
     const builderTools =
       s.subject_ref === BUILDER_SUBJECT
-        ? buildContextBuilderTools(ctx, who, latestBuilderCard(transcript))
+        ? buildContextBuilderTools(ctx, who, builderSeed, templateStart)
         : null
     const tools = builderTools ?? buildChatTools(ctx, who)
     // ONE METER, serving both readers of it: the per-turn log line and the timings persisted on
@@ -357,6 +358,7 @@ export const contextRoutes = (ctx: AppContext) => {
           asker: { name: me.name ?? me.username ?? null, role: seat.role },
           skills: tools.skills,
           ...(templateStart ? { templateStart } : {}),
+          ...(templateStart && builderSeed ? { templatePrepared: true } : {}),
           ...(builderTools ? { purpose: "context_builder" as const } : {}),
         },
       ),

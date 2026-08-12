@@ -313,6 +313,7 @@ describe("the workspace chat", () => {
           uri: "derive://templates/narrative-pitch",
           title: "Spoofed client title",
           kind: "artifact",
+          sourceArtifactId: "art_client_cannot_choose_lineage",
         },
       },
     )
@@ -331,6 +332,10 @@ describe("the workspace chat", () => {
     expect(sawRenderPixels).toBe(true)
     expect(turn).toBe(5)
     expect(msgs.at(-1)?.body_md).toContain("published")
+    const storedStart = JSON.parse(msgs[0]?.meta ?? "{}") as {
+      template_start?: { sourceArtifactId?: string }
+    }
+    expect(storedStart.template_start?.sourceArtifactId).toBeUndefined()
     const artifacts = await meta.listArtifacts({ orgId: "default" })
     const result = artifacts.find((artifact) => artifact.title === "Acme onboarding narrative")
     expect(result?.derived_from).toBe((await meta.getByShortId(evidenceShortId))?.id)

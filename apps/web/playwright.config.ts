@@ -51,6 +51,11 @@ export default defineConfig({
   // safe). `--project=smoke` selects just it; no flag runs everything.
   projects: [
     { name: "smoke", testMatch: /smoke\.spec\.ts$/ },
+    // Template libraries have a wider management/share lifecycle than the
+    // ordinary route smokes. Keep that focused suite independently selectable,
+    // but include it in the shipped e2e gate (package.json) so it cannot become
+    // a dormant folder of reassuring assertions that never execute.
+    { name: "templates-deep", testMatch: /deep\/templates\.deep\.spec\.ts$/ },
     // Visual-QA capture harness (not a test gate): seeds a realistic workspace and
     // screenshots the real, auth-walled dashboard across themes + viewports. Its
     // specs self-skip unless SHOTS=1, so a bare `playwright test` never runs them.

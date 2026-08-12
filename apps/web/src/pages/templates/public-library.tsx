@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
 import { ApiError, api } from "@/api"
@@ -20,9 +20,11 @@ const route = getRouteApi("/template-libraries/$id")
 
 export function PublicTemplateLibrary() {
   const { id } = route.useParams()
+  const { use: resumeEntryId } = route.useSearch()
   const { me } = useAuth()
   const inner = <PublicTemplateLibraryInner id={id} />
-  return me ? inner : <PublicFrame returnTo={`/template-libraries/${id}`}>{inner}</PublicFrame>
+  const returnTo = `/template-libraries/${id}${resumeEntryId ? `?use=${encodeURIComponent(resumeEntryId)}` : ""}`
+  return me ? inner : <PublicFrame returnTo={returnTo}>{inner}</PublicFrame>
 }
 
 export function PublicTemplateLibraryCatalog() {
@@ -33,9 +35,11 @@ export function PublicTemplateLibraryCatalog() {
 
 function PublicTemplateLibraryCatalogInner() {
   const [query, setQuery] = useState("")
-  const libraries = useQuery({
+  const libraries = useInfiniteQuery({
     queryKey: ["public-template-libraries"] as const,
-    queryFn: () => api.listTemplateLibraries(),
+    initialPageParam: undefined as string | undefined,
+    queryFn: ({ pageParam }) => api.listTemplateLibraries({ cursor: pageParam, limit: 30 }),
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
   })
   useDocumentTitle("Public template libraries")
   if (libraries.isPending)
@@ -64,7 +68,7 @@ function PublicTemplateLibraryCatalogInner() {
       </PageShell>
     )
   const needle = query.trim().toLocaleLowerCase()
-  const publicLibraries = (libraries.data?.libraries ?? []).filter(
+  const publicLibraries = (libraries.data?.pages.flatMap((page) => page.libraries) ?? []).filter(
     (library) =>
       library.scope === "public" &&
       (!needle ||
@@ -81,7 +85,7 @@ function PublicTemplateLibraryCatalogInner() {
         <Badge variant="outline" shape="pill">
           <Icon name="globe" size={12} /> Public template libraries
         </Badge>
-        <h1 className="mt-4 max-w-3xl font-serif text-4xl font-medium leading-tight tracking-tight text-foreground sm:text-5xl">
+        <h1 className="mt-4 max-w-3xl font-serif text-4xl font-medium leading-tight tracking-tight text-foreground [overflow-wrap:anywhere] sm:text-5xl">
           Useful beginnings, shared openly.
         </h1>
         <p className="mt-3 max-w-2xl text-base text-pretty text-muted-foreground">
@@ -118,7 +122,7 @@ function PublicTemplateLibraryCatalogInner() {
                 <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
                   {library.title}
                 </h2>
-                <p className="mt-1 text-sm text-pretty text-muted-foreground">
+                <p className="mt-1 text-sm text-pretty text-muted-foreground [overflow-wrap:anywhere]">
                   {library.description || "Reusable Derive starters."}
                 </p>
               </div>
@@ -162,6 +166,18 @@ function PublicTemplateLibraryCatalogInner() {
           title="No public libraries yet"
           description="The first public starter kit will appear here."
         />
+      )}
+      {libraries.hasNextPage && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => libraries.fetchNextPage()}
+            disabled={libraries.isFetchingNextPage}
+            data-testid="public-template-libraries-load-more"
+          >
+            {libraries.isFetchingNextPage ? "Loading…" : "Load more libraries"}
+          </Button>
+        </div>
       )}
     </PageShell>
   )
@@ -325,12 +341,12 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
               <p className="mt-1 text-sm text-pretty text-muted-foreground">{entry.description}</p>
             </div>
             {entry.sections.length > 0 && (
-              <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+              <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">
                 {entry.sections.join(" · ")}
               </p>
             )}
             {entry.inputs.length > 0 && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                 Needs:{" "}
                 {entry.inputs
                   .map((input) => `${input.name}${input.required ? " · required" : ""}`)

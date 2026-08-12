@@ -1661,6 +1661,9 @@ export interface TemplateLibraryRecord {
   created_by: string
   created_at: string
   updated_at: string | null
+  /** Short-lived server-side mutex for scope/entry mutations. Never serialized. */
+  mutation_token: string | null
+  mutation_started_at: string | null
 }
 
 /** The durable, independently-readable starter stored in one library. */
@@ -1723,21 +1726,28 @@ export interface TemplateLibraryStore {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    before?: { createdAt: string; id: string }
     limit?: number
   }): Promise<TemplateLibraryRecord[]>
   updateTemplateLibrary(
     id: string,
     fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
   ): Promise<TemplateLibraryRecord | null>
+  /** Serialize mutations whose validation depends on the library's current
+   * scope and entries. A stale holder may be replaced after `staleBefore`. */
+  acquireTemplateLibraryMutation(id: string, token: string, staleBefore: string): Promise<boolean>
+  releaseTemplateLibraryMutation(id: string, token: string): Promise<void>
   deleteTemplateLibrary(id: string): Promise<void>
   createTemplateLibraryEntry(x: NewTemplateLibraryEntry): Promise<TemplateLibraryEntryRecord>
   getTemplateLibraryEntry(id: string): Promise<TemplateLibraryEntryRecord | null>
   listTemplateLibraryEntries(libraryId: string): Promise<TemplateLibraryEntryRecord[]>
-  /** Batched catalog operations keep discovery query-count constant as libraries grow. */
-  listTemplateLibraryEntriesForLibraries(
-    libraryIds: string[],
-    limit: number,
-  ): Promise<TemplateLibraryEntryRecord[]>
+  /** Search entry + library metadata under the caller's discoverable access union. */
+  searchTemplateLibraryEntries(opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>>
   countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>>
   deleteTemplateLibraryEntry(id: string): Promise<void>
 }

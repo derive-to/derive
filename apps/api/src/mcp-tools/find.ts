@@ -5,6 +5,7 @@ import {
   isDerivedFactName,
   LINKS_FACT,
   SKILL_CONTENT_TYPE,
+  templateLibraryUri,
 } from "@derive/core"
 import { listTemplates } from "@derive-to/templates"
 import { z } from "zod"
@@ -199,7 +200,9 @@ export function registerFindTool(tc: ToolContext): void {
         max_matches: z.coerce
           .number()
           .optional()
-          .describe("Grep/search: cap on matches per artifact (default 40, max 200)."),
+          .describe(
+            "Grep/search: cap on matches per artifact (default 40). Templates: cap total results (default 100). Maximum 200.",
+          ),
         links_to: z
           .string()
           .optional()
@@ -240,6 +243,7 @@ export function registerFindTool(tc: ToolContext): void {
       if (templates) {
         const t = await resolveWs(workspace)
         if ("error" in t) return err(t.error)
+        const cap = Math.min(Math.max(max_matches ?? 100, 1), 200)
         const needle = query?.trim().toLowerCase() ?? ""
         const builtIns = listTemplates({ query }).map((template) => ({
           type: "template" as const,
@@ -252,54 +256,16 @@ export function registerFindTool(tc: ToolContext): void {
           format: template.format,
           uri: `derive://templates/${template.id}`,
         }))
-        const [publicLibraries, workspaceLibraries, privateLibraries] = await Promise.all([
-          ctx.meta.listTemplateLibraries({ scope: "public", limit: 101 }),
-          ctx.meta.listTemplateLibraries({ orgId: t.org, scope: "workspace", limit: 101 }),
-          ownerId
-            ? ctx.meta.listTemplateLibraries({
-                orgId: t.org,
-                scope: "private",
-                createdBy: ownerId,
-                limit: 101,
-              })
-            : [],
-        ])
-        const allLibraries = [
-          ...privateLibraries,
-          ...workspaceLibraries,
-          ...publicLibraries,
-        ].filter(
-          (library, index, all) =>
-            all.findIndex((candidate) => candidate.id === library.id) === index,
-        )
-        const libraries = allLibraries
-          .sort((a, b) => b.created_at.localeCompare(a.created_at))
-          .slice(0, 100)
-        const libraryById = new Map(libraries.map((library) => [library.id, library]))
-        const entries = await ctx.meta.listTemplateLibraryEntriesForLibraries(
-          libraries.map((library) => library.id),
-          1_000,
-        )
-        const authoredAll = entries
-          .flatMap((entry) => {
-            const library = libraryById.get(entry.library_id)
-            return library ? [{ library, entry }] : []
-          })
-          .filter(({ library, entry }) => {
-            if (!needle) return true
-            return [
-              library.title,
-              entry.title,
-              entry.description,
-              entry.outcome,
-              entry.category,
-              entry.tags_json,
-            ]
-              .join(" ")
-              .toLowerCase()
-              .includes(needle)
-          })
-        const authored = authoredAll.slice(0, 100).map(({ library, entry }) => ({
+        const authoredCapacity = Math.max(cap - builtIns.length, 0)
+        const authoredAll = authoredCapacity
+          ? await ctx.meta.searchTemplateLibraryEntries({
+              orgId: t.org,
+              ownerId,
+              ...(needle ? { query: needle } : {}),
+              limit: authoredCapacity + 1,
+            })
+          : []
+        const authoredRows = authoredAll.slice(0, authoredCapacity).map(({ library, entry }) => ({
           type: "template" as const,
           source: "library" as const,
           id: entry.id,
@@ -309,17 +275,16 @@ export function registerFindTool(tc: ToolContext): void {
           category: entry.category,
           format: entry.format,
           library: { id: library.id, title: library.title, scope: library.scope },
-          uri: `derive://template-libraries/${library.id}/${entry.id}`,
+          uri: templateLibraryUri(library.id, entry.id),
         }))
+        const allResults = [...builtIns, ...authoredRows]
+        const results = allResults.slice(0, cap)
         return json({
           workspace: t.org,
           ...(query ? { query } : {}),
-          count: builtIns.length + authored.length,
-          results: [...builtIns, ...authored],
-          truncated:
-            allLibraries.length > libraries.length ||
-            entries.length === 1_000 ||
-            authoredAll.length > authored.length,
+          count: results.length,
+          results,
+          truncated: builtIns.length > cap || authoredAll.length > authoredCapacity,
           next: "Read a result's uri, adapt its starter to the person's request, publish with lineage, then inspect the render.",
         })
       }

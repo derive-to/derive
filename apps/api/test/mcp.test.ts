@@ -1207,6 +1207,22 @@ describe("remote MCP endpoint (/mcp)", () => {
       "derive://template-libraries/tlb_mcp/tpl_mcp",
     )
     expect(found.results.some((result) => result.uri.startsWith("derive://templates/"))).toBe(true)
+
+    // Canonical URIs fail closed. Extra path segments must never be silently
+    // interpreted as the valid starter that happens to prefix them.
+    const malformed = "derive://template-libraries/tlb_mcp/tpl_mcp/extra"
+    expect(toolText(await call(app, token, "read", { short_id: malformed }))).toMatch(
+      /No artifact|cannot reach/i,
+    )
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Must not adopt malformed lineage",
+          content: "# No",
+          derived_from: malformed,
+        }),
+      ),
+    ).toMatch(/Input validation|No template starter/i)
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {

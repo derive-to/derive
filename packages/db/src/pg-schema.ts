@@ -832,6 +832,8 @@ export const templateLibrary = pgTable("template_library", {
   created_by: text("created_by").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   updated_at: text("updated_at"),
+  mutation_token: text("mutation_token"),
+  mutation_started_at: text("mutation_started_at"),
 })
 
 export const templateLibraryEntry = pgTable(
