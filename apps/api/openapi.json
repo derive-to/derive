@@ -4086,6 +4086,36 @@
         }
       }
     },
+    "/v1/workspace/invites/{id}/resend": {
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Rotate a pending invitation and return its acceptance link (Admin only).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The replacement pending invitation and acceptance link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/workspace/invites/{id}": {
       "delete": {
         "tags": [
