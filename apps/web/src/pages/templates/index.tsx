@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { useDeferredValue, useEffect, useState } from "react"
 import { api } from "@/api"
@@ -5,18 +6,13 @@ import { Icon } from "@/components/icons"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
+import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentTemplateDialog, type AgentTemplateTarget } from "./agent-template-dialog"
-import {
-  ARTIFACT_TEMPLATES,
-  CONTEXT_TEMPLATES,
-  getTemplate,
-  TEMPLATE_CATEGORIES,
-  templateMatches,
-} from "./catalog"
+import { getTemplate, TEMPLATE_CATEGORIES, templateMatches } from "./catalog"
 import { DeriveSource } from "./derive-source"
 import { LibraryShelf } from "./library-shelf"
 import { TemplateCard } from "./template-card"
@@ -45,12 +41,20 @@ export function Templates() {
   const nav = useNavigate({ from: "/templates" })
   const tab = search.tab ?? "artifacts"
   const query = useDeferredValue(search.query ?? "")
+  const catalogState = useQuery({
+    queryKey: ["templates", "built-ins"],
+    queryFn: api.listBuiltInTemplates,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+  const builtIns = catalogState.data?.templates ?? []
+  const artifactTemplates = builtIns.filter((template) => template.kind === "artifact")
+  const contextTemplates = builtIns.filter((template) => template.kind === "context")
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
   const sourceArtifact = search.source
   const requestedTemplate = search.use
   useEffect(() => {
-    if (!requestedTemplate) return
-    const template = getTemplate(requestedTemplate)
+    if (!requestedTemplate || catalogState.isPending) return
+    const template = getTemplate(builtIns, requestedTemplate)
     void nav({ search: (previous) => ({ ...previous, use: undefined }), replace: true })
     if (!template) return
     setAgentTarget({
@@ -61,7 +65,7 @@ export function Templates() {
       category: template.category,
       inputs: template.inputs,
     })
-  }, [requestedTemplate, nav])
+  }, [requestedTemplate, nav, catalogState.isPending, builtIns])
   useEffect(() => {
     if (!sourceArtifact) return
     let active = true
@@ -93,14 +97,16 @@ export function Templates() {
       active = false
     }
   }, [sourceArtifact, nav])
-  const templates = (tab === "contexts" ? CONTEXT_TEMPLATES : ARTIFACT_TEMPLATES).filter(
+  const templates = (tab === "contexts" ? contextTemplates : artifactTemplates).filter(
     (template) =>
       templateMatches(template, query) &&
       (tab !== "artifacts" || !search.category || template.category === search.category),
   )
   const selectedTemplate =
     tab !== "libraries"
-      ? (getTemplate(search.selected) ?? templates.find((item) => item.featured) ?? templates[0])
+      ? (getTemplate(builtIns, search.selected) ??
+        templates.find((item) => item.featured) ??
+        templates[0])
       : undefined
 
   const setTab = (next: TemplateTab) =>
@@ -158,10 +164,10 @@ export function Templates() {
         </div>
         <div className="flex gap-5 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
           <span>
-            <b className="text-foreground">{ARTIFACT_TEMPLATES.length}</b> artifacts
+            <b className="text-foreground">{artifactTemplates.length}</b> artifacts
           </span>
           <span>
-            <b className="text-foreground">{CONTEXT_TEMPLATES.length}</b> contexts
+            <b className="text-foreground">{contextTemplates.length}</b> contexts
           </span>
         </div>
       </section>
@@ -262,6 +268,29 @@ export function Templates() {
               category: entry.category,
               inputs: entry.inputs,
             })
+          }
+        />
+      ) : catalogState.isPending ? (
+        <div className="grid min-h-64 place-items-center border-y py-12 text-center" role="status">
+          <div className="flex max-w-sm flex-col items-center gap-3 text-muted-foreground">
+            <Icon name="derive" size={24} className="animate-pulse" />
+            <p className="text-sm">Loading built-in templates…</p>
+          </div>
+        </div>
+      ) : catalogState.isError ? (
+        <StatusPanel
+          tone="danger"
+          title="Derive couldn’t load the built-in templates."
+          description="Your libraries are still available. Retry the catalog when you’re ready."
+          action={
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="templates-catalog-retry"
+              onClick={() => void catalogState.refetch()}
+            >
+              Retry
+            </Button>
           }
         />
       ) : noResults ? (

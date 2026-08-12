@@ -21,6 +21,15 @@ describe("template libraries: pinned reusable starters", () => {
     return app.request("/v1/artifacts", { method: "POST", body: form, headers })
   }
 
+  it("serves the built-in catalog without shipping starter source to the browser", async () => {
+    const response = await app.request("/v1/templates")
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.templates).toHaveLength(30)
+    expect(body.templates[0]).toMatchObject({ libraryId: "derive/built-ins", catalogVersion: 1 })
+    expect(body.templates[0]).not.toHaveProperty("source")
+  })
+
   it("pins source bytes, gates private libraries, and makes an explicit public snapshot shareable", async () => {
     const published = await publishMarkdown("# First version", {}, as(owner.email))
     const source = await published.json()

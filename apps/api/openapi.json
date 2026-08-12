@@ -3051,6 +3051,123 @@
           "is_default"
         ]
       },
+      "BuiltInTemplate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artifact",
+              "context"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "Deck",
+              "Doc",
+              "Report",
+              "Site",
+              "Agent"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "md",
+              "html"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "defaultTitle": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "required": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "description"
+              ]
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "featured": {
+            "type": "boolean"
+          },
+          "starterPrompts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "libraryId": {
+            "type": "string",
+            "enum": [
+              "derive/built-ins"
+            ]
+          },
+          "catalogVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "category",
+          "format",
+          "title",
+          "defaultTitle",
+          "description",
+          "outcome",
+          "sections",
+          "inputs",
+          "tags",
+          "libraryId",
+          "catalogVersion"
+        ]
+      },
       "TemplateLibrary": {
         "type": "object",
         "properties": {
@@ -9628,6 +9745,37 @@
                   },
                   "required": [
                     "sessions"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/templates": {
+      "get": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "List the built-in template catalog.",
+        "responses": {
+          "200": {
+            "description": "Portable built-in template metadata; starter source remains agent-only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "templates": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/BuiltInTemplate"
+                      }
+                    }
+                  },
+                  "required": [
+                    "templates"
                   ]
                 }
               }

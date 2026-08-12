@@ -1,5 +1,5 @@
+import { ARTIFACT_TEMPLATES, CONTEXT_TEMPLATES } from "@derive-to/templates"
 import { describe, expect, it } from "vitest"
-import { ARTIFACT_TEMPLATES, CONTEXT_TEMPLATES } from "./catalog"
 import { buildTemplateDraft } from "./template-content"
 
 describe("built-in templates", () => {

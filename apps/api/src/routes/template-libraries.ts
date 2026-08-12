@@ -5,7 +5,12 @@ import {
   type TemplateLibraryEntryRecord,
   type TemplateLibraryRecord,
 } from "@derive/core"
-import { unsafeHtmlTemplateBindings } from "@derive-to/templates"
+import {
+  BUILT_INS_LIBRARY_ID,
+  listTemplates,
+  TEMPLATE_CATALOG_VERSION,
+  unsafeHtmlTemplateBindings,
+} from "@derive-to/templates"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -47,6 +52,25 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     description: z.string().trim().min(1).max(240),
     required: z.boolean().optional(),
   })
+  const BuiltInTemplate = z
+    .object({
+      id: z.string(),
+      kind: EntryKind,
+      category: z.enum(["Deck", "Doc", "Report", "Site", "Agent"]),
+      format: EntryFormat,
+      title: z.string(),
+      defaultTitle: z.string(),
+      description: z.string(),
+      outcome: z.string(),
+      sections: z.array(z.string()),
+      inputs: z.array(Input),
+      tags: z.array(z.string()),
+      featured: z.boolean().optional(),
+      starterPrompts: z.array(z.string()).optional(),
+      libraryId: z.literal(BUILT_INS_LIBRARY_ID),
+      catalogVersion: z.literal(TEMPLATE_CATALOG_VERSION),
+    })
+    .openapi("BuiltInTemplate")
 
   const Entry = z
     .object({
@@ -237,6 +261,24 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     if (!(await canManage(c, library))) return fail(c, 403, "forbidden")
     return library
   }
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/templates",
+      tags: ["Templates"],
+      summary: "List the built-in template catalog.",
+      responses: {
+        200: {
+          description: "Portable built-in template metadata; starter source remains agent-only.",
+          content: {
+            "application/json": { schema: z.object({ templates: z.array(BuiltInTemplate) }) },
+          },
+        },
+      },
+    }),
+    (c) => c.json({ templates: [...listTemplates()] }),
+  )
 
   app.openapi(
     createRoute({

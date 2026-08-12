@@ -26,7 +26,11 @@ const MANIFEST = join(CLIENT, ".vite/manifest.json")
 // deliberately (in a PR) when a feature earns it.
 const EAGER_BUDGET = 300 * 1024
 const CHUNK_BUDGET = 180 * 1024
-const TOTAL_BACKSTOP = 800 * 1024
+// Templates adds a fully lazy catalog + library-management surface. Its metadata
+// is fetched on demand (not bundled), and the eager path remains unchanged; give
+// that intentional route 10 kB of aggregate room without relaxing either hard
+// user-facing budget above.
+const TOTAL_BACKSTOP = 810 * 1024
 
 let manifest
 try {

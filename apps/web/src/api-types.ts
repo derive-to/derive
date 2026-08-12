@@ -5806,6 +5806,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the built-in template catalog. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Portable built-in template metadata; starter source remains agent-only. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            templates: components["schemas"]["BuiltInTemplate"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/template-libraries": {
         parameters: {
             query?: never;
@@ -7857,6 +7895,32 @@ export interface components {
             label: string;
             /** @description The one a turn uses when nobody chose. */
             is_default: boolean;
+        };
+        BuiltInTemplate: {
+            id: string;
+            /** @enum {string} */
+            kind: "artifact" | "context";
+            /** @enum {string} */
+            category: "Deck" | "Doc" | "Report" | "Site" | "Agent";
+            /** @enum {string} */
+            format: "md" | "html";
+            title: string;
+            defaultTitle: string;
+            description: string;
+            outcome: string;
+            sections: string[];
+            inputs: {
+                name: string;
+                description: string;
+                required?: boolean;
+            }[];
+            tags: string[];
+            featured?: boolean;
+            starterPrompts?: string[];
+            /** @enum {string} */
+            libraryId: "derive/built-ins";
+            /** @enum {number} */
+            catalogVersion: 1;
         };
         TemplateLibrary: {
             id: string;
