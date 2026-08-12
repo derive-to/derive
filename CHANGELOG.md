@@ -4,6 +4,13 @@ All notable changes to Derive are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims to
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reaches 1.0.
 
+## [0.2.0] - 2026-08-12
+
+The first tagged release with the self-hosting distribution path. It includes the
+published GHCR image, a release-bundled Compose/env pair, pinned image digest,
+SHA-256 checksums, and GitHub build attestation. See [QUICKSTART.md](QUICKSTART.md)
+for the recommended install and verification flow.
+
 ## [Unreleased]
 
 ### Added
