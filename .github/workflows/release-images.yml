@@ -63,7 +63,6 @@ jobs:
           tags: |
             type=raw,value=${{ steps.version.outputs.value }}
             type=raw,value=${{ steps.version.outputs.value }},suffix=-${{ github.sha }}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && steps.version.outputs.stable == 'true' }}
 
       - name: Build and publish amd64 + arm64 with SBOM and provenance
         id: build
@@ -109,12 +108,54 @@ jobs:
           grep -q "image: ghcr.io/derive-to/derive@$DIGEST" release/rendered-compose.yml
           printf 'ghcr.io/derive-to/derive@%s\n' "$DIGEST" > release/image-digest.txt
 
-      - name: Attach install files to the GitHub release
+      # Keep the previous stable release at /releases/latest until an anonymous client has
+      # downloaded and exercised this release's exact public assets. Prereleases never move it.
+      - name: Publish a non-latest GitHub release with install files
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
+          prerelease: ${{ steps.version.outputs.stable != 'true' }}
+          make_latest: false
+          fail_on_unmatched_files: true
           files: |
             release/compose.yml
             release/selfhost.env.example
             release/image-digest.txt
+
+      - name: Download and exercise the public release bundle anonymously
+        if: github.ref_type == 'tag'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          ref="ghcr.io/derive-to/derive@$DIGEST"
+          scripts/test-published-selfhost-bundle.sh "$GITHUB_REF_NAME" "$ref" 18080 release
+
+      # The digest-pinned install path is now proven. Move both human-facing convenience aliases
+      # only for a stable tag, and move the image first so a failure cannot advertise a release
+      # whose convenience image still points at an older build.
+      - name: Log in to GHCR for stable promotion
+        if: github.ref_type == 'tag' && steps.version.outputs.stable == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the verified stable image and release to latest
+        if: github.ref_type == 'tag' && steps.version.outputs.stable == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref="ghcr.io/derive-to/derive@$DIGEST"
+          docker buildx imagetools create --tag ghcr.io/derive-to/derive:latest "$ref"
+          gh release edit "$GITHUB_REF_NAME" --latest
+
+      - name: Verify the documented latest download path
+        if: github.ref_type == 'tag' && steps.version.outputs.stable == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          ref="ghcr.io/derive-to/derive@$DIGEST"
+          scripts/test-published-selfhost-bundle.sh latest "$ref" 18080 release assets-only

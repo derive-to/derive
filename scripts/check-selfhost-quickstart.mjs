@@ -11,6 +11,7 @@ const BUILD_COMPOSE = "deploy/compose.build.yml"
 const RELEASE = ".github/workflows/release-images.yml"
 const CI = ".github/workflows/ci.yml"
 const SMOKE = "scripts/test-selfhost-quickstart.sh"
+const PUBLISHED_SMOKE = "scripts/test-published-selfhost-bundle.sh"
 const SMOKE_CLIENT = "scripts/selfhost-smoke-client.mjs"
 
 const read = (path) => readFileSync(path, "utf8")
@@ -22,6 +23,7 @@ const buildCompose = read(BUILD_COMPOSE)
 const release = read(RELEASE)
 const ci = read(CI)
 const smoke = read(SMOKE)
+const publishedSmoke = read(PUBLISHED_SMOKE)
 const smokeClient = read(SMOKE_CLIENT)
 
 const failures = []
@@ -97,15 +99,46 @@ for (const asset of ["compose.yml", "selfhost.env.example"]) {
 }
 
 requireText(release, "DERIVE_IMAGE=ghcr.io/derive-to/derive@$DIGEST", RELEASE)
+requireText(release, "make_latest: false", `${RELEASE} pre-promotion release`)
+requireText(release, PUBLISHED_SMOKE, `${RELEASE} published-bundle gate`)
+requireText(
+  release,
+  `scripts/test-published-selfhost-bundle.sh "$GITHUB_REF_NAME" "$ref" 18080 release`,
+  `${RELEASE} tag-specific public bundle test`,
+)
+requireText(
+  release,
+  'docker buildx imagetools create --tag ghcr.io/derive-to/derive:latest "$ref"',
+  `${RELEASE} verified image promotion`,
+)
+requireText(
+  release,
+  'gh release edit "$GITHUB_REF_NAME" --latest',
+  `${RELEASE} verified release promotion`,
+)
+requireText(
+  release,
+  `scripts/test-published-selfhost-bundle.sh latest "$ref" 18080 release assets-only`,
+  `${RELEASE} documented latest-download check`,
+)
+requireOrder(
+  release,
+  [
+    "Publish a non-latest GitHub release with install files",
+    "Download and exercise the public release bundle anonymously",
+    "Promote the verified stable image and release to latest",
+    "Verify the documented latest download path",
+  ],
+  `${RELEASE} safe release order`,
+)
+if (release.includes("type=raw,value=latest"))
+  fail(`${RELEASE} must not publish the latest image before its public bundle passes`)
 requireText(compose, "${DERIVE_IMAGE:?", COMPOSE)
 requireText(compose, "http://127.0.0.1:8080/readyz", COMPOSE)
 requireText(buildCompose, "image: derive:local", BUILD_COMPOSE)
 
-for (const workflow of [
-  [CI, ci],
-  [RELEASE, release],
-])
-  requireText(workflow[1], SMOKE, `${workflow[0]} self-host integration gate`)
+requireText(ci, PUBLISHED_SMOKE, `${CI} PR-safe published-bundle integration gate`)
+requireText(release, SMOKE, `${RELEASE} self-host integration gate`)
 
 for (const operation of [
   "bootstrap-operator",
@@ -115,6 +148,13 @@ for (const operation of [
   "restore-backup /backups/quickstart-smoke",
 ])
   requireText(smoke, operation, SMOKE)
+
+for (const boundary of [
+  "env -u GH_TOKEN -u GITHUB_TOKEN curl -q",
+  'cmp "$staged_file" "$download_dir/$asset"',
+  '"$download_dir/compose.yml" "$download_dir/selfhost.env.example"',
+])
+  requireText(publishedSmoke, boundary, PUBLISHED_SMOKE)
 
 for (const boundary of [
   "/api/auth/sign-in/email",

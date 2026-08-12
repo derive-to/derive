@@ -7,6 +7,8 @@ set -euo pipefail
 
 image=${1:-derive:ci}
 port=${2:-18080}
+compose_source=${3:-}
+env_source=${4:-}
 
 if [[ ! "$port" =~ ^[0-9]+$ ]] || ((port < 1024 || port > 65535)); then
   echo "port must be an integer from 1024 through 65535" >&2
@@ -18,6 +20,14 @@ if [[ -z "$image" || "$image" == *[[:space:]]* ]]; then
 fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+compose_source=${compose_source:-"$repo_root/deploy/compose.yml"}
+env_source=${env_source:-"$repo_root/deploy/selfhost.env.example"}
+for source_file in "$compose_source" "$env_source"; do
+  if [[ ! -f "$source_file" ]]; then
+    echo "self-host bundle file does not exist: $source_file" >&2
+    exit 1
+  fi
+done
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/derive-selfhost-smoke.XXXXXX")
 project="derive-quickstart-smoke-$$"
 data_volume="${project}-data"
@@ -77,7 +87,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cp "$repo_root/deploy/compose.yml" "$compose_file"
+cp "$compose_source" "$compose_file"
+cp "$env_source" "$env_file"
 mkdir -p "$backup_dir"
 docker run --rm --user 0 --entrypoint sh -v "$backup_dir:/target" "$image" -c \
   'chown 1000:1000 /target && chmod 0700 /target'
@@ -91,7 +102,7 @@ docker run --rm --user 0 --entrypoint sh -v "$backup_dir:/target" "$image" -c \
   printf 'DERIVE_AUTH_SECRET=%s\n' "$secret"
   printf 'COMPOSE_PROJECT_NAME=%s\n' "$project"
   printf 'DERIVE_DATA_VOLUME=%s\n' "$data_volume"
-} >"$env_file"
+} >>"$env_file"
 chmod 0600 "$env_file"
 
 "${compose[@]}" config --quiet
