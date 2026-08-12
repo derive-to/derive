@@ -100,6 +100,13 @@ for (const asset of ["compose.yml", "selfhost.env.example"]) {
 
 requireText(release, "DERIVE_IMAGE=ghcr.io/derive-to/derive@$DIGEST", RELEASE)
 requireText(release, "make_latest: false", `${RELEASE} pre-promotion release`)
+requireText(release, "draft: true", `${RELEASE} immutable-release draft`)
+requireText(release, "actions/attest@v4", `${RELEASE} build attestation`)
+requireText(
+  release,
+  "sha256sum compose.yml selfhost.env.example image-digest.txt > SHA256SUMS",
+  `${RELEASE} release checksums`,
+)
 requireText(release, PUBLISHED_SMOKE, `${RELEASE} published-bundle gate`)
 requireText(
   release,
@@ -113,7 +120,7 @@ requireText(
 )
 requireText(
   release,
-  'gh release edit "$GITHUB_REF_NAME" --latest',
+  'gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false',
   `${RELEASE} verified release promotion`,
 )
 requireText(
@@ -124,7 +131,8 @@ requireText(
 requireOrder(
   release,
   [
-    "Publish a non-latest GitHub release with install files",
+    "Create release draft with install files",
+    "Publish release for anonymous verification",
     "Download and exercise the public release bundle anonymously",
     "Promote the verified stable image and release to latest",
     "Verify the documented latest download path",
@@ -152,6 +160,8 @@ for (const operation of [
 for (const boundary of [
   "env -u GH_TOKEN -u GITHUB_TOKEN curl -q",
   'cmp "$staged_file" "$download_dir/$asset"',
+  "assets=(compose.yml selfhost.env.example image-digest.txt SHA256SUMS)",
+  "sha256sum -c SHA256SUMS",
   '"$download_dir/compose.yml" "$download_dir/selfhost.env.example"',
 ])
   requireText(publishedSmoke, boundary, PUBLISHED_SMOKE)

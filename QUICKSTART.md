@@ -52,7 +52,7 @@ contains `compose.yml` and `selfhost.env.example`. If those files are not availa
 
 ### 1. Download the release configuration
 
-Create a directory for the installation and download the two release files:
+Create a directory for the installation and download the release files:
 
 ```bash
 mkdir derive-selfhost
@@ -60,16 +60,38 @@ cd derive-selfhost
 
 curl -fsSLO https://github.com/derive-to/derive/releases/latest/download/compose.yml
 curl -fsSLO https://github.com/derive-to/derive/releases/latest/download/selfhost.env.example
+curl -fsSLO https://github.com/derive-to/derive/releases/latest/download/image-digest.txt
+curl -fsSLO https://github.com/derive-to/derive/releases/latest/download/SHA256SUMS
 ```
 
 The downloaded environment example pins `DERIVE_IMAGE` to the release's immutable image digest.
+Verify the release files before using them:
+
+```bash
+sha256sum -c SHA256SUMS
+```
+
+For a specific tagged release, GitHub CLI can also verify the immutable release and an asset:
+
+```bash
+gh release verify vX.Y.Z
+gh release verify-asset vX.Y.Z compose.yml
+```
+
+The image's signed build provenance can be checked with:
+
+```bash
+gh attestation verify "oci://$(cat image-digest.txt)" -R derive-to/derive
+```
 
 ### 2. Configure the instance
 
 Copy the example, then generate a session-signing secret:
 
 ```bash
+umask 077
 cp selfhost.env.example .env
+chmod 600 .env
 
 DERIVE_QUICKSTART_SECRET="$(openssl rand -hex 32)"
 printf '\nDERIVE_AUTH_SECRET=%s\n' "${DERIVE_QUICKSTART_SECRET:?}" >> .env
@@ -186,7 +208,9 @@ Clone the repository, or switch an existing checkout to the branch you want to t
 ```bash
 git clone https://github.com/derive-to/derive.git
 cd derive
+umask 077
 cp deploy/selfhost.env.example deploy/.env
+chmod 600 deploy/.env
 ```
 
 Open `deploy/.env`. For a local evaluation, set:

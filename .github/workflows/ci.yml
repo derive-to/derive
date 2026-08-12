@@ -279,7 +279,8 @@ jobs:
           cp deploy/selfhost.env.example "$staged/selfhost.env.example"
           sed -i 's|^DERIVE_IMAGE=.*|DERIVE_IMAGE=derive:ci|' "$staged/selfhost.env.example"
           printf 'derive:ci\n' > "$staged/image-digest.txt"
-          cp "$staged/compose.yml" "$staged/selfhost.env.example" "$staged/image-digest.txt" "$published/"
+          (cd "$staged" && sha256sum compose.yml selfhost.env.example image-digest.txt > SHA256SUMS)
+          cp "$staged/compose.yml" "$staged/selfhost.env.example" "$staged/image-digest.txt" "$staged/SHA256SUMS" "$published/"
           DERIVE_RELEASE_DOWNLOAD_BASE="file://$bundle_root/published" \
             scripts/test-published-selfhost-bundle.sh \
               v0.0.0-ci derive:ci 18080 "$staged"

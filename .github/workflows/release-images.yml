@@ -3,15 +3,11 @@ name: Release self-host images
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version without v (for a recovery/manual publish)"
-        required: true
 
 permissions:
   contents: write
   packages: write
+  attestations: write
   id-token: write
 
 concurrency:
@@ -37,14 +33,8 @@ jobs:
 
       - name: Resolve version
         id: version
-        env:
-          MANUAL_VERSION: ${{ inputs.version }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            version=${GITHUB_REF_NAME#v}
-          else
-            version=$MANUAL_VERSION
-          fi
+          version=${GITHUB_REF_NAME#v}
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
             echo "version must be semver (for example 1.2.3)" >&2
             exit 1
@@ -82,6 +72,13 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Publish GitHub build attestation
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/derive-to/derive
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
       - name: Verify the release is anonymously pullable
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -107,21 +104,30 @@ jobs:
           docker compose --env-file release/selfhost.env.example -f release/compose.yml config > release/rendered-compose.yml
           grep -q "image: ghcr.io/derive-to/derive@$DIGEST" release/rendered-compose.yml
           printf 'ghcr.io/derive-to/derive@%s\n' "$DIGEST" > release/image-digest.txt
+          (cd release && sha256sum compose.yml selfhost.env.example image-digest.txt > SHA256SUMS)
 
       # Keep the previous stable release at /releases/latest until an anonymous client has
       # downloaded and exercised this release's exact public assets. Prereleases never move it.
-      - name: Publish a non-latest GitHub release with install files
+      - name: Create release draft with install files
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
           prerelease: ${{ steps.version.outputs.stable != 'true' }}
+          draft: true
           make_latest: false
           fail_on_unmatched_files: true
           files: |
             release/compose.yml
             release/selfhost.env.example
             release/image-digest.txt
+            release/SHA256SUMS
+
+      - name: Publish release for anonymous verification
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
 
       - name: Download and exercise the public release bundle anonymously
         if: github.ref_type == 'tag'

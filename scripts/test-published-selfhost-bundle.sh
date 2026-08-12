@@ -59,7 +59,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-assets=(compose.yml selfhost.env.example image-digest.txt)
+assets=(compose.yml selfhost.env.example image-digest.txt SHA256SUMS)
 for asset in "${assets[@]}"; do
   staged_file="$staged_dir/$asset"
   if [[ ! -f "$staged_file" || -L "$staged_file" ]]; then
@@ -74,6 +74,8 @@ for asset in "${assets[@]}"; do
     --output "$download_dir/$asset" "$release_url/$asset"
   cmp "$staged_file" "$download_dir/$asset"
 done
+
+(cd "$download_dir" && sha256sum -c SHA256SUMS)
 
 downloaded_image=$(tr -d '\r\n' <"$download_dir/image-digest.txt")
 if [[ "$downloaded_image" != "$expected_image" ]]; then
