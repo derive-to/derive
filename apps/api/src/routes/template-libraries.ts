@@ -277,7 +277,19 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
         },
       },
     }),
-    (c) => c.json({ templates: [...listTemplates()] }),
+    (c) =>
+      c.json({
+        templates: listTemplates().map((template) => {
+          const { sections, inputs, tags, starterPrompts, ...metadata } = template
+          return {
+            ...metadata,
+            sections: [...sections],
+            inputs: inputs.map((input) => ({ ...input })),
+            tags: [...tags],
+            ...(starterPrompts ? { starterPrompts: [...starterPrompts] } : {}),
+          }
+        }),
+      }),
   )
 
   app.openapi(
