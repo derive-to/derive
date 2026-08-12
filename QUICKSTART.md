@@ -29,6 +29,11 @@ The container supports 64-bit AMD and ARM hosts. Before you start, install:
 - `curl`; and
 - `openssl` for generating the session-signing secret.
 
+Allow at least 4 GB of free Docker storage to pull and run a published image. Building the
+current checkout also keeps build layers and needs at least 10 GB free during the first build.
+These figures leave working room beyond the approximately 2.2 GB unpacked runtime image measured
+on `linux/amd64`; your database, artifacts, and off-host backups need additional capacity.
+
 Confirm that Docker and Compose are available:
 
 ```bash

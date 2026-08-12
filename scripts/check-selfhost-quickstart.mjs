@@ -9,6 +9,9 @@ const DEPLOY = "DEPLOY.md"
 const COMPOSE = "deploy/compose.yml"
 const BUILD_COMPOSE = "deploy/compose.build.yml"
 const RELEASE = ".github/workflows/release-images.yml"
+const CI = ".github/workflows/ci.yml"
+const SMOKE = "scripts/test-selfhost-quickstart.sh"
+const SMOKE_CLIENT = "scripts/selfhost-smoke-client.mjs"
 
 const read = (path) => readFileSync(path, "utf8")
 const quickstart = read(QUICKSTART)
@@ -17,6 +20,9 @@ const deploy = read(DEPLOY)
 const compose = read(COMPOSE)
 const buildCompose = read(BUILD_COMPOSE)
 const release = read(RELEASE)
+const ci = read(CI)
+const smoke = read(SMOKE)
+const smokeClient = read(SMOKE_CLIENT)
 
 const failures = []
 const fail = (message) => failures.push(message)
@@ -79,6 +85,9 @@ for (const variable of [
 ])
   requireText(quickstart, variable, QUICKSTART)
 
+for (const capacity of ["4 GB of free Docker storage", "10 GB free"])
+  requireText(quickstart, capacity, `${QUICKSTART} capacity requirements`)
+
 for (const target of ["CONTRIBUTING.md", "DEPLOY.md"])
   requireText(quickstart, target, `${QUICKSTART} path chooser`)
 
@@ -91,6 +100,29 @@ requireText(release, "DERIVE_IMAGE=ghcr.io/derive-to/derive@$DIGEST", RELEASE)
 requireText(compose, "${DERIVE_IMAGE:?", COMPOSE)
 requireText(compose, "http://127.0.0.1:8080/readyz", COMPOSE)
 requireText(buildCompose, "image: derive:local", BUILD_COMPOSE)
+
+for (const workflow of [
+  [CI, ci],
+  [RELEASE, release],
+])
+  requireText(workflow[1], SMOKE, `${workflow[0]} self-host integration gate`)
+
+for (const operation of [
+  "bootstrap-operator",
+  "up -d --wait --wait-timeout 120",
+  "backup /backups/quickstart-smoke",
+  "verify-backup /backups/quickstart-smoke",
+  "restore-backup /backups/quickstart-smoke",
+])
+  requireText(smoke, operation, SMOKE)
+
+for (const boundary of [
+  "/api/auth/sign-in/email",
+  "/api/auth/sign-up/email",
+  "SIGNUP_NOT_ALLOWED",
+  "/v1/artifacts",
+])
+  requireText(smokeClient, boundary, SMOKE_CLIENT)
 
 requireText(readme, "[self-hosting quick start](QUICKSTART.md)", README)
 requireText(deploy, "[QUICKSTART.md](QUICKSTART.md)", DEPLOY)
@@ -112,6 +144,6 @@ if (failures.length > 0) {
   process.exitCode = 1
 } else {
   console.log(
-    "check-selfhost-quickstart: ok — release + source paths configure, bootstrap, wait, and back up",
+    "check-selfhost-quickstart: ok — docs and CI cover bootstrap, auth, publish, backup, and restore",
   )
 }

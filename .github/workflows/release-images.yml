@@ -94,21 +94,7 @@ jobs:
             exit 1
           fi
           docker pull "$ref"
-          id=$(docker run -d -p 127.0.0.1:18080:8080 "$ref")
-          trap 'docker rm -f "$id" >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:18080/readyz >/dev/null; then
-              curl -fsS http://127.0.0.1:18080/healthz >/dev/null
-              curl -fsS http://127.0.0.1:18080/ >/dev/null
-              test "$(docker inspect -f '{{.Config.User}}' "$ref")" = node
-              docker exec "$id" node --import tsx src/server-cli.ts backup /tmp/release-backup
-              docker exec "$id" node --import tsx src/server-cli.ts verify-backup /tmp/release-backup
-              exit 0
-            fi
-            sleep 2
-          done
-          docker logs "$id"
-          exit 1
+          scripts/test-selfhost-quickstart.sh "$ref" 18080
 
       - name: Prepare release install files
         env:
