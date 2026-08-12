@@ -1,0 +1,167 @@
+name: Release self-host images
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'derive-to/derive'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - name: Verify source gate before publishing
+        run: pnpm verify
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version
+        id: version
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must be semver (for example 1.2.3)" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        id: meta
+        with:
+          images: ghcr.io/derive-to/derive
+          tags: |
+            type=raw,value=${{ steps.version.outputs.value }}
+            type=raw,value=${{ steps.version.outputs.value }},suffix=-${{ github.sha }}
+
+      - name: Build and publish amd64 + arm64 with SBOM and provenance
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.value }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Publish GitHub build attestation
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/derive-to/derive
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Verify the release is anonymously pullable
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker logout ghcr.io
+          ref="ghcr.io/derive-to/derive@$DIGEST"
+          if ! docker buildx imagetools inspect "$ref"; then
+            echo "::error::The GHCR package is private. After the first publish, an organization owner must open the derive package settings, change visibility to Public, and rerun this workflow."
+            exit 1
+          fi
+          docker pull "$ref"
+          scripts/test-selfhost-quickstart.sh "$ref" 18080
+
+      - name: Prepare release install files
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir release
+          cp deploy/compose.yml release/compose.yml
+          cp deploy/selfhost.env.example release/selfhost.env.example
+          sed -i "s|^DERIVE_IMAGE=.*|DERIVE_IMAGE=ghcr.io/derive-to/derive@$DIGEST|" release/selfhost.env.example
+          grep -qx "DERIVE_IMAGE=ghcr.io/derive-to/derive@$DIGEST" release/selfhost.env.example
+          docker compose --env-file release/selfhost.env.example -f release/compose.yml config > release/rendered-compose.yml
+          grep -q "image: ghcr.io/derive-to/derive@$DIGEST" release/rendered-compose.yml
+          printf 'ghcr.io/derive-to/derive@%s\n' "$DIGEST" > release/image-digest.txt
+          (cd release && sha256sum compose.yml selfhost.env.example image-digest.txt > SHA256SUMS)
+
+      # Keep the previous stable release at /releases/latest until an anonymous client has
+      # downloaded and exercised this release's exact public assets. Prereleases never move it.
+      - name: Create release draft with install files
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.version.outputs.stable != 'true' }}
+          draft: true
+          make_latest: false
+          fail_on_unmatched_files: true
+          files: |
+            release/compose.yml
+            release/selfhost.env.example
+            release/image-digest.txt
+            release/SHA256SUMS
+
+      - name: Publish release for anonymous verification
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
+
+      - name: Download and exercise the public release bundle anonymously
+        if: github.ref_type == 'tag'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          ref="ghcr.io/derive-to/derive@$DIGEST"
+          scripts/test-published-selfhost-bundle.sh "$GITHUB_REF_NAME" "$ref" 18080 release
+
+      # The digest-pinned install path is now proven. Move both human-facing convenience aliases
+      # only for a stable tag, and move the image first so a failure cannot advertise a release
+      # whose convenience image still points at an older build.
+      - name: Log in to GHCR for stable promotion
+        if: github.ref_type == 'tag' && steps.version.outputs.stable == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote the verified stable image and release to latest
+        if: github.ref_type == 'tag' && steps.version.outputs.stable == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ref="ghcr.io/derive-to/derive@$DIGEST"
+          docker buildx imagetools create --tag ghcr.io/derive-to/derive:latest "$ref"
+          gh release edit "$GITHUB_REF_NAME" --latest
+
+      - name: Verify the documented latest download path
+        if: github.ref_type == 'tag' && steps.version.outputs.stable == 'true'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          ref="ghcr.io/derive-to/derive@$DIGEST"
+          scripts/test-published-selfhost-bundle.sh latest "$ref" 18080 release assets-only

@@ -184,6 +184,7 @@ import {
   follow,
   githubApp,
   githubInstallation,
+  instanceOperator,
   invitation,
   membership,
   modelCredential,
@@ -256,6 +257,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  instanceOperator,
   subscription,
   oauthClientWorkspace,
   context,
@@ -5131,6 +5133,25 @@ export class PgMetaStore implements MetaStore {
     // See the SQLite store: a stable thread-reply id makes an outbox recovery idempotent.
     await this.db.insert(agentMention).values(m).onConflictDoNothing()
   }
+  // ---- Instance operators ------------------------------------------------
+  async isInstanceOperator(userId: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ user_id: instanceOperator.user_id })
+      .from(instanceOperator)
+      .where(eq(instanceOperator.user_id, userId))
+      .limit(1)
+    return rows.length > 0
+  }
+  async hasInstanceOperators(): Promise<boolean> {
+    const rows = await this.db
+      .select({ user_id: instanceOperator.user_id })
+      .from(instanceOperator)
+      .limit(1)
+    return rows.length > 0
+  }
+  async addInstanceOperator(userId: string): Promise<void> {
+    await this.db.insert(instanceOperator).values({ user_id: userId }).onConflictDoNothing()
+  }
   // ---- Workspace invitations ---------------------------------------------
   async createInvitation(i: NewInvitation): Promise<InvitationRecord> {
     const rows = await this.db.insert(invitation).values(i).returning()
@@ -5161,11 +5182,15 @@ export class PgMetaStore implements MetaStore {
   async deleteInvitation(id: string, orgId: string): Promise<void> {
     await this.db.delete(invitation).where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
   }
-  async markInvitationAccepted(id: string): Promise<void> {
-    await this.db
+  async consumeInvitation(id: string, now: string): Promise<boolean> {
+    const rows = await this.db
       .update(invitation)
-      .set({ accepted_at: new Date().toISOString() })
-      .where(eq(invitation.id, id))
+      .set({ accepted_at: now })
+      .where(
+        and(eq(invitation.id, id), isNull(invitation.accepted_at), gt(invitation.expires_at, now)),
+      )
+      .returning({ id: invitation.id })
+    return rows.length > 0
   }
 
   // ---- Beta signups --------------------------------------------------------
@@ -5231,14 +5256,23 @@ export class PgMetaStore implements MetaStore {
       .delete(artifactInvite)
       .where(and(eq(artifactInvite.id, id), eq(artifactInvite.artifact_id, artifactId)))
   }
-  async markArtifactInviteAccepted(id: string): Promise<void> {
-    await this.db
+  async consumeArtifactInvite(id: string, now: string): Promise<boolean> {
+    const rows = await this.db
       .update(artifactInvite)
-      .set({ accepted_at: new Date().toISOString() })
-      .where(eq(artifactInvite.id, id))
+      .set({ accepted_at: now })
+      .where(
+        and(
+          eq(artifactInvite.id, id),
+          isNull(artifactInvite.accepted_at),
+          gt(artifactInvite.expires_at, now),
+        ),
+      )
+      .returning({ id: artifactInvite.id })
+    return rows.length > 0
   }
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   async deleteUserData(userId: string): Promise<void> {
+    await this.db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId))
     await this.db.delete(membership).where(eq(membership.user_id, userId))
     await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
     await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))

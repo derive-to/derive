@@ -142,6 +142,8 @@ export type AuthDb = BetterAuthOptions["database"]
  */
 /** Optional integrations the auth layer needs from the surrounding app. */
 export interface AuthHooks {
+  /** Admission policy for NEW accounts. Runs for email, OAuth, and OIDC alike. */
+  signupAllowed?: (attempt: { email: string; cookieHeader: string | null }) => Promise<boolean>
   /** Is this handle already taken? Lets the auto-assign hook pick a free one.
    *  Omitted in schema-gen / tests (no real user table); the unique index backstops. */
   usernameTaken?: (username: string) => Promise<boolean>
@@ -308,10 +310,10 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
       // A reset re-establishes account control, so drop every other live session.
       revokeSessionsOnPasswordReset: true,
       resetPasswordTokenExpiresIn: 60 * 60, // 1h
-      // Self-serve "forgot password": render + enqueue the reset link on the outbox. With
-      // no real mail transport the link still rides the log sender (an operator reads it),
-      // and capabilities reports passwordReset:false so the SPA hides the self-serve flow —
-      // recovery is then the logged link + scripts/reset-password.mjs.
+      // Self-serve "forgot password": render + enqueue the reset link on the outbox.
+      // Without a real mail transport capabilities reports passwordReset:false and the
+      // SPA hides this flow; the log sender deliberately omits body/capability URLs, so
+      // recovery is the offline reset-password command rather than reading logs.
       sendResetPassword: async ({ user, url }) => {
         await hooks.sendAuthEmail?.("reset", { to: user.email, name: user.name ?? null, url })
       },
@@ -334,8 +336,22 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
     databaseHooks: {
       user: {
         create: {
-          before: async (user) => {
+          before: async (user, ctx) => {
             const u = user as typeof user & { username?: string | null; email?: string }
+            // Better Auth's database-hook context is the request-local endpoint
+            // context (despite its internal helper's historical name), so this
+            // forwards the actual cookie for email and OAuth/OIDC signups alike.
+            const cookieHeader =
+              ctx?.headers?.get("cookie") ?? ctx?.request?.headers.get("cookie") ?? null
+            if (
+              hooks.signupAllowed &&
+              !(await hooks.signupAllowed({ email: u.email ?? "", cookieHeader }))
+            )
+              throw new APIError("FORBIDDEN", {
+                message:
+                  "Account creation is not open on this Derive instance. Ask an operator for an invitation.",
+                code: "SIGNUP_NOT_ALLOWED",
+              })
             if (u.username) return { data: user }
             try {
               const taken = hooks.usernameTaken ?? (async () => false)

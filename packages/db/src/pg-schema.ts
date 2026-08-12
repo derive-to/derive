@@ -399,6 +399,12 @@ export const signupAttribution = pgTable(
   (t) => [uniqueIndex("signup_attribution_user").on(t.user_id)],
 )
 
+// Immutable instance authority; see the SQLite twin for the trust-boundary note.
+export const instanceOperator = pgTable("instance_operator", {
+  user_id: text("user_id").primaryKey(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+})
+
 export const agentMention = pgTable("agent_mention", {
   id: text("id").primaryKey(),
   agent_id: text("agent_id").notNull(),
@@ -970,6 +976,7 @@ const TABLES = [
   artifactInvite,
   betaSignup,
   signupAttribution,
+  instanceOperator,
   oauthClientWorkspace,
   artifactFavorite,
   follow,

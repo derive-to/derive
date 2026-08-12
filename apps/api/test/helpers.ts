@@ -46,6 +46,7 @@ type Seat = { user_id: string; role: Role }
 // longer name the same schema, and leftovers stay in the schema of the file that made them.
 const pgStores: TestStore[] = []
 const pgSchemas = new Set<string>()
+const appSeeds: Promise<void>[] = []
 const workerKey = (process.env.VITEST_POOL_ID ?? String(process.pid)).replace(/[^a-z0-9]+/gi, "_")
 const fileKey = randomUUID().replace(/-/g, "").slice(0, 10)
 const schemaFor = (name: string) =>
@@ -218,9 +219,16 @@ export const app = authProxy(sharedApp)
 export const anonApp = sharedApp
 
 afterAll(async () => {
-  if (PG_URL) await Promise.all(pgStores.map((s) => Promise.resolve(s.close()).catch(() => {})))
-  else meta.close()
-  rmSync(dir, { recursive: true, force: true })
+  try {
+    // makeAuthedApp starts its seed immediately so direct context users see the same initialized
+    // store as HTTP callers. Some tests never make a request, so teardown must wait for every
+    // seed explicitly before closing any shared Postgres pool.
+    await Promise.all(appSeeds)
+  } finally {
+    if (PG_URL) await Promise.all(pgStores.map((s) => Promise.resolve(s.close()).catch(() => {})))
+    else meta.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 export const upload = (
@@ -261,6 +269,7 @@ export type TestUser = {
   image?: string | null
   username?: string | null
   discoverable?: boolean
+  emailVerified?: boolean
 }
 
 const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
@@ -309,7 +318,13 @@ export const makeAuthedApp = (
   name: string,
   users: TestUser[],
   defaultRole?: AppDeps["defaultRole"],
-  opts?: { isolated?: boolean; deps?: Partial<AppDeps>; noPlan?: boolean; noAutomate?: boolean },
+  opts?: {
+    isolated?: boolean
+    deps?: Partial<AppDeps>
+    noPlan?: boolean
+    noAutomate?: boolean
+    operatorIds?: string[]
+  },
 ) => {
   // Seed a shared "default" workspace so the user list collaborates (the single-
   // mode default before always-multi): users[0] is the Admin/owner, the rest take
@@ -342,6 +357,8 @@ export const makeAuthedApp = (
   // deliberately in automate-gate.test.ts, which builds apps WITHOUT this seed, instead of being
   // proved incidentally by every other suite having to remember.
   const planReady = (async () => {
+    const authorityStore = opts?.deps?.meta ?? m
+    for (const userId of opts?.operatorIds ?? []) await authorityStore.addInstanceOperator(userId)
     if (!opts?.noPlan) await connectPoolPlan(m, "default").catch(() => undefined)
     // `noAutomate` opts OUT: the suite that asserts the shipped DEFAULTS has to see the real ones,
     // and a blanket seed would have made that assertion quietly lie about this exact field.
@@ -350,6 +367,7 @@ export const makeAuthedApp = (
     if (current)
       await m.setOrgSettings("default", { ...current, automateBeta: true }).catch(() => undefined)
   })()
+  appSeeds.push(planReady)
   const deps: AppDeps = {
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),

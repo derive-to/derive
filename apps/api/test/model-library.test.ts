@@ -38,11 +38,12 @@ const setup = (name: string, opts?: { operators?: string[]; gateway?: GatewayCon
   makeAuthedApp(
     name,
     [
-      { id: "u-op", email: "op@x.com", name: "Olive" },
+      { id: "u-op", email: "op@x.com", name: "Olive", emailVerified: true },
       { id: "u-mem", email: "mem@x.com", name: "Mem" },
     ],
     undefined,
     {
+      operatorIds: opts?.operators ?? ["u-op"],
       deps: {
         models: catalogOf([
           {
@@ -53,7 +54,6 @@ const setup = (name: string, opts?: { operators?: string[]; gateway?: GatewayCon
           },
         ]),
         ...(opts?.gateway === null ? {} : { modelGateway: opts?.gateway ?? GATEWAY }),
-        superAdmins: opts?.operators ?? ["op@x.com"],
         rateLimiters: inMemoryRateLimiters(),
       },
     },
@@ -480,9 +480,10 @@ describe("probing", () => {
     // opposite of what this page exists to tell somebody.
     const { app, meta } = makeAuthedApp(
       "lib-probe-down",
-      [{ id: "u-op", email: "op@x.com", name: "Olive" }],
+      [{ id: "u-op", email: "op@x.com", name: "Olive", emailVerified: true }],
       undefined,
       {
+        operatorIds: ["u-op"],
         deps: {
           models: catalogOf([
             {
@@ -495,7 +496,6 @@ describe("probing", () => {
             },
           ]),
           modelGateway: GATEWAY,
-          superAdmins: ["op@x.com"],
         },
       },
     )
@@ -582,16 +582,16 @@ describe("what a turn costs to route", () => {
     const { app } = makeAuthedApp(
       "lib-view-one-read-probe",
       [
-        { id: "u-op", email: "op@x.com", name: "Olive" },
+        { id: "u-op", email: "op@x.com", name: "Olive", emailVerified: true },
         { id: "u-mem", email: "mem@x.com", name: "Mem" },
       ],
       undefined,
       {
+        operatorIds: ["u-op"],
         deps: {
           meta: proxy,
           models: catalogOf([ONLY]),
           modelGateway: GATEWAY,
-          superAdmins: ["op@x.com"],
           rateLimiters: inMemoryRateLimiters(),
         },
       },

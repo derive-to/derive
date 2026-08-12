@@ -171,6 +171,7 @@ import {
   follow,
   githubApp,
   githubInstallation,
+  instanceOperator,
   invitation,
   membership,
   modelCredential,
@@ -317,6 +318,7 @@ export const schema = {
   invitation,
   betaSignup,
   signupAttribution,
+  instanceOperator,
   subscription,
   oauthClientWorkspace,
   context,
@@ -4138,6 +4140,24 @@ export function makeRepos(db: SqliteDb) {
     await db.insert(agentMention).values(m).onConflictDoNothing().run()
   }
 
+  // ---- Instance operators ------------------------------------------------
+  const isInstanceOperator = async (userId: string): Promise<boolean> =>
+    (await db
+      .select({ user_id: instanceOperator.user_id })
+      .from(instanceOperator)
+      .where(eq(instanceOperator.user_id, userId))
+      .limit(1)
+      .get()) !== undefined
+  const hasInstanceOperators = async (): Promise<boolean> =>
+    (await db
+      .select({ user_id: instanceOperator.user_id })
+      .from(instanceOperator)
+      .limit(1)
+      .get()) !== undefined
+  const addInstanceOperator = async (userId: string): Promise<void> => {
+    await db.insert(instanceOperator).values({ user_id: userId }).onConflictDoNothing().run()
+  }
+
   // ---- Workspace invitations ---------------------------------------------
   const createInvitation = async (i: NewInvitation): Promise<InvitationRecord> =>
     (await db.insert(invitation).values(i).returning().get()) as InvitationRecord
@@ -4168,12 +4188,16 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(invitation.id, id), eq(invitation.org_id, orgId)))
       .run()
   }
-  const markInvitationAccepted = async (id: string): Promise<void> => {
-    await db
+  const consumeInvitation = async (id: string, now: string): Promise<boolean> => {
+    const row = await db
       .update(invitation)
-      .set({ accepted_at: new Date().toISOString() })
-      .where(eq(invitation.id, id))
-      .run()
+      .set({ accepted_at: now })
+      .where(
+        and(eq(invitation.id, id), isNull(invitation.accepted_at), gt(invitation.expires_at, now)),
+      )
+      .returning({ id: invitation.id })
+      .get()
+    return row !== undefined
   }
 
   // ---- Beta signups --------------------------------------------------------
@@ -4241,17 +4265,26 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(artifactInvite.id, id), eq(artifactInvite.artifact_id, artifactId)))
       .run()
   }
-  const markArtifactInviteAccepted = async (id: string): Promise<void> => {
-    await db
+  const consumeArtifactInvite = async (id: string, now: string): Promise<boolean> => {
+    const row = await db
       .update(artifactInvite)
-      .set({ accepted_at: new Date().toISOString() })
-      .where(eq(artifactInvite.id, id))
-      .run()
+      .set({ accepted_at: now })
+      .where(
+        and(
+          eq(artifactInvite.id, id),
+          isNull(artifactInvite.accepted_at),
+          gt(artifactInvite.expires_at, now),
+        ),
+      )
+      .returning({ id: artifactInvite.id })
+      .get()
+    return row !== undefined
   }
 
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   const deleteUserData = async (userId: string): Promise<void> => {
     // The user's own association rows go entirely.
+    await db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId)).run()
     await db.delete(membership).where(eq(membership.user_id, userId)).run()
     await db.delete(artifactMember).where(eq(artifactMember.user_id, userId)).run()
     await db.delete(collectionMember).where(eq(collectionMember.user_id, userId)).run()
@@ -4762,12 +4795,15 @@ export function makeRepos(db: SqliteDb) {
     createAgentMention,
     listPendingAgentMentions,
     ackAgentMention,
+    isInstanceOperator,
+    hasInstanceOperators,
+    addInstanceOperator,
     createInvitation,
     getInvitationByToken,
     listPendingInvitations,
     deletePendingInvitationsFor,
     deleteInvitation,
-    markInvitationAccepted,
+    consumeInvitation,
     recordBetaSignup,
     recordSignupAttribution,
     getSignupAttribution,
@@ -4776,7 +4812,7 @@ export function makeRepos(db: SqliteDb) {
     listPendingArtifactInvites,
     deletePendingArtifactInvitesFor,
     deleteArtifactInvite,
-    markArtifactInviteAccepted,
+    consumeArtifactInvite,
     deleteUserData,
     createReport,
     getReport,

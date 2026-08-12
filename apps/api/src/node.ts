@@ -30,6 +30,7 @@ import { makeGithubCommentSender } from "./lib/github-comments"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { mountWeb } from "./lib/serve-web"
+import { signupPolicy } from "./lib/signup-policy"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { loopSubstrate } from "./lib/substrate-loop"
@@ -94,7 +95,10 @@ if (remoteDb && (process.env.npm_lifecycle_event ?? "").startsWith("dev")) {
   log.warn("dev mode is using a REMOTE database (DERIVE_ALLOW_REMOTE_DB=1)")
 }
 
-mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })
+// Postgres + object storage is genuinely stateless. Do not manufacture a /data
+// dependency in that topology merely because the Lite topology needs one.
+if (!cfg.databaseUrl || !cfg.objectStoreUrl)
+  mkdirSync(join(cfg.dataDir, "blobs"), { recursive: true })
 
 // Metadata + auth share one datastore: Postgres when DATABASE_URL is set (the
 // stateless multi-instance topology), else embedded SQLite (zero-config).
@@ -201,15 +205,16 @@ if (cfg.databaseUrl) {
 }
 
 const authSecret = resolveAuthSecret(cfg.dataDir)
-// A real transactional email transport (Resend) is configured — else the log sender
-// still records each message (an operator can read a reset link from the container logs),
-// but the SPA hides the self-serve mail flows (see `emailEnabled` in createApp deps).
+// A real transactional email transport (Resend) is configured — otherwise the safe
+// log sender records only recipient + subject (never capability URLs), and the SPA
+// hides self-serve mail flows (see `emailEnabled` in createApp deps).
 const emailEnabled = !!(cfg.resendApiKey && cfg.emailFrom)
 // Hoisted above makeAuth (rather than built inline down at createApp's `billing:` dep,
 // where it lived before) so the account-deletion hook below and the billing routes
 // share the exact same driver instance instead of constructing two.
 const billing = makeBillingDriver(cfg.stripeSecretKey, cfg.stripeWebhookSecret)
 const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
+  signupAllowed: signupPolicy(cfg.signupMode, authSecret, meta),
   usernameTaken: (u) => meta.getUserByUsername(u).then(Boolean),
   // Render + enqueue transactional auth emails (reset / verify / change-email) onto the
   // same retrying outbox as notifications; the configured sender transports them.

@@ -1,21 +1,36 @@
-# The whole app (API + web + sandboxed viewer) in one container: zero external
-# dependencies — SQLite + local blobs in one volume. Open http://localhost:8080.
-# Uncomment DATABASE_URL / OBJECT_STORE_URL to use Postgres + S3/R2 instead.
+# Release install: copy this file plus selfhost.env.example to `.env`, fill in
+# BASE_URL, then `docker compose up -d`. Release bundles pin DERIVE_IMAGE by digest.
 services:
   derive:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+    image: ${DERIVE_IMAGE:?Set DERIVE_IMAGE to a released tag or digest}
+    init: true
+    restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${DERIVE_BIND_ADDRESS:-127.0.0.1}:${DERIVE_PORT:-8080}:8080"
     volumes:
       - derive-data:/data
+      - ./backups:/backups
+    env_file:
+      - path: .env
+        required: false
     environment:
-      BASE_URL: http://localhost:8080
-      # Set a stable session secret in production (any 32-byte hex):
-      # DERIVE_AUTH_SECRET: change-me
-      # DATABASE_URL: postgres://...
-      # OBJECT_STORE_URL: s3://...
+      PORT: "8080"
+      DATA_DIR: /data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 1gb
+    stop_grace_period: 30s
 
 volumes:
   derive-data:
+    name: ${DERIVE_DATA_VOLUME:-derive-data}

@@ -1,5 +1,10 @@
 # Deploying Derive
 
+For a new single-container installation, follow [QUICKSTART.md](QUICKSTART.md). It covers the
+released-image and source-build paths, creates the first operator while the service is offline,
+waits for readiness, and verifies a first backup. This document is the reference for choosing a
+topology and operating or extending an installation.
+
 ## Deployment tiers
 
 Pick the tier that matches your scale and infrastructure:
@@ -20,27 +25,28 @@ All tiers run the same codebase and are additive: Lite + `DATABASE_URL` = Node B
 
 ## Lite: single container
 
-One command gives you a complete, working Derive — sign-in, publish, comments, reviews,
+One container gives you a complete, working Derive — sign-in, publish, comments, reviews,
 notifications, the sandboxed viewer — all served from `http://localhost:8080`.
 
-```bash
-docker build -f deploy/Dockerfile -t derive .
+Use the [self-hosting quick start](QUICKSTART.md#choose-one-path) for a fresh install. The
+commands there explicitly load the environment file, validate the rendered Compose model, create
+the first operator before the service starts, wait for readiness, and prove the first backup.
 
-docker run -d -p 8080:8080 -v derive_data:/data \
-  -e DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \
-  -e BASE_URL="https://derive.example.com" \
-  derive
-```
-
-Or with Compose:
+The Compose file pulls the pinned release image from GHCR, persists `/data`, runs
+as a non-root user with an init process, binds to `127.0.0.1` by default, and defines
+a database/blob readiness health check. To
+build the same image from a checkout instead:
 
 ```bash
-docker compose -f deploy/compose.yml up -d
+docker compose --env-file deploy/.env \
+  -f deploy/compose.yml -f deploy/compose.build.yml \
+  up --build -d --wait
 ```
 
 That's the whole thing. The image bundles the built SPA and the API serves it
 same-origin, so there's nothing else to host. State (SQLite + artifact blobs) lives
-in the `/data` volume — back that up and you've backed up the instance.
+in the `/data` volume. Use the online backup command below; copying a live WAL-mode
+volume is not a consistent backup.
 
 - **`BASE_URL`** is the public origin you'll reach it at. It signs auth cookies and
   builds artifact share links, so set it to your real URL (behind a proxy, the
@@ -80,10 +86,79 @@ cookies and share links work out of the box. Set `BASE_URL` only when you point 
 custom domain at it. Set `DERIVE_AUTH_SECRET` once so sessions survive redeploys on
 hosts with an ephemeral filesystem.
 
-### First user
+### Accounts and first user
 
-The first person to sign up becomes the workspace **owner**; everyone after joins at
-the default role. Sign up at `/login`.
+Every new account gets its own personal workspace as **owner**. People join another
+workspace only by accepting its invitation. `DERIVE_SIGNUP_MODE` controls who can
+create an account: `open` (default), `invite` (the browser must first present a live
+workspace/artifact invitation), or `closed` (offline bootstrap only). Existing users can
+always sign in. Keep Internet-facing hosts on `invite`; invite admission is a short-lived,
+signed HttpOnly capability minted from the invite token, not an email-address lookup.
+
+`bootstrap-operator` is the normal first-user path. It creates the account through the
+same Better Auth API as the app and stores instance-wide authority against the immutable
+user id. It refuses an existing account or a second operator unless you pass the explicit
+recovery flags shown by its usage error. `DERIVE_SUPERADMIN_EMAILS` is deprecated and only
+migrates an already-verified legacy account to the user-id record; it never admits signup.
+
+### Backup, restore, and password recovery
+
+Create the host backup directory once (`mkdir -p deploy/backups`), then:
+
+```bash
+# Online and safe while Derive is serving: SQLite snapshot first, immutable blobs second.
+docker compose --env-file deploy/.env -f deploy/compose.yml run --rm derive \
+  backup /backups/derive-$(date +%F)
+docker compose --env-file deploy/.env -f deploy/compose.yml run --rm derive \
+  verify-backup /backups/derive-$(date +%F)
+
+# Recovery without putting the new password in shell history or the process list.
+read -rsp 'New password: ' DERIVE_RESET_PASSWORD
+printf '%s' "$DERIVE_RESET_PASSWORD" | docker compose \
+  --env-file deploy/.env -f deploy/compose.yml run --rm -T derive \
+  reset-password --email owner@example.com --password-stdin
+unset DERIVE_RESET_PASSWORD
+```
+
+Each backup contains a SQLite online snapshot, all content-addressed local blobs, the
+Lite instance identity files, and an exhaustive checksum manifest. `verify-backup` rejects
+unmanifested files, links and unexpected topology, checks every blob's content address,
+and runs SQLite integrity checking. Copy the completed directory to an independent,
+preferably immutable backup store. Checksums detect corruption; they are not signatures.
+When an identity is supplied by `DERIVE_AUTH_SECRET` or `DERIVE_DEFAULT_ORG_ID` instead of
+a data-volume file, the manifest records only its fingerprint and restore requires the
+same environment value.
+`restore-backup` only accepts a new, empty `DATA_DIR`, so a restore cannot overwrite a
+running instance accidentally.
+
+Restore into a new named volume and validate it before cutover. Keep the old volume until
+you have signed in and opened representative artifacts on the restored instance:
+
+```bash
+docker compose --env-file deploy/.env -f deploy/compose.yml down
+
+# Restore into a fresh volume; the existing derive-data volume is untouched.
+DERIVE_DATA_VOLUME=derive-data-restored docker compose \
+  --env-file deploy/.env -f deploy/compose.yml run --rm derive \
+  restore-backup /backups/derive-2026-08-11
+
+# Boot the restored copy on a temporary loopback port and test it.
+DERIVE_DATA_VOLUME=derive-data-restored DERIVE_PORT=18080 \
+  docker compose --env-file deploy/.env -f deploy/compose.yml up -d --wait
+curl -fsS http://127.0.0.1:18080/readyz
+```
+
+After validation, stop it, set `DERIVE_DATA_VOLUME=derive-data-restored` in `deploy/.env`,
+and start normally. Rollback is the inverse volume selection; neither volume is deleted by
+`docker compose down` unless you explicitly add `--volumes`.
+
+For Postgres + S3/R2, the built-in Lite commands refuse to run: a local SQLite file or
+blob directory in that topology is not the source of truth. Take a provider-consistent
+Postgres snapshot first, then snapshot/version/replicate the object-store bucket, and
+retain the matching `DERIVE_AUTH_SECRET` and `DERIVE_DEFAULT_ORG_ID` in your secret
+manager. Test recovery into a new database, bucket and deployment before promoting it.
+Hybrid Postgres/local-blob and SQLite/S3 configurations are runtime-supported for
+specialized deployments, but are intentionally not covered by the built-in backup tool.
 
 ---
 
@@ -93,6 +168,8 @@ the default role. Sign up at `/login`.
 |---|---|---|
 | `BASE_URL` | `http://localhost:PORT` | Public origin of the instance (cookies + share links) |
 | `DERIVE_AUTH_SECRET` | generated, persisted | Session signing key (set in prod) |
+| `DERIVE_SIGNUP_MODE` | `open` | New-account admission: `open`, `invite`, or `closed` |
+| `DERIVE_SUPERADMIN_EMAILS` | (none) | Deprecated migration only: binds matching verified legacy accounts to immutable-id operator records |
 | `PORT` | `8080` | Listen port |
 | `DATA_DIR` | `/data` | SQLite + blob dir (single container) |
 | `DATABASE_URL` | (SQLite) | Postgres for metadata + auth (scale-out) |
@@ -202,6 +279,7 @@ fly secrets set \
   DATABASE_URL='postgres://...' \
   OBJECT_STORE_URL='s3://...' \
   DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \
+  DERIVE_DEFAULT_ORG_ID='ws_choose-one-stable-id' \
   BASE_URL='https://api.example.com'
 
 fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile
@@ -209,7 +287,8 @@ fly deploy --config deploy/fly.toml --dockerfile deploy/Dockerfile
 
 With `DATABASE_URL` + `OBJECT_STORE_URL` set the container is stateless: scale it
 horizontally and drop the `[mounts]` volume from `fly.toml`. Each instance must share
-the same `DERIVE_AUTH_SECRET`.
+the same `DERIVE_AUTH_SECRET` and `DERIVE_DEFAULT_ORG_ID`; Node refuses to boot with
+Postgres if either is missing rather than silently giving replicas different identities.
 
 ### 3. (Optional) Serve the SPA from a CDN
 

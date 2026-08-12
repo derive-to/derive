@@ -111,6 +111,7 @@ export type JunctionTable =
   | "artifactTag"
   | "collectionItem"
   | "oauthClientWorkspace"
+  | "instanceOperator"
 
 type ClassifiedKey = keyof TypedTables | JunctionTable
 

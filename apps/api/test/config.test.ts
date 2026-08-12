@@ -30,6 +30,26 @@ describe("config: fail-fast env validation", () => {
     expect(() => loadConfig({ ...base, DATABASE_URL: "not a url" })).toThrow(/DATABASE_URL/)
   })
 
+  it("requires shared identity settings with Postgres", () => {
+    const database = "postgres://derive:password@db.example.com:5432/derive"
+    expect(() => loadConfig({ ...base, DATABASE_URL: database })).toThrow(/DERIVE_AUTH_SECRET/)
+    expect(() =>
+      loadConfig({
+        ...base,
+        DATABASE_URL: database,
+        DERIVE_AUTH_SECRET: "shared-secret-0123456789",
+      }),
+    ).toThrow(/DERIVE_DEFAULT_ORG_ID/)
+    expect(
+      loadConfig({
+        ...base,
+        DATABASE_URL: database,
+        DERIVE_AUTH_SECRET: "shared-secret-0123456789",
+        DERIVE_DEFAULT_ORG_ID: "ws_shared",
+      }).databaseUrl,
+    ).toBe(database)
+  })
+
   it("rejects a malformed OBJECT_STORE_URL", () => {
     expect(() => loadConfig({ ...base, OBJECT_STORE_URL: "::::" })).toThrow(/OBJECT_STORE_URL/)
   })

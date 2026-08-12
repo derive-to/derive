@@ -173,12 +173,32 @@ jobs:
               - 'packages/**'
               - 'pnpm-lock.yaml'
               - 'package.json'
-            docker:
+            runner:
               - 'packages/cli/**'
               - 'pnpm-lock.yaml'
               - 'deploy/runner.Dockerfile'
               - 'deploy/runner.Dockerfile.dockerignore'
               - 'deploy/runner-entrypoint.sh'
+            app_image:
+              - '.dockerignore'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release-images.yml'
+              - 'QUICKSTART.md'
+              - 'apps/api/**'
+              - 'apps/web/**'
+              - 'packages/broker/**'
+              - 'packages/core/**'
+              - 'packages/db/**'
+              - 'packages/storage/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'deploy/Dockerfile*'
+              - 'deploy/compose*.yml'
+              - 'deploy/selfhost.env.example'
+              - 'scripts/selfhost-smoke-client.mjs'
+              - 'scripts/test-published-selfhost-bundle.sh'
+              - 'scripts/test-selfhost-quickstart.sh'
       - uses: ./.github/actions/setup
 
       # More workers than cores, deliberately. This lane is the critical path —
@@ -230,13 +250,40 @@ jobs:
       # CLI's only dependency is fflate, pure JS. So an arch change would not break
       # this step; it just would not be building the thing that ships.)
       - name: Build runner image + start check
-        if: steps.filter.outputs.docker == 'true'
+        if: steps.filter.outputs.runner == 'true'
         # No token/context on purpose: a healthy image exits 1 with the house
         # one-liner, not a stack trace — proves node, the CLI, and its deps wired.
         run: |
           docker build -f deploy/runner.Dockerfile -t derive-runner:ci .
           out=$(docker run --rm derive-runner:ci serve 2>&1) && exit 1 || true
           echo "$out" | grep -q "error: a context id and an agent token are required"
+
+      # The self-host image is a release artifact in its own right. Build and boot
+      # it on every affecting PR so a bad production dependency graph, non-root
+      # permission, SPA path, or healthcheck cannot wait until a version tag.
+      - name: Build self-host image + readiness check
+        if: steps.filter.outputs.app_image == 'true'
+        run: |
+          mkdir -p deploy/backups
+          printf '%s\n' 'build-context-secret-canary' > deploy/.env
+          printf '%s\n' 'build-context-backup-canary' > deploy/backups/build-context-canary
+          docker build -f deploy/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t derive:ci .
+
+          # Exercise the same download-and-handoff script used after a real GitHub release. This
+          # local URL is the PR-safe seam; the tag workflow supplies GitHub's anonymous URL.
+          bundle_root=$(mktemp -d "$RUNNER_TEMP/derive-release-test.XXXXXX")
+          staged="$bundle_root/staged"
+          published="$bundle_root/published/v0.0.0-ci"
+          mkdir -p "$staged" "$published"
+          cp deploy/compose.yml "$staged/compose.yml"
+          cp deploy/selfhost.env.example "$staged/selfhost.env.example"
+          sed -i 's|^DERIVE_IMAGE=.*|DERIVE_IMAGE=derive:ci|' "$staged/selfhost.env.example"
+          printf 'derive:ci\n' > "$staged/image-digest.txt"
+          (cd "$staged" && sha256sum compose.yml selfhost.env.example image-digest.txt > SHA256SUMS)
+          cp "$staged/compose.yml" "$staged/selfhost.env.example" "$staged/image-digest.txt" "$staged/SHA256SUMS" "$published/"
+          DERIVE_RELEASE_DOWNLOAD_BASE="file://$bundle_root/published" \
+            scripts/test-published-selfhost-bundle.sh \
+              v0.0.0-ci derive:ci 18080 "$staged"
 
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # both lanes pass. Schemas (D1 + Postgres) land BEFORE the worker flips, so a

@@ -1,6 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
+    ".": {
+      "entry": ["scripts/selfhost-smoke-client.mjs"]
+    },
     "apps/api": {
       "entry": [
         "gen-auth-schema.ts",
