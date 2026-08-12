@@ -50,12 +50,35 @@ export function unsafeHtmlTemplateBindings(
   const scriptRanges = [...source.matchAll(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi)].map(
     (match) => [match.index ?? 0, (match.index ?? 0) + match[0].length] as const,
   )
-  for (const match of source.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)) {
-    const name = match[1]?.trim() ?? ""
+  // Scan delimiters directly so malformed input cannot trigger regex
+  // backtracking on whitespace-heavy sequences such as "{{{{    ".
+  let cursor = 0
+  while (cursor < source.length) {
+    const start = source.indexOf("{{", cursor)
+    if (start === -1) break
+    cursor = start + 2
+
+    let bindingStart = start
+    while (cursor < source.length && !source.startsWith("}}", cursor)) {
+      if (source.startsWith("{{", cursor)) {
+        bindingStart = cursor
+        cursor += 2
+      } else {
+        cursor += 1
+      }
+    }
+    if (cursor >= source.length) break
+    const end = cursor
+    cursor = end + 2
+
+    const binding = source.slice(bindingStart + 2, end)
+    if (!binding || binding.includes("{") || binding.includes("}")) continue
+    const name = binding.trim()
     if (!names.has(name.toLowerCase())) continue
-    const at = match.index ?? 0
-    const inScriptOrStyle = scriptRanges.some(([start, end]) => at >= start && at < end)
-    const inTag = source.lastIndexOf("<", at) > source.lastIndexOf(">", at)
+    const inScriptOrStyle = scriptRanges.some(
+      ([rangeStart, rangeEnd]) => bindingStart >= rangeStart && bindingStart < rangeEnd,
+    )
+    const inTag = source.lastIndexOf("<", bindingStart) > source.lastIndexOf(">", bindingStart)
     if (inScriptOrStyle || inTag) unsafe.add(name)
   }
   return [...unsafe]

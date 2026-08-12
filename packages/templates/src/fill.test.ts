@@ -39,4 +39,9 @@ describe("template source filling", () => {
       '<h1 data-name="{{Project name}}">{{Project name}}</h1><script>"{{Audience}}"</script>'
     expect(unsafeHtmlTemplateBindings(source, inputs)).toEqual(["Project name", "Audience"])
   })
+
+  it("scans malformed, whitespace-heavy bindings without regex backtracking", () => {
+    const source = `{{{{${" ".repeat(20_000)}<div data-name="{{Project name}}">ok</div>`
+    expect(unsafeHtmlTemplateBindings(source, inputs)).toEqual(["Project name"])
+  })
 })
