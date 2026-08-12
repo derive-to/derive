@@ -369,7 +369,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
                 }
               >
                 <Icon name="sparkles" />
-                {entry.kind === "context" ? "Set up with Derive" : "Make it mine"}
+                {entry.kind === "context" ? "Make it ours" : "Make it mine"}
               </Button>
             ) : (
               <Button

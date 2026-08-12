@@ -35,12 +35,12 @@ export function TemplateDetail({
 
       <Button size="lg" onClick={onUse} data-testid="template-use">
         <Icon name="sparkles" />
-        {template.kind === "context" ? "Set up with Derive" : "Make it mine"}
+        {template.kind === "context" ? "Make it ours" : "Make it mine"}
       </Button>
       <p className="-mt-2 text-xs text-pretty text-muted-foreground">
         {template.kind === "context"
-          ? "Derive adapts the safe manifest to your job, then helps connect local sources and authority."
-          : "Brief Derive in your own words. It will adapt this shape, build the draft, and show you the result."}
+          ? "Brief your agent in your own words. It will adapt this setup while keeping authority and source decisions explicit."
+          : "Brief your agent in your own words. It will adapt this shape, publish the draft, and inspect the result."}
       </p>
 
       <div className="flex flex-col gap-3 border-t pt-4">

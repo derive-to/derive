@@ -57,7 +57,7 @@ export function TemplateCard({
       </button>
       <div className="border-t p-2">
         <Button className="w-full" size="sm" onClick={onUse} data-testid="template-card-use">
-          <Icon name="sparkles" /> {template.kind === "context" ? "Set up" : "Make it mine"}
+          <Icon name="sparkles" /> {template.kind === "context" ? "Make it ours" : "Make it mine"}
         </Button>
       </div>
     </article>

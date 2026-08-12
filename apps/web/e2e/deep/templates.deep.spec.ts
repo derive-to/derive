@@ -15,14 +15,21 @@ test("Quick Create hands a Template to the agent without opening source", async 
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
 })
 
-test("a Context Template opens the agentic Context builder", async ({ owner }) => {
+test("a Context Template prepares an agentic handoff", async ({ owner }) => {
   await owner.goto("/templates?tab=contexts")
   await owner.getByTestId("template-card-weekly-research-context").click()
   await owner.getByTestId("template-use").click()
   await expect(
     owner.getByRole("heading", { name: "Make Weekly research brief yours" }),
   ).toBeVisible()
-  await expect(owner.getByText(/build the Context with you/)).toBeVisible()
+  await expect(owner.getByText(/copy a complete handoff/)).toBeVisible()
+  await owner
+    .getByTestId("template-agent-brief")
+    .fill("Research the template ecosystem using approved sources every Monday.")
+  await owner.getByTestId("template-agent-preview").click()
+  expect(await owner.getByLabel("Agent handoff to copy").inputValue()).toContain(
+    "automate with create_context",
+  )
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
 })
 

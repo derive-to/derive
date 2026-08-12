@@ -31,37 +31,74 @@ async function addWorkspaceStarter(page: Page, sourceShortId: string) {
 }
 
 test.describe("templates", () => {
-  test("choosing a template starts a natural-language agent job, not an editor", async ({
+  test("choosing a template prepares a complete handoff for the user's local agent", async ({
     owner: page,
   }) => {
-    let openedBody: Record<string, unknown> | null = null
-    await page.route("**/v1/chat-session", async (route) => {
-      openedBody = route.request().postDataJSON() as Record<string, unknown>
-      await route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: JSON.stringify({ session: { id: "ses_template_handoff" }, messages: [] }),
-      })
-    })
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     await page.goto("/templates")
     await page.getByTestId("template-card-narrative-pitch").click()
     await page.getByTestId("template-use").click()
 
     await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
-    await expect(page.getByText("not an empty form to fill in")).toBeVisible()
+    await expect(page.getByText("copy a complete handoff", { exact: false })).toBeVisible()
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
     await page
       .getByTestId("template-agent-brief")
       .fill("A customer-onboarding story for Acme’s product and success leaders.")
-    await page.getByTestId("template-agent-go").click()
+    await page.getByTestId("template-agent-preview").click()
+    const preview = page.getByLabel("Agent handoff to copy")
+    const previewValue = await preview.inputValue()
+    expect(previewValue).toContain("Exact reference: derive://templates/narrative-pitch")
+    expect(previewValue).toContain("customer-onboarding story")
+    expect(previewValue).toContain("Use Derive's read tool")
+    expect(previewValue).toContain("Use find")
+    expect(previewValue).toContain("visually inspect")
+    await page.getByTestId("template-agent-copy").click()
+    await expect(page.getByTestId("template-agent-copy")).toContainText("Copied — paste into agent")
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+      "derive://templates/narrative-pitch",
+    )
+    expect(new URL(page.url()).pathname).toBe("/templates")
+  })
 
-    await expect(page).toHaveURL(/\/chat\?session=ses_template_handoff/)
-    const url = new URL(page.url())
-    expect([...url.searchParams.keys()]).toEqual(["session"])
-    expect(JSON.stringify(openedBody)).toContain("derive://templates/narrative-pitch")
-    expect(JSON.stringify(openedBody)).toContain("customer-onboarding story")
-    await expect(page.getByTestId("chat-page")).toBeVisible()
-    await expect(page.getByText("derive://templates/narrative-pitch")).toHaveCount(0)
+  test("the local handoff still works when native Build in Derive is unavailable", async ({
+    owner: page,
+  }) => {
+    await page.route("**/v1/workspace", (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Workspace is temporarily unavailable." }),
+      }),
+    )
+    await page.goto("/templates")
+    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-agent-brief").fill("Make a customer launch story.")
+
+    await expect(page.getByTestId("template-agent-build-beta")).toBeDisabled()
+    await expect(page.getByText("You can still copy this handoff")).toBeVisible()
+    await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
+    await page.getByTestId("template-agent-preview").click()
+    expect(await page.getByLabel("Agent handoff to copy").inputValue()).toContain(
+      "Make a customer launch story.",
+    )
+  })
+
+  test("a blocked clipboard reveals a selectable manual fallback", async ({ owner: page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: () => Promise.reject(new Error("blocked")) },
+      })
+    })
+    await page.goto("/templates")
+    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-agent-brief").fill("Make this ours without changing source.")
+    await page.getByTestId("template-agent-copy").click()
+
+    await expect(page.getByTestId("template-agent-error")).toContainText("Select the handoff")
+    await expect(page.getByTestId("template-agent-handoff-preview")).toBeVisible()
+    await expect(page.getByLabel("Agent handoff to copy")).not.toBeEditable()
   })
 
   test("any existing artifact can become an agentic starting point", async ({ owner: page }) => {
@@ -88,7 +125,7 @@ test.describe("templates", () => {
     await page
       .getByTestId("template-agent-brief")
       .fill("Turn this evidence into a concise launch page for operations leaders.")
-    await page.getByTestId("template-agent-go").click()
+    await page.getByTestId("template-agent-build-beta").click()
     await expect(page).toHaveURL(/\/chat\?session=ses_artifact_handoff/)
     const url = new URL(page.url())
     expect(url.pathname).toBe("/chat")
@@ -124,7 +161,7 @@ test.describe("templates", () => {
     await page.getByTestId("template-use").click()
     const brief = "Confidential launch plan for the October partner rollout."
     await page.getByTestId("template-agent-brief").fill(brief)
-    await page.getByTestId("template-agent-go").click()
+    await page.getByTestId("template-agent-build-beta").click()
 
     await expect(page.getByTestId("template-agent-error")).toContainText("No model")
     await expect(page.getByTestId("template-agent-brief")).toHaveValue(brief)
@@ -149,12 +186,12 @@ test.describe("templates", () => {
     await page.goto("/templates")
     await page.getByTestId("template-use").click()
     await page.getByTestId("template-agent-brief").fill("Make this specific to Acme.")
-    await page.getByTestId("template-agent-go").click()
+    await page.getByTestId("template-agent-build-beta").click()
     await page.keyboard.press("Escape")
 
     await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
-    await expect(page.getByTestId("template-agent-go")).toBeDisabled()
-    await page.getByTestId("template-agent-go").click({ force: true })
+    await expect(page.getByTestId("template-agent-build-beta")).toBeDisabled()
+    await page.getByTestId("template-agent-build-beta").click({ force: true })
     await expect(page).toHaveURL(/\/chat\?session=ses_slow_template/)
     expect(requests).toBe(1)
   })
@@ -168,7 +205,7 @@ test.describe("templates", () => {
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
   })
 
-  test("a complex HTML library starter is handed to the agent as one natural-language job", async ({
+  test("a complex HTML library starter becomes one portable agent handoff", async ({
     owner: page,
   }) => {
     const source = await publishArtifact(
@@ -182,15 +219,6 @@ test.describe("templates", () => {
       "text/html",
     )
     const { libraryId, entryId } = await addWorkspaceStarter(page, source)
-    let openedBody: Record<string, unknown> | null = null
-    await page.route("**/v1/chat-session", async (route) => {
-      openedBody = route.request().postDataJSON() as Record<string, unknown>
-      await route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: JSON.stringify({ session: { id: "ses_complex_html" }, messages: [] }),
-      })
-    })
     await page.goto(`/templates?tab=libraries&library=${libraryId}`)
     await page.getByTestId(`template-library-use-${entryId}`).click()
     await expect(
@@ -201,12 +229,12 @@ test.describe("templates", () => {
     await page
       .getByTestId("template-agent-brief")
       .fill("Align the November launch around customer evidence and one accountable owner.")
-    await page.getByTestId("template-agent-go").click()
-    await expect(page).toHaveURL(/\/chat\?session=ses_complex_html/)
-    expect(JSON.stringify(openedBody)).toContain(
-      `derive://template-libraries/${libraryId}/${entryId}`,
-    )
-    expect(JSON.stringify(openedBody)).toContain("November launch")
+    await page.getByTestId("template-agent-preview").click()
+    const handoff = await page.getByLabel("Agent handoff to copy").inputValue()
+    expect(handoff).toContain(`derive://template-libraries/${libraryId}/${entryId}`)
+    expect(handoff).toContain("November launch")
+    expect(handoff).toContain("interactions")
+    expect(new URL(page.url()).pathname).toBe("/templates")
   })
 
   test("a Context template starts a context-builder agent job", async ({ owner: page }) => {
@@ -226,7 +254,7 @@ test.describe("templates", () => {
     await page
       .getByTestId("template-agent-brief")
       .fill("Track template ecosystems from approved product research every Monday at 9am.")
-    await page.getByTestId("template-agent-go").click()
+    await page.getByTestId("template-agent-build-beta").click()
     await expect(page).toHaveURL(/\/chat\?session=ses_context_template/)
     expect(openedBody).toMatchObject({ purpose: "context_builder" })
     expect(JSON.stringify(openedBody)).toContain("weekly-research-context")

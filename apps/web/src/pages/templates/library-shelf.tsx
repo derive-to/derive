@@ -709,8 +709,7 @@ function EntryCard({
           onClick={() => onUse(entry)}
           data-testid={`template-library-use-${entry.id}`}
         >
-          <Icon name="sparkles" />{" "}
-          {entry.kind === "context" ? "Set up with Derive" : "Make it mine"}
+          <Icon name="sparkles" /> {entry.kind === "context" ? "Make it ours" : "Make it mine"}
         </Button>
         {canManage && (
           <Button
