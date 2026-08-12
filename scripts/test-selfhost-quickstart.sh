@@ -118,7 +118,8 @@ artifact_id=$(env \
 
 "${compose[@]}" run --rm derive backup /backups/quickstart-smoke
 "${compose[@]}" run --rm derive verify-backup /backups/quickstart-smoke
-grep -q '"path": "blobs/' "$backup_dir/quickstart-smoke/derive-backup.json"
+docker run --rm --entrypoint grep -v "$backup_dir:/backups:ro" "$image" \
+  -q '"path": "blobs/' /backups/quickstart-smoke/derive-backup.json
 
 "${compose[@]}" down
 docker volume inspect "$data_volume" >/dev/null
