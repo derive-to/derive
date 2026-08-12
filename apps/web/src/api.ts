@@ -1326,6 +1326,8 @@ export const api = {
     f("/v1/workspace/invites", opts({ email, role })).then(j),
   listWorkspaceInvites: (): Promise<{ invites: Invite[] }> =>
     f("/v1/workspace/invites", opts()).then(j),
+  resendWorkspaceInvite: (id: string): Promise<InviteResult> =>
+    f(`/v1/workspace/invites/${id}/resend`, { method: "POST", credentials: "include" }).then(j),
   revokeWorkspaceInvite: (id: string): Promise<void> =>
     f(`/v1/workspace/invites/${id}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,

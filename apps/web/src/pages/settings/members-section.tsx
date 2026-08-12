@@ -350,6 +350,15 @@ function seatConfirmDescription(billing: BillingInfo, includeInviteNote: boolean
 function PendingInvites() {
   const qc = useQueryClient()
   const { data: invites } = useQuery(workspaceInvitesQuery())
+  const resendMut = useApiMutation({
+    mutationFn: (id: string) => api.resendWorkspaceInvite(id),
+    onSuccess: async (r) => {
+      if (r.kind !== "invite") return
+      const copiedLink = await copyText(r.accept_url, { error: null })
+      toast.success(copiedLink ? "Invitation link copied" : "Invitation link refreshed")
+      qc.invalidateQueries({ queryKey: workspaceInvitesQuery().queryKey })
+    },
+  })
   const revokeMut = useApiMutation({
     mutationFn: (id: string) => api.revokeWorkspaceInvite(id),
     onSuccess: (_data, id) =>
@@ -372,6 +381,15 @@ function PendingInvites() {
           actions={
             <>
               <Badge variant="outline">Pending</Badge>
+              <Button
+                data-testid={`invite-copy-${inv.id}`}
+                variant="ghost"
+                size="sm"
+                onClick={() => resendMut.mutate(inv.id)}
+                disabled={resendMut.isPending}
+              >
+                Copy link
+              </Button>
               <Button
                 data-testid={`invite-revoke-${inv.id}`}
                 variant="destructive-ghost"

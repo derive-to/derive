@@ -49,6 +49,26 @@ describe("workspace invitations", () => {
     expect(JSON.stringify(list)).not.toContain("dki_")
   })
 
+  it("rotates a pending invite when an admin needs its link again", async () => {
+    const created = await (
+      await invite(as(admin.email), { email: "resend-me@derive.test", role: "commenter" })
+    ).json()
+    const oldToken = created.accept_url.split("/invite/")[1]
+    const res = await app.request(`/v1/workspace/invites/${created.invite.id}/resend`, {
+      method: "POST",
+      headers: as(admin.email),
+    })
+    expect(res.status).toBe(201)
+    const replacement = await res.json()
+    expect(replacement.kind).toBe("invite")
+    expect(replacement.accept_url).toContain("/invite/")
+    expect(replacement.accept_url).not.toContain(oldToken)
+    expect((await app.request(`/v1/invites/${oldToken}`)).status).toBe(404)
+    expect(
+      (await app.request(`/v1/invites/${replacement.accept_url.split("/invite/")[1]}`)).status,
+    ).toBe(200)
+  })
+
   it("rejects a non-admin trying to invite", async () => {
     const res = await invite(as(teammate.email), { email: "x@derive.test", role: "editor" })
     // teammate is an editor here (default role), not an owner → forbidden.
