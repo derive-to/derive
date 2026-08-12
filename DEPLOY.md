@@ -1,5 +1,10 @@
 # Deploying Derive
 
+For a new single-container installation, follow [QUICKSTART.md](QUICKSTART.md). It covers the
+released-image and source-build paths, creates the first operator while the service is offline,
+waits for readiness, and verifies a first backup. This document is the reference for choosing a
+topology and operating or extending an installation.
+
 ## Deployment tiers
 
 Pick the tier that matches your scale and infrastructure:
@@ -23,27 +28,19 @@ All tiers run the same codebase and are additive: Lite + `DATABASE_URL` = Node B
 One container gives you a complete, working Derive — sign-in, publish, comments, reviews,
 notifications, the sandboxed viewer — all served from `http://localhost:8080`.
 
-```bash
-cp deploy/selfhost.env.example deploy/.env
-# The image runs as uid/gid 1000; make the host backup directory writable only by it.
-sudo install -d -o 1000 -g 1000 -m 0700 deploy/backups
-# Edit deploy/.env: set BASE_URL and pin DERIVE_IMAGE to a release digest.
-docker compose -f deploy/compose.yml up -d
-
-# Create the first account + immutable-id instance operator without opening signup.
-read -rsp 'Operator password: ' DERIVE_BOOTSTRAP_PASSWORD
-printf '%s' "$DERIVE_BOOTSTRAP_PASSWORD" | docker compose -f deploy/compose.yml run --rm -T derive \
-  bootstrap-operator --email owner@example.com --name 'Owner' --password-stdin
-unset DERIVE_BOOTSTRAP_PASSWORD
-```
+Use the [self-hosting quick start](QUICKSTART.md#choose-one-path) for a fresh install. The
+commands there explicitly load the environment file, validate the rendered Compose model, create
+the first operator before the service starts, wait for readiness, and prove the first backup.
 
 The Compose file pulls the pinned release image from GHCR, persists `/data`, runs
-as a non-root user with an init process, binds to `127.0.0.1` by default, and waits
-for the database/blob readiness check. To
+as a non-root user with an init process, binds to `127.0.0.1` by default, and defines
+a database/blob readiness health check. To
 build the same image from a checkout instead:
 
 ```bash
-docker compose -f deploy/compose.yml -f deploy/compose.build.yml up --build -d
+docker compose --env-file deploy/.env \
+  -f deploy/compose.yml -f deploy/compose.build.yml \
+  up --build -d --wait
 ```
 
 That's the whole thing. The image bundles the built SPA and the API serves it
@@ -110,12 +107,15 @@ Create the host backup directory once (`mkdir -p deploy/backups`), then:
 
 ```bash
 # Online and safe while Derive is serving: SQLite snapshot first, immutable blobs second.
-docker compose -f deploy/compose.yml run --rm derive backup /backups/derive-$(date +%F)
-docker compose -f deploy/compose.yml run --rm derive verify-backup /backups/derive-$(date +%F)
+docker compose --env-file deploy/.env -f deploy/compose.yml run --rm derive \
+  backup /backups/derive-$(date +%F)
+docker compose --env-file deploy/.env -f deploy/compose.yml run --rm derive \
+  verify-backup /backups/derive-$(date +%F)
 
 # Recovery without putting the new password in shell history or the process list.
 read -rsp 'New password: ' DERIVE_RESET_PASSWORD
-printf '%s' "$DERIVE_RESET_PASSWORD" | docker compose -f deploy/compose.yml run --rm -T derive \
+printf '%s' "$DERIVE_RESET_PASSWORD" | docker compose \
+  --env-file deploy/.env -f deploy/compose.yml run --rm -T derive \
   reset-password --email owner@example.com --password-stdin
 unset DERIVE_RESET_PASSWORD
 ```
@@ -135,15 +135,16 @@ Restore into a new named volume and validate it before cutover. Keep the old vol
 you have signed in and opened representative artifacts on the restored instance:
 
 ```bash
-docker compose -f deploy/compose.yml down
+docker compose --env-file deploy/.env -f deploy/compose.yml down
 
 # Restore into a fresh volume; the existing derive-data volume is untouched.
-DERIVE_DATA_VOLUME=derive-data-restored docker compose -f deploy/compose.yml run --rm derive \
+DERIVE_DATA_VOLUME=derive-data-restored docker compose \
+  --env-file deploy/.env -f deploy/compose.yml run --rm derive \
   restore-backup /backups/derive-2026-08-11
 
 # Boot the restored copy on a temporary loopback port and test it.
 DERIVE_DATA_VOLUME=derive-data-restored DERIVE_PORT=18080 \
-  docker compose -f deploy/compose.yml up -d
+  docker compose --env-file deploy/.env -f deploy/compose.yml up -d --wait
 curl -fsS http://127.0.0.1:18080/readyz
 ```
 

@@ -14,7 +14,7 @@ Permanent versioned URLs and a review loop your team and its agents share, on in
 <p align="center">
   <a href="https://derive.to"><b>Try free</b></a>
   &nbsp;·&nbsp;
-  <a href="#get-started">Self-host</a>
+  <a href="QUICKSTART.md">Self-host</a>
   &nbsp;·&nbsp;
   <a href="STANDARD.md">Docs</a>
 </p>
@@ -161,14 +161,12 @@ You get a library, in-browser publishing, and the comment loop in about a minute
 
 ### 🖥️ Self-host
 
-One container is the whole product.
+One container is the whole product: API, web, sign-in, publishing, comments, and the
+sandboxed viewer, with SQLite and blobs in one volume.
 
-```bash
-docker compose -f deploy/compose.yml up -d
-# → http://localhost:8080
-```
-
-API and web, sign-in, publishing, comments, and the sandboxed viewer, with SQLite and blobs in one volume. See [DEPLOY.md](DEPLOY.md) for Postgres, S3/R2, and cloud hosts.
+Follow the **[self-hosting quick start](QUICKSTART.md)** to install a digest-pinned release or
+build the current checkout. It includes secure first-user bootstrap, readiness checks, and a
+verified first backup. See [DEPLOY.md](DEPLOY.md) for Postgres, S3/R2, and cloud hosts.
 
 </td>
 </tr>
@@ -240,6 +238,9 @@ Every artifact ships OG and Twitter meta plus an oEmbed document, serves a live 
 ## Deploy
 
 The single-container image runs on any host with a persistent volume.
+
+For a fresh installation, start with **[QUICKSTART.md](QUICKSTART.md)**. The full deployment
+reference below covers managed hosts, external storage, scaling, and optional services.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
 &nbsp;&nbsp;
