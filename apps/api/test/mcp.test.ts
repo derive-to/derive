@@ -116,15 +116,18 @@ describe("remote MCP endpoint (/mcp)", () => {
     // setup_brandprint folds into publish (derive://brandprint/profile).
     expect(names.sort()).toEqual([
       "automate",
+      "browse_library",
       "catch_up",
       "checkpoint",
       "clear_queue",
       "comment",
       "find",
+      "list_automations",
       "list_workspaces",
       "organize",
       "publish",
       "read",
+      "shelve",
       "stage",
       "use",
     ])
@@ -139,7 +142,14 @@ describe("remote MCP endpoint (/mcp)", () => {
     type ListedTool = { name: string; annotations?: { readOnlyHint?: boolean } }
     const listed = (list.parsed?.result as { tools?: ListedTool[] } | undefined)?.tools ?? []
     const readOnly = listed.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name)
-    expect(readOnly.sort()).toEqual(["catch_up", "find", "list_workspaces", "read"])
+    expect(readOnly.sort()).toEqual([
+      "browse_library",
+      "catch_up",
+      "find",
+      "list_automations",
+      "list_workspaces",
+      "read",
+    ])
     // Consolidated away — folded into find / catch_up / comment / publish / stage / use.
     for (const gone of [
       "whoami",

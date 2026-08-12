@@ -25,13 +25,16 @@
 // instructions carry only a one-line index of them. The mcp-surface-budget test guards
 // the thinness.
 //
-// TEN tools, one per intent — WORKSPACES (list_workspaces), FIND (find: BROWSE the
+// One tool per intent — WORKSPACES (list_workspaces), FIND (find: BROWSE the
 // library, GREP one artifact, or SEARCH the workspace — plus the askable contexts,
 // all discriminated by argument), READ content (read), CATCH UP on state/feedback/
 // history AND pull the WORK QUEUE (catch_up: with a short_id it's one artifact's
 // delta; with none it's the @mention inbox teammates handed this agent — the ask-agent
 // and Rework buttons — so the queue is a mode of catch_up, not its own slot), COMMENT
-// (comment), WRITE (publish: also the home for the Brandprint profile — publishing to
+// (comment), ORGANISE the library (browse_library reads it, organize tags and collects,
+// shelve retires or deletes — see mcp-tools/organize.ts for why that one is three),
+// AUTOMATE standing work (list_automations reads, automate writes), WRITE (publish: also
+// the home for the Brandprint profile — publishing to
 // derive://brandprint/profile scaffolds the slot on first write, so brand setup is a
 // publish target, not a separate tool), STAGE out-of-band uploads (stage: target:'doc'
 // for a whole big document/bundle, target:'asset' for an image/font — one tool, two
@@ -44,6 +47,14 @@
 // into a human-reviewed proposal, and `find` collapses browse/grep/search/contexts onto
 // `query`/`short_id`/`tag`. A new capability is a parameter on an existing tool, not a
 // new tool — every extra tool costs the agent a slot to understand and choose between.
+//
+// ONE EXCEPTION, and it is not a softening of the rule: a parameter may not carry a tool
+// across the READ/WRITE line. Annotations are per-tool, not per-argument, so a tool that
+// both reads and writes has to declare the write — and clients gate on that, which means
+// the read pays an approval prompt forever. `organize` did exactly this: browsing a tag
+// vocabulary prompted as hard as a permanent delete, because `state:'deleted'` shared the
+// slot. Splitting there buys back auto-approval on the common path, which is worth more
+// than the slot it costs. Splitting anywhere else still needs the old argument.
 //
 // STRUCTURE — buildServer stays thin: it constructs the McpServer, registers the
 // resources (skills + Brandprint conventions), resolves the Brandprint, writes the
@@ -75,7 +86,7 @@ import type { AppContext } from "./context"
 import { resolveActorBrandprint } from "./lib/brandprint"
 import type { Sandbox } from "./lib/code-sandbox"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
-import { registerAutomateTool } from "./mcp-tools/automate"
+import { registerAutomateTools } from "./mcp-tools/automate"
 import { registerCallTool } from "./mcp-tools/call"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
@@ -84,7 +95,7 @@ import { registerCodeTool } from "./mcp-tools/code"
 import { registerCommentTool } from "./mcp-tools/comment"
 import { registerFindTool } from "./mcp-tools/find"
 import { registerListWorkspacesTool } from "./mcp-tools/list-workspaces"
-import { registerOrganizeTool } from "./mcp-tools/organize"
+import { registerLibraryTools } from "./mcp-tools/organize"
 import { registerPublishTool } from "./mcp-tools/publish"
 import { registerReadTool } from "./mcp-tools/read"
 import { registerStageTool } from "./mcp-tools/stage"
@@ -487,7 +498,8 @@ export function registerToolSurface(
   if (wanted("list_workspaces")) registerListWorkspacesTool(tc, () => [...names].sort())
   if (wanted("find")) registerFindTool(tc)
   if (wanted("read")) registerReadTool(tc)
-  if (wanted("organize")) registerOrganizeTool(tc)
+  // browse_library + organize + shelve (read / reversible write / the one irreversible verb)
+  if (wanted("organize")) registerLibraryTools(tc)
   if (wanted("catch_up")) registerCatchUpTool(tc)
   if (wanted("clear_queue")) registerClearQueueTool(tc)
   if (wanted("comment")) registerCommentTool(tc)
@@ -495,7 +507,8 @@ export function registerToolSurface(
   if (wanted("publish")) registerPublishTool(tc)
   if (wanted("checkpoint")) registerCheckpointTool(tc)
   if (wanted("use")) registerUseTool(tc)
-  if (wanted("automate")) registerAutomateTool(tc)
+  // list_automations + automate (read / write)
+  if (wanted("automate")) registerAutomateTools(tc)
   // OPT-IN, not `wanted`. `wanted` is true whenever `only` is absent, which is exactly how an
   // external MCP client is registered — so the ordinary form would hand `call` to every client
   // holding a grant. What it reaches is the WORKSPACE's connected credentials, and an external
