@@ -5,6 +5,11 @@ released-image and source-build paths, creates the first operator while the serv
 waits for readiness, and verifies a first backup. This document is the reference for choosing a
 topology and operating or extending an installation.
 
+For the normal self-hosted path, start with [Install a published release](QUICKSTART.md#install-a-published-release-recommended).
+That path downloads the release Compose and environment files, pins the tested image digest,
+and verifies `SHA256SUMS` before starting. The optional GitHub CLI checks also verify the
+immutable release asset and its build attestation.
+
 ## Deployment tiers
 
 Pick the tier that matches your scale and infrastructure:
