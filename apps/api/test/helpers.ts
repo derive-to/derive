@@ -46,6 +46,7 @@ type Seat = { user_id: string; role: Role }
 // longer name the same schema, and leftovers stay in the schema of the file that made them.
 const pgStores: TestStore[] = []
 const pgSchemas = new Set<string>()
+const appSeeds: Promise<void>[] = []
 const workerKey = (process.env.VITEST_POOL_ID ?? String(process.pid)).replace(/[^a-z0-9]+/gi, "_")
 const fileKey = randomUUID().replace(/-/g, "").slice(0, 10)
 const schemaFor = (name: string) =>
@@ -218,9 +219,16 @@ export const app = authProxy(sharedApp)
 export const anonApp = sharedApp
 
 afterAll(async () => {
-  if (PG_URL) await Promise.all(pgStores.map((s) => Promise.resolve(s.close()).catch(() => {})))
-  else meta.close()
-  rmSync(dir, { recursive: true, force: true })
+  try {
+    // makeAuthedApp starts its seed immediately so direct context users see the same initialized
+    // store as HTTP callers. Some tests never make a request, so teardown must wait for every
+    // seed explicitly before closing any shared Postgres pool.
+    await Promise.all(appSeeds)
+  } finally {
+    if (PG_URL) await Promise.all(pgStores.map((s) => Promise.resolve(s.close()).catch(() => {})))
+    else meta.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 export const upload = (
@@ -359,6 +367,7 @@ export const makeAuthedApp = (
     if (current)
       await m.setOrgSettings("default", { ...current, automateBeta: true }).catch(() => undefined)
   })()
+  appSeeds.push(planReady)
   const deps: AppDeps = {
     meta: m,
     blobs: new FsBlobStore(join(dir, "blobs")),

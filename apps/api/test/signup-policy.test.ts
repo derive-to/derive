@@ -11,7 +11,7 @@ import {
   signupPolicy,
 } from "../src/lib/signup-policy"
 
-const SECRET = "test-secret-0123456789abcd"
+const SECRET = "test-secret-0123456789abcd" // gitleaks:allow -- deterministic test fixture, not a credential
 const HASH = "a".repeat(64)
 
 describe("self-host signup admission", () => {
