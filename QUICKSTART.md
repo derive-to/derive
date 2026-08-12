@@ -196,6 +196,43 @@ unset DERIVE_BACKUP
 Copy the resulting directory from `./backups` to a separate system. A backup stored only beside
 the live volume does not protect against losing the host.
 
+## Upgrade a published installation
+
+An upgrade keeps the named `derive-data` volume. The new image applies the SQLite and Better Auth
+schema changes at startup; it does not replace the database or the artifact blobs. Always make and
+verify a backup before changing the image.
+
+From the existing installation directory, download and verify the new release bundle. Do not
+overwrite `.env`: it contains your instance configuration and secrets.
+
+```bash
+VERSION=vX.Y.Z
+curl -fsSLo compose.yml "https://github.com/derive-to/derive/releases/download/${VERSION}/compose.yml"
+curl -fsSLo selfhost.env.example.new "https://github.com/derive-to/derive/releases/download/${VERSION}/selfhost.env.example"
+curl -fsSLo image-digest.txt "https://github.com/derive-to/derive/releases/download/${VERSION}/image-digest.txt"
+curl -fsSLo SHA256SUMS "https://github.com/derive-to/derive/releases/download/${VERSION}/SHA256SUMS"
+sha256sum -c SHA256SUMS
+```
+
+Copy the `DERIVE_IMAGE=...` value from `selfhost.env.example.new` into the existing `.env`, then
+validate and restart the same Compose project:
+
+```bash
+docker compose --env-file .env -f compose.yml config --quiet
+docker compose --env-file .env -f compose.yml run --rm derive backup /backups/derive-before-upgrade
+docker compose --env-file .env -f compose.yml run --rm derive verify-backup /backups/derive-before-upgrade
+docker compose --env-file .env -f compose.yml down
+docker compose --env-file .env -f compose.yml pull
+docker compose --env-file .env -f compose.yml up -d --wait --wait-timeout 120
+curl -fsS http://127.0.0.1:8080/readyz
+```
+
+Keep the old image digest and backup until you have signed in and opened representative artifacts.
+To roll back an image-only problem, put the previous digest back in `.env` and run `pull` and
+`up` again. If the new release performed a schema change that the old image cannot read, restore
+the pre-upgrade backup into a fresh data volume and validate that copy before switching back; never
+delete the original volume during an upgrade.
+
 ## Build the current checkout
 
 Use this path to test unreleased code. The resulting image is called `derive:local`; it is not a

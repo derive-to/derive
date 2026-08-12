@@ -53,6 +53,11 @@ same-origin, so there's nothing else to host. State (SQLite + artifact blobs) li
 in the `/data` volume. Use the online backup command below; copying a live WAL-mode
 volume is not a consistent backup.
 
+For upgrades, follow [Upgrade a published installation](QUICKSTART.md#upgrade-a-published-installation).
+The named data volume is retained and the new image applies SQLite and Better Auth schema changes
+at boot. Back up and verify first, keep the previous digest and volume, and validate the upgraded
+instance before removing anything.
+
 - **`BASE_URL`** is the public origin you'll reach it at. It signs auth cookies and
   builds artifact share links, so set it to your real URL (behind a proxy, the
   `https://…` domain — not `localhost`).
