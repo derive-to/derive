@@ -487,6 +487,64 @@ export const workspaceRoutes = (ctx: AppContext) => {
     },
   )
 
+  // Rotate a pending invitation and return a fresh acceptance link. Tokens are never
+  // stored in plaintext, so this is the safe recovery path after the original link is lost.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/workspace/invites/{id}/resend",
+      tags: ["Workspace"],
+      summary: "Rotate a pending invitation and return its acceptance link (Admin only).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        201: {
+          description: "The replacement pending invitation and acceptance link.",
+          content: { "application/json": { schema: InviteResult } },
+        },
+      },
+    }),
+    async (c) => {
+      const org = await requireWorkspace(c, "manage")
+      if (org instanceof Response) return bail(org)
+      const invite = (await meta.listPendingInvitations(org)).find(
+        (candidate) => candidate.id === c.req.param("id"),
+      )
+      if (!invite) return bail(fail(c, 404, "pending invitation not found"))
+      const rl = await limited(c, inviteLimiter)
+      if (rl) return bail(rl)
+
+      await meta.deleteInvitation(invite.id, org)
+      const token = mintToken("dki")
+      const inviter = await currentUser(c)
+      const replacement = await meta.createInvitation({
+        id: newId("inv"),
+        org_id: org,
+        email: invite.email,
+        role: invite.role,
+        token: sha256(token),
+        invited_by: inviter?.id ?? null,
+        expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+      })
+      const acceptUrl = `${deps.baseUrl.replace(/\/$/, "")}/invite/${token}`
+      const ws = await meta.getWorkspace(org)
+      await enqueueChannelDelivery(
+        meta,
+        "email",
+        "workspace.invite",
+        buildInviteEmail({
+          to: invite.email,
+          workspace: ws?.name ?? DEFAULT_WORKSPACE_NAME,
+          inviter: inviter?.name ?? null,
+          url: acceptUrl,
+        }),
+      )
+      return c.json(
+        { kind: "invite" as const, invite: inviteJson(replacement), accept_url: acceptUrl },
+        201,
+      )
+    },
+  )
+
   // Revoke a pending invitation (Admin only; scoped to the workspace).
   app.openapi(
     createRoute({
