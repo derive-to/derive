@@ -8,10 +8,20 @@ describe("template libraries: pinned reusable starters", () => {
     email: "teammate@templates.test",
     name: "Teammate",
   }
-  const { app } = makeAuthedApp("template-libraries", [owner, teammate], "editor")
+  const { app, meta } = makeAuthedApp("template-libraries", [owner, teammate], "editor")
+  const publishMarkdown = (
+    content: string,
+    fields: Record<string, string> = {},
+    headers: Record<string, string> = {},
+  ) => {
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode(content)]), "starter.md")
+    for (const [key, value] of Object.entries(fields)) form.append(key, value)
+    return app.request("/v1/artifacts", { method: "POST", body: form, headers })
+  }
 
   it("pins source bytes, gates private libraries, and makes an explicit public snapshot shareable", async () => {
-    const published = await publishAs(app, "# First version", {}, as(owner.email))
+    const published = await publishMarkdown("# First version", {}, as(owner.email))
     const source = await published.json()
     const library = await (
       await app.request(
@@ -29,14 +39,12 @@ describe("template libraries: pinned reusable starters", () => {
         source_short_id: `trusted-decision-${source.short_id}@v1`,
         kind: "artifact",
         category: "Doc",
-        format: "md",
         title: "Decision record",
         description: "The repeatable decision shape.",
         outcome: "A clear call with durable rationale.",
         sections: ["Decision", "Evidence", "Owner"],
         inputs: [],
         tags: ["decision"],
-        theme_mode: "fixed",
       }),
     )
     expect(entryRes.status).toBe(201)
@@ -60,6 +68,7 @@ describe("template libraries: pinned reusable starters", () => {
     expect(privateStarter.source).toContain("First version")
     expect(privateStarter.source).not.toContain("Second version")
     expect(privateStarter.entry.source_version).toBe(1)
+    expect(privateStarter.entry.format).toBe("md")
 
     // Distribution is an explicit library-level decision. Public entries now
     // serve to anonymous visitors without widening the original artifact itself.
@@ -91,11 +100,36 @@ describe("template libraries: pinned reusable starters", () => {
       `/v1/template-libraries/${library.id}/entries/${entry.id}/starter`,
     )
     expect(publicStarter.status).toBe(200)
-    expect((await publicStarter.json()).source).toContain("First version")
+    const reusable = await publicStarter.json()
+    expect(reusable.source).toContain("First version")
+
+    // Adoption remains the ordinary publish endpoint, but a validated template
+    // entry records structured lineage even when the adopter cannot read the
+    // original private source artifact.
+    const adopted = await publishAs(
+      app,
+      reusable.source,
+      { template_library_id: library.id, template_entry_id: entry.id },
+      as(teammate.email),
+    )
+    expect(adopted.status).toBe(201)
+    const adoptedJson = await adopted.json()
+    const [sourceRow, adoptedRow] = await Promise.all([
+      meta.getByShortId(source.short_id),
+      meta.getByShortId(adoptedJson.short_id),
+    ])
+    expect(adoptedRow?.derived_from).toBe(sourceRow?.id)
+    if (!sourceRow) throw new Error("missing template source")
+    await meta.deleteArtifact(sourceRow.id, sourceRow.org_id)
+    const afterSourceDelete = await app.request(
+      `/v1/template-libraries/${library.id}/entries/${entry.id}/starter`,
+    )
+    expect(afterSourceDelete.status).toBe(200)
+    expect((await afterSourceDelete.json()).source).toContain("First version")
   })
 
   it("shares workspace libraries with members and keeps context templates secret-free", async () => {
-    const source = await (await publishAs(app, "# Team template", {}, as(owner.email))).json()
+    const source = await (await publishMarkdown("# Team template", {}, as(owner.email))).json()
     const library = await (
       await app.request(
         "/v1/template-libraries",
@@ -108,14 +142,12 @@ describe("template libraries: pinned reusable starters", () => {
         source_short_id: source.short_id,
         kind: "artifact",
         category: "Doc",
-        format: "md",
         title: "Team note",
         description: "A shared note starter.",
         outcome: "A repeatable team update.",
         sections: [],
         inputs: [],
         tags: [],
-        theme_mode: "fixed",
       }),
     )
     expect(workspaceEntry.status).toBe(201)
@@ -125,7 +157,7 @@ describe("template libraries: pinned reusable starters", () => {
     ).toBe(200)
 
     const unsafe = await (
-      await publishAs(app, "api_key: sk_thisIsClearlyNotATemplateSecret", {}, as(owner.email))
+      await publishMarkdown("api_key: sk_thisIsClearlyNotATemplateSecret", {}, as(owner.email))
     ).json()
     const denied = await app.request(
       `/v1/template-libraries/${library.id}/entries`,
@@ -133,20 +165,18 @@ describe("template libraries: pinned reusable starters", () => {
         source_short_id: unsafe.short_id,
         kind: "context",
         category: "Context",
-        format: "md",
         title: "Unsafe context",
         description: "Should be rejected.",
         outcome: "Never ships credentials.",
         sections: [],
         inputs: [],
         tags: [],
-        theme_mode: "fixed",
       }),
     )
     expect(denied.status).toBe(422)
 
     const safe = await (
-      await publishAs(app, "# Safe context\n\napi_key: {{API_KEY}}", {}, as(owner.email))
+      await publishMarkdown("# Safe context\n\napi_key: {{API_KEY}}", {}, as(owner.email))
     ).json()
     const allowed = await app.request(
       `/v1/template-libraries/${library.id}/entries`,
@@ -154,16 +184,67 @@ describe("template libraries: pinned reusable starters", () => {
         source_short_id: safe.short_id,
         kind: "context",
         category: "Context",
-        format: "md",
         title: "Bound context",
         description: "A portable manifest with a named credential binding.",
         outcome: "A safely configured Context.",
         sections: [],
         inputs: [],
         tags: ["context"],
-        theme_mode: "fixed",
       }),
     )
     expect(allowed.status).toBe(201)
+  })
+
+  it("derives format from pinned bytes and rejects ambiguous HTML bindings", async () => {
+    const source = await (
+      await publishAs(
+        app,
+        '<!doctype html><h1 data-project="{{Project}}">{{Project}}</h1>',
+        {},
+        as(owner.email),
+      )
+    ).json()
+    const library = await (
+      await app.request(
+        "/v1/template-libraries",
+        jsonAs(as(owner.email), { title: "HTML starters", scope: "workspace" }),
+      )
+    ).json()
+    const unsafeBinding = await app.request(
+      `/v1/template-libraries/${library.id}/entries`,
+      jsonAs(as(owner.email), {
+        source_short_id: source.short_id,
+        kind: "artifact",
+        category: "Site",
+        title: "Project page",
+        description: "A project page with a starting brief.",
+        outcome: "A clear page.",
+        sections: [],
+        inputs: [{ name: "Project", description: "Project name", required: true }],
+        tags: [],
+      }),
+    )
+    expect(unsafeBinding.status).toBe(422)
+    expect(await unsafeBinding.text()).toMatch(/visible text/i)
+
+    const duplicateInputs = await app.request(
+      `/v1/template-libraries/${library.id}/entries`,
+      jsonAs(as(owner.email), {
+        source_short_id: source.short_id,
+        kind: "artifact",
+        category: "Site",
+        title: "Project page",
+        description: "A project page with a starting brief.",
+        outcome: "A clear page.",
+        sections: [],
+        inputs: [
+          { name: "Project", description: "Project name" },
+          { name: "project", description: "Duplicate project name" },
+        ],
+        tags: [],
+      }),
+    )
+    expect(duplicateInputs.status).toBe(422)
+    expect(await duplicateInputs.text()).toMatch(/unique/i)
   })
 })

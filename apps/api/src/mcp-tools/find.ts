@@ -6,6 +6,7 @@ import {
   LINKS_FACT,
   SKILL_CONTENT_TYPE,
 } from "@derive/core"
+import { listTemplates } from "@derive-to/templates"
 import { z } from "zod"
 import {
   searchArtifactVersion,
@@ -91,7 +92,18 @@ export const backlinkNotes = (o: {
 }
 
 export function registerFindTool(tc: ToolContext): void {
-  const { server, ctx, agent, actingFor, reach, notFound, resolveWs, wsArg, askableContexts } = tc
+  const {
+    server,
+    ctx,
+    agent,
+    actingFor,
+    ownerId,
+    reach,
+    notFound,
+    resolveWs,
+    wsArg,
+    askableContexts,
+  } = tc
 
   // Askable contexts as typed `find` rows — INVARIANT (A): sourced ONLY from
   // askableContexts (the per-human canUserAskContext gate), so a roster-gated context this
@@ -125,7 +137,7 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things; what you pass picks the MODE. `short_id`+`query` GREPs one artifact (in:'source' by default, the exact bytes; in:'text' the visible words), `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a phrase or question; empty means try another word, never that nothing exists. See derive://skills/finding.",
+        "Find things; what you pass picks the MODE. `templates:true` finds reusable starts, `short_id`+`query` GREPs one artifact, `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a phrase or question. See derive://skills/finding.",
       annotations: {
         title: "Find artifacts",
         readOnlyHint: true,
@@ -165,6 +177,12 @@ export function registerFindTool(tc: ToolContext): void {
           .boolean()
           .optional()
           .describe("Browse only: true lists the archive shelf instead of the live library."),
+        templates: z
+          .boolean()
+          .optional()
+          .describe(
+            "Find built-in and accessible authored templates. Combine with `query` to filter; omit query to browse the template catalog.",
+          ),
         case_sensitive: z.boolean().optional(),
         in: z
           .enum(["source", "text"])
@@ -200,6 +218,7 @@ export function registerFindTool(tc: ToolContext): void {
       links_to,
       skills,
       archived,
+      templates,
       case_sensitive,
       in: scope,
       context,
@@ -207,10 +226,94 @@ export function registerFindTool(tc: ToolContext): void {
       version,
       workspace,
     }) => {
-      if (archived && (query || short_id || data !== undefined || links_to !== undefined))
+      if (
+        archived &&
+        (query || short_id || data !== undefined || links_to !== undefined || templates)
+      )
         return err(
-          "`archived:true` applies only to browse mode (omit query/short_id/data/links_to).",
+          "`archived:true` applies only to browse mode (omit query/short_id/data/links_to/templates).",
         )
+      if (templates && (short_id || data !== undefined || links_to || skills || archived))
+        return err(
+          "`templates:true` finds reusable starts. Combine it only with `query` and `workspace`.",
+        )
+      if (templates) {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const needle = query?.trim().toLowerCase() ?? ""
+        const builtIns = listTemplates({ query }).map((template) => ({
+          type: "template" as const,
+          source: "built-in" as const,
+          id: template.id,
+          title: template.title,
+          description: template.description,
+          kind: template.kind,
+          category: template.category,
+          format: template.format,
+          uri: `derive://templates/${template.id}`,
+        }))
+        const [publicLibraries, workspaceLibraries, privateLibraries] = await Promise.all([
+          ctx.meta.listTemplateLibraries({ scope: "public" }),
+          ctx.meta.listTemplateLibraries({ orgId: t.org, scope: "workspace" }),
+          ownerId
+            ? ctx.meta.listTemplateLibraries({
+                orgId: t.org,
+                scope: "private",
+                createdBy: ownerId,
+              })
+            : [],
+        ])
+        const libraries = [...privateLibraries, ...workspaceLibraries, ...publicLibraries].filter(
+          (library, index, all) =>
+            all.findIndex((candidate) => candidate.id === library.id) === index,
+        )
+        const authored = (
+          await Promise.all(
+            libraries.map(async (library) =>
+              (
+                await ctx.meta.listTemplateLibraryEntries(library.id)
+              ).map((entry) => ({
+                library,
+                entry,
+              })),
+            ),
+          )
+        )
+          .flat()
+          .filter(({ library, entry }) => {
+            if (!needle) return true
+            return [
+              library.title,
+              entry.title,
+              entry.description,
+              entry.outcome,
+              entry.category,
+              entry.tags_json,
+            ]
+              .join(" ")
+              .toLowerCase()
+              .includes(needle)
+          })
+          .map(({ library, entry }) => ({
+            type: "template" as const,
+            source: "library" as const,
+            id: entry.id,
+            title: entry.title,
+            description: entry.description,
+            kind: entry.kind,
+            category: entry.category,
+            format: entry.format,
+            library: { id: library.id, title: library.title, scope: library.scope },
+            uri: `derive://template-libraries/${library.id}/${entry.id}`,
+          }))
+        return json({
+          workspace: t.org,
+          ...(query ? { query } : {}),
+          count: builtIns.length + authored.length,
+          results: [...builtIns, ...authored],
+          next: "Read a result's uri for exact pinned source, then pass that source to publish.",
+        })
+      }
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with
       // "`query` is required to grep" — the wrong error for a caller who asked a different
       // question. Backlinks reach artifacts by content across the workspace; the other three

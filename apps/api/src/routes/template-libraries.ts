@@ -4,6 +4,7 @@ import {
   type TemplateLibraryEntryRecord,
   type TemplateLibraryRecord,
 } from "@derive/core"
+import { unsafeHtmlTemplateBindings } from "@derive-to/templates"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -25,6 +26,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     authorize,
     isToken,
     managementPrincipal,
+    membershipOf,
     meta,
     sourceText,
     workspaceCan,
@@ -34,10 +36,9 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
   const Scope = z.enum(["private", "workspace", "public"])
   const EntryKind = z.enum(["artifact", "context"])
   const EntryFormat = z.enum(["md", "html"])
-  const ThemeMode = z.enum(["native", "adaptable", "fixed"])
   const Input = z.object({
-    name: z.string(),
-    description: z.string(),
+    name: z.string().trim().min(1).max(80),
+    description: z.string().trim().min(1).max(240),
     required: z.boolean().optional(),
   })
 
@@ -56,7 +57,6 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       sections: z.array(z.string()),
       inputs: z.array(Input),
       tags: z.array(z.string()),
-      theme_mode: ThemeMode,
       created_by: z.string(),
       created_at: z.string(),
     })
@@ -120,7 +120,6 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
           typeof (value as { required?: unknown }).required === "boolean"),
     ),
     tags: array(entry.tags_json, (value): value is string => typeof value === "string"),
-    theme_mode: entry.theme_mode,
     created_by: entry.created_by,
     created_at: entry.created_at,
   })
@@ -145,10 +144,13 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       return false
     return library.scope === "workspace" || library.created_by === (await ownerFor(c))
   }
-  const canManage = async (c: Context, library: TemplateLibraryRecord): Promise<boolean> =>
-    (isToken(c) || library.created_by === (await ownerFor(c))) &&
-    (await activeWorkspace(c)) === library.org_id &&
-    (await workspaceCan(c, "publish"))
+  const canManage = async (c: Context, library: TemplateLibraryRecord): Promise<boolean> => {
+    const owner = await ownerFor(c)
+    const active = await activeWorkspace(c)
+    if (active !== library.org_id || !(await workspaceCan(c, "publish"))) return false
+    if (isToken(c) || library.created_by === owner) return true
+    return !!owner && (await membershipOf(c, library.org_id, owner))?.role === "owner"
+  }
 
   const libraryJson = async (
     c: Context,
@@ -370,14 +372,12 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
           source_version: z.number().int().positive().optional(),
           kind: EntryKind,
           category: z.string().trim().min(1).max(64),
-          format: EntryFormat,
           title: z.string().trim().min(1).max(120),
           description: z.string().trim().max(500),
           outcome: z.string().trim().max(300),
           sections: z.array(z.string().trim().min(1).max(120)).max(30),
           inputs: z.array(Input).max(20),
           tags: z.array(z.string().trim().min(1).max(48)).max(20),
-          theme_mode: ThemeMode,
         }),
       )
       if (body instanceof Response) return bail(body)
@@ -390,10 +390,42 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       const versionNumber = body.source_version ?? sourceRef.version ?? source.current_version
       const version = await meta.getVersion(source.id, versionNumber)
       if (!version) return bail(fail(c, 404, "not found"))
+      if (source.kind !== "file")
+        return bail(
+          fail(
+            c,
+            422,
+            "template libraries currently support single-file Markdown, HTML, and Derive decks; bundles are not yet supported",
+          ),
+        )
+      const format =
+        version.content_type === "text/markdown"
+          ? ("md" as const)
+          : version.content_type === "text/html" || version.content_type === "text/x-derive-deck"
+            ? ("html" as const)
+            : null
+      if (!format)
+        return bail(
+          fail(c, 422, "template libraries currently support Markdown, HTML, and Derive decks"),
+        )
       // Verify that the snapshot is materializable before advertising it. This
       // also rejects a broken bundle manifest instead of creating a dead card.
       const starter = await sourceText(version)
       if (starter === null) return bail(fail(c, 409, "source unavailable"))
+      const normalizedInputs = body.inputs.map((input) => input.name.toLowerCase())
+      if (new Set(normalizedInputs).size !== normalizedInputs.length)
+        return bail(fail(c, 422, "template input names must be unique"))
+      if (format === "html") {
+        const unsafeBindings = unsafeHtmlTemplateBindings(starter, body.inputs)
+        if (unsafeBindings.length)
+          return bail(
+            fail(
+              c,
+              422,
+              `HTML template inputs must appear in visible text, not tags, scripts, or styles: ${unsafeBindings.join(", ")}`,
+            ),
+          )
+      }
       if (body.kind === "context" && hasContextCredential(starter))
         return bail(
           fail(
@@ -412,15 +444,14 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
         source_blob_key: version.blob_key,
         source_content_type: version.content_type,
         kind: body.kind,
-        category: body.category,
-        format: body.format,
+        category: version.content_type === "text/x-derive-deck" ? "Deck" : body.category,
+        format,
         title: body.title,
         description: body.description,
         outcome: body.outcome,
         sections_json: JSON.stringify(body.sections),
         inputs_json: JSON.stringify(body.inputs),
         tags_json: JSON.stringify(body.tags),
-        theme_mode: body.theme_mode,
         created_by: owner,
       })
       return c.json(entryJson(entry), 201)

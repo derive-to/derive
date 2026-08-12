@@ -27,9 +27,6 @@ const ALLOW_FILES = new Set([
   // A self-contained HTML document published as an artifact, not app UI — its
   // colors ship inside the document and can't reference the token system.
   "pages/brandprint/profile-placeholder.ts",
-  // Self-contained built-in template source: the literal colors are published
-  // inside user artifacts and cannot reference the app's runtime token system.
-  "pages/templates/template-content.ts",
 ])
 
 const PALETTE =

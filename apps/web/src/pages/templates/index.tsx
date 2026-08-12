@@ -1,5 +1,6 @@
 import { useNavigate, useSearch } from "@tanstack/react-router"
-import { useDeferredValue } from "react"
+import { useDeferredValue, useEffect, useState } from "react"
+import { api } from "@/api"
 import { Icon } from "@/components/icons"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
@@ -8,34 +9,28 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { AgentTemplateDialog, type AgentTemplateTarget } from "./agent-template-dialog"
 import {
   ARTIFACT_TEMPLATES,
-  BUILT_IN_THEMES,
   CONTEXT_TEMPLATES,
   getTemplate,
-  getTheme,
   TEMPLATE_CATEGORIES,
   templateMatches,
-  themeMatches,
 } from "./catalog"
 import { DeriveSource } from "./derive-source"
 import { LibraryShelf } from "./library-shelf"
-import { TemplateCard, ThemeCard } from "./template-card"
-import { TemplateDetail, ThemeDetail } from "./template-detail"
+import { TemplateCard } from "./template-card"
+import { TemplateDetail } from "./template-detail"
 import type { TemplateTab } from "./types"
 
 const TAB_COPY: Record<TemplateTab, { title: string; description: string }> = {
   artifacts: {
     title: "Useful shapes for the work that repeats.",
-    description: "Start with a strong structure, then make the artifact yours.",
+    description: "Choose a strong shape, then tell Derive what to make for you.",
   },
   contexts: {
     title: "Reusable setups for agent work.",
-    description: "Publish a safe manifest, then bind the runner, sources, and authority locally.",
-  },
-  themes: {
-    title: "Appearance without rewriting the story.",
-    description: "Choose a visual recipe independently from the template's content structure.",
+    description: "Brief a proven setup and let Derive adapt it into a working Context.",
   },
   libraries: {
     title: "A useful beginning can travel.",
@@ -50,55 +45,71 @@ export function Templates() {
   const nav = useNavigate({ from: "/templates" })
   const tab = search.tab ?? "artifacts"
   const query = useDeferredValue(search.query ?? "")
-  const selectedTheme = getTheme(search.theme) ?? BUILT_IN_THEMES[0]
-
+  const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
+  const sourceArtifact = search.source
+  useEffect(() => {
+    if (!sourceArtifact) return
+    let active = true
+    void api
+      .getArtifact(sourceArtifact)
+      .then((artifact) => {
+        if (!active) return
+        setAgentTarget({
+          uri: artifact.short_id,
+          title: artifact.title || "Untitled artifact",
+          description: "A new, agent-authored result grounded in this artifact.",
+          kind: "artifact",
+          category:
+            artifact.current_content_type === "text/x-derive-deck"
+              ? "Deck"
+              : artifact.current_content_type === "text/markdown"
+                ? "Doc"
+                : "Site",
+        })
+        void nav({ search: (previous) => ({ ...previous, source: undefined }), replace: true })
+      })
+      .catch(() => {
+        void nav({
+          search: (previous) => ({ ...previous, source: undefined, derive: true }),
+          replace: true,
+        })
+      })
+    return () => {
+      active = false
+    }
+  }, [sourceArtifact, nav])
   const templates = (tab === "contexts" ? CONTEXT_TEMPLATES : ARTIFACT_TEMPLATES).filter(
     (template) =>
       templateMatches(template, query) &&
       (tab !== "artifacts" || !search.category || template.category === search.category),
   )
-  const themes = BUILT_IN_THEMES.filter((theme) => themeMatches(theme, query))
   const selectedTemplate =
-    tab !== "themes" && tab !== "libraries"
+    tab !== "libraries"
       ? (getTemplate(search.selected) ?? templates.find((item) => item.featured) ?? templates[0])
       : undefined
-  const selectedThemeDetail =
-    tab === "themes" ? (getTheme(search.selected) ?? themes[0]) : selectedTheme
 
   const setTab = (next: TemplateTab) =>
     nav({
       search: {
         tab: next,
-        theme: next === "artifacts" ? search.theme : undefined,
         derive: next === "artifacts" ? search.derive : undefined,
         library: undefined,
       },
     })
 
-  const useTemplate = () => {
-    if (!selectedTemplate) return
-    const base = { template: selectedTemplate.id }
-    if (selectedTemplate.kind === "context") {
-      nav({
-        to: "/new",
-        search: {
-          ...base,
-          next: "context",
-          contextName: selectedTemplate.title,
-        },
-      })
-      return
-    }
-    nav({
-      to: "/new",
-      search: {
-        ...base,
-        theme: selectedTemplate.themeMode === "fixed" ? undefined : selectedTheme?.id,
-      },
+  const openTemplate = (template = selectedTemplate) => {
+    if (!template) return
+    setAgentTarget({
+      uri: `derive://templates/${template.id}`,
+      title: template.title,
+      description: template.description,
+      kind: template.kind,
+      category: template.category,
+      inputs: template.inputs,
     })
   }
 
-  const noResults = tab === "themes" ? themes.length === 0 : templates.length === 0
+  const noResults = templates.length === 0
   const copy = TAB_COPY[tab]
 
   return (
@@ -106,7 +117,7 @@ export function Templates() {
       <PageHeader
         eyebrow="Built into Derive"
         title="Templates"
-        subtitle="A named beginning, never a locked document. Copy one exactly, adapt the draft, or start from any artifact."
+        subtitle="Choose a proven starting point, brief Derive, and review a finished first draft."
         actions={
           <>
             <Button
@@ -132,13 +143,10 @@ export function Templates() {
         </div>
         <div className="flex gap-5 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
           <span>
-            <b className="text-foreground">24</b> artifacts
+            <b className="text-foreground">{ARTIFACT_TEMPLATES.length}</b> artifacts
           </span>
           <span>
-            <b className="text-foreground">6</b> contexts
-          </span>
-          <span>
-            <b className="text-foreground">5</b> themes
+            <b className="text-foreground">{CONTEXT_TEMPLATES.length}</b> contexts
           </span>
         </div>
       </section>
@@ -154,16 +162,26 @@ export function Templates() {
           <TabsTrigger value="libraries" data-testid="templates-tab-libraries">
             Libraries
           </TabsTrigger>
-          <TabsTrigger value="themes" data-testid="templates-tab-themes">
-            Themes
-          </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {(search.derive || tab === "artifacts") && (
+      {search.derive && (
         <DeriveSource
           autoFocus={!!search.derive}
-          onUse={(source) => nav({ to: "/new", search: { source } })}
+          onUse={(artifact) =>
+            setAgentTarget({
+              uri: artifact.short_id,
+              title: artifact.title || "Untitled artifact",
+              description: "A new, agent-authored result grounded in this artifact.",
+              kind: "artifact",
+              category:
+                artifact.current_content_type === "text/x-derive-deck"
+                  ? "Deck"
+                  : artifact.current_content_type === "text/markdown"
+                    ? "Doc"
+                    : "Site",
+            })
+          }
         />
       )}
 
@@ -221,14 +239,13 @@ export function Templates() {
           selectedId={search.library}
           onSelect={(library) => nav({ search: { tab: "libraries", library } })}
           onUse={(entry) =>
-            nav({
-              to: "/new",
-              search: {
-                library: entry.library_id,
-                entry: entry.id,
-                next: entry.kind === "context" ? "context" : undefined,
-                contextName: entry.kind === "context" ? entry.title : undefined,
-              },
+            setAgentTarget({
+              uri: `derive://template-libraries/${entry.library_id}/${entry.id}`,
+              title: entry.title,
+              description: entry.description,
+              kind: entry.kind,
+              category: entry.category,
+              inputs: entry.inputs,
             })
           }
         />
@@ -255,53 +272,25 @@ export function Templates() {
       ) : (
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]">
           <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-            {tab === "themes"
-              ? themes.map((theme) => (
-                  <ThemeCard
-                    key={theme.id}
-                    theme={theme}
-                    selected={selectedThemeDetail?.id === theme.id}
-                    onSelect={() => nav({ search: { ...search, selected: theme.id } })}
-                  />
-                ))
-              : templates.map((template, index) => (
-                  <div
-                    key={template.id}
-                    className={
-                      index === 0 && !query && !search.category ? "sm:col-span-2" : undefined
-                    }
-                  >
-                    <TemplateCard
-                      template={template}
-                      selected={selectedTemplate?.id === template.id}
-                      featured={index === 0 && !query && !search.category}
-                      onSelect={() => nav({ search: { ...search, selected: template.id } })}
-                    />
-                  </div>
-                ))}
+            {templates.map((template, index) => (
+              <div
+                key={template.id}
+                className={index === 0 && !query && !search.category ? "sm:col-span-2" : undefined}
+              >
+                <TemplateCard
+                  template={template}
+                  selected={selectedTemplate?.id === template.id}
+                  featured={index === 0 && !query && !search.category}
+                  onSelect={() => nav({ search: { ...search, selected: template.id } })}
+                  onUse={() => openTemplate(template)}
+                />
+              </div>
+            ))}
           </div>
 
-          <div className="order-first min-w-0 lg:order-last">
-            {tab === "themes" && selectedThemeDetail ? (
-              <ThemeDetail
-                theme={selectedThemeDetail}
-                onUse={() =>
-                  nav({
-                    search: {
-                      tab: "artifacts",
-                      theme: selectedThemeDetail.id,
-                      selected: "narrative-pitch",
-                    },
-                  })
-                }
-              />
-            ) : selectedTemplate ? (
-              <TemplateDetail
-                template={selectedTemplate}
-                theme={selectedTheme}
-                onTheme={(theme) => nav({ search: { ...search, theme } })}
-                onUse={useTemplate}
-              />
+          <div className="min-w-0">
+            {selectedTemplate ? (
+              <TemplateDetail template={selectedTemplate} onUse={() => openTemplate()} />
             ) : null}
           </div>
         </div>
@@ -327,6 +316,10 @@ export function Templates() {
         </div>
         <Icon name="derive" size={24} className="text-muted-foreground" />
       </section>
+      <AgentTemplateDialog
+        target={agentTarget}
+        onOpenChange={(open) => !open && setAgentTarget(null)}
+      />
     </PageShell>
   )
 }

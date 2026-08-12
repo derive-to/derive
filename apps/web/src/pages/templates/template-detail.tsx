@@ -1,50 +1,19 @@
 import { Icon } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
-import { BUILT_IN_THEMES } from "./catalog"
-import { TemplateArtwork, ThemeArtwork } from "./template-artwork"
-import type { BuiltInTemplate, BuiltInTheme } from "./types"
-
-function ThemePicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  return (
-    <fieldset className="grid grid-cols-5 gap-1.5">
-      <legend className="sr-only">Choose a theme</legend>
-      {BUILT_IN_THEMES.map((theme) => (
-        <button
-          key={theme.id}
-          type="button"
-          data-testid={`template-theme-${theme.id}`}
-          aria-label={theme.title}
-          aria-pressed={value === theme.id}
-          onClick={() => onChange(theme.id)}
-          className={cn(
-            "rounded-lg border bg-card p-1 outline-none hover:border-foreground/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-            value === theme.id && "border-foreground/40 bg-secondary",
-          )}
-        >
-          <ThemeArtwork theme={theme} className="aspect-square rounded-md p-1.5" />
-        </button>
-      ))}
-    </fieldset>
-  )
-}
+import { TemplateArtwork } from "./template-artwork"
+import type { BuiltInTemplate } from "./types"
 
 export function TemplateDetail({
   template,
-  theme,
-  onTheme,
   onUse,
 }: {
   template: BuiltInTemplate
-  theme?: BuiltInTheme
-  onTheme: (id: string) => void
   onUse: () => void
 }) {
-  const usesTheme = template.themeMode !== "fixed"
   return (
     <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto lg:pr-1">
-      <TemplateArtwork template={template} theme={theme} />
+      <TemplateArtwork template={template} />
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="outline" shape="pill">
           {template.kind === "context" ? "Context" : template.category}
@@ -52,11 +21,6 @@ export function TemplateDetail({
         <Badge variant="outline" shape="pill">
           Built-in v1
         </Badge>
-        {usesTheme && (
-          <Badge variant="outline" shape="pill">
-            Theme-ready
-          </Badge>
-        )}
       </div>
       <div className="flex flex-col gap-2">
         <h2 className="font-serif text-2xl font-medium leading-tight tracking-tight text-foreground">
@@ -69,24 +33,14 @@ export function TemplateDetail({
         <p className="mt-1 text-sm font-medium text-pretty text-foreground">{template.outcome}</p>
       </div>
 
-      {usesTheme && theme && (
-        <div className="flex flex-col gap-2.5">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-foreground">Theme</p>
-            <span className="text-xs text-muted-foreground">{theme.title}</span>
-          </div>
-          <ThemePicker value={theme.id} onChange={onTheme} />
-        </div>
-      )}
-
       <Button size="lg" onClick={onUse} data-testid="template-use">
-        <Icon name={template.kind === "context" ? "context" : "plus"} />
-        {template.kind === "context" ? "Create context manifest" : "Use this template"}
+        <Icon name="sparkles" />
+        {template.kind === "context" ? "Set up with Derive" : "Make it mine"}
       </Button>
       <p className="-mt-2 text-xs text-pretty text-muted-foreground">
         {template.kind === "context"
-          ? "Publish the safe manifest first, then bind a runner and sources. Credentials never travel with a template."
-          : "Opens an independent draft. Editing or publishing it never changes the template."}
+          ? "Derive adapts the safe manifest to your job, then helps connect local sources and authority."
+          : "Brief Derive in your own words. It will adapt this shape, build the draft, and show you the result."}
       </p>
 
       <div className="flex flex-col gap-3 border-t pt-4">
@@ -129,46 +83,6 @@ export function TemplateDetail({
           </ul>
         </div>
       )}
-    </aside>
-  )
-}
-
-export function ThemeDetail({ theme, onUse }: { theme: BuiltInTheme; onUse: () => void }) {
-  return (
-    <aside className="flex flex-col gap-5 lg:sticky lg:top-6">
-      <ThemeArtwork theme={theme} />
-      <Badge variant="outline" shape="pill">
-        Theme · built-in v1
-      </Badge>
-      <div className="flex flex-col gap-2">
-        <h2 className="font-serif text-2xl font-medium leading-tight tracking-tight text-foreground">
-          {theme.title}
-        </h2>
-        <p className="text-sm text-pretty text-muted-foreground">{theme.description}</p>
-      </div>
-      <div className="border-y py-3">
-        <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-          Register
-        </p>
-        <p className="mt-1 text-sm font-medium text-foreground">{theme.tone}</p>
-      </div>
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium text-foreground">Best for</p>
-        <div className="flex flex-wrap gap-1.5">
-          {theme.bestFor.map((item) => (
-            <Badge key={item} variant="secondary">
-              {item}
-            </Badge>
-          ))}
-        </div>
-      </div>
-      <Button size="lg" onClick={onUse} data-testid="theme-use">
-        <Icon name="templates" /> Use with a template
-      </Button>
-      <p className="-mt-2 text-xs text-pretty text-muted-foreground">
-        Themes change the visual recipe, not the content structure. You can switch before
-        publishing.
-      </p>
     </aside>
   )
 }

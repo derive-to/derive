@@ -1,3 +1,4 @@
+import { fillTemplateSource } from "@derive-to/templates"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate, useSearch } from "@tanstack/react-router"
 import { useEffect, useRef, useState } from "react"
@@ -40,38 +41,20 @@ const detectFormat = (t: string): "md" | "html" => {
   return "md"
 }
 
-type StarterInput = TemplateLibraryEntry["inputs"][number]
-
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-
-// Input names are human-facing, so template authors may write `Project name`
-// while their source uses `{{project_name}}`. Fill the obvious spellings only;
-// anything more magical would make a starter harder to reason about.
-const applyStarterBrief = (
-  source: string,
-  inputs: StarterInput[],
-  values: Record<string, string>,
-) =>
-  inputs.reduce((next, input) => {
-    const value = values[input.name]?.trim()
-    if (!value) return next
-    const spellings = [input.name, input.name.replace(/\s+/g, "_"), input.name.replace(/\s+/g, "-")]
-    return spellings.reduce(
-      (text, name) =>
-        text.replace(new RegExp(`\\{\\{\\s*${escapeRegex(name)}\\s*\\}\\}`, "gi"), value),
-      next,
-    )
-  }, source)
+type BriefStarter = {
+  title: string
+  inputs: readonly TemplateLibraryEntry["inputs"][number][]
+}
 
 function StarterBriefDialog({
-  entry,
+  starter,
   open,
   values,
   onOpenChange,
   onValueChange,
   onApply,
 }: {
-  entry: TemplateLibraryEntry
+  starter: BriefStarter
   open: boolean
   values: Record<string, string>
   onOpenChange: (open: boolean) => void
@@ -79,8 +62,9 @@ function StarterBriefDialog({
   onApply: () => void
 }) {
   const [error, setError] = useState("")
+  const hasRequiredInputs = starter.inputs.some((input) => input.required)
   const submit = () => {
-    const missing = entry.inputs.filter((input) => input.required && !values[input.name]?.trim())
+    const missing = starter.inputs.filter((input) => input.required && !values[input.name]?.trim())
     if (missing.length) {
       setError(`Add ${missing.map((input) => input.name).join(" and ")} to start this draft.`)
       return
@@ -94,8 +78,8 @@ function StarterBriefDialog({
         <DialogHeader>
           <DialogTitle>Set the starting brief</DialogTitle>
           <DialogDescription>
-            Give {entry.title} the context it needs before the editor opens. This stays an ordinary
-            editable draft.
+            Give {starter.title} the context it needs before the visual draft opens. You can adjust
+            this brief again before publishing.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -105,26 +89,32 @@ function StarterBriefDialog({
             submit()
           }}
         >
-          {entry.inputs.map((input) => (
+          {starter.inputs.map((input) => (
             <label key={input.name} className="grid gap-1.5 text-sm font-medium text-foreground">
               {input.name}
               {input.required && <span className="text-destructive">Required</span>}
               <Input
+                data-testid={`template-brief-input-${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
                 value={values[input.name] ?? ""}
                 onChange={(event) => {
                   onValueChange(input.name, event.target.value)
                   if (error) setError("")
                 }}
                 placeholder={input.description}
-                autoFocus={entry.inputs[0]?.name === input.name}
+                autoFocus={starter.inputs[0]?.name === input.name}
               />
               <span className="text-xs font-normal text-muted-foreground">{input.description}</span>
             </label>
           ))}
           {error && <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-              Skip for now
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              data-testid="template-brief-skip"
+            >
+              {hasRequiredInputs ? "Preview first" : "Skip for now"}
             </Button>
             <Button type="submit" data-testid="template-start-brief-continue">
               Start drafting <Icon name="arrow" />
@@ -144,13 +134,20 @@ export function NewArtifact() {
   useDocumentTitle("New artifact")
   const nav = useNavigate()
   const search = useSearch({ from: "/new" })
-  const templateDraft = buildTemplateDraft(search.template, search.theme)
+  const templateDraft = buildTemplateDraft(search.template)
+  const builtInInputs = templateDraft?.template.inputs ?? []
   const [src, setSrc] = useState(() => templateDraft?.source ?? "")
   const [title, setTitle] = useState(() => templateDraft?.title ?? "")
   const [message, setMessage] = useState(() => templateDraft?.message ?? "")
-  const [briefOpen, setBriefOpen] = useState(false)
-  const [briefValues, setBriefValues] = useState<Record<string, string>>({})
+  const [briefOpen, setBriefOpen] = useState(builtInInputs.length > 0)
+  const [briefValues, setBriefValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(builtInInputs.map((input) => [input.name, ""])),
+  )
+  const [appliedBriefValues, setAppliedBriefValues] = useState<Record<string, string>>({})
   const [briefApplied, setBriefApplied] = useState(false)
+  const [interactivePreview, setInteractivePreview] = useState(
+    () => !search.source && !(search.library && search.entry),
+  )
   const sourceSeeded = useRef<string | null>(null)
   const sourceQuery = useQuery({
     queryKey: ["new-from-artifact", search.source] as const,
@@ -217,6 +214,7 @@ export function NewArtifact() {
     )
     if (starter.entry.inputs.length) {
       setBriefValues(Object.fromEntries(starter.entry.inputs.map((input) => [input.name, ""])))
+      setAppliedBriefValues({})
       setBriefApplied(false)
       setBriefOpen(true)
     }
@@ -224,16 +222,28 @@ export function NewArtifact() {
 
   const applyBrief = () => {
     const starter = libraryStarterQuery.data
-    if (!starter) return
-    const brief = starter.entry.inputs
+    const inputs = starter?.entry.inputs ?? builtInInputs
+    if (!inputs.length) return
+    const brief = inputs
       .map((input) => [input.name, briefValues[input.name]?.trim()] as const)
       .filter(([, value]) => !!value)
       .map(([name, value]) => `${name}: ${value}`)
-    setSrc((current) => applyStarterBrief(current, starter.entry.inputs, briefValues))
-    setTitle((current) => applyStarterBrief(current, starter.entry.inputs, briefValues))
-    setMessage(
-      `Created from template library entry ${starter.entry.title} · source v${starter.entry.source_version}${brief.length ? ` · brief: ${brief.join("; ")}` : ""}`,
-    )
+    if (starter) {
+      setSrc(
+        fillTemplateSource(starter.source, starter.entry.inputs, briefValues, starter.entry.format),
+      )
+      setTitle(fillTemplateSource(starter.entry.title, starter.entry.inputs, briefValues, "md"))
+      setMessage(
+        `Created from template library entry ${starter.entry.title} · source v${starter.entry.source_version}${brief.length ? ` · brief: ${brief.join("; ")}` : ""}`,
+      )
+    } else if (templateDraft) {
+      const filledDraft = buildTemplateDraft(templateDraft.template.id, briefValues)
+      if (filledDraft) setSrc(filledDraft.source)
+      setMessage(
+        `Created from ${templateDraft.origin.libraryId}/${templateDraft.template.id} catalog v${templateDraft.origin.catalogVersion}${brief.length ? ` · brief: ${brief.join("; ")}` : ""}`,
+      )
+    }
+    setAppliedBriefValues({ ...briefValues })
     setBriefApplied(true)
     setBriefOpen(false)
   }
@@ -268,6 +278,11 @@ export function NewArtifact() {
       const type = format === "md" ? "text/markdown" : "text/html"
       const fields: Record<string, string> = { title: name }
       if (message.trim()) fields.message = message.trim()
+      if (search.source) fields.derived_from = search.source
+      if (search.library && search.entry) {
+        fields.template_library_id = search.library
+        fields.template_entry_id = search.entry
+      }
       return api.publish(new File([src], `inline.${ext}`, { type }), fields)
     },
     // Freshen the library so the new artifact + bumped total are correct on return.
@@ -301,6 +316,16 @@ export function NewArtifact() {
     },
   })
   const publish = () => {
+    const missingBrief = starterInputs.filter(
+      (input) => input.required && !appliedBriefValues[input.name]?.trim(),
+    )
+    if (missingBrief.length) {
+      const missingBriefMessage = `Add ${missingBrief.map((input) => input.name).join(" and ")} before publishing.`
+      toast.error(missingBriefMessage) // mutation-ignore: local brief validation, not a mutation failure
+      setBriefValues({ ...appliedBriefValues })
+      setBriefOpen(true)
+      return
+    }
     if (!src.trim()) {
       toast.error("Add some content first.")
       return
@@ -350,9 +375,7 @@ export function NewArtifact() {
   const origin = templateDraft
     ? {
         label: templateDraft.template.title,
-        meta: templateDraft.theme
-          ? `${templateDraft.origin.libraryId} · v${templateDraft.origin.catalogVersion} · ${templateDraft.theme.title}`
-          : `${templateDraft.origin.libraryId} · v${templateDraft.origin.catalogVersion}`,
+        meta: `${templateDraft.origin.libraryId} · v${templateDraft.origin.catalogVersion}`,
       }
     : sourceQuery.data
       ? {
@@ -365,9 +388,10 @@ export function NewArtifact() {
             meta: `Template library · source v${libraryStarterQuery.data.entry.source_version}`,
           }
         : null
-  const starterInputs = libraryStarterQuery.data?.entry.inputs ?? []
+  const starterInputs = libraryStarterQuery.data?.entry.inputs ?? builtInInputs
+  const briefStarter = libraryStarterQuery.data?.entry ?? templateDraft?.template
   const briefItems = starterInputs
-    .map((input) => [input.name, briefValues[input.name]?.trim()] as const)
+    .map((input) => [input.name, appliedBriefValues[input.name]?.trim()] as const)
     .filter(([, value]) => !!value)
 
   return (
@@ -386,6 +410,19 @@ export function NewArtifact() {
           >
             Change start
           </Button>
+          {starterInputs.length > 0 && (
+            <Button
+              variant="outline"
+              size="xs"
+              data-testid="template-adjust-brief"
+              onClick={() => {
+                setBriefValues({ ...appliedBriefValues })
+                setBriefOpen(true)
+              }}
+            >
+              Adjust brief
+            </Button>
+          )}
         </div>
       )}
       {briefApplied && briefItems.length > 0 && (
@@ -416,6 +453,9 @@ export function NewArtifact() {
         onPublish={publish}
         onPropose={() => {}}
         publishing={publishMut.isPending}
+        interactivePreview={interactivePreview}
+        onEnableInteractivePreview={() => setInteractivePreview(true)}
+        previewOnly={!!origin}
         placeholder={
           templateDraft || libraryStarterQuery.data
             ? "Replace the template prompts with your content — the preview updates as you work."
@@ -437,9 +477,9 @@ export function NewArtifact() {
           if (blocker.status === "blocked") blocker.proceed()
         }}
       />
-      {libraryStarterQuery.data && starterInputs.length > 0 && (
+      {briefStarter && starterInputs.length > 0 && (
         <StarterBriefDialog
-          entry={libraryStarterQuery.data.entry}
+          starter={briefStarter}
           open={briefOpen}
           values={briefValues}
           onOpenChange={setBriefOpen}

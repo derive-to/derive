@@ -1,7 +1,9 @@
 import { cn } from "@/lib/utils"
-import type { BuiltInTemplate, BuiltInTheme, ThemeMotif } from "./types"
+import type { BuiltInTemplate } from "./types"
 
-const MOTIF_SURFACE: Record<ThemeMotif, string> = {
+type TemplateMotif = "editorial" | "operator" | "field" | "institutional" | "signal"
+
+const MOTIF_SURFACE: Record<TemplateMotif, string> = {
   editorial: "bg-card text-card-foreground",
   operator: "bg-foreground text-background",
   field: "bg-secondary text-secondary-foreground",
@@ -140,14 +142,21 @@ function AgentArtwork({ context }: { context: boolean }) {
 
 export function TemplateArtwork({
   template,
-  theme,
   className,
 }: {
   template: BuiltInTemplate
-  theme?: BuiltInTheme
   className?: string
 }) {
-  const motif = theme?.motif ?? (template.category === "Deck" ? "editorial" : "institutional")
+  const motif: TemplateMotif =
+    template.category === "Deck"
+      ? "editorial"
+      : template.category === "Report"
+        ? "operator"
+        : template.category === "Site"
+          ? "field"
+          : template.category === "Agent"
+            ? "signal"
+            : "institutional"
   return (
     <div
       aria-hidden="true"
@@ -168,51 +177,6 @@ export function TemplateArtwork({
       ) : (
         <AgentArtwork context={template.kind === "context"} />
       )}
-    </div>
-  )
-}
-
-export function ThemeArtwork({ theme, className }: { theme: BuiltInTheme; className?: string }) {
-  return (
-    <div
-      aria-hidden="true"
-      className={cn(
-        "relative aspect-[16/10] overflow-hidden rounded-lg border border-current/15 p-4",
-        MOTIF_SURFACE[theme.motif],
-        className,
-      )}
-    >
-      <div className="flex items-center justify-between font-mono text-2xs tracking-widest opacity-55">
-        <span>THEME</span>
-        <span>Aa</span>
-      </div>
-      {theme.motif === "operator" ? (
-        <div className="mt-6 grid grid-cols-4 items-end gap-2 border-b border-current pb-2 opacity-65">
-          <span className="h-6 bg-current" />
-          <span className="h-14 bg-current" />
-          <span className="h-9 bg-current" />
-          <span className="h-12 bg-current" />
-        </div>
-      ) : theme.motif === "signal" ? (
-        <div className="mt-5 max-w-36 text-3xl font-black leading-none tracking-tighter">
-          ONE CLEAR IDEA.
-        </div>
-      ) : theme.motif === "field" ? (
-        <div className="mt-5 rotate-[-1deg] border border-current bg-card p-3 text-card-foreground shadow-[var(--shadow-sm)]">
-          <Line width="w-4/5" strong />
-          <Line width="mt-2 w-full" />
-          <Line width="mt-1.5 w-2/3" />
-        </div>
-      ) : (
-        <div className="mt-7 grid grid-cols-[1fr_3rem] gap-3">
-          <div>
-            <Line width="w-full" strong />
-            <Line width="mt-2 w-2/3" />
-          </div>
-          <div className="border border-current" />
-        </div>
-      )}
-      <div className="absolute right-4 bottom-4 left-4 border-t border-current opacity-30" />
     </div>
   )
 }

@@ -135,7 +135,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/contexts" | "/chat" | "/archived"
+  to: "/following" | "/contexts" | "/templates" | "/chat" | "/archived"
   active: boolean
   testId?: string
 }) {
@@ -376,6 +376,7 @@ export function NavRail() {
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
   const onContexts = loc.pathname.startsWith("/contexts")
+  const onTemplates = loc.pathname.startsWith("/templates")
   const onSettings = loc.pathname.startsWith("/settings")
   const onChat = loc.pathname.startsWith("/chat")
   const onArchived = loc.pathname === "/archived"
@@ -548,6 +549,13 @@ export function NavRail() {
                 search={{}}
                 active={isAll}
                 testId="sidebar-all"
+              />
+              <NavItem
+                icon="templates"
+                label="Templates"
+                to="/templates"
+                active={onTemplates}
+                testId="nav-templates"
               />
               <NavItem
                 icon="context"

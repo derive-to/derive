@@ -4,10 +4,8 @@ import { useEffect, useState } from "react"
 // the client mounts). Drives the mobile layout branches across the app. 640 is
 // Tailwind's `sm`, so JS branches and `max-sm:` utilities stay in lockstep.
 export function useIsMobile(bp = 640): boolean {
-  // Never read matchMedia during the initial client render: prerendering assumes
-  // desktop, and a mobile-first client value would make Sidebar render a Sheet
-  // where the server emitted the desktop rail. Set the real value after mount,
-  // when changing the DOM cannot break hydration.
+  // The server cannot know the viewport. Keep its desktop-shaped first render
+  // through hydration, then switch to the real media query after mount.
   const [m, setM] = useState(false)
   useEffect(() => {
     const mq = window.matchMedia(`(max-width:${bp}px)`)
@@ -24,9 +22,10 @@ export function useIsMobile(bp = 640): boolean {
 // narrow desktop window is neither. Anything sized for thumbs (hit targets, "tap"
 // rather than "click") should ask this instead of the breakpoint.
 export function useCoarsePointer(): boolean {
-  const [coarse, setCoarse] = useState(
-    () => typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches,
-  )
+  // Match the server's deterministic first render, then adopt the live input
+  // capability after mount. Reading matchMedia in the initializer hydrates a
+  // different mobile tree from the desktop-shaped SSR markup.
+  const [coarse, setCoarse] = useState(false)
   useEffect(() => {
     const mq = window.matchMedia("(pointer: coarse)")
     const on = () => setCoarse(mq.matches)

@@ -8,16 +8,15 @@ describe("built-in templates", () => {
     expect(CONTEXT_TEMPLATES).toHaveLength(6)
   })
 
-  it("builds a Derive-aware deck with the selected theme", () => {
-    const draft = buildTemplateDraft("narrative-pitch", "high-signal")
+  it("builds a deterministic Derive-aware deck", () => {
+    const draft = buildTemplateDraft("narrative-pitch")
     expect(draft?.format).toBe("html")
-    expect(draft?.theme?.id).toBe("high-signal")
     expect(draft?.source).toContain("source:'derive-deck'")
     expect(draft?.source).toContain('data-derive-slide="0"')
   })
 
   it("builds a safe context manifest without credentials", () => {
-    const draft = buildTemplateDraft("weekly-research-context", undefined)
+    const draft = buildTemplateDraft("weekly-research-context")
     expect(draft?.format).toBe("md")
     expect(draft?.source).toContain(
       "Bind a runner, sources, permissions, and credentials separately",
@@ -25,9 +24,8 @@ describe("built-in templates", () => {
     expect(draft?.source).not.toContain("API_KEY=")
   })
 
-  it("ignores themes for fixed markdown templates", () => {
-    const draft = buildTemplateDraft("decision-memo", "field-notes")
-    expect(draft?.theme).toBeUndefined()
+  it("builds a markdown template without a second visual-system contract", () => {
+    const draft = buildTemplateDraft("decision-memo")
     expect(draft?.source).toContain("# Decision memo")
   })
 })

@@ -121,7 +121,11 @@ function ArtifactSourcePicker({
                   </span>
                 </span>
                 <Badge variant="outline" shape="pill">
-                  {artifact.current_content_type === "text/markdown" ? "Markdown" : "HTML"}
+                  {artifact.current_content_type === "text/x-derive-deck"
+                    ? "Deck"
+                    : artifact.current_content_type === "text/markdown"
+                      ? "Markdown"
+                      : "HTML"}
                 </Badge>
               </button>
             )
@@ -136,6 +140,7 @@ function ArtifactSourcePicker({
       <label className="grid gap-1.5 text-sm font-medium text-foreground">
         Or paste a Derive link or short ID
         <Input
+          data-testid="template-library-source-paste"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder="decision-memo-ab12cd34@v4"
@@ -160,6 +165,7 @@ function ScopePicker({
         const item = scopeCopy[scope]
         return (
           <button
+            data-testid={`template-library-visibility-${scope}`}
             key={scope}
             type="button"
             aria-pressed={value === scope}
@@ -224,6 +230,7 @@ function CreateLibraryDialog({
           <label className="grid gap-1.5 text-sm font-medium text-foreground">
             Name
             <Input
+              data-testid="template-library-name"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Product team starters"
@@ -233,6 +240,7 @@ function CreateLibraryDialog({
           <label className="grid gap-1.5 text-sm font-medium text-foreground">
             What belongs here?
             <Textarea
+              data-testid="template-library-description"
               value={description}
               onChange={(event) => setDescription(event.target.value)}
               placeholder="Decision docs, product briefs, and launch-ready pages."
@@ -243,7 +251,12 @@ function CreateLibraryDialog({
             <ScopePicker value={scope} onChange={setScope} />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              data-testid="template-library-create-cancel"
+            >
               Cancel
             </Button>
             <Button
@@ -315,11 +328,17 @@ function LibrarySettingsDialog({
           >
             <label className="grid gap-1.5 text-sm font-medium text-foreground">
               Name
-              <Input value={title} onChange={(event) => setTitle(event.target.value)} autoFocus />
+              <Input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                autoFocus
+                data-testid="template-library-settings-name"
+              />
             </label>
             <label className="grid gap-1.5 text-sm font-medium text-foreground">
               Description
               <Textarea
+                data-testid="template-library-settings-description"
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
               />
@@ -329,14 +348,28 @@ function LibrarySettingsDialog({
               <ScopePicker value={scope} onChange={setScope} />
             </div>
             <DialogFooter className="gap-2 sm:justify-between">
-              <Button type="button" variant="ghost" onClick={() => setDeleteOpen(true)}>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setDeleteOpen(true)}
+                data-testid="template-library-settings-delete"
+              >
                 <Icon name="delete" /> Delete library
               </Button>
               <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => onOpenChange(false)}
+                  data-testid="template-library-settings-cancel"
+                >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={!title.trim() || update.isPending}>
+                <Button
+                  type="submit"
+                  disabled={!title.trim() || update.isPending}
+                  data-testid="template-library-settings-save"
+                >
                   Save settings
                 </Button>
               </div>
@@ -366,9 +399,10 @@ function AddEntryDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const [step, setStep] = useState<"source" | "details">("source")
   const [source, setSource] = useState("")
+  const [selectedSource, setSelectedSource] = useState<Artifact | null>(null)
   const [kind, setKind] = useState<"artifact" | "context">("artifact")
-  const [format, setFormat] = useState<"md" | "html">("md")
   const [category, setCategory] = useState("Doc")
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
@@ -376,27 +410,27 @@ function AddEntryDialog({
   const [inputs, setInputs] = useState("")
   const [sections, setSections] = useState("")
   const [tags, setTags] = useState("")
-  const [themeMode, setThemeMode] = useState<"native" | "adaptable" | "fixed">("fixed")
   const create = useApiMutation({
     mutationFn: () =>
       api.createTemplateLibraryEntry(libraryId, {
         source_short_id: source.trim(),
         kind,
-        category:
-          category.trim() || (kind === "context" ? "Context" : format === "html" ? "Site" : "Doc"),
-        format,
+        category: category.trim() || (kind === "context" ? "Context" : "Doc"),
         title: title.trim(),
         description: description.trim(),
         outcome: outcome.trim(),
         sections: csv(sections),
         inputs: inputsFromLines(inputs),
         tags: csv(tags),
-        theme_mode: themeMode,
       }),
     invalidate: [["template-libraries"], ["template-library", libraryId]],
     success: "Reusable starter published",
     onSuccess: () => {
+      setStep("source")
       setSource("")
+      setSelectedSource(null)
+      setKind("artifact")
+      setCategory("Doc")
       setTitle("")
       setDescription("")
       setOutcome("")
@@ -408,146 +442,209 @@ function AddEntryDialog({
   })
   const chooseSource = (artifact: Artifact) => {
     setSource(artifact.short_id)
+    setSelectedSource(artifact)
     if (!title.trim()) setTitle(artifact.title || "Reusable starter")
-    const nextFormat = artifact.current_content_type === "text/markdown" ? "md" : "html"
-    setFormat(nextFormat)
-    if (category === "Doc" && nextFormat === "html") setCategory("Site")
+    setCategory(
+      artifact.current_content_type === "text/x-derive-deck"
+        ? "Deck"
+        : artifact.current_content_type === "text/markdown"
+          ? "Doc"
+          : "Site",
+    )
   }
+  const sourceType = selectedSource
+    ? selectedSource.current_content_type === "text/x-derive-deck"
+      ? "Derive deck"
+      : selectedSource.current_content_type === "text/markdown"
+        ? "Markdown"
+        : "HTML"
+    : "Format detected when published"
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) setStep("source")
+        onOpenChange(nextOpen)
+      }}
+    >
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Make this artifact reusable</DialogTitle>
+          <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+            {step === "source" ? "1 of 2 · Choose source" : "2 of 2 · Describe starter"}
+          </p>
+          <DialogTitle>
+            {step === "source" ? "Choose reusable work" : "Name the starter"}
+          </DialogTitle>
           <DialogDescription>
-            The source stays untouched. Derive captures its current version as an independent,
-            version-pinned starter with this metadata.
+            {step === "source"
+              ? "Pick any readable artifact. Derive will pin its current version without changing the original."
+              : "Add just enough context for someone—or an agent—to know when and how to use it."}
           </DialogDescription>
         </DialogHeader>
         <form
-          className="grid gap-3"
+          className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault()
-            if (source.trim() && title.trim() && description.trim()) create.mutate()
+            if (step === "source") {
+              if (source.trim()) setStep("details")
+            } else if (source.trim() && title.trim() && description.trim()) create.mutate()
           }}
         >
-          <div className="grid gap-3 sm:grid-cols-2">
-            <ArtifactSourcePicker value={source} onChange={setSource} onSelect={chooseSource} />
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Display name
-              <Input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Decision record"
-              />
-            </label>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Type
-              <select
-                className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
-                value={kind}
-                onChange={(event) => setKind(event.target.value as "artifact" | "context")}
-              >
-                <option value="artifact">Artifact</option>
-                <option value="context">Context manifest</option>
-              </select>
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Format
-              <select
-                className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
-                value={format}
-                onChange={(event) => setFormat(event.target.value as "md" | "html")}
-              >
-                <option value="md">Markdown</option>
-                <option value="html">HTML</option>
-              </select>
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Category
-              <Input
-                value={category}
-                onChange={(event) => setCategory(event.target.value)}
-                placeholder="Doc, Deck, Site…"
-              />
-            </label>
-          </div>
-          <label className="grid gap-1.5 text-sm font-medium text-foreground">
-            Description
-            <Textarea
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="The repeatable shape and when to use it."
+          {step === "source" ? (
+            <ArtifactSourcePicker
+              value={source}
+              onChange={(value) => {
+                setSource(value)
+                setSelectedSource(null)
+              }}
+              onSelect={chooseSource}
             />
-          </label>
-          <label className="grid gap-1.5 text-sm font-medium text-foreground">
-            Inputs <span className="font-normal text-muted-foreground">(optional)</span>
-            <Textarea
-              value={inputs}
-              onChange={(event) => setInputs(event.target.value)}
-              placeholder={"*Project name — used in the title\nAudience — who this is for"}
-            />
-            <span className="text-xs font-normal text-muted-foreground">
-              One per line. Prefix a required input with *.
-            </span>
-          </label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Outcome
-              <Input
-                value={outcome}
-                onChange={(event) => setOutcome(event.target.value)}
-                placeholder="What a good result makes possible."
-              />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Theme behavior
-              <select
-                className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
-                value={themeMode}
-                onChange={(event) =>
-                  setThemeMode(event.target.value as "native" | "adaptable" | "fixed")
-                }
-              >
-                <option value="fixed">Fixed</option>
-                <option value="native">Native</option>
-                <option value="adaptable">Adaptable</option>
-              </select>
-            </label>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Sections
-              <Input
-                value={sections}
-                onChange={(event) => setSections(event.target.value)}
-                placeholder="Decision, evidence, owner"
-              />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium text-foreground">
-              Tags
-              <Input
-                value={tags}
-                onChange={(event) => setTags(event.target.value)}
-                placeholder="decision, leadership"
-              />
-            </label>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Paste an artifact URL or short ID. Contexts remain portable manifests: bind runners,
-            sources, permissions, and credentials only after adoption.
-          </p>
+          ) : (
+            <>
+              <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl border bg-secondary/40 p-3">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-foreground">
+                    {selectedSource?.title || source}
+                  </span>
+                  <span className="font-mono text-2xs text-muted-foreground">
+                    {sourceType}
+                    {selectedSource ? ` · pinned at v${selectedSource.current_version}` : ""}
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setStep("source")}
+                  data-testid="template-library-source-change"
+                >
+                  Change
+                </Button>
+              </div>
+              <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                Starter name
+                <Input
+                  data-testid="template-library-starter-name"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="Decision record"
+                  autoFocus
+                />
+              </label>
+              <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                Description
+                <Textarea
+                  data-testid="template-library-starter-description"
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  placeholder="A repeatable shape for documenting a consequential decision."
+                />
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                  Creates a
+                  <select
+                    data-testid="template-library-starter-kind"
+                    className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                    value={kind}
+                    onChange={(event) => setKind(event.target.value as "artifact" | "context")}
+                  >
+                    <option value="artifact">Artifact</option>
+                    <option value="context">Context manifest</option>
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                  Category
+                  <Input
+                    data-testid="template-library-starter-category"
+                    value={category}
+                    onChange={(event) => setCategory(event.target.value)}
+                    placeholder="Doc, Deck, Site…"
+                  />
+                </label>
+              </div>
+              <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                Starting brief <span className="font-normal text-muted-foreground">(optional)</span>
+                <Textarea
+                  data-testid="template-library-starter-inputs"
+                  value={inputs}
+                  onChange={(event) => setInputs(event.target.value)}
+                  placeholder={"*Project name — used in the title\nAudience — who this is for"}
+                />
+                <span className="text-xs font-normal text-muted-foreground">
+                  One input per line. Prefix required inputs with *. HTML inputs are limited to
+                  visible text so adopting untrusted templates stays safe.
+                </span>
+              </label>
+              <details className="rounded-xl border px-3 py-2">
+                <summary className="cursor-pointer text-sm font-medium text-foreground">
+                  More discovery details
+                </summary>
+                <div className="mt-3 grid gap-3">
+                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                    Outcome
+                    <Input
+                      data-testid="template-library-starter-outcome"
+                      value={outcome}
+                      onChange={(event) => setOutcome(event.target.value)}
+                      placeholder="What a good result makes possible."
+                    />
+                  </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Sections
+                      <Input
+                        data-testid="template-library-starter-sections"
+                        value={sections}
+                        onChange={(event) => setSections(event.target.value)}
+                        placeholder="Decision, evidence, owner"
+                      />
+                    </label>
+                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
+                      Tags
+                      <Input
+                        data-testid="template-library-starter-tags"
+                        value={tags}
+                        onChange={(event) => setTags(event.target.value)}
+                        placeholder="decision, leadership"
+                      />
+                    </label>
+                  </div>
+                </div>
+              </details>
+              <p className="text-xs text-muted-foreground">
+                The published starter is a stable snapshot. Context manifests stay portable: connect
+                runners, sources, permissions, and credentials only after adoption.
+              </p>
+            </>
+          )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+            <Button
+              data-testid="template-library-entry-back"
+              type="button"
+              variant="outline"
+              onClick={() => (step === "details" ? setStep("source") : onOpenChange(false))}
+            >
+              {step === "details" ? "Back" : "Cancel"}
             </Button>
             <Button
               type="submit"
-              disabled={!source.trim() || !title.trim() || !description.trim() || create.isPending}
+              disabled={
+                !source.trim() ||
+                (step === "details" && (!title.trim() || !description.trim())) ||
+                create.isPending
+              }
               data-testid="template-library-entry-create"
             >
-              <Icon name="templates" /> Publish starter
+              {step === "source" ? (
+                <>
+                  Continue <Icon name="arrow" />
+                </>
+              ) : (
+                <>
+                  <Icon name="templates" /> Publish starter
+                </>
+              )}
             </Button>
           </DialogFooter>
         </form>
@@ -576,11 +673,6 @@ function EntryCard({
         <Badge variant="outline" shape="pill">
           v{entry.source_version}
         </Badge>
-        {entry.theme_mode !== "fixed" && (
-          <Badge variant="outline" shape="pill">
-            Theme-ready
-          </Badge>
-        )}
       </div>
       <div className="min-w-0">
         <h3 className="font-serif text-xl font-medium tracking-tight text-foreground">
@@ -607,11 +699,12 @@ function EntryCard({
           onClick={() => onUse(entry)}
           data-testid={`template-library-use-${entry.id}`}
         >
-          <Icon name={entry.kind === "context" ? "context" : "plus"} />{" "}
-          {entry.kind === "context" ? "Create manifest" : "Use starter"}
+          <Icon name="sparkles" />{" "}
+          {entry.kind === "context" ? "Set up with Derive" : "Make it mine"}
         </Button>
         {canManage && (
           <Button
+            data-testid={`template-library-delete-${entry.id}`}
             size="sm"
             variant="ghost"
             className="ml-auto"
@@ -661,7 +754,7 @@ function LibraryDetail({
         title="This library is unavailable"
         description="It may be private, deleted, or outside your current workspace."
         action={
-          <Button variant="outline" onClick={onBack}>
+          <Button variant="outline" onClick={onBack} data-testid="template-library-error-back">
             Back to libraries
           </Button>
         }
@@ -684,7 +777,7 @@ function LibraryDetail({
   return (
     <section className="flex flex-col gap-5" data-testid="template-library-detail">
       <div className="flex flex-wrap items-start gap-3 border-b pb-5">
-        <Button size="sm" variant="ghost" onClick={onBack}>
+        <Button size="sm" variant="ghost" onClick={onBack} data-testid="template-library-back">
           <Icon name="chevron-left" /> Libraries
         </Button>
         <div className="min-w-0 flex-1">
@@ -706,19 +799,24 @@ function LibraryDetail({
         </div>
         <div className="flex flex-wrap gap-2">
           {library.can_manage && (
-            <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSettingsOpen(true)}
+              data-testid="template-library-settings-open"
+            >
               <Icon name="settings" /> Library settings
             </Button>
           )}
           {library.scope === "public" && (
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline" size="sm" data-testid="template-library-public-page">
               <a href={`/template-libraries/${library.id}`} target="_blank" rel="noreferrer">
                 <Icon name="globe" /> Public page
               </a>
             </Button>
           )}
           {library.can_manage && (
-            <Button onClick={() => setAddOpen(true)}>
+            <Button onClick={() => setAddOpen(true)} data-testid="template-library-add-starter">
               <Icon name="plus" /> Add starter
             </Button>
           )}
@@ -728,6 +826,7 @@ function LibraryDetail({
         <label className="max-w-sm">
           <span className="sr-only">Filter starters</span>
           <Input
+            data-testid="template-library-entry-filter"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Filter starters"
@@ -763,7 +862,11 @@ function LibraryDetail({
           title="No matching starters"
           description="Try a broader word or clear the current filter."
           action={
-            <Button variant="outline" onClick={() => setQuery("")}>
+            <Button
+              variant="outline"
+              onClick={() => setQuery("")}
+              data-testid="template-library-entry-filter-clear"
+            >
               Clear filter
             </Button>
           }
@@ -828,6 +931,7 @@ export function LibraryShelf({
             <label className="min-w-48 flex-1 sm:w-56 sm:flex-none">
               <span className="sr-only">Search libraries</span>
               <Input
+                data-testid="template-library-search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search libraries"
@@ -856,7 +960,7 @@ export function LibraryShelf({
             </Button>
           ))}
         </fieldset>
-        <Button asChild variant="ghost" size="sm">
+        <Button asChild variant="ghost" size="sm" data-testid="template-library-explore-public">
           <a href="/template-libraries">
             <Icon name="globe" /> Explore public libraries
           </a>
@@ -872,7 +976,11 @@ export function LibraryShelf({
           title="Libraries couldn't load"
           description="Try again in a moment."
           action={
-            <Button variant="outline" onClick={() => libraries.refetch()}>
+            <Button
+              variant="outline"
+              onClick={() => libraries.refetch()}
+              data-testid="template-library-retry"
+            >
               Retry
             </Button>
           }
@@ -921,7 +1029,11 @@ export function LibraryShelf({
           title="No matching libraries"
           description="Try a broader word or clear the current search."
           action={
-            <Button variant="outline" onClick={() => setQuery("")}>
+            <Button
+              variant="outline"
+              onClick={() => setQuery("")}
+              data-testid="template-library-search-clear"
+            >
               Clear search
             </Button>
           }

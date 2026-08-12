@@ -30,7 +30,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Evidence", "Artifacts or facts that support the story"),
     ],
     tags: ["pitch", "story", "deck"],
-    themeMode: "native",
     featured: true,
   },
   {
@@ -50,7 +49,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Traction", "The evidence that deserves the room"),
     ],
     tags: ["fundraising", "founder", "deck"],
-    themeMode: "native",
   },
   {
     id: "product-launch",
@@ -77,7 +75,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Proof", "Demo, quote, or measurable result"),
     ],
     tags: ["launch", "marketing", "deck"],
-    themeMode: "native",
   },
   {
     id: "quarterly-business-review",
@@ -104,7 +101,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Decisions", "Items that need a call"),
     ],
     tags: ["qbr", "operations", "deck"],
-    themeMode: "native",
     featured: true,
   },
   {
@@ -132,7 +128,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Audience", "Who will act on the answer?"),
     ],
     tags: ["research", "evidence", "deck"],
-    themeMode: "native",
   },
   {
     id: "board-update",
@@ -159,7 +154,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Asks", "Where the board can help"),
     ],
     tags: ["board", "executive", "deck"],
-    themeMode: "native",
   },
   {
     id: "decision-memo",
@@ -186,7 +180,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Evidence", "Artifacts that support the choice"),
     ],
     tags: ["decision", "leadership", "doc"],
-    themeMode: "fixed",
     featured: true,
   },
   {
@@ -215,7 +208,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Evidence", "Research and product artifacts"),
     ],
     tags: ["product", "brief", "doc"],
-    themeMode: "fixed",
   },
   {
     id: "technical-design",
@@ -245,7 +237,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("References", "Relevant code or architecture artifacts"),
     ],
     tags: ["engineering", "architecture", "doc"],
-    themeMode: "fixed",
   },
   {
     id: "strategy-narrative",
@@ -271,7 +262,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Constraints", "What cannot be wished away"),
     ],
     tags: ["strategy", "leadership", "doc"],
-    themeMode: "fixed",
   },
   {
     id: "launch-plan",
@@ -300,7 +290,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Owners", "Teams or individuals accountable"),
     ],
     tags: ["launch", "program", "doc"],
-    themeMode: "fixed",
   },
   {
     id: "postmortem",
@@ -328,7 +317,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Evidence", "Logs, messages, or related artifacts"),
     ],
     tags: ["incident", "learning", "doc"],
-    themeMode: "fixed",
   },
   {
     id: "meeting-synthesis",
@@ -355,7 +343,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Audience", "Who needs the synthesis"),
     ],
     tags: ["meeting", "notes", "doc"],
-    themeMode: "fixed",
   },
   {
     id: "research-plan",
@@ -383,7 +370,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Constraints", "Time, access, or ethical limits"),
     ],
     tags: ["research", "planning", "doc"],
-    themeMode: "fixed",
   },
   {
     id: "weekly-operating-review",
@@ -410,7 +396,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Prior review", "Last week's commitments"),
     ],
     tags: ["weekly", "operations", "report"],
-    themeMode: "fixed",
   },
   {
     id: "customer-health-report",
@@ -436,7 +421,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Period", "Review window"),
     ],
     tags: ["customer", "account", "report"],
-    themeMode: "fixed",
   },
   {
     id: "market-landscape",
@@ -464,7 +448,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Sources", "Research artifacts or links"),
     ],
     tags: ["market", "competitive", "report"],
-    themeMode: "fixed",
   },
   {
     id: "project-hub",
@@ -483,7 +466,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Artifacts", "The work this hub should point to"),
     ],
     tags: ["project", "hub", "site"],
-    themeMode: "adaptable",
   },
   {
     id: "launch-page",
@@ -502,7 +484,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Proof", "Evidence, quote, or result"),
     ],
     tags: ["launch", "marketing", "site"],
-    themeMode: "adaptable",
   },
   {
     id: "context-manifest",
@@ -529,7 +510,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Boundaries", "What must it not do?"),
     ],
     tags: ["context", "agent", "manifest"],
-    themeMode: "fixed",
   },
   {
     id: "skill-package",
@@ -556,7 +536,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Examples", "Representative successful cases"),
     ],
     tags: ["skill", "agent", "procedure"],
-    themeMode: "fixed",
   },
   {
     id: "review-rubric",
@@ -583,7 +562,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Audience", "Who receives the findings?"),
     ],
     tags: ["review", "quality", "agent"],
-    themeMode: "fixed",
   },
   {
     id: "automation-brief",
@@ -611,7 +589,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Authority", "What may it publish or change?"),
     ],
     tags: ["automation", "agent", "operations"],
-    themeMode: "fixed",
   },
   {
     id: "source-guide",
@@ -638,7 +615,6 @@ const ARTIFACT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Caveats", "Known gaps or permission boundaries"),
     ],
     tags: ["source", "agent", "guide"],
-    themeMode: "fixed",
   },
 ]
 
@@ -668,7 +644,6 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Cadence", "When the brief should be ready"),
     ],
     tags: ["research", "weekly", "context"],
-    themeMode: "fixed",
     featured: true,
     starterPrompts: [
       "What changed this week?",
@@ -701,7 +676,6 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Authority", "Proposal-only or publish"),
     ],
     tags: ["product", "decision", "context"],
-    themeMode: "fixed",
     starterPrompts: [
       "Pressure-test these options.",
       "What prior decisions constrain this?",
@@ -733,7 +707,6 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Sensitivity", "Special access constraints"),
     ],
     tags: ["customer", "account", "context"],
-    themeMode: "fixed",
     starterPrompts: [
       "What changed in this account?",
       "Where are commitments at risk?",
@@ -765,7 +738,6 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Signals", "Artifacts or systems that show progress"),
     ],
     tags: ["launch", "program", "context"],
-    themeMode: "fixed",
     starterPrompts: [
       "What drifted since the last update?",
       "Which milestone is least credible?",
@@ -797,7 +769,6 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Sources", "Architecture and product references"),
     ],
     tags: ["engineering", "repository", "context"],
-    themeMode: "fixed",
     starterPrompts: [
       "Orient me to this repository.",
       "Which checks govern this change?",
@@ -829,7 +800,6 @@ const CONTEXT_TEMPLATE_DEFINITIONS: TemplateDefinition[] = [
       input("Strictness", "Advisory or approval-required"),
     ],
     tags: ["brand", "review", "context"],
-    themeMode: "fixed",
     starterPrompts: [
       "Review this against our Brandprint.",
       "Propose a Theme for this artifact.",

@@ -144,18 +144,24 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-position")).toHaveCount(0)
   })
 
-  test("the library's Start a deck opens the editor on the canonical starter", async ({
+  test("the library's template path opens the canonical deck as a visual draft", async ({
     owner: page,
   }) => {
-    // The human entry point. It has to arrive with the real starter in the editor —
-    // an empty editor here is the whole feature failing silently.
+    // The human entry point serves the canonical deck, but its storage format is
+    // never the authoring experience. The rendered deck is the workbench.
     await page.goto("/")
     await page.getByTestId("library-new").click()
-    await page.getByTestId("library-new-deck").click()
-    await expect(page).toHaveURL(/\/new\?start=deck/)
-    const editor = page.getByTestId("artifact-source-editor")
-    await expect(editor).toContainText("data-derive-slide")
-    await expect(editor).toContainText("derive-deck")
+    await page.getByTestId("library-new-template").click()
+    await expect(page).toHaveURL(/\/templates/)
+    await page.getByTestId("template-card-narrative-pitch").click()
+    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-brief-input-audience").fill("Product leaders")
+    await page.getByTestId("template-brief-input-objective").fill("Approve the launch")
+    await page.getByTestId("template-start-brief-continue").click()
+    await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
+    await expect(
+      page.frameLocator('[data-testid="artifact-preview"]').getByText("Product leaders"),
+    ).toBeVisible()
   })
 
   /* ── The other half: a deck that announces NOTHING ─────────────────────────

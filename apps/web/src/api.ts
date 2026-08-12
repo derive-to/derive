@@ -1130,6 +1130,11 @@ export const api = {
     body_md: string
     model?: string
     purpose?: "context_builder"
+    template_start?: {
+      uri: string
+      title: string
+      kind: "artifact" | "context"
+    }
   }): Promise<{ session: Session; messages: SessionMessage[] }> =>
     f("/v1/chat-session", opts(input)).then(j),
   askContext: (
@@ -1500,14 +1505,12 @@ export const api = {
       source_version?: number
       kind: "artifact" | "context"
       category: string
-      format: "md" | "html"
       title: string
       description: string
       outcome: string
       sections: string[]
       inputs: { name: string; description: string; required?: boolean }[]
       tags: string[]
-      theme_mode: "native" | "adaptable" | "fixed"
     },
   ): Promise<TemplateLibraryEntry> =>
     f(`/v1/template-libraries/${encodeURIComponent(id)}/entries`, opts(body)).then(j),

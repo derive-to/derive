@@ -5,36 +5,23 @@ export type {
   TemplateCategory,
   TemplateFormat,
   TemplateInput,
-  ThemeMode,
 } from "@derive-to/templates"
 
-export type TemplateTab = "artifacts" | "contexts" | "libraries" | "themes"
-
-export type ThemeMotif = "editorial" | "operator" | "field" | "institutional" | "signal"
-
-export type BuiltInTheme = {
-  id: string
-  title: string
-  description: string
-  tone: string
-  motif: ThemeMotif
-  bestFor: string[]
-}
+export type TemplateTab = "artifacts" | "contexts" | "libraries"
 
 export type TemplatesSearch = {
   tab?: TemplateTab
   query?: string
   category?: TemplateCategory
   selected?: string
-  theme?: string
   derive?: boolean
+  source?: string
   library?: string
 }
 
 export type NewArtifactSearch = {
   start?: "deck"
   template?: string
-  theme?: string
   source?: string
   library?: string
   entry?: string

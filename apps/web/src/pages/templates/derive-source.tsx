@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,35 +25,45 @@ export function DeriveSource({
   onUse,
 }: {
   autoFocus?: boolean
-  onUse: (shortId: string) => void
+  onUse: (artifact: Artifact) => void
 }) {
   const [value, setValue] = useState("")
   const [error, setError] = useState("")
-  const submit = () => {
+  const [loading, setLoading] = useState(false)
+  const submit = async () => {
     const shortId = artifactIdFromInput(value)
     if (!shortId) {
       setError("Paste a Derive artifact link or short id.")
       return
     }
     setError("")
-    onUse(shortId)
+    setLoading(true)
+    try {
+      onUse(await api.getArtifact(shortId))
+    } catch {
+      setError(
+        "Derive couldn’t open that artifact. Check the link and your access, then try again.",
+      )
+    } finally {
+      setLoading(false)
+    }
   }
   return (
     <form
       className="grid gap-4 rounded-xl border bg-secondary p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"
       onSubmit={(event) => {
         event.preventDefault()
-        submit()
+        void submit()
       }}
     >
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex items-center gap-2">
           <Icon name="derive" className="text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">Create from any artifact</p>
+          <p className="text-sm font-medium text-foreground">Make any artifact yours</p>
         </div>
         <p className="max-w-2xl text-sm text-pretty text-muted-foreground">
-          Paste a Derive link. Its current source opens as a new, independent draft; the original
-          stays untouched.
+          Paste a Derive link, then tell the agent what you need. It will reuse the artifact’s
+          strongest ideas and shape while leaving the original untouched.
         </p>
         <Input
           autoFocus={autoFocus}
@@ -73,8 +84,13 @@ export function DeriveSource({
           </p>
         )}
       </div>
-      <Button type="submit" variant="outline" data-testid="template-source-submit">
-        Open as draft <Icon name="arrow" />
+      <Button
+        type="submit"
+        variant="outline"
+        disabled={loading}
+        data-testid="template-source-submit"
+      >
+        {loading ? "Opening…" : "Make it mine"} <Icon name="sparkles" />
       </Button>
     </form>
   )

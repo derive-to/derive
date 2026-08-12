@@ -631,6 +631,44 @@ export const artifactRoutes = (ctx: AppContext) => {
 
     const body = await c.req.parseBody()
 
+    // Reuse is still the ordinary publish path: these optional fields only add
+    // validated provenance to a NEW artifact. A direct derivation requires read
+    // access to its source. A library derivation requires access to the library
+    // entry, whose pinned starter can intentionally outlive a private/deleted
+    // source artifact.
+    const derivedRef = str(body["derived_from"])
+    const templateLibraryId = str(body["template_library_id"])
+    const templateEntryId = str(body["template_entry_id"])
+    if (shortId && (derivedRef || templateLibraryId || templateEntryId))
+      return fail(c, 400, "provenance fields are create-only")
+    if (!!templateLibraryId !== !!templateEntryId)
+      return fail(c, 400, "template_library_id and template_entry_id must be provided together")
+    if (derivedRef && templateEntryId)
+      return fail(c, 400, "provide derived_from OR a template library entry, not both")
+    let derivedFromId: string | null = null
+    if (derivedRef) {
+      const source = await meta.getByShortId(derivedRef)
+      if (!source || !(await authorize(c, "read", source))) return fail(c, 404, "source not found")
+      derivedFromId = source.id
+    } else if (templateLibraryId && templateEntryId) {
+      const [library, entry] = await Promise.all([
+        meta.getTemplateLibrary(templateLibraryId),
+        meta.getTemplateLibraryEntry(templateEntryId),
+      ])
+      if (!library || !entry || entry.library_id !== library.id)
+        return fail(c, 404, "template entry not found")
+      const callerId = tokenUser?.id ?? (await actingUser(c))?.id ?? null
+      const workspaceReadable =
+        library.org_id === org && (tokenAuth ? true : await workspaceCan(c, "read"))
+      const libraryReadable =
+        library.scope === "public" ||
+        (workspaceReadable &&
+          (library.scope === "workspace" ||
+            (library.scope === "private" && library.created_by === callerId)))
+      if (!libraryReadable) return fail(c, 404, "template entry not found")
+      derivedFromId = entry.source_artifact_id
+    }
+
     // `edits` — a token-cheap revision (stdio/API parity with the MCP publish
     // tool's `edits`): exact-match search/replace against the current stored
     // source instead of a re-uploaded `file`. Materialize the full content, then
@@ -834,6 +872,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           linkRole: resolvedLinkRole,
           listed: resolvedListed,
           expiresAt: draft?.expiresAt,
+          derivedFrom: derivedFromId,
         },
         shortId,
       )

@@ -7,7 +7,8 @@ export {
   TEMPLATE_CATEGORIES,
   templateMatches,
 } from "./catalog"
-export { DEFAULT_TEMPLATE_VISUAL_THEME, renderTemplate } from "./render"
+export { fillTemplateSource, unsafeHtmlTemplateBindings } from "./fill"
+export { renderTemplate } from "./render"
 export {
   catalogResource,
   TEMPLATE_CATALOG_URI,
@@ -27,6 +28,4 @@ export {
   type TemplateKind,
   type TemplateRef,
   type TemplateResource,
-  type TemplateVisualTheme,
-  type ThemeMode,
 } from "./types"

@@ -3051,6 +3051,193 @@
           "is_default"
         ]
       },
+      "TemplateLibrary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "private",
+              "workspace",
+              "public"
+            ],
+            "description": "private = owner only; workspace = workspace members; public = anyone with the library URL or catalog."
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "nullable": true
+          },
+          "entry_count": {
+            "type": "number"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TemplateLibraryEntry"
+            }
+          },
+          "publisher": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "nullable": true
+              },
+              "username": {
+                "type": "string",
+                "nullable": true
+              },
+              "image": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "name",
+              "username",
+              "image"
+            ]
+          },
+          "can_manage": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "org_id",
+          "title",
+          "description",
+          "scope",
+          "created_by",
+          "created_at",
+          "updated_at",
+          "entry_count",
+          "publisher"
+        ]
+      },
+      "TemplateLibraryEntry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "library_id": {
+            "type": "string"
+          },
+          "source_artifact_id": {
+            "type": "string",
+            "description": "Provenance source; never used to read the starter."
+          },
+          "source_version": {
+            "type": "number",
+            "description": "Pinned source version captured on publication."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "artifact",
+              "context"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "md",
+              "html"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "required": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "description"
+              ]
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "library_id",
+          "source_artifact_id",
+          "source_version",
+          "kind",
+          "category",
+          "format",
+          "title",
+          "description",
+          "outcome",
+          "sections",
+          "inputs",
+          "tags",
+          "created_by",
+          "created_at"
+        ]
+      },
       "Viewer": {
         "type": "object",
         "properties": {
@@ -9458,6 +9645,249 @@
                   },
                   "required": [
                     "sessions"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/template-libraries": {
+      "get": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "List public libraries plus libraries accessible in the active workspace.",
+        "responses": {
+          "200": {
+            "description": "Libraries the caller can discover. Public libraries are available anonymously.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "libraries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/TemplateLibrary"
+                      }
+                    }
+                  },
+                  "required": [
+                    "libraries"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Create a template library in the active workspace.",
+        "responses": {
+          "201": {
+            "description": "The newly created empty library.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateLibrary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/template-libraries/{id}": {
+      "get": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Read one accessible library and its reusable entries.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Library and entries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateLibrary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Rename, describe, or change a library's distribution scope.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated library.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateLibrary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Delete a library and its entries; source artifacts remain untouched.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          }
+        }
+      }
+    },
+    "/v1/template-libraries/{id}/entries": {
+      "post": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Publish a pinned artifact version as a reusable template entry.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Published entry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateLibraryEntry"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/template-libraries/{id}/entries/{entryId}": {
+      "delete": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Remove a reusable entry without changing its source artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "entryId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          }
+        }
+      }
+    },
+    "/v1/template-libraries/{id}/entries/{entryId}/starter": {
+      "get": {
+        "tags": [
+          "Templates"
+        ],
+        "summary": "Read an accessible entry's pinned starter source and provenance.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "entryId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A stable source snapshot. Editing it never changes the template entry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/TemplateLibraryEntry"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "entry",
+                    "source",
+                    "mime_type"
                   ]
                 }
               }

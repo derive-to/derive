@@ -199,7 +199,6 @@ export interface TemplateLibraryEntryJson {
   sections: string[]
   inputs: { name: string; description: string; required?: boolean }[]
   tags: string[]
-  theme_mode: "native" | "adaptable" | "fixed"
   created_by: string
   created_at: string
 }

@@ -4,10 +4,6 @@ export const BUILT_INS_LIBRARY_ID = "derive/built-ins"
 export type TemplateKind = "artifact" | "context"
 export type TemplateCategory = "Deck" | "Doc" | "Report" | "Site" | "Agent"
 export type TemplateFormat = "md" | "html"
-// This is metadata on an authored Template, not the Theme catalog. It lets the
-// existing web prototype describe a template honestly while Themes stays a
-// separate, additive follow-up.
-export type ThemeMode = "native" | "adaptable" | "fixed"
 
 export type TemplateInput = {
   name: string
@@ -27,7 +23,6 @@ export type TemplateDefinition = {
   sections: readonly string[]
   inputs: readonly TemplateInput[]
   tags: readonly string[]
-  themeMode: ThemeMode
   featured?: boolean
   starterPrompts?: readonly string[]
 }
@@ -41,14 +36,6 @@ export type TemplateRef = {
 export type BuiltInTemplate = TemplateDefinition & {
   libraryId: typeof BUILT_INS_LIBRARY_ID
   catalogVersion: typeof TEMPLATE_CATALOG_VERSION
-}
-
-// A rendering adapter, not a Theme object. The Templates package needs no Theme
-// catalog to produce a deterministic starter; the web prototype may pass a visual
-// recipe until Themes becomes its own package surface.
-export type TemplateVisualTheme = {
-  id: string
-  css: string
 }
 
 export type TemplateDraft = {

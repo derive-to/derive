@@ -1683,6 +1683,22 @@ export function makeRepos(db: SqliteDb) {
       .returning()
       .get()) as WorkspaceRecord
   const deleteWorkspace = async (orgId: string): Promise<void> => {
+    // A library has no workspace FK because public snapshots must remain readable
+    // independently of their source artifacts. Delete its entries explicitly before
+    // removing the workspace so a workspace teardown cannot strand either row type.
+    await db
+      .delete(templateLibraryEntry)
+      .where(
+        inArray(
+          templateLibraryEntry.library_id,
+          db
+            .select({ id: templateLibrary.id })
+            .from(templateLibrary)
+            .where(eq(templateLibrary.org_id, orgId)),
+        ),
+      )
+      .run()
+    await db.delete(templateLibrary).where(eq(templateLibrary.org_id, orgId)).run()
     await db.delete(membership).where(eq(membership.org_id, orgId)).run()
     // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
@@ -4639,6 +4655,56 @@ export function makeRepos(db: SqliteDb) {
 
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   const deleteUserData = async (userId: string): Promise<void> => {
+    // Private libraries and everything in the departing user's personal workspace
+    // belong to that account, so remove them with their entries. Shared/public
+    // libraries in a surviving workspace are durable team/public resources instead:
+    // hand their management to an owner (then an editor) deterministically. If no
+    // eligible member remains, use the route-recognized sentinel rather than retain
+    // the deleted account id in an API-visible publisher field.
+    const personalOrg = `ws_p_${userId}`
+    const ownedLibraries = await db
+      .select()
+      .from(templateLibrary)
+      .where(eq(templateLibrary.created_by, userId))
+      .all()
+    const deletedLibraryIds = ownedLibraries
+      .filter((library) => library.scope === "private" || library.org_id === personalOrg)
+      .map((library) => library.id)
+    if (deletedLibraryIds.length) {
+      await db
+        .delete(templateLibraryEntry)
+        .where(inArray(templateLibraryEntry.library_id, deletedLibraryIds))
+        .run()
+      await db.delete(templateLibrary).where(inArray(templateLibrary.id, deletedLibraryIds)).run()
+    }
+    for (const library of ownedLibraries) {
+      if (deletedLibraryIds.includes(library.id)) continue
+      const managers = await db
+        .select()
+        .from(membership)
+        .where(and(eq(membership.org_id, library.org_id), ne(membership.user_id, userId)))
+        .orderBy(asc(membership.created_at), asc(membership.user_id))
+        .all()
+      const manager =
+        managers.find((member) => member.role === "owner") ??
+        managers.find((member) => member.role === "editor")
+      const replacement = manager?.user_id ?? "__deleted_template_library_owner__"
+      await db
+        .update(templateLibrary)
+        .set({ created_by: replacement, updated_at: new Date().toISOString() })
+        .where(eq(templateLibrary.id, library.id))
+        .run()
+      await db
+        .update(templateLibraryEntry)
+        .set({ created_by: replacement })
+        .where(
+          and(
+            eq(templateLibraryEntry.library_id, library.id),
+            eq(templateLibraryEntry.created_by, userId),
+          ),
+        )
+        .run()
+    }
     // The user's own association rows go entirely.
     await db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId)).run()
     await db.delete(membership).where(eq(membership.user_id, userId)).run()
@@ -4673,10 +4739,7 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(collectionInvite.invited_by, userId))
       .run()
     // Drop the personal workspace row (removes the "<name>'s Workspace" label).
-    await db
-      .delete(workspace)
-      .where(eq(workspace.id, `ws_p_${userId}`))
-      .run()
+    await db.delete(workspace).where(eq(workspace.id, personalOrg)).run()
   }
   const listPendingAgentMentions = async (
     agentId: string,

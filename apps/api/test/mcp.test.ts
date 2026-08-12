@@ -1114,6 +1114,7 @@ describe("remote MCP endpoint (/mcp)", () => {
 
   it("exposes accessible authored template libraries as resources without adding tools", async () => {
     const { app, token, meta } = appWithGrant(
+      dir,
       "template-library",
       "openid derive:read derive:publish",
     )
@@ -1146,7 +1147,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       sections_json: '["Context", "Plan"]',
       inputs_json: "[]",
       tags_json: '["planning"]',
-      theme_mode: "fixed",
       created_by: "u_o",
     })
 
@@ -1156,23 +1156,54 @@ describe("remote MCP endpoint (/mcp)", () => {
       (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
     ).map((resource) => resource.uri)
     expect(uris).toContain("derive://template-libraries")
-    expect(uris).toContain("derive://template-libraries/tlb_mcp")
-    expect(uris).toContain("derive://template-libraries/tlb_mcp/tpl_mcp")
-
-    const entry = await rpc(app, token, {
-      jsonrpc: "2.0",
-      id: 4,
-      method: "resources/read",
-      params: { uri: "derive://template-libraries/tlb_mcp/tpl_mcp" },
-    })
-    const text = (entry.parsed?.result as { contents?: { text: string }[] } | undefined)
-      ?.contents?.[0]?.text
-    const body = JSON.parse(text ?? "{}") as {
-      starter?: { source?: string }
-      source_version?: number
-    }
+    const body = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: "derive://template-libraries/tlb_mcp/tpl_mcp",
+        }),
+      ),
+    ) as { starter?: { source?: string }; source_version?: number }
     expect(body.source_version).toBe(1)
     expect(body.starter?.source).toContain("Reusable planning note")
+
+    // The ordinary publish tool carries the pinned starter's lineage. Template
+    // adoption does not need (or get) a second write tool.
+    const adopted = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Adapted planning note",
+          content: "# Adapted planning note\n\nSpecific to this team.",
+          derived_from: "derive://template-libraries/tlb_mcp/tpl_mcp",
+        }),
+      ),
+    ) as { short_id: string; derived_from?: string }
+    expect(adopted.derived_from).toBe("derive://template-libraries/tlb_mcp/tpl_mcp")
+    const adoptedArtifact = await meta.getByShortId(adopted.short_id)
+    expect(adoptedArtifact?.derived_from).toBe(artifact.id)
+
+    // Built-ins use the same resource/read concepts, and template discovery is
+    // one mode of find rather than another MCP tool.
+    const builtinResources = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "resources/list",
+    })
+    const builtinUris = (
+      (builtinResources.parsed?.result as { resources?: { uri: string }[] } | undefined)
+        ?.resources ?? []
+    ).map((resource) => resource.uri)
+    expect(builtinUris).toContain("derive://templates/catalog")
+    const builtInRead = toolText(
+      await call(app, token, "read", { short_id: "derive://templates/decision-memo" }),
+    )
+    expect(builtInRead).toMatch(/Decision/i)
+    const found = JSON.parse(toolText(await call(app, token, "find", { templates: true }))) as {
+      results: { uri: string }[]
+    }
+    expect(found.results.map((result) => result.uri)).toContain(
+      "derive://template-libraries/tlb_mcp/tpl_mcp",
+    )
+    expect(found.results.some((result) => result.uri.startsWith("derive://templates/"))).toBe(true)
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {

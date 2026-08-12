@@ -4150,7 +4150,9 @@ export function runStoreContract(
       await store.setWorkspace(org, "Shared")
       await store.setWorkspace(`ws_p_${leaver}`, "Leaver's Workspace")
       await store.setMembership({ id: uuid(), org_id: org, user_id: leaver, role: "owner" })
-      await store.setMembership({ id: uuid(), org_id: org, user_id: other, role: "owner" })
+      // Deliberately an editor: account deletion must fall back to a workspace
+      // editor when no other owner is available to manage a surviving library.
+      await store.setMembership({ id: uuid(), org_id: org, user_id: other, role: "editor" })
       await store.setMembership({
         id: uuid(),
         org_id: `ws_p_${leaver}`,
@@ -4186,6 +4188,50 @@ export function runStoreContract(
       await store.setModelCredential(mkCred(other, "enc-other"))
       await store.setModelCredential(mkCred("__workspace_pool__", "enc-pool"))
 
+      const privateLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Private leaver library",
+        scope: "private",
+        created_by: leaver,
+      })
+      const sharedLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Shared team library",
+        scope: "workspace",
+        created_by: leaver,
+      })
+      const personalLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: `ws_p_${leaver}`,
+        title: "Personal public library",
+        scope: "public",
+        created_by: leaver,
+      })
+      const entryFor = async (libraryId: string) =>
+        store.createTemplateLibraryEntry({
+          id: uuid(),
+          library_id: libraryId,
+          source_artifact_id: uuid(),
+          source_version: 1,
+          source_blob_key: `blob_${uuid()}`,
+          source_content_type: "text/markdown",
+          kind: "artifact",
+          category: "Doc",
+          format: "md",
+          title: "Starter",
+          description: "A durable starter.",
+          outcome: "A useful result.",
+          sections_json: "[]",
+          inputs_json: "[]",
+          tags_json: "[]",
+          created_by: leaver,
+        })
+      const privateEntry = await entryFor(privateLibrary.id)
+      const sharedEntry = await entryFor(sharedLibrary.id)
+      const personalEntry = await entryFor(personalLibrary.id)
+
       await store.deleteUserData(leaver)
 
       // Their memberships are gone (both shared + personal); the other member stays.
@@ -4195,6 +4241,17 @@ export function runStoreContract(
       // Their personal workspace row is dropped; the shared one survives.
       expect(await store.getWorkspace(`ws_p_${leaver}`)).toBeNull()
       expect(await store.getWorkspace(org)).not.toBeNull()
+      // Account-owned libraries disappear with their entries. Shared/public
+      // libraries survive, but no response-visible publisher field retains the
+      // deleted user: the remaining editor now manages both the library and entry.
+      expect(await store.getTemplateLibrary(privateLibrary.id)).toBeNull()
+      expect(await store.getTemplateLibraryEntry(privateEntry.id)).toBeNull()
+      expect(await store.getTemplateLibrary(personalLibrary.id)).toBeNull()
+      expect(await store.getTemplateLibraryEntry(personalEntry.id)).toBeNull()
+      expect(await store.getTemplateLibrary(sharedLibrary.id)).toMatchObject({ created_by: other })
+      expect(await store.getTemplateLibraryEntry(sharedEntry.id)).toMatchObject({
+        created_by: other,
+      })
       // Associations cleared.
       expect(await store.listUserFavoriteIds(leaver)).toEqual([])
       expect(await store.listFollows(leaver, org)).toEqual([])
@@ -4209,6 +4266,47 @@ export function runStoreContract(
       expect((await store.getModelCredential(org, "__workspace_pool__", "codex"))?.secret).toBe(
         "enc-pool",
       )
+    })
+
+    it("deleteUserData: leaves a scrubbed public library recoverable when no manager remains", async () => {
+      const org = `org_tpl_orphan_${uuid()}`
+      const leaver = `tpl_orphan_${uuid()}`
+      await store.setWorkspace(org, "Orphaned templates")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: leaver, role: "owner" })
+      const library = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Public community library",
+        scope: "public",
+        created_by: leaver,
+      })
+      const entry = await store.createTemplateLibraryEntry({
+        id: uuid(),
+        library_id: library.id,
+        source_artifact_id: uuid(),
+        source_version: 1,
+        source_blob_key: `blob_${uuid()}`,
+        source_content_type: "text/html",
+        kind: "artifact",
+        category: "Site",
+        format: "html",
+        title: "Public starter",
+        description: "Still readable after account deletion.",
+        outcome: "A reusable public page.",
+        sections_json: "[]",
+        inputs_json: "[]",
+        tags_json: "[]",
+        created_by: leaver,
+      })
+
+      await store.deleteUserData(leaver)
+
+      expect(await store.getTemplateLibrary(library.id)).toMatchObject({
+        created_by: "__deleted_template_library_owner__",
+      })
+      expect(await store.getTemplateLibraryEntry(entry.id)).toMatchObject({
+        created_by: "__deleted_template_library_owner__",
+      })
     })
 
     it("removeMembership + deleteWorkspace purge model_credential (incl. the pool sentinel)", async () => {
@@ -4230,6 +4328,31 @@ export function runStoreContract(
       await store.setMembership({ id: uuid(), org_id: org, user_id: member, role: "editor" })
       await store.setModelCredential(cred(member, "enc-member"))
       await store.setModelCredential(cred("__workspace_pool__", "enc-pool"))
+      const library = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Workspace lifecycle library",
+        scope: "workspace",
+        created_by: member,
+      })
+      const entry = await store.createTemplateLibraryEntry({
+        id: uuid(),
+        library_id: library.id,
+        source_artifact_id: uuid(),
+        source_version: 1,
+        source_blob_key: `blob_${uuid()}`,
+        source_content_type: "text/markdown",
+        kind: "artifact",
+        category: "Doc",
+        format: "md",
+        title: "Workspace starter",
+        description: "Must not be orphaned.",
+        outcome: "No orphan rows.",
+        sections_json: "[]",
+        inputs_json: "[]",
+        tags_json: "[]",
+        created_by: member,
+      })
 
       // Removing a member drops only their credential; the pool row stays.
       await store.removeMembership(org, member)
@@ -4241,6 +4364,8 @@ export function runStoreContract(
       // Deleting the workspace clears the pool sentinel too — nothing orphaned.
       await store.deleteWorkspace(org)
       expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
+      expect(await store.getTemplateLibrary(library.id)).toBeNull()
+      expect(await store.getTemplateLibraryEntry(entry.id)).toBeNull()
     })
   })
 

@@ -3,7 +3,7 @@ import { requireOnboarded } from "../lib/route-guards"
 import { Templates } from "../pages/templates"
 import type { TemplateCategory, TemplatesSearch, TemplateTab } from "../pages/templates/types"
 
-const TABS: TemplateTab[] = ["artifacts", "contexts", "libraries", "themes"]
+const TABS: TemplateTab[] = ["artifacts", "contexts", "libraries"]
 const CATEGORIES: TemplateCategory[] = ["Deck", "Doc", "Report", "Site", "Agent"]
 
 export const Route = createFileRoute("/templates")({
@@ -15,8 +15,8 @@ export const Route = createFileRoute("/templates")({
       ? (search.category as TemplateCategory)
       : undefined,
     selected: typeof search.selected === "string" ? search.selected : undefined,
-    theme: typeof search.theme === "string" ? search.theme : undefined,
     derive: search.derive === true || search.derive === "true" ? true : undefined,
+    source: typeof search.source === "string" ? search.source : undefined,
     library: typeof search.library === "string" ? search.library : undefined,
   }),
   component: Templates,

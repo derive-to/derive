@@ -20,6 +20,7 @@ import {
   type VersionDataRecord,
   type VersionRecord,
 } from "@derive/core"
+import { catalogResource, templateResource } from "@derive-to/templates"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
 import { cleanPath } from "../lib/bundle"
@@ -149,6 +150,7 @@ export function registerReadTool(tc: ToolContext): void {
     staleNote,
     actingFor,
     ownerId,
+    inGrant,
     resolveWs,
     askableContexts,
   } = tc
@@ -327,6 +329,128 @@ export function registerReadTool(tc: ToolContext): void {
             `No deck resource "${short_id}". The starter is derive://decks/template; the guide is derive://skills/decks.`,
           )
         return json({ uri: short_id, mimeType: "text/html", content: DECK_TEMPLATE })
+      }
+      const BUILT_IN_TEMPLATES = "derive://templates/"
+      if (short_id.startsWith(BUILT_IN_TEMPLATES)) {
+        const resource =
+          short_id === "derive://templates/catalog"
+            ? catalogResource()
+            : templateResource(short_id.slice(BUILT_IN_TEMPLATES.length))
+        if (!resource)
+          return err(
+            `No built-in template "${short_id}". Read derive://templates/catalog to find one.`,
+          )
+        return json({
+          uri: resource.uri,
+          mimeType: resource.mimeType,
+          content: JSON.parse(resource.text),
+        })
+      }
+      const AUTHORED_TEMPLATES = "derive://template-libraries"
+      if (short_id === AUTHORED_TEMPLATES || short_id.startsWith(`${AUTHORED_TEMPLATES}/`)) {
+        const canReadLibrary = async (library: {
+          org_id: string
+          scope: "private" | "workspace" | "public"
+          created_by: string
+        }) => {
+          if (library.scope === "public") return true
+          if (!ownerId || !inGrant(library.org_id)) return false
+          const member = await ctx.meta.getMembership(library.org_id, ownerId)
+          return !!member && (library.scope === "workspace" || library.created_by === ownerId)
+        }
+        if (short_id === AUTHORED_TEMPLATES) {
+          const ws = await resolveWs(workspace)
+          if ("error" in ws) return err(ws.error)
+          const [publicLibraries, workspaceLibraries, privateLibraries] = await Promise.all([
+            ctx.meta.listTemplateLibraries({ scope: "public" }),
+            ctx.meta.listTemplateLibraries({ orgId: ws.org, scope: "workspace" }),
+            ownerId
+              ? ctx.meta.listTemplateLibraries({
+                  orgId: ws.org,
+                  scope: "private",
+                  createdBy: ownerId,
+                })
+              : [],
+          ])
+          const libraries = [...privateLibraries, ...workspaceLibraries, ...publicLibraries].filter(
+            (library, index, all) =>
+              all.findIndex((candidate) => candidate.id === library.id) === index,
+          )
+          return json({
+            uri: short_id,
+            libraries: await Promise.all(
+              libraries.map(async (library) => ({
+                id: library.id,
+                title: library.title,
+                description: library.description,
+                scope: library.scope,
+                entry_count: (await ctx.meta.listTemplateLibraryEntries(library.id)).length,
+                read: `${AUTHORED_TEMPLATES}/${library.id}`,
+              })),
+            ),
+          })
+        }
+        const [libraryId = "", entryId] = short_id.slice(AUTHORED_TEMPLATES.length + 1).split("/")
+        const library = await ctx.meta.getTemplateLibrary(libraryId)
+        if (!library || !(await canReadLibrary(library)))
+          return err(
+            `No template library "${libraryId}" you can reach. Read derive://template-libraries to find one.`,
+          )
+        const entries = await ctx.meta.listTemplateLibraryEntries(library.id)
+        if (!entryId)
+          return json({
+            uri: short_id,
+            id: library.id,
+            title: library.title,
+            description: library.description,
+            scope: library.scope,
+            entries: entries.map((entry) => ({
+              id: entry.id,
+              title: entry.title,
+              description: entry.description,
+              kind: entry.kind,
+              category: entry.category,
+              format: entry.format,
+              source_version: entry.source_version,
+              read: `${AUTHORED_TEMPLATES}/${library.id}/${entry.id}`,
+            })),
+          })
+        const entry = entries.find((candidate) => candidate.id === entryId)
+        if (!entry) return err(`No starter "${entryId}" in template library "${libraryId}".`)
+        const source = await ctx.sourceText({
+          blob_key: entry.source_blob_key,
+          content_type: entry.source_content_type,
+        })
+        if (source === null) return err(`Starter "${entry.title}" is unavailable.`)
+        const parse = (raw: string): unknown[] => {
+          try {
+            const value: unknown = JSON.parse(raw)
+            return Array.isArray(value) ? value : []
+          } catch {
+            return []
+          }
+        }
+        return json({
+          uri: short_id,
+          id: entry.id,
+          library_id: library.id,
+          title: entry.title,
+          description: entry.description,
+          outcome: entry.outcome,
+          kind: entry.kind,
+          category: entry.category,
+          format: entry.format,
+          source_version: entry.source_version,
+          sections: parse(entry.sections_json),
+          inputs: parse(entry.inputs_json),
+          tags: parse(entry.tags_json),
+          starter: {
+            source,
+            filename: `${entry.id}.${entry.format}`,
+            mime_type: entry.source_content_type,
+            message: `Created from ${library.title}/${entry.title} · source v${entry.source_version}`,
+          },
+        })
       }
       // A CONTEXT id or name loads the PACKAGE rather than a document: manifest inline,
       // skills and sources as pointers. Same gate as asking — askableContexts is the

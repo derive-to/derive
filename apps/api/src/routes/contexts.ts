@@ -52,6 +52,7 @@ import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
+import { TemplateStartSchema } from "../lib/template-start"
 import { log } from "../log"
 
 /**
@@ -270,6 +271,20 @@ export const contextRoutes = (ctx: AppContext) => {
       return
     }
     const transcript = await meta.listSessionMessages(s.id)
+    const templateStart = (() => {
+      for (const message of transcript) {
+        if (message.author_kind !== "asker" || !message.meta) continue
+        try {
+          const value = (JSON.parse(message.meta) as { template_start?: unknown }).template_start
+          const parsed = TemplateStartSchema.safeParse(value)
+          if (parsed.success) return parsed.data
+        } catch {
+          // Old or runner-authored metadata can be malformed; it is unrelated to
+          // serving the turn and must not take the conversation down.
+        }
+      }
+      return undefined
+    })()
     const ws = await meta.getWorkspace(s.org_id).catch(() => null)
     const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
     // WHICH MODEL, read fresh every turn so an admin can change it mid-conversation.
@@ -341,6 +356,7 @@ export const contextRoutes = (ctx: AppContext) => {
           workspaceName: ws?.name ?? "this workspace",
           asker: { name: me.name ?? me.username ?? null, role: seat.role },
           skills: tools.skills,
+          ...(templateStart ? { templateStart } : {}),
           ...(builderTools ? { purpose: "context_builder" as const } : {}),
         },
       ),
@@ -2064,6 +2080,7 @@ export const contextRoutes = (ctx: AppContext) => {
             .optional()
             .describe("A model id from /v1/chat/models; omitted = this deploy's default."),
           purpose: z.enum(["context_builder"]).optional(),
+          template_start: TemplateStartSchema.optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -2095,7 +2112,13 @@ export const contextRoutes = (ctx: AppContext) => {
           asker_id: me.id,
           subject_ref: b.purpose === "context_builder" ? BUILDER_SUBJECT : null,
         },
-        { id: newId("sm"), author_kind: "asker", author_id: me.id, body_md: b.body_md },
+        {
+          id: newId("sm"),
+          author_kind: "asker",
+          author_id: me.id,
+          body_md: b.body_md,
+          meta: b.template_start ? JSON.stringify({ template_start: b.template_start }) : null,
+        },
         "open",
       )
       // Detached, exactly like the document lane: the transcript is what the surface follows,

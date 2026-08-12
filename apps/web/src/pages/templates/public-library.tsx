@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { AgentTemplateDialog, type AgentTemplateTarget } from "./agent-template-dialog"
 
 const route = getRouteApi("/template-libraries/$id")
 
@@ -51,7 +52,11 @@ function PublicTemplateLibraryCatalogInner() {
           title="Couldn’t load public libraries"
           description="This is usually temporary."
           action={
-            <Button variant="outline" onClick={() => libraries.refetch()}>
+            <Button
+              variant="outline"
+              onClick={() => libraries.refetch()}
+              data-testid="public-template-libraries-retry"
+            >
               Try again
             </Button>
           }
@@ -80,12 +85,13 @@ function PublicTemplateLibraryCatalogInner() {
           Useful beginnings, shared openly.
         </h1>
         <p className="mt-3 max-w-2xl text-base text-pretty text-muted-foreground">
-          Browse version-pinned starters from the Derive community. Starting one always creates your
-          own editable work.
+          Browse version-pinned starters from the Derive community, then tell Derive what to make
+          with one.
         </p>
         <label className="mt-5 block max-w-md">
           <span className="sr-only">Search public libraries</span>
           <Input
+            data-testid="public-template-libraries-search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search libraries, publishers, or topics"
@@ -123,7 +129,11 @@ function PublicTemplateLibraryCatalogInner() {
                 handle={library.publisher.username}
                 size="xs"
               />
-              <Button asChild className="mt-auto">
+              <Button
+                asChild
+                className="mt-auto"
+                data-testid={`public-template-library-open-${library.id}`}
+              >
                 <Link to="/template-libraries/$id" params={{ id: library.id }}>
                   Browse starters <Icon name="arrow" />
                 </Link>
@@ -137,7 +147,11 @@ function PublicTemplateLibraryCatalogInner() {
           title="No public libraries match that search"
           description="Try a broader topic, library name, or publisher."
           action={
-            <Button variant="outline" onClick={() => setQuery("")}>
+            <Button
+              variant="outline"
+              onClick={() => setQuery("")}
+              data-testid="public-template-libraries-search-clear"
+            >
               Clear search
             </Button>
           }
@@ -155,6 +169,7 @@ function PublicTemplateLibraryCatalogInner() {
 
 function PublicTemplateLibraryInner({ id }: { id: string }) {
   const { me } = useAuth()
+  const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
   const library = useQuery({
     queryKey: ["public-template-library", id] as const,
     queryFn: () => api.getTemplateLibrary(id),
@@ -175,7 +190,11 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
           title="Couldn’t load this library"
           description="This is usually temporary."
           action={
-            <Button variant="outline" onClick={() => library.refetch()}>
+            <Button
+              variant="outline"
+              onClick={() => library.refetch()}
+              data-testid="public-template-library-retry"
+            >
               Try again
             </Button>
           }
@@ -200,10 +219,6 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
     } catch {
       toast.error("Couldn't copy the public library link")
     }
-  }
-  const start = (entry: { id: string; kind: "artifact" | "context"; title: string }) => {
-    const target = `/new?library=${encodeURIComponent(data.id)}&entry=${encodeURIComponent(entry.id)}${entry.kind === "context" ? `&next=context&contextName=${encodeURIComponent(entry.title)}` : ""}`
-    return me ? target : `/login?signup=true&return_to=${encodeURIComponent(target)}`
   }
   return (
     <PageShell width="wide" className="flex flex-col gap-8">
@@ -232,16 +247,26 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
           <span className="text-sm text-muted-foreground">Published starter kit</span>
         </div>
         <p className="mt-4 max-w-2xl text-sm text-muted-foreground">
-          Every starter begins as an independent copy. Its source version is pinned for provenance;
-          the original artifact never changes when someone uses it.
+          Every starter gives Derive an exact, version-pinned shape to work from. You describe the
+          job; the agent adapts it into new, independent work and leaves the original untouched.
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            data-testid="public-template-library-browse-all"
+          >
             <a href="/template-libraries">
               <Icon name="templates" /> Browse public libraries
             </a>
           </Button>
-          <Button variant="outline" size="sm" onClick={copyPublicLink}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={copyPublicLink}
+            data-testid="public-template-library-copy-link"
+          >
             <Icon name="link" /> Copy library link
           </Button>
         </div>
@@ -279,12 +304,41 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
                   .join(" · ")}
               </p>
             )}
-            <Button asChild className="mt-auto">
-              <Link to={start(entry)}>
-                {entry.kind === "context" ? "Create manifest" : "Start with this"}
-                <Icon name="arrow" />
-              </Link>
-            </Button>
+            {me ? (
+              <Button
+                className="mt-auto"
+                data-testid={`public-template-library-use-${entry.id}`}
+                onClick={() =>
+                  setAgentTarget({
+                    uri: `derive://template-libraries/${data.id}/${entry.id}`,
+                    title: entry.title,
+                    description: entry.description,
+                    kind: entry.kind,
+                    category: entry.category,
+                    inputs: entry.inputs,
+                  })
+                }
+              >
+                <Icon name="sparkles" />
+                {entry.kind === "context" ? "Set up with Derive" : "Make it mine"}
+              </Button>
+            ) : (
+              <Button
+                asChild
+                className="mt-auto"
+                data-testid={`public-template-library-use-${entry.id}`}
+              >
+                <Link
+                  to="/login"
+                  search={{
+                    signup: true,
+                    return_to: `/template-libraries/${data.id}`,
+                  }}
+                >
+                  <Icon name="sparkles" /> Make it mine
+                </Link>
+              </Button>
+            )}
           </article>
         ))}
       </section>
@@ -295,6 +349,10 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
           description="This public library is ready for its first reusable artifact."
         />
       )}
+      <AgentTemplateDialog
+        target={agentTarget}
+        onOpenChange={(open) => !open && setAgentTarget(null)}
+      />
     </PageShell>
   )
 }

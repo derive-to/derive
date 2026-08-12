@@ -2302,6 +2302,20 @@ export class PgMetaStore implements MetaStore {
     return one(rows)
   }
   async deleteWorkspace(orgId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(templateLibraryEntry)
+        .where(
+          inArray(
+            templateLibraryEntry.library_id,
+            tx
+              .select({ id: templateLibrary.id })
+              .from(templateLibrary)
+              .where(eq(templateLibrary.org_id, orgId)),
+          ),
+        )
+      await tx.delete(templateLibrary).where(eq(templateLibrary.org_id, orgId))
+    })
     await this.db.delete(membership).where(eq(membership.org_id, orgId))
     // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
@@ -5628,6 +5642,47 @@ export class PgMetaStore implements MetaStore {
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   async deleteUserData(userId: string): Promise<void> {
     await this.db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId))
+    const personalOrg = `ws_p_${userId}`
+    const ownedLibraries = await this.db
+      .select()
+      .from(templateLibrary)
+      .where(eq(templateLibrary.created_by, userId))
+    const deletedLibraryIds = ownedLibraries
+      .filter((library) => library.scope === "private" || library.org_id === personalOrg)
+      .map((library) => library.id)
+    if (deletedLibraryIds.length) {
+      await this.db.transaction(async (tx) => {
+        await tx
+          .delete(templateLibraryEntry)
+          .where(inArray(templateLibraryEntry.library_id, deletedLibraryIds))
+        await tx.delete(templateLibrary).where(inArray(templateLibrary.id, deletedLibraryIds))
+      })
+    }
+    for (const library of ownedLibraries) {
+      if (deletedLibraryIds.includes(library.id)) continue
+      const managers = await this.db
+        .select()
+        .from(membership)
+        .where(and(eq(membership.org_id, library.org_id), ne(membership.user_id, userId)))
+        .orderBy(asc(membership.created_at), asc(membership.user_id))
+      const manager =
+        managers.find((member) => member.role === "owner") ??
+        managers.find((member) => member.role === "editor")
+      const replacement = manager?.user_id ?? "__deleted_template_library_owner__"
+      await this.db
+        .update(templateLibrary)
+        .set({ created_by: replacement, updated_at: new Date().toISOString() })
+        .where(eq(templateLibrary.id, library.id))
+      await this.db
+        .update(templateLibraryEntry)
+        .set({ created_by: replacement })
+        .where(
+          and(
+            eq(templateLibraryEntry.library_id, library.id),
+            eq(templateLibraryEntry.created_by, userId),
+          ),
+        )
+    }
     await this.db.delete(membership).where(eq(membership.user_id, userId))
     await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
     await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))
@@ -5654,7 +5709,7 @@ export class PgMetaStore implements MetaStore {
       .update(collectionInvite)
       .set({ invited_by: null })
       .where(eq(collectionInvite.invited_by, userId))
-    await this.db.delete(workspace).where(eq(workspace.id, `ws_p_${userId}`))
+    await this.db.delete(workspace).where(eq(workspace.id, personalOrg))
   }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
     return this.db

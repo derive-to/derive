@@ -26,12 +26,45 @@ describe("Derive built-in Templates catalog", () => {
     const second = renderTemplate("narrative-pitch")
     expect(first).toEqual(second)
     expect(first?.source).toContain('data-derive-slide="0"')
+    expect(first?.source).toContain('class="stage"')
+    expect(first?.source).toContain('id="prev"')
+    expect(first?.source).toContain('id="next"')
+    expect(first?.source).toContain('source: "derive-deck"')
+    expect(first?.source.match(/^\s*<section class="slide" data-derive-slide=/gm)).toHaveLength(
+      first?.template.sections.length ?? 0,
+    )
     expect(first?.origin).toEqual({
       libraryId: BUILT_INS_LIBRARY_ID,
       templateId: "narrative-pitch",
       catalogVersion: TEMPLATE_CATALOG_VERSION,
     })
     expect(first?.message).toBe("Created from derive/built-ins/narrative-pitch catalog v1")
+  })
+
+  it("renders a supplied brief into built-in artifacts without exposing source bindings", () => {
+    const deck = renderTemplate("narrative-pitch", {
+      Audience: "Product and GTM leaders",
+      Objective: "Commit to the October launch plan",
+      Evidence: "24 design partners and $2.4M qualified pipeline",
+    })
+    expect(deck?.source).toContain("Product and GTM leaders")
+    expect(deck?.source).toContain("Commit to the October launch plan")
+    expect(deck?.source).toContain("24 design partners and $2.4M qualified pipeline")
+    expect(deck?.source).not.toContain("{{Audience}}")
+
+    const page = renderTemplate("launch-page", {
+      Offer: "Derive Templates",
+      Audience: "Teams shipping repeatable work",
+    })
+    expect(page?.source).toContain("Derive Templates")
+    expect(page?.source).toContain("Teams shipping repeatable work")
+
+    const doc = renderTemplate("decision-memo", {
+      Decision: "Ship the source-free adoption workbench",
+    })
+    expect(doc?.source).toContain(
+      "**Decision · required:** Ship the source-free adoption workbench",
+    )
   })
 
   it("keeps Context manifests portable and secret-free", () => {

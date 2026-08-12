@@ -70,6 +70,7 @@ export function registerPublishTool(tc: ToolContext): void {
     defaultOrg,
     defaultRole,
     reach,
+    inGrant,
     resolveWs,
     wsArg,
   } = tc
@@ -220,6 +221,15 @@ export function registerPublishTool(tc: ToolContext): void {
             "Add/overwrite `files` INTO the existing bundle instead of replacing it. Requires `short_id`.",
           ),
         message: z.string().optional(),
+        derived_from: z
+          .string()
+          .regex(
+            /^(?:[0-9a-z]{6,12}|derive:\/\/template-libraries\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)$/,
+          )
+          .optional()
+          .describe(
+            "NEW artifact only: preserve lineage to an artifact short id or the exact derive://template-libraries/<library>/<entry> URI you read. Omit on revisions and built-in templates.",
+          ),
         tags: z
           .array(z.string())
           .optional()
@@ -345,6 +355,7 @@ export function registerPublishTool(tc: ToolContext): void {
       spa,
       merge,
       message,
+      derived_from,
       tags,
       filename,
       for_review,
@@ -443,6 +454,8 @@ export function registerPublishTool(tc: ToolContext): void {
       if (reached && "error" in reached) return text(reached.error)
       const existing = reached && !("error" in reached) ? reached.a : null
       if (short_id && !existing) return text(`No artifact "${short_id}" you can reach.`)
+      if (short_id && derived_from)
+        return err("`derived_from` records creation lineage and cannot be added to a revision.")
       let targetOrg = defaultOrg
       let actRole = defaultRole
       if (existing && reached && !("error" in reached)) {
@@ -453,6 +466,41 @@ export function registerPublishTool(tc: ToolContext): void {
         if ("error" in t) return text(t.error)
         targetOrg = t.org
         actRole = t.role
+      }
+
+      // Creation lineage uses the same access rules as reading the starting
+      // point. Library entries are immutable snapshots, so the copy can outlive
+      // its source; the stored edge points to that source artifact when present.
+      let derivedFromId: string | null = null
+      if (derived_from?.startsWith("derive://template-libraries/")) {
+        const [libraryId = "", entryId = ""] = derived_from
+          .slice("derive://template-libraries/".length)
+          .split("/")
+        const [library, entry] = await Promise.all([
+          ctx.meta.getTemplateLibrary(libraryId),
+          ctx.meta.getTemplateLibraryEntry(entryId),
+        ])
+        if (!library || !entry || entry.library_id !== library.id)
+          return err(`No template starter "${derived_from}" you can reach.`)
+        const uid = actingFor?.id ?? ownerId
+        const member = uid ? await ctx.meta.getMembership(library.org_id, uid) : null
+        const readable =
+          library.scope === "public" ||
+          (!!uid &&
+            inGrant(library.org_id) &&
+            !!member &&
+            (library.scope === "workspace" || library.created_by === uid))
+        if (!readable) return err(`No template starter "${derived_from}" you can reach.`)
+        derivedFromId = entry.source_artifact_id
+      } else if (derived_from) {
+        const source = await reach(derived_from, workspace)
+        if (!source || "error" in source)
+          return err(
+            source && "error" in source
+              ? source.error
+              : `No source artifact "${derived_from}" you can reach.`,
+          )
+        derivedFromId = source.a.id
       }
 
       // `edits` / `slide_ops` — materialize the full new content up front, then fall
@@ -650,6 +698,7 @@ export function registerPublishTool(tc: ToolContext): void {
             workspaceAccess: resolvedWorkspaceAccess,
             linkRole: resolvedLinkRole,
             listed: resolvedListed,
+            derivedFrom: derivedFromId,
           },
           short_id,
         )
@@ -866,6 +915,7 @@ export function registerPublishTool(tc: ToolContext): void {
           workspace_access: artifact.workspace_access,
           link_role: artifact.link_role,
           listed: artifact.listed,
+          ...(artifact.derived_from ? { derived_from } : {}),
           ...(editsApplied ? { edits_applied: editsApplied } : {}),
           ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),

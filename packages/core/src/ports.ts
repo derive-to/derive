@@ -1651,7 +1651,6 @@ export interface ContextStore {
 export type TemplateLibraryScope = "private" | "workspace" | "public"
 export type TemplateEntryKind = "artifact" | "context"
 export type TemplateEntryFormat = "md" | "html"
-export type TemplateEntryThemeMode = "native" | "adaptable" | "fixed"
 
 export interface TemplateLibraryRecord {
   id: string
@@ -1684,7 +1683,6 @@ export interface TemplateLibraryEntryRecord {
   sections_json: string
   inputs_json: string
   tags_json: string
-  theme_mode: TemplateEntryThemeMode
   created_by: string
   created_at: string
 }
@@ -1714,7 +1712,6 @@ export interface NewTemplateLibraryEntry {
   sections_json: string
   inputs_json: string
   tags_json: string
-  theme_mode: TemplateEntryThemeMode
   created_by: string
 }
 
