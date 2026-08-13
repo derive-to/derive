@@ -58,7 +58,8 @@ export function capRole(role: Role | null, cap: Role): Role | null {
 export interface Actor {
   kind: "user" | "token" | "anon"
   userId?: string
-  /** Per-artifact role override (a share), if any. Beats the workspace role. */
+  /** Already-scoped per-artifact role. Request adapters remove workspace-bound
+   *  owner/seat grants before constructing an actor outside the active workspace. */
   artifactRole?: Role | null
   /** Baseline role from membership in the artifact's workspace, if any. */
   orgRole?: Role | null
@@ -75,7 +76,9 @@ export interface Actor {
  *
  *   access = max( explicit share , workspace seat , world link )
  *
- * EXPLICIT (`artifactRole`) — a per-artifact or collection share. Always counts.
+ * EXPLICIT (`artifactRole`) — an already-scoped per-artifact or collection grant.
+ * Portable collaborator shares always count; request adapters omit workspace-bound
+ * owner grants when the artifact's workspace is not active.
  *
  * WORKSPACE SEAT — when `workspaceAccess === "member"`, a signed-in member of the
  * ARTIFACT's workspace opens at their OWN seat role (`orgRole`): an editor edits,

@@ -5,9 +5,11 @@ import {
   decodeCursor,
   effectiveRole,
   encodeCursor,
+  maxRole,
   newId,
   normalizeSelector,
   parseSubject,
+  type Role,
   roleAllows,
   type SessionMessageRecord,
   type SessionRecord,
@@ -113,6 +115,15 @@ export const contextRoutes = (ctx: AppContext) => {
   /** How many past conversations the history picker offers. A picker, not an archive: far
    *  enough back to find last week's thread, short enough to stay one batched read. */
   const CHAT_HISTORY_PAGE = 50
+
+  // A document conversation carries artifact content in its transcript and can
+  // publish on a follow-up. Treat it like the document itself: a browser may use it
+  // only while that workspace is active. Plain workspace chats and packaged-context
+  // sessions keep their own explicit workspace/context gates.
+  const artifactSessionIsActive = async (c: Context, s: SessionRecord): Promise<boolean> => {
+    const subject = parseSubject(s.subject_ref)
+    return subject?.kind !== "artifact" || (await activeWorkspace(c)) === s.org_id
+  }
 
   /**
    * WHICH MODEL this conversation was last answered with, read off the transcript.
@@ -385,7 +396,7 @@ export const contextRoutes = (ctx: AppContext) => {
     agentId: string | null,
     /** What the caller asked for on THIS turn. `modelId` is the person's model pick; absent
      *  means "whatever this conversation was already using", then the deploy's default. */
-    opts?: { modelId?: string | null },
+    opts?: { modelId?: string | null; activeOrg?: string },
   ) => {
     const subject = parseSubject(s.subject_ref)
     // WHAT THIS LANE WILL SERVE, and what it must leave alone.
@@ -503,12 +514,19 @@ export const contextRoutes = (ctx: AppContext) => {
       // from the doc still holds the id, and without this they would keep reading the CURRENT
       // contents back and keep publishing to it. `canRead`/`canWrite` are resolved for the
       // asker, not for whoever opened the session.
-      const seat = await meta.getMembership(artifact.org_id, me.id)
+      const workspaceActive = opts?.activeOrg === artifact.org_id
+      const seat = workspaceActive ? await meta.getMembership(artifact.org_id, me.id) : null
+      const member = await meta.getArtifactMember(artifact.id, me.id)
+      const collectionRoles = await meta.collectionRolesForArtifact(artifact.id, me.id, {
+        includeWorkspaceSeats: workspaceActive,
+      })
+      const portable = (role: Role | null | undefined) =>
+        workspaceActive || role !== "owner" ? (role ?? null) : null
       const role = effectiveRole(
         {
           kind: "user",
           orgRole: seat?.role,
-          artifactRole: (await meta.getArtifactMember(artifact.id, me.id))?.role,
+          artifactRole: maxRole(portable(member?.role), ...collectionRoles.map(portable)),
         },
         artifact.workspace_access,
         artifact.link_role,
@@ -1647,7 +1665,12 @@ export const contextRoutes = (ctx: AppContext) => {
         // Ask-access to the CONTEXT is not read-access to the DOCUMENT. Re-check the
         // artifact separately, or a session becomes a way to read anything by naming it.
         const target = await meta.getByShortId(subject.id)
-        if (!target || target.current_version === 0 || !(await authorize(c, "read", target)))
+        if (
+          !target ||
+          target.current_version === 0 ||
+          target.org_id !== (await activeWorkspace(c)) ||
+          !(await authorize(c, "read", target))
+        )
           return bail(fail(c, 404, "not found"))
         // Publishing to it is a stronger grant than reading it, checked separately so a
         // reader cannot request `mode:"publish"` and have the gate be the only thing
@@ -1957,7 +1980,9 @@ export const contextRoutes = (ctx: AppContext) => {
       // in the transcript. On Node (and tests) it awaits inline, which is what keeps the suite
       // deterministic. The comments and the polling UI both describe THIS, and previously the
       // code did not do it.
-      await ctx.background(serveAttended(session, me, null))
+      await ctx.background(
+        serveAttended(session, me, null, { activeOrg: await activeWorkspace(c) }),
+      )
       return c.json({ session: sessionJson(session), messages: [messageJson(first)] }, 201)
     },
   )
@@ -2075,7 +2100,12 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       // Detached, exactly like the document lane: the transcript is what the surface follows,
       // so closing the tab mid-turn loses nothing.
-      await ctx.background(serveAttended(created.session, me, null, { modelId: b.model ?? null }))
+      await ctx.background(
+        serveAttended(created.session, me, null, {
+          modelId: b.model ?? null,
+          activeOrg: await activeWorkspace(c),
+        }),
+      )
       return c.json(
         { session: sessionJson(created.session), messages: [messageJson(created.message)] },
         201,
@@ -2347,10 +2377,12 @@ export const contextRoutes = (ctx: AppContext) => {
       // asker and nobody else — including a workspace owner, who has no standing here that
       // a context would otherwise have conferred. Without this branch every poll on a chat
       // session 404s and the reply never appears, which is exactly what dogfooding caught.
-      const mine = !!s && !s.context_id && s.asker_id === me.id
+      const active = !!s && (await artifactSessionIsActive(c, s))
+      const mine = active && !s.context_id && s.asker_id === me.id
       const allowed =
         mine ||
-        (!!s &&
+        (active &&
+          !!s &&
           !!linked &&
           (await canAskContext(c, linked.context)) &&
           (linked.context.created_by === me.id || s.asker_id === me.id))
@@ -2473,7 +2505,11 @@ export const contextRoutes = (ctx: AppContext) => {
       // not keep querying through it — canAskContext re-checks membership + policy.
       // Contextless: ownership IS the whole gate. With a context, re-check the ask grant
       // too, so someone removed from the roster cannot keep querying through an old session.
-      if (s.asker_id !== me.id || (linked && !(await canAskContext(c, linked.context))))
+      if (
+        !(await artifactSessionIsActive(c, s)) ||
+        s.asker_id !== me.id ||
+        (linked && !(await canAskContext(c, linked.context)))
+      )
         return bail(fail(c, 404, "not found"))
       // (Membership for the contextless CHAT lane is re-checked per turn inside serveAttended,
       // alongside the document ACL, so the refusal lands in the transcript with a reason rather
@@ -2543,7 +2579,10 @@ export const contextRoutes = (ctx: AppContext) => {
         if (!st?.chatBeta) return c.json({ message: messageJson(m) }, 201)
       }
       await ctx.background(
-        serveAttended(s, me, linked?.context.agent_id ?? null, { modelId: b.model ?? null }),
+        serveAttended(s, me, linked?.context.agent_id ?? null, {
+          modelId: b.model ?? null,
+          activeOrg: await activeWorkspace(c),
+        }),
       )
       return c.json({ message: messageJson(m) }, 201)
     },
@@ -2593,12 +2632,14 @@ export const contextRoutes = (ctx: AppContext) => {
       // asker's call alone — same carve-out the session read already makes. Without this,
       // Stop 404s on every workspace-chat turn (the ask, not just the poll, matters here):
       // a hung answer had no way to end early short of the ten-minute reaper.
-      const mine = !s.context_id && s.asker_id === me.id
+      const active = await artifactSessionIsActive(c, s)
+      const mine = active && !s.context_id && s.asker_id === me.id
       // Same membership floor as the session read: a removed asker/creator can't
       // touch the session at all (close included) once they're out of the workspace.
       const allowed =
         mine ||
-        (!!linked &&
+        (active &&
+          !!linked &&
           (await canAskContext(c, linked.context)) &&
           (linked.context.created_by === me.id || s.asker_id === me.id))
       if (!allowed) return bail(fail(c, 404, "not found"))

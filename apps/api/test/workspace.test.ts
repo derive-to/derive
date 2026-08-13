@@ -157,6 +157,67 @@ describe("workspace: edge conditions", () => {
   })
 })
 
+describe("workspace: ownership handoff", () => {
+  const admin: TestUser = {
+    id: "u_handoff_admin",
+    email: "handoff-admin@derive.test",
+    name: "Admin",
+  }
+  const leaver: TestUser = {
+    id: "u_handoff_leaver",
+    email: "handoff-leaver@derive.test",
+    name: "Leaver",
+  }
+  const { app, meta } = makeAuthedApp("ws-ownership-handoff", [admin, leaver], "editor")
+
+  it("does not remove the sole owner of workspace resources", async () => {
+    const published = await publishAs(
+      app,
+      "<h1>Private</h1>",
+      { title: "Private", workspace_access: "none", link_role: "none", listed: "none" },
+      as(leaver.email),
+    )
+    expect(published.status).toBe(201)
+    const artifact = (await published.json()) as { short_id: string }
+    const record = await meta.getByShortId(artifact.short_id)
+    expect(record).not.toBeNull()
+
+    const madeCollection = await app.request(
+      "/v1/collections",
+      jsonAs(as(leaver.email), { title: "Leaver's collection" }),
+    )
+    expect(madeCollection.status).toBe(201)
+    const collection = (await madeCollection.json()) as { id: string }
+
+    const blocked = await app.request(`/v1/workspace/members/${leaver.id}`, {
+      method: "DELETE",
+      headers: as(admin.email),
+    })
+    expect(blocked.status).toBe(409)
+    expect((await blocked.json()).error).toMatch(/another owner.*1 artifact.*1 collection/i)
+    expect(await meta.getMembership("default", leaver.id)).not.toBeNull()
+
+    await meta.setArtifactMember({
+      id: "am_handoff_admin",
+      artifact_id: record?.id ?? "",
+      user_id: admin.id,
+      role: "owner",
+    })
+    await meta.setCollectionMember({
+      id: "cm_handoff_admin",
+      collection_id: collection.id,
+      user_id: admin.id,
+      role: "owner",
+    })
+    const removed = await app.request(`/v1/workspace/members/${leaver.id}`, {
+      method: "DELETE",
+      headers: as(admin.email),
+    })
+    expect(removed.status).toBe(204)
+    expect(await meta.getMembership("default", leaver.id)).toBeNull()
+  })
+})
+
 describe("workspace: anonymous lockout + token mode", () => {
   it("a no-token instance still does NOT trust anonymous callers (can't manage)", async () => {
     const noTokenApp = createApp({

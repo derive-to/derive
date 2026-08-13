@@ -496,6 +496,7 @@ export class ApiError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly workspace?: { id: string; name: string; personal: boolean },
   ) {
     super(message)
   }
@@ -503,7 +504,13 @@ export class ApiError extends Error {
 const j = async (r: Response) => {
   if (!r.ok) {
     const body = await r.json().catch(() => ({}))
-    throw new ApiError(body.error ?? `HTTP ${r.status}`, r.status, body.code)
+    const workspace =
+      typeof body.workspace?.id === "string" &&
+      typeof body.workspace?.name === "string" &&
+      typeof body.workspace?.personal === "boolean"
+        ? body.workspace
+        : undefined
+    throw new ApiError(body.error ?? `HTTP ${r.status}`, r.status, body.code, workspace)
   }
   return r.json()
 }

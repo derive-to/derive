@@ -4,7 +4,7 @@ import { createInProcessBackplane } from "../src/bus"
 import { catalogOf } from "../src/lib/model-catalog"
 import { setInstanceSlot } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
-import { as, makeAuthedApp } from "./helpers"
+import { as, jsonAs, makeAuthedApp } from "./helpers"
 
 // CHAT, END TO END through the real routes: open a session on a document, send a message, and
 // the document changes. This is the attended path — no queue, no runner, no dispatch tick — so
@@ -221,6 +221,40 @@ describe("chatting with a document", () => {
     expect(fresh?.current_version).toBe(2)
   })
 
+  it("hides an artifact transcript and refuses follow-ups after switching workspaces", async () => {
+    const { app, meta, artifact } = await setup(
+      "chat-workspace-switch",
+      revision("# Should not publish"),
+    )
+    const opened = await app.request("/v1/artifacts/chat-session", {
+      method: "POST",
+      headers: { ...as("ed@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ short_id: artifact.short_id, body_md: "hello", mode: "publish" }),
+    })
+    expect(opened.status).toBe(201)
+    const { session } = (await opened.json()) as { session: { id: string } }
+    const before = (await meta.getByShortId(artifact.short_id))?.current_version
+
+    const switched = await app.request("/v1/workspaces", {
+      ...jsonAs(as("ed@x.com"), { name: "Elsewhere" }),
+      method: "POST",
+    })
+    expect(switched.status).toBe(201)
+    const cookie = (switched.headers.get("set-cookie") ?? "").match(/derive_ws=([^;]+)/)?.[1]
+    expect(cookie).toBeTruthy()
+    const elsewhere = { ...as("ed@x.com"), cookie: `derive_ws=${cookie}` }
+
+    expect((await app.request(`/v1/sessions/${session.id}`, { headers: elsewhere })).status).toBe(
+      404,
+    )
+    const followup = await app.request(`/v1/sessions/${session.id}/messages`, {
+      ...jsonAs(elsewhere, { body_md: "rewrite it now" }),
+      method: "POST",
+    })
+    expect(followup.status).toBe(404)
+    expect((await meta.getByShortId(artifact.short_id))?.current_version).toBe(before)
+  })
+
   it("answers a QUESTION without touching the document", async () => {
     const { app, meta, artifact, cx } = await setup("chat-ask", "It is one line long.")
     const { msgs } = await chat(
@@ -419,20 +453,17 @@ describe("access is re-checked on every turn, not just at session open", () => {
     await meta.removeMembership("default", "u-mo")
 
     const before = (await meta.getByShortId(short_id))?.current_version
-    await app.request(`/v1/sessions/${session.id}/messages`, {
+    const transcriptSize = (await meta.listSessionMessages(session.id)).length
+    const followup = await app.request(`/v1/sessions/${session.id}/messages`, {
       method: "POST",
       headers: { ...as("mo@x.com"), "content-type": "application/json" },
       body: JSON.stringify({ body_md: "rewrite the whole thing" }),
     })
-    for (let i = 0; i < 60; i++) {
-      const msgs = await meta.listSessionMessages(session.id)
-      if (msgs.some((m) => m.author_kind === "agent")) break
-      await new Promise((r) => setTimeout(r, 20))
-    }
-    // The document is untouched, and the transcript says why rather than going silent.
+    // Losing the workspace hides the transcript itself, so the follow-up cannot
+    // append either the person's prompt or a response containing document context.
+    expect(followup.status).toBe(404)
     expect((await meta.getByShortId(short_id))?.current_version).toBe(before)
-    const last = (await meta.listSessionMessages(session.id)).at(-1)
-    expect(last?.body_md ?? "").toMatch(/no longer have access|not found/i)
+    expect(await meta.listSessionMessages(session.id)).toHaveLength(transcriptSize)
   })
 })
 
@@ -581,21 +612,16 @@ describe("chat requires membership, not merely read access", () => {
 
     await meta.removeMembership("default", stranger.id)
     const before = (await meta.getByShortId(short_id))?.current_version
+    const transcriptSize = (await meta.listSessionMessages(session.id)).length
 
-    await app.request(`/v1/sessions/${session.id}/messages`, {
+    const followup = await app.request(`/v1/sessions/${session.id}/messages`, {
       method: "POST",
       headers: { ...as(stranger.email), "content-type": "application/json" },
       body: JSON.stringify({ body_md: "now rewrite the whole thing" }),
     })
-    for (let i = 0; i < 60; i++) {
-      const msgs = await meta.listSessionMessages(session.id)
-      if (msgs.filter((m) => m.author_kind === "agent").length > 1) break
-      await new Promise((r) => setTimeout(r, 20))
-    }
-    // The document is untouched, and the transcript says why rather than going silent.
+    expect(followup.status).toBe(404)
     expect((await meta.getByShortId(short_id))?.current_version).toBe(before)
-    const last = (await meta.listSessionMessages(session.id)).at(-1)
-    expect(last?.body_md ?? "").toMatch(/not a member/i)
+    expect(await meta.listSessionMessages(session.id)).toHaveLength(transcriptSize)
   })
 })
 

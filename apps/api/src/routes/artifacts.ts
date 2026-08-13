@@ -19,6 +19,7 @@ import {
   heavyAssetsAdvisory,
   isHtmlLike,
   isMarkdownBundle,
+  maxRole,
   missingBlobAdvisory,
   newId,
   newShortId,
@@ -279,8 +280,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // your active one — so scope the listing to the collection's org (gated by
       // access), or a direct/cold link to a collection in another workspace reads as
       // empty. Unknown collection ⇒ nothing.
-      let listOrg = await activeWorkspace(c)
+      const activeOrg = await activeWorkspace(c)
+      let listOrg = activeOrg
       let collectionAccess = false
+      let collectionGrant: Role | null = null
       // Carry the collection's title so the client can label the view even when the
       // collection lives in another workspace (it's absent from the local sidebar list).
       // Only for a caller who actually has access — otherwise the title (and the fact
@@ -297,7 +300,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         // seat, conditionally on the collection's OWN workspace_access — see context.ts):
         // plain isMember(org) would grant access to an Invited-only collection to every
         // workspace member, defeating the toggle entirely.
-        collectionAccess = (await collectionRole(c, col)) !== null
+        collectionGrant = await collectionRole(c, col)
+        collectionAccess = collectionGrant !== null
         if (collectionAccess) collectionInfo = { id: col.id, title: col.title }
       }
       // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
@@ -307,15 +311,19 @@ export const artifactRoutes = (ctx: AppContext) => {
 
       // The caller's baseline standing in the listing's workspace — reused for the
       // public-only clamp below and the per-row `my_role` (which needs the ROLE, so
-      // the boolean isMember helper doesn't fit). A user's standing is their
-      // membership row; an agent's is its registered role, valid only in its home
-      // workspace (the same scoping actorFor applies).
+      // the boolean isMember helper doesn't fit). Workspace seats only apply when
+      // this is also the active workspace. A portable collection share can make a
+      // foreign collection the listing scope, but must not bring that workspace's
+      // seat along with it (the same scoping actorFor applies).
       const isOperator = isToken(c)
-      const baselineRole = me
-        ? ((await membershipOf(c, listOrg, me.id))?.role ?? null)
-        : agent && agent.org_id === listOrg
-          ? agent.role
-          : null
+      const baselineRole =
+        listOrg !== activeOrg
+          ? null
+          : me
+            ? ((await membershipOf(c, listOrg, me.id))?.role ?? null)
+            : agent && agent.org_id === listOrg
+              ? agent.role
+              : null
       // A listing only shows non-public artifacts to a MEMBER of that workspace (or the
       // operator token). Anyone else — a non-member user, a foreign-workspace agent —
       // sees public artifacts only, so org/link titles never leak via the list or ?query=.
@@ -397,6 +405,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       const feedback = enrichment.signals
       const proposalCounts = enrichment.proposals
       const shareRoles = enrichment.shareRoles
+      const scopedShareRole = (artifact: ArtifactRecord): Role | null => {
+        const role = shareRoles[artifact.id] ?? null
+        return artifact.org_id === activeOrg || role !== "owner" ? role : null
+      }
       // Page-scoped and taken from the batch, for BOTH paths — including the favorites
       // feed, whose `favIds` above is a narrowing input, not the row decoration. One
       // source of truth means the star a row renders can't disagree with the star the
@@ -413,9 +425,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           favorite: favorites.has(a.id),
           has_preview: previews[a.id] === true,
           // Which actions the client may surface on the row (the card's quick-actions
-          // menu gates delete/tags on it). Workspace seat + per-artifact shares + the
-          // world-link floor; collection-share roles aren't folded in at list
-          // granularity, so the detail response's my_role stays authoritative.
+          // menu gates delete/tags on it). A collection-scoped listing has already
+          // resolved the caller's role on that collection, so fold the same grant into
+          // every item instead of rendering cards weaker than their detail pages.
           my_role: isOperator
             ? "owner"
             : effectiveRole(
@@ -425,9 +437,9 @@ export const artifactRoutes = (ctx: AppContext) => {
                       userId: memberKey,
                       artifactRole:
                         agent?.created_by != null
-                          ? capRole(shareRoles[a.id] ?? null, agent.role)
-                          : (shareRoles[a.id] ?? null),
-                      orgRole: a.org_id === listOrg ? baselineRole : null,
+                          ? capRole(maxRole(scopedShareRole(a), collectionGrant), agent.role)
+                          : maxRole(scopedShareRole(a), collectionGrant),
+                      orgRole: a.org_id === activeOrg ? baselineRole : null,
                     }
                   : { kind: "anon" },
                 a.workspace_access,
@@ -1378,6 +1390,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       // costs one round trip instead of two. Optional, like `artifactGrants` beneath it:
       // a store without it takes the read-by-read path unchanged.
       const viewer = await currentUser(c)
+      // Active-workspace validation is another independent read. Start it beside the
+      // artifact query so workspace-scoped authorization does not put a new serial trip
+      // on the document-open critical path. activeWorkspace memoizes this promise, so
+      // actorFor below consumes the same result rather than starting it again.
+      const activeOrg = viewer ? activeWorkspace(c) : Promise.resolve<string | null>(null)
       const combined =
         viewer && meta.artifactWithGrants
           ? await meta.artifactWithGrants(shortId, viewer.id)
@@ -1397,16 +1414,62 @@ export const artifactRoutes = (ctx: AppContext) => {
         c,
         artifact,
         combined && viewer
-          ? { userId: viewer.id, orgRole: combined.orgRole, artifactRoles: combined.artifactRoles }
+          ? {
+              userId: viewer.id,
+              orgRole: combined.orgRole,
+              artifactRoles: combined.artifactRoles,
+              portableArtifactRoles: combined.portableArtifactRoles,
+            }
           : undefined,
       )
-      if (!can(actor, "read", artifact.workspace_access, artifact.link_role))
+      if (!can(actor, "read", artifact.workspace_access, artifact.link_role)) {
+        // A workspace mismatch is recoverable without weakening the boundary. Tell
+        // a signed-in member where to switch only when their full standing would
+        // actually read the artifact there. The response carries no artifact data;
+        // strangers and members without artifact access keep the indistinguishable
+        // 404 below.
+        const resolvedActiveOrg = await activeOrg
+        const destinationSeat =
+          viewer && resolvedActiveOrg !== artifact.org_id
+            ? await membershipOf(c, artifact.org_id, viewer.id)
+            : null
+        const readableInDestination =
+          viewer && destinationSeat
+            ? combined
+              ? can(
+                  {
+                    kind: "user",
+                    userId: viewer.id,
+                    artifactRole: maxRole(null, ...combined.artifactRoles),
+                    orgRole: combined.orgRole,
+                  },
+                  "read",
+                  artifact.workspace_access,
+                  "none",
+                )
+              : await authorizeUserStanding(viewer.id, "read", artifact)
+            : false
+        if (viewer && readableInDestination) {
+          const workspace = await meta.getWorkspace(artifact.org_id)
+          if (workspace)
+            return bail(
+              fail(c, 409, "Switch workspaces to view this artifact.", {
+                code: "workspace_mismatch",
+                workspace: {
+                  id: workspace.id,
+                  name: workspace.name,
+                  personal: workspace.id === `ws_p_${viewer.id}`,
+                },
+              }),
+            )
+        }
         // A locked artifact isn't hidden, it's lockable: tell the client to prompt for
         // the password (401) rather than claim it doesn't exist (404). A lock only ever
         // sits on a world link, so a stored hash means the world-link path is gated.
         return bail(
           artifact.password_hash ? fail(c, 401, "password required") : fail(c, 404, "not found"),
         )
+      }
       // Taken down: serve a minimal tombstone, not the full record. A takedown is a
       // moderation action and the title is often the very thing being removed
       // (harassment/doxxing), so drop title, author, the slug in the URL, and the
@@ -1491,18 +1554,29 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Anonymous link readers can never see a row (no role, no standing) — skip the
       // lookups entirely on that hot path.
       if (collections.length > 0 && (me !== null || isToken(c) || canManageArtifact)) {
-        const [colRecords, rolesById] = await Promise.all([
-          meta.getCollections(collections),
-          me
+        const workspaceActive = isToken(c) || (await activeWorkspace(c)) === artifact.org_id
+        const roles = me
+          ? workspaceActive
             ? meta.collectionRolesForUser(collections, me)
-            : Promise.resolve<Record<string, Role>>({}),
-        ])
-        // Fold in the two sources the batched query can't know (mirrors collectionRole).
+            : meta
+                .collectionRolesForUser(collections, me, { includeWorkspaceSeats: false })
+                .then((byId) =>
+                  Object.fromEntries(Object.entries(byId).filter(([, role]) => role !== "owner")),
+                )
+          : Promise.resolve<Record<string, Role>>({})
+        const [colRecords, rolesById] = await Promise.all([meta.getCollections(collections), roles])
+        // Fold in creator ownership only in the collection's active workspace. On a
+        // portable artifact open, the role map above likewise contains only explicit
+        // non-owner collection shares — never a foreign workspace seat.
         const roleOf = (col: (typeof colRecords)[number]): Role | null =>
-          isToken(c) ? "owner" : col.created_by === me ? "owner" : (rolesById[col.id] ?? null)
+          isToken(c)
+            ? "owner"
+            : workspaceActive && col.created_by === me
+              ? "owner"
+              : (rolesById[col.id] ?? null)
         const visible = colRecords
           .map((col) => ({ col, role: roleOf(col) }))
-          .filter(({ role }) => role !== null || canManageArtifact)
+          .filter(({ role }) => role !== null || (workspaceActive && canManageArtifact))
         const [memberCounts, creatorNames] = await Promise.all([
           meta.collectionMemberCounts(visible.map(({ col }) => col.id)),
           resolveUserBylines(meta, [...new Set(visible.map(({ col }) => col.created_by))]),

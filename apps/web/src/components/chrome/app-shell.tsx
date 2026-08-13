@@ -140,6 +140,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (id === workspaces?.active) return
     try {
       await api.switchWorkspace(id)
+      // Reload in place. If this is a private artifact from another workspace,
+      // its detail request returns only a workspace-switch hint (never content),
+      // so the page can offer a one-click return instead of dumping the person in
+      // the library with no explanation.
       reloadAfterWorkspaceChange()
     } catch {
       /* surfaced elsewhere */

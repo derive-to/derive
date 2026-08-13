@@ -584,6 +584,10 @@ export const collectionRoutes = (ctx: AppContext) => {
       // their role isn't a member row anyone can rewrite — reject demoting them.
       if (user.id === col.created_by)
         return bail(fail(c, 409, "the collection owner's role can't be changed"))
+      // Like artifact ownership, collection ownership is authority inside this
+      // workspace. Portable cross-workspace shares stop at editor.
+      if (b.role === "owner" && !(await meta.getMembership(col.org_id, user.id)))
+        return bail(fail(c, 400, "a collection owner must belong to its workspace"))
       await meta.setCollectionMember({
         id: newId("cm"),
         collection_id: col.id,

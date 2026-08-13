@@ -930,13 +930,21 @@ export interface WorkspaceStore {
   countMemberships(orgId: string): Promise<number>
   /** Insert or update a member's workspace role. */
   setMembership(m: NewMembership): Promise<MembershipRecord>
+  /** Owned resources that would have no remaining workspace member able to
+   *  own them if this membership were removed. Used to make offboarding fail safe
+   *  instead of silently marooning workspace-bound ownership. */
+  workspaceOwnershipBlockers(
+    orgId: string,
+    userId: string,
+  ): Promise<{ artifacts: number; collections: number }>
   /** Remove a member from the workspace. */
   removeMembership(orgId: string, userId: string): Promise<void>
 
   getArtifactMember(artifactId: string, userId: string): Promise<ArtifactMemberRecord | null>
   listArtifactMembers(artifactId: string): Promise<ArtifactMemberRecord[]>
-  /** Artifact ids explicitly shared with a user (they hold a per-artifact
-   *  membership) — the "Shared with you" set; can span workspaces. */
+  /** Artifact ids explicitly shared with a user at a portable collaborator role
+   *  (viewer/commenter/editor) — the "Shared with you" set; can span workspaces.
+   *  Owner rows are workspace-bound ownership, not shares, and are excluded. */
   artifactIdsSharedWith(userId: string): Promise<string[]>
   /** Insert or update a per-artifact role override (a share). */
   setArtifactMember(m: NewArtifactMember): Promise<ArtifactMemberRecord>
@@ -1043,17 +1051,28 @@ export interface CollectionStore {
    *  ids with no member rows are absent from the map. Empty ids ⇒ {}. Drives the
    *  share dialog's collection-disclosure rows ("n collection members"). */
   collectionMemberCounts(collectionIds: string[]): Promise<Record<string, number>>
-  /** One user's role per collection over a set of collections, in TWO queries
-   *  (explicit member rows + the workspace seat on workspace-open collections,
-   *  higher wins) — the batched face of context.ts's collectionRole for the
-   *  artifact detail's disclosure rows. The caller still folds in created_by
-   *  (permanent owner) and the static token. Ids with no role are absent. */
-  collectionRolesForUser(collectionIds: string[], userId: string): Promise<Record<string, Role>>
+  /** One user's role per collection over a set of collections (explicit member rows
+   *  + the workspace seat on workspace-open collections, higher wins) — the batched
+   *  face of context.ts's collectionRole for artifact disclosure rows. Set
+   *  `includeWorkspaceSeats` false outside the active workspace. The caller still
+   *  folds in created_by (workspace-bound owner) and the static token. Ids with no
+   *  role are absent. */
+  collectionRolesForUser(
+    collectionIds: string[],
+    userId: string,
+    opts?: { includeWorkspaceSeats?: boolean },
+  ): Promise<Record<string, Role>>
   setCollectionMember(m: NewCollectionMember): Promise<CollectionMemberRecord>
   removeCollectionMember(collectionId: string, userId: string): Promise<void>
-  /** This user's collection-member roles over collections containing the
-   *  artifact — folded into their effective artifact role (collection sharing). */
-  collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]>
+  /** This user's collection roles over collections containing the artifact — folded
+   *  into their effective artifact role. Set `includeWorkspaceSeats` false when the
+   *  artifact's workspace is not active: only portable explicit collection shares
+   *  are returned; workspace-open collection seats are workspace-bound. */
+  collectionRolesForArtifact(
+    artifactId: string,
+    userId: string,
+    opts?: { includeWorkspaceSeats?: boolean },
+  ): Promise<Role[]>
 
   /**
    * OPTIONAL FAST PATH: every grant one user holds over one artifact, in ONE round trip.
@@ -1071,14 +1090,15 @@ export interface CollectionStore {
    *
    * It never changes the ANSWER. `can()` remains the only place a decision is made; this only
    * changes how its inputs arrive. Returns exactly what the four calls would: the org role (null
-   * when not a member) and every artifact-level role — explicit and collection-derived —
-   * unreduced, so the caller folds them with maxRole as before.
+   * when not a member), every artifact-level role, and the portable subset (explicit non-owner
+   * artifact/collection shares, with seats and owners removed). Both role arrays are unreduced,
+   * so the caller folds them with maxRole as before.
    */
   artifactGrants?(
     artifactId: string,
     orgId: string,
     userId: string,
-  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }>
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[]; portableArtifactRoles: Role[] }>
 
   /**
    * `getByShortId` + `artifactGrants`, keyed on the SHORT ID, in one statement.
@@ -1155,7 +1175,12 @@ export interface CollectionStore {
   artifactWithGrants?(
     shortId: string,
     userId: string,
-  ): Promise<{ artifact: ArtifactRecord; orgRole: Role | null; artifactRoles: Role[] } | null>
+  ): Promise<{
+    artifact: ArtifactRecord
+    orgRole: Role | null
+    artifactRoles: Role[]
+    portableArtifactRoles: Role[]
+  } | null>
 
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>

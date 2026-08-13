@@ -2176,6 +2176,68 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return one(rows)
   }
+  async workspaceOwnershipBlockers(
+    orgId: string,
+    userId: string,
+  ): Promise<{ artifacts: number; collections: number }> {
+    const res = await this.db.execute(sql`
+      select 'artifacts' as kind, count(*) as n
+        from artifact a
+        join artifact_member mine
+          on mine.artifact_id = a.id
+         and mine.user_id = ${userId}
+         and mine.role = 'owner'
+       where a.org_id = ${orgId}
+         and not exists (
+           select 1
+             from artifact_member other
+             join membership active
+               on active.org_id = a.org_id
+              and active.user_id = other.user_id
+            where other.artifact_id = a.id
+              and other.user_id <> ${userId}
+              and other.role = 'owner'
+         )
+      union all
+      select 'collections', count(*)
+        from collection c
+       where c.org_id = ${orgId}
+         and (
+           c.created_by = ${userId}
+           or exists (
+             select 1 from collection_member mine
+              where mine.collection_id = c.id
+                and mine.user_id = ${userId}
+                and mine.role = 'owner'
+           )
+         )
+         and not exists (
+           select 1
+             from membership active
+            where active.org_id = c.org_id
+              and active.user_id <> ${userId}
+              and (
+                active.user_id = c.created_by
+                or exists (
+                  select 1 from collection_member other
+                   where other.collection_id = c.id
+                     and other.user_id = active.user_id
+                     and other.role = 'owner'
+                )
+              )
+         )
+    `)
+    const rows =
+      (
+        res as unknown as {
+          rows?: { kind: "artifacts" | "collections"; n: string | number }[]
+        }
+      ).rows ?? []
+    return {
+      artifacts: Number(rows.find((row) => row.kind === "artifacts")?.n ?? 0),
+      collections: Number(rows.find((row) => row.kind === "collections")?.n ?? 0),
+    }
+  }
   async removeMembership(orgId: string, userId: string): Promise<void> {
     await this.db
       .delete(membership)
@@ -2285,17 +2347,19 @@ export class PgMetaStore implements MetaStore {
     artifactId: string,
     orgId: string,
     userId: string,
-  ): Promise<{ orgRole: Role | null; artifactRoles: Role[] }> {
+  ): Promise<{ orgRole: Role | null; artifactRoles: Role[]; portableArtifactRoles: Role[] }> {
     const res = await this.db.execute(sql`
       select 'org' as kind, m.role as role
         from membership m
        where m.org_id = ${orgId} and m.user_id = ${userId}
       union all
-      select 'artifact' as kind, am.role as role
+      select case when am.role = 'owner' then 'artifact' else 'portable' end as kind,
+             am.role as role
         from artifact_member am
        where am.artifact_id = ${artifactId} and am.user_id = ${userId}
       union all
-      select 'artifact' as kind, cm.role as role
+      select case when cm.role = 'owner' then 'artifact' else 'portable' end as kind,
+             cm.role as role
         from collection_member cm
         join collection_item ci on ci.collection_id = cm.collection_id
        where ci.artifact_id = ${artifactId} and cm.user_id = ${userId}
@@ -2311,11 +2375,15 @@ export class PgMetaStore implements MetaStore {
     const rows = (res as unknown as { rows?: { kind: string; role: Role }[] }).rows ?? []
     let orgRole: Role | null = null
     const artifactRoles: Role[] = []
+    const portableArtifactRoles: Role[] = []
     for (const r of rows) {
       if (r.kind === "org") orgRole = r.role
-      else artifactRoles.push(r.role)
+      else {
+        artifactRoles.push(r.role)
+        if (r.kind === "portable") portableArtifactRoles.push(r.role)
+      }
     }
-    return { orgRole, artifactRoles }
+    return { orgRole, artifactRoles, portableArtifactRoles }
   }
   // `getByShortId` + `artifactGrants` as ONE statement — see the port doc. The artifact
   // resolves in a CTE and every grant arm joins to it, so the caller's standing comes back
@@ -2325,7 +2393,12 @@ export class PgMetaStore implements MetaStore {
   async artifactWithGrants(
     shortId: string,
     userId: string,
-  ): Promise<{ artifact: ArtifactRecord; orgRole: Role | null; artifactRoles: Role[] } | null> {
+  ): Promise<{
+    artifact: ArtifactRecord
+    orgRole: Role | null
+    artifactRoles: Role[]
+    portableArtifactRoles: Role[]
+  } | null> {
     const res = await this.db.execute(sql`
       with a as (select * from artifact where short_id = ${shortId})
       select 'artifact' as kind, to_jsonb(a) as doc from a
@@ -2333,10 +2406,10 @@ export class PgMetaStore implements MetaStore {
       select 'org', to_jsonb(m.role)
         from a join membership m on m.org_id = a.org_id and m.user_id = ${userId}
       union all
-      select 'grant', to_jsonb(am.role)
+      select case when am.role = 'owner' then 'grant' else 'portable' end, to_jsonb(am.role)
         from a join artifact_member am on am.artifact_id = a.id and am.user_id = ${userId}
       union all
-      select 'grant', to_jsonb(cm.role)
+      select case when cm.role = 'owner' then 'grant' else 'portable' end, to_jsonb(cm.role)
         from a
         join collection_item ci on ci.artifact_id = a.id
         join collection_member cm on cm.collection_id = ci.collection_id and cm.user_id = ${userId}
@@ -2351,14 +2424,18 @@ export class PgMetaStore implements MetaStore {
     let record: ArtifactRecord | null = null
     let orgRole: Role | null = null
     const artifactRoles: Role[] = []
+    const portableArtifactRoles: Role[] = []
     for (const r of rows) {
       if (r.kind === "artifact") record = r.doc as ArtifactRecord
       else if (r.kind === "org") orgRole = r.doc as Role
-      else artifactRoles.push(r.doc as Role)
+      else {
+        artifactRoles.push(r.doc as Role)
+        if (r.kind === "portable") portableArtifactRoles.push(r.doc as Role)
+      }
     }
     // No artifact row means no such short id — and then no grant arm could have matched
     // either, since every one of them joins through it.
-    return record ? { artifact: record, orgRole, artifactRoles } : null
+    return record ? { artifact: record, orgRole, artifactRoles, portableArtifactRoles } : null
   }
   async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
     if (artifactIds.length === 0) return {}
@@ -2370,10 +2447,10 @@ export class PgMetaStore implements MetaStore {
       )
     return Object.fromEntries(rows.map((r) => [r.artifact_id, r.role]))
   }
-  // Artifacts explicitly shared with a user (per-artifact membership) — can span
-  // workspaces; drives the home's "Shared with you" section. Excludes what they
-  // authored: the creator's own owner-member row (written at publish) is
-  // ownership, not a share (see repos.ts).
+  // Artifacts explicitly shared with a user at a portable collaborator role — can
+  // span workspaces and drive the home's "Shared with you" section. Owner rows are
+  // workspace-bound ownership, not shares. The author check additionally protects
+  // historical creator rows (see repos.ts).
   async artifactIdsSharedWith(userId: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifactMember.artifact_id })
@@ -2382,6 +2459,7 @@ export class PgMetaStore implements MetaStore {
       .where(
         and(
           eq(artifactMember.user_id, userId),
+          ne(artifactMember.role, "owner"),
           or(isNull(artifact.author_id), ne(artifact.author_id, userId)),
         ),
       )
@@ -3052,7 +3130,11 @@ export class PgMetaStore implements MetaStore {
         and(eq(collectionMember.collection_id, collectionId), eq(collectionMember.user_id, userId)),
       )
   }
-  async collectionRolesForArtifact(artifactId: string, userId: string): Promise<Role[]> {
+  async collectionRolesForArtifact(
+    artifactId: string,
+    userId: string,
+    opts?: { includeWorkspaceSeats?: boolean },
+  ): Promise<Role[]> {
     // Explicit collectionMember rows on any collection holding this artifact.
     const explicit = await this.db
       .select({ role: collectionMember.role })
@@ -3063,32 +3145,49 @@ export class PgMetaStore implements MetaStore {
     // inside it — "Everyone in the workspace opens this at their role" (the Share
     // dialog's promise; see access-model.md). Join the artifact's collections to the
     // viewer's membership in each collection's org, keeping only workspace-open ones.
-    const seat = await this.db
-      .select({ role: membership.role })
-      .from(collectionItem)
-      .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
-      .innerJoin(membership, eq(membership.org_id, collection.org_id))
-      .where(
-        and(
-          eq(collectionItem.artifact_id, artifactId),
-          eq(collection.workspace_access, "member"),
-          eq(membership.user_id, userId),
-        ),
-      )
+    const seat =
+      opts?.includeWorkspaceSeats === false
+        ? []
+        : await this.db
+            .select({ role: membership.role })
+            .from(collectionItem)
+            .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
+            .innerJoin(membership, eq(membership.org_id, collection.org_id))
+            .where(
+              and(
+                eq(collectionItem.artifact_id, artifactId),
+                eq(collection.workspace_access, "member"),
+                eq(membership.user_id, userId),
+              ),
+            )
     return [...explicit, ...seat].map((r) => r.role)
   }
   async collectionRolesForUser(
     collectionIds: string[],
     userId: string,
+    opts?: { includeWorkspaceSeats?: boolean },
   ): Promise<Record<string, Role>> {
     if (collectionIds.length === 0) return {}
     // Same two sources as collectionRolesForArtifact, keyed per collection: the user's
     // explicit member rows, and their SEAT on each workspace-open collection — a UNION ALL
     // instead of two sequential awaits, since both are scoped to the same collectionIds.
-    const { rows } = await this.pool.query<{ id: string; role: Role }>(
-      collectionRolesSql("SELECT unnest($1::text[])", "$2"),
-      [collectionIds, userId],
-    )
+    const rows =
+      opts?.includeWorkspaceSeats === false
+        ? await this.db
+            .select({ id: collectionMember.collection_id, role: collectionMember.role })
+            .from(collectionMember)
+            .where(
+              and(
+                inArray(collectionMember.collection_id, collectionIds),
+                eq(collectionMember.user_id, userId),
+              ),
+            )
+        : (
+            await this.pool.query<{ id: string; role: Role }>(
+              collectionRolesSql("SELECT unnest($1::text[])", "$2"),
+              [collectionIds, userId],
+            )
+          ).rows
     const out: Record<string, Role> = {}
     for (const r of rows) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
