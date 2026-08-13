@@ -58,6 +58,7 @@ describe("scaffold", () => {
         ".codex/config.toml",
         ".mcp.json",
         "AGENTS.md",
+        "CLAUDE.md",
         "derive.json",
         "derive.schema.json",
         "index.md",
@@ -80,6 +81,11 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, ".codex/config.toml"), "utf8")).toContain(
       'url = "https://derive.to/mcp"',
     )
+    for (const file of ["AGENTS.md", "CLAUDE.md"]) {
+      const instructions = readFileSync(join(d, file), "utf8")
+      expect(instructions).toContain("<!-- derive:artifact-first:start -->")
+      expect(instructions).toContain("reviewable Derive artifact")
+    }
     const codexSkill = readFileSync(join(d, ".agents/skills/derive/SKILL.md"), "utf8")
     const claudeSkill = readFileSync(join(d, ".claude/skills/derive/SKILL.md"), "utf8")
     expect(codexSkill).toBe(claudeSkill)
@@ -116,6 +122,43 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, ".mcp.json"), "utf8")).toBe('{"mine":true}\n')
   })
 
+  it("adds an idempotent managed preference to existing agent instruction files", () => {
+    const d = tmp()
+    writeFileSync(join(d, "AGENTS.md"), "# Existing agent rules\n\nKeep this.\n")
+    writeFileSync(join(d, "CLAUDE.md"), "# Existing Claude rules\n\nKeep this too.")
+
+    const first = scaffoldAgent(d)
+    expect(first.updated).toEqual(expect.arrayContaining(["AGENTS.md", "CLAUDE.md"]))
+    expect(readFileSync(join(d, "AGENTS.md"), "utf8")).toMatch(
+      /^# Existing agent rules\n\nKeep this\.\n\n<!-- derive:artifact-first:start -->/,
+    )
+    expect(readFileSync(join(d, "CLAUDE.md"), "utf8")).toMatch(
+      /^# Existing Claude rules\n\nKeep this too\.\n\n<!-- derive:artifact-first:start -->/,
+    )
+
+    const second = scaffoldAgent(d)
+    expect(second.skipped).toEqual(expect.arrayContaining(["AGENTS.md", "CLAUDE.md"]))
+    expect(
+      readFileSync(join(d, "AGENTS.md"), "utf8").match(/derive:artifact-first:start/g),
+    ).toHaveLength(1)
+  })
+
+  it("refreshes only Derive's marked instruction block with --update", () => {
+    const d = tmp()
+    scaffoldAgent(d)
+    const path = join(d, "AGENTS.md")
+    writeFileSync(path, readFileSync(path, "utf8").replace("Artifact-first handoff", "Old policy"))
+
+    const kept = scaffoldAgent(d)
+    expect(kept.outdated).toContain("AGENTS.md")
+    expect(readFileSync(path, "utf8")).toContain("## Old policy")
+
+    const refreshed = scaffoldAgent(d, { update: true })
+    expect(refreshed.updated).toContain("AGENTS.md")
+    expect(readFileSync(path, "utf8")).toContain("## Artifact-first handoff")
+    expect(readFileSync(path, "utf8")).not.toContain("## Old policy")
+  })
+
   it("html template uses index.html as the entry", () => {
     const d = tmp()
     scaffold(d, "Page", "html")
@@ -149,6 +192,18 @@ describe("scaffold", () => {
     expect(skipped).toContain(CONFIG_FILE)
     expect(created).not.toContain(CONFIG_FILE)
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).id).toBe("keep")
+  })
+
+  it("derive init adds the managed preference to existing instruction files", () => {
+    const d = tmp()
+    writeFileSync(join(d, "AGENTS.md"), "# My rules\n")
+    const { updated, created } = scaffold(d, "X", "md")
+    expect(updated).toContain("AGENTS.md")
+    expect(created).toContain("CLAUDE.md")
+    expect(readFileSync(join(d, "AGENTS.md"), "utf8")).toContain("# My rules")
+    expect(readFileSync(join(d, "AGENTS.md"), "utf8")).toContain(
+      "<!-- derive:artifact-first:start -->",
+    )
   })
 
   it("site template scaffolds a multi-file bundle with a directory entry", () => {

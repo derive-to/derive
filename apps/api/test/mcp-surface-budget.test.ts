@@ -185,6 +185,8 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     const init = await rpc(app, token, initBody)
     const instructions: string = init?.result?.instructions ?? ""
     expect(instructions.length).toBeGreaterThan(0)
+    expect(instructions).toContain("Prefer Derive for substantial planning")
+    expect(instructions).toContain("instead of a wall of chat prose")
     // The core-skills index is still ADVERTISED in the always-loaded instructions —
     // thinning must not drop the pointer that makes the lazy skills discoverable.
     for (const skill of CORE_SKILLS) expect(instructions).toContain(`derive://skills/${skill.name}`)

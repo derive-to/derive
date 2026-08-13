@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and run the review loop against a Derive server.
 //   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+//   derive onboard [dir] [--update]       add/update artifact-first instructions + agent setup
 //   derive agent setup [dir] [--update]   install/update Codex/Claude skills + MCP config
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
 //                                          OAuth sign-in; discovers every workspace
@@ -160,7 +161,7 @@ if (cmd === "init") {
   for (const f of created) console.log(`  + ${f}`)
   for (const f of skipped) console.log(`  · ${f} (exists, kept)`)
   // The starter the user should open next — not the config/convention files.
-  const meta = [CONFIG_FILE, "derive.schema.json", "AGENTS.md", ".gitignore"]
+  const meta = [CONFIG_FILE, "derive.schema.json", "AGENTS.md", "CLAUDE.md", ".gitignore"]
   const entry = created.find((f) => !meta.includes(f) && !f.startsWith(".")) ?? "the entry"
   const next = template === "context" ? "derive context push" : "derive publish"
   console.log(
@@ -171,8 +172,8 @@ if (cmd === "init") {
   process.exit(0)
 }
 
-if (cmd === "agent" && positional[0] === "setup") {
-  const dir = positional[1] ?? "."
+if (cmd === "onboard" || (cmd === "agent" && positional[0] === "setup")) {
+  const dir = cmd === "onboard" ? (positional[0] ?? ".") : (positional[1] ?? ".")
   const { created, updated, outdated, skipped } = scaffoldAgent(dir, {
     update: flags.update === "true",
   })
@@ -182,7 +183,7 @@ if (cmd === "agent" && positional[0] === "setup") {
   for (const f of skipped) console.log(`  · ${f} (exists, kept)`)
   if (outdated.length)
     console.log(
-      "\nA newer or different packaged Derive skill is available. Run `derive agent setup --update` to replace only Derive skill files; MCP configs remain untouched.",
+      "\nA managed Derive instruction or packaged skill differs. Run `derive onboard --update` to refresh only Derive-owned blocks and skill files; project prose and MCP configs remain untouched.",
     )
   const keptConfigs = skipped.filter(
     (file) => file === ".mcp.json" || file === ".codex/config.toml",
@@ -193,7 +194,7 @@ if (cmd === "agent" && positional[0] === "setup") {
     )
   console.log(
     created.length || updated.length
-      ? "\nAgent on-ramp installed. Restart your agent, trust the project MCP config, and complete OAuth when prompted."
+      ? "\nDerive onboarding installed. Restart your agent, trust the project MCP config, and complete OAuth when prompted."
       : outdated.length
         ? "\nAgent on-ramp is present; update available."
         : "\nNothing to do — the agent on-ramp is already current.",
@@ -1428,7 +1429,8 @@ if (cmd === "brandprint") {
 if (cmd !== "publish") {
   console.error(`usage:
   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
-  derive agent setup [dir] [--update]     install skills + remote MCP config; update replaces skill files only
+  derive onboard [dir] [--update]         prefer Derive in AGENTS.md + CLAUDE.md; install skills + MCP config
+  derive agent setup [dir] [--update]     compatibility alias for derive onboard
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
                                             OAuth sign-in (defaults to https://derive.to);
                                             discovers every workspace you belong to;
@@ -1516,6 +1518,20 @@ let savedId = false
 if (!p.id && config && json.short_id) {
   writeId(".", json.short_id)
   savedId = true
+}
+
+// A successful project-scoped publish is the other onboarding entry point: older
+// projects may predate `derive init`'s agent package. The installer is idempotent,
+// preserves project prose/config, and only appends Derive's marked preference block.
+if (config) {
+  const onboarded = scaffoldAgent(".")
+  const changed = [...onboarded.created, ...onboarded.updated]
+  if (changed.length)
+    console.error(
+      `  + Derive agent onboarding (${changed.length} files); restart the agent to load it`,
+    )
+  if (onboarded.outdated.length)
+    console.error("  ! Derive agent files differ; run `derive onboard --update` to refresh them")
 }
 
 // `--json`: print the server response only, for scripts + CI (the GitHub Action
