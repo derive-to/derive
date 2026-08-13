@@ -104,9 +104,25 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // params, worked examples and edge-case history go to the skill body, which is fetched only
 // by a session that needs it, or to the tool's own RESPONSE, which teaches at the moment of
 // use and costs nothing to sessions that never call it.
-const TOOL_DESCRIPTIONS_BUDGET = 3_200
+const TOOL_DESCRIPTIONS_BUDGET = 3_650
 const PARAM_DESCRIPTIONS_BUDGET = 8_000
-const SURFACE_BUDGET = 11_000
+// RAISED 11000 -> 11450, and tool descriptions 3200 -> 3650 (2026-08-12), to split read
+// from write: `organize` became browse_library + organize + shelve, `automate` became
+// list_automations + automate. Measured 3571 + 7636 = 11207. Three more tools for +532
+// description chars — roughly 130 tokens on a surface already costing ~2.6k — and the
+// param budget absorbed the duplicated `workspace`/`short_ids` text without moving.
+//
+// This is the first raise that BUYS something rather than paying for new capability. The
+// thin-tools rule holds — every tool costs the agent a slot to choose between — but a tool
+// that switched behaviour on which arguments arrived cost a slot too, and charged the user
+// an approval prompt to read a tag vocabulary, because a tool containing a permanent
+// delete has to declare itself destructive. Read-only tools auto-approve; mode-switching
+// ones cannot. So this spends characters to buy back prompts and honest annotations, and
+// MCP directory review requires the same split independently.
+//
+// Keeping the ~2% headroom the earlier raises settled on. The next addition still has to
+// argue for its characters, and should reclaim before it asks.
+const SURFACE_BUDGET = 11_450
 const INSTRUCTIONS_BUDGET = 2_400
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,

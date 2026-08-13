@@ -64,7 +64,7 @@ describe("organize state — retire an artifact and put it back", () => {
     const art = await meta.getByShortId(pub.short_id)
     if (!art) throw new Error("artifact missing")
 
-    const gone = await call(app, token, "organize", {
+    const gone = await call(app, token, "shelve", {
       short_ids: [pub.short_id],
       state: "removed",
     })
@@ -76,11 +76,11 @@ describe("organize state — retire an artifact and put it back", () => {
 
     // The way back is handed over at the moment it might be wanted, as a runnable call.
     expect(gone.state.undo).toMatchObject({
-      tool: "organize",
+      tool: "shelve",
       arguments: { short_ids: [pub.short_id], state: "live" },
     })
 
-    const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    const back = await call(app, token, "shelve", { short_ids: [pub.short_id], state: "live" })
     expect(back.state.changed).toBe(1)
     expect((await meta.getByShortId(pub.short_id))?.removed_at).toBeNull()
     // ...and its undo points the other way, so the pair is symmetric.
@@ -93,19 +93,19 @@ describe("organize state — retire an artifact and put it back", () => {
     // Readable to begin with.
     expect((await callRaw(app, token, "read", { short_id: pub.short_id })).isError).toBe(false)
 
-    await call(app, token, "organize", { short_ids: [pub.short_id], state: "removed" })
+    await call(app, token, "shelve", { short_ids: [pub.short_id], state: "removed" })
     const afterRemove = await callRaw(app, token, "read", { short_id: pub.short_id })
     expect(afterRemove.isError).toBe(true)
 
     // Restoring makes it readable again: the whole point of pairing the directions.
-    await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    await call(app, token, "shelve", { short_ids: [pub.short_id], state: "live" })
     expect((await callRaw(app, token, "read", { short_id: pub.short_id })).isError).toBe(false)
   })
 
   it("refuses an unknown state by name, rather than failing a schema check", async () => {
     const { app, token } = await setup("shelve-bad")
     const pub = await call(app, token, "publish", { title: "X", content: "# X\n\nbody" })
-    const bad = await callRaw(app, token, "organize", {
+    const bad = await callRaw(app, token, "shelve", {
       short_ids: [pub.short_id],
       // Was "deleted" until that became a real state — which is the point of this test:
       // the vocabulary GROWS, so the invalid case has to be something never shipped.
@@ -121,7 +121,7 @@ describe("organize state — retire an artifact and put it back", () => {
   it("skips artifacts the caller can't edit instead of failing the batch", async () => {
     const { app, meta, token } = await setup("shelve-skip")
     const mine = await call(app, token, "publish", { title: "Mine", content: "# Mine\n\nbody" })
-    const out = await call(app, token, "organize", {
+    const out = await call(app, token, "shelve", {
       short_ids: [mine.short_id, "zzzzzzzz"],
       state: "removed",
     })
@@ -144,7 +144,7 @@ describe("organize state — retire an artifact and put it back", () => {
     if (!art) throw new Error("artifact missing")
     await meta.setArtifactSourcePath(art.id, "docs/synced.md")
 
-    const gone = await call(app, token, "organize", {
+    const gone = await call(app, token, "shelve", {
       short_ids: [pub.short_id],
       state: "removed",
     })
@@ -153,7 +153,7 @@ describe("organize state — retire an artifact and put it back", () => {
     expect(gone.state.synced_from_repo_note).toContain("remove the file at the source")
 
     // Restoring says nothing about sync: there is no surprise to warn about that way.
-    const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    const back = await call(app, token, "shelve", { short_ids: [pub.short_id], state: "live" })
     expect(back.state.synced_from_repo).toBeUndefined()
   })
 
@@ -178,7 +178,7 @@ describe("organize state — retire an artifact and put it back", () => {
       detail: "abuse",
     })
 
-    const tryBack = await call(app, token, "organize", {
+    const tryBack = await call(app, token, "shelve", {
       short_ids: [pub.short_id],
       state: "live",
     })
@@ -228,8 +228,8 @@ describe("organize state — retire an artifact and put it back", () => {
       vi.useRealTimers()
     }
 
-    await call(app, token, "organize", { short_ids: [pub.short_id], state: "removed" })
-    const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    await call(app, token, "shelve", { short_ids: [pub.short_id], state: "removed" })
+    const back = await call(app, token, "shelve", { short_ids: [pub.short_id], state: "live" })
     expect(back.state.changed).toBe(1)
     expect(back.state.moderation_hold).toBeUndefined()
   })
@@ -257,7 +257,7 @@ describe("organize state — retire an artifact and put it back", () => {
       created_by: owner.id,
     })
 
-    const gone = await call(app, token, "organize", {
+    const gone = await call(app, token, "shelve", {
       short_ids: [man.short_id],
       state: "removed",
     })
@@ -269,7 +269,7 @@ describe("organize state — retire an artifact and put it back", () => {
 
   it("still needs short_ids, and says so", async () => {
     const { app, token } = await setup("shelve-noids")
-    const bare = await callRaw(app, token, "organize", { state: "removed" })
+    const bare = await callRaw(app, token, "shelve", { state: "removed" })
     expect(bare.isError).toBe(true)
     expect(bare.text).toContain("short_ids")
   })

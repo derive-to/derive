@@ -199,7 +199,12 @@ describe("automate list over MCP reports the gate state", () => {
   type App = ReturnType<typeof makeAuthedApp>["app"]
 
   // A direct tools/call over the stateless /mcp endpoint (mcp-contexts' shape).
-  const callAutomate = async (app: App, token: string, args: Record<string, unknown>) => {
+  const callAutomate = async (
+    app: App,
+    token: string,
+    args: Record<string, unknown>,
+    tool = "automate",
+  ) => {
     const res = await app.request("/mcp", {
       method: "POST",
       headers: {
@@ -211,7 +216,7 @@ describe("automate list over MCP reports the gate state", () => {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "automate", arguments: args },
+        params: { name: tool, arguments: args },
       }),
     })
     const ct = res.headers.get("content-type") ?? ""
@@ -257,7 +262,7 @@ describe("automate list over MCP reports the gate state", () => {
     const current = await meta.getOrgSettings("default")
     if (current) await meta.setOrgSettings("default", { ...current, automateBeta: false })
 
-    const r = await callAutomate(app, raw, { action: "list" })
+    const r = await callAutomate(app, raw, {}, "list_automations")
     expect(r.count).toBe(1)
     expect(r.automations).toHaveLength(1)
     expect(r.automations_enabled).toBe(false)
@@ -265,9 +270,23 @@ describe("automate list over MCP reports the gate state", () => {
     expect(r.note).toContain("automateBeta")
   })
 
+  it("the write tool refuses the read action instead of quietly serving it", async () => {
+    // The split has to be enforced, not just advertised: `automate` no longer lists
+    // AUTOMATE_WRITE_ACTIONS' absent `list` in its schema, and passing it anyway is
+    // rejected by name. A split that exists only in a description is not a split — a
+    // caller with a stale schema would otherwise still reach the read through the tool
+    // that declares itself a write, and the honest readOnlyHint on list_automations
+    // would be the only thing that ever said so.
+    const { app, raw } = await setup("gate-mcp-list-refused")
+    const r = await callAutomate(app, raw, { action: "list" })
+    expect(JSON.stringify(r)).toContain("list")
+    expect(r.count).toBeUndefined()
+    expect(r.automations).toBeUndefined()
+  })
+
   it("an opted-in workspace reports enabled:true with no warning", async () => {
     const { app, raw } = await setup("gate-mcp-list-on")
-    const r = await callAutomate(app, raw, { action: "list" })
+    const r = await callAutomate(app, raw, {}, "list_automations")
     expect(r.automations_enabled).toBe(true)
     expect(r.note).toBeUndefined()
   })

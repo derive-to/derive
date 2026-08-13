@@ -1,23 +1,26 @@
 ---
 name: organize
-summary: make the library findable: browse the tag vocabulary + collections, and tag or collect artifacts (organize)
+summary: make the library findable: browse the tag vocabulary + collections, tag or collect artifacts, and retire what you no longer need (browse_library, organize, shelve)
 order: 8
 ---
 # Organizing the library (tags + collections)
 
-`organize` is the library's findability layer: browse TAGS (lightweight labels) and
-COLLECTIONS (a set treated as a unit), in one tool. Tag freely and reuse the vocabulary — a
+The library's findability layer is three tools: `browse_library` reads, `organize` writes
+tags and collections, and `shelve` retires or deletes. They split that way so reading is
+read-only — an annotation-honouring client runs `browse_library` without an approval
+prompt, which it could never do while the same tool could permanently delete something.
+Tag freely and reuse the vocabulary — a
 well-tagged library is findable. Reach for a collection only when a set is a real unit, not
 for plain findability. Tags can also be set at publish time via publish's `tags` param.
 
-## Read mode
+## Reading (`browse_library`)
 
 - **No `short_ids`:** returns the workspace's tag vocabulary (tag → count) and its
   collections. Call this BEFORE tagging so you reuse an existing tag over a near-duplicate.
 - **With `short_ids`:** returns those artifacts' current tags + collections, plus
   `suggested` tags drawn from the most semantically-similar docs (when a single id is given).
 
-## Write mode (pass `short_ids` plus any of these)
+## Tagging and collecting (`organize` — pass `short_ids` plus any of these)
 
 - **`add`** — union onto existing tags (never drops what's there).
 - **`remove`** — drop these tags.
@@ -27,10 +30,11 @@ for plain findability. Tags can also be set at publish time via publish's `tags`
 Tags are normalized (trimmed, lowercased, deduped, capped 20). Each artifact is authorized on
 its own; ones you can't edit come back as `skipped`, never failing the batch.
 
-## Cleaning up after yourself (`state`)
+## Cleaning up after yourself (`shelve`)
 
-The same tool retires, restores, and deletes — so the way back is never a separate thing to
-discover. Pass `short_ids` plus `state`:
+One tool retires, restores, and deletes, so the way back is never a separate thing to
+discover — but it is a DIFFERENT tool from the one that tags, because it is the only place
+on this surface with an irreversible verb. Pass `short_ids` plus `state`:
 
 - **`state:'removed'`** — retire from the library. The url reads as removed, **nothing is
   deleted**, and the response hands you the exact call that undoes it. This is the one to

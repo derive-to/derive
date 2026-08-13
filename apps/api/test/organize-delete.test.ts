@@ -108,7 +108,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     expect(await meta.getByShortId(a.short_id)).toBeTruthy()
 
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "deleted" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "deleted" }),
     )
     expect(out.state.deleted).toBe(1)
     // Gone from the store, not merely tombstoned.
@@ -141,7 +141,7 @@ describe("organize state:'deleted' — the permanent one", () => {
       viewer_kind: "anon",
     })
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "deleted" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "deleted" }),
     )
     expect(out.state.deleted).toBe(1)
     expect(await meta.getByShortId(a.short_id)).toBeNull()
@@ -154,7 +154,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     const a = await publish(app, token, "Keeper")
 
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "deleted" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "deleted" }),
     )
     expect(out.state.deleted).toBe(0)
     expect(out.state.needs_manage).toEqual([a.short_id])
@@ -168,7 +168,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     const { app, token, meta } = appWithGrant("orgdelshelf", "openid derive:read derive:publish")
     const a = await publish(app, token, "Shelvable")
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "removed" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "removed" }),
     )
     expect(out.state.changed).toBe(1)
     expect(out.state.undo).toMatchObject({ arguments: { state: "live" } })
@@ -183,7 +183,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     const a = await publish(app, token, "One")
     const b = await publish(app, token, "Two")
     const out = await toolJson(
-      await call(app, token, "organize", {
+      await call(app, token, "shelve", {
         short_ids: [a.short_id, b.short_id, "nosuchid"],
         state: "deleted",
       }),
@@ -196,7 +196,7 @@ describe("organize state:'deleted' — the permanent one", () => {
 
   it("rejects an unknown state value by name, listing the real ones", async () => {
     const { app, token } = appWithGrant("orgdelbad", "openid derive:read derive:publish")
-    const res = await call(app, token, "organize", { short_ids: ["x"], state: "destroyed" })
+    const res = await call(app, token, "shelve", { short_ids: ["x"], state: "destroyed" })
     const txt = await res.text()
     expect(txt).toContain("deleted")
   })
