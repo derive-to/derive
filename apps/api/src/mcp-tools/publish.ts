@@ -298,11 +298,31 @@ export function registerPublishTool(tc: ToolContext): void {
                   .string()
                   .describe("Replacement for the quoted span, as plain text. Empty deletes."),
               }),
+              z.object({
+                op: z.literal("scene-update"),
+                id: z.string().describe("Stable data-derive-scene value."),
+                duration_ms: z.coerce.number().optional(),
+                transition: z.enum(["cut", "fade", "dissolve", "slide"]).optional(),
+                transition_ms: z.coerce.number().optional(),
+              }),
+              z.object({
+                op: z.literal("scene-move"),
+                id: z.string().describe("Stable data-derive-scene value."),
+                direction: z.enum(["previous", "next"]),
+              }),
+              z.object({
+                op: z.literal("scene-duplicate"),
+                id: z.string().describe("Stable data-derive-scene value."),
+              }),
+              z.object({
+                op: z.literal("scene-delete"),
+                id: z.string().describe("Stable data-derive-scene value."),
+              }),
             ]),
           )
           .optional()
           .describe(
-            "Revise a single-file artifact without resending it. Two shapes, not mixable: {old_str, new_str} against the stored source, or {quote:{exact,prefix,suffix}, new_text} against visible text. A miss applies nothing and says why.",
+            "Revise a single-file artifact without resending it. Exact-source edits cannot mix with the other shapes. Quote edits change visible text; scene-* edits change timing and structure in an HTML Video. A miss applies nothing and says why.",
           ),
         slide_ops: z
           .array(
