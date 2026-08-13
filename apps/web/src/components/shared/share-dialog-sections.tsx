@@ -14,7 +14,7 @@ import { getInitials } from "@/lib/initials"
 export type ShareSegment = "invite" | "workspace" | "anyone"
 type ShareTestPrefix = "share" | "collection-share"
 
-export const SHARE_SEGMENTS: { value: ShareSegment; label: string; icon: IconName }[] = [
+const SHARE_SEGMENTS: { value: ShareSegment; label: string; icon: IconName }[] = [
   { value: "invite", label: "Invited", icon: "lock" },
   { value: "workspace", label: "Workspace", icon: "workspace" },
   { value: "anyone", label: "Anyone", icon: "globe" },

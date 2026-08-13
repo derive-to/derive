@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { accessIcon, accessSummary } from "./share-dialog"
+import { accessIcon, accessSummary } from "@/components/shared/share-dialog-sections"
 
 // The share dialog's pure access projections. The invariant under test: a
 // workspace-open collection makes an artifact workspace-reachable regardless of the

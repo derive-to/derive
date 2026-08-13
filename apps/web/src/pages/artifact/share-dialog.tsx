@@ -51,8 +51,6 @@ import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
 // a lock for invite-only. A workspace-open collection makes the artifact workspace-
 // reachable even when its own fields say Invited (see access-model.md) — the lock is
 // a promise ("nobody but the roster"), so it must account for that grant too.
-export { accessIcon, accessSummary } from "@/components/shared/share-dialog-sections"
-
 // The access triple + an optional world-link password, applied atomically by setAccess.
 type AccessDraft = {
   workspaceAccess: WorkspaceAccess
@@ -145,7 +143,7 @@ export function ShareButton({
   // this caller may see (the collection_access contract) — render verbatim.
   const grants = collectionAccess ?? []
   const collectionOpen = grants.some((g) => g.workspace_access === "member")
-  // The collection being managed in the stacked ShareCollectionDialog (null = closed).
+  // The collection controller mounted over this dialog when its disclosure row is managed.
   const [manageCol, setManageCol] = useState<CollectionGrant | null>(null)
 
   // The canonical share URL — the server-built artifact URL when the detail is
@@ -188,7 +186,7 @@ export function ShareButton({
   // its effect is friction with no safety benefit. The lock is the one exception:
   // checking the box reveals the input, and nothing applies until Set password.
   // Optimistic so the controls don't flash the old state; the primitive rolls back the
-  // draft AND toasts on failure (converged with ShareCollectionDialog — no more inline err).
+  // draft AND toasts on failure through the shared access surface.
   const accessMut = useApiMutation({
     mutationFn: (next: AccessDraft) => api.setAccess(shortId, next),
     optimistic: (next) => {
@@ -573,8 +571,8 @@ export function ShareButton({
                             `${g.member_count} collection ${g.member_count === 1 ? "member opens" : "members open"} this at their role`}
                       </div>
                     </div>
-                    {/* Collection sharing is owner-managed (matches ShareCollectionDialog's
-                        bar); everyone else gets attribution — who to ask. Muted at rest
+                    {/* Collection sharing is owner-managed; everyone else gets attribution —
+                        who to ask. Muted at rest
                         (this section is disclosure, not control — the row's content
                         carries the weight); hover re-inks. */}
                     {g.my_role === "owner" ? (
