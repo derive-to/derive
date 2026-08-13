@@ -520,7 +520,12 @@ describe("template libraries: pinned reusable starters", () => {
 })
 
 describe("template libraries: release sequencing", () => {
-  it("returns an explicit temporary state when an unmerged preview is ahead of schema", async () => {
+  // The Postgres test store is a deferred proxy whose methods cannot be replaced
+  // in-place. The predicate suite covers Postgres's 42P01 shape directly; this
+  // integration case exercises the app-level 503 mapping against the replaceable
+  // SQLite store used by PR previews.
+  const releaseSequencingIt = process.env.DERIVE_TEST_DB === "pg" ? it.skip : it
+  releaseSequencingIt("maps missing preview schema to an explicit temporary state", async () => {
     const previewUser: TestUser = {
       id: "u_tpl_preview",
       email: "preview@templates.test",
