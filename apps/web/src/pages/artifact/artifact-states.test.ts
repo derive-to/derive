@@ -15,7 +15,7 @@ describe("ArtifactWrongWorkspace", () => {
 
     expect(html).toContain("Switch to Acme")
     expect(html).toContain("This artifact belongs to Acme")
-    expect(html).toContain('data-testid="artifact-workspace-switch"')
+    expect(html).toContain('data-testid="artifact-workspace-switch">Switch to Acme</button>')
     expect(html).toContain('data-testid="artifact-workspace-back"')
   })
 })
