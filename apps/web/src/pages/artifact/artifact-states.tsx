@@ -41,7 +41,7 @@ export function ArtifactWrongWorkspace({
       action={
         <div className="flex gap-2">
           <Button data-testid="artifact-workspace-switch" onClick={onSwitch}>
-            Switch workspace
+            Switch to {workspaceName}
           </Button>
           <Button variant="outline" data-testid="artifact-workspace-back" onClick={onBack}>
             Back to library
