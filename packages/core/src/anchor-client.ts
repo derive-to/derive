@@ -1536,9 +1536,10 @@ interface ElReg {
       redoScene = () => scene.remove()
       undoScene = () => root.insertBefore(scene, originalNext)
     }
+    const entry = { wire, undo: undoScene, redo: redoScene }
     redoScene()
-    sceneEdits.push({ wire, undo: undoScene, redo: redoScene })
-    sceneRedo = []
+    sceneEdits.push(entry)
+    remember({ kind: "scene", entry, activeAfter: false })
     videoAt = Math.max(0, Math.min(videoAt, videoScenes().length - 1))
     showVideoScene(videoAt)
     postDirty()
@@ -1970,7 +1971,6 @@ interface ElReg {
   }
   let editOn = false
   let sceneEdits: SceneHistory[] = []
-  let sceneRedo: SceneHistory[] = []
   // The frame is HTML even when the stored document is Markdown. Element selectors
   // are only a supported write against HTML/deck SOURCE, so the host explicitly
   // enables opening-tag operations. Image replacement remains available either way.
@@ -2187,22 +2187,24 @@ interface ElReg {
   type HistoryEntry =
     | { kind: "html"; el: HTMLElement; html: string }
     | { kind: "style"; el: ResizableElement; style: string | null }
+    | { kind: "scene"; entry: SceneHistory; activeAfter: boolean }
   let undoStack: HistoryEntry[] = []
   let redoStack: HistoryEntry[] = []
   let lastBurst: { el: HTMLElement; at: number } | null = null
   // The resize overlay is mounted below; history can run before/after it without
   // knowing its DOM. Reassigned once that controller exists.
   let refreshResizeUi = () => {}
-  const checkpoint = (el: HTMLElement) => {
-    undoStack.push({ kind: "html", el, html: el.innerHTML })
+  const remember = (entry: HistoryEntry) => {
+    undoStack.push(entry)
     if (undoStack.length > UNDO_LIMIT) undoStack.shift()
     // A new action forks the timeline: whatever was undone is no longer ahead of us.
     redoStack = []
   }
+  const checkpoint = (el: HTMLElement) => {
+    remember({ kind: "html", el, html: el.innerHTML })
+  }
   const checkpointStyle = (el: ResizableElement) => {
-    undoStack.push({ kind: "style", el, style: rawStyle(el) })
-    if (undoStack.length > UNDO_LIMIT) undoStack.shift()
-    redoStack = []
+    remember({ kind: "style", el, style: rawStyle(el) })
   }
   /** Checkpoint at the start of a typing burst, never mid-word. */
   const checkpointTyping = (el: HTMLElement) => {
@@ -2228,8 +2230,19 @@ interface ElReg {
   }
   const stepHistory = (from: typeof undoStack, to: typeof undoStack) => {
     const entry = from.pop()
-    if (!entry || !document.contains(entry.el)) return
-    if (entry.kind === "html") {
+    if (!entry) return
+    if (entry.kind === "scene") {
+      if (entry.activeAfter) {
+        entry.entry.redo()
+        if (!sceneEdits.includes(entry.entry)) sceneEdits.push(entry.entry)
+      } else {
+        entry.entry.undo()
+        sceneEdits = sceneEdits.filter((candidate) => candidate !== entry.entry)
+      }
+      to.push({ ...entry, activeAfter: !entry.activeAfter })
+      showVideoScene(Math.min(videoAt, videoScenes().length - 1))
+    } else if (!document.contains(entry.el)) return
+    else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
       entry.el.innerHTML = entry.html
       reregister(targetFor(entry.el), entry.el)
@@ -2241,30 +2254,8 @@ interface ElReg {
     refreshResizeUi()
     postDirty()
   }
-  const undo = () => {
-    if (sceneEdits.length) {
-      const entry = sceneEdits.pop()
-      if (entry) {
-        entry.undo()
-        sceneRedo.push(entry)
-      }
-      showVideoScene(Math.min(videoAt, videoScenes().length - 1))
-      postDirty()
-      return
-    }
-    stepHistory(undoStack, redoStack)
-  }
-  const redo = () => {
-    const entry = sceneRedo.pop()
-    if (entry) {
-      entry.redo()
-      sceneEdits.push(entry)
-      showVideoScene(Math.min(videoAt, videoScenes().length - 1))
-      postDirty()
-      return
-    }
-    stepHistory(redoStack, undoStack)
-  }
+  const undo = () => stepHistory(undoStack, redoStack)
+  const redo = () => stepHistory(redoStack, undoStack)
 
   /** Is there a selection the format verbs could act on — one run, inside one
    *  editable block? The bar's B / I / link enable on exactly this. */
@@ -2328,15 +2319,15 @@ interface ElReg {
     const selectedText = contextRange
       ? contextRange.toString().replace(/\s+/g, " ").trim().slice(0, 120)
       : ""
-    const state = `${n}|${undoStack.length > 0 || sceneEdits.length > 0}|${redoStack.length > 0 || sceneRedo.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}`
+    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}`
     if (state !== lastState) {
       lastState = state
       lastDirty = n
       post({
         type: "edit-state",
         dirty: n,
-        canUndo: undoStack.length > 0 || sceneEdits.length > 0,
-        canRedo: redoStack.length > 0 || sceneRedo.length > 0,
+        canUndo: undoStack.length > 0,
+        canRedo: redoStack.length > 0,
         canFormat,
         textActive,
         textKind,
@@ -2882,7 +2873,6 @@ interface ElReg {
       }
       editBase = { text: full, starts }
       sceneEdits = []
-      sceneRedo = []
       setHover(null)
       // Off-screen slides stop catching clicks meant for the slide on screen.
       maskOffscreenSlides()
@@ -2915,7 +2905,6 @@ interface ElReg {
       pendingRange = null
       lastState = ""
       sceneEdits = []
-      sceneRedo = []
       clearEditMention()
       post({ type: "edit-mention-close" })
     }
@@ -2934,14 +2923,15 @@ interface ElReg {
     restoreResizeFocus()
     clearResizeUi()
     sceneEdits = []
-    sceneRedo = []
     if (lastDirty !== 0) {
       lastDirty = 0
       post({ type: "edit-state", dirty: 0 })
     }
   }
   const restoreEdits = () => {
+    const restoredScenes = sceneEdits.length > 0
     for (let i = sceneEdits.length - 1; i >= 0; i--) sceneEdits[i]?.undo()
+    if (restoredScenes) showVideoScene(Math.min(videoAt, videoScenes().length - 1))
     for (const t of editTargets) {
       if (document.contains(t.el)) {
         if (concatText(t.el) !== t.origConcat) {
@@ -2965,7 +2955,6 @@ interface ElReg {
     restoreResizeFocus()
     clearResizeUi()
     sceneEdits = []
-    sceneRedo = []
     if (lastDirty !== 0) {
       lastDirty = 0
       post({ type: "edit-state", dirty: 0 })
