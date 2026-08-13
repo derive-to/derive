@@ -8,6 +8,11 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 const ana: TestUser = { id: "u_move_ana", email: "ana@move.test", name: "Ana" }
 const ben: TestUser = { id: "u_move_ben", email: "ben@move.test", name: "Ben" }
 
+const workspaceCookie = (res: Response): string => {
+  const match = (res.headers.get("set-cookie") ?? "").match(/derive_ws=([^;]+)/)
+  return match ? `derive_ws=${match[1]}` : ""
+}
+
 describe("move an artifact to a different workspace", () => {
   // ana is the Admin/owner of "default"; ben is an editor there (makeAuthedApp's
   // default team seeding: users[0] = owner, the rest = defaultRole).
@@ -42,13 +47,29 @@ describe("move an artifact to a different workspace", () => {
     expect(moved.status).toBe(200)
     expect((await moved.json()).org_id).toBe("acme")
 
-    // The detail response reflects the new workspace. Ana's role stays "owner"
-    // here — not because of her (editor) membership in "acme", but because
-    // publishing wrote her a per-artifact owner share, which a move doesn't
-    // touch (a direct share is independent of org membership, same as a
-    // private-artifact invite outlives the sharer's own workspace role).
+    // Moving does not silently switch the whole application. The artifact leaves
+    // the active workspace immediately, so even its creator cannot keep opening
+    // it through an owner row that belongs to another workspace.
+    const leftBehind = await app.request(`/v1/artifacts/${a.short_id}`, {
+      headers: as(ana.email),
+    })
+    expect(leftBehind.status).toBe(409)
+    expect(await leftBehind.json()).toMatchObject({
+      code: "workspace_mismatch",
+      workspace: { id: "acme", name: "Acme" },
+    })
+
+    // In the destination workspace, the workspace-bound owner row applies again.
+    // Ana only has an editor seat there, so this also proves ownership comes from
+    // the artifact grant without making that grant portable across workspaces.
+    const switched = await app.request(
+      "/v1/workspace/switch",
+      jsonAs(as(ana.email), { id: "acme" }),
+    )
+    expect(switched.status).toBe(200)
+    const inAcme = { ...as(ana.email), cookie: workspaceCookie(switched) }
     const detail = await (
-      await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(ana.email) })
+      await app.request(`/v1/artifacts/${a.short_id}`, { headers: inAcme })
     ).json()
     expect(detail.org_id).toBe("acme")
     expect(detail.my_role).toBe("owner")
@@ -56,7 +77,7 @@ describe("move an artifact to a different workspace", () => {
     // Moving into the workspace it's already in is a no-op error, not a 200.
     const noop = await app.request(
       `/v1/artifacts/${a.short_id}/move`,
-      jsonAs(as(ana.email), { targetOrgId: "acme" }),
+      jsonAs(inAcme, { targetOrgId: "acme" }),
     )
     expect(noop.status).toBe(400)
   })

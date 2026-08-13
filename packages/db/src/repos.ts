@@ -1514,6 +1514,62 @@ export function makeRepos(db: SqliteDb) {
       })
       .returning()
       .get()) as MembershipRecord
+  const workspaceOwnershipBlockers = async (
+    orgId: string,
+    userId: string,
+  ): Promise<{ artifacts: number; collections: number }> => {
+    const rows = (await db.all(sql`
+      SELECT 'artifacts' AS kind, count(*) AS n
+        FROM artifact a
+        JOIN artifact_member mine
+          ON mine.artifact_id = a.id
+         AND mine.user_id = ${userId}
+         AND mine.role = 'owner'
+       WHERE a.org_id = ${orgId}
+         AND NOT EXISTS (
+           SELECT 1
+             FROM artifact_member other
+             JOIN membership active
+               ON active.org_id = a.org_id
+              AND active.user_id = other.user_id
+            WHERE other.artifact_id = a.id
+              AND other.user_id <> ${userId}
+              AND other.role = 'owner'
+         )
+      UNION ALL
+      SELECT 'collections', count(*)
+        FROM collection c
+       WHERE c.org_id = ${orgId}
+         AND (
+           c.created_by = ${userId}
+           OR EXISTS (
+             SELECT 1 FROM collection_member mine
+              WHERE mine.collection_id = c.id
+                AND mine.user_id = ${userId}
+                AND mine.role = 'owner'
+           )
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM membership active
+            WHERE active.org_id = c.org_id
+              AND active.user_id <> ${userId}
+              AND (
+                active.user_id = c.created_by
+                OR EXISTS (
+                  SELECT 1 FROM collection_member other
+                   WHERE other.collection_id = c.id
+                     AND other.user_id = active.user_id
+                     AND other.role = 'owner'
+                )
+              )
+         )
+    `)) as { kind: "artifacts" | "collections"; n: number }[]
+    return {
+      artifacts: Number(rows.find((row) => row.kind === "artifacts")?.n ?? 0),
+      collections: Number(rows.find((row) => row.kind === "collections")?.n ?? 0),
+    }
+  }
   const removeMembership = async (orgId: string, userId: string): Promise<void> => {
     await db
       .delete(membership)
@@ -1569,6 +1625,52 @@ export function makeRepos(db: SqliteDb) {
       .get()) ?? null
   const listArtifactMembers = async (artifactId: string): Promise<ArtifactMemberRecord[]> =>
     db.select().from(artifactMember).where(eq(artifactMember.artifact_id, artifactId)).all()
+  // The embedded-store fast path mirrors Postgres's four-arm UNION. It matters less
+  // for local latency, but keeps active-workspace authorization from adding another
+  // store call on the document-open path and gives both dialects one grant shape.
+  const artifactGrants = async (
+    artifactId: string,
+    orgId: string,
+    userId: string,
+  ): Promise<{
+    orgRole: Role | null
+    artifactRoles: Role[]
+    portableArtifactRoles: Role[]
+  }> => {
+    const rows = (await db.all(sql`
+      SELECT 'org' AS kind, m.role AS role
+        FROM membership m
+       WHERE m.org_id = ${orgId} AND m.user_id = ${userId}
+      UNION ALL
+      SELECT CASE WHEN am.role = 'owner' THEN 'artifact' ELSE 'portable' END, am.role
+        FROM artifact_member am
+       WHERE am.artifact_id = ${artifactId} AND am.user_id = ${userId}
+      UNION ALL
+      SELECT CASE WHEN cm.role = 'owner' THEN 'artifact' ELSE 'portable' END, cm.role
+        FROM collection_member cm
+        JOIN collection_item ci ON ci.collection_id = cm.collection_id
+       WHERE ci.artifact_id = ${artifactId} AND cm.user_id = ${userId}
+      UNION ALL
+      SELECT 'artifact', m2.role
+        FROM collection_item ci2
+        JOIN collection c ON c.id = ci2.collection_id
+        JOIN membership m2 ON m2.org_id = c.org_id
+       WHERE ci2.artifact_id = ${artifactId}
+         AND c.workspace_access = 'member'
+         AND m2.user_id = ${userId}
+    `)) as { kind: "org" | "artifact" | "portable"; role: Role }[]
+    let orgRole: Role | null = null
+    const artifactRoles: Role[] = []
+    const portableArtifactRoles: Role[] = []
+    for (const row of rows) {
+      if (row.kind === "org") orgRole = row.role
+      else {
+        artifactRoles.push(row.role)
+        if (row.kind === "portable") portableArtifactRoles.push(row.role)
+      }
+    }
+    return { orgRole, artifactRoles, portableArtifactRoles }
+  }
   const artifactRolesFor = async (
     userId: string,
     artifactIds: string[],
@@ -1583,8 +1685,9 @@ export function makeRepos(db: SqliteDb) {
       .all()
     return Object.fromEntries(rows.map((r) => [r.artifact_id, r.role]))
   }
-  // Artifacts explicitly shared with a user (they hold a per-artifact membership) —
-  // the "Shared with you" set, which can span workspaces.
+  // Artifacts explicitly shared with a user at a portable collaborator role —
+  // the "Shared with you" set, which can span workspaces. Owner rows are
+  // workspace-bound ownership, not shares.
   // "Shared with me" excludes what I authored: publishing writes the creator an
   // owner-member row (that's how `private` knows its owner), and without the
   // author check every artifact you make would land in your own shared feed.
@@ -1597,6 +1700,7 @@ export function makeRepos(db: SqliteDb) {
         .where(
           and(
             eq(artifactMember.user_id, userId),
+            ne(artifactMember.role, "owner"),
             // NULL-safe: a token-published artifact (author_id null) shared with
             // you still counts — plain != would drop the NULL rows.
             or(isNull(artifact.author_id), ne(artifact.author_id, userId)),
@@ -2347,6 +2451,7 @@ export function makeRepos(db: SqliteDb) {
   const collectionRolesForArtifact = async (
     artifactId: string,
     userId: string,
+    opts?: { includeWorkspaceSeats?: boolean },
   ): Promise<Role[]> => {
     // Explicit collectionMember rows on any collection holding this artifact.
     const explicit = await db
@@ -2359,24 +2464,28 @@ export function makeRepos(db: SqliteDb) {
     // inside it — "Everyone in the workspace opens this at their role" (the Share
     // dialog's promise; see access-model.md). Join the artifact's collections to the
     // viewer's membership in each collection's org, keeping only workspace-open ones.
-    const seat = await db
-      .select({ role: membership.role })
-      .from(collectionItem)
-      .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
-      .innerJoin(membership, eq(membership.org_id, collection.org_id))
-      .where(
-        and(
-          eq(collectionItem.artifact_id, artifactId),
-          eq(collection.workspace_access, "member"),
-          eq(membership.user_id, userId),
-        ),
-      )
-      .all()
+    const seat =
+      opts?.includeWorkspaceSeats === false
+        ? []
+        : await db
+            .select({ role: membership.role })
+            .from(collectionItem)
+            .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
+            .innerJoin(membership, eq(membership.org_id, collection.org_id))
+            .where(
+              and(
+                eq(collectionItem.artifact_id, artifactId),
+                eq(collection.workspace_access, "member"),
+                eq(membership.user_id, userId),
+              ),
+            )
+            .all()
     return [...explicit, ...seat].map((r) => r.role)
   }
   const collectionRolesForUser = async (
     collectionIds: string[],
     userId: string,
+    opts?: { includeWorkspaceSeats?: boolean },
   ): Promise<Record<string, Role>> => {
     if (collectionIds.length === 0) return {}
     // Same two sources as collectionRolesForArtifact, keyed per collection: the
@@ -2391,18 +2500,21 @@ export function makeRepos(db: SqliteDb) {
         ),
       )
       .all()
-    const seat = await db
-      .select({ id: collection.id, role: membership.role })
-      .from(collection)
-      .innerJoin(membership, eq(membership.org_id, collection.org_id))
-      .where(
-        and(
-          inArray(collection.id, collectionIds),
-          eq(collection.workspace_access, "member"),
-          eq(membership.user_id, userId),
-        ),
-      )
-      .all()
+    const seat =
+      opts?.includeWorkspaceSeats === false
+        ? []
+        : await db
+            .select({ id: collection.id, role: membership.role })
+            .from(collection)
+            .innerJoin(membership, eq(membership.org_id, collection.org_id))
+            .where(
+              and(
+                inArray(collection.id, collectionIds),
+                eq(collection.workspace_access, "member"),
+                eq(membership.user_id, userId),
+              ),
+            )
+            .all()
     const out: Record<string, Role> = {}
     for (const r of [...explicit, ...seat]) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
@@ -4584,6 +4696,7 @@ export function makeRepos(db: SqliteDb) {
     listMembershipsForOrgs,
     countMemberships,
     setMembership,
+    workspaceOwnershipBlockers,
     removeMembership,
     getWorkspace,
     setWorkspace,
@@ -4591,6 +4704,7 @@ export function makeRepos(db: SqliteDb) {
     listWorkspaces,
     getArtifactMember,
     listArtifactMembers,
+    artifactGrants,
     artifactRolesFor,
     artifactIdsSharedWith,
     setArtifactMember,

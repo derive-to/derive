@@ -209,6 +209,11 @@ export const sharingRoutes = (ctx: AppContext) => {
         const email = ref.trim().toLowerCase()
         if (!looksLikeEmail(email))
           return bail(fail(c, 404, "no Derive user with that username or email"))
+        // Ownership is workspace authority, not a portable artifact share. An
+        // unknown invitee cannot already hold a seat, so invite them to the
+        // workspace before transferring ownership.
+        if (b.role === "owner")
+          return bail(fail(c, 400, "an artifact owner must belong to its workspace"))
         // Each invite emails an arbitrary address with the caller's artifact title
         // in the subject — rate-limited so an account can't run a spam cannon.
         const rl = await limited(c, inviteLimiter)
@@ -246,6 +251,8 @@ export const sharingRoutes = (ctx: AppContext) => {
           201,
         )
       }
+      if (b.role === "owner" && !(await meta.getMembership(artifact.org_id, user.id)))
+        return bail(fail(c, 400, "an artifact owner must belong to its workspace"))
       // A direct share supersedes any pending invite for the same person.
       if (user.email)
         await meta.deletePendingArtifactInvitesFor(artifact.id, user.email.toLowerCase())
@@ -434,6 +441,11 @@ export const sharingRoutes = (ctx: AppContext) => {
       const { inv, artifact } = live
       const mismatch = await emailMismatch409(c, inv.email, me.email)
       if (mismatch) return bail(mismatch)
+      // Historical owner invitations may predate the workspace-bound ownership
+      // invariant. Refuse them without consuming the token; joining the workspace
+      // first makes the same invite redeemable.
+      if (inv.role === "owner" && !(await meta.getMembership(artifact.org_id, me.id)))
+        return bail(fail(c, 400, "an artifact owner must belong to its workspace"))
       const now = new Date().toISOString()
       if (!(await meta.consumeArtifactInvite(inv.id, now)))
         return bail(fail(c, 409, "this invitation has already been accepted"))

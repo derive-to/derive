@@ -88,6 +88,67 @@ export function runStoreContract(
       expect(await store.getMembership(ORG, "temp")).toBeNull()
     })
 
+    it("finds ownership that must be handed off before a member leaves", async () => {
+      const org = `org_handoff_${uuid()}`
+      const leaver = `leaver_${uuid()}`
+      const successor = `successor_${uuid()}`
+      await store.setWorkspace(org, "Handoff")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: leaver, role: "editor" })
+      await store.setMembership({ id: uuid(), org_id: org, user_id: successor, role: "owner" })
+
+      const artifact = await store.createArtifact(
+        newArtifact({ org_id: org, author_id: leaver, workspace_access: "none" }),
+      )
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: artifact.id,
+        user_id: leaver,
+        role: "owner",
+      })
+      const collection = await store.createCollection({
+        id: uuid(),
+        org_id: org,
+        title: "Private collection",
+        created_by: leaver,
+        workspace_access: "none",
+      })
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: collection.id,
+        user_id: leaver,
+        role: "owner",
+      })
+
+      expect(await store.workspaceOwnershipBlockers(org, leaver)).toEqual({
+        artifacts: 1,
+        collections: 1,
+      })
+
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: artifact.id,
+        user_id: successor,
+        role: "owner",
+      })
+      await store.setCollectionMember({
+        id: uuid(),
+        collection_id: collection.id,
+        user_id: successor,
+        role: "owner",
+      })
+      expect(await store.workspaceOwnershipBlockers(org, leaver)).toEqual({
+        artifacts: 0,
+        collections: 0,
+      })
+
+      // A stale owner row belonging to someone who has left is not a handoff.
+      await store.removeMembership(org, successor)
+      expect(await store.workspaceOwnershipBlockers(org, leaver)).toEqual({
+        artifacts: 1,
+        collections: 1,
+      })
+    })
+
     it("workspacesAndOauthBinding matches the two calls it replaces", async () => {
       const orgA = `org_${uuid()}`
       const orgB = `org_${uuid()}`
@@ -898,6 +959,24 @@ export function runStoreContract(
       expect(await store.getArtifactMember(a.id, "bob")).toBeNull()
     })
 
+    it("treats collaborator rows, but not owner rows, as cross-workspace shares", async () => {
+      const a = await store.createArtifact(newArtifact({ author_id: "amy" }))
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: a.id,
+        user_id: "bob",
+        role: "owner",
+      })
+      expect(await store.artifactIdsSharedWith("bob")).not.toContain(a.id)
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: a.id,
+        user_id: "bob",
+        role: "editor",
+      })
+      expect(await store.artifactIdsSharedWith("bob")).toContain(a.id)
+    })
+
     it("stars + unstars an artifact", async () => {
       const a = await store.createArtifact(newArtifact())
       await store.setFavorite(a.id, "amy")
@@ -1616,6 +1695,9 @@ export function runStoreContract(
       expect(await store.getCollectionMember(col.id, "bob")).toMatchObject({ role: "viewer" })
       expect(await store.listCollectionMembers(col.id)).toHaveLength(1)
       expect(await store.collectionRolesForArtifact(a.id, "bob")).toContain("viewer")
+      expect(
+        await store.collectionRolesForArtifact(a.id, "bob", { includeWorkspaceSeats: false }),
+      ).toContain("viewer")
 
       const renamed = await store.updateCollection(col.id, { title: "Renamed" })
       expect(renamed?.title).toBe("Renamed")
@@ -1645,6 +1727,11 @@ export function runStoreContract(
       })
       await store.addCollectionItem(open.id, priv.id)
       expect(await store.collectionRolesForArtifact(priv.id, "carol")).toContain("editor")
+      expect(
+        await store.collectionRolesForArtifact(priv.id, "carol", {
+          includeWorkspaceSeats: false,
+        }),
+      ).toHaveLength(0)
 
       // An invite-only collection (workspace_access=none) grants a bare seat nothing —
       // only its explicit members reach it.
@@ -2138,6 +2225,11 @@ export function runStoreContract(
       expect(roles[seated.id]).toBe("viewer") // seat only
       expect(roles[inviteOnly.id]).toBe("owner") // explicit share only
       expect(roles[untouched.id]).toBeUndefined() // neither
+      expect(
+        await store.collectionRolesForUser([seated.id, inviteOnly.id, untouched.id], "bob", {
+          includeWorkspaceSeats: false,
+        }),
+      ).toEqual({ [inviteOnly.id]: "owner" })
     })
 
     it("notificationsPage matches listNotifications + unreadNotificationCount, and unread counts the WHOLE history not just the page", async () => {
@@ -5105,12 +5197,26 @@ export function runStoreContract(
         const orgRole = (await store.getMembership(orgId, userId))?.role ?? null
         const am = await store.getArtifactMember(art.id, userId)
         const cRoles = await store.collectionRolesForArtifact(art.id, userId)
-        return { orgRole, artifactRole: maxRole(am?.role ?? null, ...cRoles) }
+        const portableCollectionRoles = await store.collectionRolesForArtifact(art.id, userId, {
+          includeWorkspaceSeats: false,
+        })
+        return {
+          orgRole,
+          artifactRole: maxRole(am?.role ?? null, ...cRoles),
+          portableArtifactRole: maxRole(
+            am?.role === "owner" ? null : (am?.role ?? null),
+            ...portableCollectionRoles.filter((role) => role !== "owner"),
+          ),
+        }
       }
       const fast = async (orgId: string, userId: string) => {
         const g = await store.artifactGrants?.(art.id, orgId, userId)
         if (!g) throw new Error("artifactGrants vanished mid-test")
-        return { orgRole: g.orgRole, artifactRole: maxRole(null, ...g.artifactRoles) }
+        return {
+          orgRole: g.orgRole,
+          artifactRole: maxRole(null, ...g.artifactRoles),
+          portableArtifactRole: maxRole(null, ...g.portableArtifactRoles),
+        }
       }
 
       // The THIRD path: the same grants, resolved by SHORT ID alongside the artifact row,
@@ -5119,7 +5225,11 @@ export function runStoreContract(
       const combined = async (userId: string) => {
         const r = await store.artifactWithGrants?.(art.short_id, userId)
         if (!r) throw new Error("artifactWithGrants found no artifact")
-        return { orgRole: r.orgRole, artifactRole: maxRole(null, ...r.artifactRoles) }
+        return {
+          orgRole: r.orgRole,
+          artifactRole: maxRole(null, ...r.artifactRoles),
+          portableArtifactRole: maxRole(null, ...r.portableArtifactRoles),
+        }
       }
 
       for (const u of [owner, member, sharee, collab, stranger]) {
@@ -5214,11 +5324,22 @@ export function runStoreContract(
           const orgRole = (await store.getMembership(org, u))?.role ?? null
           const am = await store.getArtifactMember(art.id, u)
           const cRoles = await store.collectionRolesForArtifact(art.id, u)
-          const slow = { orgRole, artifactRole: maxRole(am?.role ?? null, ...cRoles) }
+          const portableCollectionRoles = await store.collectionRolesForArtifact(art.id, u, {
+            includeWorkspaceSeats: false,
+          })
+          const slow = {
+            orgRole,
+            artifactRole: maxRole(am?.role ?? null, ...cRoles),
+            portableArtifactRole: maxRole(
+              am?.role === "owner" ? null : (am?.role ?? null),
+              ...portableCollectionRoles.filter((role) => role !== "owner"),
+            ),
+          }
           const g = await store.artifactGrants?.(art.id, org, u)
           const fast = {
             orgRole: g?.orgRole ?? null,
             artifactRole: maxRole(null, ...(g?.artifactRoles ?? [])),
+            portableArtifactRole: maxRole(null, ...(g?.portableArtifactRoles ?? [])),
           }
           expect(fast, `round ${round} (seed ${startSeed}) disagreed for ${u}`).toEqual(slow)
         }

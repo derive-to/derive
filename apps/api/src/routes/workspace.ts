@@ -357,6 +357,24 @@ export const workspaceRoutes = (ctx: AppContext) => {
       if (!existing) return c.body(null, 204)
       if (existing.role === "owner" && (await isLastOwner(org, userId)))
         return bail(fail(c, 409, "the workspace needs at least one admin"))
+      const owned = await meta.workspaceOwnershipBlockers(org, userId)
+      if (owned.artifacts > 0 || owned.collections > 0) {
+        const resources = [
+          owned.artifacts > 0
+            ? `${owned.artifacts} artifact${owned.artifacts === 1 ? "" : "s"}`
+            : null,
+          owned.collections > 0
+            ? `${owned.collections} collection${owned.collections === 1 ? "" : "s"}`
+            : null,
+        ].filter((resource) => resource !== null)
+        return bail(
+          fail(
+            c,
+            409,
+            `Transfer or add another owner to ${resources.join(" and ")} before removing this member.`,
+          ),
+        )
+      }
       await meta.removeMembership(org, userId)
       await syncSeats({ meta, billing }, org)
       return c.body(null, 204)

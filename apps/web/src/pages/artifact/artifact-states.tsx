@@ -23,6 +23,35 @@ export function ArtifactNotFound({ onBack }: { onBack: () => void }) {
   )
 }
 
+export function ArtifactWrongWorkspace({
+  workspaceName,
+  onSwitch,
+  onBack,
+}: {
+  workspaceName: string
+  onSwitch: () => void
+  onBack: () => void
+}) {
+  return (
+    <EmptyState
+      className="h-full"
+      icon={<Icon name="workspace" strokeWidth={1.75} />}
+      title={`Switch to ${workspaceName}`}
+      description={`This artifact belongs to ${workspaceName}. Switch workspaces to view it.`}
+      action={
+        <div className="flex gap-2">
+          <Button data-testid="artifact-workspace-switch" onClick={onSwitch}>
+            Switch workspace
+          </Button>
+          <Button variant="outline" data-testid="artifact-workspace-back" onClick={onBack}>
+            Back to library
+          </Button>
+        </div>
+      }
+    />
+  )
+}
+
 // A TRANSIENT failure (network blip, a 5xx, the server briefly unhealthy) — distinct
 // from a real 404/403. The query already auto-retries with backoff; this is the
 // recoverable fallback once those are exhausted, so the page comes back with one

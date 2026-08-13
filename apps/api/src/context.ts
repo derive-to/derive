@@ -1109,40 +1109,46 @@ export function buildContext(deps: AppDeps) {
   // The caller's active workspace for this request (memoized). Single mode: always
   // the bootstrap org. Multi mode: the derive_ws cookie (validated against
   // membership), else the user's first workspace, provisioning one if they have none.
-  const wsCache = new WeakMap<Context, string>()
-  const activeWorkspace = async (c: Context): Promise<string> => {
+  const wsCache = new WeakMap<Context, Promise<string>>()
+  const activeWorkspace = (c: Context): Promise<string> => {
     const cached = wsCache.get(c)
     if (cached) return cached
-    // An agent acts within its own workspace, never a cookie's.
-    const ag = await agentFor(c)
-    const me = ag ? null : await currentUser(c)
-    let ws: string
-    if (ag) {
-      // agentFor already re-homed an OAuth agent's org_id when a validated
-      // X-Derive-Workspace header was present, so authorize() and this resolver
-      // can never disagree on the workspace.
-      ws = ag.org_id
-    } else if (!me) {
-      ws = reserved(getCookie(c, WS_COOKIE)) || defaultOrg
-    } else {
-      const ck = reserved(getCookie(c, WS_COOKIE))
-      if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
-      else {
-        const mine = await cachedWorkspaces(c, me.id)
-        if (mine[0]) ws = mine[0].id
+    // Cache the PROMISE, not just the answer. Document open starts workspace resolution
+    // beside its artifact+grants read; caching only after resolution would let actorFor
+    // launch the same membership lookup again while the first one was still in flight.
+    const pending = (async () => {
+      // An agent acts within its own workspace, never a cookie's.
+      const ag = await agentFor(c)
+      const me = ag ? null : await currentUser(c)
+      let ws: string
+      if (ag) {
+        // agentFor already re-homed an OAuth agent's org_id when a validated
+        // X-Derive-Workspace header was present, so authorize() and this resolver
+        // can never disagree on the workspace.
+        ws = ag.org_id
+      } else if (!me) {
+        ws = reserved(getCookie(c, WS_COOKIE)) || defaultOrg
+      } else {
+        const ck = reserved(getCookie(c, WS_COOKIE))
+        if (ck && (await cachedMembership(c, ck, me.id))) ws = ck
         else {
-          ws = await provisionPersonal(me)
-          // Drop the memoized EMPTY list: it predates the workspace we just created, and
-          // GET /v1/workspaces reads the list again for its body in this same request —
-          // it would have answered "you have no workspaces" moments after making one.
-          // Exactly the invalidation `ensureMembership` does after provisioning a row.
-          workspacesCache.get(c)?.delete(me.id)
+          const mine = await cachedWorkspaces(c, me.id)
+          if (mine[0]) ws = mine[0].id
+          else {
+            ws = await provisionPersonal(me)
+            // Drop the memoized EMPTY list: it predates the workspace we just created, and
+            // GET /v1/workspaces reads the list again for its body in this same request —
+            // it would have answered "you have no workspaces" moments after making one.
+            // Exactly the invalidation `ensureMembership` does after provisioning a row.
+            workspacesCache.get(c)?.delete(me.id)
+          }
         }
       }
-    }
-    wsCache.set(c, ws)
-    c.set("orgId", ws)
-    return ws
+      c.set("orgId", ws)
+      return ws
+    })()
+    wsCache.set(c, pending)
+    return pending
   }
   // Persist the active-workspace choice. Same cross-site handling as the viewer
   // cookie so it survives the hosted SPA↔API split.
@@ -1214,7 +1220,12 @@ export function buildContext(deps: AppDeps) {
    *  else (an agent bearer alongside a session cookie, a token, an anonymous visitor)
    *  ignores it and takes the normal path, so a mis-supplied `pre` can cost a wasted
    *  query but cannot produce the wrong actor. */
-  type PreGrants = { userId: string; orgRole: Role | null; artifactRoles: Role[] }
+  type PreGrants = {
+    userId: string
+    orgRole: Role | null
+    artifactRoles: Role[]
+    portableArtifactRoles: Role[]
+  }
 
   const actorFor = (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
     let perArtifact = actorCache.get(c)
@@ -1262,18 +1273,24 @@ export function buildContext(deps: AppDeps) {
         derived = capRole(maxRole(m?.role ?? null, ...cRoles), ag.role)
       }
       const orgRole = ag.org_id === a.org_id ? ag.role : null
+      // Historical rows written directly to an agent id remain explicit grants, but
+      // ownership is workspace-bound even for that legacy shape. Lower collaborator
+      // roles remain portable, matching human shares.
+      const ownRole = ag.org_id === a.org_id || own?.role !== "owner" ? (own?.role ?? null) : null
       return {
         kind: "user",
         userId: ag.id,
-        artifactRole: maxRole(own?.role ?? null, derived),
+        artifactRole: maxRole(ownRole, derived),
         orgRole,
         locked,
       }
     }
-    // A signed-in human. Baseline role = membership in the ARTIFACT's workspace. Opening a
-    // shared link never auto-joins you into someone else's workspace; you only carry an org
-    // role where you're explicitly a member.
+    // A signed-in human. Workspace authority belongs to the ACTIVE workspace, not
+    // merely to the account: switching away drops the artifact workspace's seat and
+    // every owner-level artifact/collection grant. Deliberate lower collaborator
+    // shares remain portable, as does the separately-evaluated world link.
     const me = p.user
+    const workspaceActive = (await activeWorkspace(c)) === a.org_id
     // ONE ROUND TRIP WHERE THE STORE CAN, four where it cannot. The reads below are the
     // membership, the per-artifact share and the collection shares — and the last is itself two
     // queries, so this is four trips to decide one boolean, on every authorize. A store that can
@@ -1288,8 +1305,11 @@ export function buildContext(deps: AppDeps) {
       return {
         kind: "user",
         userId: me.id,
-        artifactRole: maxRole(null, ...pre.artifactRoles),
-        orgRole: pre.orgRole,
+        artifactRole: maxRole(
+          null,
+          ...(workspaceActive ? pre.artifactRoles : pre.portableArtifactRoles),
+        ),
+        orgRole: workspaceActive ? pre.orgRole : null,
         locked,
         unlocked,
       }
@@ -1298,18 +1318,27 @@ export function buildContext(deps: AppDeps) {
       return {
         kind: "user",
         userId: me.id,
-        artifactRole: maxRole(null, ...g.artifactRoles),
-        orgRole: g.orgRole,
+        artifactRole: maxRole(
+          null,
+          ...(workspaceActive ? g.artifactRoles : g.portableArtifactRoles),
+        ),
+        orgRole: workspaceActive ? g.orgRole : null,
         locked,
         unlocked,
       }
     }
-    const orgRole = (await meta.getMembership(a.org_id, me.id))?.role ?? null
+    const orgRole = workspaceActive
+      ? ((await meta.getMembership(a.org_id, me.id))?.role ?? null)
+      : null
     const am = await meta.getArtifactMember(a.id, me.id)
     // A collection share grants its role on every artifact in the collection,
     // folded in alongside any per-artifact share (the higher wins).
-    const cRoles = await meta.collectionRolesForArtifact(a.id, me.id)
-    const artifactRole = maxRole(am?.role ?? null, ...cRoles)
+    const cRoles = await meta.collectionRolesForArtifact(a.id, me.id, {
+      includeWorkspaceSeats: workspaceActive,
+    })
+    const portable = (role: Role | null | undefined): Role | null =>
+      workspaceActive || role !== "owner" ? (role ?? null) : null
+    const artifactRole = maxRole(portable(am?.role), ...cRoles.map(portable))
     return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
   }
 
@@ -1405,16 +1434,15 @@ export function buildContext(deps: AppDeps) {
     return data ? new TextDecoder().decode(data) : null
   }
 
-  // A caller's role on a collection: the static token is owner; otherwise the
-  // creator, else their explicit collection-member role, else — when the
-  // collection's own workspace_access is `member` — their workspace SEAT role,
-  // else null (no access). Shared by the collections routes and the artifact
-  // listing (collection scoping).
+  // A caller's role on a collection: the static token is owner; in the active
+  // workspace the creator/explicit owner and workspace seat apply. Outside it,
+  // only explicit viewer/commenter/editor shares travel with the person.
   const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
     if (isToken(c)) return "owner"
     const me = await currentUser(c)
     if (!me) return null
-    if (col.created_by === me.id) return "owner"
+    const workspaceActive = (await activeWorkspace(c)) === col.org_id
+    if (workspaceActive && col.created_by === me.id) return "owner"
     // A collection lives in a workspace, so — same share experience as an
     // artifact's workspace_access — its members reach it at their SEAT role when
     // it's workspace-open; an invite-only collection (workspace_access=none)
@@ -1425,9 +1453,10 @@ export function buildContext(deps: AppDeps) {
     // collectionRolesForArtifact mirrors this exact rule (explicit membership OR a
     // seat on a workspace-open collection), so visibility of the collection and of
     // its contents stay in lockstep (no phantom-empty collections).
-    const explicit = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    const memberRole = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
+    const explicit = workspaceActive || memberRole !== "owner" ? memberRole : null
     const seat =
-      col.workspace_access === "member"
+      workspaceActive && col.workspace_access === "member"
         ? ((await meta.getMembership(col.org_id, me.id))?.role ?? null)
         : null
     return maxRole(explicit, seat)

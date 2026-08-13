@@ -31,7 +31,12 @@ import { ArtifactChat, type RailTab } from "./artifact-chat"
 import { ArtifactComments } from "./artifact-comments"
 import { ArtifactDocument } from "./artifact-document"
 import { ArtifactInspect } from "./artifact-inspect"
-import { ArtifactLoadError, ArtifactNotFound, ArtifactRemoved } from "./artifact-states"
+import {
+  ArtifactLoadError,
+  ArtifactNotFound,
+  ArtifactRemoved,
+  ArtifactWrongWorkspace,
+} from "./artifact-states"
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
@@ -110,6 +115,7 @@ function FocusShellSync({ focus }: { focus: boolean }) {
 }
 
 export function Artifact() {
+  const { switchWorkspace } = useShell()
   const { ref } = useParams({ from: "/artifacts/$ref" })
   const search = useSearch({ from: "/artifacts/$ref" })
   const { shortId, version } = parseRef(ref)
@@ -672,6 +678,17 @@ export function Artifact() {
   // background-refetch failure sets isError while react-query keeps `art` (e.g. a blip right
   // after a publish invalidates the query) — keep the loaded workbench, don't flash the error.
   if (failed && !art) {
+    if (error instanceof ApiError && error.code === "workspace_mismatch" && error.workspace) {
+      const workspace = error.workspace
+      const name = workspace.personal ? "Personal" : workspace.name
+      return (
+        <ArtifactWrongWorkspace
+          workspaceName={name}
+          onSwitch={() => switchWorkspace(workspace.id)}
+          onBack={() => nav({ to: "/" })}
+        />
+      )
+    }
     // A genuine 404/403 is "not found / no access". Anything else (a 5xx, a
     // network blip, the server briefly unhealthy) is transient — the query already
     // auto-retried with backoff, so offer a clean "Try again" rather than a

@@ -35,13 +35,19 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   URL confers on anyone, including people outside the workspace (`none` = no world
   link). **`listed`** (`none` / workspace / public): pure discoverability — the
   workspace library or the public directory — with no access meaning of its own.
-  The effective role is `max(explicit share, workspace seat if a member, world
-  link)`; an anonymous holder of a live link is always clamped to view. The
-  effective capability by who's asking:
+  The active workspace is part of the authorization context: workspace seats and
+  owner-level artifact/collection grants apply only while the artifact's workspace
+  is active. Switching workspaces therefore never carries private ownership along.
+  Explicit viewer/commenter/editor shares and world links remain portable; an owner
+  may only be assigned to a member of the artifact's workspace.
+
+  Within that context, the effective role is `max(explicit share, workspace seat
+  if a member, world link)`; an anonymous holder of a live link is always clamped
+  to view. The effective capability by who's asking:
 
   | Field state                    | Anonymous (no account) | Signed in outside the workspace | Workspace member          | Explicit share          |
   |--------------------------------|------------------------|---------------------------------|---------------------------|-------------------------|
-  | workspace_access none, link none | No access            | No access                       | Their share role only¹    | Their share role        |
+  | workspace_access none, link none | No access            | No access                       | Their portable share only¹ | Their share role       |
   | workspace_access member          | No access            | No access                       | max(seat, share)          | max(seat², share)       |
   | link_role viewer                 | View                 | View                            | max(seat/share, view)     | max(share, view)        |
   | link_role commenter              | View (sign in to comment) | View + comment             | max(seat/share, comment)  | max(share, comment)     |
@@ -49,6 +55,7 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
 
   ¹ workspace_access=none withholds the seat grant, so a workspace owner cannot
   open a teammate's invite-only draft by role alone — only an explicit share does.
+  Owner grants are not portable shares: they require this workspace to be active.
   ² A shared-with outsider isn't a workspace member, so their seat grant is nil;
   their share role alone applies.
 

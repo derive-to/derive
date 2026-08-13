@@ -27,6 +27,19 @@ Every artifact carries, independently:
 Plus, unchanged: `password_hash` (locks the world link), and explicit
 `artifact_member` / collection shares.
 
+The **active workspace** scopes authority. Workspace seats and owner-level
+artifact/collection grants count only when the artifact's workspace is active;
+switching away drops both. Explicit viewer/commenter/editor shares and world links
+remain portable, so a deliberate collaborator or link holder can still open the
+artifact from another workspace. Owner grants may only target members of the
+artifact's workspace.
+
+When a signed-in member would be able to read a private artifact after switching
+to its workspace, the detail endpoint returns a content-free `workspace_mismatch`
+hint. The client offers that switch directly. Everyone else still receives the
+ordinary not-found response, so the recovery path does not become an existence
+oracle.
+
 ## effectiveRole — the one gate
 
 Three grants, maxed. No coherence rule; no illegal combinations.
@@ -34,9 +47,10 @@ Three grants, maxed. No coherence rule; no illegal combinations.
 ```ts
 effectiveRole(actor, workspaceAccess, linkRole):
   if actor is a token        -> "owner"          // operator/internal
-  explicit = actor.artifactRole                   // a share or collection role, always
-  seat     = workspaceAccess === "member" && actor is a signed-in member of THIS
-             workspace ? actor.orgRole : null      // their SEAT role
+  explicit = actor.artifactRole                   // portable non-owner share, or owner
+                                                  // only in the active workspace
+  seat     = workspaceAccess === "member" && THIS workspace is active
+             && actor is its signed-in member ? actor.orgRole : null
   world    = linkRole === "none"        ? null     // link off
            : locked && !unlocked        ? null     // password gate
            : actor is a signed-in user  ? linkRole // any holder, member or not
@@ -60,7 +74,8 @@ artifact uses, so "who can open the collection" and "who can open what's inside"
 never diverge:
 
 - **Explicit** `collection_member` rows grant that role on every artifact in the
-  collection (can cross workspaces).
+  collection. Viewer/commenter/editor roles can cross workspaces; owner remains
+  bound to the collection's active workspace.
 - A **workspace-open** collection (`workspace_access = member`) additionally hands
   every workspace member their **seat role** on every artifact inside — the Share
   dialog's promise, "Everyone in the workspace opens this at their role." An
@@ -71,9 +86,10 @@ never diverge:
 effective role, and `collectionRole` gates collection visibility on the same rule —
 so a raw `COUNT(collection_item)` is always truthful for anyone who can see the
 collection (no "· 1 but empty"). The **creator** (`created_by`) is permanently
-owner and can never be demoted or removed; workspace admins may otherwise manage
-membership. Collections omit `listed`/`link_role` (a collection isn't individually
-link-servable — it's a grouping of artifacts, each with its own link).
+owner while that collection's workspace is active and can never be demoted or
+removed; workspace admins may otherwise manage membership. Collections omit
+`listed`/`link_role` (a collection isn't individually link-servable — it's a
+grouping of artifacts, each with its own link).
 
 ## Listing preconditions (the only invariants)
 
