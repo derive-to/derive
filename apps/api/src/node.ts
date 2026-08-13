@@ -220,11 +220,11 @@ const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
   // same retrying outbox as notifications; the configured sender transports them.
   sendAuthEmail: (kind, input) =>
     enqueueChannelDelivery(meta, "email", `auth.${kind}`, buildAuthEmail(kind, input)),
-  // Account deletion: block if they'd orphan a shared workspace, else purge domain data.
+  // Account deletion: block if they'd orphan workspace or resource ownership, else purge.
   blockUserDeletion: async (userId) => {
     const blocking = await workspacesBlockingDeletion(meta, userId)
     return blocking.length
-      ? `Transfer ownership or remove the other members of ${blocking.join(", ")} before deleting your account.`
+      ? `Resolve owned work or workspace ownership in ${blocking.join(", ")} before deleting your account.`
       : null
   },
   // Purge, then heal Stripe seat counts on every workspace the deleted account was

@@ -296,7 +296,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         blockUserDeletion: async (userId) => {
           const blocking = await workspacesBlockingDeletion(meta, userId)
           return blocking.length
-            ? `Transfer ownership or remove the other members of ${blocking.join(", ")} before deleting your account.`
+            ? `Resolve owned work or workspace ownership in ${blocking.join(", ")} before deleting your account.`
             : null
         },
         // Purge, then heal Stripe seat counts on every workspace the deleted account was
