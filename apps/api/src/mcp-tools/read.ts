@@ -19,6 +19,7 @@ import {
   toMarkdown,
   type VersionDataRecord,
   type VersionRecord,
+  VIDEO_TEMPLATE,
 } from "@derive/core"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
@@ -327,6 +328,13 @@ export function registerReadTool(tc: ToolContext): void {
             `No deck resource "${short_id}". The starter is derive://decks/template; the guide is derive://skills/decks.`,
           )
         return json({ uri: short_id, mimeType: "text/html", content: DECK_TEMPLATE })
+      }
+      if (short_id.startsWith("derive://videos/")) {
+        if (short_id !== "derive://videos/template")
+          return err(
+            `No video resource "${short_id}". The starter is derive://videos/template; the guide is derive://skills/videos.`,
+          )
+        return json({ uri: short_id, mimeType: "text/html", content: VIDEO_TEMPLATE })
       }
       // A CONTEXT id or name loads the PACKAGE rather than a document: manifest inline,
       // skills and sources as pointers. Same gate as asking — askableContexts is the

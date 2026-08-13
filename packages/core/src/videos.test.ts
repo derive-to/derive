@@ -12,6 +12,27 @@ describe("HTML video scenes", () => {
     expect(sliceScenes(video).map((scene) => scene.id)).toEqual(["opening", "proof"])
   })
 
+  it("refuses ambiguous ids and timing instead of guessing", () => {
+    expect(
+      isVideoDocument(video.replace('data-derive-scene="opening"', 'data-derive-scene="1 bad"')),
+    ).toBe(false)
+    expect(() =>
+      sliceScenes(video.replace('data-duration-ms="5000"', 'data-duration-ms="50000"')),
+    ).toThrow(/1000 to 30000/)
+    const outside = video.replace(
+      "</main>",
+      "</main><section data-derive-scene=outside>x</section>",
+    )
+    expect(isVideoDocument(outside)).toBe(true)
+    expect(sliceScenes(outside)).toHaveLength(2)
+  })
+
+  it("updates captions through the same scene operation", () => {
+    expect(
+      applySceneEdits(video, [{ op: "scene-update", id: "proof", caption: "Proof point" }]),
+    ).toContain('data-derive-caption="Proof point"')
+  })
+
   it("updates scene timing without serializing the document", () => {
     const out = applySceneEdits(video, [
       {

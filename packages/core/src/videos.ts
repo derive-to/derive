@@ -4,6 +4,7 @@ import { attrValue, elementEnd, type HtmlTag, tags } from "./html-tags"
 export const VIDEO_CONTENT_TYPE = "text/x-derive-video"
 const SCENE_TAGS = new Set(["section", "div", "article"])
 const TRANSITIONS = new Set(["cut", "fade", "dissolve", "slide"])
+const SCENE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 
 export interface VideoScene {
   position: number
@@ -15,6 +16,8 @@ export interface VideoScene {
   durationMs: number
   transition: string
   transitionMs: number
+  title?: string
+  caption?: string
 }
 
 export type SceneEdit =
@@ -24,6 +27,7 @@ export type SceneEdit =
       duration_ms?: number
       transition?: "cut" | "fade" | "dissolve" | "slide"
       transition_ms?: number
+      caption?: string
     }
   | { op: "scene-move"; id: string; direction: "previous" | "next" }
   | { op: "scene-duplicate"; id: string }
@@ -37,15 +41,49 @@ export const isSceneEdit = (value: unknown): value is SceneEdit =>
 
 export const sliceScenes = (html: string): VideoScene[] => {
   const all = tags(html)
+  const roots = all
+    .map((tag, i) => ({ tag, i }))
+    .filter(({ tag }) => !tag.closing && /\bdata-derive-video(?:\s|=|$)/i.test(tag.attrs))
+  if (roots.length !== 1)
+    throw new EditError("An HTML video needs exactly one data-derive-video root.")
+  const root = roots[0] as { tag: HtmlTag; i: number }
+  const rootEnd = elementEnd(all, root.i)
+  if (rootEnd < 0) throw new EditError("The data-derive-video root is never closed.")
   const spans: VideoScene[] = []
   for (let i = 0; i < all.length; i++) {
     const open = all[i] as HtmlTag
     if (open.closing || !SCENE_TAGS.has(open.name)) continue
+    if (open.start <= root.tag.start || open.start >= rootEnd) continue
     const id = attrValue(open.attrs, "data-derive-scene")
     if (!id) continue
+    if (!SCENE_ID.test(id))
+      throw new EditError(
+        `Scene "${id}" needs a short stable id beginning with a letter and using only letters, numbers, - or _.`,
+      )
     const end = elementEnd(all, i)
     if (end < 0)
       throw new EditError(`Scene "${id}" is never closed, so the video cannot be edited safely.`)
+    const durationRaw = attrValue(open.attrs, "data-duration-ms")
+    const transitionRaw = attrValue(open.attrs, "data-transition")
+    const transitionMsRaw = attrValue(open.attrs, "data-transition-ms")
+    const durationMs = durationRaw == null ? 5000 : Number(durationRaw)
+    const transition = transitionRaw || "cut"
+    const transitionMs = transitionMsRaw == null ? 300 : Number(transitionMsRaw)
+    if (!Number.isInteger(durationMs) || durationMs < 1000 || durationMs > 30000)
+      throw new EditError(`Scene "${id}" duration must be a whole number from 1000 to 30000 ms.`)
+    if (!TRANSITIONS.has(transition))
+      throw new EditError(`Scene "${id}" has unknown transition "${transition}".`)
+    if (!Number.isInteger(transitionMs) || transitionMs < 100 || transitionMs > 2000)
+      throw new EditError(`Scene "${id}" transition duration must be 100 to 2000 ms.`)
+    const source = html.slice(open.start, end)
+    const heading = /<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]>/i.exec(source)?.[1]
+    const title =
+      attrValue(open.attrs, "data-derive-scene-title") ||
+      heading
+        ?.replace(/<[^<>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    const caption = attrValue(open.attrs, "data-derive-caption")
     spans.push({
       position: 0,
       start: open.start,
@@ -53,9 +91,11 @@ export const sliceScenes = (html: string): VideoScene[] => {
       openStart: open.start,
       openEnd: open.end,
       id,
-      durationMs: Number(attrValue(open.attrs, "data-duration-ms")) || 5000,
-      transition: attrValue(open.attrs, "data-transition") || "cut",
-      transitionMs: Number(attrValue(open.attrs, "data-transition-ms")) || 300,
+      durationMs,
+      transition,
+      transitionMs,
+      ...(title ? { title } : {}),
+      ...(caption ? { caption } : {}),
     })
   }
   for (let i = 1; i < spans.length; i++)
@@ -128,6 +168,11 @@ export const applySceneEdits = (html: string, edits: SceneEdit[]): string => {
           "data-transition-ms",
           String(boundedInteger(raw.transition_ms, 100, 2000, "Transition duration")),
         )
+      if (raw.caption !== undefined) {
+        if (typeof raw.caption !== "string" || raw.caption.length > 500)
+          throw new EditError("Scene caption must be at most 500 characters.")
+        opening = setAttr(opening, "data-derive-caption", raw.caption)
+      }
       out = out.slice(0, scene.openStart) + opening + out.slice(scene.openEnd)
     } else if (raw.op === "scene-delete") {
       if (scenes.length === 1) throw new EditError("A video must keep at least one scene.")

@@ -61,6 +61,7 @@ export function ArtifactTopBar(props: {
   inlineEditLabel: string
   /** This artifact is a slide deck — offer Present (fullscreen) in the ⋯ menu. */
   isDeck: boolean
+  videoMoment?: { scene: string; timeMs: number }
   /** Caller may toggle the change-lock (editor/owner). */
   canLock: boolean
   /** Whether the artifact is currently locked (changes go through approval). */
@@ -124,6 +125,7 @@ export function ArtifactTopBar(props: {
           passwordProtected={props.passwordProtected}
           publicHistory={props.publicHistory}
           collectionAccess={props.collectionAccess}
+          videoMoment={props.videoMoment}
         />
         <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
         <DropdownMenu>

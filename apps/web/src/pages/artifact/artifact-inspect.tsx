@@ -46,6 +46,7 @@ export function ArtifactInspect({
     durationMs: number
     transition: string
     transitionMs: number
+    caption: string
   } | null
   onSceneEdit?: (edit: Record<string, unknown>) => void
   onUndo: () => void
@@ -110,6 +111,7 @@ function SceneInspect({
     durationMs: number
     transition: string
     transitionMs: number
+    caption: string
   }
   onEdit: (edit: Record<string, unknown>) => void
   saving: boolean
@@ -160,6 +162,18 @@ function SceneInspect({
           <option value="dissolve">Dissolve</option>
           <option value="slide">Slide</option>
         </select>
+      </label>
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        Caption
+        <textarea
+          data-testid="artifact-inspect-scene-caption"
+          key={`${video.id}-caption`}
+          defaultValue={video.caption}
+          maxLength={500}
+          disabled={saving}
+          className="min-h-16 resize-y rounded-md border border-input bg-transparent px-2.5 py-2 text-sm text-foreground"
+          onBlur={(e) => update({ caption: e.target.value })}
+        />
       </label>
       <label className="grid gap-1.5 text-xs text-muted-foreground">
         Transition duration

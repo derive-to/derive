@@ -94,6 +94,14 @@ presentation bar, Present mode, and comments that pin to a slide — and a deck 
 that still looks right, so the loss is invisible. `derive://decks/template` is a complete
 working starter.
 
+**Building a lightweight HTML video? Start from `derive://videos/template`.** Keep one
+`data-derive-video` root with flat, stable `data-derive-scene` children. Derive then reuses
+its playback/fullscreen bar, direct canvas editor, Inspect, shared undo/Save/Suggest,
+comments, versions and sharing. Scene duration is 1000–30000 ms; transitions are `cut`,
+`fade`, `dissolve` or `slide`. `read(map:true)` exposes `scene:<id>` nodes and `$video`
+exposes timing metadata. Quote/element edits and `scene-update`/`scene-move`/
+`scene-duplicate`/`scene-delete` publish atomically with `base_version`.
+
 ## stage target:'doc' for large docs and bundles
 
 Inline `content`/`files` is model output — capped by the per-response token ceiling and

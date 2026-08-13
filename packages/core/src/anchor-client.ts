@@ -1378,6 +1378,11 @@ interface ElReg {
   let videoTimer = 0
   const videoDuration = (el: HTMLElement | undefined): number =>
     Math.max(1000, Math.min(30000, Number(el?.dataset.durationMs) || 5000))
+  const videoTotalDuration = (scenes = videoScenes()): number =>
+    scenes.reduce((total, scene) => total + videoDuration(scene), 0)
+  const videoPosition = (scenes = videoScenes()): number =>
+    scenes.slice(0, videoAt).reduce((total, scene) => total + videoDuration(scene), 0) +
+    videoElapsed
   const animateVideoScene = (scene: HTMLElement) => {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return
     const transition = scene.dataset.transition || "cut"
@@ -1409,8 +1414,11 @@ interface ElReg {
       durationMs: videoDuration(scene),
       transition: scene.dataset.transition || "cut",
       transitionMs: Number(scene.dataset.transitionMs) || 300,
+      caption: scene.dataset.deriveCaption || "",
       playing: videoPlaying,
       elapsedMs: videoElapsed,
+      positionMs: videoPosition(scenes),
+      totalDurationMs: videoTotalDuration(scenes),
     })
   }
   const showVideoScene = (index: number) => {
@@ -1446,7 +1454,7 @@ interface ElReg {
     postVideoSniff()
     if (videoPlaying) videoTimer = requestAnimationFrame(tickVideo)
   }
-  const driveVideo = (action: string, n?: number) => {
+  const driveVideo = (action: string, n?: number, id?: string) => {
     if (action === "next") showVideoScene(videoAt + 1)
     else if (action === "prev") showVideoScene(videoAt - 1)
     else if (action === "goto") showVideoScene(Number.isInteger(n) ? (n as number) : 0)
@@ -1463,6 +1471,26 @@ interface ElReg {
     } else if (action === "restart") {
       showVideoScene(0)
       driveVideo("play")
+    } else if (action === "seek" && typeof n === "number") {
+      const scenes = videoScenes()
+      let remaining = Math.max(0, Math.min(videoTotalDuration(scenes), n))
+      let at = 0
+      while (at < scenes.length - 1 && remaining >= videoDuration(scenes[at])) {
+        remaining -= videoDuration(scenes[at])
+        at++
+      }
+      showVideoScene(at)
+      videoElapsed = Math.min(videoDuration(scenes[at]), remaining)
+      videoStarted = performance.now() - videoElapsed
+      postVideoSniff()
+    } else if (action === "seek-scene" && id) {
+      const scenes = videoScenes()
+      const at = scenes.findIndex((scene) => scene.dataset.deriveScene === id)
+      if (at < 0) return
+      showVideoScene(at)
+      videoElapsed = Math.max(0, Math.min(videoDuration(scenes[at]), Number(n) || 0))
+      videoStarted = performance.now() - videoElapsed
+      postVideoSniff()
     }
   }
   type WireSceneEdit =
@@ -1472,6 +1500,7 @@ interface ElReg {
         duration_ms?: number
         transition?: string
         transition_ms?: number
+        caption?: string
       }
     | { op: "scene-move"; id: string; direction: "previous" | "next" }
     | { op: "scene-duplicate"; id: string }
@@ -3670,7 +3699,8 @@ interface ElReg {
     // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
     // `deck` message, which it answers itself.
     else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)
-    else if (d.type === "video-drive") driveVideo(String(d.action || ""), d.n)
+    else if (d.type === "video-drive")
+      driveVideo(String(d.action || ""), d.n, typeof d.id === "string" ? d.id : undefined)
     else if (d.type === "video-edit") {
       const op = String(d.op || "")
       const id = String(d.id || "")
@@ -3681,6 +3711,7 @@ interface ElReg {
           duration_ms: typeof d.durationMs === "number" ? d.durationMs : undefined,
           transition: typeof d.transition === "string" ? d.transition : undefined,
           transition_ms: typeof d.transitionMs === "number" ? d.transitionMs : undefined,
+          caption: typeof d.caption === "string" ? d.caption : undefined,
         })
       else if (op === "move" && (d.direction === "previous" || d.direction === "next"))
         applySceneFromHost({ op: "scene-move", id, direction: d.direction })

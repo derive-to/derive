@@ -66,6 +66,7 @@ import {
   type Role,
   roleAllows,
   SKILL_CONTENT_TYPE,
+  VIDEO_TEMPLATE,
 } from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
@@ -305,6 +306,21 @@ async function buildServer(
     },
     async (uri) => ({
       contents: [{ uri: uri.href, mimeType: "text/markdown", text: BRANDPRINT_REFERENCE }],
+    }),
+  )
+
+  server.registerResource(
+    "videos:template",
+    "derive://videos/template",
+    {
+      title: "HTML video starter (canonical)",
+      description:
+        "A complete lightweight HTML video whose scenes reuse Derive playback, Inspect, editing and sharing.",
+      mimeType: "text/html",
+      annotations: { audience: ["assistant"], priority: 0.8 },
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: "text/html", text: VIDEO_TEMPLATE }],
     }),
   )
   server.registerResource(

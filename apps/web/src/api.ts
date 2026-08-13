@@ -135,6 +135,7 @@ export type SceneEditInput =
       duration_ms?: number
       transition?: "cut" | "fade" | "dissolve" | "slide"
       transition_ms?: number
+      caption?: string
     }
   | { op: "scene-move"; id: string; direction: "previous" | "next" }
   | { op: "scene-duplicate"; id: string }

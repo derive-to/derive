@@ -186,8 +186,11 @@ export function useArtifactFrame(p: {
           durationMs: d.durationMs ?? 5000,
           transition: String(d.transition ?? "cut"),
           transitionMs: d.transitionMs ?? 300,
+          caption: String(d.caption ?? ""),
           playing: !!d.playing,
           elapsedMs: d.elapsedMs ?? 0,
+          positionMs: d.positionMs ?? d.elapsedMs ?? 0,
+          totalDurationMs: d.totalDurationMs ?? d.durationMs ?? 5000,
           sniffed: false,
         }
         videoRef.current = next
@@ -215,8 +218,11 @@ export function useArtifactFrame(p: {
           durationMs: d.durationMs ?? 5000,
           transition: String(d.transition ?? "cut"),
           transitionMs: d.transitionMs ?? 300,
+          caption: String(d.caption ?? ""),
           playing: !!d.playing,
           elapsedMs: d.elapsedMs ?? 0,
+          positionMs: d.positionMs ?? d.elapsedMs ?? 0,
+          totalDurationMs: d.totalDurationMs ?? d.durationMs ?? 5000,
           sniffed: true,
         }
         videoRef.current = next
@@ -276,7 +282,7 @@ export function useArtifactFrame(p: {
       } else if (d.type === "present") {
         // `p` pressed with focus inside the document. Only a deck can be presented,
         // and only from a read state — mid-edit the mode has its own answer.
-        if (deckRef.current) presentRef.current()
+        if (deckRef.current || videoRef.current) presentRef.current()
       } else if (d.type === "navigate" && typeof d.ref === "string") {
         onNavigate(d.ref, !!d.newTab)
       } else if (d.type === "open-external" && typeof d.href === "string") {
@@ -329,13 +335,18 @@ export function useArtifactFrame(p: {
     [],
   )
   const videoCmd = useCallback(
-    (action: "next" | "prev" | "goto" | "play" | "pause" | "restart", n?: number) => {
+    (
+      action: "next" | "prev" | "goto" | "play" | "pause" | "restart" | "seek" | "seek-scene",
+      n?: number,
+      id?: string,
+    ) => {
       frame.current?.contentWindow?.postMessage(
         {
           source: "derive-host",
           type: videoRef.current?.sniffed ? "video-drive" : "video",
           action,
           n,
+          id,
         },
         "*",
       )
@@ -347,9 +358,9 @@ export function useArtifactFrame(p: {
   // this hook already owns the wrapper and the drive command.
   const present = usePresentMode({
     wrapRef: presentWrap,
-    hasDeck: !!deck,
-    total: deck?.total ?? 1,
-    cmd: deckCmd,
+    hasDeck: !!deck || !!video,
+    total: deck?.total ?? video?.total ?? 1,
+    cmd: deck ? deckCmd : (action, n) => videoCmd(action, n),
     onEnter: p.onPresent,
   })
   presentRef.current = present.toggle

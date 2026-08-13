@@ -114,8 +114,11 @@ export type Video = {
   durationMs: number
   transition: string
   transitionMs: number
+  caption: string
   playing: boolean
   elapsedMs: number
+  positionMs: number
+  totalDurationMs: number
   sniffed: boolean
 }
 

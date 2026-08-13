@@ -125,6 +125,7 @@ export function Artifact() {
   // Thumb-sized targets and "tap" copy follow the POINTER, not the breakpoint: a
   // landscape phone is 844px wide and a tablet wider still, and both are fingers.
   const coarsePointer = useCoarsePointer()
+  const openedVideoMoment = useRef<string | null>(null)
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the
@@ -454,6 +455,18 @@ export function Artifact() {
       else window.open(u.href, "_blank", "noopener,noreferrer")
     },
   })
+
+  // A shared moment is an absolute timeline offset, so it still lands on the same
+  // content after an earlier scene's duration changes. Apply once when the video runtime
+  // announces itself; later clock updates must not drag the viewer back.
+  useEffect(() => {
+    if (!video || search.t === undefined) return
+    const key = `${shortId}:${version ?? "current"}:${search.t}`
+    if (openedVideoMoment.current === key) return
+    openedVideoMoment.current = key
+    if (search.scene) videoCmd("seek-scene", search.t, search.scene)
+    else videoCmd("seek", search.t)
+  }, [search.scene, search.t, shortId, version, video, videoCmd])
 
   // Preview vs. line-diff for the shown version, plus the fetched diff. See
   // use-version-diff.
@@ -867,6 +880,7 @@ export function Artifact() {
       onVideoNext={() => videoCmd("next")}
       onVideoToggle={() => videoCmd(video?.playing ? "pause" : "play")}
       onVideoRestart={() => videoCmd("restart")}
+      onVideoSeek={(ms) => videoCmd("seek", ms)}
       presenting={present.presenting}
       presentOverlay={present.overlay}
       controlsIdle={present.idle}
@@ -1054,6 +1068,7 @@ export function Artifact() {
               inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
               onInlineEdit={() => inlineEdit.start()}
               isDeck={isDeckLike}
+              videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
               canLock={canLock}
               canMove={canMove}
               automateBeta={automateBeta}

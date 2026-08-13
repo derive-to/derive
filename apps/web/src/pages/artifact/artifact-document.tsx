@@ -42,6 +42,7 @@ export function ArtifactDocument({
   onVideoNext,
   onVideoToggle,
   onVideoRestart,
+  onVideoSeek,
   presenting = false,
   presentOverlay = false,
   controlsIdle = false,
@@ -77,6 +78,7 @@ export function ArtifactDocument({
   onVideoNext: () => void
   onVideoToggle: () => void
   onVideoRestart: () => void
+  onVideoSeek: (ms: number) => void
   /** Present mode is up: the stage is the whole screen and the comment/cursor
    *  layers step aside. */
   presenting?: boolean
@@ -173,6 +175,8 @@ export function ArtifactDocument({
                   onNext={onVideoNext}
                   onToggle={onVideoToggle}
                   onRestart={onVideoRestart}
+                  onSeek={onVideoSeek}
+                  onPresent={onPresent ?? (() => {})}
                 />
               )}
               {/* Live peer cursors ease in here, over the framed render (the iframe is

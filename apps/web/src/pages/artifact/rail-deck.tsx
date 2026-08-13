@@ -94,14 +94,29 @@ export function VideoBar({
   onNext,
   onToggle,
   onRestart,
+  onSeek,
+  onPresent,
 }: {
-  video: { i: number; total: number; playing: boolean; elapsedMs: number; durationMs: number }
+  video: {
+    i: number
+    total: number
+    playing: boolean
+    elapsedMs: number
+    durationMs: number
+    positionMs: number
+    totalDurationMs: number
+  }
   onPrev: () => void
   onNext: () => void
   onToggle: () => void
   onRestart: () => void
+  onSeek: (ms: number) => void
+  onPresent: () => void
 }) {
-  const progress = Math.max(0, Math.min(100, (video.elapsedMs / video.durationMs) * 100))
+  const clock = (ms: number) => {
+    const sec = Math.max(0, Math.floor(ms / 1000))
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
+  }
   return (
     <div
       data-testid="video-bar"
@@ -148,9 +163,28 @@ export function VideoBar({
       <span className="min-w-13 text-center font-mono text-2xs tabular-nums text-muted-foreground">
         {video.i + 1} / {video.total}
       </span>
-      <span className="h-1.5 min-w-20 flex-1 overflow-hidden rounded-full bg-muted">
-        <span className="block h-full bg-primary" style={{ width: `${progress}%` }} />
+      <input
+        data-testid="video-seek"
+        type="range"
+        min={0}
+        max={Math.max(1, video.totalDurationMs)}
+        value={Math.min(video.positionMs, video.totalDurationMs)}
+        onChange={(e) => onSeek(Number(e.target.value))}
+        className="h-4 min-w-24 flex-1 accent-primary"
+        aria-label="Video position"
+      />
+      <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+        {clock(video.positionMs)} / {clock(video.totalDurationMs)}
       </span>
+      <Button
+        variant="outline"
+        size="icon-xs"
+        data-testid="video-fullscreen"
+        onClick={onPresent}
+        aria-label="View video fullscreen"
+      >
+        <Icon name="present" />
+      </Button>
     </div>
   )
 }

@@ -304,6 +304,7 @@ export function registerPublishTool(tc: ToolContext): void {
                 duration_ms: z.coerce.number().optional(),
                 transition: z.enum(["cut", "fade", "dissolve", "slide"]).optional(),
                 transition_ms: z.coerce.number().optional(),
+                caption: z.string().max(500).optional(),
               }),
               z.object({
                 op: z.literal("scene-move"),
