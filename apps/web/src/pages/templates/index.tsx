@@ -22,11 +22,11 @@ import type { TemplateTab } from "./types"
 const TAB_COPY: Record<TemplateTab, { title: string; description: string }> = {
   artifacts: {
     title: "Useful shapes for the work that repeats.",
-    description: "Choose a strong shape, then tell Derive what to make for you.",
+    description: "Choose a strong shape, then tell your agent what to make for you.",
   },
   contexts: {
     title: "Reusable setups for agent work.",
-    description: "Brief a proven setup and let Derive adapt it into a working Context.",
+    description: "Brief a proven setup and let your agent adapt it into a working Context.",
   },
   libraries: {
     title: "A useful beginning can travel.",
@@ -138,7 +138,7 @@ export function Templates() {
       <PageHeader
         eyebrow="Built into Derive"
         title="Templates"
-        subtitle="Choose a proven starting point, brief Derive, and review a finished first draft."
+        subtitle="Choose a proven starting point, brief your agent, and review a finished first draft."
         actions={
           <>
             <Button

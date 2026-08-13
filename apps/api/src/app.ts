@@ -11,6 +11,7 @@ import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
 import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
+import { isTemplateLibrarySchemaUnavailable } from "./lib/template-library-schema"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
 import { agentDiscoveryRoutes } from "./routes/agent-discovery"
@@ -131,6 +132,16 @@ export function createApp(deps: AppDeps): Hono {
   // Uncaught errors become a consistent JSON 500 (never a stack trace to the
   // client) and a structured server log line.
   app.onError((err, c) => {
+    // Production always applies schema before flipping the worker. Unmerged PR
+    // previews share production data but deliberately cannot apply their DDL;
+    // explain only that narrow missing-table state instead of presenting a
+    // generic 500. Every unrelated database failure remains loud below.
+    const templateLibraryPath =
+      c.req.path === "/v1/template-libraries" || c.req.path.startsWith("/v1/template-libraries/")
+    if (templateLibraryPath && isTemplateLibrarySchemaUnavailable(err))
+      return fail(c, 503, "template libraries are waiting for the database update", {
+        code: "template_library_schema_unavailable",
+      })
     log.error("unhandled error", {
       method: c.req.method,
       path: redactPath(c.req.path),

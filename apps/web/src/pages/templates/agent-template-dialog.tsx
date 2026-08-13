@@ -424,7 +424,7 @@ export function AgentTemplateDialog({
                     onClick={() => void copyForLocalAgent()}
                     data-testid="template-agent-copy-again"
                   >
-                    <Icon name={copied ? "check" : "copy"} /> {copied ? "Copied" : "Copy again"}
+                    <Icon name={copied ? "check" : "copy"} /> {copied ? "Copied" : "Copy task"}
                   </Button>
                 </div>
                 <Textarea

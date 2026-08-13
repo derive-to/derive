@@ -518,3 +518,29 @@ describe("template libraries: pinned reusable starters", () => {
     expect(await response.text()).toMatch(/cannot distribute/i)
   })
 })
+
+describe("template libraries: release sequencing", () => {
+  it("returns an explicit temporary state when an unmerged preview is ahead of schema", async () => {
+    const previewUser: TestUser = {
+      id: "u_tpl_preview",
+      email: "preview@templates.test",
+      name: "Preview tester",
+    }
+    const preview = makeAuthedApp("template-libraries-preview-schema", [previewUser])
+    Object.assign(preview.meta, {
+      listTemplateLibraries: async () => {
+        throw Object.assign(new Error('relation "template_library" does not exist'), {
+          code: "42P01",
+        })
+      },
+    })
+
+    const response = await preview.app.request("/v1/template-libraries", {
+      headers: as(previewUser.email),
+    })
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      code: "template_library_schema_unavailable",
+    })
+  })
+})

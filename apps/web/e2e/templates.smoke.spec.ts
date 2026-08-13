@@ -47,6 +47,7 @@ test.describe("templates", () => {
       .getByTestId("template-agent-brief")
       .fill("A customer-onboarding story for Acme’s product and success leaders.")
     await page.getByTestId("template-agent-preview").click()
+    await expect(page.getByTestId("template-agent-copy-again")).toContainText("Copy task")
     const preview = page.getByLabel("Agent handoff to copy")
     const previewValue = await preview.inputValue()
     expect(previewValue).toContain("Exact reference: derive://templates/narrative-pitch")
@@ -270,6 +271,28 @@ test.describe("templates", () => {
     await expect(
       firstCard.locator("..").getByRole("button", { name: "Make it mine" }),
     ).toBeVisible()
+  })
+
+  test("a preview ahead of additive schema explains the beta release state", async ({
+    owner: page,
+  }) => {
+    await page.route("**/v1/template-libraries?**", (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "template libraries are waiting for the database update",
+          code: "template_library_schema_unavailable",
+        }),
+      }),
+    )
+    await page.goto("/templates?tab=libraries")
+
+    await expect(page.getByText("Template libraries are landing with this release")).toBeVisible()
+    await expect(
+      page.getByText("Shared libraries turn on automatically when the release finishes."),
+    ).toBeVisible()
+    await expect(page.getByTestId("template-library-retry")).toHaveCount(0)
   })
 
   test("a legacy deck link resumes the same agent-first flow without exposing source", async ({

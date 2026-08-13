@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { useDeferredValue, useState } from "react"
 import {
+  ApiError,
   type Artifact,
   api,
   type TemplateLibrary,
@@ -759,7 +760,7 @@ function LibraryDetail({
   if (detail.isError || !detail.data)
     return (
       <EmptyState
-        icon="templates"
+        icon={<Icon name="templates" />}
         title="This library is unavailable"
         description="It may be private, deleted, or outside your current workspace."
         action={
@@ -856,7 +857,7 @@ function LibraryDetail({
       </div>
       {allEntries.length === 0 && (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="No starters yet"
           description={
             library.can_manage
@@ -867,7 +868,7 @@ function LibraryDetail({
       )}
       {allEntries.length > 0 && entries.length === 0 && (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="No matching starters"
           description="Try a broader word or clear the current filter."
           action={
@@ -909,6 +910,9 @@ export function LibraryShelf({
   const [createOpen, setCreateOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [scope, setScope] = useState<"all" | TemplateLibraryScope>("all")
+  const schemaPending =
+    libraries.error instanceof ApiError &&
+    libraries.error.code === "template_library_schema_unavailable"
   if (selectedId)
     return <LibraryDetail libraryId={selectedId} onBack={() => onSelect(undefined)} onUse={onUse} />
   const visibleLibraries = libraryRows.filter(
@@ -980,9 +984,15 @@ export function LibraryShelf({
         <div className="grid min-h-64 place-items-center border-y text-sm text-muted-foreground">
           Loading libraries…
         </div>
+      ) : schemaPending ? (
+        <EmptyState
+          icon={<Icon name="templates" />}
+          title="Template libraries are landing with this release"
+          description="Built-in artifact and Context templates are ready now. Shared libraries turn on automatically when the release finishes."
+        />
       ) : libraries.isError ? (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="Libraries couldn't load"
           description="Try again in a moment."
           action={
@@ -1049,7 +1059,7 @@ export function LibraryShelf({
         </>
       ) : libraryRows.length ? (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="No matching libraries"
           description="Try a broader word or clear the current search."
           action={
@@ -1064,7 +1074,7 @@ export function LibraryShelf({
         />
       ) : (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="Create the first shared beginning"
           description="Turn a trusted artifact into a library entry, then share it privately, with your workspace, or publicly."
         />

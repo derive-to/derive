@@ -89,8 +89,8 @@ function PublicTemplateLibraryCatalogInner() {
           Useful beginnings, shared openly.
         </h1>
         <p className="mt-3 max-w-2xl text-base text-pretty text-muted-foreground">
-          Browse version-pinned starters from the Derive community, then tell Derive what to make
-          with one.
+          Browse version-pinned starters from the Derive community, then tell your agent what to
+          make with one.
         </p>
         <label className="mt-5 block max-w-md">
           <span className="sr-only">Search public libraries</span>
@@ -147,7 +147,7 @@ function PublicTemplateLibraryCatalogInner() {
         </section>
       ) : needle ? (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="No public libraries match that search"
           description="Try a broader topic, library name, or publisher."
           action={
@@ -162,7 +162,7 @@ function PublicTemplateLibraryCatalogInner() {
         />
       ) : (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="No public libraries yet"
           description="The first public starter kit will appear here."
         />
@@ -240,7 +240,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
     return (
       <PageShell className="grid min-h-full place-items-center">
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="This library isn’t available"
           description="It may be private, deleted, or moved."
         />
@@ -393,7 +393,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
       </section>
       {(data.entries ?? []).length === 0 && (
         <EmptyState
-          icon="templates"
+          icon={<Icon name="templates" />}
           title="No starters published yet"
           description="This public library is ready for its first reusable artifact."
         />
