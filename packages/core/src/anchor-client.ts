@@ -1378,6 +1378,25 @@ interface ElReg {
   let videoTimer = 0
   const videoDuration = (el: HTMLElement | undefined): number =>
     Math.max(1000, Math.min(30000, Number(el?.dataset.durationMs) || 5000))
+  const animateVideoScene = (scene: HTMLElement) => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return
+    const transition = scene.dataset.transition || "cut"
+    if (transition === "cut") return
+    const duration = Math.max(100, Math.min(2000, Number(scene.dataset.transitionMs) || 300))
+    const keyframes: Keyframe[] =
+      transition === "slide"
+        ? [
+            { opacity: 0, transform: "translateX(4%)" },
+            { opacity: 1, transform: "translateX(0)" },
+          ]
+        : transition === "dissolve"
+          ? [
+              { opacity: 0, filter: "blur(8px)" },
+              { opacity: 1, filter: "blur(0)" },
+            ]
+          : [{ opacity: 0 }, { opacity: 1 }]
+    scene.animate(keyframes, { duration, easing: "ease-out" })
+  }
   const postVideoSniff = () => {
     const scenes = videoScenes()
     const scene = scenes[videoAt]
@@ -1402,6 +1421,7 @@ interface ElReg {
       const scene = scenes[i] as HTMLElement
       scene.hidden = i !== videoAt
       scene.toggleAttribute("data-derive-video-active", i === videoAt)
+      if (i === videoAt) animateVideoScene(scene)
     }
     videoElapsed = 0
     videoStarted = performance.now()
