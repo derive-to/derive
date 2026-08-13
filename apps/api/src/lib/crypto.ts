@@ -118,9 +118,9 @@ export const safeEqual = (a: string, b: string | undefined): boolean =>
 
 // --- password-protected shared links --------------------------------------
 // Reuse Better Auth's scrypt implementation for both artifacts and collections.
-// Existing artifact locks used `salt.sha256(salt+pw)`; keep read compatibility so
-// deployed links do not suddenly stop unlocking, while every new/reset password is
-// stored with the deliberately expensive scrypt KDF (`salt:key`).
+// Every new/reset password is stored with the deliberately expensive scrypt KDF
+// (`salt:key`). Pre-scrypt hashes deliberately fail verification; their owners can
+// reset the link password through the authenticated share dialog.
 export const hashPassword = (password: string): Promise<string> => scryptPassword(password)
 
 export const verifyPassword = async (
@@ -128,23 +128,12 @@ export const verifyPassword = async (
   stored: string | null | undefined,
 ): Promise<boolean> => {
   if (!stored) return false
-  if (stored.includes(":")) {
-    try {
-      return await verifyScryptPassword({ hash: stored, password })
-    } catch {
-      return false
-    }
+  if (!stored.includes(":")) return false
+  try {
+    return await verifyScryptPassword({ hash: stored, password })
+  } catch {
+    return false
   }
-
-  const [salt, digest] = stored.split(".")
-  if (!salt || !digest) return false
-  // Compatibility-only verification of hashes written before scrypt adoption.
-  // This branch never creates a new stored credential; it can only validate a
-  // pre-scrypt artifact link so its owner can reset it onto the secure format.
-  const legacyHash = createHash("sha256")
-  // codeql[js/insufficient-password-hash]
-  legacyHash.update(salt + password)
-  return safeEqual(legacyHash.digest("hex"), digest)
 }
 
 // The cookie that proves a visitor has unlocked one artifact. Its value is

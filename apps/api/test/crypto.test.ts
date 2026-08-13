@@ -116,13 +116,13 @@ describe("hashPassword / verifyPassword — salted, hashed at rest", () => {
     expect(await verifyPassword("same", await hashPassword("same"))).toBe(true)
   })
 
-  it("keeps legacy artifact passwords readable", async () => {
+  it("rejects pre-scrypt password hashes so owners must reset them", async () => {
     expect(
       await verifyPassword(
         "hunter2",
         "c2FsdHNhbHQ.acfaf71f49378900e704fbdcc285f260cc47ea3e154518cb072990747f61ba8d",
       ),
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it("rejects null / empty / malformed stored values", async () => {
