@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "derive",
+  "displayName": "Derive",
+  "description": "Publish agent output to permanent versioned URLs, read review comments back, and revise.",
+  "author": {
+    "name": "Derive",
+    "url": "https://derive.to"
+  },
+  "homepage": "https://derive.to",
+  "repository": "https://github.com/derive-to/derive",
+  "license": "FSL-1.1-ALv2",
+  "keywords": ["artifacts", "publishing", "review", "documents", "mcp"],
+  "skills": ["./.claude/skills/derive"],
+  "mcpServers": {
+    "derive": {
+      "type": "http",
+      "url": "https://derive.to/mcp"
+    }
+  }
+}
