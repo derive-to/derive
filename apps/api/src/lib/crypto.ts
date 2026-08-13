@@ -141,13 +141,10 @@ export const verifyPassword = async (
   // Compatibility-only verification of hashes written before scrypt adoption.
   // This branch never creates a new stored credential; it can only validate a
   // pre-scrypt artifact link so its owner can reset it onto the secure format.
+  const legacyHash = createHash("sha256")
   // codeql[js/insufficient-password-hash]
-  return safeEqual(
-    createHash("sha256")
-      .update(salt + password)
-      .digest("hex"),
-    digest,
-  )
+  legacyHash.update(salt + password)
+  return safeEqual(legacyHash.digest("hex"), digest)
 }
 
 // The cookie that proves a visitor has unlocked one artifact. Its value is
