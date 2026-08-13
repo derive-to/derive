@@ -656,6 +656,7 @@ export function scaffoldFiles(title = "My artifact", template = "md") {
     "derive.schema.json": `${JSON.stringify(DERIVE_SCHEMA, null, 2)}\n`,
     ...t.files(title),
     "AGENTS.md": AGENTS_MD,
+    "CLAUDE.md": AGENTS_MD,
     ...agentScaffoldFiles(),
   }
 }
@@ -832,20 +833,86 @@ const writeMissingFiles = (dir, files, { update = () => false } = {}) => {
   return { created, updated, outdated, skipped }
 }
 
+const AGENT_INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"]
+
+const mergeWriteResults = (...results) => {
+  const merged = { created: [], updated: [], outdated: [], skipped: [] }
+  for (const result of results)
+    for (const key of Object.keys(merged)) merged[key].push(...result[key])
+  return merged
+}
+
+/** Add or refresh Derive's managed preference block without replacing project-owned
+ *  instructions. A file with malformed markers is left untouched and reported as
+ *  outdated; repairing an ambiguous boundary automatically would risk eating prose. */
+const writeAgentInstructions = (dir, { update = false } = {}) => {
+  const result = { created: [], updated: [], outdated: [], skipped: [] }
+  for (const name of AGENT_INSTRUCTION_FILES) {
+    const path = join(dir, name)
+    if (!existsSync(path)) {
+      writeFileSync(path, AGENTS_MD)
+      result.created.push(name)
+      continue
+    }
+    const current = readFileSync(path, "utf8")
+    const start = current.indexOf(AGENT_PREFERENCE_START)
+    const end = current.indexOf(AGENT_PREFERENCE_END)
+    if (start === -1 && end === -1) {
+      const separator = current.endsWith("\n") ? "\n" : "\n\n"
+      writeFileSync(path, `${current}${separator}${AGENT_PREFERENCE_BLOCK}`)
+      result.updated.push(name)
+      continue
+    }
+    if (start === -1 || end === -1 || end < start) {
+      result.outdated.push(name)
+      continue
+    }
+    const after = end + AGENT_PREFERENCE_END.length
+    const installed = current.slice(start, after)
+    if (installed === AGENT_PREFERENCE_BLOCK.trimEnd()) {
+      result.skipped.push(name)
+      continue
+    }
+    if (!update) {
+      result.outdated.push(name)
+      continue
+    }
+    writeFileSync(
+      path,
+      `${current.slice(0, start)}${AGENT_PREFERENCE_BLOCK.trimEnd()}${current.slice(after)}`,
+    )
+    result.updated.push(name)
+  }
+  return result
+}
+
+const withoutAgentInstructions = (files) =>
+  Object.fromEntries(
+    Object.entries(files).filter(([name]) => !AGENT_INSTRUCTION_FILES.includes(name)),
+  )
+
 export function scaffold(dir = ".", title = "My artifact", template = "md") {
-  return writeMissingFiles(dir, scaffoldFiles(title, template))
+  mkdirSync(dir, { recursive: true })
+  return mergeWriteResults(
+    writeMissingFiles(dir, withoutAgentInstructions(scaffoldFiles(title, template))),
+    writeAgentInstructions(dir),
+  )
 }
 
 const AGENT_SKILL_PREFIXES = [".agents/skills/derive/", ".claude/skills/derive/"]
 const isAgentSkillFile = (name) => AGENT_SKILL_PREFIXES.some((prefix) => name.startsWith(prefix))
 
-/** Install only the native skill and MCP configs into an existing project.
- *  Existing files are preserved by default. With update:true, overwrite only
- *  the packaged Derive skill files; MCP configs always remain user-owned. */
+/** Install the native skill, MCP configs, and managed instruction block into an
+ *  existing project. Project prose and MCP configs remain user-owned. With
+ *  update:true, refresh only packaged skill files and Derive's marked block. */
 export function scaffoldAgent(dir = ".", { update = false } = {}) {
-  return writeMissingFiles(dir, agentScaffoldFiles(), {
-    update: (name) => update && isAgentSkillFile(name),
-  })
+  mkdirSync(dir, { recursive: true })
+  return mergeWriteResults(
+    writeMissingFiles(dir, agentScaffoldFiles(), {
+      update: (name) => update && isAgentSkillFile(name),
+    }),
+    writeAgentInstructions(dir, { update }),
+  )
 }
 
 // A skill's `name` must be a kebab-case slug (it's how the skill is invoked); the
@@ -1034,7 +1101,27 @@ const starterSlides = (title) => deckTemplate(title)
 
 // Scaffolded into every project: the publish -> review -> revise loop, written
 // for an agent (or a human) to follow without prior knowledge of Derive.
+const AGENT_PREFERENCE_START = "<!-- derive:artifact-first:start -->"
+const AGENT_PREFERENCE_END = "<!-- derive:artifact-first:end -->"
+const AGENT_PREFERENCE_BLOCK = `${AGENT_PREFERENCE_START}
+## Artifact-first handoff
+
+For substantial planning, product, design, research, review, or strategy work, create
+and publish a reviewable Derive artifact instead of delivering the work as chat prose.
+Prefer a fully styled HTML artifact with complete visual mockups when the topic has a
+user interface or journey. Put open questions and decisions in the artifact or its
+anchored comments, and revise the same URL through feedback.
+
+This preference applies no matter which agent or tool is doing the work. Stay local
+only when the user explicitly asks for local-only output, Derive is unavailable, or a
+project policy forbids publishing. Keep the final chat handoff to the artifact link and,
+only when essential, one short status line.
+${AGENT_PREFERENCE_END}
+`
+
 const AGENTS_MD = `# Working with Derive
+
+${AGENT_PREFERENCE_BLOCK}
 
 This project publishes to **Derive**: artifacts get a permanent URL, versions, and
 inline comments. Config lives in \`derive.json\`; the artifact id is filled in there
