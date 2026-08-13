@@ -15,6 +15,8 @@ describe("collectionsJson: the preview byline heal", () => {
     created_by: "u_rob",
     created_at: "2026-08-01T00:00:00.000Z",
     workspace_access: "member" as const,
+    link_role: "none" as const,
+    password_hash: null,
     folder_id: null,
     count: 1,
   }

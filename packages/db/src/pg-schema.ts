@@ -373,6 +373,25 @@ export const artifactInvite = pgTable(
   ],
 )
 
+export const collectionInvite = pgTable(
+  "collection_invite",
+  {
+    id: text("id").primaryKey(),
+    collection_id: text("collection_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("commenter"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("collection_invite_token").on(t.token),
+    index("collection_invite_collection_email").on(t.collection_id, t.email),
+  ],
+)
+
 // A beta signup from the marketing site (see schema.ts for the full note).
 export const betaSignup = pgTable(
   "beta_signup",
@@ -486,6 +505,8 @@ export const collection = pgTable("collection", {
   // See the sqlite dialect's schema.ts for the full comment. Defaults to `member`
   // (not artifact's fail-closed `none`) to match collections' existing behavior.
   workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  password_hash: text("password_hash"),
   // See schema.ts for the full comment: the org-shared folder this collection is filed
   // under (null = ungrouped). Plain nullable pointer, NOT a FK — folders grant no access.
   folder_id: text("folder_id"),
@@ -974,6 +995,7 @@ const TABLES = [
   connection,
   invitation,
   artifactInvite,
+  collectionInvite,
   betaSignup,
   signupAttribution,
   instanceOperator,

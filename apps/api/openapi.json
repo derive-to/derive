@@ -1438,6 +1438,24 @@
             ],
             "description": "Workspace share scope: \"member\" (all members) or \"none\" (invite-only)."
           },
+          "link_role": {
+            "type": "string",
+            "enum": [
+              "none",
+              "viewer",
+              "commenter",
+              "editor"
+            ],
+            "description": "What merely holding the canonical collection link grants."
+          },
+          "password_protected": {
+            "type": "boolean",
+            "description": "Whether the collection world link requires a password."
+          },
+          "url": {
+            "type": "string",
+            "description": "Canonical share URL for this collection."
+          },
           "my_role": {
             "type": "string",
             "nullable": true,
@@ -1448,7 +1466,11 @@
               "owner",
               null
             ],
-            "description": "Caller's own role on the collection; drives the Share dialog. Null if none."
+            "description": "Caller's effective role on the collection. Null if none."
+          },
+          "can_share": {
+            "type": "boolean",
+            "description": "Whether the caller has standing (not merely a world-link role) to change collection sharing."
           },
           "starred": {
             "type": "boolean",
@@ -5659,6 +5681,85 @@
         }
       }
     },
+    "/v1/collections/{id}": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Get one collection through standing or its world link.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Rename a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated collection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Delete a collection.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The collection was deleted."
+          }
+        }
+      }
+    },
     "/v1/collections": {
       "get": {
         "tags": [
@@ -5782,63 +5883,12 @@
         }
       }
     },
-    "/v1/collections/{id}": {
-      "patch": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "Rename a collection.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The updated collection.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Collection"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "Delete a collection.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "The collection was deleted."
-          }
-        }
-      }
-    },
     "/v1/collections/{id}/access": {
       "patch": {
         "tags": [
           "Collections"
         ],
-        "summary": "Change a collection's workspace access.",
+        "summary": "Change a collection's workspace and link access.",
         "parameters": [
           {
             "schema": {
@@ -5864,10 +5914,62 @@
                         "member"
                       ],
                       "description": "The collection's new workspace share scope."
+                    },
+                    "link_role": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "viewer",
+                        "commenter",
+                        "editor"
+                      ]
+                    },
+                    "locked": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
-                    "workspace_access"
+                    "workspace_access",
+                    "link_role",
+                    "locked"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/unlock": {
+      "post": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Unlock a password-protected collection link.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unlocked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
                   ]
                 }
               }
@@ -6045,11 +6147,48 @@
                       "items": {
                         "$ref": "#/components/schemas/ArtifactMember"
                       }
+                    },
+                    "invites": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "viewer",
+                              "commenter",
+                              "editor",
+                              "owner"
+                            ]
+                          },
+                          "created_at": {
+                            "type": "string"
+                          },
+                          "expires_at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "email",
+                          "role",
+                          "created_at",
+                          "expires_at"
+                        ]
+                      }
                     }
                   },
                   "required": [
                     "created_by",
-                    "members"
+                    "members",
+                    "invites"
                   ]
                 }
               }
@@ -6074,11 +6213,82 @@
         ],
         "responses": {
           "201": {
-            "description": "The added member.",
+            "description": "The member added directly, or a pending emailed invite.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ArtifactMember"
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "member"
+                          ]
+                        },
+                        "member": {
+                          "$ref": "#/components/schemas/ArtifactMember"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "member"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "invite"
+                          ]
+                        },
+                        "invite": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "email": {
+                              "type": "string"
+                            },
+                            "role": {
+                              "type": "string",
+                              "enum": [
+                                "viewer",
+                                "commenter",
+                                "editor",
+                                "owner"
+                              ]
+                            },
+                            "created_at": {
+                              "type": "string"
+                            },
+                            "expires_at": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "email",
+                            "role",
+                            "created_at",
+                            "expires_at"
+                          ]
+                        },
+                        "accept_url": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "invite",
+                        "accept_url"
+                      ]
+                    }
+                  ]
                 }
               }
             }
@@ -6113,6 +6323,142 @@
         "responses": {
           "204": {
             "description": "The member was removed."
+          }
+        }
+      }
+    },
+    "/v1/collections/{id}/invites/{inviteId}": {
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Revoke a pending collection invitation.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "inviteId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The invitation was revoked."
+          }
+        }
+      }
+    },
+    "/v1/collection-invites/{token}": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Preview a collection invitation.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection and role the token grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "inviter": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "role",
+                    "email",
+                    "inviter"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/collection-invites/{token}/accept": {
+      "post": {
+        "tags": [
+          "Collections"
+        ],
+        "summary": "Accept a collection invitation.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection joined and granted role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "collection_id": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string",
+                      "enum": [
+                        "viewer",
+                        "commenter",
+                        "editor",
+                        "owner"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "collection_id",
+                    "role"
+                  ]
+                }
+              }
+            }
           }
         }
       }

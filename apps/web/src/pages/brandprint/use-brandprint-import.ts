@@ -92,7 +92,7 @@ export function useBrandprintImport(
         // Conventions are for the whole team: open the collection to the workspace so
         // members can read the docs (collection access propagates to its contents).
         // Best-effort — MCP delivery reads under the workspace grant either way.
-        await api.setCollectionAccess(target, "member").catch(() => {})
+        await api.setCollectionAccess(target, { workspaceAccess: "member" }).catch(() => {})
       }
       // Seed the brand-profile placeholder on the first run that lacks one, best-effort
       // — losing it costs the hand-off beat, not the docs (a later run heals it).

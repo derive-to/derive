@@ -15,6 +15,7 @@ import { roleLabel } from "./settings/roles"
 
 const route = getRouteApi("/invite/$token")
 const artifactRoute = getRouteApi("/invite/a/$token")
+const collectionRoute = getRouteApi("/invite/c/$token")
 
 // The calm chrome-less shell shared with /login and /reset-password.
 function Shell({ children }: { children: React.ReactNode }) {
@@ -118,21 +119,38 @@ export function AcceptInvite() {
   )
 }
 
-// The artifact twin of AcceptInvite: same shell, same mismatch contract, but the
-// token grants ONE artifact (a per-artifact share) and accepting lands on it.
 export function AcceptArtifactInvite() {
-  useDocumentTitle("Invitation")
   const { token } = artifactRoute.useParams()
+  return <AcceptSharedSubjectInvite kind="artifact" token={token} />
+}
+
+export function AcceptCollectionInvite() {
+  const { token } = collectionRoute.useParams()
+  return <AcceptSharedSubjectInvite kind="collection" token={token} />
+}
+
+// Artifact and collection invitations share the exact capability, mismatch,
+// signup, error, and landing flow; only the subject noun and destination differ.
+function AcceptSharedSubjectInvite({
+  kind,
+  token,
+}: {
+  kind: "artifact" | "collection"
+  token: string
+}) {
+  useDocumentTitle("Invitation")
   const { me, loading } = useAuth()
   const nav = useNavigate()
+  const noun = kind === "artifact" ? "artifact" : "collection"
 
   const {
     data: preview,
     isPending,
     isError,
   } = useQuery({
-    queryKey: ["artifact-invite", token],
-    queryFn: () => api.previewArtifactInvite(token),
+    queryKey: [`${kind}-invite`, token],
+    queryFn: () =>
+      kind === "artifact" ? api.previewArtifactInvite(token) : api.previewCollectionInvite(token),
     retry: false,
     // Keyed by the invite token (a capability secret) — never write it to IndexedDB.
     meta: { persist: false },
@@ -145,13 +163,21 @@ export function AcceptArtifactInvite() {
   )
 
   const acceptMut = useApiMutation({
-    mutationFn: () => api.acceptArtifactInvite(token, mismatch),
+    mutationFn: (): Promise<
+      { short_id: string; role: string } | { collection_id: string; role: string }
+    > =>
+      kind === "artifact"
+        ? api.acceptArtifactInvite(token, mismatch)
+        : api.acceptCollectionInvite(token, mismatch),
     errorToast: false,
-    onSuccess: (r) => nav({ to: "/artifacts/$ref", params: { ref: r.short_id } }),
+    onSuccess: (result) => {
+      if ("short_id" in result) nav({ to: "/artifacts/$ref", params: { ref: result.short_id } })
+      else nav({ to: "/collections/$id", params: { id: result.collection_id } })
+    },
   })
   const accept = () => {
     if (!me) {
-      nav({ to: "/login", search: { return_to: `/invite/a/${token}` } })
+      nav({ to: "/login", search: { return_to: `/invite/${kind[0]}/${token}` } })
       return
     }
     acceptMut.mutate()
@@ -170,7 +196,7 @@ export function AcceptArtifactInvite() {
         <StatusPanel
           tone="danger"
           title="This invitation is invalid or has expired"
-          description="Ask the person who shared the artifact to send a new one."
+          description={`Ask the person who shared the ${noun} to send a new one.`}
         />
         <Button variant="outline" data-testid="invite-go-home" onClick={() => nav({ to: "/" })}>
           Go to Derive
@@ -186,7 +212,7 @@ export function AcceptArtifactInvite() {
           <p className="text-sm text-pretty text-muted-foreground">
             Open{" "}
             <span className="font-medium text-foreground">
-              {preview.title ?? "an untitled artifact"}
+              {preview.title ?? `an untitled ${noun}`}
             </span>{" "}
             on Derive as <Badge variant="secondary">{ROLE_LABELS[preview.role]}</Badge>
           </p>
@@ -196,7 +222,7 @@ export function AcceptArtifactInvite() {
         </>
       }
       invitedEmail={preview.email}
-      cta={{ idle: "Open the artifact", busy: "Opening…", signIn: "Sign in to open" }}
+      cta={{ idle: `Open the ${noun}`, busy: "Opening…", signIn: "Sign in to open" }}
       signedIn={!!me}
       accepting={acceptMut.isPending}
       err={acceptMut.error?.message ?? ""}
@@ -206,7 +232,7 @@ export function AcceptArtifactInvite() {
   )
 }
 
-// One invitation surface for both invite kinds — workspace and artifact differ
+// One invitation surface for every invite kind — workspace and shared subjects differ
 // only in the headline body, the CTA verbs, and where accepting lands; the
 // mismatch warning, error panel, and button skeleton are the shared contract
 // (and share the testids the e2e specs assert on).

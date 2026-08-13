@@ -1025,7 +1025,12 @@ export interface CollectionStore {
   getCollections(ids: string[]): Promise<CollectionRecord[]>
   updateCollection(id: string, fields: { title?: string }): Promise<CollectionRecord | null>
   /** Change a collection's share experience (see CollectionRecord.workspace_access). */
-  setCollectionAccess(id: string, workspaceAccess: WorkspaceAccess): Promise<void>
+  setCollectionAccess(
+    id: string,
+    workspaceAccess: WorkspaceAccess,
+    linkRole?: LinkRole,
+    passwordHash?: string | null,
+  ): Promise<void>
   /** Remove a collection and its items + member rows. */
   deleteCollection(id: string): Promise<void>
   /** Collections with their item counts, newest first; scoped to a workspace when orgId is given. */
@@ -1043,6 +1048,9 @@ export interface CollectionStore {
   collectionArtifactIds(collectionId: string): Promise<string[]>
   /** Collection ids containing an artifact (for the artifact's "add to" UI). */
   collectionIdsForArtifact(artifactId: string): Promise<string[]>
+  /** Collections containing an artifact, in one join. Authorization uses their
+   *  already-gated world links as inherited grants on the artifact. */
+  collectionsForArtifact(artifactId: string): Promise<CollectionRecord[]>
   addCollectionItem(collectionId: string, artifactId: string): Promise<void>
   removeCollectionItem(collectionId: string, artifactId: string): Promise<void>
   getCollectionMember(collectionId: string, userId: string): Promise<CollectionMemberRecord | null>
@@ -2017,6 +2025,14 @@ export interface AgentStore {
   deleteArtifactInvite(id: string, artifactId: string): Promise<void>
   /** Atomically spend a still-live invite. Exactly one concurrent caller wins. */
   consumeArtifactInvite(id: string, now: string): Promise<boolean>
+
+  // ---- Collection invitations (share-by-email → accept) -------------------
+  createCollectionInvite(i: NewCollectionInvite): Promise<CollectionInviteRecord>
+  getCollectionInviteByToken(tokenHash: string): Promise<CollectionInviteRecord | null>
+  listPendingCollectionInvites(collectionId: string): Promise<CollectionInviteRecord[]>
+  deletePendingCollectionInvitesFor(collectionId: string, email: string): Promise<void>
+  deleteCollectionInvite(id: string, collectionId: string): Promise<void>
+  consumeCollectionInvite(id: string, now: string): Promise<boolean>
   // ---- Beta signups (the marketing site's request-access form) ------------
   /** Record a beta signup (idempotent per email). Returns true when the email is
    *  new, false when it was already on the list — the caller resends the access
@@ -2709,6 +2725,29 @@ export interface NewArtifactInvite {
   expires_at: string
 }
 
+/** Collection counterpart to ArtifactInviteRecord. Separate storage preserves
+ *  each subject's foreign-key lifecycle; the API/UI share the invite behavior. */
+export interface CollectionInviteRecord {
+  id: string
+  collection_id: string
+  email: string
+  role: Role
+  token: string
+  invited_by: string | null
+  created_at: string
+  expires_at: string
+  accepted_at: string | null
+}
+export interface NewCollectionInvite {
+  id: string
+  collection_id: string
+  email: string
+  role: Role
+  token: string
+  invited_by?: string | null
+  expires_at: string
+}
+
 /**
  * A candidate version awaiting review. It holds content exactly like a version
  * (blob_key + content_type, file or bundle manifest) but is NOT current until a
@@ -3075,6 +3114,10 @@ export interface CollectionRecord {
    *  link-servable content). `member` = every workspace member reaches it at
    *  their seat role; `none` = invite-only (collectionMember rows only). */
   workspace_access: WorkspaceAccess
+  /** What merely holding the canonical collection URL grants. */
+  link_role: LinkRole
+  /** Salted hash that gates only the collection's world-link grant. */
+  password_hash: string | null
   /** The org-shared folder this collection is filed under (null = ungrouped). Pure
    *  organization — never consulted by any auth path. See FolderRecord. */
   folder_id: string | null
@@ -3087,6 +3130,8 @@ export interface NewCollection {
   /** Omitted falls to the store's column default (`member`, unlike an artifact's
    *  fail-closed `none` — see CollectionRecord.workspace_access). */
   workspace_access?: WorkspaceAccess
+  link_role?: LinkRole
+  password_hash?: string | null
 }
 
 /** A folder that organizes ONE collection's artifacts (Collection → Folder → artifacts).

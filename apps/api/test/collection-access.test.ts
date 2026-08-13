@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { sha256 } from "../src/lib/crypto"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // A collection's own share experience (docs/access-model.md, extended to
@@ -83,13 +84,105 @@ describe("a collection's own workspace access", () => {
     ).toBe("viewer")
   })
 
-  it("only a manager can change the access — a plain editor can't widen or narrow it", async () => {
+  it("an editor can share it, matching an artifact's sharing bar", async () => {
     const col = await create("Ana's call", as(ana.email))
-    // Cara is a workspace editor (seat-folds to "editor" on the collection, per
-    // collectionRole) but that's below the "manage" bar this route gates on —
-    // same bar as delete/member add/remove.
-    expect((await setAccess(col.id, "none", as(cara.email))).status).toBe(403)
-    expect((await meta.getCollection(col.id))?.workspace_access).toBe("member")
+    expect((await setAccess(col.id, "none", as(cara.email))).status).toBe(200)
+    expect((await meta.getCollection(col.id))?.workspace_access).toBe("none")
+  })
+
+  it("shares a password link that unlocks the collection and every contained artifact", async () => {
+    const col = await create("Launch room", as(ana.email))
+    const artifact = await (
+      await publishAs(
+        app,
+        "<p>launch plan</p>",
+        { title: "Launch plan", workspace_access: "none", listed: "none", link_role: "none" },
+        as(ana.email),
+      )
+    ).json()
+    await app.request(`/v1/collections/${col.id}/items/${artifact.short_id}`, {
+      method: "PUT",
+      headers: as(ana.email),
+    })
+
+    const shared = await app.request(`/v1/collections/${col.id}/access`, {
+      ...jsonAs(as(ana.email), { linkRole: "viewer", password: "swordfish" }),
+      method: "PATCH",
+    })
+    expect(await shared.json()).toMatchObject({ link_role: "viewer", locked: true })
+    expect((await app.request(`/v1/collections/${col.id}`)).status).toBe(401)
+    expect((await app.request(`/v1/artifacts?collection=${col.id}`)).status).toBe(401)
+
+    expect(
+      (
+        await app.request(`/v1/collections/${col.id}/unlock`, {
+          ...jsonAs({}, { password: "wrong" }),
+          method: "POST",
+        })
+      ).status,
+    ).toBe(401)
+    const unlocked = await app.request(`/v1/collections/${col.id}/unlock`, {
+      ...jsonAs({}, { password: "swordfish" }),
+      method: "POST",
+    })
+    expect(unlocked.status).toBe(200)
+    const cookie = unlocked.headers.get("set-cookie")?.split(";")[0] ?? ""
+    expect(cookie).toContain(`dkcu_${col.id}`)
+
+    const collection = await app.request(`/v1/collections/${col.id}`, { headers: { cookie } })
+    expect(collection.status).toBe(200)
+    expect(await collection.json()).toMatchObject({ id: col.id, password_protected: true })
+    const feed = await app.request(`/v1/artifacts?collection=${col.id}`, { headers: { cookie } })
+    expect((await feed.json()).artifacts.map((a: { short_id: string }) => a.short_id)).toEqual([
+      artifact.short_id,
+    ])
+    // The collection link is inherited on direct item URLs as well.
+    expect(
+      (await app.request(`/v1/artifacts/${artifact.short_id}`, { headers: { cookie } })).status,
+    ).toBe(200)
+    // Public-link holders get contents, never the private collaborator roster.
+    expect(
+      (await app.request(`/v1/collections/${col.id}/members`, { headers: { cookie } })).status,
+    ).toBe(404)
+  })
+
+  it("emails unknown people and redeems the same role-bearing invite flow as artifacts", async () => {
+    const col = await create("Research", as(ana.email))
+    const invited = await app.request(`/v1/collections/${col.id}/members`, {
+      ...jsonAs(as(ana.email), { email: "new-person@example.test", role: "commenter" }),
+      method: "PUT",
+    })
+    expect(invited.status).toBe(201)
+    expect(await invited.json()).toMatchObject({
+      kind: "invite",
+      invite: { email: "new-person@example.test", role: "commenter" },
+    })
+
+    // Exercise redemption with a deterministic token for an account that can sign in.
+    const token = "collection-invite-test-token"
+    await meta.createCollectionInvite({
+      id: "cinv_redeem",
+      collection_id: col.id,
+      email: ben.email,
+      role: "editor",
+      token: sha256(token),
+      invited_by: ana.id,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    })
+    const preview = await app.request(`/v1/collection-invites/${token}`)
+    expect(preview.status).toBe(200)
+    expect(await preview.json()).toMatchObject({
+      title: "Research",
+      role: "editor",
+      email: ben.email,
+    })
+    const accepted = await app.request(`/v1/collection-invites/${token}/accept`, {
+      method: "POST",
+      headers: as(ben.email),
+    })
+    expect(accepted.status).toBe(200)
+    expect(await accepted.json()).toEqual({ collection_id: col.id, role: "editor" })
+    expect((await meta.getCollectionMember(col.id, ben.id))?.role).toBe("editor")
   })
 
   // Regression: the /v1/artifacts feed's own collection-scoping check used to grant
@@ -196,6 +289,49 @@ describe("a collection's own workspace access", () => {
 
     // Ana is still owner throughout.
     expect((await meta.getCollectionMember(col.id, ana.id))?.role).toBe("owner")
+  })
+})
+
+describe("collection world-link standing", () => {
+  const owner: TestUser = {
+    id: "u_col_link_owner",
+    email: "owner@collection-link.test",
+    name: "Owner",
+  }
+  const holder: TestUser = {
+    id: "u_col_link_holder",
+    email: "holder@collection-link.test",
+    name: "Link Holder",
+  }
+  const { app } = makeAuthedApp("collection-link-standing", [owner, holder], undefined, {
+    isolated: true,
+  })
+
+  it("reports effective editor access without pretending a pure link holder can re-share", async () => {
+    const col = await (
+      await app.request("/v1/collections", jsonAs(as(owner.email), { title: "Editor link" }))
+    ).json()
+    await app.request(`/v1/collections/${col.id}/access`, {
+      ...jsonAs(as(owner.email), { workspaceAccess: "none", linkRole: "editor" }),
+      method: "PATCH",
+    })
+
+    const throughLink = await app.request(`/v1/collections/${col.id}`, {
+      headers: as(holder.email),
+    })
+    expect(throughLink.status).toBe(200)
+    expect(await throughLink.json()).toMatchObject({ my_role: "editor", can_share: false })
+    expect(
+      (
+        await app.request(`/v1/collections/${col.id}/access`, {
+          ...jsonAs(as(holder.email), { linkRole: "viewer" }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(403)
+
+    const forOwner = await app.request(`/v1/collections/${col.id}`, { headers: as(owner.email) })
+    expect(await forOwner.json()).toMatchObject({ my_role: "owner", can_share: true })
   })
 })
 

@@ -33,8 +33,10 @@ import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as ContextsNewRouteImport } from './routes/contexts.new'
 import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
+import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
 import { Route as ClaimTokenRouteImport } from './routes/claim.$token'
 import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
+import { Route as InviteCTokenRouteImport } from './routes/invite.c.$token'
 import { Route as InviteATokenRouteImport } from './routes/invite.a.$token'
 
 const WelcomeRoute = WelcomeRouteImport.update({
@@ -157,6 +159,11 @@ const ContextsIdRoute = ContextsIdRouteImport.update({
   path: '/contexts/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CollectionsIdRoute = CollectionsIdRouteImport.update({
+  id: '/collections/$id',
+  path: '/collections/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ClaimTokenRoute = ClaimTokenRouteImport.update({
   id: '/claim/$token',
   path: '/claim/$token',
@@ -165,6 +172,11 @@ const ClaimTokenRoute = ClaimTokenRouteImport.update({
 const ArtifactsRefRoute = ArtifactsRefRouteImport.update({
   id: '/artifacts/$ref',
   path: '/artifacts/$ref',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InviteCTokenRoute = InviteCTokenRouteImport.update({
+  id: '/invite/c/$token',
+  path: '/invite/c/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
 const InviteATokenRoute = InviteATokenRouteImport.update({
@@ -193,6 +205,7 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
+  '/collections/$id': typeof CollectionsIdRoute
   '/contexts/$id': typeof ContextsIdRoute
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
@@ -201,6 +214,7 @@ export interface FileRoutesByFullPath {
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
+  '/invite/c/$token': typeof InviteCTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -221,6 +235,7 @@ export interface FileRoutesByTo {
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
+  '/collections/$id': typeof CollectionsIdRoute
   '/contexts/$id': typeof ContextsIdRoute
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
@@ -229,6 +244,7 @@ export interface FileRoutesByTo {
   '/contexts': typeof ContextsIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
+  '/invite/c/$token': typeof InviteCTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -251,6 +267,7 @@ export interface FileRoutesById {
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
+  '/collections/$id': typeof CollectionsIdRoute
   '/contexts/$id': typeof ContextsIdRoute
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
@@ -259,6 +276,7 @@ export interface FileRoutesById {
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
+  '/invite/c/$token': typeof InviteCTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -282,6 +300,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/artifacts/$ref'
     | '/claim/$token'
+    | '/collections/$id'
     | '/contexts/$id'
     | '/contexts/new'
     | '/invite/$token'
@@ -290,6 +309,7 @@ export interface FileRouteTypes {
     | '/contexts/'
     | '/settings/'
     | '/invite/a/$token'
+    | '/invite/c/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -310,6 +330,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/artifacts/$ref'
     | '/claim/$token'
+    | '/collections/$id'
     | '/contexts/$id'
     | '/contexts/new'
     | '/invite/$token'
@@ -318,6 +339,7 @@ export interface FileRouteTypes {
     | '/contexts'
     | '/settings'
     | '/invite/a/$token'
+    | '/invite/c/$token'
   id:
     | '__root__'
     | '/'
@@ -339,6 +361,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/artifacts/$ref'
     | '/claim/$token'
+    | '/collections/$id'
     | '/contexts/$id'
     | '/contexts/new'
     | '/invite/$token'
@@ -347,6 +370,7 @@ export interface FileRouteTypes {
     | '/contexts/'
     | '/settings/'
     | '/invite/a/$token'
+    | '/invite/c/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -369,12 +393,14 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
   ClaimTokenRoute: typeof ClaimTokenRoute
+  CollectionsIdRoute: typeof CollectionsIdRoute
   ContextsIdRoute: typeof ContextsIdRoute
   ContextsNewRoute: typeof ContextsNewRoute
   InviteTokenRoute: typeof InviteTokenRoute
   UsersHandleRoute: typeof UsersHandleRoute
   ContextsIndexRoute: typeof ContextsIndexRoute
   InviteATokenRoute: typeof InviteATokenRoute
+  InviteCTokenRoute: typeof InviteCTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -547,6 +573,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContextsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/collections/$id': {
+      id: '/collections/$id'
+      path: '/collections/$id'
+      fullPath: '/collections/$id'
+      preLoaderRoute: typeof CollectionsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/claim/$token': {
       id: '/claim/$token'
       path: '/claim/$token'
@@ -559,6 +592,13 @@ declare module '@tanstack/react-router' {
       path: '/artifacts/$ref'
       fullPath: '/artifacts/$ref'
       preLoaderRoute: typeof ArtifactsRefRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invite/c/$token': {
+      id: '/invite/c/$token'
+      path: '/invite/c/$token'
+      fullPath: '/invite/c/$token'
+      preLoaderRoute: typeof InviteCTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/invite/a/$token': {
@@ -605,12 +645,14 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,
   ClaimTokenRoute: ClaimTokenRoute,
+  CollectionsIdRoute: CollectionsIdRoute,
   ContextsIdRoute: ContextsIdRoute,
   ContextsNewRoute: ContextsNewRoute,
   InviteTokenRoute: InviteTokenRoute,
   UsersHandleRoute: UsersHandleRoute,
   ContextsIndexRoute: ContextsIndexRoute,
   InviteATokenRoute: InviteATokenRoute,
+  InviteCTokenRoute: InviteCTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

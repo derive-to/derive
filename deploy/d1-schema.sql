@@ -289,6 +289,21 @@ CREATE TABLE IF NOT EXISTS artifact_invite (
 
 CREATE INDEX IF NOT EXISTS artifact_invite_artifact_email ON artifact_invite (artifact_id, email);
 
+CREATE TABLE IF NOT EXISTS collection_invite (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'commenter',
+  token TEXT NOT NULL,
+  invited_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at TEXT NOT NULL,
+  accepted_at TEXT,
+  UNIQUE (token)
+);
+
+CREATE INDEX IF NOT EXISTS collection_invite_collection_email ON collection_invite (collection_id, email);
+
 CREATE TABLE IF NOT EXISTS beta_signup (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL,
@@ -356,6 +371,8 @@ CREATE TABLE IF NOT EXISTS collection (
   created_by TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   workspace_access TEXT NOT NULL DEFAULT 'member',
+  link_role TEXT NOT NULL DEFAULT 'none',
+  password_hash TEXT,
   folder_id TEXT
 );
 

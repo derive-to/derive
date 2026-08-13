@@ -1371,6 +1371,8 @@ export const api = {
   // Collections (shareable groups; sharing grants the role on every item)
   listCollections: (): Promise<{ collections: Collection[] }> =>
     f("/v1/collections", opts()).then(j),
+  getCollection: (id: string): Promise<Collection> =>
+    f(`/v1/collections/${encodeURIComponent(id)}`, opts()).then(j),
   /** Collections where semantically-similar artifacts already live — the picker's
    *  Suggested tier. Best-effort by contract: empty whenever there's no signal. */
   collectionSuggestions: (shortId: string): Promise<{ suggestions: CollectionSuggestion[] }> =>
@@ -1385,13 +1387,15 @@ export const api = {
     f(`/v1/collections/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
   deleteCollection: (id: string): Promise<void> =>
     f(`/v1/collections/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
-  // Change a collection's share experience — the Share dialog's Invited/Workspace
-  // toggle. Same one-question shape as an artifact's setAccess, no link_role/listed.
+  // Same access write as an artifact, minus discovery listing. Omitted fields keep
+  // their current value; a password sets/changes the lock, "" clears it.
   setCollectionAccess: (
     id: string,
-    workspaceAccess: WorkspaceAccess,
-  ): Promise<{ workspace_access: WorkspaceAccess }> =>
-    f(`/v1/collections/${id}/access`, { ...opts({ workspaceAccess }), method: "PATCH" }).then(j),
+    access: { workspaceAccess?: WorkspaceAccess; linkRole?: LinkRole; password?: string },
+  ): Promise<{ workspace_access: WorkspaceAccess; link_role: LinkRole; locked: boolean }> =>
+    f(`/v1/collections/${id}/access`, { ...opts(access), method: "PATCH" }).then(j),
+  unlockCollection: (id: string, password: string): Promise<{ ok: true }> =>
+    f(`/v1/collections/${encodeURIComponent(id)}/unlock`, opts({ password })).then(j),
   addToCollection: (collectionId: string, shortId: string): Promise<void> =>
     f(`/v1/collections/${collectionId}/items/${shortId}`, { ...opts(), method: "PUT" }).then(
       () => undefined,
@@ -1419,15 +1423,34 @@ export const api = {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
-  listCollectionMembers: (id: string): Promise<{ created_by: string; members: ArtifactMember[] }> =>
+  listCollectionMembers: (
+    id: string,
+  ): Promise<{ created_by: string; members: ArtifactMember[]; invites: ArtifactInvite[] }> =>
     f(`/v1/collections/${id}/members`, opts()).then(j),
-  setCollectionMember: (id: string, user: string, role: Role): Promise<ArtifactMember> =>
+  setCollectionMember: (id: string, user: string, role: Role): Promise<ShareResult> =>
     f(`/v1/collections/${id}/members`, { ...opts({ user, role }), method: "PUT" }).then(j),
   removeCollectionMember: (id: string, userId: string): Promise<void> =>
     f(`/v1/collections/${id}/members/${userId}`, {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
+  revokeCollectionInvite: (id: string, inviteId: string): Promise<void> =>
+    f(`/v1/collections/${id}/invites/${inviteId}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  previewCollectionInvite: (
+    token: string,
+  ): Promise<{ title: string; role: Role; email: string; inviter: string | null }> =>
+    f(`/v1/collection-invites/${token}`, opts()).then(j),
+  acceptCollectionInvite: (
+    token: string,
+    confirmEmailMismatch = false,
+  ): Promise<{ collection_id: string; role: Role }> =>
+    f(
+      `/v1/collection-invites/${token}/accept${confirmEmailMismatch ? "?confirm_email_mismatch=1" : ""}`,
+      { ...opts({}), method: "POST" },
+    ).then(j),
 
   listWebhooks: (): Promise<{ webhooks: Webhook[]; event_options: string[] }> =>
     f("/v1/webhooks", opts()).then(j),

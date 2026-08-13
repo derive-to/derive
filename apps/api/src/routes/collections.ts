@@ -1,13 +1,16 @@
 import {
   type Action,
+  type CollectionInviteRecord,
   type CollectionRecord,
   isRole,
   newId,
+  ROLES,
   type Role,
   roleAllows,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
+import { setCookie } from "hono/cookie"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import {
@@ -20,10 +23,28 @@ import {
 } from "../lib/boot-shapes"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { voteCollections } from "../lib/collection-suggest"
+import {
+  hashPassword,
+  mintToken,
+  sha256,
+  subjectUnlockCookie,
+  unlockToken,
+  verifyPassword,
+} from "../lib/crypto"
+import { buildShareInviteEmail } from "../lib/email"
 import { bail, fail, readJson } from "../lib/http"
+import {
+  emailMismatch409,
+  INVITE_TTL_MS,
+  inviteJson,
+  isLiveInvite,
+  looksLikeEmail,
+} from "../lib/invite"
 import { resolveUserRef } from "../lib/resolve-user"
+import { armInviteAdmission } from "../lib/signup-policy"
 import { log } from "../log"
-import { ArtifactMember } from "../schemas"
+import { ArtifactMember, roleEnum } from "../schemas"
+import { enqueueChannelDelivery } from "../webhooks"
 
 /** Collections: shareable groups of artifacts. A member's role on a collection
  *  propagates to every artifact inside it (see collectionRolesForArtifact). The
@@ -58,11 +79,42 @@ export const collectionRoutes = (ctx: AppContext) => {
     workspaceCan,
     authorize,
     collectionRole,
+    collectionStandingRole,
+    limited,
+    unlockLimiter,
+    actingUser,
+    inviteLimiter,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const canManageCollection = async (c: Context, col: CollectionRecord, action: Action) =>
-    roleAllows((await collectionRole(c, col)) ?? "viewer", action)
+    roleAllows((await collectionStandingRole(c, col)) ?? "viewer", action)
+  const rank = (role: Role | null): number => (role ? ROLES.indexOf(role) : -1)
+  const CollectionInvite = z.object({
+    id: z.string(),
+    email: z.string(),
+    role: roleEnum,
+    created_at: z.string(),
+    expires_at: z.string(),
+  })
+  const CollectionShareResult = z.union([
+    z.object({ kind: z.literal("member"), member: ArtifactMember }),
+    z.object({
+      kind: z.literal("invite"),
+      invite: CollectionInvite,
+      accept_url: z.string(),
+    }),
+  ])
+  const liveCollectionInvite = async (
+    c: Context,
+  ): Promise<{ inv: CollectionInviteRecord; collection: CollectionRecord } | null> => {
+    const token = c.req.param("token")
+    if (!token) return null
+    const inv = await meta.getCollectionInviteByToken(sha256(token))
+    if (!inv || !isLiveInvite(inv)) return null
+    const collection = await meta.getCollection(inv.collection_id)
+    return collection ? { inv, collection } : null
+  }
 
   // Resolve the :id collection and gate it — 404 missing, 403 present-but-
   // unauthorized (unlike an artifact's read gate, a collection you can't manage is
@@ -78,6 +130,42 @@ export const collectionRoutes = (ctx: AppContext) => {
     if (!(await canManageCollection(c, col, action))) return fail(c, 403, "forbidden")
     return col
   }
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/collections/{id}",
+      tags: ["Collections"],
+      summary: "Get one collection through standing or its world link.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The collection.",
+          content: { "application/json": { schema: Collection } },
+        },
+      },
+    }),
+    async (c) => {
+      const col = await meta.getCollection(c.req.param("id"))
+      if (!col) return bail(fail(c, 404, "not found"))
+      const role = await collectionRole(c, col)
+      if (!role)
+        return bail(
+          col.password_hash ? fail(c, 401, "password required") : fail(c, 404, "not found"),
+        )
+      const standing = await collectionStandingRole(c, col)
+      const [ids, sources] = await Promise.all([
+        meta.collectionArtifactIds(col.id),
+        meta.listRepoSources(col.org_id),
+      ])
+      const { srcByCollection, branchByRepo } = sourceMaps(sources)
+      return c.json({
+        ...enrich({ ...col, count: ids.length, my_role: role }, srcByCollection, branchByRepo),
+        can_share: roleAllows(standing ?? "viewer", "share"),
+        url: `${ctx.deps.baseUrl.replace(/\/$/, "")}/collections/${col.id}`,
+      })
+    },
+  )
 
   app.openapi(
     createRoute({
@@ -268,17 +356,14 @@ export const collectionRoutes = (ctx: AppContext) => {
     },
   )
 
-  // Change a collection's share experience — the Share dialog's Invited/Workspace
-  // toggle. Same one-question shape as an artifact's /access, minus link_role/
-  // listed (a collection isn't individually link-servable content, so its share
-  // dialog skips the Anyone segment — see access-model.md and the collection
-  // table's workspace_access comment). Applies immediately, no Save button.
+  // Same access transition as an artifact, minus listing: workspace seats, the
+  // canonical world link, and its optional password are one atomic write.
   app.openapi(
     createRoute({
       method: "patch",
       path: "/v1/collections/{id}/access",
       tags: ["Collections"],
-      summary: "Change a collection's workspace access.",
+      summary: "Change a collection's workspace and link access.",
       request: { params: z.object({ id: z.string() }) },
       responses: {
         200: {
@@ -289,6 +374,8 @@ export const collectionRoutes = (ctx: AppContext) => {
                 workspace_access: z
                   .enum(["none", "member"])
                   .describe("The collection's new workspace share scope."),
+                link_role: z.enum(["none", "viewer", "commenter", "editor"]),
+                locked: z.boolean(),
               }),
             },
           },
@@ -296,12 +383,70 @@ export const collectionRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const col = await requireCollection(c, "manage")
+      const col = await requireCollection(c, "share")
       if (col instanceof Response) return bail(col)
-      const b = await readJson(c, z.object({ workspaceAccess: z.enum(["none", "member"]) }))
+      const b = await readJson(
+        c,
+        z.object({
+          workspaceAccess: z.enum(["none", "member"]).optional(),
+          linkRole: z.enum(["none", "viewer", "commenter", "editor"]).optional(),
+          password: z.string().optional(),
+        }),
+      )
       if (b instanceof Response) return bail(b)
-      await meta.setCollectionAccess(col.id, b.workspaceAccess)
-      return c.json({ workspace_access: b.workspaceAccess })
+      const workspaceAccess = b.workspaceAccess ?? col.workspace_access
+      const linkRole = b.linkRole ?? col.link_role
+      let passwordHash: string | null = null
+      if (linkRole !== "none") {
+        if (b.password) passwordHash = hashPassword(b.password)
+        else if (b.password === undefined) passwordHash = col.password_hash
+      }
+      await meta.setCollectionAccess(col.id, workspaceAccess, linkRole, passwordHash)
+      return c.json({
+        workspace_access: workspaceAccess,
+        link_role: linkRole,
+        locked: !!passwordHash,
+      })
+    },
+  )
+
+  // authz-exempt: possession of the collection password is the authorization gate.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/collections/{id}/unlock",
+      tags: ["Collections"],
+      summary: "Unlock a password-protected collection link.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "Unlocked.",
+          content: { "application/json": { schema: z.object({ ok: z.boolean() }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const over = await limited(c, unlockLimiter)
+      if (over) return bail(over)
+      const col = await meta.getCollection(c.req.param("id"))
+      if (!col?.password_hash) return bail(fail(c, 404, "not found"))
+      const b = await readJson(c, z.object({ password: z.string().min(1) }))
+      if (b instanceof Response) return bail(b)
+      if (!verifyPassword(b.password, col.password_hash))
+        return bail(fail(c, 401, "wrong password"))
+      setCookie(
+        c,
+        subjectUnlockCookie("collection", col.id),
+        unlockToken(col.id, col.password_hash),
+        {
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+          httpOnly: true,
+          sameSite: ctx.deps.crossSite ? "None" : "Lax",
+          secure: ctx.deps.crossSite || new URL(ctx.deps.baseUrl).protocol === "https:",
+        },
+      )
+      return c.json({ ok: true })
     },
   )
 
@@ -315,7 +460,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The collection was deleted." } },
     }),
     async (c) => {
-      const col = await requireCollection(c, "manage")
+      const col = await requireCollection(c, "share")
       if (col instanceof Response) return bail(col)
       await meta.deleteCollection(col.id)
       return c.body(null, 204)
@@ -525,6 +670,7 @@ export const collectionRoutes = (ctx: AppContext) => {
               schema: z.object({
                 created_by: z.string().describe("User id of the collection's creator."),
                 members: z.array(ArtifactMember),
+                invites: z.array(CollectionInvite),
               }),
             },
           },
@@ -533,10 +679,18 @@ export const collectionRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const col = await meta.getCollection(c.req.param("id"))
-      if (!col || (await collectionRole(c, col)) === null) return bail(fail(c, 404, "not found"))
+      // A public link grants the collection's contents, not its private roster.
+      // Keep collaborator identity behind standing (seat/direct-share) access just
+      // like the artifact sharing endpoints do.
+      if (!col || (await collectionStandingRole(c, col)) === null)
+        return bail(fail(c, 404, "not found"))
       const rows = await meta.listCollectionMembers(col.id)
       const users = await meta.getUsers(rows.map((r) => r.user_id))
       const byId = new Map(users.map((u) => [u.id, u]))
+      const standing = await collectionStandingRole(c, col)
+      const invites = roleAllows(standing ?? "viewer", "share")
+        ? (await meta.listPendingCollectionInvites(col.id)).map(inviteJson)
+        : []
       return c.json({
         created_by: col.created_by,
         members: rows.map((r) => ({
@@ -545,6 +699,7 @@ export const collectionRoutes = (ctx: AppContext) => {
           name: byId.get(r.user_id)?.name ?? null,
           role: r.role,
         })),
+        invites,
       })
     },
   )
@@ -558,13 +713,13 @@ export const collectionRoutes = (ctx: AppContext) => {
       request: { params: z.object({ id: z.string() }) },
       responses: {
         201: {
-          description: "The added member.",
-          content: { "application/json": { schema: ArtifactMember } },
+          description: "The member added directly, or a pending emailed invite.",
+          content: { "application/json": { schema: CollectionShareResult } },
         },
       },
     }),
     async (c) => {
-      const col = await requireCollection(c, "manage")
+      const col = await requireCollection(c, "share")
       if (col instanceof Response) return bail(col)
       const b = await readJson(
         c,
@@ -577,9 +732,48 @@ export const collectionRoutes = (ctx: AppContext) => {
           .refine((v) => v.user || v.email, "a username or email is required"),
       )
       if (b instanceof Response) return bail(b)
+      if (rank(b.role) > rank(await collectionStandingRole(c, col)))
+        return bail(fail(c, 403, "you can't grant a role above your own"))
       const id = await resolveUserRef(meta, (b.user ?? b.email) as string)
       const [user] = id ? await meta.getUsers([id]) : []
-      if (!user) return bail(fail(c, 404, "no Derive user with that username or email"))
+      if (!user) {
+        const email = ((b.user ?? b.email) as string).trim().toLowerCase()
+        if (!looksLikeEmail(email))
+          return bail(fail(c, 404, "no Derive user with that username or email"))
+        const over = await limited(c, inviteLimiter)
+        if (over) return bail(over)
+        await meta.deletePendingCollectionInvitesFor(col.id, email)
+        const token = mintToken("dkc")
+        const sharer = await actingUser(c)
+        const invite = await meta.createCollectionInvite({
+          id: newId("cinv"),
+          collection_id: col.id,
+          email,
+          role: b.role,
+          token: sha256(token),
+          invited_by: sharer?.id ?? null,
+          expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+        })
+        const acceptUrl = `${ctx.deps.baseUrl.replace(/\/$/, "")}/invite/c/${token}`
+        await enqueueChannelDelivery(
+          meta,
+          "email",
+          "collection.invite",
+          buildShareInviteEmail({
+            to: email,
+            title: col.title,
+            subject: "collection",
+            inviter: sharer?.name ?? null,
+            role: b.role,
+            url: acceptUrl,
+          }),
+        )
+        return c.json(
+          { kind: "invite" as const, invite: inviteJson(invite), accept_url: acceptUrl },
+          201,
+        )
+      }
+      if (user.email) await meta.deletePendingCollectionInvitesFor(col.id, user.email.toLowerCase())
       // The creator is permanently owner (collectionRole checks created_by first), so
       // their role isn't a member row anyone can rewrite — reject demoting them.
       if (user.id === col.created_by)
@@ -594,7 +788,13 @@ export const collectionRoutes = (ctx: AppContext) => {
         user_id: user.id,
         role: b.role,
       })
-      return c.json({ user_id: user.id, handle: user.username, name: user.name, role: b.role }, 201)
+      return c.json(
+        {
+          kind: "member" as const,
+          member: { user_id: user.id, handle: user.username, name: user.name, role: b.role },
+        },
+        201,
+      )
     },
   )
 
@@ -608,14 +808,127 @@ export const collectionRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "The member was removed." } },
     }),
     async (c) => {
-      const col = await requireCollection(c, "manage")
+      const col = await requireCollection(c, "share")
       if (col instanceof Response) return bail(col)
       // The creator stays owner via created_by regardless of member rows; removing the
       // row wouldn't revoke their access, it would just orphan the roster — refuse it.
       if (c.req.param("userId") === col.created_by)
         return bail(fail(c, 409, "can't remove the collection owner"))
+      const target = await meta.getCollectionMember(col.id, c.req.param("userId"))
+      if (target && rank(target.role) > rank(await collectionStandingRole(c, col)))
+        return bail(fail(c, 403, "you can't remove a collaborator who outranks you"))
       await meta.removeCollectionMember(col.id, c.req.param("userId"))
       return c.body(null, 204)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "delete",
+      path: "/v1/collections/{id}/invites/{inviteId}",
+      tags: ["Collections"],
+      summary: "Revoke a pending collection invitation.",
+      request: { params: z.object({ id: z.string(), inviteId: z.string() }) },
+      responses: { 204: { description: "The invitation was revoked." } },
+    }),
+    async (c) => {
+      const col = await requireCollection(c, "share")
+      if (col instanceof Response) return bail(col)
+      const target = (await meta.listPendingCollectionInvites(col.id)).find(
+        (i) => i.id === c.req.param("inviteId"),
+      )
+      if (target && rank(target.role) > rank(await collectionStandingRole(c, col)))
+        return bail(fail(c, 403, "you can't revoke an invite that outranks you"))
+      await meta.deleteCollectionInvite(c.req.param("inviteId"), col.id)
+      return c.body(null, 204)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/collection-invites/{token}",
+      tags: ["Collections"],
+      summary: "Preview a collection invitation.",
+      request: { params: z.object({ token: z.string() }) },
+      responses: {
+        200: {
+          description: "The collection and role the token grants.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                title: z.string(),
+                role: roleEnum,
+                email: z.string(),
+                inviter: z.string().nullable(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const live = await liveCollectionInvite(c)
+      if (!live) return bail(fail(c, 404, "this invitation is invalid or has expired"))
+      const { inv, collection } = live
+      await armInviteAdmission(
+        c,
+        "collection",
+        sha256(c.req.param("token")),
+        inv.expires_at,
+        ctx.deps.encryptionKey,
+        { baseUrl: ctx.deps.baseUrl, crossSite: ctx.deps.crossSite },
+      )
+      const inviter = inv.invited_by ? (await meta.getUsers([inv.invited_by]))[0] : undefined
+      return c.json({
+        title: collection.title,
+        role: inv.role,
+        email: inv.email,
+        inviter: inviter?.name ?? null,
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/collection-invites/{token}/accept",
+      tags: ["Collections"],
+      summary: "Accept a collection invitation.",
+      request: { params: z.object({ token: z.string() }) },
+      responses: {
+        200: {
+          description: "The collection joined and granted role.",
+          content: {
+            "application/json": {
+              schema: z.object({ collection_id: z.string(), role: roleEnum }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const live = await liveCollectionInvite(c)
+      if (!live) return bail(fail(c, 404, "this invitation is invalid or has expired"))
+      const { inv, collection } = live
+      const mismatch = await emailMismatch409(c, inv.email, me.email)
+      if (mismatch) return bail(mismatch)
+      const now = new Date().toISOString()
+      if (!(await meta.consumeCollectionInvite(inv.id, now)))
+        return bail(fail(c, 409, "this invitation has already been accepted"))
+      const existing = await meta.getCollectionMember(collection.id, me.id)
+      const granted = existing && rank(existing.role) >= rank(inv.role) ? existing.role : inv.role
+      if (granted !== existing?.role)
+        await meta.setCollectionMember({
+          id: existing?.id ?? newId("cm"),
+          collection_id: collection.id,
+          user_id: me.id,
+          role: granted,
+        })
+      await meta.deletePendingCollectionInvitesFor(collection.id, inv.email)
+      return c.json({ collection_id: collection.id, role: granted })
     },
   )
 

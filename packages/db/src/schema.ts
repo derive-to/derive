@@ -453,6 +453,25 @@ export const artifactInvite = sqliteTable(
   ],
 )
 
+export const collectionInvite = sqliteTable(
+  "collection_invite",
+  {
+    id: text("id").primaryKey(),
+    collection_id: text("collection_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<Role>().notNull().default("commenter"),
+    token: text("token").notNull(),
+    invited_by: text("invited_by"),
+    created_at: text("created_at").notNull().default(now),
+    expires_at: text("expires_at").notNull(),
+    accepted_at: text("accepted_at"),
+  },
+  (t) => [
+    uniqueIndex("collection_invite_token").on(t.token),
+    index("collection_invite_collection_email").on(t.collection_id, t.email),
+  ],
+)
+
 // A beta signup from the marketing site's request-access form: just the email and
 // when it arrived. The access email (with the create-account link) is sent on
 // signup; this row is the audience list — who asked, and in what order.
@@ -592,6 +611,10 @@ export const collection = sqliteTable("collection", {
   // already folds in the caller's seat unconditionally, so an ADD COLUMN migration
   // defaulting every existing row to `member` changes nothing for anyone.
   workspace_access: text("workspace_access").$type<WorkspaceAccess>().notNull().default("member"),
+  // The canonical collection URL can grant a role which propagates to every item.
+  // Existing collections stay closed to the world through the additive `none` default.
+  link_role: text("link_role").$type<LinkRole>().notNull().default("none"),
+  password_hash: text("password_hash"),
   // The org-shared folder this collection is filed under (null = ungrouped). A plain
   // pointer, NOT a FK — folders are pure organization and grant no access, and a
   // constraint-free nullable column keeps the ADD COLUMN migration trivially additive
@@ -1198,6 +1221,7 @@ const TABLES = [
   connection,
   invitation,
   artifactInvite,
+  collectionInvite,
   betaSignup,
   signupAttribution,
   instanceOperator,

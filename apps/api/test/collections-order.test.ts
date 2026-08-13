@@ -14,6 +14,8 @@ const rec = (id: string, title: string, created_at: string) => ({
   created_by: "u1",
   created_at,
   workspace_access: "member" as const,
+  link_role: "none" as const,
+  password_hash: null,
   folder_id: null,
   count: 0,
 })

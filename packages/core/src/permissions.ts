@@ -67,6 +67,9 @@ export interface Actor {
   locked?: boolean
   /** The caller has entered the correct password for a locked artifact. */
   unlocked?: boolean
+  /** An already-authorized world-link grant inherited from a container. Its own
+   *  password gate has been resolved while assembling this Actor. */
+  inheritedLinkRole?: Exclude<LinkRole, "none"> | null
 }
 
 /**
@@ -74,7 +77,7 @@ export interface Actor {
  * (docs/access-model.md). null means no access at all. The single source of
  * truth for the access matrix; SECURITY.md documents the same for humans.
  *
- *   access = max( explicit share , workspace seat , world link )
+ *   access = max( explicit share , workspace seat , world link , inherited link )
  *
  * EXPLICIT (`artifactRole`) — an already-scoped per-artifact or collection grant.
  * Portable collaborator shares always count; request adapters omit workspace-bound
@@ -123,7 +126,12 @@ export function effectiveRole(
         : actor.kind === "user"
           ? linkRole
           : "viewer"
-  return maxRole(explicit, seat, world)
+  const inheritedWorld: Role | null = actor.inheritedLinkRole
+    ? actor.kind === "user"
+      ? actor.inheritedLinkRole
+      : "viewer"
+    : null
+  return maxRole(explicit, seat, world, inheritedWorld)
 }
 
 /** The one authorization gate. */

@@ -2406,6 +2406,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/collections/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one collection through standing or its world link. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The collection. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Collection"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete a collection. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The collection was deleted. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Rename a collection. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The updated collection. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Collection"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/v1/collections": {
         parameters: {
             query?: never;
@@ -2528,64 +2608,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/collections/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Delete a collection. */
-        delete: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The collection was deleted. */
-                204: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
-            };
-        };
-        options?: never;
-        head?: never;
-        /** Rename a collection. */
-        patch: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The updated collection. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Collection"];
-                    };
-                };
-            };
-        };
-        trace?: never;
-    };
     "/v1/collections/{id}/access": {
         parameters: {
             query?: never;
@@ -2599,7 +2621,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Change a collection's workspace access. */
+        /** Change a collection's workspace and link access. */
         patch: {
             parameters: {
                 query?: never;
@@ -2623,11 +2645,54 @@ export interface paths {
                              * @enum {string}
                              */
                             workspace_access: "none" | "member";
+                            /** @enum {string} */
+                            link_role: "none" | "viewer" | "commenter" | "editor";
+                            locked: boolean;
                         };
                     };
                 };
             };
         };
+        trace?: never;
+    };
+    "/v1/collections/{id}/unlock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unlock a password-protected collection link. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Unlocked. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/collections/{id}/items/{shortId}": {
@@ -2797,6 +2862,14 @@ export interface paths {
                             /** @description User id of the collection's creator. */
                             created_by: string;
                             members: components["schemas"]["ArtifactMember"][];
+                            invites: {
+                                id: string;
+                                email: string;
+                                /** @enum {string} */
+                                role: "viewer" | "commenter" | "editor" | "owner";
+                                created_at: string;
+                                expires_at: string;
+                            }[];
                         };
                     };
                 };
@@ -2814,13 +2887,29 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The added member. */
+                /** @description The member added directly, or a pending emailed invite. */
                 201: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["ArtifactMember"];
+                        "application/json": {
+                            /** @enum {string} */
+                            kind: "member";
+                            member: components["schemas"]["ArtifactMember"];
+                        } | {
+                            /** @enum {string} */
+                            kind: "invite";
+                            invite: {
+                                id: string;
+                                email: string;
+                                /** @enum {string} */
+                                role: "viewer" | "commenter" | "editor" | "owner";
+                                created_at: string;
+                                expires_at: string;
+                            };
+                            accept_url: string;
+                        };
                     };
                 };
             };
@@ -2864,6 +2953,129 @@ export interface paths {
                 };
             };
         };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/collections/{id}/invites/{inviteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a pending collection invitation. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    inviteId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The invitation was revoked. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/collection-invites/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview a collection invitation. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The collection and role the token grants. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            title: string;
+                            /** @enum {string} */
+                            role: "viewer" | "commenter" | "editor" | "owner";
+                            email: string;
+                            inviter: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/collection-invites/{token}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept a collection invitation. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The collection joined and granted role. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            collection_id: string;
+                            /** @enum {string} */
+                            role: "viewer" | "commenter" | "editor" | "owner";
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6742,10 +6954,21 @@ export interface components {
              */
             workspace_access?: "none" | "member";
             /**
-             * @description Caller's own role on the collection; drives the Share dialog. Null if none.
+             * @description What merely holding the canonical collection link grants.
+             * @enum {string}
+             */
+            link_role?: "none" | "viewer" | "commenter" | "editor";
+            /** @description Whether the collection world link requires a password. */
+            password_protected?: boolean;
+            /** @description Canonical share URL for this collection. */
+            url?: string;
+            /**
+             * @description Caller's effective role on the collection. Null if none.
              * @enum {string|null}
              */
             my_role?: "viewer" | "commenter" | "editor" | "owner" | null;
+            /** @description Whether the caller has standing (not merely a world-link role) to change collection sharing. */
+            can_share?: boolean;
             /** @description Whether the caller starred this collection — it pins to their sidebar. */
             starred?: boolean;
             last_activity?: string;

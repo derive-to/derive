@@ -67,7 +67,7 @@ Consequences that fall out for free:
 - The **role dropdown only appears for "Anyone"** in the UI — Workspace uses seats,
   so it has no role, just a listing switch.
 
-### Collections propagate like a workspace-open artifact
+### Collections use the same sharing primitive
 
 A collection's role reaches its **contents** by the same explicit-or-seat rule an
 artifact uses, so "who can open the collection" and "who can open what's inside"
@@ -81,15 +81,24 @@ never diverge:
   dialog's promise, "Everyone in the workspace opens this at their role." An
   **invite-only** collection (`workspace_access = none`) grants nothing from a mere
   seat; only its explicit members reach it.
+- A collection **world link** (`link_role`) is also additive on every artifact it
+  contains. The canonical `/collections/:id` page lists the collection through
+  that grant, and direct artifact URLs inherit it. Anonymous holders remain
+  clamped to viewer exactly as they are on artifact links.
+- `password_hash` locks that collection link as one unit. One collection unlock
+  cookie opens the collection page and every contained artifact; standing access
+  from a seat or explicit share never depends on the password.
 
 `collectionRolesForArtifact` (both stores) folds both sources into an artifact's
 effective role, and `collectionRole` gates collection visibility on the same rule —
 so a raw `COUNT(collection_item)` is always truthful for anyone who can see the
 collection (no "· 1 but empty"). The **creator** (`created_by`) is permanently
 owner while that collection's workspace is active and can never be demoted or
-removed; workspace admins may otherwise manage membership. Collections omit
-`listed`/`link_role` (a collection isn't individually link-servable — it's a
-grouping of artifacts, each with its own link).
+removed; workspace admins may otherwise manage membership. Collections deliberately
+omit only `listed`: they are reachable at a canonical link but are not independently
+directory-listed. Their Share dialog reuses the same Invited / Workspace / Anyone
+controls, link-role selector, password controls, people roles, pending email
+invitations, and copy-link action as an artifact.
 
 ## Listing preconditions (the only invariants)
 

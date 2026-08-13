@@ -123,11 +123,26 @@ export const Collection = z
       .enum(["none", "member"])
       .optional()
       .describe('Workspace share scope: "member" (all members) or "none" (invite-only).'),
+    link_role: z
+      .enum(["none", "viewer", "commenter", "editor"])
+      .optional()
+      .describe("What merely holding the canonical collection link grants."),
+    password_protected: z
+      .boolean()
+      .optional()
+      .describe("Whether the collection world link requires a password."),
+    url: z.string().optional().describe("Canonical share URL for this collection."),
     my_role: z
       .enum(["viewer", "commenter", "editor", "owner"])
       .nullable()
       .optional()
-      .describe("Caller's own role on the collection; drives the Share dialog. Null if none."),
+      .describe("Caller's effective role on the collection. Null if none."),
+    can_share: z
+      .boolean()
+      .optional()
+      .describe(
+        "Whether the caller has standing (not merely a world-link role) to change collection sharing.",
+      ),
     starred: z
       .boolean()
       .optional()
@@ -211,11 +226,16 @@ export const enrich = (
   srcByCollection: Map<string, Src>,
   branchByRepo: Map<string, string>,
 ) => {
+  // `password_hash` is authorization material, never wire data. Every collection
+  // response goes through this mapper, so one omission protects list, bootstrap,
+  // create, rename, and public detail together.
+  const { password_hash, ...safe } = col
+  const publicCol = { ...safe, password_protected: !!password_hash }
   const src = srcByCollection.get(col.id)
-  if (!src) return { ...col, kind: "manual" as const }
-  if (src.pr === null) return { ...col, kind: "repo" as const, repo: src.repo }
+  if (!src) return { ...publicCol, kind: "manual" as const }
+  if (src.pr === null) return { ...publicCol, kind: "repo" as const, repo: src.repo }
   return {
-    ...col,
+    ...publicCol,
     kind: "pr" as const,
     repo: src.repo,
     prNumber: src.pr,

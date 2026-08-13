@@ -11,9 +11,11 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  effectiveRole,
   FREE_SEAT_LIMIT,
   isAuthenticated,
   isBundleContentType,
+  type LinkRole,
   type MembershipRecord,
   type MetaStore,
   maxRole,
@@ -39,7 +41,14 @@ import type { BillingDriver } from "./lib/billing"
 import type { CustomDomainProvider } from "./lib/cloudflare-saas"
 import type { Sandbox } from "./lib/code-sandbox"
 import { answerDeriveMention } from "./lib/comment-turn"
-import { AGENT_TOKEN_PREFIX, safeEqual, sha256, unlockCookie, unlockToken } from "./lib/crypto"
+import {
+  AGENT_TOKEN_PREFIX,
+  safeEqual,
+  sha256,
+  subjectUnlockCookie,
+  unlockCookie,
+  unlockToken,
+} from "./lib/crypto"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { INSTANCE_SETTINGS_ID } from "./lib/instance-settings"
 import { catalogOf, type GatewayConfig, type ModelCatalog } from "./lib/model-catalog"
@@ -1242,6 +1251,48 @@ export function buildContext(deps: AppDeps) {
     return pending
   }
 
+  const openCollectionLinkRole = (
+    c: Context,
+    col: CollectionRecord,
+  ): Exclude<LinkRole, "none"> | null => {
+    if (col.link_role === "none") return null
+    if (!col.password_hash) return col.link_role
+    const unlocked = safeEqual(
+      getCookie(c, subjectUnlockCookie("collection", col.id)) ?? "",
+      unlockToken(col.id, col.password_hash),
+    )
+    return unlocked ? col.link_role : null
+  }
+
+  // A collection's world link is an additive grant on every artifact it contains.
+  // Resolve all containing collections in one join, then reuse maxRole/effectiveRole;
+  // there is no second collection-specific permission ladder.
+  const inheritedCollectionLinkRole = async (
+    c: Context,
+    artifactId: string,
+  ): Promise<Exclude<LinkRole, "none"> | null> => {
+    const roles = (await meta.collectionsForArtifact(artifactId))
+      .map((col) => openCollectionLinkRole(c, col))
+      .filter((role): role is Exclude<LinkRole, "none"> => role !== null)
+    const best = maxRole(...roles)
+    return best === "viewer" || best === "commenter" || best === "editor" ? best : null
+  }
+
+  // Collection links top out at editor for signed-in callers and viewer for
+  // anonymous callers. Skip their join whenever that ceiling cannot change the
+  // already-resolved role; collection-only access pays the lookup on demand.
+  const withInheritedCollectionLink = async (
+    c: Context,
+    a: ArtifactRecord,
+    actor: Actor,
+  ): Promise<Actor> => {
+    if (actor.kind === "token") return actor
+    const direct = effectiveRole(actor, a.workspace_access, a.link_role)
+    if (direct === "owner" || direct === "editor" || (actor.kind === "anon" && direct === "viewer"))
+      return actor
+    return { ...actor, inheritedLinkRole: await inheritedCollectionLinkRole(c, a.id) }
+  }
+
   const resolveActor = async (c: Context, a: ArtifactRecord, pre?: PreGrants): Promise<Actor> => {
     // A password on the artifact is a lock on its public link. Has this visitor
     // entered it? The unlock cookie's value is derived from the server-only
@@ -1253,7 +1304,8 @@ export function buildContext(deps: AppDeps) {
     // Narrow the one Principal to this artifact's Actor (the can() input).
     const p = await resolvePrincipal(c)
     if (p.kind === "token") return { kind: "token" }
-    if (p.kind === "anonymous") return { kind: "anon", locked, unlocked }
+    if (p.kind === "anonymous")
+      return withInheritedCollectionLink(c, a, { kind: "anon", locked, unlocked })
     if (p.kind === "agent") {
       const ag = p.agent
       // An agent acts AS ITS REGISTRANT, capped at its registered role and bound
@@ -1277,13 +1329,13 @@ export function buildContext(deps: AppDeps) {
       // ownership is workspace-bound even for that legacy shape. Lower collaborator
       // roles remain portable, matching human shares.
       const ownRole = ag.org_id === a.org_id || own?.role !== "owner" ? (own?.role ?? null) : null
-      return {
+      return withInheritedCollectionLink(c, a, {
         kind: "user",
         userId: ag.id,
         artifactRole: maxRole(ownRole, derived),
         orgRole,
         locked,
-      }
+      })
     }
     // A signed-in human. Workspace authority belongs to the ACTIVE workspace, not
     // merely to the account: switching away drops the artifact workspace's seat and
@@ -1302,7 +1354,7 @@ export function buildContext(deps: AppDeps) {
     // Already resolved alongside the artifact itself — same inputs, one round trip earlier.
     // The identity check is the guard described on PreGrants.
     if (pre && pre.userId === me.id)
-      return {
+      return withInheritedCollectionLink(c, a, {
         kind: "user",
         userId: me.id,
         artifactRole: maxRole(
@@ -1312,10 +1364,10 @@ export function buildContext(deps: AppDeps) {
         orgRole: workspaceActive ? pre.orgRole : null,
         locked,
         unlocked,
-      }
+      })
     if (meta.artifactGrants) {
       const g = await meta.artifactGrants(a.id, a.org_id, me.id)
-      return {
+      return withInheritedCollectionLink(c, a, {
         kind: "user",
         userId: me.id,
         artifactRole: maxRole(
@@ -1325,7 +1377,7 @@ export function buildContext(deps: AppDeps) {
         orgRole: workspaceActive ? g.orgRole : null,
         locked,
         unlocked,
-      }
+      })
     }
     const orgRole = workspaceActive
       ? ((await meta.getMembership(a.org_id, me.id))?.role ?? null)
@@ -1339,7 +1391,14 @@ export function buildContext(deps: AppDeps) {
     const portable = (role: Role | null | undefined): Role | null =>
       workspaceActive || role !== "owner" ? (role ?? null) : null
     const artifactRole = maxRole(portable(am?.role), ...cRoles.map(portable))
-    return { kind: "user", userId: me.id, artifactRole, orgRole, locked, unlocked }
+    return withInheritedCollectionLink(c, a, {
+      kind: "user",
+      userId: me.id,
+      artifactRole,
+      orgRole,
+      locked,
+      unlocked,
+    })
   }
 
   /** Authorize an action against a specific artifact. Access is the max of three
@@ -1355,7 +1414,9 @@ export function buildContext(deps: AppDeps) {
    *  the link/listing or clearing the password: a random signed-in URL holder with an
    *  editor link edits content, but only a member or an explicit sharee re-shares. */
   const authorizeStanding = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, "none"))
+    actorFor(c, a).then((actor) =>
+      can({ ...actor, inheritedLinkRole: null }, action, a.workspace_access, "none"),
+    )
 
   /** Authorize an EXPLICIT user (not the request's principal) against an artifact,
    *  on STANDING only — their explicit share + collection shares + workspace seat,
@@ -1434,15 +1495,44 @@ export function buildContext(deps: AppDeps) {
     return data ? new TextDecoder().decode(data) : null
   }
 
-  // A caller's role on a collection: the static token is owner; in the active
-  // workspace the creator/explicit owner and workspace seat apply. Outside it,
-  // only explicit viewer/commenter/editor shares travel with the person.
-  const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> => {
-    if (isToken(c)) return "owner"
-    const me = await currentUser(c)
-    if (!me) return null
+  // A caller's role on a collection: the static token is owner; otherwise the
+  // creator, else their explicit collection-member role, else — when the
+  // collection's own workspace_access is `member` — their workspace SEAT role,
+  // else null (no access). Shared by the collections routes and the artifact
+  // listing (collection scoping).
+  const collectionActor = async (c: Context, col: CollectionRecord): Promise<Actor> => {
+    const locked = !!col.password_hash
+    const unlocked = !!openCollectionLinkRole(c, col)
+    const p = await resolvePrincipal(c)
+    if (p.kind === "token") return { kind: "token" }
+    if (p.kind === "anonymous") return { kind: "anon", locked, unlocked }
+    if (p.kind === "agent") {
+      const ownerId = p.onBehalfOf
+      const workspaceActive = p.agent.org_id === col.org_id
+      const memberRole = ownerId
+        ? ((await meta.getCollectionMember(col.id, ownerId))?.role ?? null)
+        : null
+      const portableMemberRole = workspaceActive || memberRole !== "owner" ? memberRole : null
+      const ownerStanding = ownerId
+        ? maxRole(
+            workspaceActive && col.created_by === ownerId ? "owner" : null,
+            portableMemberRole,
+            workspaceActive && col.workspace_access === "member"
+              ? ((await meta.getMembership(col.org_id, ownerId))?.role ?? null)
+              : null,
+          )
+        : null
+      return {
+        kind: "user",
+        userId: p.agent.id,
+        artifactRole: ownerStanding ? capRole(ownerStanding, p.agent.role) : null,
+        orgRole: p.agent.org_id === col.org_id ? p.agent.role : null,
+        locked,
+        unlocked,
+      }
+    }
+    const me = p.user
     const workspaceActive = (await activeWorkspace(c)) === col.org_id
-    if (workspaceActive && col.created_by === me.id) return "owner"
     // A collection lives in a workspace, so — same share experience as an
     // artifact's workspace_access — its members reach it at their SEAT role when
     // it's workspace-open; an invite-only collection (workspace_access=none)
@@ -1455,11 +1545,21 @@ export function buildContext(deps: AppDeps) {
     // its contents stay in lockstep (no phantom-empty collections).
     const memberRole = (await meta.getCollectionMember(col.id, me.id))?.role ?? null
     const explicit = workspaceActive || memberRole !== "owner" ? memberRole : null
+    const standing = maxRole(workspaceActive && col.created_by === me.id ? "owner" : null, explicit)
     const seat =
       workspaceActive && col.workspace_access === "member"
         ? ((await meta.getMembership(col.org_id, me.id))?.role ?? null)
         : null
-    return maxRole(explicit, seat)
+    return { kind: "user", userId: me.id, artifactRole: standing, orgRole: seat, locked, unlocked }
+  }
+  const collectionRole = async (c: Context, col: CollectionRecord): Promise<Role | null> =>
+    effectiveRole(await collectionActor(c, col), col.workspace_access, col.link_role)
+  const collectionStandingRole = async (
+    c: Context,
+    col: CollectionRecord,
+  ): Promise<Role | null> => {
+    const actor = await collectionActor(c, col)
+    return effectiveRole({ ...actor, unlocked: false }, col.workspace_access, "none")
   }
 
   // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
@@ -1627,6 +1727,7 @@ export function buildContext(deps: AppDeps) {
     workspaceRole,
     workspaceCan,
     collectionRole,
+    collectionStandingRole,
     sourceText,
     requireArtifact,
     requireWorkspace,

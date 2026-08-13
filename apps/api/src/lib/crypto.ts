@@ -128,9 +128,12 @@ export const verifyPassword = (password: string, stored: string | null | undefin
 // The cookie that proves a visitor has unlocked one artifact. Its value is
 // derived from the server-only password hash, so a client can't forge it without
 // the password, and it auto-invalidates if the password changes.
-export const unlockCookie = (shortId: string): string => `dku_${shortId}`
-export const unlockToken = (artifactId: string, passwordHash: string): string =>
-  sha256(`${artifactId}:${passwordHash}`)
+export type UnlockSubject = "artifact" | "collection"
+export const subjectUnlockCookie = (subject: UnlockSubject, publicId: string): string =>
+  `${subject === "artifact" ? "dku" : "dkcu"}_${publicId}`
+export const unlockCookie = (shortId: string): string => subjectUnlockCookie("artifact", shortId)
+export const unlockToken = (subjectId: string, passwordHash: string): string =>
+  sha256(`${subjectId}:${passwordHash}`)
 
 // --- breached-password check (Have I Been Pwned, k-anonymity) ----------------
 // Reject account passwords that appear in known breach corpora, WITHOUT ever sending
