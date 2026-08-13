@@ -788,7 +788,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // takes when link_role != none.
       const passwordHash =
         resolvedLinkRole && resolvedLinkRole !== "none" && password && !draft
-          ? hashPassword(password)
+          ? await hashPassword(password)
           : undefined
       const { artifact, version } = await publish(
         meta,
@@ -1823,7 +1823,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // dropping the link (link_role=none) always clears it.
       let passwordHash: string | null = null
       if (linkRole !== "none") {
-        if (b.password) passwordHash = hashPassword(b.password)
+        if (b.password) passwordHash = await hashPassword(b.password)
         else if (b.password === undefined) passwordHash = artifact.password_hash ?? null
       }
       // Legacy `visibility=password` means "link + lock": it must carry a password.
@@ -2058,7 +2058,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!artifact?.password_hash) return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ password: z.string().min(1) }))
       if (b instanceof Response) return bail(b)
-      if (!verifyPassword(b.password, artifact.password_hash))
+      if (!(await verifyPassword(b.password, artifact.password_hash)))
         return bail(fail(c, 401, "wrong password"))
       setCookie(
         c,

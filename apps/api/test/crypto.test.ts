@@ -103,22 +103,31 @@ describe("encryptSecret / decryptSecret — AES-256-GCM at rest", () => {
 })
 
 describe("hashPassword / verifyPassword — salted, hashed at rest", () => {
-  it("verifies the right password and rejects the wrong one", () => {
-    const stored = hashPassword("hunter2")
-    expect(verifyPassword("hunter2", stored)).toBe(true)
-    expect(verifyPassword("Hunter2", stored)).toBe(false)
+  it("verifies the right password and rejects the wrong one", async () => {
+    const stored = await hashPassword("hunter2")
+    expect(await verifyPassword("hunter2", stored)).toBe(true)
+    expect(await verifyPassword("Hunter2", stored)).toBe(false)
   })
 
-  it("stores a salt alongside the sha256 digest, and verifies against it", () => {
-    const [salt, digest] = hashPassword("same").split(".")
+  it("stores a salt alongside the scrypt key, and verifies against it", async () => {
+    const [salt, digest] = (await hashPassword("same")).split(":")
     expect(salt).toBeTruthy() // a per-hash salt is prepended (its randomness is node's job)
-    expect(digest).toMatch(/^[0-9a-f]{64}$/) // sha256 hex
-    expect(verifyPassword("same", hashPassword("same"))).toBe(true)
+    expect(digest).toMatch(/^[0-9a-f]{128}$/) // 64-byte scrypt key, hex encoded
+    expect(await verifyPassword("same", await hashPassword("same"))).toBe(true)
   })
 
-  it("rejects null / empty / malformed stored values", () => {
+  it("keeps legacy artifact passwords readable", async () => {
+    expect(
+      await verifyPassword(
+        "hunter2",
+        "c2FsdHNhbHQ.acfaf71f49378900e704fbdcc285f260cc47ea3e154518cb072990747f61ba8d",
+      ),
+    ).toBe(true)
+  })
+
+  it("rejects null / empty / malformed stored values", async () => {
     for (const bad of [null, undefined, "", "nodot", "salt.", ".digest"])
-      expect(verifyPassword("x", bad)).toBe(false)
+      expect(await verifyPassword("x", bad)).toBe(false)
   })
 })
 

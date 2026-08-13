@@ -7,6 +7,10 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto"
+import {
+  hashPassword as scryptPassword,
+  verifyPassword as verifyScryptPassword,
+} from "better-auth/crypto"
 
 export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex")
 
@@ -112,17 +116,31 @@ export const safeEqual = (a: string, b: string | undefined): boolean =>
   !!b &&
   timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest())
 
-// --- password-protected artifacts -----------------------------------------
-// The unlock password is a shared link secret, not an account credential, so it
-// follows the same hashed-at-rest model as agent tokens — but salted, so a DB
-// leak can't rainbow-table common passwords. Stored as `salt.sha256(salt+pw)`.
-export const hashPassword = (password: string): string => {
-  const salt = randomBytes(9).toString("base64url")
-  return `${salt}.${sha256(salt + password)}`
-}
-export const verifyPassword = (password: string, stored: string | null | undefined): boolean => {
-  const [salt, digest] = (stored ?? "").split(".")
-  return !!salt && !!digest && safeEqual(sha256(salt + password), digest)
+// --- password-protected shared links --------------------------------------
+// Reuse Better Auth's scrypt implementation for both artifacts and collections.
+// Existing artifact locks used `salt.sha256(salt+pw)`; keep read compatibility so
+// deployed links do not suddenly stop unlocking, while every new/reset password is
+// stored with the deliberately expensive scrypt KDF (`salt:key`).
+export const hashPassword = (password: string): Promise<string> => scryptPassword(password)
+
+export const verifyPassword = async (
+  password: string,
+  stored: string | null | undefined,
+): Promise<boolean> => {
+  if (!stored) return false
+  if (stored.includes(":")) {
+    try {
+      return await verifyScryptPassword({ hash: stored, password })
+    } catch {
+      return false
+    }
+  }
+
+  const [salt, digest] = stored.split(".")
+  if (!salt || !digest) return false
+  // Compatibility-only verification of hashes written before scrypt adoption.
+  // codeql[js/insufficient-password-hash]
+  return safeEqual(sha256(salt + password), digest)
 }
 
 // The cookie that proves a visitor has unlocked one artifact. Its value is

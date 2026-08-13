@@ -398,7 +398,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       const linkRole = b.linkRole ?? col.link_role
       let passwordHash: string | null = null
       if (linkRole !== "none") {
-        if (b.password) passwordHash = hashPassword(b.password)
+        if (b.password) passwordHash = await hashPassword(b.password)
         else if (b.password === undefined) passwordHash = col.password_hash
       }
       await meta.setCollectionAccess(col.id, workspaceAccess, linkRole, passwordHash)
@@ -432,7 +432,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       if (!col?.password_hash) return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ password: z.string().min(1) }))
       if (b instanceof Response) return bail(b)
-      if (!verifyPassword(b.password, col.password_hash))
+      if (!(await verifyPassword(b.password, col.password_hash)))
         return bail(fail(c, 401, "wrong password"))
       setCookie(
         c,
