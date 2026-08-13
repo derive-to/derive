@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from "react"
-import { type ArtifactMember, api, type Collection, type Role, type WorkspaceAccess } from "@/api"
+import {
+  type ArtifactInvite,
+  type ArtifactMember,
+  api,
+  type Collection,
+  type LinkRole,
+  type Role,
+  type WorkspaceAccess,
+} from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -7,6 +15,7 @@ import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
+import { WorldLinkControls } from "@/components/shared/world-link-controls"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -15,16 +24,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { toast } from "@/components/ui/sonner"
+import { useCopy } from "@/lib/clipboard"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
 // Same share experience as an artifact (docs/access-model.md), minus the
 // Anyone segment — a collection isn't individually link-servable content, it's a
 // grouping of other artifacts, each with its own access. So just the one
 // question: invite-only, or does the workspace reach it at each member's seat?
-type Segment = "invite" | "workspace"
+type Segment = "invite" | "workspace" | "anyone"
 const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
   { value: "invite", label: "Invited", icon: "lock" },
   { value: "workspace", label: "Workspace", icon: "workspace" },
+  { value: "anyone", label: "Anyone", icon: "globe" },
 ]
 
 // Share a collection: who can open it at all (Invited vs Workspace, applies
@@ -38,7 +50,8 @@ export function ShareCollectionDialog({
   /** Narrowed to the fields this dialog reads, so both callers fit: the library
    *  passes a full Collection; the artifact share dialog passes a CollectionGrant
    *  (its disclosure row's Manage action — see share-dialog.tsx). */
-  collection: Pick<Collection, "id" | "title" | "created_by" | "workspace_access" | "my_role">
+  collection: Pick<Collection, "id" | "title" | "created_by" | "workspace_access" | "my_role"> &
+    Partial<Pick<Collection, "link_role" | "password_protected" | "url">>
   onClose: () => void
   /** Fired each time a write LANDS (access flip, member add/remove/re-role) — the
    *  artifact share dialog refetches its disclosure rows from here, never from
@@ -46,6 +59,7 @@ export function ShareCollectionDialog({
   onChanged?: () => void
 }) {
   const [members, setMembers] = useState<ArtifactMember[]>([])
+  const [invites, setInvites] = useState<ArtifactInvite[]>([])
   const [email, setEmail] = useState("")
   const [role, setRole] = useState<Role>("editor")
   // A ref, not just the mutation's async `isPending`: a burst of synchronous native
@@ -54,6 +68,12 @@ export function ShareCollectionDialog({
   // first mutate re-renders. The ref flips synchronously, so only the first gets through.
   const adding = useRef(false)
   const [wsAccess, setWsAccess] = useState<WorkspaceAccess>(collection.workspace_access ?? "member")
+  const [linkRole, setLinkRole] = useState<LinkRole>(collection.link_role ?? "none")
+  const [hasLock, setHasLock] = useState(!!collection.password_protected)
+  const [lockDraft, setLockDraft] = useState(false)
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [password, setPassword] = useState("")
+  const { copied, copy } = useCopy()
   // Re-seed when the caller hands us a different snapshot of the SAME dialog's
   // subject — the artifact share dialog's grant refreshes after a write, and a
   // stale seed here would re-create the exact lie this feature exists to fix.
@@ -61,45 +81,93 @@ export function ShareCollectionDialog({
     setWsAccess(collection.workspace_access ?? "member")
   }, [collection.workspace_access])
 
-  // Unlike an artifact (editors can share — GDocs model), a collection's access
-  // and membership routes are owner-only on the backend (same bar as delete —
-  // pre-dates this dialog, see collections.ts's canManageCollection(..., "manage")
-  // calls). Match that here: an editor would otherwise see live-looking controls
-  // that 403 on every action.
-  const canManage = collection.my_role === "owner"
+  // Same GDocs-style sharing bar as an artifact: owners and editors can share.
+  const canManage = collection.my_role === "owner" || collection.my_role === "editor"
 
   const load = () => {
     api
       .listCollectionMembers(collection.id)
-      .then((r) => setMembers(r.members))
+      .then((r) => {
+        setMembers(r.members)
+        setInvites(r.invites)
+      })
+      .catch(() => toast.error("Couldn't load who has access"))
+  }
+  const loadAccess = () => {
+    api
+      .getCollection(collection.id)
+      .then((fresh) => {
+        setWsAccess(fresh.workspace_access ?? "member")
+        setLinkRole(fresh.link_role ?? "none")
+        setHasLock(!!fresh.password_protected)
+      })
       .catch(() => {})
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-fetch members when the shared collection changes; load reads collection.id.
   useEffect(() => {
     load()
+    loadAccess()
   }, [collection.id])
 
   // Access applies immediately (a Save button between a toggle and its effect is friction
   // with no safety benefit). Optimistic via setWsAccess; the primitive rolls it back +
   // toasts on failure. Membership add/remove/re-role reconcile the roster on success.
+  type AccessDraft = { workspaceAccess: WorkspaceAccess; linkRole: LinkRole; password?: string }
   const accessMut = useApiMutation({
-    mutationFn: (next: WorkspaceAccess) => api.setCollectionAccess(collection.id, next),
+    mutationFn: (next: AccessDraft) => api.setCollectionAccess(collection.id, next),
     optimistic: (next) => {
-      const prev = wsAccess
-      setWsAccess(next)
-      return () => setWsAccess(prev)
+      const prev = { wsAccess, linkRole, hasLock, lockDraft }
+      setWsAccess(next.workspaceAccess)
+      setLinkRole(next.linkRole)
+      if (next.linkRole === "none") {
+        setHasLock(false)
+        setLockDraft(false)
+      }
+      return () => {
+        setWsAccess(prev.wsAccess)
+        setLinkRole(prev.linkRole)
+        setHasLock(prev.hasLock)
+        setLockDraft(prev.lockDraft)
+      }
     },
     onSuccess: (r) => {
       setWsAccess(r.workspace_access)
+      setLinkRole(r.link_role)
+      setHasLock(r.locked)
+      setLockDraft(false)
+      setPasswordOpen(false)
+      setPassword("")
       onChanged?.()
     },
   })
-  const applyAccess = (next: WorkspaceAccess) => accessMut.mutate(next)
+  const applyAccess = (next: AccessDraft) => accessMut.mutate(next)
+  const segment: Segment =
+    linkRole !== "none" ? "anyone" : wsAccess === "member" ? "workspace" : "invite"
+  const linkRoleValue: Exclude<LinkRole, "none"> = linkRole === "none" ? "viewer" : linkRole
+  const pickSegment = (next: Segment) => {
+    if (next === "invite") return applyAccess({ workspaceAccess: "none", linkRole: "none" })
+    if (next === "workspace") return applyAccess({ workspaceAccess: "member", linkRole: "none" })
+    return applyAccess({ workspaceAccess: "member", linkRole: linkRoleValue })
+  }
+  const currentWithPassword = (nextPassword: string): AccessDraft => ({
+    workspaceAccess: wsAccess,
+    linkRole,
+    password: nextPassword,
+  })
+  const toggleLock = (on: boolean) => {
+    if (on) setLockDraft(true)
+    else if (hasLock) applyAccess(currentWithPassword(""))
+    else setLockDraft(false)
+  }
+  const shareUrl =
+    collection.url ??
+    `${typeof window === "undefined" ? "" : window.location.origin}/collections/${collection.id}`
 
   const addMut = useApiMutation({
     mutationFn: (addr: string) => api.setCollectionMember(collection.id, addr, role),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setEmail("")
+      if (res.kind === "invite") toast(`Invite sent to ${res.invite.email}.`)
       load()
       onChanged?.()
     },
@@ -125,6 +193,12 @@ export function ShareCollectionDialog({
     },
   })
   const remove = (m: ArtifactMember) => removeMut.mutate(m)
+
+  const revokeInviteMut = useApiMutation({
+    mutationFn: (inviteId: string) => api.revokeCollectionInvite(collection.id, inviteId),
+    success: "Invite revoked",
+    onSuccess: () => load(),
+  })
 
   // Re-role in place — setCollectionMember upserts, so it's the Add call keyed by handle.
   const changeMut = useApiMutation({
@@ -166,20 +240,37 @@ export function ShareCollectionDialog({
               <div className="mt-2 flex flex-col">
                 <AccessSegmentToggle
                   segments={SEGMENTS}
-                  value={wsAccess === "member" ? "workspace" : "invite"}
-                  onChange={(v) => applyAccess(v === "workspace" ? "member" : "none")}
+                  value={segment}
+                  onChange={pickSegment}
                   disabled={accessMut.isPending}
                   testId="collection-share-access"
                 />
-                {wsAccess === "none" ? (
+                {segment === "invite" ? (
                   <p className="mt-3 text-sm text-muted-foreground">
                     Only the people you add below can open this.
                   </p>
-                ) : (
+                ) : segment === "workspace" ? (
                   <p className="mt-3 text-sm text-muted-foreground">
                     Everyone in the workspace opens this at their role — admins manage, editors
                     edit, commenters comment.
                   </p>
+                ) : (
+                  <WorldLinkControls
+                    role={linkRoleValue}
+                    pending={accessMut.isPending}
+                    hasLock={hasLock}
+                    lockDraft={lockDraft}
+                    passwordOpen={passwordOpen}
+                    password={password}
+                    testPrefix="collection-share"
+                    onRoleChange={(next) =>
+                      applyAccess({ workspaceAccess: wsAccess, linkRole: next })
+                    }
+                    onLockChange={toggleLock}
+                    onPasswordOpen={() => setPasswordOpen(true)}
+                    onPasswordChange={setPassword}
+                    onPasswordSet={(next) => applyAccess(currentWithPassword(next))}
+                  />
                 )}
               </div>
             ) : (
@@ -275,7 +366,47 @@ export function ShareCollectionDialog({
                 })}
               </div>
             )}
+            {invites.length > 0 && (
+              <div className="mt-2 flex flex-col gap-1.5">
+                {invites.map((invite) => (
+                  <div key={invite.id} className="flex items-center gap-2">
+                    <Icon name="mail" className="text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">
+                        {invite.email}
+                      </div>
+                      <div className="truncate text-xs text-muted-foreground">
+                        Invited · joins as {ROLE_LABELS[invite.role]} once they accept
+                      </div>
+                    </div>
+                    {canManage && (
+                      <Button
+                        data-testid={`collection-share-invite-revoke-${invite.id}`}
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => revokeInviteMut.mutate(invite.id)}
+                        aria-label={`Revoke the invite to ${invite.email}`}
+                      >
+                        <Icon name="close" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <Button
+            data-testid="collection-share-url-copy"
+            variant="outline"
+            size="sm"
+            onClick={() => copy(shareUrl)}
+          >
+            <Icon name={copied ? "check" : "link"} />
+            {copied ? "Copied" : "Copy link"}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

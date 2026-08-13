@@ -7,6 +7,10 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto"
+import {
+  hashPassword as scryptPassword,
+  verifyPassword as verifyScryptPassword,
+} from "better-auth/crypto"
 
 export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex")
 
@@ -112,25 +116,35 @@ export const safeEqual = (a: string, b: string | undefined): boolean =>
   !!b &&
   timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest())
 
-// --- password-protected artifacts -----------------------------------------
-// The unlock password is a shared link secret, not an account credential, so it
-// follows the same hashed-at-rest model as agent tokens — but salted, so a DB
-// leak can't rainbow-table common passwords. Stored as `salt.sha256(salt+pw)`.
-export const hashPassword = (password: string): string => {
-  const salt = randomBytes(9).toString("base64url")
-  return `${salt}.${sha256(salt + password)}`
-}
-export const verifyPassword = (password: string, stored: string | null | undefined): boolean => {
-  const [salt, digest] = (stored ?? "").split(".")
-  return !!salt && !!digest && safeEqual(sha256(salt + password), digest)
+// --- password-protected shared links --------------------------------------
+// Reuse Better Auth's scrypt implementation for both artifacts and collections.
+// Every new/reset password is stored with the deliberately expensive scrypt KDF
+// (`salt:key`). Pre-scrypt hashes deliberately fail verification; their owners can
+// reset the link password through the authenticated share dialog.
+export const hashPassword = (password: string): Promise<string> => scryptPassword(password)
+
+export const verifyPassword = async (
+  password: string,
+  stored: string | null | undefined,
+): Promise<boolean> => {
+  if (!stored) return false
+  if (!stored.includes(":")) return false
+  try {
+    return await verifyScryptPassword({ hash: stored, password })
+  } catch {
+    return false
+  }
 }
 
 // The cookie that proves a visitor has unlocked one artifact. Its value is
 // derived from the server-only password hash, so a client can't forge it without
 // the password, and it auto-invalidates if the password changes.
-export const unlockCookie = (shortId: string): string => `dku_${shortId}`
-export const unlockToken = (artifactId: string, passwordHash: string): string =>
-  sha256(`${artifactId}:${passwordHash}`)
+export type UnlockSubject = "artifact" | "collection"
+export const subjectUnlockCookie = (subject: UnlockSubject, publicId: string): string =>
+  `${subject === "artifact" ? "dku" : "dkcu"}_${publicId}`
+export const unlockCookie = (shortId: string): string => subjectUnlockCookie("artifact", shortId)
+export const unlockToken = (subjectId: string, passwordHash: string): string =>
+  sha256(`${subjectId}:${passwordHash}`)
 
 // --- breached-password check (Have I Been Pwned, k-anonymity) ----------------
 // Reject account passwords that appear in known breach corpora, WITHOUT ever sending

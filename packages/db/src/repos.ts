@@ -7,6 +7,7 @@ import type {
   AssetRecord,
   AuditLogRecord,
   AutomationRecord,
+  CollectionInviteRecord,
   CollectionMemberRecord,
   CollectionPreview,
   CollectionRecord,
@@ -45,6 +46,7 @@ import type {
   NewAuditLog,
   NewAutomation,
   NewCollection,
+  NewCollectionInvite,
   NewCollectionMember,
   NewComment,
   NewConnection,
@@ -159,6 +161,7 @@ import {
   betaSignup,
   collection,
   collectionFavorite,
+  collectionInvite,
   collectionItem,
   collectionMember,
   comment,
@@ -2276,15 +2279,22 @@ export function makeRepos(db: SqliteDb) {
   const setCollectionAccess = async (
     id: string,
     workspaceAccess: WorkspaceAccess,
+    linkRole?: LinkRole,
+    passwordHash?: string | null,
   ): Promise<void> => {
     await db
       .update(collection)
-      .set({ workspace_access: workspaceAccess })
+      .set({
+        workspace_access: workspaceAccess,
+        ...(linkRole !== undefined ? { link_role: linkRole } : {}),
+        ...(passwordHash !== undefined ? { password_hash: passwordHash } : {}),
+      })
       .where(eq(collection.id, id))
       .run()
   }
   // Sequential cascade (used by D1). better-sqlite3 overrides with a transaction.
   const deleteCollection = async (id: string): Promise<void> => {
+    await db.delete(collectionInvite).where(eq(collectionInvite.collection_id, id)).run()
     await db.delete(collectionItem).where(eq(collectionItem.collection_id, id)).run()
     await db.delete(collectionMember).where(eq(collectionMember.collection_id, id)).run()
     await db.delete(folder).where(eq(folder.collection_id, id)).run()
@@ -2387,6 +2397,15 @@ export function makeRepos(db: SqliteDb) {
         .where(eq(collectionItem.artifact_id, artifactId))
         .all()
     ).map((r) => r.id)
+  const collectionsForArtifact = async (artifactId: string): Promise<CollectionRecord[]> => {
+    const rows = await db
+      .select({ collection })
+      .from(collectionItem)
+      .innerJoin(collection, eq(collection.id, collectionItem.collection_id))
+      .where(eq(collectionItem.artifact_id, artifactId))
+      .all()
+    return rows.map((r) => r.collection as CollectionRecord)
+  }
   const addCollectionItem = async (collectionId: string, artifactId: string): Promise<void> => {
     await db
       .insert(collectionItem)
@@ -4393,6 +4412,62 @@ export function makeRepos(db: SqliteDb) {
     return row !== undefined
   }
 
+  // ---- Collection invitations ---------------------------------------------
+  const createCollectionInvite = async (i: NewCollectionInvite): Promise<CollectionInviteRecord> =>
+    (await db.insert(collectionInvite).values(i).returning().get()) as CollectionInviteRecord
+  const getCollectionInviteByToken = async (
+    tokenHash: string,
+  ): Promise<CollectionInviteRecord | null> =>
+    (await db.select().from(collectionInvite).where(eq(collectionInvite.token, tokenHash)).get()) ??
+    null
+  const listPendingCollectionInvites = async (
+    collectionId: string,
+  ): Promise<CollectionInviteRecord[]> =>
+    db
+      .select()
+      .from(collectionInvite)
+      .where(
+        and(eq(collectionInvite.collection_id, collectionId), isNull(collectionInvite.accepted_at)),
+      )
+      .orderBy(desc(collectionInvite.created_at))
+      .all()
+  const deletePendingCollectionInvitesFor = async (
+    collectionId: string,
+    email: string,
+  ): Promise<void> => {
+    await db
+      .delete(collectionInvite)
+      .where(
+        and(
+          eq(collectionInvite.collection_id, collectionId),
+          eq(collectionInvite.email, email),
+          isNull(collectionInvite.accepted_at),
+        ),
+      )
+      .run()
+  }
+  const deleteCollectionInvite = async (id: string, collectionId: string): Promise<void> => {
+    await db
+      .delete(collectionInvite)
+      .where(and(eq(collectionInvite.id, id), eq(collectionInvite.collection_id, collectionId)))
+      .run()
+  }
+  const consumeCollectionInvite = async (id: string, now: string): Promise<boolean> => {
+    const row = await db
+      .update(collectionInvite)
+      .set({ accepted_at: now })
+      .where(
+        and(
+          eq(collectionInvite.id, id),
+          isNull(collectionInvite.accepted_at),
+          gt(collectionInvite.expires_at, now),
+        ),
+      )
+      .returning({ id: collectionInvite.id })
+      .get()
+    return row !== undefined
+  }
+
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   const deleteUserData = async (userId: string): Promise<void> => {
     // The user's own association rows go entirely.
@@ -4422,6 +4497,11 @@ export function makeRepos(db: SqliteDb) {
       .update(artifactInvite)
       .set({ invited_by: null })
       .where(eq(artifactInvite.invited_by, userId))
+      .run()
+    await db
+      .update(collectionInvite)
+      .set({ invited_by: null })
+      .where(eq(collectionInvite.invited_by, userId))
       .run()
     // Drop the personal workspace row (removes the "<name>'s Workspace" label).
     await db
@@ -4750,6 +4830,7 @@ export function makeRepos(db: SqliteDb) {
     collectionItemFolders,
     collectionArtifactIds,
     collectionIdsForArtifact,
+    collectionsForArtifact,
     addCollectionItem,
     removeCollectionItem,
     getCollectionMember,
@@ -4927,6 +5008,12 @@ export function makeRepos(db: SqliteDb) {
     deletePendingArtifactInvitesFor,
     deleteArtifactInvite,
     consumeArtifactInvite,
+    createCollectionInvite,
+    getCollectionInviteByToken,
+    listPendingCollectionInvites,
+    deletePendingCollectionInvitesFor,
+    deleteCollectionInvite,
+    consumeCollectionInvite,
     deleteUserData,
     createReport,
     getReport,

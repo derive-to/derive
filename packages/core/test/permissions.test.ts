@@ -49,6 +49,13 @@ describe("effectiveRole resolution", () => {
     expect(effectiveRole(user({}), "member")).toBe(null) // no seat
     expect(effectiveRole(user({ locked: true }), "none", "viewer")).toBe(null)
   })
+  it("folds an inherited collection link into the same additive role ladder", () => {
+    expect(effectiveRole(user({ inheritedLinkRole: "commenter" }), "none")).toBe("commenter")
+    expect(
+      effectiveRole(user({ artifactRole: "viewer", inheritedLinkRole: "editor" }), "none"),
+    ).toBe("editor")
+    expect(effectiveRole({ kind: "anon", inheritedLinkRole: "editor" }, "none")).toBe("viewer")
+  })
   it("a static token is owner; an anonymous caller is always read-only, never above viewer", () => {
     expect(effectiveRole({ kind: "token" }, "member")).toBe("owner")
     // No "open"/trusted-anonymous path exists: anon never gets a writing role, even

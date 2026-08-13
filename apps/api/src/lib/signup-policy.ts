@@ -4,7 +4,7 @@ import { setCookie } from "hono/cookie"
 import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
 
 export type SignupMode = "open" | "invite" | "closed"
-export type InviteKind = "workspace" | "artifact"
+export type InviteKind = "workspace" | "artifact" | "collection"
 
 export interface SignupAttempt {
   email: string
@@ -83,7 +83,8 @@ export async function mintInviteAdmission(
 export function signupPolicy(
   mode: SignupMode,
   secret: string,
-  meta: Pick<MetaStore, "getInvitationByToken" | "getArtifactInviteByToken">,
+  meta: Pick<MetaStore, "getInvitationByToken" | "getArtifactInviteByToken"> &
+    Partial<Pick<MetaStore, "getCollectionInviteByToken">>,
 ): (attempt: SignupAttempt) => Promise<boolean> {
   return async ({ cookieHeader }) => {
     if (mode === "open") return true
@@ -99,7 +100,9 @@ export function signupPolicy(
         ? await meta.getInvitationByToken(tokenHash ?? "")
         : kind === "artifact"
           ? await meta.getArtifactInviteByToken(tokenHash ?? "")
-          : null
+          : kind === "collection"
+            ? await meta.getCollectionInviteByToken?.(tokenHash ?? "")
+            : null
     return !!invite && invite.accepted_at === null && Date.parse(invite.expires_at) > Date.now()
   }
 }

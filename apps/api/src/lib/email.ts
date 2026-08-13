@@ -167,22 +167,25 @@ export const buildBetaEmail = (input: { to: string; url: string }): EmailMsg => 
 /** Render a per-artifact invitation email: who invited you, to which document, and a
  *  link to accept. The recipient has likely never seen Derive, so the copy explains it
  *  in a line. The link lands on the accept page (signed-in gate; signup included). */
-export const buildArtifactInviteEmail = (input: {
+export const buildShareInviteEmail = (input: {
   to: string
   title: string
+  subject?: "artifact" | "collection"
   inviter?: string | null
   role: string
   url: string
 }): EmailMsg => {
+  const subject = input.subject ?? "artifact"
   const by = input.inviter ? `${input.inviter} invited you` : "You've been invited"
   const verb =
     input.role === "viewer" ? "view" : input.role === "commenter" ? "comment on" : "work on"
   const href = escapeHtml(input.url)
   const title = escapeHtml(input.title)
+  const noun = subject === "collection" ? "collection" : "document"
   const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
   <p style="font-size:16px;font-weight:600;margin:0 0 8px">${escapeHtml(by)} to ${verb} “${title}” on Derive</p>
-  <p>Derive hosts living documents at permanent links, with review comments pinned to the text. Accept the invite, sign in (Google works), and the document opens — you'll only ever see what's shared with you.</p>
-  <p><a href="${href}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Open the document</a></p>
+  <p>Derive hosts living documents at permanent links, with review comments pinned to the text. Accept the invite, sign in (Google works), and the ${noun} opens — you'll only ever see what's shared with you.</p>
+  <p><a href="${href}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">Open the ${noun}</a></p>
   <p style="color:#666;font-size:13px">Or paste this link into your browser:<br/><a href="${href}" style="color:#666">${href}</a></p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
   <p style="color:#999;font-size:12px">If you weren't expecting this, you can ignore this email.</p>
@@ -190,12 +193,14 @@ export const buildArtifactInviteEmail = (input: {
   const text = [
     `${by} to ${verb} “${input.title}” on Derive.`,
     ``,
-    `Open the document: ${input.url}`,
+    `Open the ${noun}: ${input.url}`,
     ``,
     `If you weren't expecting this, ignore this email.`,
   ].join("\n")
   return { to: input.to, subject: `${by} to ${verb} “${input.title}”`, html, text }
 }
+
+export const buildArtifactInviteEmail = buildShareInviteEmail
 
 /** Render a review-request email — an agent finished a revision and is blocked on
  *  its human. The one notification that most deserves to interrupt: the recipient

@@ -41,7 +41,7 @@ export function ArtifactCard({
 }: {
   artifact: Artifact
   onOpen: () => void
-  onToggleFavorite: () => void
+  onToggleFavorite?: () => void
   // Quick action in the ⋯ menu — organize without opening the artifact.
   // Collections apply to any signed-in viewer (you're organizing your
   // collections, not mutating the artifact).
@@ -188,29 +188,31 @@ export function ArtifactCard({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-          <Button
-            size="icon-sm"
-            variant="outline"
-            data-testid={`artifact-card-favorite-${a.short_id}`}
-            aria-label="Toggle favorite"
-            aria-pressed={a.favorite}
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleFavorite()
-            }}
-            className={cn("relative border-border-soft bg-card", reveal(!!a.favorite))}
-          >
-            <Icon
-              name="star"
-              size={16}
-              weight={a.favorite ? "fill" : "regular"}
-              className={a.favorite ? "text-primary" : "text-muted-foreground"}
-            />
-            <span
-              aria-hidden
-              className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
-            />
-          </Button>
+          {onToggleFavorite && (
+            <Button
+              size="icon-sm"
+              variant="outline"
+              data-testid={`artifact-card-favorite-${a.short_id}`}
+              aria-label="Toggle favorite"
+              aria-pressed={a.favorite}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleFavorite()
+              }}
+              className={cn("relative border-border-soft bg-card", reveal(!!a.favorite))}
+            >
+              <Icon
+                name="star"
+                size={16}
+                weight={a.favorite ? "fill" : "regular"}
+                className={a.favorite ? "text-primary" : "text-muted-foreground"}
+              />
+              <span
+                aria-hidden
+                className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+              />
+            </Button>
+          )}
         </div>
       </div>
 

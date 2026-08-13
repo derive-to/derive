@@ -206,10 +206,13 @@ export const artifactRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const me = await currentUser(c)
+      const requestedCollection = c.req.query("collection")?.trim() || undefined
       // Registered/OAuth agents list too — their library is how MCP list_artifacts
-      // finds work. Anonymous stays 401: nothing in the product lists tokenless.
+      // finds work. Anonymous listing is allowed only through one explicitly named,
+      // authorized collection world link; the workspace library remains closed.
       const agent = me ? null : await agentFor(c)
-      if (!me && !agent && !isToken(c)) return bail(fail(c, 401, "unauthenticated"))
+      if (!me && !agent && !isToken(c) && !requestedCollection)
+        return bail(fail(c, 401, "unauthenticated"))
       // Whose member rows count. Listing must mirror can(read): an agent derives
       // its standing from its registrant's rows (capped at its registered role —
       // see actorFor), so a linked agent's key is the REGISTRANT; an agent with
@@ -228,7 +231,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
       const q = c.req.query("query")?.trim().slice(0, 200) || undefined
       const tag = c.req.query("tag")?.trim() || undefined
-      const collectionId = c.req.query("collection")?.trim() || undefined
+      const collectionId = requestedCollection
       const favOnly = c.req.query("favorite") === "true"
       // ?author=<github login> narrows to artifacts whose current author is that login.
       const author = c.req.query("author")?.trim().slice(0, 100) || undefined
@@ -283,7 +286,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const activeOrg = await activeWorkspace(c)
       let listOrg = activeOrg
       let collectionAccess = false
-      let collectionGrant: Role | null = null
+      let collectionScopeRole: Role | null = null
       // Carry the collection's title so the client can label the view even when the
       // collection lives in another workspace (it's absent from the local sidebar list).
       // Only for a caller who actually has access — otherwise the title (and the fact
@@ -300,8 +303,16 @@ export const artifactRoutes = (ctx: AppContext) => {
         // seat, conditionally on the collection's OWN workspace_access — see context.ts):
         // plain isMember(org) would grant access to an Invited-only collection to every
         // workspace member, defeating the toggle entirely.
-        collectionGrant = await collectionRole(c, col)
-        collectionAccess = collectionGrant !== null
+        collectionScopeRole = await collectionRole(c, col)
+        collectionAccess = collectionScopeRole !== null
+        if (!collectionAccess) {
+          // A live password link is discoverable-but-locked so the public page
+          // can render its gate. Private collections preserve the historical
+          // empty feed and leak neither title nor items.
+          if (col.password_hash && col.link_role !== "none")
+            return bail(fail(c, 401, "password required"))
+          return c.json({ artifacts: [], next_cursor: null })
+        }
         if (collectionAccess) collectionInfo = { id: col.id, title: col.title }
       }
       // Author filter narrows to artifacts last changed by a GitHub login, scoped to the
@@ -430,21 +441,22 @@ export const artifactRoutes = (ctx: AppContext) => {
           // every item instead of rendering cards weaker than their detail pages.
           my_role: isOperator
             ? "owner"
-            : effectiveRole(
+            : (collectionScopeRole ??
+              effectiveRole(
                 memberKey
                   ? {
                       kind: "user",
                       userId: memberKey,
                       artifactRole:
                         agent?.created_by != null
-                          ? capRole(maxRole(scopedShareRole(a), collectionGrant), agent.role)
-                          : maxRole(scopedShareRole(a), collectionGrant),
+                          ? capRole(scopedShareRole(a), agent.role)
+                          : scopedShareRole(a),
                       orgRole: a.org_id === activeOrg ? baselineRole : null,
                     }
                   : { kind: "anon" },
                 a.workspace_access,
                 a.link_role,
-              ),
+              )),
           // The current author as a resolved profile (name/login/avatar + Derive handle), so
           // the list can render the last editor + filter by them.
           author: authorProfile(a, handleByGhId, bylineByUserId),
@@ -776,7 +788,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // takes when link_role != none.
       const passwordHash =
         resolvedLinkRole && resolvedLinkRole !== "none" && password && !draft
-          ? hashPassword(password)
+          ? await hashPassword(password)
           : undefined
       const { artifact, version } = await publish(
         meta,
@@ -1811,7 +1823,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // dropping the link (link_role=none) always clears it.
       let passwordHash: string | null = null
       if (linkRole !== "none") {
-        if (b.password) passwordHash = hashPassword(b.password)
+        if (b.password) passwordHash = await hashPassword(b.password)
         else if (b.password === undefined) passwordHash = artifact.password_hash ?? null
       }
       // Legacy `visibility=password` means "link + lock": it must carry a password.
@@ -2046,7 +2058,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!artifact?.password_hash) return bail(fail(c, 404, "not found"))
       const b = await readJson(c, z.object({ password: z.string().min(1) }))
       if (b instanceof Response) return bail(b)
-      if (!verifyPassword(b.password, artifact.password_hash))
+      if (!(await verifyPassword(b.password, artifact.password_hash)))
         return bail(fail(c, 401, "wrong password"))
       setCookie(
         c,

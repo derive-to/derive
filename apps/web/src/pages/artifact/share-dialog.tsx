@@ -19,9 +19,9 @@ import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
 import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
 import { Spinner } from "@/components/shared/spinner"
+import { WorldLinkControls } from "@/components/shared/world-link-controls"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -30,12 +30,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import {
-  SelectMenu,
-  SelectMenuContent,
-  SelectMenuItem,
-  SelectMenuTrigger,
-} from "@/components/ui/select-menu"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
@@ -70,11 +64,6 @@ export const accessIcon = (
 ): IconName =>
   linkRole !== "none" ? "globe" : workspaceAccess === "member" || collectionOpen ? "share" : "lock"
 
-const LINK_ROLE_LABEL: Record<Exclude<LinkRole, "none">, string> = {
-  viewer: "Can view",
-  commenter: "Can comment",
-  editor: "Can edit",
-}
 // The read-only one-liner for someone who can't manage access. Mirrors accessIcon:
 // a workspace-open collection makes "everyone in the workspace" true regardless of
 // the artifact's own fields, so the summary must fold it in too.
@@ -524,35 +513,20 @@ export function ShareButton({
 
                 {/* Anyone: a world link — its role, its public listing, and the lock. */}
                 {segment === "anyone" && (
-                  <>
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                      <span className="text-sm text-muted-foreground">Anyone with the link</span>
-                      <SelectMenu
-                        value={roleValue}
-                        onValueChange={(v) => pickRole(v as Exclude<LinkRole, "none">)}
-                      >
-                        <SelectMenuTrigger
-                          aria-label="What the link grants"
-                          data-testid="share-link-role"
-                          disabled={accessMut.isPending}
-                          className="bg-card"
-                        >
-                          {LINK_ROLE_LABEL[roleValue]}
-                        </SelectMenuTrigger>
-                        <SelectMenuContent>
-                          <SelectMenuItem value="viewer">Can view</SelectMenuItem>
-                          <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
-                          <SelectMenuItem value="editor">Can edit</SelectMenuItem>
-                        </SelectMenuContent>
-                      </SelectMenu>
-                    </div>
-
-                    {roleValue === "editor" && (
-                      <p className="mt-2 rounded-lg bg-warning/10 px-2.5 py-2 text-2xs text-warning">
-                        Anyone with the link can edit, publish, and share this.
-                      </p>
-                    )}
-
+                  <WorldLinkControls
+                    role={roleValue}
+                    pending={accessMut.isPending}
+                    hasLock={hasLock}
+                    lockDraft={lockDraft}
+                    passwordOpen={pwOpen}
+                    password={pw}
+                    testPrefix="share"
+                    onRoleChange={pickRole}
+                    onLockChange={toggleLock}
+                    onPasswordOpen={() => setPwOpen(true)}
+                    onPasswordChange={setPw}
+                    onPasswordSet={setPassword}
+                  >
                     {/* Listing is a SEPARATE question — its own row, below a rule. */}
                     <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
                       <div className="min-w-0">
@@ -588,57 +562,7 @@ export function ShareButton({
                         onCheckedChange={togglePublicHistory}
                       />
                     </div>
-
-                    {/* The lock — a modifier on the world link. Members and people
-                        added below never need the password. */}
-                    <label className="mt-3 flex items-center gap-2 text-sm text-foreground">
-                      <Checkbox
-                        checked={hasLock || lockDraft}
-                        disabled={accessMut.isPending}
-                        aria-label="Require a password"
-                        data-testid="share-lock-toggle"
-                        onCheckedChange={(v) => toggleLock(v === true)}
-                      />
-                      Require a password
-                    </label>
-                    {(lockDraft || (hasLock && pwOpen)) && (
-                      <div className="mt-2 flex gap-1.5">
-                        <Input
-                          type="password"
-                          data-testid="share-visibility-password"
-                          placeholder={hasLock ? "New password" : "Set a password"}
-                          aria-label="Password"
-                          value={pw}
-                          onChange={(e) => setPw(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && pw) setPassword(pw)
-                          }}
-                          className="flex-1"
-                        />
-                        <Button
-                          data-testid="share-visibility-save"
-                          variant="secondary"
-                          size="sm"
-                          disabled={!pw}
-                          loading={accessMut.isPending}
-                          onClick={() => setPassword(pw)}
-                        >
-                          {accessMut.isPending ? "Setting…" : "Set password"}
-                        </Button>
-                      </div>
-                    )}
-                    {!lockDraft && hasLock && !pwOpen && (
-                      <Button
-                        variant="link"
-                        size="xs"
-                        data-testid="share-password-change"
-                        className="mt-1 self-start px-0"
-                        onClick={() => setPwOpen(true)}
-                      >
-                        Change password
-                      </Button>
-                    )}
-                  </>
+                  </WorldLinkControls>
                 )}
 
                 {/* First-need on-ramp: the word "workspace" earns its first
