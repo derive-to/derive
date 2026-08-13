@@ -13,14 +13,16 @@ import {
   type Role,
   type WorkspaceAccess,
 } from "@/api"
-import { Icon, type IconName } from "@/components/icons"
-import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
-import { PersonSearchInput } from "@/components/shared/person-search-input"
-import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
+import { Icon } from "@/components/icons"
 import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
-import { Spinner } from "@/components/shared/spinner"
-import { WorldLinkControls } from "@/components/shared/world-link-controls"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import {
+  accessIcon,
+  accessSummary,
+  ShareAccessSection,
+  ShareCopyLinkButton,
+  SharePeopleSection,
+  type ShareSegment,
+} from "@/components/shared/share-dialog-sections"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -34,7 +36,6 @@ import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
 import { copyText, useCopy } from "@/lib/clipboard"
-import { getInitials } from "@/lib/initials"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -45,41 +46,12 @@ import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
 // is the WIDEST reach currently granted: a world link is "anyone"; workspace-seat
 // access is "workspace"; neither is "invite". The world link's role and each
 // segment's listing (does it show in a feed) are secondary switches beneath it.
-type Segment = "invite" | "workspace" | "anyone"
-const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
-  { value: "invite", label: "Invited", icon: "lock" },
-  { value: "workspace", label: "Workspace", icon: "workspace" },
-  { value: "anyone", label: "Anyone", icon: "globe" },
-]
-
 // The state glyph the Share trigger carries so exposure is legible without opening
 // the dialog: a globe when the URL alone reads, the share glyph for the workspace,
 // a lock for invite-only. A workspace-open collection makes the artifact workspace-
 // reachable even when its own fields say Invited (see access-model.md) — the lock is
 // a promise ("nobody but the roster"), so it must account for that grant too.
-export const accessIcon = (
-  linkRole: LinkRole,
-  workspaceAccess: WorkspaceAccess,
-  collectionOpen = false,
-): IconName =>
-  linkRole !== "none" ? "globe" : workspaceAccess === "member" || collectionOpen ? "share" : "lock"
-
-// The read-only one-liner for someone who can't manage access. Mirrors accessIcon:
-// a workspace-open collection makes "everyone in the workspace" true regardless of
-// the artifact's own fields, so the summary must fold it in too.
-export const accessSummary = (
-  linkRole: LinkRole,
-  workspaceAccess: WorkspaceAccess,
-  collectionOpen = false,
-): string => {
-  if (linkRole !== "none") {
-    const what = linkRole === "viewer" ? "view" : linkRole === "editor" ? "edit" : "comment"
-    return `Anyone with the link can ${what}.`
-  }
-  if (workspaceAccess === "member" || collectionOpen)
-    return "Everyone in the workspace can open this."
-  return "Only invited people can open this."
-}
+export { accessIcon, accessSummary } from "@/components/shared/share-dialog-sections"
 
 // The access triple + an optional world-link password, applied atomically by setAccess.
 type AccessDraft = {
@@ -204,7 +176,7 @@ export function ShareButton({
   // listed) draft ──────────────────────────────────────────────────────────────
   // The segment is the WIDEST reach: a live world link is "anyone"; workspace-seat
   // access is "workspace"; neither is "invite".
-  const segment: Segment =
+  const segment: ShareSegment =
     lRole !== "none" ? "anyone" : wsAccess === "member" ? "workspace" : "invite"
   // The listing switch per segment — public directory for "anyone", the workspace
   // library for "workspace". Invited lists nowhere.
@@ -254,7 +226,7 @@ export function ShareButton({
   const applyAccess = (next: AccessDraft) => accessMut.mutate(next)
   // Picking a segment sets its fields at the safe default: a fresh segment starts
   // UNLISTED (the switch is how you opt into a feed), the world link at view.
-  const pickSegment = (seg: Segment) => {
+  const pickSegment = (seg: ShareSegment) => {
     if (seg === "invite")
       return void applyAccess({ workspaceAccess: "none", linkRole: "none", listed: "none" })
     if (seg === "workspace")
@@ -460,144 +432,114 @@ export function ShareButton({
         </DialogHeader>
 
         <div className="flex flex-col gap-6">
-          <div>
-            <SectionEyebrow action={accessMut.isPending && <Spinner className="size-3" />}>
-              Who can open this
-            </SectionEyebrow>
-            {canManage ? (
-              <div className="mt-2 flex flex-col">
-                {/* One primary choice — the widest reach. Each segment sets the
-                    (workspace_access, link_role, listed) triple — see pickSegment. */}
-                <AccessSegmentToggle
-                  segments={SEGMENTS}
-                  value={segment}
-                  onChange={pickSegment}
+          <ShareAccessSection
+            canManage={canManage}
+            pending={accessMut.isPending}
+            segment={segment}
+            testPrefix="share"
+            inviteCopy={
+              grants.length > 0
+                ? "Only the people you add below — plus everyone reached through its collections."
+                : "Only the people you add below can open this."
+            }
+            workspaceCopy="Everyone in the workspace opens this at their role — admins manage, editors edit, commenters comment."
+            readOnlyIcon={accessIcon(
+              linkRole ?? "none",
+              workspaceAccess ?? "member",
+              collectionOpen,
+            )}
+            readOnlyCopy={accessSummary(
+              linkRole ?? "none",
+              workspaceAccess ?? "member",
+              collectionOpen,
+            )}
+            onSegmentChange={pickSegment}
+            world={{
+              role: roleValue,
+              hasLock,
+              lockDraft,
+              passwordOpen: pwOpen,
+              password: pw,
+              onRoleChange: pickRole,
+              onLockChange: toggleLock,
+              onPasswordOpen: () => setPwOpen(true),
+              onPasswordChange: setPw,
+              onPasswordSet: setPassword,
+            }}
+            workspaceChildren={
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-foreground">Show in the workspace library</div>
+                  <div className="text-xs text-muted-foreground">
+                    Otherwise it's link-only — out of the team's feed.
+                  </div>
+                </div>
+                <Switch
+                  checked={isListed}
                   disabled={accessMut.isPending}
-                  testId="share-access"
+                  aria-label="Show in the workspace library"
+                  data-testid="share-listed"
+                  onCheckedChange={toggleListed}
                 />
-
-                {segment === "invite" && (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    {grants.length > 0
-                      ? // Invited must not read as a promise the collections below break.
-                        "Only the people you add below — plus everyone reached through its collections."
-                      : "Only the people you add below can open this."}
-                  </p>
-                )}
-
-                {/* Workspace: seats decide the role — no dropdown. Admins manage,
-                    editors edit, commenters comment. Just the library switch. */}
-                {segment === "workspace" && (
-                  <>
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      Everyone in the workspace opens this at their role — admins manage, editors
-                      edit, commenters comment.
-                    </p>
-                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
-                      <div className="min-w-0">
-                        <div className="text-sm text-foreground">Show in the workspace library</div>
-                        <div className="text-xs text-muted-foreground">
-                          Otherwise it's link-only — out of the team's feed.
-                        </div>
-                      </div>
-                      <Switch
-                        checked={isListed}
-                        disabled={accessMut.isPending}
-                        aria-label="Show in the workspace library"
-                        data-testid="share-listed"
-                        onCheckedChange={toggleListed}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* Anyone: a world link — its role, its public listing, and the lock. */}
-                {segment === "anyone" && (
-                  <WorldLinkControls
-                    role={roleValue}
-                    pending={accessMut.isPending}
-                    hasLock={hasLock}
-                    lockDraft={lockDraft}
-                    passwordOpen={pwOpen}
-                    password={pw}
-                    testPrefix="share"
-                    onRoleChange={pickRole}
-                    onLockChange={toggleLock}
-                    onPasswordOpen={() => setPwOpen(true)}
-                    onPasswordChange={setPw}
-                    onPasswordSet={setPassword}
-                  >
-                    {/* Listing is a SEPARATE question — its own row, below a rule. */}
-                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
-                      <div className="min-w-0">
-                        <div className="text-sm text-foreground">List in the public directory</div>
-                        <div className="text-xs text-muted-foreground">
-                          Otherwise the link works, but it stays undiscoverable.
-                        </div>
-                      </div>
-                      <Switch
-                        checked={isListed}
-                        disabled={accessMut.isPending}
-                        aria-label="List in the public directory"
-                        data-testid="share-listed"
-                        onCheckedChange={toggleListed}
-                      />
-                    </div>
-
-                    {/* Public history — a disclosure like the listing: whether the
-                        anonymous page shows every version (dropdown + old reads).
-                        Signed-in readers always see history; this governs anon only. */}
-                    <div className="mt-3 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="text-sm text-foreground">Show version history</div>
-                        <div className="text-xs text-muted-foreground">
-                          Anyone with the link can browse every version.
-                        </div>
-                      </div>
-                      <Switch
-                        checked={pubHist}
-                        disabled={accessMut.isPending}
-                        aria-label="Show version history on the public page"
-                        data-testid="share-public-history"
-                        onCheckedChange={togglePublicHistory}
-                      />
-                    </div>
-                  </WorldLinkControls>
-                )}
-
-                {/* First-need on-ramp: the word "workspace" earns its first
-                    appearance by answering "how do I show this to my team?". */}
-                {solo && (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    Working with a team?{" "}
-                    <Button
-                      variant="link"
-                      size="xs"
-                      data-testid="share-create-workspace"
-                      className="px-0"
-                      onClick={() =>
-                        nav({
-                          to: "/settings/$section",
-                          params: { section: "general" },
-                          search: { "new-workspace": "1" },
-                        })
-                      }
-                    >
-                      Create a workspace
-                    </Button>{" "}
-                    to share with them.
-                  </p>
-                )}
               </div>
-            ) : (
-              <p className="mt-2 flex items-center gap-1.5 text-sm text-muted-foreground">
-                <Icon
-                  name={accessIcon(linkRole ?? "none", workspaceAccess ?? "member", collectionOpen)}
-                />
-                {accessSummary(linkRole ?? "none", workspaceAccess ?? "member", collectionOpen)}
+            }
+            worldChildren={
+              <>
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-foreground">List in the public directory</div>
+                    <div className="text-xs text-muted-foreground">
+                      Otherwise the link works, but it stays undiscoverable.
+                    </div>
+                  </div>
+                  <Switch
+                    checked={isListed}
+                    disabled={accessMut.isPending}
+                    aria-label="List in the public directory"
+                    data-testid="share-listed"
+                    onCheckedChange={toggleListed}
+                  />
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-foreground">Show version history</div>
+                    <div className="text-xs text-muted-foreground">
+                      Anyone with the link can browse every version.
+                    </div>
+                  </div>
+                  <Switch
+                    checked={pubHist}
+                    disabled={accessMut.isPending}
+                    aria-label="Show version history on the public page"
+                    data-testid="share-public-history"
+                    onCheckedChange={togglePublicHistory}
+                  />
+                </div>
+              </>
+            }
+          >
+            {solo && (
+              <p className="mt-3 text-sm text-muted-foreground">
+                Working with a team?{" "}
+                <Button
+                  variant="link"
+                  size="xs"
+                  data-testid="share-create-workspace"
+                  className="px-0"
+                  onClick={() =>
+                    nav({
+                      to: "/settings/$section",
+                      params: { section: "general" },
+                      search: { "new-workspace": "1" },
+                    })
+                  }
+                >
+                  Create a workspace
+                </Button>{" "}
+                to share with them.
               </p>
             )}
-          </div>
+          </ShareAccessSection>
 
           {/* Disclosure, not control: each row is a collection whose sharing reaches
               this artifact — the one access source the fields above can't express
@@ -657,164 +599,32 @@ export function ShareButton({
             </div>
           )}
 
-          <div>
-            <SectionEyebrow count={members.length || undefined}>People with access</SectionEyebrow>
-            {members.length === 0 ? (
-              <p data-testid="share-empty" className="px-2 py-2.5 text-sm text-muted-foreground">
-                {canManage ? "No one shared yet." : "No one else has been added."}
-              </p>
-            ) : (
-              <div className="-mx-2 mt-1 flex flex-col">
-                {members.map((m) => (
-                  <div
-                    key={m.user_id}
-                    data-testid={`share-member-row-${m.user_id}`}
-                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-secondary"
-                  >
-                    <Avatar className="size-8 shrink-0">
-                      <AvatarFallback className="text-xs">
-                        {getInitials(m.name ?? m.handle ?? "?")}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
-                        {m.user_id === me?.id && (
-                          <span className="text-muted-foreground"> (you)</span>
-                        )}
-                      </div>
-                      {m.name && m.handle && (
-                        <div className="truncate font-mono text-2xs text-muted-foreground">
-                          @{m.handle}
-                        </div>
-                      )}
-                    </div>
-                    {/* The sole owner's row is fixed — the server refuses to downgrade
-                      or remove the last owner, so don't offer it. */}
-                    {canManage &&
-                    !(
-                      m.role === "owner" && members.filter((x) => x.role === "owner").length === 1
-                    ) ? (
-                      <>
-                        <div
-                          data-testid={`share-member-role-${m.user_id}`}
-                          className="w-25 shrink-0"
-                        >
-                          <RoleSelect
-                            value={m.role}
-                            onChange={(next) => change(m, next)}
-                            aria-label={`Role for ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                            className="w-full"
-                          />
-                        </div>
-                        <Button
-                          data-testid={`share-member-remove-${m.user_id}`}
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => remove(m)}
-                          aria-label={`Remove ${m.name ?? (m.handle ? `@${m.handle}` : "member")}`}
-                        >
-                          <Icon name="close" />
-                        </Button>
-                      </>
-                    ) : (
-                      <span
-                        data-testid={`share-member-role-${m.user_id}`}
-                        className="shrink-0 text-sm text-muted-foreground"
-                      >
-                        {ROLE_LABELS[m.role]}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Pending emailed invites: not members yet — a quiet mail row with the
-                granted role and a revoke. Accepting turns the row into a member. */}
-            {invites.length > 0 && (
-              <div className="-mx-2 mt-1 flex flex-col">
-                {invites.map((i) => (
-                  <div
-                    key={i.id}
-                    data-testid={`share-invite-row-${i.id}`}
-                    className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-secondary"
-                  >
-                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-secondary">
-                      <Icon name="mail" size={16} className="text-muted-foreground" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-foreground">{i.email}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        Invited · joins as {ROLE_LABELS[i.role]} once they accept
-                      </div>
-                    </div>
-                    {canManage && (
-                      <Button
-                        data-testid={`share-invite-revoke-${i.id}`}
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => revokeInviteMut.mutate(i.id)}
-                        aria-label={`Revoke the invite to ${i.email}`}
-                      >
-                        <Icon name="close" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Adding people is the natural next step after seeing who already has
-                access — the roster reads top-to-bottom as one flow: who's in, then
-                bring in more. */}
-            <div className="mt-3 flex flex-col gap-2">
-              {canManage ? (
-                <form onSubmit={add} className="flex items-center gap-1.5">
-                  <PersonSearchInput
-                    value={email}
-                    onChange={setEmail}
-                    placeholder="Add people by @username or email…"
-                    testId="share-email"
-                  />
-                  <div data-testid="share-role" className="w-28 shrink-0">
-                    <RoleSelect
-                      value={role}
-                      onChange={setRole}
-                      aria-label="Role for new member"
-                      className="w-full"
-                    />
-                  </div>
-                  <Button
-                    data-testid="share-add"
-                    variant="default"
-                    size="sm"
-                    type="submit"
-                    loading={addMut.isPending}
-                  >
-                    {addMut.isPending ? "Adding…" : "Add"}
-                  </Button>
-                </form>
-              ) : (
-                <div
-                  data-testid="share-viewonly"
-                  className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground"
-                >
-                  <Icon name="lock" />
-                  View only · ask an owner or editor to change access.
-                </div>
-              )}
-            </div>
-          </div>
+          <SharePeopleSection
+            members={members}
+            invites={invites}
+            currentUserId={me?.id}
+            canManage={canManage}
+            email={email}
+            role={role}
+            pending={addMut.isPending}
+            testPrefix="share"
+            memberIsFixed={(member) =>
+              member.role === "owner" &&
+              members.filter((item) => item.role === "owner").length === 1
+            }
+            onEmailChange={setEmail}
+            onRoleChange={setRole}
+            onAdd={add}
+            onMemberRoleChange={change}
+            onRemoveMember={remove}
+            onRevokeInvite={(inviteId) => revokeInviteMut.mutate(inviteId)}
+          />
         </div>
 
         {/* Footer: the universal action on the left, distribution mechanics folded
             behind a quiet disclosure on the right. */}
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <Button data-testid="share-url-copy" variant="outline" size="sm" onClick={copyLink}>
-            <Icon name={copiedLink ? "check" : "link"} />
-            {copiedLink ? "Copied" : "Copy link"}
-          </Button>
+          <ShareCopyLinkButton copied={copiedLink} testPrefix="share" onCopy={copyLink} />
           <Button
             data-testid="share-more-toggle"
             variant="ghost"
