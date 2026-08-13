@@ -70,10 +70,3 @@ export const localAgentLaunchUrl = (
   }
   return `codex://new?prompt=${encodeURIComponent(prompt)}`
 }
-
-/** Native beta uses the same product promise. The exact trusted URI is carried
- * separately as template_start, so it never has to appear in the visible chat. */
-export const nativeTemplateRequest = (target: AgentTemplateTarget, brief: string) =>
-  target.kind === "context"
-    ? `Use the ${target.title} template to make this Context ours: ${cleanBrief(brief)}\n\nAdapt the setup to this workspace and ask only for decisions you cannot safely infer. Create the Context when the runner, sources, permissions, and credential bindings are clear, then show me what you set up.`
-    : `Use the ${target.title} template to make this mine: ${cleanBrief(brief)}\n\nFind and use relevant evidence from this workspace when it helps. Build a polished first draft, publish it, inspect the rendered result, and show me what you made.`

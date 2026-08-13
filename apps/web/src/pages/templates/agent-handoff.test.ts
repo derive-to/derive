@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { localAgentHandoff, localAgentLaunchUrl, nativeTemplateRequest } from "./agent-handoff"
+import { localAgentHandoff, localAgentLaunchUrl } from "./agent-handoff"
 
 const artifact = {
   uri: "derive://templates/narrative-pitch",
@@ -29,12 +29,6 @@ describe("template agent handoffs", () => {
     expect(handoff).toContain("procedures, sources, and operating decisions")
     expect(handoff).toContain("automate with create_context")
     expect(handoff).not.toContain("visually inspect")
-  })
-
-  it("keeps the native prompt conversational because template_start carries the URI", () => {
-    const prompt = nativeTemplateRequest(artifact, "  Make the launch story. ")
-    expect(prompt).toContain("Make the launch story.")
-    expect(prompt).not.toContain(artifact.uri)
   })
 
   it("opens Codex and Claude Code with the complete portable handoff prefilled", () => {
