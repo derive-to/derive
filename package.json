@@ -33,7 +33,8 @@
       "ws": "^8.21.0",
       "postcss": ">=8.5.23",
       "nanoid@<4": ">=3.3.17",
-      "brace-expansion@>=3.0.0 <5.0.8": ">=5.0.8"
+      "brace-expansion@>=3.0.0 <5.0.8": ">=5.0.8",
+      "@puppeteer/browsers": "^3.2.0"
     },
     "patchedDependencies": {
       "@better-auth/oauth-provider@1.6.19": "patches/@better-auth__oauth-provider@1.6.19.patch",
