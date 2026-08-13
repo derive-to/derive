@@ -209,6 +209,13 @@ async function buildServer(
       // (an agent that does not know that never looks it up), and the core-skills index, which
       // is the spine progressive disclosure hangs on. Everything else is in a derive://skills/*
       // body fetched when it is needed, or in an actionable error at runtime.
+      //
+      // "this server's own resources" is load-bearing, not padding. Telling a model to fetch
+      // procedure before acting is, in outline, the shape of a prompt-injection vector, and
+      // connector-directory policy rejects descriptions that send Claude to EXTERNAL sources
+      // for behavioral instructions. Ours are registered resources of this same server, so
+      // the sentence says whose they are rather than leaving a reviewer (or a scanner) to
+      // infer it from a bare URI scheme.
       instructions:
         `You are connected to Derive as "${agent.name}"${
           actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
@@ -218,8 +225,9 @@ async function buildServer(
         `renders as authored, so publish real designed pages, not just prose. Work the loop: ` +
         `catch_up for what changed, read only the parts you need, then act. Other workspaces: ` +
         `list_workspaces, then pass \`workspace\`.\n\n` +
-        `CORE SKILLS carry the procedure for each intent. Read the matching one before you act ` +
-        `(a resource, or read("derive://skills/<name>")):\n${skillsIndex}\n\n` +
+        `CORE SKILLS are this server's own resources, each carrying the procedure for one ` +
+        `intent. Read the matching one before you act (read("derive://skills/<name>")):\n` +
+        `${skillsIndex}\n\n` +
         `Team procedures exist too: find skills:true, then read.` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),

@@ -52,11 +52,17 @@ export function registerStageTool(tc: ToolContext): void {
     "stage",
     {
       description:
-        "Mint a SHORT-LIVED capability and curl with it — zero bytes through context. target:'doc' a document/bundle past ~a page, 'asset' an image or font (max 25MB), 'api' a REAL bearer for REST (15 min, capped at your role, live in this transcript). NEVER base64 a binary through a tool call. See derive://skills/publishing.",
+        "Mint a SHORT-LIVED capability and curl with it — zero bytes through context. target:'doc' a document/bundle past ~a page, 'asset' an image or font (max 25MB), 'api' a REAL bearer for the Derive REST API at derive.to/docs (15 min, capped at your role, live in this transcript). NEVER base64 a binary through a tool call. See derive://skills/publishing.",
       // Mints a short-lived credential (upload URL or bearer token) — a write in the
       // sense that it CAN be spent to publish later, but this call itself never touches
       // artifact content, so not destructive. Not idempotent: every call mints a distinct
       // token. The minted URLs all point back at this same Derive server's own API.
+      //
+      // target:'api' names that API and links its reference in the description on purpose.
+      // The token is spent against endpoints the CALLER composes, so "a REAL bearer for
+      // REST" left the question "which REST?" unanswered — the one thing a caller holding
+      // a credential most needs to know, and the gap directory reviewers read as a
+      // freeform-request tool with no documented target.
       annotations: {
         title: "Stage an upload",
         readOnlyHint: false,
