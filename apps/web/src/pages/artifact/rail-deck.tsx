@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
 import type { Viewer } from "@/api"
 import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
@@ -84,6 +84,73 @@ export function DeckBar({
       {presenting && (
         <span className="pr-1.5 pl-0.5 font-mono text-2xs text-muted-foreground">Esc to exit</span>
       )}
+    </div>
+  )
+}
+
+export function VideoBar({
+  video,
+  onPrev,
+  onNext,
+  onToggle,
+  onRestart,
+}: {
+  video: { i: number; total: number; playing: boolean; elapsedMs: number; durationMs: number }
+  onPrev: () => void
+  onNext: () => void
+  onToggle: () => void
+  onRestart: () => void
+}) {
+  const progress = Math.max(0, Math.min(100, (video.elapsedMs / video.durationMs) * 100))
+  return (
+    <div
+      data-testid="video-bar"
+      className="absolute bottom-3.5 left-1/2 z-5 flex min-w-72 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)]"
+    >
+      <Button
+        data-testid="video-restart"
+        variant="outline"
+        size="icon-xs"
+        onClick={onRestart}
+        aria-label="Restart video"
+      >
+        <RotateCcw />
+      </Button>
+      <Button
+        data-testid="video-prev"
+        variant="outline"
+        size="icon-xs"
+        onClick={onPrev}
+        disabled={video.i <= 0}
+        aria-label="Previous scene"
+      >
+        <ChevronLeft />
+      </Button>
+      <Button
+        data-testid="video-play-pause"
+        variant="default"
+        size="icon-xs"
+        onClick={onToggle}
+        aria-label={video.playing ? "Pause video" : "Play video"}
+      >
+        {video.playing ? <Pause /> : <Play />}
+      </Button>
+      <Button
+        data-testid="video-next"
+        variant="outline"
+        size="icon-xs"
+        onClick={onNext}
+        disabled={video.i >= video.total - 1}
+        aria-label="Next scene"
+      >
+        <ChevronRight />
+      </Button>
+      <span className="min-w-13 text-center font-mono text-2xs tabular-nums text-muted-foreground">
+        {video.i + 1} / {video.total}
+      </span>
+      <span className="h-1.5 min-w-20 flex-1 overflow-hidden rounded-full bg-muted">
+        <span className="block h-full bg-primary" style={{ width: `${progress}%` }} />
+      </span>
     </div>
   )
 }

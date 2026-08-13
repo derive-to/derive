@@ -24,8 +24,9 @@ export const unsavedEditsCopy = (n: number) => ({
 const editMessage = (edits: InlineEditInput[]): string => {
   const first = edits[0]
   if (edits.length !== 1 || !first) return `Inline edits (${edits.length})`
-  if ("op" in first)
+  if ("op" in first && first.op === "resize")
     return `Resized ${first.target.snapshot?.label ?? first.target.tag} to ${first.width}px`
+  if ("op" in first) return `Updated video scene ${first.id}`
   if (first.new_text === undefined) return `Inline formatting: "${clip(first.quote.exact.trim())}"`
   return `Inline edit: "${clip(first.quote.exact.trim())}" → "${clip(first.new_text.trim())}"`
 }

@@ -10,6 +10,7 @@ import {
   type Panel,
   parseAnchor,
   type Selection,
+  type Video,
 } from "./types"
 import { usePresentMode } from "./use-present-mode"
 
@@ -144,6 +145,8 @@ export function useArtifactFrame(p: {
   // re-subscribes), so selection-capture and cursor-tagging see the CURRENT slide
   // rather than the stale value `deck` would be frozen at. Kept in sync below.
   const deckRef = useRef<Deck | null>(null)
+  const [video, setVideo] = useState<Video | null>(null)
+  const videoRef = useRef<Video | null>(null)
 
   const post = useCallback((msg: Record<string, unknown>) => {
     frame.current?.contentWindow?.postMessage({ source: "derive-host", ...msg }, "*")
@@ -175,6 +178,22 @@ export function useArtifactFrame(p: {
         setDeck(next)
         return
       }
+      if (d.source === "derive-video" && d.type === "state") {
+        const next = {
+          i: d.i ?? 0,
+          total: d.total ?? 1,
+          id: String(d.id ?? "scene-1"),
+          durationMs: d.durationMs ?? 5000,
+          transition: String(d.transition ?? "cut"),
+          transitionMs: d.transitionMs ?? 300,
+          playing: !!d.playing,
+          elapsedMs: d.elapsedMs ?? 0,
+          sniffed: false,
+        }
+        videoRef.current = next
+        setVideo(next)
+        return
+      }
       if (d.source !== "derive") return
       // The injected client recognised a deck the artifact never announced. An
       // artifact that speaks for itself always wins: once a protocol message has
@@ -185,6 +204,23 @@ export function useArtifactFrame(p: {
         const next = { i: d.i ?? 0, total: d.total ?? 1, sniffed: true }
         deckRef.current = next
         setDeck(next)
+        return
+      }
+      if (d.type === "video-sniff") {
+        if (videoRef.current && !videoRef.current.sniffed) return
+        const next = {
+          i: d.i ?? 0,
+          total: d.total ?? 1,
+          id: String(d.id ?? "scene-1"),
+          durationMs: d.durationMs ?? 5000,
+          transition: String(d.transition ?? "cut"),
+          transitionMs: d.transitionMs ?? 300,
+          playing: !!d.playing,
+          elapsedMs: d.elapsedMs ?? 0,
+          sniffed: true,
+        }
+        videoRef.current = next
+        setVideo(next)
         return
       }
       if (d.type === "select") {
@@ -292,6 +328,20 @@ export function useArtifactFrame(p: {
       ),
     [],
   )
+  const videoCmd = useCallback(
+    (action: "next" | "prev" | "goto" | "play" | "pause" | "restart", n?: number) => {
+      frame.current?.contentWindow?.postMessage(
+        {
+          source: "derive-host",
+          type: videoRef.current?.sniffed ? "video-drive" : "video",
+          action,
+          n,
+        },
+        "*",
+      )
+    },
+    [],
+  )
   // Present mode owns the fullscreen element, the presenting state and the keyboard
   // that drives a deck while it's up (see use-present-mode). It lives here because
   // this hook already owns the wrapper and the drive command.
@@ -309,6 +359,8 @@ export function useArtifactFrame(p: {
   useEffect(() => {
     setDeck(null)
     deckRef.current = null
+    setVideo(null)
+    videoRef.current = null
     setSel(null)
     setLandedSlides({})
     setAnchorConf({})
@@ -401,6 +453,8 @@ export function useArtifactFrame(p: {
     scrollBy,
     deck,
     deckCmd,
+    video,
+    videoCmd,
     present,
     sel,
     setSel,

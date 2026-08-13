@@ -839,7 +839,7 @@ const mdSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
  *  a local `=== "text/html"` check would silently drift on decks. */
 export const isHtmlLike = (contentType: string): boolean => {
   const ct = contentType.split(";")[0]?.trim()
-  return ct === "text/html" || ct === "text/x-derive-deck"
+  return ct === "text/html" || ct === "text/x-derive-deck" || ct === "text/x-derive-video"
 }
 
 /** The agent-readable form of stored source: HTML converts to Markdown, everything

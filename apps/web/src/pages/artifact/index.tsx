@@ -383,6 +383,8 @@ export function Artifact() {
     scrollBy,
     deck,
     deckCmd,
+    video,
+    videoCmd,
     present,
     sel,
     setSel,
@@ -600,7 +602,8 @@ export function Artifact() {
     // replacement but gets no resize handle.
     allowElementEdits:
       art?.current_content_type?.startsWith("text/html") === true ||
-      art?.current_content_type === "text/x-derive-deck",
+      art?.current_content_type === "text/x-derive-deck" ||
+      art?.current_content_type === "text/x-derive-video",
     onOpenSourceEditor: startEdit,
     onEnter: () => {
       setSel(null)
@@ -838,6 +841,7 @@ export function Artifact() {
       onDiffRetry={retryDiff}
       restoring={restoring}
       deck={deck}
+      video={video}
       frameRef={frame}
       presentWrapRef={presentWrap}
       cursor={live.cursor}
@@ -859,6 +863,10 @@ export function Artifact() {
       }
       onDeckPrev={() => deckCmd("prev")}
       onDeckNext={() => deckCmd("next")}
+      onVideoPrev={() => videoCmd("prev")}
+      onVideoNext={() => videoCmd("next")}
+      onVideoToggle={() => videoCmd(video?.playing ? "pause" : "play")}
+      onVideoRestart={() => videoCmd("restart")}
       presenting={present.presenting}
       presentOverlay={present.overlay}
       controlsIdle={present.idle}
@@ -1218,6 +1226,8 @@ export function Artifact() {
                     textActive={inlineEdit.tools.textActive}
                     textKind={inlineEdit.tools.textKind}
                     selectedText={inlineEdit.tools.selectedText}
+                    video={video}
+                    onSceneEdit={(edit) => post({ type: "video-edit", ...edit })}
                     onUndo={inlineEdit.undo}
                     onRedo={inlineEdit.redo}
                     onFormat={inlineEdit.format}

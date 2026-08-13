@@ -1362,6 +1362,168 @@ interface ElReg {
     } catch (_e) {}
   }
 
+  /* ── HTML video scenes ──────────────────────────────────────────────────────
+     A canonical video is still authored HTML. The injected client supplies the
+     small common runtime: scene position, playback and host control. Authors keep
+     complete control of each scene's visual design; Derive only toggles `hidden`
+     and reads the four data attributes that form the editing contract. */
+  const videoRoot = (): HTMLElement | null =>
+    document.querySelector<HTMLElement>("[data-derive-video]")
+  const videoScenes = (): HTMLElement[] =>
+    Array.from(document.querySelectorAll<HTMLElement>("[data-derive-scene]"))
+  let videoAt = 0
+  let videoPlaying = false
+  let videoStarted = 0
+  let videoElapsed = 0
+  let videoTimer = 0
+  const videoDuration = (el: HTMLElement | undefined): number =>
+    Math.max(1000, Math.min(30000, Number(el?.dataset.durationMs) || 5000))
+  const postVideoSniff = () => {
+    const scenes = videoScenes()
+    const scene = scenes[videoAt]
+    if (!videoRoot() || !scene) return
+    post({
+      type: "video-sniff",
+      i: videoAt,
+      total: scenes.length,
+      id: scene.dataset.deriveScene || `scene-${videoAt + 1}`,
+      durationMs: videoDuration(scene),
+      transition: scene.dataset.transition || "cut",
+      transitionMs: Number(scene.dataset.transitionMs) || 300,
+      playing: videoPlaying,
+      elapsedMs: videoElapsed,
+    })
+  }
+  const showVideoScene = (index: number) => {
+    const scenes = videoScenes()
+    if (!scenes.length) return
+    videoAt = Math.max(0, Math.min(scenes.length - 1, index))
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i] as HTMLElement
+      scene.hidden = i !== videoAt
+      scene.toggleAttribute("data-derive-video-active", i === videoAt)
+    }
+    videoElapsed = 0
+    videoStarted = performance.now()
+    postVideoSniff()
+  }
+  const stopVideoClock = () => {
+    if (videoTimer) cancelAnimationFrame(videoTimer)
+    videoTimer = 0
+  }
+  const tickVideo = (now: number) => {
+    if (!videoPlaying) return
+    videoElapsed = now - videoStarted
+    const scenes = videoScenes()
+    const duration = videoDuration(scenes[videoAt])
+    if (videoElapsed >= duration) {
+      if (videoAt < scenes.length - 1) showVideoScene(videoAt + 1)
+      else {
+        videoPlaying = false
+        videoElapsed = duration
+      }
+    }
+    postVideoSniff()
+    if (videoPlaying) videoTimer = requestAnimationFrame(tickVideo)
+  }
+  const driveVideo = (action: string, n?: number) => {
+    if (action === "next") showVideoScene(videoAt + 1)
+    else if (action === "prev") showVideoScene(videoAt - 1)
+    else if (action === "goto") showVideoScene(Number.isInteger(n) ? (n as number) : 0)
+    else if (action === "play") {
+      videoPlaying = true
+      videoStarted = performance.now() - videoElapsed
+      stopVideoClock()
+      videoTimer = requestAnimationFrame(tickVideo)
+    } else if (action === "pause") {
+      videoElapsed = performance.now() - videoStarted
+      videoPlaying = false
+      stopVideoClock()
+      postVideoSniff()
+    } else if (action === "restart") {
+      showVideoScene(0)
+      driveVideo("play")
+    }
+  }
+  type WireSceneEdit =
+    | {
+        op: "scene-update"
+        id: string
+        duration_ms?: number
+        transition?: string
+        transition_ms?: number
+      }
+    | { op: "scene-move"; id: string; direction: "previous" | "next" }
+    | { op: "scene-duplicate"; id: string }
+    | { op: "scene-delete"; id: string }
+  interface SceneHistory {
+    wire: WireSceneEdit
+    undo: () => void
+    redo: () => void
+  }
+  const videoSceneById = (id: string): HTMLElement | null =>
+    videoScenes().find((scene) => scene.dataset.deriveScene === id) ?? null
+  const applySceneFromHost = (wire: WireSceneEdit) => {
+    if (!editOn) return
+    const scene = videoSceneById(wire.id)
+    const root = videoRoot()
+    if (!scene || !root) return
+    let undoScene = () => {}
+    let redoScene = () => {}
+    if (wire.op === "scene-update") {
+      const before = {
+        duration: scene.getAttribute("data-duration-ms"),
+        transition: scene.getAttribute("data-transition"),
+        transitionMs: scene.getAttribute("data-transition-ms"),
+      }
+      redoScene = () => {
+        if (wire.duration_ms !== undefined)
+          scene.setAttribute("data-duration-ms", String(wire.duration_ms))
+        if (wire.transition !== undefined) scene.setAttribute("data-transition", wire.transition)
+        if (wire.transition_ms !== undefined)
+          scene.setAttribute("data-transition-ms", String(wire.transition_ms))
+      }
+      undoScene = () => {
+        const restore = (name: string, value: string | null) =>
+          value === null ? scene.removeAttribute(name) : scene.setAttribute(name, value)
+        restore("data-duration-ms", before.duration)
+        restore("data-transition", before.transition)
+        restore("data-transition-ms", before.transitionMs)
+      }
+    } else if (wire.op === "scene-move") {
+      const originalNext = scene.nextSibling
+      redoScene = () => {
+        if (wire.direction === "previous") {
+          const prev = scene.previousElementSibling
+          if (prev?.hasAttribute("data-derive-scene")) root.insertBefore(scene, prev)
+        } else {
+          const next = scene.nextElementSibling
+          if (next?.hasAttribute("data-derive-scene")) root.insertBefore(next, scene)
+        }
+      }
+      undoScene = () => root.insertBefore(scene, originalNext)
+    } else if (wire.op === "scene-duplicate") {
+      const copy = scene.cloneNode(true) as HTMLElement
+      const used = new Set(videoScenes().map((s) => s.dataset.deriveScene))
+      let n = videoScenes().length + 1
+      while (used.has(`scene-${n}`)) n++
+      copy.dataset.deriveScene = `scene-${n}`
+      redoScene = () => scene.after(copy)
+      undoScene = () => copy.remove()
+    } else {
+      if (videoScenes().length <= 1) return
+      const originalNext = scene.nextSibling
+      redoScene = () => scene.remove()
+      undoScene = () => root.insertBefore(scene, originalNext)
+    }
+    redoScene()
+    sceneEdits.push({ wire, undo: undoScene, redo: redoScene })
+    sceneRedo = []
+    videoAt = Math.max(0, Math.min(videoAt, videoScenes().length - 1))
+    showVideoScene(videoAt)
+    postDirty()
+  }
+
   /* 🚨 Hidden slides still catch clicks.
      A deck stacks every slide at `inset:0` and hides the inactive ones with
      OPACITY — which removes them from view but NOT from hit testing. So a click
@@ -1582,6 +1744,7 @@ interface ElReg {
     watchSlides()
     postDeckSniff()
     setTimeout(postDeckSniff, 400)
+    if (videoRoot()) showVideoScene(videoAt)
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
      content animates, an accordion expands) — none of which fire scroll/resize/load. So
@@ -1786,6 +1949,8 @@ interface ElReg {
     aspect: number
   }
   let editOn = false
+  let sceneEdits: SceneHistory[] = []
+  let sceneRedo: SceneHistory[] = []
   // The frame is HTML even when the stored document is Markdown. Element selectors
   // are only a supported write against HTML/deck SOURCE, so the host explicitly
   // enables opening-tag operations. Image replacement remains available either way.
@@ -1985,7 +2150,7 @@ interface ElReg {
     }
     for (const t of resizeTargets)
       if (document.contains(t.el) && rawStyle(t.el) !== t.origStyle) n++
-    return n
+    return n + sceneEdits.length
   }
   /* ── Undo, for the whole session ──────────────────────────────────────────────
      The browser's own undo only knows typing, and only inside the one block it
@@ -2056,8 +2221,30 @@ interface ElReg {
     refreshResizeUi()
     postDirty()
   }
-  const undo = () => stepHistory(undoStack, redoStack)
-  const redo = () => stepHistory(redoStack, undoStack)
+  const undo = () => {
+    if (sceneEdits.length) {
+      const entry = sceneEdits.pop()
+      if (entry) {
+        entry.undo()
+        sceneRedo.push(entry)
+      }
+      showVideoScene(Math.min(videoAt, videoScenes().length - 1))
+      postDirty()
+      return
+    }
+    stepHistory(undoStack, redoStack)
+  }
+  const redo = () => {
+    const entry = sceneRedo.pop()
+    if (entry) {
+      entry.redo()
+      sceneEdits.push(entry)
+      showVideoScene(Math.min(videoAt, videoScenes().length - 1))
+      postDirty()
+      return
+    }
+    stepHistory(redoStack, undoStack)
+  }
 
   /** Is there a selection the format verbs could act on — one run, inside one
    *  editable block? The bar's B / I / link enable on exactly this. */
@@ -2121,15 +2308,15 @@ interface ElReg {
     const selectedText = contextRange
       ? contextRange.toString().replace(/\s+/g, " ").trim().slice(0, 120)
       : ""
-    const state = `${n}|${undoStack.length > 0}|${redoStack.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}`
+    const state = `${n}|${undoStack.length > 0 || sceneEdits.length > 0}|${redoStack.length > 0 || sceneRedo.length > 0}|${canFormat}|${textActive}|${textKind}|${selectedText}`
     if (state !== lastState) {
       lastState = state
       lastDirty = n
       post({
         type: "edit-state",
         dirty: n,
-        canUndo: undoStack.length > 0,
-        canRedo: redoStack.length > 0,
+        canUndo: undoStack.length > 0 || sceneEdits.length > 0,
+        canRedo: redoStack.length > 0 || sceneRedo.length > 0,
         canFormat,
         textActive,
         textKind,
@@ -2674,6 +2861,8 @@ interface ElReg {
         full += `${n.nodeValue}\n`
       }
       editBase = { text: full, starts }
+      sceneEdits = []
+      sceneRedo = []
       setHover(null)
       // Off-screen slides stop catching clicks meant for the slide on screen.
       maskOffscreenSlides()
@@ -2705,6 +2894,8 @@ interface ElReg {
       lastBurst = null
       pendingRange = null
       lastState = ""
+      sceneEdits = []
+      sceneRedo = []
       clearEditMention()
       post({ type: "edit-mention-close" })
     }
@@ -2722,12 +2913,15 @@ interface ElReg {
     resizeTargets = []
     restoreResizeFocus()
     clearResizeUi()
+    sceneEdits = []
+    sceneRedo = []
     if (lastDirty !== 0) {
       lastDirty = 0
       post({ type: "edit-state", dirty: 0 })
     }
   }
   const restoreEdits = () => {
+    for (let i = sceneEdits.length - 1; i >= 0; i--) sceneEdits[i]?.undo()
     for (const t of editTargets) {
       if (document.contains(t.el)) {
         if (concatText(t.el) !== t.origConcat) {
@@ -2750,6 +2944,8 @@ interface ElReg {
     resizeTargets = []
     restoreResizeFocus()
     clearResizeUi()
+    sceneEdits = []
+    sceneRedo = []
     if (lastDirty !== 0) {
       lastDirty = 0
       post({ type: "edit-state", dirty: 0 })
@@ -3316,7 +3512,7 @@ interface ElReg {
     width: number
     height: number | "auto"
   }
-  type WireChange = WireEdit | WireElementEdit
+  type WireChange = WireEdit | WireElementEdit | WireSceneEdit
   const wireEdit = (qe: {
     exact: string
     prefix: string
@@ -3426,6 +3622,8 @@ interface ElReg {
       }
       edits.push({ op: "resize", target: t.selector, width, height })
     }
+    for (const entry of sceneEdits) edits.push(entry.wire)
+    dirty += sceneEdits.length
     return { edits, dirty, uncaptured }
   }
 
@@ -3463,7 +3661,23 @@ interface ElReg {
     // Only sent to a SNIFFED deck: one that speaks the protocol is driven by its own
     // `deck` message, which it answers itself.
     else if (d.type === "deck-drive") driveDeck(String(d.action || ""), d.n)
-    else if (d.type === "edit-collect") {
+    else if (d.type === "video-drive") driveVideo(String(d.action || ""), d.n)
+    else if (d.type === "video-edit") {
+      const op = String(d.op || "")
+      const id = String(d.id || "")
+      if (op === "update")
+        applySceneFromHost({
+          op: "scene-update",
+          id,
+          duration_ms: typeof d.durationMs === "number" ? d.durationMs : undefined,
+          transition: typeof d.transition === "string" ? d.transition : undefined,
+          transition_ms: typeof d.transitionMs === "number" ? d.transitionMs : undefined,
+        })
+      else if (op === "move" && (d.direction === "previous" || d.direction === "next"))
+        applySceneFromHost({ op: "scene-move", id, direction: d.direction })
+      else if (op === "duplicate") applySceneFromHost({ op: "scene-duplicate", id })
+      else if (op === "delete") applySceneFromHost({ op: "scene-delete", id })
+    } else if (d.type === "edit-collect") {
       // The nonce rides back untouched: a slow page can answer a TIMED-OUT collect
       // after the host started a new one, and stale edits must not resolve it.
       const { edits, dirty, uncaptured } = collectEdits()

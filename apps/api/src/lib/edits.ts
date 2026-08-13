@@ -4,6 +4,7 @@ import {
   applyEdits,
   applyElementEdits,
   applyQuoteEdits,
+  applySceneEdits,
   applySlideOps,
   type DiffOp,
   type DocEdit,
@@ -13,7 +14,9 @@ import {
   isElementEdit,
   isHtmlLike,
   isQuoteEdit,
+  isSceneEdit,
   type QuoteEdit,
+  type SceneEdit,
   type SlideOp,
   toMarkdown,
   type VersionRecord,
@@ -238,13 +241,15 @@ export async function materializeEdits(
     )
   const quoteEdits: QuoteEdit[] = []
   const elementEdits: ElementEdit[] = []
+  const sceneEdits: SceneEdit[] = []
   const strEdits: DocEdit[] = []
   for (const e of edits) {
     if (isQuoteEdit(e)) quoteEdits.push(e)
     else if (isElementEdit(e)) elementEdits.push(e)
+    else if (isSceneEdit(e)) sceneEdits.push(e)
     else strEdits.push(e as DocEdit)
   }
-  if (!quoteEdits.length && !elementEdits.length && !strEdits.length)
+  if (!quoteEdits.length && !elementEdits.length && !sceneEdits.length && !strEdits.length)
     throw new EditError("`edits` is empty — provide at least one edit.")
   // The two shapes resolve against DIFFERENT baselines (quotes against the stored
   // source all-at-once; old_str edits sequentially, each seeing the previous
@@ -259,6 +264,10 @@ export async function materializeEdits(
     throw new EditError(
       "`edits` mixes element edits and old_str edits — send the two shapes as separate requests.",
     )
+  if (strEdits.length && sceneEdits.length)
+    throw new EditError(
+      "`edits` mixes scene edits and old_str edits — send the two shapes as separate requests.",
+    )
   let content = src
   if (strEdits.length) content = applyEdits(src, strEdits)
   else {
@@ -271,6 +280,13 @@ export async function materializeEdits(
       content = applyElementEdits(content, elementEdits)
     }
     if (quoteEdits.length) content = applyQuoteEdits(content, contentType ?? "", quoteEdits)
+    // Structural scene operations run last, so duplicating a scene also carries any
+    // text the person changed in it during the same atomic Save.
+    if (sceneEdits.length) {
+      if (contentType !== "text/x-derive-video")
+        throw new EditError("Scene edits apply to HTML video artifacts only.")
+      content = applySceneEdits(content, sceneEdits)
+    }
   }
   // Keep the artifact's content type: the sniffer types by filename first, and the
   // default index.html would silently re-type an edited markdown doc as HTML.
