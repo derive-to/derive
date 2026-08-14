@@ -27,6 +27,8 @@ Security fixes may follow a private process until coordinated disclosure is safe
 
 ## Review standard
 
+- Reviews are requested deliberately. Routine dependency updates do not notify every
+  maintainer merely because the bot changed a broadly owned file.
 - A maintainer does not approve their own pull request. Repository administrators may use
   GitHub's pull-request-only bypass when another maintainer is unavailable. It preserves the
   pull request and audit trail and must only be used after the required checks pass.
