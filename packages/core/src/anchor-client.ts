@@ -1524,6 +1524,7 @@ interface ElReg {
         duration: scene.getAttribute("data-duration-ms"),
         transition: scene.getAttribute("data-transition"),
         transitionMs: scene.getAttribute("data-transition-ms"),
+        caption: scene.getAttribute("data-derive-caption"),
       }
       redoScene = () => {
         if (wire.duration_ms !== undefined)
@@ -1531,6 +1532,7 @@ interface ElReg {
         if (wire.transition !== undefined) scene.setAttribute("data-transition", wire.transition)
         if (wire.transition_ms !== undefined)
           scene.setAttribute("data-transition-ms", String(wire.transition_ms))
+        if (wire.caption !== undefined) scene.setAttribute("data-derive-caption", wire.caption)
       }
       undoScene = () => {
         const restore = (name: string, value: string | null) =>
@@ -1538,6 +1540,7 @@ interface ElReg {
         restore("data-duration-ms", before.duration)
         restore("data-transition", before.transition)
         restore("data-transition-ms", before.transitionMs)
+        restore("data-derive-caption", before.caption)
       }
     } else if (wire.op === "scene-move") {
       const originalNext = scene.nextSibling
