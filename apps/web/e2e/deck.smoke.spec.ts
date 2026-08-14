@@ -153,16 +153,13 @@ test.describe("deck", () => {
     await page.getByTestId("library-new").click()
     await page.getByTestId("library-new-template").click()
     await expect(page).toHaveURL(/\/templates/)
-    await page.getByTestId("template-card-narrative-pitch").click()
-    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-use-narrative-pitch").click()
     await page
       .getByTestId("template-agent-brief")
       .fill("Make a launch narrative for product leaders that earns approval for the plan.")
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
-    await expect(page.getByText("Reads the exact reference")).toBeVisible()
-    await expect(page.getByText("Adapts it to your brief")).toBeVisible()
-    await expect(page.getByRole("button", { name: "Codex" })).toBeEnabled()
-    await expect(page.getByRole("button", { name: "Claude Code" })).toBeEnabled()
+    await expect(page.getByTestId("template-agent-open-codex")).toBeEnabled()
+    await expect(page.getByTestId("template-agent-open-claude")).toBeEnabled()
   })
 
   /* ── The other half: a deck that announces NOTHING ─────────────────────────

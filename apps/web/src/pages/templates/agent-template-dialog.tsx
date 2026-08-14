@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icons"
+import { FormField } from "@/components/shared/form-field"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -134,29 +135,21 @@ function AgentTemplateDialogInner({
             if (selectedRunner) void runOnConnectedMachine()
           }}
         >
-          <label className="grid gap-2 text-sm font-medium text-foreground">
-            What should your agent make?
+          <FormField
+            label="What should your agent make?"
+            htmlFor="template-agent-brief-field"
+            error={error ? <span data-testid="template-agent-error">{error}</span> : undefined}
+          >
             <Textarea
+              id="template-agent-brief-field"
               value={brief}
               onChange={(event) => setBrief(event.target.value)}
               placeholder={exampleBrief(target)}
               className="min-h-24 resize-y py-3"
               autoFocus
               data-testid="template-agent-brief"
-              aria-describedby={error ? "template-agent-error" : undefined}
             />
-          </label>
-
-          {error && (
-            <p
-              id="template-agent-error"
-              className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-              role="alert"
-              data-testid="template-agent-error"
-            >
-              {error}
-            </p>
-          )}
+          </FormField>
 
           {contextsState.isError ? (
             <StatusPanel

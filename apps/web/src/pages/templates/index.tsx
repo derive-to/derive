@@ -3,6 +3,9 @@ import { useNavigate, useSearch } from "@tanstack/react-router"
 import { useDeferredValue, useEffect, useState } from "react"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
+import { CardGrid } from "@/components/shared/card-grid"
+import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
@@ -16,7 +19,6 @@ import { getTemplate, templateMatches } from "./catalog"
 import { DeriveSource } from "./derive-source"
 import { LibraryShelf } from "./library-shelf"
 import { TemplateCard } from "./template-card"
-import { TemplateDetail } from "./template-detail"
 import { targetFromArtifact, targetFromBuiltIn, targetFromLibraryEntry } from "./template-target"
 import type { TemplateTab } from "./types"
 
@@ -97,13 +99,6 @@ export function Templates() {
       templateMatches(template, query) &&
       (tab !== "artifacts" || !search.category || template.category === search.category),
   )
-  const selectedTemplate =
-    tab !== "libraries"
-      ? (getTemplate(builtIns, search.selected) ??
-        templates.find((item) => item.featured) ??
-        templates[0])
-      : undefined
-
   const setTab = (next: TemplateTab) => {
     setSourceArtifactError("")
     nav({
@@ -113,11 +108,6 @@ export function Templates() {
         library: undefined,
       },
     })
-  }
-
-  const openTemplate = (template = selectedTemplate) => {
-    if (!template) return
-    setAgentTarget(targetFromBuiltIn(template))
   }
 
   const noResults = templates.length === 0
@@ -212,7 +202,7 @@ export function Templates() {
           <SearchField
             value={search.query ?? ""}
             onValueChange={(queryValue) =>
-              nav({ search: { ...search, query: queryValue || undefined, selected: undefined } })
+              nav({ search: { ...search, query: queryValue || undefined } })
             }
             placeholder={`Filter ${tab}`}
             aria-label={`Filter ${tab}`}
@@ -226,9 +216,7 @@ export function Templates() {
                 size="xs"
                 variant={!search.category ? "default" : "outline"}
                 data-testid="templates-category-all"
-                onClick={() =>
-                  nav({ search: { ...search, category: undefined, selected: undefined } })
-                }
+                onClick={() => nav({ search: { ...search, category: undefined } })}
               >
                 All
               </Button>
@@ -243,7 +231,6 @@ export function Templates() {
                       search: {
                         ...search,
                         category: search.category === category ? undefined : category,
-                        selected: undefined,
                       },
                     })
                   }
@@ -270,31 +257,18 @@ export function Templates() {
           </div>
         </div>
       ) : catalogState.isError ? (
-        <StatusPanel
-          tone="danger"
+        <LoadError
           title="Derive couldn’t load the built-in templates."
           description="Your libraries are still available. Retry the catalog when you’re ready."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="templates-catalog-retry"
-              onClick={() => void catalogState.refetch()}
-            >
-              Retry
-            </Button>
-          }
+          testId="templates-catalog-retry"
+          onRetry={() => void catalogState.refetch()}
         />
       ) : noResults ? (
-        <div className="grid min-h-64 place-items-center border-y py-12 text-center">
-          <div className="flex max-w-sm flex-col items-center gap-3">
-            <Icon name="templates" size={24} className="text-muted-foreground" />
-            <div>
-              <h2 className="font-serif text-xl font-medium text-foreground">No matching shape</h2>
-              <p className="mt-1 text-sm text-pretty text-muted-foreground">
-                Try a broader word or clear the current category.
-              </p>
-            </div>
+        <EmptyState
+          icon={<Icon name="templates" />}
+          title="No matching shape"
+          description="Try a broader word or clear the current category."
+          action={
             <Button
               variant="outline"
               size="sm"
@@ -303,33 +277,18 @@ export function Templates() {
             >
               Clear filters
             </Button>
-          </div>
-        </div>
+          }
+        />
       ) : (
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]">
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-            {templates.map((template, index) => (
-              <div
-                key={template.id}
-                className={index === 0 && !query && !search.category ? "sm:col-span-2" : undefined}
-              >
-                <TemplateCard
-                  template={template}
-                  selected={selectedTemplate?.id === template.id}
-                  featured={index === 0 && !query && !search.category}
-                  onSelect={() => nav({ search: { ...search, selected: template.id } })}
-                  onUse={() => openTemplate(template)}
-                />
-              </div>
-            ))}
-          </div>
-
-          <div className="min-w-0">
-            {selectedTemplate ? (
-              <TemplateDetail template={selectedTemplate} onUse={() => openTemplate()} />
-            ) : null}
-          </div>
-        </div>
+        <CardGrid>
+          {templates.map((template) => (
+            <TemplateCard
+              key={template.id}
+              template={template}
+              onUse={() => setAgentTarget(targetFromBuiltIn(template))}
+            />
+          ))}
+        </CardGrid>
       )}
 
       <section className="grid gap-4 border-t pt-6 sm:grid-cols-[1fr_auto] sm:items-center">

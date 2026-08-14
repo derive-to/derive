@@ -1,6 +1,7 @@
 import { useReducer } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
+import { FormField } from "@/components/shared/form-field"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -11,12 +12,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { initialAddEntryState, reduceAddEntry } from "./add-entry-state"
 import { ArtifactSourcePicker } from "./artifact-source-picker"
 import { artifactTemplateFormat } from "./artifact-template-format"
-import { csv, inputsFromLines } from "./template-library-helpers"
 import { templateLibraryInvalidation } from "./template-library-queries"
 
 export function AddEntryDialog({
@@ -29,31 +36,19 @@ export function AddEntryDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const [form, dispatch] = useReducer(reduceAddEntry, undefined, initialAddEntryState)
-  const {
-    step,
-    source,
-    selectedSource,
-    kind,
-    category,
-    title,
-    description,
-    outcome,
-    inputs,
-    sections,
-    tags,
-  } = form
+  const { step, source, selectedSource, kind, category, title, description } = form
   const create = useApiMutation({
     mutationFn: () =>
       api.createTemplateLibraryEntry(libraryId, {
         source_short_id: source.trim(),
         kind,
-        category: category.trim() || (kind === "context" ? "Context" : "Doc"),
+        category: kind === "context" ? "Context" : category.trim() || "Doc",
         title: title.trim(),
         description: description.trim(),
-        outcome: outcome.trim(),
-        sections: csv(sections),
-        inputs: inputsFromLines(inputs),
-        tags: csv(tags),
+        outcome: "",
+        sections: [],
+        inputs: [],
+        tags: [],
       }),
     invalidate: templateLibraryInvalidation,
     success: "Reusable starter published",
@@ -132,9 +127,9 @@ export function AddEntryDialog({
                   Change
                 </Button>
               </div>
-              <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                Starter name
+              <FormField label="Starter name" htmlFor="template-library-starter-name-field">
                 <Input
+                  id="template-library-starter-name-field"
                   data-testid="template-library-starter-name"
                   value={title}
                   onChange={(event) =>
@@ -143,10 +138,10 @@ export function AddEntryDialog({
                   placeholder="Decision record"
                   autoFocus
                 />
-              </label>
-              <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                Description
+              </FormField>
+              <FormField label="Description" htmlFor="template-library-starter-description-field">
                 <Textarea
+                  id="template-library-starter-description-field"
                   data-testid="template-library-starter-description"
                   value={description}
                   onChange={(event) =>
@@ -158,101 +153,29 @@ export function AddEntryDialog({
                   }
                   placeholder="A repeatable shape for documenting a consequential decision."
                 />
-              </label>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                  Creates a
-                  <select
-                    data-testid="template-library-starter-kind"
-                    className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm"
-                    value={kind}
-                    onChange={(event) =>
-                      dispatch({
-                        type: "set-kind",
-                        kind: event.target.value as "artifact" | "context",
-                      })
-                    }
-                  >
-                    <option value="artifact">Artifact</option>
-                    <option value="context">Context manifest</option>
-                  </select>
-                </label>
-                <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                  Category
-                  <Input
-                    data-testid="template-library-starter-category"
-                    value={category}
-                    onChange={(event) =>
-                      dispatch({ type: "set-field", field: "category", value: event.target.value })
-                    }
-                    placeholder="Doc, Deck, Site…"
-                  />
-                </label>
-              </div>
-              <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                Starting brief <span className="font-normal text-muted-foreground">(optional)</span>
-                <Textarea
-                  data-testid="template-library-starter-inputs"
-                  value={inputs}
-                  onChange={(event) =>
-                    dispatch({ type: "set-field", field: "inputs", value: event.target.value })
+              </FormField>
+              <FormField label="Creates a" htmlFor="template-library-starter-kind-field">
+                <Select
+                  value={kind}
+                  onValueChange={(value) =>
+                    dispatch({ type: "set-kind", kind: value as "artifact" | "context" })
                   }
-                  placeholder={"*Project name — used in the title\nAudience — who this is for"}
-                />
-                <span className="text-xs font-normal text-muted-foreground">
-                  One input per line. Prefix required inputs with *. HTML inputs are limited to
-                  visible text so adopting untrusted templates stays safe.
-                </span>
-              </label>
-              <details className="rounded-xl border px-3 py-2">
-                <summary className="cursor-pointer text-sm font-medium text-foreground">
-                  More discovery details
-                </summary>
-                <div className="mt-3 grid gap-3">
-                  <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                    Outcome
-                    <Input
-                      data-testid="template-library-starter-outcome"
-                      value={outcome}
-                      onChange={(event) =>
-                        dispatch({ type: "set-field", field: "outcome", value: event.target.value })
-                      }
-                      placeholder="What a good result makes possible."
-                    />
-                  </label>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                      Sections
-                      <Input
-                        data-testid="template-library-starter-sections"
-                        value={sections}
-                        onChange={(event) =>
-                          dispatch({
-                            type: "set-field",
-                            field: "sections",
-                            value: event.target.value,
-                          })
-                        }
-                        placeholder="Decision, evidence, owner"
-                      />
-                    </label>
-                    <label className="grid gap-1.5 text-sm font-medium text-foreground">
-                      Tags
-                      <Input
-                        data-testid="template-library-starter-tags"
-                        value={tags}
-                        onChange={(event) =>
-                          dispatch({ type: "set-field", field: "tags", value: event.target.value })
-                        }
-                        placeholder="decision, leadership"
-                      />
-                    </label>
-                  </div>
-                </div>
-              </details>
+                >
+                  <SelectTrigger
+                    id="template-library-starter-kind-field"
+                    data-testid="template-library-starter-kind"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="artifact">Artifact</SelectItem>
+                    <SelectItem value="context">Context</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormField>
               <p className="text-xs text-muted-foreground">
-                The published starter is a stable snapshot. Context manifests stay portable: connect
-                runners, sources, permissions, and credentials only after adoption.
+                The published starter is a stable snapshot. The agent reads the pinned source when
+                someone uses it, so there is no separate template schema to maintain.
               </p>
             </>
           )}

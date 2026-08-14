@@ -4,36 +4,46 @@ import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { scopeCopy } from "./template-library-helpers"
 
 function LibraryCardContent({ library }: { library: TemplateLibrary }) {
   return (
     <>
-      <div className="flex items-center justify-between gap-2">
-        <Badge variant="outline" shape="pill">
-          <Icon name={scopeCopy[library.scope].icon} size={12} /> {scopeCopy[library.scope].label}
-        </Badge>
-        <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-          {library.entry_count} starters
-        </span>
-      </div>
-      <div>
-        <h3 className="font-serif text-xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
+      <CardHeader>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <Badge variant="outline" shape="pill">
+            <Icon name={scopeCopy[library.scope].icon} size={12} /> {scopeCopy[library.scope].label}
+          </Badge>
+          <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+            {library.entry_count} starters
+          </span>
+        </div>
+        <CardTitle className="font-serif text-xl tracking-tight [overflow-wrap:anywhere]">
           {library.title}
-        </h3>
-        <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+        </CardTitle>
+        <CardDescription className="line-clamp-2">
           {library.description || "Reusable Derive starters."}
-        </p>
-      </div>
-      {library.publisher.name || library.publisher.username ? (
-        <AuthorChip
-          name={library.publisher.name}
-          login={null}
-          avatar={library.publisher.image}
-          handle={library.publisher.username}
-          size="xs"
-        />
-      ) : null}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {library.publisher.name || library.publisher.username ? (
+          <AuthorChip
+            name={library.publisher.name}
+            login={null}
+            avatar={library.publisher.image}
+            handle={library.publisher.username}
+            size="xs"
+          />
+        ) : null}
+      </CardContent>
     </>
   )
 }
@@ -47,29 +57,34 @@ export function TemplateLibraryCard({
   onOpen?: () => void
   testId: string
 }) {
+  const content = <LibraryCardContent library={library} />
   if (onOpen)
     return (
       <button
         type="button"
         onClick={onOpen}
-        className="group flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4 text-left outline-none hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="min-w-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         data-testid={testId}
       >
-        <LibraryCardContent library={library} />
-        <span className="mt-auto text-sm font-medium text-foreground">
-          Browse starters <Icon name="arrow" className="inline size-3.5" />
-        </span>
+        <Card className="h-full gap-3 hover:border-foreground/25">
+          {content}
+          <CardFooter className="mt-auto justify-between text-sm font-medium">
+            Browse starters <Icon name="arrow" className="size-3.5" />
+          </CardFooter>
+        </Card>
       </button>
     )
 
   return (
-    <article className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4">
-      <LibraryCardContent library={library} />
-      <Button asChild className="mt-auto" data-testid={testId}>
-        <Link to="/template-libraries/$id" params={{ id: library.id }}>
-          Browse starters <Icon name="arrow" />
-        </Link>
-      </Button>
-    </article>
+    <Card className="min-w-0 gap-3">
+      {content}
+      <CardFooter className="mt-auto">
+        <Button asChild className="w-full" data-testid={testId}>
+          <Link to="/template-libraries/$id" params={{ id: library.id }}>
+            Browse starters <Icon name="arrow" />
+          </Link>
+        </Button>
+      </CardFooter>
+    </Card>
   )
 }

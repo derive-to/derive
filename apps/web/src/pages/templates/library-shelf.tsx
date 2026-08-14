@@ -3,11 +3,13 @@ import { useDeferredValue, useState } from "react"
 import { ApiError, type TemplateLibraryEntry, type TemplateLibraryScope } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import { LoadError } from "@/components/shared/load-error"
+import { PageHeader } from "@/components/shared/page-header"
+import { SearchField } from "@/components/shared/search-field"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { LibraryDetail } from "./library-detail"
 import { CreateLibraryDialog } from "./library-dialogs"
-import { TemplateLibraryCard } from "./template-library-card"
+import { TemplateLibraryGrid } from "./template-library-grid"
 import { scopeCopy } from "./template-library-helpers"
 import { templateLibrariesQuery } from "./template-library-queries"
 
@@ -38,37 +40,30 @@ export function LibraryShelf({
     return <LibraryDetail libraryId={selectedId} onBack={() => onSelect(undefined)} onUse={onUse} />
   return (
     <section className="flex flex-col gap-5" data-testid="template-libraries">
-      <div className="flex flex-wrap items-end justify-between gap-4 border-y py-5">
-        <div>
-          <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-            A shareable starting point
-          </p>
-          <h2 className="mt-2 font-serif text-3xl font-medium tracking-tight text-foreground">
-            Libraries make useful work reusable.
-          </h2>
-          <p className="mt-1 max-w-2xl text-sm text-pretty text-muted-foreground">
-            Publish the version you trust. Others start from an independent copy, with source
-            provenance intact.
-          </p>
-        </div>
-        <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:flex-nowrap">
-          {(query || libraryRows.length > 1) && (
-            <label className="min-w-48 flex-1 sm:w-56 sm:flex-none">
-              <span className="sr-only">Search libraries</span>
-              <Input
-                data-testid="template-library-search"
+      <PageHeader
+        className="border-y py-5"
+        eyebrow="A shareable starting point"
+        title="Libraries make useful work reusable."
+        subtitle="Publish the version you trust. Others start from an independent copy, with source provenance intact."
+        actions={
+          <>
+            {(query || libraryRows.length > 1) && (
+              <SearchField
+                className="min-w-48 flex-1 sm:w-56 sm:flex-none"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onValueChange={setQuery}
+                loading={libraries.isFetching && !libraries.isFetchingNextPage}
                 placeholder="Search libraries"
                 aria-label="Search libraries"
+                testId="template-library-search"
               />
-            </label>
-          )}
-          <Button onClick={() => setCreateOpen(true)} data-testid="template-library-new">
-            <Icon name="plus" /> New library
-          </Button>
-        </div>
-      </div>
+            )}
+            <Button onClick={() => setCreateOpen(true)} data-testid="template-library-new">
+              <Icon name="plus" /> New library
+            </Button>
+          </>
+        }
+      />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <fieldset className="flex flex-wrap gap-1.5">
           <legend className="sr-only">Library visibility</legend>
@@ -102,31 +97,21 @@ export function LibraryShelf({
           description="Built-in artifact and Context templates are ready now. Shared libraries turn on automatically when the release finishes."
         />
       ) : libraries.isError ? (
-        <EmptyState
-          icon={<Icon name="templates" />}
-          title="Libraries couldn't load"
-          description="Try again in a moment."
-          action={
-            <Button
-              variant="outline"
-              onClick={() => libraries.refetch()}
-              data-testid="template-library-retry"
-            >
-              Retry
-            </Button>
-          }
+        <LoadError
+          title="Couldn’t load template libraries"
+          onRetry={() => libraries.refetch()}
+          testId="template-library-retry"
         />
       ) : libraryRows.length ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {libraryRows.map((library) => (
-            <TemplateLibraryCard
-              key={library.id}
-              library={library}
-              onOpen={() => onSelect(library.id)}
-              testId={`template-library-card-${library.id}`}
-            />
-          ))}
-        </div>
+        <TemplateLibraryGrid
+          libraries={libraryRows}
+          testId={(library) => `template-library-card-${library.id}`}
+          onOpen={(library) => onSelect(library.id)}
+          loadMoreTestId="template-libraries-load-more"
+          hasNextPage={libraries.hasNextPage && !libraries.isPlaceholderData}
+          loadingMore={libraries.isFetchingNextPage}
+          onLoadMore={() => void libraries.fetchNextPage()}
+        />
       ) : query.trim() ? (
         <EmptyState
           icon={<Icon name="templates" />}
@@ -149,18 +134,6 @@ export function LibraryShelf({
           description="Turn a trusted artifact into a library entry, then share it privately, with your workspace, or publicly."
         />
       )}
-      {libraries.hasNextPage && !libraries.isPlaceholderData ? (
-        <div className="flex justify-center">
-          <Button
-            variant="outline"
-            onClick={() => libraries.fetchNextPage()}
-            disabled={libraries.isFetchingNextPage}
-            data-testid="template-libraries-load-more"
-          >
-            {libraries.isFetchingNextPage ? "Loading…" : "Load more libraries"}
-          </Button>
-        </div>
-      ) : null}
       <CreateLibraryDialog
         open={createOpen}
         onOpenChange={setCreateOpen}

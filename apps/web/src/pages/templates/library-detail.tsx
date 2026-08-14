@@ -2,11 +2,12 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type TemplateLibraryEntry } from "@/api"
 import { Icon } from "@/components/icons"
+import { CardGrid } from "@/components/shared/card-grid"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { SearchField } from "@/components/shared/search-field"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AddEntryDialog } from "./add-entry-dialog"
 import { LibrarySettingsDialog } from "./library-dialogs"
@@ -117,18 +118,16 @@ export function LibraryDetail({
         </div>
       </div>
       {allEntries.length > 1 && (
-        <label className="max-w-sm">
-          <span className="sr-only">Filter starters</span>
-          <Input
-            data-testid="template-library-entry-filter"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter starters"
-            aria-label="Filter starters"
-          />
-        </label>
+        <SearchField
+          className="max-w-sm"
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Filter starters"
+          aria-label="Filter starters"
+          testId="template-library-entry-filter"
+        />
       )}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      <CardGrid>
         {entries.map((entry) => (
           <TemplateEntryCard
             key={entry.id}
@@ -160,7 +159,7 @@ export function LibraryDetail({
             }
           />
         ))}
-      </div>
+      </CardGrid>
       {allEntries.length === 0 && (
         <EmptyState
           icon={<Icon name="templates" />}

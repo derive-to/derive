@@ -1,41 +1,21 @@
 import { Icon } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
+import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { TemplateArtwork } from "./template-artwork"
 import type { BuiltInTemplate } from "./types"
 
 export function TemplateCard({
   template,
-  selected,
-  featured = false,
-  onSelect,
   onUse,
 }: {
   template: BuiltInTemplate
-  selected: boolean
-  featured?: boolean
-  onSelect: () => void
   onUse: () => void
 }) {
   return (
-    <article
-      className={cn(
-        "group min-w-0 overflow-hidden rounded-xl border bg-card hover:border-foreground/25",
-        selected && "border-foreground/35 bg-secondary",
-      )}
-    >
-      <button
-        type="button"
-        data-testid={`template-card-${template.id}`}
-        aria-pressed={selected}
-        onClick={onSelect}
-        className={cn(
-          "flex w-full min-w-0 flex-col gap-3 p-3 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-          featured && "sm:grid sm:grid-cols-[1.08fr_.92fr] sm:items-center sm:gap-4",
-        )}
-      >
-        <TemplateArtwork template={template} className={cn("w-full", featured && "sm:order-2")} />
+    <Card data-testid={`template-card-${template.id}`} className="h-full gap-0 py-0">
+      <CardContent className="flex min-w-0 flex-col gap-3 p-3">
+        <TemplateArtwork template={template} className="w-full" />
         <span className="flex min-w-0 flex-col gap-2 px-1 pb-1">
           <span className="flex items-center gap-2">
             <Badge variant="outline" shape="pill">
@@ -54,12 +34,17 @@ export function TemplateCard({
             {template.description}
           </span>
         </span>
-      </button>
-      <div className="border-t p-2">
-        <Button className="w-full" size="sm" onClick={onUse} data-testid="template-card-use">
+      </CardContent>
+      <CardFooter className="mt-auto p-2">
+        <Button
+          className="w-full"
+          size="sm"
+          onClick={onUse}
+          data-testid={`template-use-${template.id}`}
+        >
           <Icon name="sparkles" /> {template.kind === "context" ? "Make it ours" : "Make it mine"}
         </Button>
-      </div>
-    </article>
+      </CardFooter>
+    </Card>
   )
 }

@@ -14,7 +14,6 @@ export const Route = createFileRoute("/templates")({
     category: CATEGORIES.includes(search.category as TemplateCategory)
       ? (search.category as TemplateCategory)
       : undefined,
-    selected: typeof search.selected === "string" ? search.selected : undefined,
     derive: search.derive === true || search.derive === "true" ? true : undefined,
     source: typeof search.source === "string" ? search.source : undefined,
     library: typeof search.library === "string" ? search.library : undefined,

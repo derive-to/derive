@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useDeferredValue, useState } from "react"
 import { type Artifact, api } from "@/api"
+import { FormField } from "@/components/shared/form-field"
 import { LoadError } from "@/components/shared/load-error"
 import { SearchField } from "@/components/shared/search-field"
 import { Badge } from "@/components/ui/badge"
@@ -86,16 +87,19 @@ export function ArtifactSourcePicker({
           No readable artifacts match this search. You can still paste a Derive link below.
         </p>
       )}
-      <label className="grid gap-1.5 text-sm font-medium text-foreground">
-        Or paste a Derive link or short ID
+      <FormField
+        label="Or paste a Derive link or short ID"
+        htmlFor="template-library-source-paste-field"
+      >
         <Input
+          id="template-library-source-paste-field"
           data-testid="template-library-source-paste"
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder="decision-memo-ab12cd34@v4"
           aria-label="Paste a Derive link or short ID"
         />
-      </label>
+      </FormField>
     </fieldset>
   )
 }

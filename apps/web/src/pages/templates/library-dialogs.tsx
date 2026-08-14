@@ -1,7 +1,9 @@
 import { useState } from "react"
 import { api, type TemplateLibrary, type TemplateLibraryScope } from "@/api"
 import { Icon } from "@/components/icons"
+import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { FormField } from "@/components/shared/form-field"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -17,39 +19,11 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { scopeCopy } from "./template-library-helpers"
 import { templateLibraryInvalidation } from "./template-library-queries"
 
-function ScopePicker({
-  value,
-  onChange,
-}: {
-  value: TemplateLibraryScope
-  onChange: (value: TemplateLibraryScope) => void
-}) {
-  return (
-    <fieldset className="grid gap-2 sm:grid-cols-3">
-      <legend className="sr-only">Library visibility</legend>
-      {(Object.keys(scopeCopy) as TemplateLibraryScope[]).map((scope) => {
-        const item = scopeCopy[scope]
-        return (
-          <button
-            data-testid={`template-library-visibility-${scope}`}
-            key={scope}
-            type="button"
-            aria-pressed={value === scope}
-            onClick={() => onChange(scope)}
-            className={`rounded-xl border p-3 text-left outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
-              value === scope ? "border-foreground/40 bg-secondary" : "hover:border-foreground/25"
-            }`}
-          >
-            <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <Icon name={item.icon} size={15} /> {item.label}
-            </span>
-            <span className="mt-1 block text-xs text-muted-foreground">{item.detail}</span>
-          </button>
-        )
-      })}
-    </fieldset>
-  )
-}
+const SCOPE_SEGMENTS = (Object.keys(scopeCopy) as TemplateLibraryScope[]).map((scope) => ({
+  value: scope,
+  label: scopeCopy[scope].label,
+  icon: scopeCopy[scope].icon,
+}))
 
 function LibraryFormFields({
   title,
@@ -69,21 +43,26 @@ function LibraryFormFields({
   mode: "create" | "settings"
 }) {
   const testIdPrefix = mode === "create" ? "template-library" : "template-library-settings"
+  const nameId = `${testIdPrefix}-name-field`
+  const descriptionId = `${testIdPrefix}-description-field`
   return (
     <>
-      <label className="grid gap-1.5 text-sm font-medium text-foreground">
-        Name
+      <FormField label="Name" htmlFor={nameId}>
         <Input
+          id={nameId}
           data-testid={`${testIdPrefix}-name`}
           value={title}
           onChange={(event) => onTitleChange(event.target.value)}
           placeholder={mode === "create" ? "Product team starters" : undefined}
           autoFocus
         />
-      </label>
-      <label className="grid gap-1.5 text-sm font-medium text-foreground">
-        {mode === "create" ? "What belongs here?" : "Description"}
+      </FormField>
+      <FormField
+        label={mode === "create" ? "What belongs here?" : "Description"}
+        htmlFor={descriptionId}
+      >
         <Textarea
+          id={descriptionId}
           data-testid={`${testIdPrefix}-description`}
           value={description}
           onChange={(event) => onDescriptionChange(event.target.value)}
@@ -91,11 +70,15 @@ function LibraryFormFields({
             mode === "create" ? "Decision docs, product briefs, and launch-ready pages." : undefined
           }
         />
-      </label>
-      <div className="grid gap-1.5">
-        <p className="text-sm font-medium text-foreground">Who can find it?</p>
-        <ScopePicker value={scope} onChange={onScopeChange} />
-      </div>
+      </FormField>
+      <FormField label="Who can find it?" hint={scopeCopy[scope].detail}>
+        <AccessSegmentToggle
+          segments={SCOPE_SEGMENTS}
+          value={scope}
+          onChange={onScopeChange}
+          testId="template-library-visibility"
+        />
+      </FormField>
     </>
   )
 }

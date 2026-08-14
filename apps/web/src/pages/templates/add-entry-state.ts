@@ -9,10 +9,6 @@ export type AddEntryState = {
   category: string
   title: string
   description: string
-  outcome: string
-  inputs: string
-  sections: string
-  tags: string
 }
 
 export const initialAddEntryState = (): AddEntryState => ({
@@ -23,10 +19,6 @@ export const initialAddEntryState = (): AddEntryState => ({
   category: "Doc",
   title: "",
   description: "",
-  outcome: "",
-  inputs: "",
-  sections: "",
-  tags: "",
 })
 
 type TextField = Exclude<keyof AddEntryState, "step" | "selectedSource" | "kind">

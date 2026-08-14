@@ -38,9 +38,6 @@ export function SourceEditor({
   placeholder,
   publishing,
   shortId,
-  interactivePreview = true,
-  onEnableInteractivePreview,
-  previewOnly = false,
 }: {
   canPublish: boolean
   title: string
@@ -64,15 +61,8 @@ export function SourceEditor({
   publishing?: boolean
   /** Existing artifact id used to scope the source editor's @mention directory. */
   shortId?: string
-  // Reused HTML can contain arbitrary script. Keep it inert until the person
-  // explicitly runs the interactive preview; ordinary editing remains unchanged.
-  interactivePreview?: boolean
-  onEnableInteractivePreview?: () => void
-  // Template adoption is an artifact experience, never a source-code experience.
-  // The source remains in parent state for publishing, but is not exposed here.
-  previewOnly?: boolean
 }) {
-  const [pane, setPane] = useState<"edit" | "preview">(previewOnly ? "preview" : "edit")
+  const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
   const [previewOpen, setPreviewOpen] = useState(true)
   const [preview, setPreview] = useState("")
@@ -137,7 +127,7 @@ export function SourceEditor({
             </span>
           </span>
         )}
-        {canPublish && !previewOnly ? (
+        {canPublish ? (
           <Input
             value={message}
             onChange={(e) => onMessage(e.target.value)}
@@ -146,7 +136,7 @@ export function SourceEditor({
             data-testid="artifact-commit-message"
             className="order-last md:order-none md:w-auto md:max-w-90 md:flex-1"
           />
-        ) : !canPublish ? (
+        ) : (
           <Input
             value={proposeMsg}
             onChange={(e) => onProposeMsg(e.target.value)}
@@ -155,42 +145,38 @@ export function SourceEditor({
             data-testid="artifact-propose-message"
             className="order-last md:order-none md:w-auto md:max-w-105 md:flex-1"
           />
-        ) : null}
+        )}
         <span className="ml-auto flex items-center gap-2">
           {/* Desktop: show/hide the preview for a full-width editor when you don't
               need it. (Phones use the Edit/Preview tabs below instead.) */}
-          {!previewOnly && (
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="artifact-preview-toggle"
-              onClick={() => setPreviewOpen((value) => !value)}
-              title={previewOpen ? "Hide preview" : "Show preview"}
-              aria-pressed={previewOpen}
-              // Pressed toggles are a neutral wash — the ink accent is reserved.
-              className={cn("hidden gap-1.5 md:inline-flex", previewOpen && "bg-accent")}
-            >
-              <Icon name="views" size={16} />
-              Preview
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="artifact-preview-toggle"
+            onClick={() => setPreviewOpen((value) => !value)}
+            title={previewOpen ? "Hide preview" : "Show preview"}
+            aria-pressed={previewOpen}
+            // Pressed toggles are a neutral wash — the ink accent is reserved.
+            className={cn("hidden gap-1.5 md:inline-flex", previewOpen && "bg-accent")}
+          >
+            <Icon name="views" size={16} />
+            Preview
+          </Button>
           {/* Phone: one pane at a time — the shared compact segmented control. */}
-          {!previewOnly && (
-            <Tabs
-              value={pane}
-              onValueChange={(v) => setPane(v as "edit" | "preview")}
-              className="md:hidden"
-            >
-              <TabsList size="sm">
-                <TabsTrigger value="edit" data-testid="artifact-edit-tab">
-                  Edit
-                </TabsTrigger>
-                <TabsTrigger value="preview" data-testid="artifact-preview-tab">
-                  Preview
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-          )}
+          <Tabs
+            value={pane}
+            onValueChange={(v) => setPane(v as "edit" | "preview")}
+            className="md:hidden"
+          >
+            <TabsList size="sm">
+              <TabsTrigger value="edit" data-testid="artifact-edit-tab">
+                Edit
+              </TabsTrigger>
+              <TabsTrigger value="preview" data-testid="artifact-preview-tab">
+                Preview
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <Button
             variant="outline"
             size="sm"
@@ -225,38 +211,34 @@ export function SourceEditor({
       </div>
 
       <div className="flex min-h-0 flex-1">
-        {!previewOnly && (
-          <div
-            className={cn("min-h-0 flex-1 flex-col md:flex", pane === "edit" ? "flex" : "hidden")}
-          >
-            <Suspense
-              fallback={
-                <textarea
-                  value={src}
-                  onChange={(e) => onSrc(e.target.value)}
-                  spellCheck={false}
-                  aria-label="Artifact source"
-                  data-testid="artifact-source-editor"
-                  placeholder={placeholder}
-                  className="h-full flex-1 resize-none border border-input bg-card px-5 py-4 font-mono text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-                />
-              }
-            >
-              <CodeEditor
+        <div className={cn("min-h-0 flex-1 flex-col md:flex", pane === "edit" ? "flex" : "hidden")}>
+          <Suspense
+            fallback={
+              <textarea
                 value={src}
-                format={format}
-                onChange={onSrc}
+                onChange={(e) => onSrc(e.target.value)}
+                spellCheck={false}
+                aria-label="Artifact source"
+                data-testid="artifact-source-editor"
                 placeholder={placeholder}
-                shortId={shortId}
+                className="h-full flex-1 resize-none border border-input bg-card px-5 py-4 font-mono text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               />
-            </Suspense>
-          </div>
-        )}
+            }
+          >
+            <CodeEditor
+              value={src}
+              format={format}
+              onChange={onSrc}
+              placeholder={placeholder}
+              shortId={shortId}
+            />
+          </Suspense>
+        </div>
         <div
           className={cn(
             "min-h-0 flex-1 flex-col bg-white md:border-l md:border-border-soft",
-            previewOnly || pane === "preview" ? "flex" : "hidden",
-            previewOnly || previewOpen ? "md:flex" : "md:hidden",
+            pane === "preview" ? "flex" : "hidden",
+            previewOpen ? "md:flex" : "md:hidden",
           )}
         >
           {previewStale && (
@@ -272,37 +254,11 @@ export function SourceEditor({
               />
             </div>
           )}
-          {format === "html" && !interactivePreview && (
-            <div
-              role="status"
-              className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-warning/25 bg-warning/10 px-3 py-2 text-sm"
-            >
-              <Icon name="lock" size={16} className="text-warning" />
-              <span className="font-medium text-warning">Interactions paused</span>
-              <span className="min-w-48 flex-1 text-muted-foreground">
-                Scripts, forms, and popups are paused. External images or fonts may still load. Run
-                interactions only when you trust the source.
-              </span>
-              {onEnableInteractivePreview && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  data-testid="template-preview-enable"
-                  onClick={onEnableInteractivePreview}
-                >
-                  Run interactions
-                </Button>
-              )}
-            </div>
-          )}
           <iframe
-            key={interactivePreview ? "interactive" : "inert"}
             title="Live preview"
             data-testid="artifact-preview"
             srcDoc={preview}
-            sandbox={
-              interactivePreview ? "allow-scripts allow-forms allow-popups allow-modals" : ""
-            }
+            sandbox="allow-scripts allow-forms allow-popups allow-modals"
             className="size-full flex-1 border-0 bg-white"
           />
         </div>

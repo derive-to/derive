@@ -121,9 +121,6 @@ export function NewArtifact() {
         onPublish={publish}
         onPropose={() => {}}
         publishing={publishMut.isPending}
-        interactivePreview
-        onEnableInteractivePreview={() => {}}
-        previewOnly={false}
         placeholder="Write or paste Markdown or HTML — the preview updates as you type."
       />
       {/* The unsaved-draft confirm: fires for any blocked departure (Cancel, a rail click,

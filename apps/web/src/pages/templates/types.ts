@@ -9,7 +9,6 @@ export type TemplatesSearch = {
   tab?: TemplateTab
   query?: string
   category?: TemplateCategory
-  selected?: string
   derive?: boolean
   source?: string
   library?: string

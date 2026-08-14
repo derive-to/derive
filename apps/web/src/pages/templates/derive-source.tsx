@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
+import { fieldError } from "@/components/shared/field-error"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { parseRef } from "@/pages/artifact/parse-ref"
@@ -30,6 +31,7 @@ export function DeriveSource({
   const [value, setValue] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
+  const errorState = fieldError("derive-source-error", error)
   const submit = async () => {
     const shortId = artifactIdFromInput(value)
     if (!shortId) {
@@ -74,15 +76,10 @@ export function DeriveSource({
           }}
           placeholder="derive.to/artifacts/… or short id"
           aria-label="Artifact link or short id"
-          aria-invalid={!!error}
-          aria-describedby={error ? "derive-source-error" : undefined}
+          {...errorState.aria}
           data-testid="template-source-input"
         />
-        {error && (
-          <p id="derive-source-error" className="text-xs text-destructive">
-            {error}
-          </p>
-        )}
+        {errorState.node}
       </div>
       <Button
         type="submit"

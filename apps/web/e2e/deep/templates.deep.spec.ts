@@ -8,17 +8,16 @@ test("Quick Create hands a Template to the agent without opening source", async 
   await owner.getByTestId("library-new").click()
   await owner.getByTestId("library-new-template").click()
   await expect(owner).toHaveURL(/\/templates/)
-  await owner.getByTestId("template-card-decision-memo").click()
-  await owner.getByTestId("template-use").click()
+  await owner.getByTestId("template-use-decision-memo").click()
   await expect(owner.getByRole("heading", { name: "Make Decision memo yours" })).toBeVisible()
   await expect(owner.getByTestId("template-agent-brief")).toBeVisible()
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
 })
 
 test("a Context Template prepares an agentic handoff", async ({ owner }) => {
+  await owner.context().grantPermissions(["clipboard-read", "clipboard-write"])
   await owner.goto("/templates?tab=contexts")
-  await owner.getByTestId("template-card-weekly-research-context").click()
-  await owner.getByTestId("template-use").click()
+  await owner.getByTestId("template-use-weekly-research-context").click()
   await expect(
     owner.getByRole("heading", { name: "Make Weekly research brief yours" }),
   ).toBeVisible()
@@ -26,8 +25,8 @@ test("a Context Template prepares an agentic handoff", async ({ owner }) => {
   await owner
     .getByTestId("template-agent-brief")
     .fill("Research the template ecosystem using approved sources every Monday.")
-  await owner.getByTestId("template-agent-preview").click()
-  expect(await owner.getByLabel("Agent handoff to copy").inputValue()).toContain(
+  await owner.getByTestId("template-agent-copy").click()
+  expect(await owner.evaluate(() => navigator.clipboard.readText())).toContain(
     "automate with create_context",
   )
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
@@ -48,7 +47,7 @@ test("a library pins an artifact starter and hands it to the agent", async ({ ow
   const libraryId = new URL(owner.url()).searchParams.get("library")
   if (!libraryId) throw new Error("created template library is missing its route id")
   await owner.getByRole("button", { name: "Library settings" }).click()
-  await owner.getByRole("button", { name: /Public Discoverable by anyone and MCP/ }).click()
+  await owner.getByTestId("template-library-visibility-public").click()
   await owner.getByRole("button", { name: "Save settings" }).click()
   await expect(owner.getByRole("link", { name: "Public page" })).toBeVisible()
   await owner.getByText("Add starter", { exact: true }).click()
@@ -57,12 +56,8 @@ test("a library pins an artifact starter and hands it to the agent", async ({ ow
   await owner.getByRole("button", { name: "Continue" }).click()
   await owner.getByLabel("Starter name").fill("Trusted decision")
   await owner.getByLabel("Description").fill("A decision-ready starting point.")
-  await owner
-    .getByTestId("template-library-starter-inputs")
-    .fill("*Decision owner — makes the call\nAudience — needs the record")
   await owner.getByTestId("template-library-entry-create").click()
   await expect(owner.getByText("Trusted decision", { exact: true })).toBeVisible()
-  await expect(owner.getByText(/Needs: Decision owner · required · Audience/)).toBeVisible()
   await owner.getByRole("button", { name: "Make it mine" }).click()
   await expect(owner.getByRole("heading", { name: "Make Trusted decision yours" })).toBeVisible()
   await expect(owner.getByTestId("template-agent-brief")).toBeVisible()
@@ -71,7 +66,7 @@ test("a library pins an artifact starter and hands it to the agent", async ({ ow
   await owner.goto("/templates?tab=libraries")
   await owner.getByTestId("template-library-scope-public").click()
   const libraryCard = owner.getByTestId(`template-library-card-${libraryId}`)
-  await expect(libraryCard).toContainText("Published by E2E Tester")
+  await expect(libraryCard.getByText("E2E Tester", { exact: true })).toBeVisible()
   await owner.getByRole("link", { name: "Explore public libraries" }).click()
   await expect(owner).toHaveURL(/\/template-libraries/)
   await expect(

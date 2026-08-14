@@ -36,8 +36,7 @@ test.describe("templates", () => {
   }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     await page.goto("/templates")
-    await page.getByTestId("template-card-narrative-pitch").click()
-    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-use-narrative-pitch").click()
 
     await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
     await expect(page.getByText("Use your own agent")).toBeVisible()
@@ -46,19 +45,13 @@ test.describe("templates", () => {
     await page
       .getByTestId("template-agent-brief")
       .fill("A customer-onboarding story for Acme’s product and success leaders.")
-    await page.getByTestId("template-agent-preview").click()
-    await expect(page.getByTestId("template-agent-copy-again")).toContainText("Copy task")
-    const preview = page.getByLabel("Agent handoff to copy")
-    const previewValue = await preview.inputValue()
-    expect(previewValue).toContain("Exact reference: derive://templates/narrative-pitch")
-    expect(previewValue).toContain("customer-onboarding story")
-    expect(previewValue).toContain("Use Derive's read tool")
-    expect(previewValue).toContain("Use find")
-    expect(previewValue).toContain("visually inspect")
     await page.getByTestId("template-agent-copy").click()
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
-      "derive://templates/narrative-pitch",
-    )
+    const handoff = await page.evaluate(() => navigator.clipboard.readText())
+    expect(handoff).toContain("Exact reference: derive://templates/narrative-pitch")
+    expect(handoff).toContain("customer-onboarding story")
+    expect(handoff).toContain("Use Derive's read tool")
+    expect(handoff).toContain("Use find")
+    expect(handoff).toContain("visually inspect")
     expect(new URL(page.url()).pathname).toBe("/templates")
   })
 
@@ -127,7 +120,7 @@ test.describe("templates", () => {
     )
 
     await page.goto("/templates")
-    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-use-narrative-pitch").click()
     await expect(page.getByTestId("template-agent-connected-runner")).toBeVisible()
     await expect(page.getByTestId("template-agent-run-connected")).toContainText(
       "Send to My local Codex",
@@ -179,7 +172,7 @@ test.describe("templates", () => {
     )
 
     await page.goto("/templates")
-    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-use-narrative-pitch").click()
     await page.getByTestId("template-agent-brief").fill("Make a customer proof deck.")
     await page.getByTestId("template-agent-run-connected").click()
 
@@ -192,6 +185,7 @@ test.describe("templates", () => {
   })
 
   test("the default workflow exposes only local-agent paths", async ({ owner: page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     let hostedStarts = 0
     await page.route("**/v1/contexts", (route) =>
       route.fulfill({
@@ -205,7 +199,7 @@ test.describe("templates", () => {
       return route.abort()
     })
     await page.goto("/templates")
-    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-use-narrative-pitch").click()
     await page.getByTestId("template-agent-brief").fill("Make a customer launch story.")
 
     await expect(page.getByText("Continue locally")).toBeVisible()
@@ -215,8 +209,8 @@ test.describe("templates", () => {
     await expect(page.getByTestId("template-agent-contexts-retry")).toBeVisible()
     await expect(page.getByText("hosted", { exact: false })).toHaveCount(0)
     await expect(page.getByTestId("template-agent-build-beta")).toHaveCount(0)
-    await page.getByTestId("template-agent-preview").click()
-    expect(await page.getByLabel("Agent handoff to copy").inputValue()).toContain(
+    await page.getByTestId("template-agent-copy").click()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
       "Make a customer launch story.",
     )
     expect(hostedStarts).toBe(0)
@@ -230,7 +224,7 @@ test.describe("templates", () => {
       })
     })
     await page.goto("/templates")
-    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-use-narrative-pitch").click()
     await page.getByTestId("template-agent-brief").fill("Make this ours without changing source.")
     await page.getByTestId("template-agent-copy").click()
 
@@ -240,6 +234,7 @@ test.describe("templates", () => {
   })
 
   test("any existing artifact can become an agentic starting point", async ({ owner: page }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     const source = await publishArtifact(
       page,
       "customer-proof.html",
@@ -254,8 +249,8 @@ test.describe("templates", () => {
     await page
       .getByTestId("template-agent-brief")
       .fill("Turn this evidence into a concise launch page for operations leaders.")
-    await page.getByTestId("template-agent-preview").click()
-    const handoff = await page.getByLabel("Agent handoff to copy").inputValue()
+    await page.getByTestId("template-agent-copy").click()
+    const handoff = await page.evaluate(() => navigator.clipboard.readText())
     expect(handoff).toContain(source)
     expect(handoff).toContain("Turn this evidence")
     expect(new URL(page.url()).pathname).toBe("/templates")
@@ -268,9 +263,7 @@ test.describe("templates", () => {
     await page.goto("/templates")
     const firstCard = page.getByTestId("template-card-narrative-pitch")
     await expect(firstCard).toBeInViewport()
-    await expect(
-      firstCard.locator("..").getByRole("button", { name: "Make it mine" }),
-    ).toBeVisible()
+    await expect(firstCard.getByRole("button", { name: "Make it mine" })).toBeVisible()
   })
 
   test("a preview ahead of additive schema explains the beta release state", async ({
@@ -307,6 +300,7 @@ test.describe("templates", () => {
   test("a complex HTML library starter becomes one portable agent handoff", async ({
     owner: page,
   }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     const source = await publishArtifact(
       page,
       "launch-command-center.html",
@@ -328,8 +322,8 @@ test.describe("templates", () => {
     await page
       .getByTestId("template-agent-brief")
       .fill("Align the November launch around customer evidence and one accountable owner.")
-    await page.getByTestId("template-agent-preview").click()
-    const handoff = await page.getByLabel("Agent handoff to copy").inputValue()
+    await page.getByTestId("template-agent-copy").click()
+    const handoff = await page.evaluate(() => navigator.clipboard.readText())
     expect(handoff).toContain(`derive://template-libraries/${libraryId}/${entryId}`)
     expect(handoff).toContain("November launch")
     expect(handoff).toContain("interactions")
@@ -339,15 +333,15 @@ test.describe("templates", () => {
   test("a Context template prepares a portable context-builder handoff", async ({
     owner: page,
   }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     await page.goto("/templates?tab=contexts")
-    await page.getByTestId("template-card-weekly-research-context").click()
-    await page.getByTestId("template-use").click()
+    await page.getByTestId("template-use-weekly-research-context").click()
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
     await page
       .getByTestId("template-agent-brief")
       .fill("Track template ecosystems from approved product research every Monday at 9am.")
-    await page.getByTestId("template-agent-preview").click()
-    const handoff = await page.getByLabel("Agent handoff to copy").inputValue()
+    await page.getByTestId("template-agent-copy").click()
+    const handoff = await page.evaluate(() => navigator.clipboard.readText())
     expect(handoff).toContain("derive://templates/weekly-research-context")
     expect(handoff).toContain("automate with create_context")
     expect(handoff).toContain("every Monday at 9am")
