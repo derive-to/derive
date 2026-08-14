@@ -1,9 +1,0 @@
-# Public ownership boundary: every change has a maintainer available for review.
-# GitHub permissions remain authoritative; MAINTAINERS.md explains the policy.
-* @an1va @cpellan561 @oz6un @robert-moore
-
-# Security and release surfaces deserve the same mandatory owner review even if
-# narrower ownership is added for product areas later.
-/.github/ @an1va @oz6un @robert-moore
-/SECURITY.md @an1va @oz6un @robert-moore
-/deploy/ @an1va @oz6un @robert-moore

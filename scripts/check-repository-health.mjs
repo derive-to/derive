@@ -82,7 +82,10 @@ requireState(
   (pullRequest?.required_approving_review_count ?? 0) >= 1,
   "main ruleset does not require an approving review",
 )
-requireState(pullRequest?.require_code_owner_review === true, "code-owner review is not required")
+requireState(
+  pullRequest?.require_code_owner_review === false,
+  "blanket code-owner review is enabled and will notify every maintainer",
+)
 requireState(
   pullRequest?.dismiss_stale_reviews_on_push === true,
   "stale reviews are not dismissed on push",
