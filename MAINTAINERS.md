@@ -27,7 +27,9 @@ Security fixes may follow a private process until coordinated disclosure is safe
 
 ## Review standard
 
-- A maintainer does not approve their own pull request as its only review.
+- A maintainer does not approve their own pull request. Repository administrators may use
+  GitHub's pull-request-only bypass when another maintainer is unavailable. It preserves the
+  pull request and audit trail and must only be used after the required checks pass.
 - Required checks must pass; a review does not waive the deterministic gate.
 - Review covers the problem, permissions, failure modes, tests, operations, documentation,
   and compatibility—not only whether the patch compiles.

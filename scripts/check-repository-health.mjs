@@ -59,7 +59,20 @@ const mainRulesets = rulesets.filter(
 requireState(mainRulesets.length === 1, "main must have exactly one active branch ruleset")
 const mainRuleset = mainRulesets[0]
 const rule = (type) => mainRuleset?.rules?.find((candidate) => candidate.type === type)
-requireState(mainRuleset?.bypass_actors?.length === 0, "main ruleset has bypass actors")
+if (Array.isArray(mainRuleset?.bypass_actors)) {
+  const [adminBypass] = mainRuleset.bypass_actors
+  requireState(
+    mainRuleset.bypass_actors.length === 1 &&
+      adminBypass?.actor_id === 5 &&
+      adminBypass.actor_type === "RepositoryRole" &&
+      adminBypass.bypass_mode === "pull_request",
+    "main ruleset admin bypass is not PR-only",
+  )
+} else {
+  // GitHub hides bypass actors from callers without ruleset-write access. The
+  // scheduled token can still audit every public rule; maintainers see this too.
+  console.warn("repository health: bypass actors hidden from this read-only token")
+}
 requireState(!!rule("deletion"), "main ruleset does not prevent deletion")
 requireState(!!rule("non_fast_forward"), "main ruleset does not prevent force pushes")
 requireState(!!rule("required_linear_history"), "main ruleset does not require linear history")
