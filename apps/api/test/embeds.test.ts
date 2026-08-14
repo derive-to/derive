@@ -7,7 +7,7 @@ import { anonApp, app, dir, makeAuthedApp, meta, type TestUser, upload } from ".
 
 const idOf = async (res: Response): Promise<string> => (await res.json()).short_id
 const SHELL =
-  "<!doctype html><html><head><title>Derive</title></head><body><div id=root></div></body></html>"
+  '<!doctype html><html><head><meta name="robots" content="noindex,nofollow"><title>Derive</title></head><body><div id=root></div></body></html>'
 
 describe("unfurl + embed", () => {
   it("serves the OG card as an SVG with the title for a public artifact", async () => {
@@ -195,6 +195,9 @@ describe("unfurl + embed", () => {
     expect(html).toContain('property="og:title"')
     expect(html).toContain("Shared Page")
     expect(html).toContain("application/json+oembed")
+    expect(html).toContain('name="robots" content="index,follow"')
+    expect(html).toContain('rel="canonical"')
+    expect(html.match(/name="robots"/g)).toHaveLength(1)
     // Still the SPA shell — humans get the app.
     expect(html).toContain("id=root")
   })
@@ -237,9 +240,11 @@ describe("unfurl + embed", () => {
       await upload("s2.md", "# secret", { visibility: "org", title: "Private Page" }),
     )
     const res = await a.request(`/artifacts/${short}`) // anonymous (no token header)
+    expect(res.status).toBe(404)
     const html = await res.text()
     expect(html).not.toContain("og:title")
     expect(html).not.toContain("Private Page")
+    expect(html).toContain('name="robots" content="noindex,nofollow"')
   })
 })
 
@@ -305,6 +310,8 @@ describe("profile unfurl (/users/:handle)", () => {
     expect(html).toContain('property="og:type" content="profile"')
     expect(html).toContain("Nia Okoye (@niao)")
     expect(html).toContain("/v1/og/users/niao")
+    expect(html).toContain('name="robots" content="index,follow"')
+    expect(html).toContain('rel="canonical"')
     expect(html).toContain("id=root") // still the SPA shell for humans
   })
 
@@ -318,8 +325,11 @@ describe("profile unfurl (/users/:handle)", () => {
       token: "tok",
       shell: SHELL,
     })
-    const html = await (await a.request("/users/ghosthandle")).text()
+    const response = await a.request("/users/ghosthandle")
+    expect(response.status).toBe(404)
+    const html = await response.text()
     expect(html).not.toContain("og:type")
+    expect(html).toContain('name="robots" content="noindex,nofollow"')
     expect(html).toContain("id=root")
   })
 })

@@ -92,6 +92,7 @@ import type {
   PlanKind,
   PlanRecord,
   PreviewStatus,
+  ProposalApproval,
   ProposalRecord,
   ProposalState,
   RenderJobRecord,
@@ -3724,11 +3725,77 @@ export class PgMetaStore implements MetaStore {
     for (const r of rows) out[r.artifact_id] = r.c
     return out
   }
+  async approveOpenProposal(id: string, approval: ProposalApproval): Promise<VersionRecord | null> {
+    return this.db.transaction(async (tx) => {
+      // Lock the proposal first: exactly one caller may observe it as open. The
+      // version append and audit decision then commit or roll back together.
+      const open = await tx
+        .select()
+        .from(proposal)
+        .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
+        .for("update")
+      const p = open[0]
+      if (!p) return null
+
+      const current = await tx
+        .select({ cv: artifact.current_version })
+        .from(artifact)
+        .where(eq(artifact.id, p.artifact_id))
+        .for("update")
+      if (!current[0]) throw new Error(`artifact not found: ${p.artifact_id}`)
+      const n = current[0].cv + 1
+      const now = new Date().toISOString()
+
+      await tx.insert(version).values({
+        id: approval.version_id,
+        artifact_id: p.artifact_id,
+        n,
+        blob_key: p.blob_key,
+        content_type: p.content_type,
+        size_bytes: approval.size_bytes,
+        author: p.author,
+        author_id: p.author_id,
+        message: p.message ?? "Approved proposal",
+        name: null,
+      })
+      await tx
+        .update(artifact)
+        .set({
+          current_version: n,
+          current_content_type: p.content_type,
+          updated_at: now,
+          author_name: p.author,
+          author_login: null,
+          author_avatar: null,
+          author_gh_id: null,
+          author_id: p.author_id,
+        })
+        .where(eq(artifact.id, p.artifact_id))
+      await tx
+        .update(proposal)
+        .set({
+          state: "approved",
+          decided_by: approval.decided_by,
+          decided_by_id: approval.decided_by_id,
+          decided_version: n,
+          decision_note: approval.decision_note ?? null,
+          decided_at: now,
+        })
+        .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
+
+      const rows = await tx
+        .select()
+        .from(version)
+        .where(and(eq(version.artifact_id, p.artifact_id), eq(version.n, n)))
+      return one(rows)
+    })
+  }
   async decideProposal(
     id: string,
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -3736,7 +3803,7 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .update(proposal)
       .set({ ...fields, decided_at: new Date().toISOString() })
-      .where(eq(proposal.id, id))
+      .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
       .returning()
     return rows[0] ?? null
   }
@@ -3785,12 +3852,17 @@ export class PgMetaStore implements MetaStore {
   }
   async resolveReviewRound(
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null> {
     const rows = await this.db
       .update(reviewRound)
       .set({ ...fields, resolved_at: new Date().toISOString() })
-      .where(eq(reviewRound.id, id))
+      .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
     return rows[0] ?? null
   }

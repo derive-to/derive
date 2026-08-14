@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Product or setup question
+    url: https://github.com/derive-to/derive/discussions/categories/q-a
+    about: Ask for help in Discussions so the answer remains searchable.
+  - name: Documentation
+    url: https://docs.derive.to/
+    about: Start with the product, client, self-hosting, and API guides.
   - name: Security vulnerability
     url: https://github.com/derive-to/derive/security/advisories/new
     about: Report security issues privately — please do not open a public issue.

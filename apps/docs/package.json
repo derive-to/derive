@@ -1,0 +1,28 @@
+{
+  "name": "@derive/docs",
+  "version": "0.1.0",
+  "private": true,
+  "license": "FSL-1.1-ALv2",
+  "type": "module",
+  "scripts": {
+    "sync": "node scripts/sync-content.mjs",
+    "dev": "pnpm sync && astro dev",
+    "dev:edge": "pnpm build && wrangler dev",
+    "build": "pnpm sync && astro build && node scripts/check-built.mjs",
+    "preview": "astro preview",
+    "pretypecheck": "pnpm sync",
+    "typecheck": "astro check",
+    "deploy": "wrangler deploy",
+    "deploy:check": "pnpm build && wrangler deploy --dry-run"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.41.7",
+    "astro": "7.2.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@astrojs/markdown-remark": "7.2.2",
+    "typescript": "6.0.3",
+    "wrangler": "4.122.0"
+  }
+}

@@ -7,6 +7,7 @@ const packages = [
   {
     dir: "packages/cli",
     required: [
+      "README.md",
       "skills/derive/SKILL.md",
       "skills/derive/agents/openai.yaml",
       "skills/derive/references/connect.md",
@@ -15,7 +16,7 @@ const packages = [
   },
   {
     dir: "packages/mcp",
-    required: ["SKILL.md", "references/connect.md", "references/compatibility.md"],
+    required: ["README.md", "SKILL.md", "references/connect.md", "references/compatibility.md"],
   },
 ]
 

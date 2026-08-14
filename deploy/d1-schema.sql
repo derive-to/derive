@@ -577,6 +577,7 @@ CREATE TABLE IF NOT EXISTS proposal (
   base_version INTEGER NOT NULL,
   state TEXT NOT NULL DEFAULT 'open',
   decided_by TEXT,
+  decided_by_id TEXT,
   decided_version INTEGER,
   decision_note TEXT,
   decided_at TEXT,
@@ -592,6 +593,8 @@ CREATE TABLE IF NOT EXISTS review_round (
   requested_for TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'pending',
   note TEXT,
+  resolved_by TEXT,
+  resolved_by_name TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   resolved_at TEXT,
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)

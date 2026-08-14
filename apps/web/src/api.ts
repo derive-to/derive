@@ -712,6 +712,11 @@ export const api = {
     f("/api/auth/sign-in/email", opts({ email, password })).then(authJson),
   signup: (email: string, password: string, name: string): Promise<unknown> =>
     f("/api/auth/sign-up/email", opts({ email, password, name: name || email })).then(authJson),
+  recordSignupAttribution: (source: {
+    source_kind: string
+    source_artifact?: string | null
+    landing_path?: string | null
+  }): Promise<unknown> => f("/v1/me/signup-attribution", opts(source)).then(j),
   logout: () => f("/api/auth/sign-out", opts({})).then((r) => r.json().catch(() => ({}))),
   // The auth capabilities of THIS instance — which sign-in methods + flows are live
   // here (drives the login page + Security hub; capability-adaptive).

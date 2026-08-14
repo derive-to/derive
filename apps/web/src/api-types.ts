@@ -7292,6 +7292,8 @@ export interface components {
             state: "pending" | "sent_back" | "approved";
             /** @description Free-text note attached to the round; null if none. */
             note: string | null;
+            /** @description The human who settled the round; null while pending or for legacy history. */
+            resolved_by_name: string | null;
             created_at: string;
             /** @description When it was sent back or approved; null while pending. */
             resolved_at: string | null;

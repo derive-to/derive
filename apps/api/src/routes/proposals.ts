@@ -32,7 +32,8 @@ const idList = (raw: string | undefined): string[] =>
     .filter(Boolean)
 
 /** Reviews: a proposal is a candidate version awaiting approval. A commenter
- *  proposes; an editor approves (it goes live) or requests changes. The Proposal
+ *  proposes; a directly signed-in human with editor standing approves (it goes
+ *  live) or requests changes. The Proposal
  *  response schema is the single source for the web client's type. */
 export const proposalRoutes = (ctx: AppContext) => {
   const {
@@ -44,11 +45,11 @@ export const proposalRoutes = (ctx: AppContext) => {
     notify,
     notifyRender,
     background,
-    currentUser,
     actingUser,
     privateOwnerId,
     anonLocked,
     requireArtifact,
+    requireDirectHuman,
     authorize,
     limited,
     overStorage,
@@ -406,11 +407,11 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (!r.ok) return bail(r.error)
       const { artifact, proposal } = r
       if (!(await authorize(c, "approve", artifact))) return bail(fail(c, 403, "forbidden"))
+      const decider = await requireDirectHuman(c)
+      if (decider instanceof Response) return bail(decider)
       const blocked = await billingGate(c, artifact.org_id)
       if (blocked) return bail(blocked)
       if (proposal.state !== "open") return bail(fail(c, 409, `proposal is ${proposal.state}`))
-      const me = await currentUser(c)
-      const approver = me ? (me.name ?? me.username ?? me.email) : null
       const body = await readJson(c, z.object({ note: z.unknown().optional() }))
       if (body instanceof Response) return bail(body)
       try {
@@ -427,9 +428,9 @@ export const proposalRoutes = (ctx: AppContext) => {
           },
           artifact,
           proposal,
-          approver,
+          decider.name,
           str(body.note) ?? null,
-          me?.id ?? null,
+          decider.id,
         )
         const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
         return c.json({
@@ -463,19 +464,20 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (!r.ok) return bail(r.error)
       const { artifact, proposal } = r
       if (!(await authorize(c, "approve", artifact))) return bail(fail(c, 403, "forbidden"))
+      const decider = await requireDirectHuman(c)
+      if (decider instanceof Response) return bail(decider)
       if (proposal.state !== "open") return bail(fail(c, 409, `proposal is ${proposal.state}`))
-      const me = await currentUser(c)
-      const reviewer = me ? (me.name ?? me.username ?? me.email) : null
       const body = await readJson(c, z.object({ note: z.unknown().optional() }))
       if (body instanceof Response) return bail(body)
-      await requestChangesAction(
+      const decided = await requestChangesAction(
         { meta, blobs, bus, notify },
         artifact,
         proposal,
-        reviewer,
+        decider.name,
         str(body.note) ?? null,
-        me?.id ?? null,
+        decider.id,
       )
+      if (!decided) return bail(fail(c, 409, "proposal is no longer open"))
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json(proposalJson(artifact, fresh, await bylinesFor([fresh])))
     },
@@ -509,11 +511,13 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (!isAuthor && !(await authorize(c, "manage", artifact)))
         return bail(fail(c, 403, "forbidden"))
       if (proposal.state !== "open") return bail(fail(c, 409, `proposal is ${proposal.state}`))
-      await meta.decideProposal(proposal.id, {
+      const decided = await meta.decideProposal(proposal.id, {
         state: "withdrawn",
         decided_by: acting?.name ?? null,
+        decided_by_id: acting?.id ?? null,
         decided_version: null,
       })
+      if (!decided) return bail(fail(c, 409, "proposal is no longer open"))
       // Retracting the proposal reopens the threads it had staged as addressed.
       for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
         bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })

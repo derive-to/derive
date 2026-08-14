@@ -24,7 +24,14 @@ const loginRoute = getRouteApi("/login")
 export function Login() {
   useDocumentTitle("Sign in")
   const { me, loading, setMe } = useAuth()
-  const { signup: wantSignup, return_to: returnTo, reset: didReset } = loginRoute.useSearch()
+  const {
+    signup: wantSignup,
+    return_to: returnTo,
+    reset: didReset,
+    src: signupSource,
+    art: sourceArtifact,
+    landing: sourceLanding,
+  } = loginRoute.useSearch()
   const [mode, setMode] = useState<"login" | "signup">(wantSignup ? "signup" : "login")
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
@@ -53,9 +60,11 @@ export function Login() {
     const search = typeof window !== "undefined" ? window.location.search : ""
     return new URLSearchParams(search).has("client_id")
       ? `/login${search}`
-      : typeof returnTo === "string"
-        ? returnTo
-        : "/"
+      : typeof signupSource === "string"
+        ? `/login${search}`
+        : typeof returnTo === "string"
+          ? returnTo
+          : "/"
   }
   // Hand off to a provider; afterwards Better Auth lands the user back where sign-in
   // was prompted (an OAuth authorize resume, a return_to, or home).
@@ -77,9 +86,24 @@ export function Login() {
   // user) with no /login left to re-trigger it. The one-shot latch guards the brief
   // pre-navigation window where the effect below can fire more than once.
   const redirected = useRef(false)
-  const afterAuth = (who?: Parameters<typeof needsOnboarding>[0] | null) => {
+  const afterAuth = async (who?: Parameters<typeof needsOnboarding>[0] | null) => {
     if (redirected.current) return
     redirected.current = true
+    // The source is already visible in this URL. Submit it once while the account
+    // is within the server's short creation window; a returning login is a no-op.
+    // This covers password, social, and OIDC signup without an attribution cookie
+    // or browser storage. Measurement can never block authentication.
+    if (typeof signupSource === "string") {
+      try {
+        await api.recordSignupAttribution({
+          source_kind: signupSource,
+          source_artifact: typeof sourceArtifact === "string" ? sourceArtifact : null,
+          landing_path: typeof sourceLanding === "string" ? sourceLanding : null,
+        })
+      } catch {
+        // Best-effort measurement: continue to the product.
+      }
+    }
     const search = typeof window !== "undefined" ? window.location.search : ""
     if (new URLSearchParams(search).has("client_id")) {
       window.location.href = `/api/auth/oauth2/authorize${search}`
@@ -102,7 +126,7 @@ export function Login() {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: afterAuth reads window.location + returnTo (stable from search); keyed to the auth state.
   useEffect(() => {
-    if (!loading && me) afterAuth(me)
+    if (!loading && me) void afterAuth(me)
   }, [loading, me])
 
   const submit = async (e: FormEvent) => {
@@ -125,7 +149,7 @@ export function Login() {
       // Seed the auth cache from the one identity read (session cookie is set now).
       const session = await api.session()
       setMe(session)
-      afterAuth(session)
+      await afterAuth(session)
     } catch (e) {
       setErr((e as Error).message)
       setBusy(false)
@@ -145,7 +169,7 @@ export function Login() {
       if (res?.error) throw new Error(res.error.message ?? "That code didn't work.")
       const session = await api.session()
       setMe(session)
-      afterAuth(session)
+      await afterAuth(session)
     } catch (e) {
       setErr((e as Error).message)
       setBusy(false)
@@ -168,7 +192,7 @@ export function Login() {
       if (res?.data) {
         const session = await api.session()
         setMe(session)
-        afterAuth(session)
+        await afterAuth(session)
       } else if (res?.error && !autoFill) {
         setErr(res.error.message ?? "Passkey sign-in failed.")
       }
@@ -489,7 +513,7 @@ export function Login() {
           wordmark, kept in the muted register so it never competes with the form. */}
       <footer className="px-6 pb-8 text-center">
         <p className="text-sm text-pretty text-muted-foreground">
-          Open source. Self-host the whole thing, or use the hosted tier.
+          Fair Source. Self-host the whole thing, or use the hosted tier.
         </p>
       </footer>
     </div>

@@ -3062,6 +3062,7 @@ export function makeRepos(db: SqliteDb) {
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -3069,7 +3070,7 @@ export function makeRepos(db: SqliteDb) {
     (await db
       .update(proposal)
       .set({ ...fields, decided_at: new Date().toISOString() })
-      .where(eq(proposal.id, id))
+      .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
       .returning()
       .get()) ?? null
 
@@ -3118,12 +3119,17 @@ export function makeRepos(db: SqliteDb) {
       .all()
   const resolveReviewRound = async (
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null> =>
     (await db
       .update(reviewRound)
       .set({ ...fields, resolved_at: new Date().toISOString() })
-      .where(eq(reviewRound.id, id))
+      .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
       .get()) ?? null
 

@@ -23,7 +23,6 @@ import { hyperdriveConn, livePgPool, requestPg } from "./edge-pg"
 import type { SendEmailBinding } from "./email-cf"
 import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedder"
 import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
-import { signupAttributionHook } from "./lib/attribution"
 import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
@@ -38,7 +37,9 @@ import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
+import { isApiPath } from "./lib/serve-web"
 import { parseSignupMode, signupPolicy } from "./lib/signup-policy"
+import { isServerRenderedPath, isSpaPath, isStaticRootPath } from "./lib/spa-paths"
 import { STATIC_NAMESPACE_PREFIXES } from "./lib/static-namespaces"
 import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { loopSubstrate } from "./lib/substrate-loop"
@@ -303,8 +304,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // billable in (see purgeUserDataAndSyncSeats) — otherwise a vacated editor/owner
         // seat keeps being billed until an unrelated membership change happens to heal it.
         purgeUserData: (userId) => purgeUserDataAndSyncSeats(meta, billing, userId),
-        // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
-        recordSignupAttribution: signupAttributionHook(meta),
       })
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
@@ -431,7 +430,8 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           return shellCache
         },
         // The marketing front door, always on: `/` for signed-out visitors +
-        // `/pricing` + `/privacy`, from the web build's site/ pages. Fetched at the
+        // `/pricing` + `/privacy` + `/examples`, from the web build's site/
+        // pages. Fetched at the
         // CANONICAL asset URLs — html_handling serves site/index.html at /site/ and
         // site/pricing.html at /site/pricing (site/privacy.html at /site/privacy,
         // same rule), and redirects the literal filenames, which ASSETS.fetch would
@@ -441,6 +441,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           home: siteFetch(env, baseUrl, "/site/"),
           pricing: siteFetch(env, baseUrl, "/site/pricing"),
           privacy: siteFetch(env, baseUrl, "/site/privacy"),
+          examples: siteFetch(env, baseUrl, "/site/examples"),
         },
       })
     }
@@ -467,8 +468,35 @@ const staticNamespacePassthrough = (req: Request, env: Env): boolean => {
   return host !== sub && !host.endsWith(`.${sub}`)
 }
 
+const appHostRequest = (req: Request, env: Env): boolean => {
+  const requestHost = new URL(req.url).hostname.toLowerCase()
+  const baseHost = new URL(env.BASE_URL ?? req.url).hostname.toLowerCase()
+  return (
+    requestHost === baseHost ||
+    requestHost === `app.${baseHost}` ||
+    requestHost.endsWith(".workers.dev")
+  )
+}
+
+const needsApp = (path: string): boolean => isApiPath(path) || isServerRenderedPath(path)
+
+const assetResponse = (req: Request, env: Env, path: string): Promise<Response> =>
+  env.ASSETS.fetch(new URL(path, req.url).toString()) as unknown as Promise<Response>
+
+const staticNotFound = async (req: Request, env: Env): Promise<Response> => {
+  const page = await assetResponse(req, env, "/404")
+  const headers = new Headers(page.headers)
+  headers.set("Cache-Control", "no-store")
+  return new Response(req.method === "HEAD" ? null : await page.arrayBuffer(), {
+    status: 404,
+    headers,
+  })
+}
+
 export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
+    const url = new URL(req.url)
+    const navigation = req.method === "GET" || req.method === "HEAD"
     // The static namespaces (/assets, /site, /brand) are worker-first solely so
     // vanity/draft hosts can reach domain mode (Static Assets routing is host-blind
     // — see serve-web.ts STATIC_NAMESPACE_PREFIXES). Everything that is NOT a
@@ -477,8 +505,16 @@ export default {
     // domain behave exactly as they did when these paths never hit the Worker.
     // URL-string fetch (the siteFetch precedent) sidesteps the workers-types/DOM
     // Request dualism; assets are GET/HEAD-only so nothing else is intercepted.
-    if ((req.method === "GET" || req.method === "HEAD") && staticNamespacePassthrough(req, env))
-      return env.ASSETS.fetch(req.url) as unknown as Promise<Response>
+    if (navigation && staticNamespacePassthrough(req, env))
+      return assetResponse(req, env, url.pathname)
+    if (navigation && isStaticRootPath(url.pathname)) return assetResponse(req, env, url.pathname)
+    // Every navigation runs through the Worker so an arbitrary path can return a
+    // real 404. Known client-only routes can still take the zero-database fast path
+    // and receive the same prerendered shell Cloudflare's SPA fallback used to serve.
+    if (navigation && appHostRequest(req, env)) {
+      if (isSpaPath(url.pathname) && !needsApp(url.pathname)) return assetResponse(req, env, "/")
+      if (!needsApp(url.pathname)) return staticNotFound(req, env)
+    }
     // Postgres tier: bind a request-scoped pool (see edge-pg.ts) for livePgPool to
     // resolve. Never end()ed here — `background()` fan-out (context.ts) keeps
     // querying it on waitUntil after the response, so an eager end() would cut

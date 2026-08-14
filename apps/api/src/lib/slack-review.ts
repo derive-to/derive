@@ -91,9 +91,13 @@ export const runSlackReviewAction = async (
         return
       }
     }
+    const linkedUser = (await meta.getUsers([link.user_id]))[0]
     const updated = await meta.resolveReviewRound(round.id, {
       state: args.op === "approve" ? "approved" : "sent_back",
       note: null,
+      resolved_by: link.user_id,
+      resolved_by_name:
+        linkedUser?.name ?? linkedUser?.username ?? linkedUser?.email ?? link.user_id,
     })
     if (!updated) {
       // Lost a race with another surface settling the same round.

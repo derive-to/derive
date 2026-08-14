@@ -16,6 +16,7 @@ dist/
 .e2e-data/
 test-results/
 playwright-report/
+playwright-report-public/
 
 # ad-hoc local data dirs
 .data-*
@@ -73,3 +74,8 @@ apps/api/wrangler.staging.toml
 # Generated preview/staging Worker configs: carry REAL binding ids, never committed.
 apps/api/wrangler.preview.toml
 apps/api/wrangler.perf.toml
+
+# Generated from the canonical repository Markdown by apps/docs/scripts/sync-content.mjs.
+apps/docs/.astro/
+apps/docs/src/content/docs/
+apps/docs/public/

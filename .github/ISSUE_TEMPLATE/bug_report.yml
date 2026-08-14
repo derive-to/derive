@@ -39,4 +39,14 @@ body:
     id: logs
     attributes:
       label: Relevant logs
+      description: Remove tokens, private URLs, email addresses, and other sensitive data before posting.
       render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find this report.
+          required: true
+        - label: This report contains no credentials, private artifact URLs, or personal data.
+          required: true

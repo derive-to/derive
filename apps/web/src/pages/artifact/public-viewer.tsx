@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { artifactTypeLabel } from "@/lib/artifact"
-import { stampSrc } from "@/lib/src-stamp"
+import { signupSourceSearch } from "@/lib/signup-source"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { FloatingControl } from "./floating-control"
@@ -167,8 +167,8 @@ export function PublicViewer({
         {/* A shared link that's being viewed feels alive — even on a phone (compact). */}
         <Presence viewers={viewers} selfId={selfId} compact={isMobile} />
 
-        {/* The growth verb (the page's one filled primary) + a quiet sign-in. Clicks
-            refine the d_src stamp so the funnel knows WHICH surface converted.
+        {/* The growth verb (the page's one filled primary) + a quiet sign-in. The
+            source rides the signup URL, with no attribution cookie or browser store.
             "Make your own" copies THIS artifact, deferred through login: `?use=1`
             carries the intent across the auth redirect, the same-tab marker proves
             it originated from this click (a pasted ?use=1 link must not write —
@@ -177,9 +177,12 @@ export function PublicViewer({
         <Button asChild variant="default" size="sm" data-testid="public-make-your-own">
           <Link
             to="/login"
-            search={{ signup: true, return_to: `${returnTo}?use=1` }}
+            search={{
+              signup: true,
+              return_to: `${returnTo}?use=1`,
+              ...signupSourceSearch("make_your_own", art.short_id, returnTo),
+            }}
             onClick={() => {
-              stampSrc("make_your_own", art.short_id)
               markUseIntent(art.short_id)
             }}
           >
@@ -276,8 +279,10 @@ export function PublicViewer({
                 <Button asChild variant="default" size="sm" data-testid="public-sign-in-to-comment">
                   <Link
                     to="/login"
-                    search={{ return_to: returnTo }}
-                    onClick={() => stampSrc("comment_wall", art.short_id)}
+                    search={{
+                      return_to: returnTo,
+                      ...signupSourceSearch("comment_wall", art.short_id, returnTo),
+                    }}
                   >
                     {copy.cta}
                   </Link>
@@ -296,8 +301,11 @@ export function PublicViewer({
         <footer className="flex shrink-0 items-center justify-center border-t border-border-soft py-1.5 font-mono text-2xs text-muted-foreground">
           <Link
             to="/login"
-            search={{ signup: true, return_to: "/new" }}
-            onClick={() => stampSrc("badge", art.short_id)}
+            search={{
+              signup: true,
+              return_to: "/new",
+              ...signupSourceSearch("badge", art.short_id, returnTo),
+            }}
             data-testid="public-made-with"
             className="flex items-center gap-1.5 rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >

@@ -108,6 +108,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           "width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content",
       },
       { title: "Derive" },
+      // The authenticated/client shell is not a search landing page. Public
+      // artifact and profile handlers replace this with index,follow only after
+      // they have verified that the underlying record is genuinely public.
+      { name: "robots", content: "noindex,nofollow" },
     ],
     links: [
       // Theme-aware: dark glyph on light browser chrome, light on dark

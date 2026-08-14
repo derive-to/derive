@@ -99,6 +99,9 @@ const billingBlockCopy = (baseUrl: string) => {
 
 export interface SessionUser {
   id: string
+  /** Better Auth account creation time; used only for the short cookieless
+   * signup-attribution acceptance window. */
+  createdAt: string
   email: string
   name: string | null
   /** Public handle (Profiles & Accounts v1); null until claimed at onboarding. */
@@ -355,8 +358,8 @@ export interface AppDeps {
   pokeRun?: (runId: string) => void
   /**
    * The marketing site (the front door). When set, `/` serves the marketing page
-   * to signed-out visitors (signed-in ones keep the SPA), `/pricing` serves the
-   * pricing page, and `/privacy` serves the privacy page. Each provider returns
+   * to signed-out visitors (signed-in ones keep the SPA); `/pricing`, `/privacy`,
+   * and `/examples` serve their public pages. Each provider returns
    * the page HTML — read from the web build's `site/` directory on Node, fetched
    * from the ASSETS binding on the edge — or null when the page is missing (falls
    * back to the shell). Set whenever the web build ships the pages; unset (a
@@ -366,6 +369,7 @@ export interface AppDeps {
     home: () => Promise<string | null>
     pricing: () => Promise<string | null>
     privacy: () => Promise<string | null>
+    examples: () => Promise<string | null>
   }
 }
 
@@ -518,6 +522,7 @@ export function buildContext(deps: AppDeps) {
     const su = s?.user as
       | {
           id: string
+          createdAt: string | Date
           email: string
           name?: string | null
           username?: string | null
@@ -532,6 +537,8 @@ export function buildContext(deps: AppDeps) {
     const u: SessionUser | null = su
       ? {
           id: su.id,
+          createdAt:
+            su.createdAt instanceof Date ? su.createdAt.toISOString() : String(su.createdAt),
           email: su.email,
           name: su.name ?? null,
           username: su.username ?? null,
@@ -1405,8 +1412,16 @@ export function buildContext(deps: AppDeps) {
    *  grants: an explicit share, the workspace seat (when workspace_access=member),
    *  and the world link (link_role, clamped to view for anonymous holders and gated
    *  by unlock when the link is password-locked). See effectiveRole. */
-  const authorize = (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> =>
-    actorFor(c, a).then((actor) => can(actor, action, a.workspace_access, a.link_role))
+  const authorize = async (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> => {
+    // `approve` is both a capability and an identity-sensitive signature. Agents
+    // may hold editor standing so they can publish work, but no machine principal
+    // can turn that standing into the human go-signal advertised by Derive. Put
+    // the rule in the shared authorization seam so every present and future HTTP
+    // approval route inherits it before route-specific attribution runs.
+    if (action === "approve" && (await resolvePrincipal(c)).kind !== "human") return false
+    const actor = await actorFor(c, a)
+    return can(actor, action, a.workspace_access, a.link_role)
+  }
 
   /** Authorize using STANDING only — an explicit share or the workspace seat, NOT
    *  the world link (link_role forced to `none`). The reach controls (change access,
@@ -1592,6 +1607,22 @@ export function buildContext(deps: AppDeps) {
   // The signed-in user, or the 401 to return — the guard every authed route opens with.
   const requireUser = async (c: Context): Promise<SessionUser | Response> =>
     (await currentUser(c)) ?? fail(c, 401, "unauthenticated")
+  // A decision that Derive presents as HUMAN must come from the direct signed-in
+  // principal. An agent's on-behalf relationship is valid attribution for authored
+  // work, but it is not consent to sign off; the static operator token is not a
+  // person either. Resolve the Principal rather than calling currentUser so a
+  // request carrying both an agent bearer and a session cookie remains an agent
+  // request (bearer precedence) and cannot smuggle the cookie through this gate.
+  const requireDirectHuman = async (
+    c: Context,
+  ): Promise<{ id: string; name: string } | Response> => {
+    const p = await resolvePrincipal(c)
+    if (p.kind !== "human") return fail(c, 403, "a signed-in human must make this decision")
+    return {
+      id: p.user.id,
+      name: p.user.name ?? p.user.username ?? p.user.email,
+    }
+  }
   // The static CI/agent token (DERIVE_TOKEN) presented as this request's bearer.
   const isToken = (c: Context): boolean => !!deps.token && safeEqual(bearer(c), deps.token)
   // Is the caller a member of this workspace? The static token counts as a member of
@@ -1732,6 +1763,7 @@ export function buildContext(deps: AppDeps) {
     requireArtifact,
     requireWorkspace,
     requireUser,
+    requireDirectHuman,
     isToken,
     isMember,
     canAskContext,

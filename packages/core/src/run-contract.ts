@@ -119,6 +119,16 @@ const unfence = (s: string): string =>
     .replace(/```\s*$/i, "")
     .trim()
 
+const blockBody = (text: string, name: "edits" | "revision"): string | null => {
+  const lower = text.toLowerCase()
+  const open = `<${name}>`
+  const close = `</${name}>`
+  const start = lower.indexOf(open)
+  if (start < 0) return null
+  const end = lower.indexOf(close, start + open.length)
+  return end < 0 ? null : text.slice(start + open.length, end)
+}
+
 /** Read a model reply into edits, forgiving about shape and strict about substance — same stance
  *  as parseRevision. An empty or malformed list is an error, never a silent no-op. */
 export const parseEdits = (
@@ -131,9 +141,9 @@ export const parseEdits = (
       message?: undefined
       error: string
     } => {
-  const m = text.match(/<edits>([\s\S]*?)<\/edits>/i)
-  if (!m?.[1]) return { error: NO_EDITS_BLOCK }
-  const cleaned = unfence(m[1])
+  const body = blockBody(text, "edits")
+  if (!body) return { error: NO_EDITS_BLOCK }
+  const cleaned = unfence(body)
   let raw: unknown
   try {
     raw = JSON.parse(cleaned)
@@ -209,11 +219,11 @@ const normalizeRevision = (r: Record<string, unknown>, content: string): Revisio
 })
 
 export const parseRevision = (text: string): RevisionParse => {
-  const m = text.match(/<revision>([\s\S]*?)<\/revision>/i)
-  if (!m?.[1]) return { error: NO_REVISION_BLOCK }
+  const body = blockBody(text, "revision")
+  if (!body) return { error: NO_REVISION_BLOCK }
   let raw: unknown
   try {
-    raw = JSON.parse(unfence(m[1]))
+    raw = JSON.parse(unfence(body))
   } catch (e) {
     return { error: `revision JSON parse: ${(e as Error).message}` }
   }
@@ -310,10 +320,26 @@ export const ASK_NUDGE = `Your previous reply was NOT accepted — the <revision
 /** Both output blocks, because "the prose" means the same thing whichever one a turn asked for
  *  and a large-document turn that answers in prose must not have its answer contaminated by a
  *  block it also emitted. */
-const BLOCK_RE = /<(revision|edits)>[\s\S]*?<\/\1>/gi
-
 /** Whatever the model said OUTSIDE the block — the prose an asker actually reads. */
-export const proseOf = (text: string): string => text.replace(BLOCK_RE, "").trim()
+export const proseOf = (text: string): string => {
+  let remaining = text
+  let prose = ""
+  while (remaining) {
+    const lower = remaining.toLowerCase()
+    const revision = lower.indexOf("<revision>")
+    const edits = lower.indexOf("<edits>")
+    const starts = [revision, edits].filter((at) => at >= 0)
+    if (!starts.length) return (prose + remaining).trim()
+    const start = Math.min(...starts)
+    const name = start === revision ? "revision" : "edits"
+    const close = `</${name}>`
+    const end = lower.indexOf(close, start)
+    if (end < 0) return (prose + remaining).trim()
+    prose += remaining.slice(0, start)
+    remaining = remaining.slice(end + close.length)
+  }
+  return prose.trim()
+}
 
 /** The page-on-disk channel, read exactly as the CLI runner reads its own: inline HTML wins,
  *  an oversized inline page WITH a path falls through to the path rather than being dropped,
@@ -343,7 +369,7 @@ const readArtifactChannel = (
  * contract rather than choosing not to write.
  */
 export const parseAsk = (text: string): AskParse => {
-  const m = text.match(/<revision>([\s\S]*?)<\/revision>/i)
+  const revisionBody = blockBody(text, "revision")
   const prose = proseOf(text)
   const answered = (over: Partial<AskReply> = {}): AskParse => ({
     reply: {
@@ -356,10 +382,10 @@ export const parseAsk = (text: string): AskParse => {
       ...over,
     },
   })
-  if (!m?.[1]) return answered()
+  if (!revisionBody) return answered()
   let raw: unknown
   try {
-    raw = JSON.parse(unfence(m[1]))
+    raw = JSON.parse(unfence(revisionBody))
   } catch (e) {
     return { error: `revision JSON parse: ${(e as Error).message}` }
   }
@@ -392,6 +418,8 @@ export const parseAsk = (text: string): AskParse => {
       : r,
     content,
   )
-  const body = typeof r.body_md === "string" && r.body_md.trim() ? r.body_md.trim() : prose
-  return { reply: { ...fields, body_md: body || revision.message || "(no reply)", revision } }
+  const responseBody = typeof r.body_md === "string" && r.body_md.trim() ? r.body_md.trim() : prose
+  return {
+    reply: { ...fields, body_md: responseBody || revision.message || "(no reply)", revision },
+  }
 }

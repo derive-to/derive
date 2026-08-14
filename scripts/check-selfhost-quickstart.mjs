@@ -101,7 +101,8 @@ for (const asset of ["compose.yml", "selfhost.env.example"]) {
 requireText(release, "DERIVE_IMAGE=ghcr.io/derive-to/derive@$DIGEST", RELEASE)
 requireText(release, "make_latest: false", `${RELEASE} pre-promotion release`)
 requireText(release, "draft: true", `${RELEASE} immutable-release draft`)
-requireText(release, "actions/attest@v4", `${RELEASE} build attestation`)
+if (!/^\s*uses:\s*actions\/attest@[0-9a-f]{40}\s+#\s+v4\s*$/m.test(release))
+  fail(`${RELEASE} build attestation must use a pinned actions/attest v4 commit`)
 requireText(
   release,
   "sha256sum compose.yml selfhost.env.example image-digest.txt > SHA256SUMS",

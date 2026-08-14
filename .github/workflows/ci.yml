@@ -107,28 +107,27 @@ jobs:
         run: pnpm test:coverage
 
       # Supply chain, folded in from its own job: it reads the lockfile and the
-      # working tree, needs no install of its own, and takes ~15s — nowhere near
-      # enough to justify a second machine.
-      #
-      # pnpm audits via npm's legacy audit endpoint, which npm RETIRED (returns 410 as of
-      # 2026-07-15) — and pnpm (v10 and v11) hasn't migrated to the bulk-advisories endpoint.
-      # So the endpoint being unreachable is now infra, not a finding: treat that specific
-      # failure as non-fatal (a warning) while STILL failing on a real high advisory, so the
-      # gate keeps working the moment pnpm/npm restore it. gitleaks below is the other gate.
-      # Durable fix: migrate this to OSV-Scanner (no npm-endpoint dependency).
-      - name: Audit production dependencies
+      # working tree, needs no install of its own, and takes only a few seconds.
+      # OSV replaces pnpm audit's retired npm endpoint and checks every locked
+      # dependency, not only advisories the package registry happens to expose.
+      # The binary and version are fixed by independent SHA-256 values below;
+      # osv-scanner.toml holds the rare, expiring applicability exception.
+      - name: Scan dependencies (OSV-Scanner)
         run: |
-          set +e
-          out=$(pnpm audit --prod --audit-level=high 2>&1)
-          code=$?
-          set -e
-          echo "$out"
-          [ "$code" -eq 0 ] && exit 0
-          if echo "$out" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE"; then
-            echo "::warning::pnpm audit endpoint unavailable (npm retired the legacy endpoint pnpm uses) — treating as non-fatal. Migrate to OSV-Scanner."
-            exit 0
-          fi
-          exit 1
+          case "$(uname -m)" in
+            aarch64|arm64)
+              asset=osv-scanner_linux_arm64
+              digest=8158b18edd2d03b1a30d905ca91b032bc62262167be8f206c27114f08823e27c
+              ;;
+            *)
+              asset=osv-scanner_linux_amd64
+              digest=bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc
+              ;;
+          esac
+          curl -sSfL "https://github.com/google/osv-scanner/releases/download/v2.3.8/${asset}" -o osv-scanner
+          printf '%s  %s\n' "$digest" osv-scanner | sha256sum --check --strict
+          chmod +x osv-scanner
+          ./osv-scanner scan source --lockfile=pnpm-lock.yaml
 
       # Asset picked from the machine rather than hardcoded, so this step stops
       # being a reason the runners can't change architecture — which is exactly
@@ -420,3 +419,114 @@ jobs:
       # 2026-07-14). Its post-deploy auto-dispatch stays off — a post-ship prod
       # check is separate from the PR gate; trigger it manually with
       # `gh workflow run e2e-smoke.yml --ref main` if wanted.
+
+  # Documentation has its own hostname, build, asset collection, and Worker.
+  # It deliberately does not share the product Worker's database bindings or
+  # deploy transaction: a docs-only change should ship without a schema lane,
+  # and a docs failure must not put the hosted application at risk.
+  deploy-docs:
+    if: github.repository == 'derive-to/derive' && github.event_name == 'push'
+    needs: [check]
+    runs-on: ubicloud-standard-4
+    environment:
+      name: docs-production
+      url: https://docs.derive.to/
+    concurrency:
+      group: deploy-docs-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      # Full history gives each generated page the last-update date of its
+      # canonical Markdown source instead of the deployment timestamp.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Skip when superseded by a newer commit
+        id: head
+        run: |
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "superseded by $(git rev-parse --short origin/main); skipping"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: ./.github/actions/setup
+        if: steps.head.outputs.stale != 'true'
+
+      - name: Build static documentation and search index
+        if: steps.head.outputs.stale != 'true'
+        run: pnpm --filter @derive/docs build
+
+      - name: Deploy docs Worker
+        if: steps.head.outputs.stale != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/docs-wrangler-output.ndjson
+          WRANGLER_SEND_METRICS: "false"
+          WRANGLER_SEND_ERROR_REPORTS: "false"
+        run: |
+          set -euo pipefail
+          deployed=false
+          for attempt in 1 2 3; do
+            if pnpm --filter @derive/docs deploy; then
+              deployed=true
+              break
+            fi
+            echo "::warning::docs deploy failed (attempt $attempt/3); retrying" >&2
+            sleep $((attempt * 10))
+          done
+          if [ "$deployed" != true ]; then
+            echo "docs deploy failed three times" >&2
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs"
+          const records = readFileSync(process.env.WRANGLER_OUTPUT_FILE_PATH, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line))
+          const deployment = records.findLast((record) => record.type === "deploy")
+          if (
+            !deployment?.version_id ||
+            deployment.worker_name !== "derive-docs" ||
+            !deployment.targets?.some((target) => String(target).includes("docs.derive.to"))
+          )
+            throw new Error("Wrangler did not record a derive-docs production deployment")
+          appendFileSync(
+            process.env.GITHUB_STEP_SUMMARY,
+            `### Documentation deployment\n\n- Worker: \`${deployment.worker_name}\`\n- Version: \`${deployment.version_id}\`\n- Target: https://docs.derive.to/\n`,
+          )
+          NODE
+
+      - name: Verify docs production
+        if: steps.head.outputs.stale != 'true'
+        run: |
+          set -euo pipefail
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            page=$(curl -fsS --max-time 15 https://docs.derive.to/ || true)
+            headers=$(curl -fsSI --max-time 15 https://docs.derive.to/ | tr -d '\r' || true)
+            missing=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+              https://docs.derive.to/this-page-must-not-exist || true)
+            asset=$(printf '%s' "$page" | grep -o '/_astro/[^" ]*' | head -n 1 || true)
+            asset_headers=""
+            if [ -n "$asset" ]; then
+              asset_headers=$(curl -fsSI --max-time 15 "https://docs.derive.to$asset" | tr -d '\r' || true)
+            fi
+            if printf '%s' "$page" | grep -Fq \
+              "<meta name=\"derive-docs-build\" content=\"$GITHUB_SHA\"/>" \
+              && printf '%s' "$headers" | grep -Eiq '^content-security-policy:' \
+              && printf '%s' "$headers" | grep -Eiq '^x-content-type-options: nosniff$' \
+              && printf '%s' "$asset_headers" | grep -Eiq \
+                '^cache-control: public, max-age=31536000, immutable$' \
+              && [ "$missing" = "404" ]; then
+              echo "docs production serving $GITHUB_SHA with hardened headers, immutable assets, and real 404s"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "docs production did not converge to $GITHUB_SHA (last unknown-path status: $missing)" >&2
+          exit 1

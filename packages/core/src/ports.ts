@@ -1432,12 +1432,17 @@ export interface ReviewStore {
   listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]>
   /** How many proposals are still awaiting a decision (for badges, no N+1). */
   openProposalCounts(artifactIds: string[]): Promise<Record<string, number>>
-  /** Record a reviewer's decision (approve / request changes / withdraw). */
+  /** Promote one still-open proposal and record its approval in the same database
+   * transaction. Null means another decision already won. */
+  approveOpenProposal(id: string, approval: ProposalApproval): Promise<VersionRecord | null>
+  /** Record a non-publishing decision on a still-open proposal. Null means another
+   * decision already won. */
   decideProposal(
     id: string,
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -1455,7 +1460,12 @@ export interface ReviewStore {
   /** Settle a round (`sent_back` or `approved`), stamping resolved_at + note. */
   resolveReviewRound(
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null>
 }
 
@@ -2659,19 +2669,18 @@ export interface BetaSignupRecord {
 
 /**
  * Where a signup came from. One row per user, recorded by the
- * auth layer's user-create hook from the `d_src` cookie the capture middleware
- * stamped on the way in; first write wins. Organic signups have no row.
+ * short, explicit signup URL handoff; first write wins. Organic signups have no row.
  */
 export interface SignupAttributionRecord {
   id: string
   /** The Better Auth user this attribution belongs to (no FK; auth owns its tables). */
   user_id: string
-  /** The sourcing surface: an artifact surface (badge, comment_wall, duplicate,
-   *  share_chrome, artifact_visit) or a campaign token (hn-launch, …). */
+  /** The explicit account handoff: a public CTA (badge, comment_wall,
+   *  make_your_own), beta form, sign-in link, or campaign token (hn-launch, …). */
   source_kind: string
   /** The artifact (short id) the sourcing surface lived on, when known. */
   source_artifact: string | null
-  /** Path of the page that stamped the cookie. */
+  /** Coarse path of the public surface that linked to signup. */
   landing_path: string | null
   /** Referrer host at stamp time. */
   referrer: string | null
@@ -2784,6 +2793,9 @@ export interface ProposalRecord {
   state: ProposalState
   /** Set once decided. */
   decided_by: string | null
+  /** Stable identity of the decider. Null only for historical rows that
+   *  predate identity-backed decisions. */
+  decided_by_id: string | null
   /** The version number it became on approval; null otherwise. */
   decided_version: number | null
   /** The reviewer's note when approving or requesting changes; the feedback. */
@@ -2806,6 +2818,16 @@ export interface NewProposal {
   base_version: number
 }
 
+/** The non-content inputs needed to promote one still-open proposal. The store
+ * owns the proposal bytes/byline and commits the version + decision together. */
+export interface ProposalApproval {
+  version_id: string
+  size_bytes: number
+  decided_by: string
+  decided_by_id: string
+  decision_note?: string | null
+}
+
 /** A review round's lifecycle. `pending` = the agent asked and is waiting;
  *  `sent_back` = the human returned their answers (the poll target); `approved` =
  *  the human signed off (the build go-signal). One pending round per person. */
@@ -2823,6 +2845,10 @@ export interface ReviewRoundRecord {
   state: ReviewRoundState
   /** Optional message from the requester, or the human's send-back note. */
   note: string | null
+  /** Stable identity of the human who settled the round. */
+  resolved_by: string | null
+  /** Snapshot name of the resolver, retained so history stays legible. */
+  resolved_by_name: string | null
   created_at: string
   resolved_at: string | null
 }

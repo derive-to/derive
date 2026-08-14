@@ -1,0 +1,36 @@
+import { CardGrid, LinkButton, LinkCard } from '@astrojs/starlight/components';
+
+Derive gives every plan, report, page, or deck one durable URL. People review the exact
+work, a compatible agent reads the feedback and revises it, and a named approval closes
+the loop.
+
+<LinkButton href="/start/first-artifact/">Publish your first artifact</LinkButton>{' '}
+<LinkButton href="https://derive.to/" variant="secondary" icon="external">
+  Open hosted Derive
+</LinkButton>
+
+## Choose your path
+
+<CardGrid>
+  <LinkCard title="Try it without an account" href="/start/first-artifact/" description="Publish an anonymous draft with one HTTP request and inspect the rendered result." />
+  <LinkCard title="Connect an agent" href="/agents/connect/" description="Use the remote MCP server or install Derive's skill in a compatible coding agent." />
+  <LinkCard title="Self-host Derive" href="/self-hosting/quickstart/" description="Run the complete product in one container with SQLite and local storage by default." />
+  <LinkCard title="Build against the API" href="/reference/api/" description="Use the OpenAPI document, interactive reference, and standard discovery endpoints." />
+</CardGrid>
+
+## The shortest useful explanation
+
+1. Publish HTML, Markdown, or a complete static site.
+2. Share the artifact's durable URL with the people who should review it.
+3. Reviewers comment on exact text and approve a named version or request changes.
+4. Your agent reads open feedback, revises the same artifact, and asks for review again.
+
+The content, every version, each thread, and the final decision stay together. The source
+of truth is the artifact—not one model's chat history.
+
+## Hosted and self-hosted are the same product
+
+The hosted service at [derive.to](https://derive.to/) is the fastest way
+to start. The self-hosted image exposes the same web application, API, MCP server, and
+review model on your infrastructure. Derive is Fair Source today; see
+[Licensing](/reference/licensing/) for the exact terms and conversion schedule.

@@ -11,6 +11,26 @@
 
 import { decodeEntities, pageText } from "./anchor"
 
+const safeLinkHref = (raw: string | null): string | null => {
+  if (!raw) return null
+  const href = raw.trim()
+  if (!href) return null
+  for (const char of href) {
+    const code = char.charCodeAt(0)
+    if (code <= 31 || code === 127) return null
+  }
+  const colon = href.indexOf(":")
+  const boundary = [href.indexOf("/"), href.indexOf("?"), href.indexOf("#")]
+    .filter((at) => at >= 0)
+    .reduce((lowest, at) => Math.min(lowest, at), Number.POSITIVE_INFINITY)
+  if (colon >= 0 && colon < boundary) {
+    const scheme = href.slice(0, colon).toLowerCase()
+    if (scheme !== "http" && scheme !== "https" && scheme !== "mailto" && scheme !== "tel")
+      return null
+  }
+  return encodeURI(href).replace(/\(/g, "%28").replace(/\)/g, "%29")
+}
+
 /** One heading in a document's h1–h6 spine. `chars` is the section's raw-source size
  *  (heading included) — a cheap budget proxy for what reading that section costs. */
 export interface OutlineSection {
@@ -415,8 +435,7 @@ export function htmlToMarkdown(html: string): string {
         break
       case "a": {
         if (!tag.closing) {
-          const href = attrOf(tag.attrs, "href")
-          const usable = href && !href.startsWith("javascript:") ? href : null
+          const usable = safeLinkHref(attrOf(tag.attrs, "href"))
           linkHrefs.push(usable)
           if (usable) append("[")
         } else {
@@ -441,7 +460,8 @@ export function htmlToMarkdown(html: string): string {
           if (rows.length) {
             const width = Math.max(...rows.map((r) => r.length))
             const norm = rows.map((r) => [...r, ...Array(width - r.length).fill("")])
-            const clean = (c: string) => collapse(c).trim().replace(/\|/g, "\\|")
+            const clean = (c: string) =>
+              collapse(c).trim().replace(/\\/g, "\\\\").replace(/\|/g, "\\|")
             const line = (r: string[]) => `| ${r.map(clean).join(" | ")} |`
             const aligns = table.aligns
             const sep = `| ${Array.from({ length: width }, (_, i) => aligns[i] ?? "---").join(" | ")} |`

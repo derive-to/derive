@@ -18,6 +18,7 @@
       "!**/api-types.ts",
       "!**/dist",
       "!**/.output",
+      "!**/.astro",
       "!**/.vinxi",
       "!data",
       "!docs",

@@ -52,7 +52,7 @@ export function Roadmap() {
         </div>
 
         <Eyebrow as="footer" className="flex flex-wrap items-center justify-between gap-2 pt-5">
-          <span>Derive · publish, review, and own your AI artifacts</span>
+          <span>Derive · turn agent output into approved work</span>
           <a href="https://derive.to" className="transition-colors hover:text-foreground">
             derive.to
           </a>

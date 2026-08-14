@@ -12,6 +12,7 @@ import {
   profileMetaTags,
   profileSummary,
   refFor,
+  setRobotsMeta,
   type UnfurlInfo,
   unfurlMetaTags,
 } from "@derive/core"
@@ -294,24 +295,19 @@ export const embedRoutes = (ctx: AppContext) => {
   const getShell = async (): Promise<string | null> =>
     ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
   if (ctx.deps.shell || ctx.deps.shellFetch)
-    // NOT edge-cached, and the reason is worth keeping: this response carries a
-    // Set-Cookie (`d_src`, the signup-source stamp that captureSignupSource() puts on
-    // every HTML entry point), and Cloudflare's Cache API refuses to store any response
-    // with Set-Cookie — cache.put simply rejects. Caching it would mean stripping that
-    // cookie from the stored copy, which silently drops signup attribution for exactly
-    // the arrivals attribution exists to measure: people following a shared link. That
-    // is a product trade, not a perf one, and the perf case is weak anyway — measured in
-    // isolation this page answers in ~140ms, near the network floor. (The 266-618ms
-    // figure that motivated the attempt was a browser measurement taken under full
-    // page-load contention, not the page's own cost.)
+    // Deliberately dynamic: readability, takedown state, status, and unfurl metadata
+    // can differ by artifact and request. Signup attribution is carried explicitly by
+    // CTA URLs, so this response no longer sets or depends on a tracking cookie.
     app.get("/artifacts/:ref", async (c) => {
       const shell = await getShell()
       if (!shell) return c.notFound()
       const ref = c.req.param("ref")
       const artifact = await readable(c, ref)
-      // A taken-down artifact serves the bare shell (the SPA shows a tombstone) and
-      // injects NO unfurl meta, so the removed title doesn't live on for crawlers.
-      if (!artifact || artifact.removed_at) return c.html(shell)
+      // Missing, gated, and taken-down artifacts still hydrate the SPA so a human
+      // gets its access/tombstone state, but carry a real 404 plus noindex so crawlers
+      // do not treat the generic application shell as a page.
+      if (!artifact || artifact.removed_at)
+        return c.html(setRobotsMeta(shell, "noindex,nofollow"), 404)
       // Canonicalise any non-canonical ref (bare id, stale name, legacy order) to
       // /artifacts/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not
       // 301) so a later rename re-canonicalises instead of being cached. Only ever for an
@@ -321,7 +317,13 @@ export const embedRoutes = (ctx: AppContext) => {
       const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
       if (ref !== canonical)
         return c.redirect(`/artifacts/${canonical}${new URL(c.req.url).search}`, 302)
-      return c.html(injectHead(shell, unfurlMetaTags(await infoFor(artifact))))
+      const indexable =
+        artifact.listed === "public" &&
+        artifact.link_role !== "none" &&
+        !artifact.password_hash &&
+        !artifact.expires_at
+      const governedShell = setRobotsMeta(shell, indexable ? "index,follow" : "noindex,nofollow")
+      return c.html(injectHead(governedShell, unfurlMetaTags(await infoFor(artifact))))
     })
   // Server-rendered profile URL: the SPA shell with profile OG/Twitter meta injected for
   // crawlers (which don't run JS). Humans get the SPA as usual (the meta is inert). Only
@@ -331,10 +333,10 @@ export const embedRoutes = (ctx: AppContext) => {
       const shell = await getShell()
       if (!shell) return c.notFound()
       const card = await profileCardFor(c.req.param("handle"))
-      if (!card) return c.html(shell)
+      if (!card) return c.html(setRobotsMeta(shell, "noindex,nofollow"), 404)
       return c.html(
         injectHead(
-          shell,
+          setRobotsMeta(shell, "index,follow"),
           profileMetaTags({
             username: card.username,
             name: card.name,
@@ -414,7 +416,7 @@ const embedShell = (data: { info: UnfurlInfo; src: string; plaque?: boolean } | 
   const infoIcon =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5"/><path d="M12 7.7h.01"/></svg>'
   const tip =
-    "<b>Derive</b> is the home for AI artifacts: publish from any agent, review together, and own the result at a permanent versioned URL."
+    "<b>Derive</b> is review and approval for agent-made work: publish from a compatible agent, review together, and keep every version and decision at one durable URL."
   // White-label (plaque:false) keeps the framed shell, just without the mark.
   const plaqueHtml = (d: { info: UnfurlInfo }) =>
     `<div class="p"><a class="b" href="${escapeHtml(`${d.info.pageUrl}?ref=embed&src=embed_badge`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a><button type="button" class="i" aria-label="What is Derive?" aria-describedby="dtip">${infoIcon}</button><span class="tip" id="dtip" role="tooltip">${tip}</span></div>`
