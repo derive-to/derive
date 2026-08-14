@@ -134,7 +134,7 @@ function SceneInspect({
         <div className="flex items-center gap-2">
           <input
             data-testid="artifact-inspect-scene-duration"
-            key={`${video.id}-duration`}
+            key={`${video.id}-duration-${video.durationMs}`}
             type="number"
             min={1}
             max={30}
@@ -151,7 +151,7 @@ function SceneInspect({
         Transition
         <select
           data-testid="artifact-inspect-scene-transition"
-          key={`${video.id}-transition`}
+          key={`${video.id}-transition-${video.transition}`}
           defaultValue={video.transition}
           disabled={saving}
           className="h-9 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground"
@@ -167,7 +167,7 @@ function SceneInspect({
         Caption
         <textarea
           data-testid="artifact-inspect-scene-caption"
-          key={`${video.id}-caption`}
+          key={`${video.id}-caption-${video.caption}`}
           defaultValue={video.caption}
           maxLength={500}
           disabled={saving}
@@ -180,7 +180,7 @@ function SceneInspect({
         <div className="flex items-center gap-2">
           <input
             data-testid="artifact-inspect-scene-transition-duration"
-            key={`${video.id}-transition-duration`}
+            key={`${video.id}-transition-duration-${video.transitionMs}`}
             type="number"
             min={0.1}
             max={2}
