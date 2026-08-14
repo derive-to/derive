@@ -108,9 +108,12 @@ export const setRobotsMeta = (
   shellHtml: string,
   content: "index,follow" | "noindex,nofollow",
 ): string => {
-  const withoutExisting = shellHtml.replace(
-    /\s*<meta\b(?=[^>]*\bname=["']robots["'])[^>]*>\s*/gi,
-    "",
+  // Keep the scan linear on untrusted artifact HTML. A single expression with
+  // overlapping `\s*` and `[^>]*` branches can backtrack polynomially on a
+  // deliberately long tag. First bound each meta tag, then inspect only that
+  // tag for the robots attribute.
+  const withoutExisting = shellHtml.replace(/<meta\b[^>]*>/gi, (tag) =>
+    /\bname\s*=\s*(?:"robots"|'robots')/i.test(tag) ? "" : tag,
   )
   return injectHead(withoutExisting, `<meta name="robots" content="${content}">`)
 }

@@ -91,6 +91,24 @@ describe("setRobotsMeta", () => {
     expect(html).toContain('content="index,follow"')
     expect(html).not.toContain("noindex")
   })
+
+  it("recognizes attribute order, spacing, case, and either quote style", () => {
+    const html = setRobotsMeta(
+      "<head><meta content='noindex,nofollow' NAME = 'ROBOTS'><META NAME=\"robots\" content=\"noindex\"><title>x</title></head>",
+      "index,follow",
+    )
+    expect(html.match(/name="robots"/g)).toHaveLength(1)
+    expect(html).not.toContain("noindex")
+  })
+
+  it("preserves unrelated metadata", () => {
+    const html = setRobotsMeta(
+      '<head><meta name="description" content="robots"><meta property="og:title" content="x"></head>',
+      "noindex,nofollow",
+    )
+    expect(html).toContain('<meta name="description" content="robots">')
+    expect(html).toContain('<meta property="og:title" content="x">')
+  })
 })
 
 describe("ogCardSvg", () => {

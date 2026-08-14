@@ -180,7 +180,11 @@ requireText(
   "<loc>https://derive.to/examples</loc>",
   "index public examples",
 )
-if (read("apps/web/public/sitemap.xml").includes("https://derive.to/guides"))
+if (
+  read("apps/web/public/sitemap.xml")
+    .split("\n")
+    .some((line) => line.trim() === "<loc>https://derive.to/guides</loc>")
+)
   fail("derive.to sitemap must not index the permanent /guides redirect")
 if (existsSync(join(ROOT, "apps/web/public/site/guides.html")))
   fail("the retired derive.to guides page must not compete with docs.derive.to")
