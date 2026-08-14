@@ -8,15 +8,14 @@ import {
   type Role,
   type WorkspaceAccess,
 } from "@/api"
-import { Icon, type IconName } from "@/components/icons"
-import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
-import { EmptyState } from "@/components/shared/empty-state"
-import { PersonSearchInput } from "@/components/shared/person-search-input"
-import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
-import { Spinner } from "@/components/shared/spinner"
-import { WorldLinkControls } from "@/components/shared/world-link-controls"
-import { Button } from "@/components/ui/button"
+import {
+  accessIcon,
+  accessSummary,
+  ShareAccessSection,
+  ShareCopyLinkButton,
+  SharePeopleSection,
+  type ShareSegment,
+} from "@/components/shared/share-dialog-sections"
 import {
   Dialog,
   DialogContent,
@@ -25,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { toast } from "@/components/ui/sonner"
+import { useAuth } from "@/ctx"
 import { useCopy } from "@/lib/clipboard"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
@@ -32,13 +32,6 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 // Anyone segment — a collection isn't individually link-servable content, it's a
 // grouping of other artifacts, each with its own access. So just the one
 // question: invite-only, or does the workspace reach it at each member's seat?
-type Segment = "invite" | "workspace" | "anyone"
-const SEGMENTS: { value: Segment; label: string; icon: IconName }[] = [
-  { value: "invite", label: "Invited", icon: "lock" },
-  { value: "workspace", label: "Workspace", icon: "workspace" },
-  { value: "anyone", label: "Anyone", icon: "globe" },
-]
-
 // Share a collection: who can open it at all (Invited vs Workspace, applies
 // immediately, no Save — mirrors the artifact ShareDialog), plus the people
 // roster whose role applies to every artifact inside it.
@@ -58,6 +51,7 @@ export function ShareCollectionDialog({
    *  onClose, so an Escape mid-flight can't race the write. */
   onChanged?: () => void
 }) {
+  const { me } = useAuth()
   const [members, setMembers] = useState<ArtifactMember[]>([])
   const [invites, setInvites] = useState<ArtifactInvite[]>([])
   const [email, setEmail] = useState("")
@@ -141,10 +135,10 @@ export function ShareCollectionDialog({
     },
   })
   const applyAccess = (next: AccessDraft) => accessMut.mutate(next)
-  const segment: Segment =
+  const segment: ShareSegment =
     linkRole !== "none" ? "anyone" : wsAccess === "member" ? "workspace" : "invite"
   const linkRoleValue: Exclude<LinkRole, "none"> = linkRole === "none" ? "viewer" : linkRole
-  const pickSegment = (next: Segment) => {
+  const pickSegment = (next: ShareSegment) => {
     if (next === "invite") return applyAccess({ workspaceAccess: "none", linkRole: "none" })
     if (next === "workspace") return applyAccess({ workspaceAccess: "member", linkRole: "none" })
     return applyAccess({ workspaceAccess: "member", linkRole: linkRoleValue })
@@ -222,7 +216,7 @@ export function ShareCollectionDialog({
         if (!o) onClose()
       }}
     >
-      <DialogContent aria-describedby={undefined}>
+      <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="line-clamp-1 pr-6">Share “{collection.title}”</DialogTitle>
           <DialogDescription>
@@ -232,181 +226,55 @@ export function ShareCollectionDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-6">
-          <div>
-            <SectionEyebrow action={accessMut.isPending && <Spinner className="size-3" />}>
-              Who can open this
-            </SectionEyebrow>
-            {canManage ? (
-              <div className="mt-2 flex flex-col">
-                <AccessSegmentToggle
-                  segments={SEGMENTS}
-                  value={segment}
-                  onChange={pickSegment}
-                  disabled={accessMut.isPending}
-                  testId="collection-share-access"
-                />
-                {segment === "invite" ? (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    Only the people you add below can open this.
-                  </p>
-                ) : segment === "workspace" ? (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    Everyone in the workspace opens this at their role — admins manage, editors
-                    edit, commenters comment.
-                  </p>
-                ) : (
-                  <WorldLinkControls
-                    role={linkRoleValue}
-                    pending={accessMut.isPending}
-                    hasLock={hasLock}
-                    lockDraft={lockDraft}
-                    passwordOpen={passwordOpen}
-                    password={password}
-                    testPrefix="collection-share"
-                    onRoleChange={(next) =>
-                      applyAccess({ workspaceAccess: wsAccess, linkRole: next })
-                    }
-                    onLockChange={toggleLock}
-                    onPasswordOpen={() => setPasswordOpen(true)}
-                    onPasswordChange={setPassword}
-                    onPasswordSet={(next) => applyAccess(currentWithPassword(next))}
-                  />
-                )}
-              </div>
-            ) : (
-              <p className="mt-2 text-sm text-muted-foreground">
-                {wsAccess === "member"
-                  ? "Everyone in the workspace can open this."
-                  : "Only people added below can open this."}
-              </p>
-            )}
-          </div>
+          <ShareAccessSection
+            canManage={canManage}
+            pending={accessMut.isPending}
+            segment={segment}
+            testPrefix="collection-share"
+            inviteCopy="Only the people you add below can open this."
+            workspaceCopy="Everyone in the workspace opens this at their role — admins manage, editors edit, commenters comment."
+            readOnlyIcon={accessIcon(linkRole, wsAccess)}
+            readOnlyCopy={accessSummary(linkRole, wsAccess)}
+            onSegmentChange={pickSegment}
+            world={{
+              role: linkRoleValue,
+              hasLock,
+              lockDraft,
+              passwordOpen,
+              password,
+              onRoleChange: (next) => applyAccess({ workspaceAccess: wsAccess, linkRole: next }),
+              onLockChange: toggleLock,
+              onPasswordOpen: () => setPasswordOpen(true),
+              onPasswordChange: setPassword,
+              onPasswordSet: (next) => applyAccess(currentWithPassword(next)),
+            }}
+          />
 
-          <div>
-            <SectionEyebrow>People with access</SectionEyebrow>
-            {canManage && (
-              <form onSubmit={add} className="mt-2 flex gap-1.5">
-                <PersonSearchInput
-                  value={email}
-                  onChange={setEmail}
-                  placeholder="@username or email"
-                  testId="collection-share-email"
-                  className="min-w-0"
-                />
-                <RoleSelect
-                  value={role}
-                  onChange={setRole}
-                  data-testid="collection-share-role"
-                  className="w-28 shrink-0"
-                />
-                {/* Add is this dialog's one filled primary — sm to sit flush with
-                    the h-8 row chassis, matching ShareDialog's add row. */}
-                <Button
-                  variant="default"
-                  size="sm"
-                  type="submit"
-                  data-testid="collection-share-add"
-                  loading={addMut.isPending}
-                >
-                  {addMut.isPending ? "Adding…" : "Add"}
-                </Button>
-              </form>
-            )}
-
-            {members.length === 0 ? (
-              <EmptyState className="mt-2 p-6">No one shared yet.</EmptyState>
-            ) : (
-              <div className="mt-2 flex flex-col gap-1.5">
-                {members.map((m) => {
-                  const who = m.name ?? (m.handle ? `@${m.handle}` : "member")
-                  return (
-                    <div key={m.user_id} className="flex items-center gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-foreground">
-                          {m.name ?? (m.handle ? `@${m.handle}` : m.user_id)}
-                        </div>
-                        {m.name && m.handle && (
-                          <div className="truncate font-mono text-2xs text-muted-foreground">
-                            @{m.handle}
-                          </div>
-                        )}
-                      </div>
-                      {/* The creator's row is fixed — a collection's creator is
-                        permanently owner via created_by regardless of member rows
-                        (collectionRole checks it first), so their role can't be
-                        changed and removing the row wouldn't revoke access, just
-                        orphan the roster. Show it read-only even to a manager (the
-                        backend rejects demote/remove of the creator too). */}
-                      {canManage && m.user_id !== collection.created_by ? (
-                        <>
-                          <RoleSelect
-                            value={m.role}
-                            onChange={(next) => change(m, next)}
-                            data-testid={`collection-share-member-role-${m.user_id}`}
-                            aria-label={`Role for ${who}`}
-                            className="w-28 shrink-0"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            data-testid={`collection-share-remove-${m.user_id}`}
-                            onClick={() => remove(m)}
-                            aria-label={`Remove ${who}`}
-                          >
-                            <Icon name="close" />
-                          </Button>
-                        </>
-                      ) : (
-                        <span className="shrink-0 text-sm text-muted-foreground">
-                          {ROLE_LABELS[m.role]}
-                        </span>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-            {invites.length > 0 && (
-              <div className="mt-2 flex flex-col gap-1.5">
-                {invites.map((invite) => (
-                  <div key={invite.id} className="flex items-center gap-2">
-                    <Icon name="mail" className="text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {invite.email}
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        Invited · joins as {ROLE_LABELS[invite.role]} once they accept
-                      </div>
-                    </div>
-                    {canManage && (
-                      <Button
-                        data-testid={`collection-share-invite-revoke-${invite.id}`}
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => revokeInviteMut.mutate(invite.id)}
-                        aria-label={`Revoke the invite to ${invite.email}`}
-                      >
-                        <Icon name="close" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <SharePeopleSection
+            members={members}
+            invites={invites}
+            currentUserId={me?.id}
+            canManage={canManage}
+            email={email}
+            role={role}
+            pending={addMut.isPending}
+            testPrefix="collection-share"
+            memberIsFixed={(member) => member.user_id === collection.created_by}
+            onEmailChange={setEmail}
+            onRoleChange={setRole}
+            onAdd={add}
+            onMemberRoleChange={change}
+            onRemoveMember={remove}
+            onRevokeInvite={(inviteId) => revokeInviteMut.mutate(inviteId)}
+          />
         </div>
 
-        <div className="border-t border-border pt-4">
-          <Button
-            data-testid="collection-share-url-copy"
-            variant="outline"
-            size="sm"
-            onClick={() => copy(shareUrl)}
-          >
-            <Icon name={copied ? "check" : "link"} />
-            {copied ? "Copied" : "Copy link"}
-          </Button>
+        <div className="flex items-center justify-between border-t border-border pt-4">
+          <ShareCopyLinkButton
+            copied={copied}
+            testPrefix="collection-share"
+            onCopy={() => copy(shareUrl)}
+          />
         </div>
       </DialogContent>
     </Dialog>
