@@ -15,7 +15,9 @@ export default defineConfig({
       // 2k+ permanently-uncovered lines, which turns this gate into a measure of how
       // BIG the client is rather than how well the shared logic is tested. Its
       // generated twin is one string constant.
-      exclude: ["src/anchor-client.ts", "src/anchor-client.gen.ts"],
+      // deck-template.html is source content imported as a raw string, not JavaScript.
+      // Asking V8/Rolldown to remap it emits a parse error after an otherwise-green run.
+      exclude: ["src/anchor-client.ts", "src/anchor-client.gen.ts", "src/**/*.html"],
       reporter: ["text-summary"],
       // Ratchet floors just under current (92.5/83.0/92.5/94.3 with the browser
       // client out of the denominator). Raise over time.

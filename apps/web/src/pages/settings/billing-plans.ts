@@ -18,7 +18,7 @@ export const PLANS = [
   {
     tier: "free",
     name: "Free",
-    tagline: "For individuals, open-source projects, and small teams.",
+    tagline: "For individuals, independent projects, and small teams.",
     price: { month: "$0 forever", year: "$0 forever" },
     features: [
       "Up to 3 editors per workspace",

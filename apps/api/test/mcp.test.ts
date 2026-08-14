@@ -3051,7 +3051,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     const approved = await app.request(
       `/v1/artifacts/${created.short_id}/proposals/${p.proposal_id}/approve`,
-      { method: "POST", headers: { authorization: `Bearer ${token}` } },
+      { method: "POST", headers: { "x-test-user": "owner@x.test" } },
     )
     expect(approved.status).toBe(200)
     const read = toolText(await call(app, token, "read", { short_id: created.short_id }))

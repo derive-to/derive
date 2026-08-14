@@ -367,7 +367,7 @@ describe("propose: a candidate version awaiting review", () => {
     const blobs = makeBlobs()
     const { artifact } = await publish(meta, blobs, file("v1"))
     const { proposal } = await propose(meta, blobs, artifact.short_id, proposeInput("candidate"))
-    const version = await approveProposal(meta, blobs, proposal, "amy", "lgtm")
+    const version = await approveProposal(meta, blobs, proposal, "amy", "u_amy", "lgtm")
     expect(version.n).toBe(2)
     expect(version.blob_key).toBe(proposal.blob_key) // reuses the proposal's stored bytes
   })
@@ -378,7 +378,7 @@ describe("propose: a candidate version awaiting review", () => {
     const { artifact } = await publish(meta, blobs, file("v1"))
     const { proposal } = await propose(meta, blobs, artifact.short_id, proposeInput("candidate"))
     await expect(
-      approveProposal(meta, blobs, { ...proposal, state: "approved" }, "amy"),
+      approveProposal(meta, blobs, { ...proposal, state: "approved" }, "amy", "u_amy"),
     ).rejects.toMatchObject({ statusCode: 409 })
   })
 })

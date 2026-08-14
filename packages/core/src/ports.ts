@@ -1433,6 +1433,7 @@ export interface ReviewStore {
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -1450,7 +1451,12 @@ export interface ReviewStore {
   /** Settle a round (`sent_back` or `approved`), stamping resolved_at + note. */
   resolveReviewRound(
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null>
 }
 
@@ -2654,8 +2660,7 @@ export interface BetaSignupRecord {
 
 /**
  * Where a signup came from. One row per user, recorded by the
- * auth layer's user-create hook from the `d_src` cookie the capture middleware
- * stamped on the way in; first write wins. Organic signups have no row.
+ * short, explicit signup URL handoff; first write wins. Organic signups have no row.
  */
 export interface SignupAttributionRecord {
   id: string
@@ -2666,7 +2671,7 @@ export interface SignupAttributionRecord {
   source_kind: string
   /** The artifact (short id) the sourcing surface lived on, when known. */
   source_artifact: string | null
-  /** Path of the page that stamped the cookie. */
+  /** Coarse path of the public surface that linked to signup. */
   landing_path: string | null
   /** Referrer host at stamp time. */
   referrer: string | null
@@ -2779,6 +2784,9 @@ export interface ProposalRecord {
   state: ProposalState
   /** Set once decided. */
   decided_by: string | null
+  /** Stable identity of the decider. Null only for historical rows that
+   *  predate identity-backed decisions. */
+  decided_by_id: string | null
   /** The version number it became on approval; null otherwise. */
   decided_version: number | null
   /** The reviewer's note when approving or requesting changes; the feedback. */
@@ -2818,6 +2826,10 @@ export interface ReviewRoundRecord {
   state: ReviewRoundState
   /** Optional message from the requester, or the human's send-back note. */
   note: string | null
+  /** Stable identity of the human who settled the round. */
+  resolved_by: string | null
+  /** Snapshot name of the resolver, retained so history stays legible. */
+  resolved_by_name: string | null
   created_at: string
   resolved_at: string | null
 }

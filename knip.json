@@ -14,8 +14,17 @@
       ],
       "ignoreDependencies": ["express"]
     },
+    "apps/docs": {
+      "entry": ["scripts/*.mjs"],
+      "ignore": ["content/**", "src/styles/**"]
+    },
     "apps/web": {
-      "entry": ["src/components/ui/**", "e2e/**/*.screens.ts"]
+      "entry": [
+        "src/components/ui/**",
+        "e2e/**/*.screens.ts",
+        "e2e/public-quality/static-server.mjs",
+        "public/site/guides.css"
+      ]
     },
     "packages/cli": {
       "ignore": ["src/runner.d.ts"]

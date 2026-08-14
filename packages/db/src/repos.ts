@@ -3020,6 +3020,7 @@ export function makeRepos(db: SqliteDb) {
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -3076,7 +3077,12 @@ export function makeRepos(db: SqliteDb) {
       .all()
   const resolveReviewRound = async (
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null> =>
     (await db
       .update(reviewRound)

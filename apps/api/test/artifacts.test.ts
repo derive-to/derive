@@ -454,7 +454,7 @@ describe("single-container web serving", () => {
   it("serves the API landing at / by default", async () => {
     const r = await app.request("/")
     expect(r.status).toBe(200)
-    expect(await r.text()).toContain("open home for AI-generated artifacts")
+    expect(await r.text()).toContain("Review and approval for work made by AI agents")
   })
 
   it("drops the / placeholder when serveWeb is set, so the bundled SPA owns the shell", async () => {

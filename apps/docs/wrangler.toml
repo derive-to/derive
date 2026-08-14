@@ -1,0 +1,16 @@
+name = "derive-docs"
+compatibility_date = "2026-08-14"
+workers_dev = false
+preview_urls = false
+
+# Documentation is a separate, static-only Worker. It has no API, database,
+# cookies, or application runtime: Astro emits HTML and Pagefind's local index,
+# and Cloudflare serves those immutable assets directly.
+[assets]
+directory = "./dist"
+html_handling = "force-trailing-slash"
+not_found_handling = "404-page"
+
+[[routes]]
+pattern = "docs.derive.to"
+custom_domain = true

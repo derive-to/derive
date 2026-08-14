@@ -11,12 +11,18 @@ export const CONFIG_FILE = "derive.json"
 export const CLOUD_SERVER = "https://derive.to"
 export const LOCAL_SERVER = "http://localhost:8080"
 
+const withoutTrailingSlashes = (value) => {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(0, end)
+}
+
 /** Resolve the target server: `--server` wins, then `--local`, then a project's
  *  derive.json server, then DERIVE_SERVER, else the hosted cloud. */
 export function resolveServer(opts = {}, config = null) {
-  if (opts.server) return String(opts.server).replace(/\/+$/, "")
+  if (opts.server) return withoutTrailingSlashes(String(opts.server))
   if (opts.local) return LOCAL_SERVER
-  return (config?.server ?? process.env.DERIVE_SERVER ?? CLOUD_SERVER).replace(/\/+$/, "")
+  return withoutTrailingSlashes(config?.server ?? process.env.DERIVE_SERVER ?? CLOUD_SERVER)
 }
 
 // ---- User-level credentials (`derive login`) --------------------------------
@@ -349,8 +355,13 @@ export function describeWorkspace(server, accountId, ref, description) {
   if (!account) throw new Error(`no such account: ${accountId}`)
   const found = findWorkspace(account.workspaces ?? {}, ref)
   if (!found) throw new Error(`no workspace "${ref}" for this account`)
-  if (description) account.workspaces[found.id].description = description
-  else delete account.workspaces[found.id].description
+  const workspace = Object.hasOwn(account.workspaces, found.id)
+    ? Object.getOwnPropertyDescriptor(account.workspaces, found.id)?.value
+    : null
+  if (!workspace || typeof workspace !== "object")
+    throw new Error(`workspace "${ref}" has an invalid local record`)
+  if (description) workspace.description = description
+  else delete workspace.description
   persistEntry(server, entry)
   return found
 }

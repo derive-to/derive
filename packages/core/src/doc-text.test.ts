@@ -93,6 +93,26 @@ describe("htmlToMarkdown", () => {
     expect(md).toBe("| Name | N |\n| --- | ---: |\n| a\\|b | 1 |")
   })
 
+  it("escapes backslashes before table pipes so a cell cannot break the table", () => {
+    const md = htmlToMarkdown(doc("<table><tr><th>A</th></tr><tr><td>x\\|y</td></tr></table>"))
+    expect(md).toContain("x\\\\\\|y")
+  })
+
+  it("drops active and unknown link schemes while preserving safe and relative links", () => {
+    const md = htmlToMarkdown(
+      doc(
+        '<p><a href="javascript:alert(1)">js</a> <a href="data:text/html,x">data</a> ' +
+          '<a href="vbscript:msgbox(1)">vb</a> <a href="/safe">relative</a> ' +
+          '<a href="https://example.com/a(b)">https</a></p>',
+      ),
+    )
+    expect(md).not.toContain("javascript:")
+    expect(md).not.toContain("data:")
+    expect(md).not.toContain("vbscript:")
+    expect(md).toContain("[relative](/safe)")
+    expect(md).toContain("[https](https://example.com/a%28b%29)")
+  })
+
   it("wraps inline <code> found inside table cells (regression: found via real Sift docs)", () => {
     const md = htmlToMarkdown(
       doc(

@@ -3729,6 +3729,7 @@ export class PgMetaStore implements MetaStore {
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -3785,7 +3786,12 @@ export class PgMetaStore implements MetaStore {
   }
   async resolveReviewRound(
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null> {
     const rows = await this.db
       .update(reviewRound)

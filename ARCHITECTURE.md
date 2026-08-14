@@ -8,7 +8,8 @@ SPA. The same code self-hosts on SQLite + local disk or scales on Postgres + S3/
 derive.to/
 ├─ apps/
 │  ├─ api/         Hono server: routes, auth, realtime, the container entrypoint
-│  └─ web/         TanStack Start SPA (front-end; separate workstream)
+│  ├─ web/         TanStack Start SPA (front-end; separate workstream)
+│  └─ docs/        Static Starlight site deployed independently at docs.derive.to
 ├─ packages/
 │  ├─ core/        runtime-agnostic domain — the MetaStore/BlobStore ports, ids,
 │  │              mime, hashing, publish/propose/approve, permissions, markdown,
@@ -60,6 +61,19 @@ the bundled SPA when present.
 - **Domain mode (C1):** hosts registered in the `domain` table (vanity subdomains,
   per-artifact drafts, workspace custom domains) serve artifact bytes at their own
   origin — only bytes and the anchor client, never the app, auth, or API.
+
+## apps/docs
+
+`apps/docs` builds the static public documentation for `docs.derive.to`. It is deliberately a
+separate Cloudflare Worker from the hosted product: documentation releases, static caching, and
+failure modes do not share the API, database, storage, or application-secret bindings.
+
+`apps/docs/docs-manifest.mjs` is the route and source inventory. Docs-specific onboarding lives
+in `apps/docs/content/`; durable repository documents such as `DEPLOY.md`, `SECURITY.md`, and the
+CLI/MCP READMEs remain canonical. The sync step generates Starlight content, source edit links,
+last-updated dates, rewritten internal links, `robots.txt`, and both concise and full LLM indexes.
+The build guard validates the declared routes, local Pagefind index, canonical URLs, sitemap,
+internal links, and real 404 output before deployment.
 
 ## packages/db — the adapters
 

@@ -50,7 +50,7 @@ Once connected you can publish a page, read its review comments, and run the pro
 // Self-host: run Derive yourself first, then connect. Mirrors DEPLOY.md's single-
 // container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
 const selfHostPrompt = () =>
-  `Set up a self-hosted Derive for me, then connect this agent to it. Derive is an open-source living-docs tool (permanent versioned URLs + inline review comments) that is itself a remote MCP server.
+  `Set up a self-hosted Derive for me, then connect this agent to it. Derive is a Fair Source review-and-approval tool for agent-made work (durable versioned URLs + inline review comments) that is itself a remote MCP server.
 
 Please:
 1. From a Derive checkout (the directory with deploy/Dockerfile), run the single-container image (state lives in the derive_data volume):
@@ -170,7 +170,7 @@ function AnyAgentPrompt({ testidPrefix, url }: { testidPrefix: string; url: stri
     <>
       <p className="text-sm text-pretty text-muted-foreground">
         {devMode
-          ? "Spin up your own Derive, then connect your agent to it. Paste this into any agent."
+          ? "Spin up your own Derive, then connect your agent to it. Paste this into an MCP-capable agent."
           : "Paste this into any MCP-capable agent — it connects Derive so the agent can publish, review, and revise for you."}
       </p>
       {/* The self-host switch rides just above the snippet it swaps — a rarely-

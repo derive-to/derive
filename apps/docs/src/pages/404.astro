@@ -1,0 +1,23 @@
+---
+import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro"
+---
+
+<StarlightPage
+  frontmatter={{
+    title: "Page not found",
+    description: "That Derive documentation page does not exist.",
+    editUrl: false,
+    template: "splash",
+    head: [
+      {
+        tag: "meta",
+        attrs: { name: "robots", content: "noindex, nofollow" },
+      },
+    ],
+  }}
+>
+  <div data-pagefind-ignore>
+    <p>Check the URL, use documentation search, or return to the documentation home.</p>
+    <p><a href="/">Documentation home</a></p>
+  </div>
+</StarlightPage>

@@ -12,9 +12,7 @@
 
 <!-- How did you verify this? New/updated tests, manual steps, screenshots. -->
 
-- [ ] `pnpm typecheck` passes
-- [ ] `pnpm exec biome ci .` reports 0 errors
-- [ ] `pnpm test` passes
+- [ ] `pnpm verify` passes (the exact CI `check` gate, including coverage ratchets)
 - [ ] Added/updated tests for the change
 
 ## Notes for reviewers

@@ -69,9 +69,8 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
         schema_version: "1.0",
         name: "Derive",
         description:
-          "The permanent, versioned home for agent-built artifacts — documents, plans, and " +
-          "fully-styled HTML pages with durable URLs, text-anchored review comments, and a " +
-          "publish → review → revise loop.",
+          "Review and approval for agent-made work — documents, plans, and fully-styled HTML " +
+          "pages with durable URLs, text-anchored comments, revisions, and named decisions.",
         url: base,
         capabilities: [
           "Publish Markdown, HTML pages, and multi-page bundles as versioned artifacts with permanent URLs",
@@ -92,6 +91,8 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
           mcp: `${base}/mcp`,
           openapi: `${base}/openapi.json`,
           docs: `${base}/docs`,
+          guides: "https://docs.derive.to/",
+          examples: `${base}/examples`,
           skill: `${base}/skill.md`,
           llms_txt: `${base}/llms.txt`,
           llms_full_txt: `${base}/llms-full.txt`,

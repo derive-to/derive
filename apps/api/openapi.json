@@ -2414,6 +2414,11 @@
             "nullable": true,
             "description": "Free-text note attached to the round; null if none."
           },
+          "resolved_by_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "The human who settled the round; null while pending or for legacy history."
+          },
           "created_at": {
             "type": "string"
           },
@@ -2431,6 +2436,7 @@
           "requested_for",
           "state",
           "note",
+          "resolved_by_name",
           "created_at",
           "resolved_at"
         ]

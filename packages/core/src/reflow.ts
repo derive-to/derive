@@ -56,9 +56,85 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
 
 const INJECTION = `${VIEWPORT}${REFLOW_CSS}${FIT_SCRIPT}`
 
+interface OpeningTag {
+  index: number
+  source: string
+}
+
+const findTagEnd = (html: string, from: number): number => {
+  let quote: '"' | "'" | null = null
+  for (let at = from; at < html.length; at++) {
+    const char = html[at]
+    if (quote) {
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'") quote = char
+    else if (char === ">") return at
+  }
+  return -1
+}
+
+const findOpeningTag = (html: string, name: string, from = 0): OpeningTag | null => {
+  const lower = html.toLowerCase()
+  const needle = `<${name}`
+  let index = lower.indexOf(needle, from)
+  while (index >= 0) {
+    const boundary = lower[index + needle.length]
+    if (
+      boundary === ">" ||
+      boundary === "/" ||
+      boundary === " " ||
+      boundary === "\t" ||
+      boundary === "\n" ||
+      boundary === "\r"
+    ) {
+      const end = findTagEnd(html, index + needle.length)
+      return end < 0 ? null : { index, source: html.slice(index, end + 1) }
+    }
+    index = lower.indexOf(needle, index + needle.length)
+  }
+  return null
+}
+
+const attributeValue = (tag: string, wanted: string): string | null => {
+  let at = 1
+  while (at < tag.length && !/\s/.test(tag[at] ?? "")) at++
+  while (at < tag.length) {
+    while (/\s/.test(tag[at] ?? "")) at++
+    if (tag[at] === ">" || (tag[at] === "/" && tag[at + 1] === ">")) return null
+    const nameStart = at
+    while (at < tag.length && !/[\s=/>]/.test(tag[at] ?? "")) at++
+    const name = tag.slice(nameStart, at).toLowerCase()
+    while (/\s/.test(tag[at] ?? "")) at++
+    let value = ""
+    if (tag[at] === "=") {
+      at++
+      while (/\s/.test(tag[at] ?? "")) at++
+      const quote = tag[at] === '"' || tag[at] === "'" ? tag[at++] : null
+      const valueStart = at
+      if (quote) while (at < tag.length && tag[at] !== quote) at++
+      else while (at < tag.length && !/[\s>]/.test(tag[at] ?? "")) at++
+      value = tag.slice(valueStart, at)
+      if (quote && tag[at] === quote) at++
+    }
+    if (name === wanted) return value
+  }
+  return null
+}
+
 /** Does this document already declare a viewport? If so the author considered mobile and
  *  we leave it untouched. Matches any `<meta name="viewport" ...>` (single/double/unquoted). */
-const hasViewportMeta = (html: string): boolean => /<meta[^>]+name=["']?viewport["']?/i.test(html)
+const hasViewportMeta = (html: string): boolean => {
+  let from = 0
+  while (from < html.length) {
+    const tag = findOpeningTag(html, "meta", from)
+    if (!tag) return false
+    if (attributeValue(tag.source, "name")?.toLowerCase() === "viewport") return true
+    from = tag.index + tag.source.length
+  }
+  return false
+}
 
 /** True when the document looks like it was NOT built for mobile (no viewport declared) and
  *  is therefore a reflow candidate. Exported for serve-time gating + telemetry. */
@@ -73,14 +149,14 @@ export const needsReflow = (html: string): boolean => !hasViewportMeta(html)
  */
 export const reflowHtml = (html: string): string => {
   if (!needsReflow(html)) return html
-  const head = html.match(/<head[^>]*>/i)
-  if (head?.index !== undefined) {
-    const at = head.index + head[0].length
+  const head = findOpeningTag(html, "head")
+  if (head) {
+    const at = head.index + head.source.length
     return html.slice(0, at) + INJECTION + html.slice(at)
   }
-  const htmlTag = html.match(/<html[^>]*>/i)
-  if (htmlTag?.index !== undefined) {
-    const at = htmlTag.index + htmlTag[0].length
+  const htmlTag = findOpeningTag(html, "html")
+  if (htmlTag) {
+    const at = htmlTag.index + htmlTag.source.length
     return `${html.slice(0, at)}<head>${INJECTION}</head>${html.slice(at)}`
   }
   return INJECTION + html

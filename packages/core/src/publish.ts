@@ -374,7 +374,7 @@ export interface ProposeResult {
 
 /**
  * Stores a candidate version for review WITHOUT making it current. A commenter
- * (or an agent) proposes; an editor approves. The content is processed exactly
+ * (or an agent) proposes; a human editor approves. The content is processed exactly
  * like a publish, so the proposal renders identically to how it will once live.
  */
 export async function propose(
@@ -415,13 +415,15 @@ export async function propose(
 /**
  * Approving a proposal appends its stored content as the new current version
  * (the experience goes live) and stamps the proposal decided. History is never
- * rewritten: the proposal row stays as the audit trail of who approved what.
+ * rewritten: the proposal row keeps both the human's stable id and display-name
+ * snapshot as the audit trail of who approved what.
  */
 export async function approveProposal(
   meta: MetaStore,
   blobs: BlobStore,
   proposal: ProposalRecord,
-  approver: string | null,
+  approver: string,
+  approverId: string,
   note?: string | null,
 ): Promise<VersionRecord> {
   if (proposal.state !== "open")
@@ -444,6 +446,7 @@ export async function approveProposal(
   await meta.decideProposal(proposal.id, {
     state: "approved",
     decided_by: approver,
+    decided_by_id: approverId,
     decided_version: version.n,
     decision_note: note ?? null,
   })

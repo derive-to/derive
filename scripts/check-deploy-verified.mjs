@@ -66,8 +66,9 @@ const OPERATIONAL = ["/healthz", "/readyz"]
 const WRANGLER = "apps/api/wrangler.toml"
 const toml = readFileSync(WRANGLER, "utf8")
 const workerFirst = /run_worker_first\s*=\s*\[([^\]]*)\]/.exec(toml)?.[1] ?? ""
+const allWorkerFirst = /run_worker_first\s*=\s*true\b/.test(toml)
 for (const route of OPERATIONAL) {
-  if (!workerFirst.includes(`"${route}"`))
+  if (!allWorkerFirst && !workerFirst.includes(`"${route}"`))
     fail(
       `${route} is not in ${WRANGLER} run_worker_first — the asset handler will serve the SPA shell for it ` +
         `with a 200, so any probe pointed at it reports healthy unconditionally.`,

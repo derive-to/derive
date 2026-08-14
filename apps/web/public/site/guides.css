@@ -1,0 +1,39 @@
+@font-face{font-family:"Geist";src:url("/site/geist.woff2") format("woff2");font-weight:100 900;font-display:swap}
+@font-face{font-family:"Geist Mono";src:url("/site/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}
+:root{color-scheme:dark;--bg:#0a0b0d;--fg:#f3f4f6;--card:#101216;--muted:#969aa2;--faint:#7f8590;--line:#252831;--accent:#c7c1ff;--good:#8ed2a0;--max:1120px}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 "Geist",system-ui,sans-serif;letter-spacing:-.01em}
+a{color:inherit;text-decoration:none;cursor:pointer}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.wrap{width:min(var(--max),calc(100% - 48px));margin:auto}
+nav{position:sticky;top:0;z-index:10;border-bottom:1px solid var(--line);background:rgba(10,11,13,.88);backdrop-filter:blur(18px)}
+.nav{height:64px;display:flex;align-items:center;gap:26px}
+.wordmark{margin-right:auto;display:flex;align-items:center}.wordmark img{width:96px;height:auto}
+.nav a:not(.wordmark){font-size:14px;color:var(--muted)}.nav a:hover{color:var(--fg)}
+.signin{padding:8px 13px;border:1px solid var(--line);border-radius:8px;color:var(--fg)!important}
+header{padding:96px 0 72px;border-bottom:1px solid var(--line)}
+.eyebrow{font:600 11px/1 "Geist Mono",monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+h1,h2,h3{margin:0;font-weight:560;letter-spacing:-.04em;text-wrap:balance}
+h1{max-width:900px;margin-top:20px;font-size:clamp(48px,7vw,84px);line-height:.98}
+.lede{max-width:720px;margin:28px 0 0;color:var(--muted);font-size:clamp(18px,2vw,23px);line-height:1.5}
+.quick{display:flex;flex-wrap:wrap;gap:10px;margin-top:34px}
+.button{display:inline-flex;align-items:center;gap:8px;padding:10px 15px;border:1px solid var(--line);border-radius:8px;font-size:14px}.button:hover{background:var(--card)}
+.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}.primary:hover{background:white}
+main{padding:72px 0 120px}
+.section{display:grid;grid-template-columns:220px 1fr;gap:60px;padding:52px 0;border-top:1px solid var(--line)}
+.section:first-child{border-top:0;padding-top:0}
+.section-label{font:600 11px/1.4 "Geist Mono",monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.section h2{font-size:34px;line-height:1.1}.intro{max-width:720px;margin:14px 0 28px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.card{display:block;padding:22px;border:1px solid var(--line);border-radius:10px;background:var(--card);transition:border-color .15s,transform .15s}
+.card:hover{border-color:#4a4e5a;transform:translateY(-1px)}
+.card h3{font-size:18px;letter-spacing:-.02em}.card p{margin:8px 0 0;color:var(--muted);font-size:14px}.card .go{display:block;margin-top:18px;color:var(--accent);font:600 11px/1 "Geist Mono",monospace;text-transform:uppercase;letter-spacing:.06em}
+.steps{counter-reset:step;display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.step{counter-increment:step;display:grid;grid-template-columns:44px 1fr;gap:14px;padding:20px;background:var(--card)}
+.step:before{content:counter(step,decimal-leading-zero);font:600 12px/1.6 "Geist Mono",monospace;color:var(--accent)}
+.step b{display:block;margin-bottom:3px}.step span{color:var(--muted);font-size:14px}
+pre{overflow:auto;margin:22px 0 0;padding:18px 20px;border:1px solid var(--line);border-radius:10px;background:#07080a;color:#ddd;font:13px/1.7 "Geist Mono",monospace}
+.truth{padding:24px;border-left:2px solid var(--good);background:var(--card);color:var(--muted)}.truth strong{color:var(--fg)}
+footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-size:13px}.foot{display:flex;justify-content:space-between;gap:24px}.foot div{display:flex;gap:20px}
+@media(max-width:760px){.wrap{width:min(100% - 30px,var(--max))}.nav a:not(.wordmark):not(.signin){display:none}header{padding:68px 0 54px}.section{grid-template-columns:1fr;gap:18px;padding:42px 0}.grid{grid-template-columns:1fr}.foot{flex-direction:column}}

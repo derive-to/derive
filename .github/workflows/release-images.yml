@@ -5,10 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  packages: write
-  attestations: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -18,6 +15,11 @@ jobs:
   publish:
     if: github.repository == 'derive-to/derive'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -73,7 +75,7 @@ jobs:
           sbom: true
 
       - name: Publish GitHub build attestation
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ghcr.io/derive-to/derive
           subject-digest: ${{ steps.build.outputs.digest }}

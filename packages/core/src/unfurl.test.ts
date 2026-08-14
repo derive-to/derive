@@ -9,6 +9,7 @@ import {
   ogProfileCardSvg,
   profileMetaTags,
   profileSummary,
+  setRobotsMeta,
   type UnfurlInfo,
   unfurlDescription,
   unfurlMetaTags,
@@ -60,6 +61,9 @@ describe("unfurlMetaTags", () => {
     expect(html).toContain('property="og:title" content="My &lt;Report&gt; &amp; Notes"')
     expect(html).toContain('property="og:image" content="http://derive.test/v1/og/abc12345"')
     expect(html).toContain('name="twitter:card" content="summary_large_image"')
+    expect(html).toContain(
+      '<link rel="canonical" href="http://derive.test/artifacts/my-report-abc12345">',
+    )
     expect(html).toContain('type="application/json+oembed"')
     // No unescaped angle brackets from the title leak into the markup.
     expect(html).not.toContain("My <Report>")
@@ -74,6 +78,18 @@ describe("injectHead", () => {
   })
   it("prepends when there is no head", () => {
     expect(injectHead("<body>x</body>", "<meta>")).toBe("<meta>\n<body>x</body>")
+  })
+})
+
+describe("setRobotsMeta", () => {
+  it("replaces a shell policy with one authoritative crawler directive", () => {
+    const html = setRobotsMeta(
+      '<head><meta name="robots" content="noindex,nofollow"><title>x</title></head>',
+      "index,follow",
+    )
+    expect(html.match(/name="robots"/g)).toHaveLength(1)
+    expect(html).toContain('content="index,follow"')
+    expect(html).not.toContain("noindex")
   })
 })
 
@@ -153,6 +169,7 @@ describe("profileMetaTags", () => {
     expect(html).toContain('property="profile:username" content="maya"')
     expect(html).toContain("Maya &lt;Chen&gt; (@maya)") // name + handle, angle brackets escaped
     expect(html).toContain('name="twitter:card" content="summary_large_image"')
+    expect(html).toContain('<link rel="canonical" href="http://derive.test/users/maya">')
     expect(html).toContain('content="http://derive.test/v1/og/users/maya"')
     expect(html).not.toContain("Maya <Chen>") // no unescaped markup leaks
   })

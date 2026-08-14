@@ -485,9 +485,9 @@ export const betaSignup = sqliteTable(
   (t) => [uniqueIndex("beta_signup_email").on(t.email)],
 )
 
-// Where a signup came from. One row per user, written by the auth
-// layer's user-create hook from the `d_src` cookie the capture middleware stamped;
-// first write wins — the attribution of record is the one at signup time. No FK to
+// Where a signup came from. One row per user, written from the explicit source
+// carried by the signup URL during the short post-auth window; first write wins.
+// No FK to
 // Better Auth's user table: auth owns its tables out-of-band, like beta_signup.
 export const signupAttribution = sqliteTable(
   "signup_attribution",
@@ -499,7 +499,8 @@ export const signupAttribution = sqliteTable(
     source_kind: text("source_kind").notNull(),
     // The artifact (short id) the sourcing surface lived on, when known.
     source_artifact: text("source_artifact"),
-    // Path of the page that stamped the cookie, and the referrer host at stamp time.
+    // Coarse public landing path. `referrer` remains for backward-compatible rows;
+    // cookieless attribution deliberately writes null for new signups.
     landing_path: text("landing_path"),
     referrer: text("referrer"),
     created_at: text("created_at").notNull().default(now),
@@ -958,6 +959,8 @@ export const proposal = sqliteTable("proposal", {
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
+  // Stable decider identity. Nullable for historical rows that stored only a name.
+  decided_by_id: text("decided_by_id"),
   decided_version: integer("decided_version"),
   decision_note: text("decision_note"),
   decided_at: text("decided_at"),
@@ -984,6 +987,9 @@ export const reviewRound = sqliteTable(
     requested_for: text("requested_for").notNull(),
     state: text("state").$type<ReviewRoundState>().notNull().default("pending"),
     note: text("note"),
+    // `requested_for` is who was asked; these record who actually settled it.
+    resolved_by: text("resolved_by"),
+    resolved_by_name: text("resolved_by_name"),
     created_at: text("created_at").notNull().default(now),
     resolved_at: text("resolved_at"),
   },

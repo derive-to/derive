@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "to.derive/derive",
   "title": "Derive",
-  "description": "Publish agent output to permanent versioned URLs, read review comments back, and revise.",
+  "description": "Review and approve agent-made work at one durable URL, with version history and exact-text feedback.",
   "version": "1.0.0",
   "websiteUrl": "https://derive.to",
   "repository": {

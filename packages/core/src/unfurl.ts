@@ -87,6 +87,7 @@ export const unfurlMetaTags = (i: UnfurlInfo): string => {
     `<meta property="og:image" content="${img}">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
+    `<link rel="canonical" href="${url}">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${t}">`,
     `<meta name="twitter:description" content="${d}">`,
@@ -100,6 +101,18 @@ export const injectHead = (shellHtml: string, headHtml: string): string => {
   const m = shellHtml.match(/<\/head>/i)
   if (!m || m.index === undefined) return `${headHtml}\n${shellHtml}`
   return `${shellHtml.slice(0, m.index)}${headHtml}\n${shellHtml.slice(m.index)}`
+}
+
+/** Replace any shell-level crawler policy with one authoritative robots tag. */
+export const setRobotsMeta = (
+  shellHtml: string,
+  content: "index,follow" | "noindex,nofollow",
+): string => {
+  const withoutExisting = shellHtml.replace(
+    /\s*<meta\b(?=[^>]*\bname=["']robots["'])[^>]*>\s*/gi,
+    "",
+  )
+  return injectHead(withoutExisting, `<meta name="robots" content="${content}">`)
 }
 
 /**
@@ -257,6 +270,7 @@ export const profileMetaTags = (i: {
     `<meta property="og:image" content="${img}">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
+    `<link rel="canonical" href="${url}">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${title}">`,
     `<meta name="twitter:description" content="${d}">`,

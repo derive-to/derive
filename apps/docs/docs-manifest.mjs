@@ -1,0 +1,107 @@
+export const docsPages = [
+  {
+    source: "apps/docs/content/index.mdx",
+    slug: "index",
+    title: "Turn agent output into approved work",
+    description:
+      "Publish work, collect exact feedback, revise it with any compatible agent, and record approval at one durable URL.",
+    stripHeading: false,
+  },
+  {
+    source: "apps/docs/content/first-artifact.md",
+    slug: "start/first-artifact",
+    title: "Publish your first artifact",
+    description: "Go from a local HTML or Markdown file to a live review URL.",
+    stripHeading: false,
+  },
+  {
+    source: "apps/docs/content/review-loop.md",
+    slug: "start/review-loop",
+    title: "Run the review loop",
+    description: "Collect anchored feedback, revise the same URL, and close with approval.",
+    stripHeading: false,
+  },
+  {
+    source: "apps/docs/content/connect-agent.md",
+    slug: "agents/connect",
+    title: "Connect an agent",
+    description: "Connect Claude Code, Codex, Cursor, or another MCP-compatible client.",
+    stripHeading: false,
+  },
+  {
+    source: "packages/cli/README.md",
+    slug: "agents/cli",
+    title: "Derive CLI",
+    description: "Publish, inspect feedback, revise artifacts, and manage Derive from a terminal.",
+  },
+  {
+    source: "packages/mcp/README.md",
+    slug: "agents/mcp",
+    title: "Derive MCP server",
+    description: "Give MCP-compatible agents Derive's publish, review, and revision tools.",
+  },
+  {
+    source: "apps/docs/content/access.md",
+    slug: "concepts/access",
+    title: "Access and sharing",
+    description:
+      "Understand workspace access, link roles, listing, passwords, and anonymous viewing.",
+  },
+  {
+    source: "apps/docs/content/hosted-runs.md",
+    slug: "concepts/hosted-runs",
+    title: "Hosted runs",
+    description: "How scheduled and interactive context runs execute safely.",
+  },
+  {
+    source: "STANDARD.md",
+    slug: "artifacts/authoring",
+    title: "Artifact authoring standard",
+    description: "Author HTML, Markdown, bundles, and decks that preserve durable review anchors.",
+  },
+  {
+    source: "examples/README.md",
+    slug: "artifacts/examples",
+    title: "Official workflow examples",
+    description:
+      "Publishable examples for a launch page, research brief, and living status report.",
+  },
+  {
+    source: "QUICKSTART.md",
+    slug: "self-hosting/quickstart",
+    title: "Self-hosting quickstart",
+    description:
+      "Run Derive in one container with secure bootstrap, readiness checks, and a backup.",
+  },
+  {
+    source: "DEPLOY.md",
+    slug: "self-hosting/configuration",
+    title: "Deployment and configuration",
+    description: "Configure storage, databases, authentication, email, domains, and scaling.",
+  },
+  {
+    source: "SECURITY.md",
+    slug: "operations/security",
+    title: "Security",
+    description: "Supported versions, vulnerability reporting, hardening, and security invariants.",
+  },
+  {
+    source: "apps/docs/content/api.md",
+    slug: "reference/api",
+    title: "API and discovery endpoints",
+    description: "OpenAPI, MCP, OAuth, agent discovery, and raw artifact endpoints.",
+    stripHeading: false,
+  },
+  {
+    source: "ARCHITECTURE.md",
+    slug: "reference/architecture",
+    title: "Architecture",
+    description: "Derive's ports-and-adapters structure and deployment topology.",
+  },
+  {
+    source: "LICENSING.md",
+    slug: "reference/licensing",
+    title: "Licensing",
+    description: "Derive's Fair Source license and scheduled Apache-2.0 conversion.",
+  },
+]

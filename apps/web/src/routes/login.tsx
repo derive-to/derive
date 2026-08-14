@@ -20,6 +20,11 @@ export const Route = createFileRoute("/login")({
   validateSearch: (s: Record<string, unknown>): Record<string, string | boolean> => {
     const out: Record<string, string | boolean> = {}
     if (s.signup) out.signup = true
+    if (typeof s.src === "string" && /^[a-z0-9][a-z0-9_-]{0,39}$/i.test(s.src))
+      out.src = s.src.toLowerCase()
+    if (typeof s.art === "string" && /^[0-9a-z]{6,12}$/.test(s.art)) out.art = s.art
+    if (typeof s.landing === "string" && s.landing.startsWith("/") && !s.landing.startsWith("//"))
+      out.landing = s.landing.slice(0, 200)
     // Set by the reset-password flow after a successful change, to show a "sign in with
     // your new password" confirmation.
     if (s.reset) out.reset = true

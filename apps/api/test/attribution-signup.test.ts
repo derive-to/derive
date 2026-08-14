@@ -7,19 +7,14 @@ import Database from "better-sqlite3"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { makeAuth, migrateAuth } from "../src/auth-config"
-import { SRC_COOKIE, signupAttributionHook } from "../src/lib/attribution"
 
-// The signup half of attribution: a REAL Better Auth sign-up (the same harness as
-// auth-origin.test.ts) carrying the d_src cookie the capture middleware stamped —
-// the user-create hook must record it, and must never be able to block the signup.
+// A real Better Auth signup followed by the same authenticated, cookieless source
+// handoff the login page performs after password, social, or OIDC account creation.
 const dir = mkdtempSync(join(tmpdir(), "derive-attr-signup-"))
-
 const dbPath = join(dir, "auth.db")
 const db = new Database(dbPath)
 const meta = new SqliteMetaStore(dbPath)
-const auth = makeAuth(db, "http://localhost:8080", "test-secret-0123456789abcd", {
-  recordSignupAttribution: signupAttributionHook(meta),
-})
+const auth = makeAuth(db, "http://localhost:8080", "test-secret-0123456789abcd")
 const app = createApp({
   meta,
   blobs: new FsBlobStore(join(dir, "blobs")),
@@ -27,80 +22,82 @@ const app = createApp({
   auth,
 })
 
-// A second auth stack whose hook always throws — attribution is best-effort
-// telemetry and must never cost an account.
-const db2 = new Database(join(dir, "auth2.db"))
-const auth2 = makeAuth(db2, "http://localhost:8080", "test-secret-0123456789abcd", {
-  recordSignupAttribution: async () => {
-    throw new Error("attribution store down")
-  },
-})
-const app2 = createApp({
-  meta: new SqliteMetaStore(join(dir, "auth2.db")),
-  blobs: new FsBlobStore(join(dir, "blobs2")),
-  baseUrl: "http://localhost:8080",
-  auth: auth2,
-})
-
-beforeAll(async () => {
-  await migrateAuth(auth)
-  await migrateAuth(auth2)
-})
+beforeAll(() => migrateAuth(auth))
 afterAll(() => {
   db.close()
-  db2.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
-const stamp = (v: object) => `${SRC_COOKIE}=${encodeURIComponent(JSON.stringify(v))}`
-
-const signUp = (a: typeof app, email: string, cookie?: string) =>
-  a.request("/api/auth/sign-up/email", {
+const signUp = (email: string) =>
+  app.request("/api/auth/sign-up/email", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      // A cookie arms Better Auth's CSRF/origin check; real browser signups always
-      // carry a same-origin Origin header, so send one (auth-origin.test.ts pattern).
-      origin: "http://localhost:8080",
-      ...(cookie ? { cookie } : {}),
-    },
+    headers: { "content-type": "application/json", origin: "http://localhost:8080" },
     body: JSON.stringify({ email, password: "password12345", name: "Tester" }),
   })
 
-describe("signup attribution (the user-create hook)", () => {
-  it("records the d_src stamp onto the new account", async () => {
-    const res = await signUp(
-      app,
-      "badge@example.com",
-      stamp({ k: "badge", a: "ab12cd34", p: "/artifacts/doc-ab12cd34", r: "news.ycombinator.com" }),
-    )
-    expect(res.status).toBe(200)
-    const userId = (await res.json()).user.id as string
+const sessionCookies = (response: Response): string =>
+  (response.headers.getSetCookie?.() ?? [])
+    .map((cookie) => cookie.split(";", 1)[0] ?? "")
+    .filter(Boolean)
+    .join("; ")
+
+const record = (cookie: string, body: object) =>
+  app.request("/v1/me/signup-attribution", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "http://localhost:8080",
+      cookie,
+    },
+    body: JSON.stringify(body),
+  })
+
+describe("signup attribution handoff", () => {
+  it("records an explicit source after account creation, without d_src", async () => {
+    const signup = await signUp("badge@example.com")
+    expect(signup.status).toBe(200)
+    expect(signup.headers.get("set-cookie")).not.toContain("d_src")
+    const userId = (await signup.clone().json()).user.id as string
+
+    const response = await record(sessionCookies(signup), {
+      source_kind: "badge",
+      source_artifact: "ab12cd34",
+      landing_path: "/artifacts/doc-ab12cd34",
+    })
+    expect(response.status).toBe(200)
     expect(await meta.getSignupAttribution(userId)).toMatchObject({
       user_id: userId,
       source_kind: "badge",
       source_artifact: "ab12cd34",
       landing_path: "/artifacts/doc-ab12cd34",
-      referrer: "news.ycombinator.com",
+      referrer: null,
     })
   })
 
-  it("records nothing for an organic signup (no cookie)", async () => {
-    const res = await signUp(app, "organic@example.com")
-    expect(res.status).toBe(200)
-    const userId = (await res.json()).user.id as string
+  it("records nothing when an organic signup sends no source handoff", async () => {
+    const signup = await signUp("organic@example.com")
+    expect(signup.status).toBe(200)
+    const userId = (await signup.json()).user.id as string
     expect(await meta.getSignupAttribution(userId)).toBeNull()
   })
 
-  it("treats a garbage stamp as organic — signup still succeeds", async () => {
-    const res = await signUp(app, "garbage@example.com", `${SRC_COOKIE}=%7Bnope`)
-    expect(res.status).toBe(200)
-    const userId = (await res.json()).user.id as string
+  it("rejects malformed source input without changing the account", async () => {
+    const signup = await signUp("garbage@example.com")
+    const userId = (await signup.clone().json()).user.id as string
+    const response = await record(sessionCookies(signup), { source_kind: "<script>" })
+    expect(response.status).toBe(400)
     expect(await meta.getSignupAttribution(userId)).toBeNull()
   })
 
-  it("a throwing attribution hook never blocks account creation", async () => {
-    const res = await signUp(app2, "resilient@example.com", stamp({ k: "badge", p: "/" }))
-    expect(res.status).toBe(200)
+  it("keeps the first source when the browser retries", async () => {
+    const signup = await signUp("retry@example.com")
+    const userId = (await signup.clone().json()).user.id as string
+    const cookie = sessionCookies(signup)
+    expect((await record(cookie, { source_kind: "docs_home", landing_path: "/" })).status).toBe(200)
+    expect((await record(cookie, { source_kind: "badge", landing_path: "/x" })).status).toBe(200)
+    expect(await meta.getSignupAttribution(userId)).toMatchObject({
+      source_kind: "docs_home",
+      landing_path: "/",
+    })
   })
 })
