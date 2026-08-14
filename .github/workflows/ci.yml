@@ -472,7 +472,7 @@ jobs:
           set -euo pipefail
           deployed=false
           for attempt in 1 2 3; do
-            if pnpm --filter @derive/docs deploy; then
+            if pnpm --filter @derive/docs run deploy; then
               deployed=true
               break
             fi
