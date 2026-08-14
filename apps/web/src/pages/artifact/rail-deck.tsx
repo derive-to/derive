@@ -134,11 +134,12 @@ export function VideoBar({
           {video.caption}
         </p>
       )}
-      <div className="flex min-w-72 max-w-full items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)]">
+      <div className="flex w-full items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)] sm:min-w-72">
         <Button
           data-testid="video-restart"
           variant="outline"
           size="icon-xs"
+          className="hidden sm:inline-flex"
           onClick={onRestart}
           aria-label="Restart video"
         >
@@ -173,7 +174,7 @@ export function VideoBar({
         >
           <ChevronRight />
         </Button>
-        <span className="min-w-13 text-center font-mono text-2xs tabular-nums text-muted-foreground">
+        <span className="hidden min-w-13 text-center font-mono text-2xs tabular-nums text-muted-foreground sm:inline">
           {video.i + 1} / {video.total}
         </span>
         <input
@@ -183,10 +184,13 @@ export function VideoBar({
           max={Math.max(1, video.totalDurationMs)}
           value={Math.min(video.positionMs, video.totalDurationMs)}
           onChange={(e) => onSeek(Number(e.target.value))}
-          className="h-4 min-w-24 flex-1 accent-primary"
+          className="h-4 min-w-12 flex-1 accent-primary sm:min-w-24"
           aria-label="Video position"
         />
-        <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+        <span className="font-mono text-2xs tabular-nums text-muted-foreground sm:hidden">
+          {clock(video.positionMs)}
+        </span>
+        <span className="hidden font-mono text-2xs tabular-nums text-muted-foreground sm:inline">
           {clock(video.positionMs)} / {clock(video.totalDurationMs)}
         </span>
         {video.caption && (
