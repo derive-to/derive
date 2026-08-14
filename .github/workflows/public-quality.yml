@@ -3,40 +3,8 @@ name: public surface quality
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - "ARCHITECTURE.md"
-      - "DEPLOY.md"
-      - "LICENSING.md"
-      - "QUICKSTART.md"
-      - "SECURITY.md"
-      - "STANDARD.md"
-      - "apps/docs/**"
-      - "apps/web/e2e/public-quality/**"
-      - "apps/web/public/**"
-      - "apps/web/playwright.public.config.ts"
-      - "apps/web/package.json"
-      - "examples/**"
-      - "packages/cli/README.md"
-      - "packages/mcp/README.md"
-      - "pnpm-lock.yaml"
   push:
     branches: [main]
-    paths:
-      - "ARCHITECTURE.md"
-      - "DEPLOY.md"
-      - "LICENSING.md"
-      - "QUICKSTART.md"
-      - "SECURITY.md"
-      - "STANDARD.md"
-      - "apps/docs/**"
-      - "apps/web/e2e/public-quality/**"
-      - "apps/web/public/**"
-      - "apps/web/playwright.public.config.ts"
-      - "apps/web/package.json"
-      - "examples/**"
-      - "packages/cli/README.md"
-      - "packages/mcp/README.md"
-      - "pnpm-lock.yaml"
 
 permissions:
   contents: read

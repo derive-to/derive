@@ -24,9 +24,9 @@ manifest source, not its generated copy.
 - `scripts/check-built.mjs` verifies every declared route, canonical URL, internal link, search
   index, sitemap, and real 404 behavior after each build.
 
-Add or move a public page through `docs-manifest.mjs` and the Starlight sidebar in
-`astro.config.mjs` together. The public-claims guard fails CI when the deployment or discovery
-contract drifts.
+Add, move, or reorder a public page once in `docs-manifest.mjs`; Starlight navigation and the
+generated content indexes derive from it. The docs build fails when routes, links, search,
+deployment, or discovery contracts drift.
 
 ## Build and deployment
 

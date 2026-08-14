@@ -1,6 +1,7 @@
 import { unified } from "@astrojs/markdown-remark"
 import starlight from "@astrojs/starlight"
 import { defineConfig } from "astro/config"
+import { docsSections } from "./docs-manifest.mjs"
 
 const buildSha = process.env.GITHUB_SHA ?? "dev"
 
@@ -71,43 +72,10 @@ export default defineConfig({
       disable404Route: true,
       sidebar: [
         { label: "Documentation home", link: "/" },
-        {
-          label: "Start here",
-          items: [
-            { slug: "start/first-artifact" },
-            { slug: "start/review-loop" },
-            { slug: "agents/connect" },
-          ],
-        },
-        {
-          label: "Use Derive",
-          items: [
-            { slug: "agents/cli" },
-            { slug: "agents/mcp" },
-            { slug: "concepts/access" },
-            { slug: "concepts/hosted-runs" },
-          ],
-        },
-        {
-          label: "Build artifacts",
-          items: [{ slug: "artifacts/authoring" }, { slug: "artifacts/examples" }],
-        },
-        {
-          label: "Self-host",
-          items: [
-            { slug: "self-hosting/quickstart" },
-            { slug: "self-hosting/configuration" },
-            { slug: "operations/security" },
-          ],
-        },
-        {
-          label: "Reference",
-          items: [
-            { slug: "reference/api" },
-            { slug: "reference/architecture" },
-            { slug: "reference/licensing" },
-          ],
-        },
+        ...docsSections.map(({ label, pages }) => ({
+          label,
+          items: pages.map(({ slug }) => ({ slug })),
+        })),
         {
           label: "Links",
           collapsed: true,
