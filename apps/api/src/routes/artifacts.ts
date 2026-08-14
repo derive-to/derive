@@ -173,9 +173,9 @@ export const artifactRoutes = (ctx: AppContext) => {
   const app = new OpenAPIHono<BlankEnv>()
 
   // Keyset-paginated (?sort=&cursor=&limit=N; the cursor is keyed on the active sort —
-  // see sortKeyOf), with optional server-side ?query= (title search), ?tag=, and
-  // ?favorite=true. Returns { artifacts, next_cursor }. tag/favorite resolve to an id
-  // set first.
+  // see sortKeyOf), with optional server-side ?query= (artifact title, tag, or
+  // collection-title search), ?tag=, and ?favorite=true. Returns { artifacts,
+  // next_cursor }. tag/favorite resolve to an id set first.
   app.openapi(
     createRoute({
       method: "get",
@@ -228,7 +228,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // keep the historical created-desc ordering when no ?sort= is given.
       const sort = parseSortMode(c.req.query("sort") ?? "created")
       // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
-      // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
+      // an unhandled DB error (a long-q 500). No real metadata search needs > 200 chars.
       const q = c.req.query("query")?.trim().slice(0, 200) || undefined
       const tag = c.req.query("tag")?.trim() || undefined
       const collectionId = requestedCollection
@@ -349,6 +349,9 @@ export const artifactRoutes = (ctx: AppContext) => {
         cursor,
         sort,
         q,
+        // Collection titles are searchable only when this caller can see that
+        // collection. Artifact titles/tags already ride the artifact visibility gate.
+        collectionSearchViewerId: isOperator ? undefined : memberKey,
         ids,
         collectionId,
         // `shared` and `following` both resolve to an id set that ALREADY encodes the

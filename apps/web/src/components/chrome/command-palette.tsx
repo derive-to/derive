@@ -146,7 +146,8 @@ export function CommandPalette() {
     setResults(fuzzyTitles(cachedArtifactRows(qc), query))
   }, [query, paletteOpen, qc])
 
-  // Debounced server search for artifacts while open (authoritative pass).
+  // Debounced server search for artifacts by title, tag, or containing collection
+  // (authoritative pass).
   useEffect(() => {
     if (!paletteOpen) return
     let alive = true

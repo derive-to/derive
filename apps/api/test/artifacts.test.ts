@@ -369,13 +369,31 @@ describe("server-side search + cursor pagination", () => {
       body: JSON.stringify({ tags }),
     })
 
-  it("searches by title server-side, case-insensitive", async () => {
-    await upload("s1.md", "x", { title: "Quarterly ZZUNIQUE Report" })
+  it("searches artifact titles, tags, and collection titles server-side", async () => {
+    const titled = await (await upload("s1.md", "x", { title: "Quarterly ZZUNIQUE Report" })).json()
     await upload("s2.md", "x", { title: "Totally unrelated" })
     const r = await (await app.request("/v1/artifacts?query=zzunique")).json()
     const titles = r.artifacts.map((a: { title: string | null }) => a.title)
     expect(titles).toContain("Quarterly ZZUNIQUE Report")
-    expect(titles.every((t: string | null) => /zzunique/i.test(t ?? ""))).toBe(true)
+
+    await putTags(titled.short_id, ["Roadmap Signal"])
+    const byTag = await (await app.request("/v1/artifacts?query=roadmap")).json()
+    expect(byTag.artifacts.map((a: { short_id: string }) => a.short_id)).toContain(titled.short_id)
+
+    const collection = await meta.createCollection({
+      id: "col_search_materials",
+      org_id: "default",
+      title: "Customer Materials",
+      created_by: "owner",
+    })
+    const titledRecord = await meta.getByShortId(titled.short_id)
+    expect(titledRecord).not.toBeNull()
+    if (!titledRecord) throw new Error("published search fixture was not stored")
+    await meta.addCollectionItem(collection.id, titledRecord.id)
+    const byCollection = await (await app.request("/v1/artifacts?query=customer")).json()
+    expect(byCollection.artifacts.map((a: { short_id: string }) => a.short_id)).toContain(
+      titled.short_id,
+    )
   })
 
   it("paginates newest-first with a keyset cursor (no overlap)", async () => {

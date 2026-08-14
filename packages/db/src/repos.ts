@@ -204,7 +204,7 @@ import {
 } from "./schema"
 
 /**
- * The WHERE conditions for the artifact list (title search, keyset cursor, id
+ * The WHERE conditions for the artifact list (metadata search, keyset cursor, id
  * restriction, workspace scope). The drizzle operators are dialect-agnostic and
  * only the `artifact` columns differ between SQLite/D1 and Postgres, so both
  * drivers build the same filter through this one helper — a new filter is added
@@ -244,7 +244,49 @@ export function artifactListConditions(
     conds.push(sql`(${art.listed} != 'none' OR ${isMember})`)
   }
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
-  if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
+  if (opts?.q) {
+    const pattern = `%${opts.q.toLowerCase()}%`
+    const collectionAccess =
+      opts.collectionSearchViewerId === undefined
+        ? sql`1 = 1`
+        : opts.collectionSearchViewerId === null
+          ? sql`1 = 0`
+          : sql`(
+              c.created_by = ${opts.collectionSearchViewerId}
+              OR EXISTS (
+                SELECT 1 FROM collection_member cm
+                WHERE cm.collection_id = c.id AND cm.user_id = ${opts.collectionSearchViewerId}
+              )
+              OR (
+                c.workspace_access = 'member'
+                AND EXISTS (
+                  SELECT 1 FROM membership m
+                  WHERE m.org_id = c.org_id AND m.user_id = ${opts.collectionSearchViewerId}
+                )
+              )
+            )`
+    // One metadata search contract for every artifact-list consumer: an artifact
+    // matches its own title, any of its tags, or the title of any collection that
+    // contains it. EXISTS avoids duplicate artifact rows when several tags/collections
+    // match and, unlike expanding matching relations into an id IN (...), stays safe
+    // for large workspaces under D1's bound-parameter limit. These table names are
+    // deliberately shared by the SQLite/D1 and Postgres schemas, just like the
+    // artifact_member visibility subquery above.
+    conds.push(sql`(
+      lower(${art.title}) LIKE ${pattern}
+      OR EXISTS (
+        SELECT 1 FROM artifact_tag at
+        WHERE at.artifact_id = ${art.id} AND lower(at.tag) LIKE ${pattern}
+      )
+      OR EXISTS (
+        SELECT 1 FROM collection_item ci
+        INNER JOIN collection c ON c.id = ci.collection_id
+        WHERE ci.artifact_id = ${art.id}
+          AND lower(c.title) LIKE ${pattern}
+          AND ${collectionAccess}
+      )
+    )`)
+  }
   if (opts?.cursor) {
     const { field, dir } = sortFields(opts.sort ?? "created")
     const col = artifactSortExpr(art, field)

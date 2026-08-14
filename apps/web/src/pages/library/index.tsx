@@ -431,8 +431,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
       value={query}
       onValueChange={setQuery}
       onEnter={(v) => nav({ to: "/search", search: { q: v } })}
-      placeholder="Filter…"
-      aria-label="Filter artifacts by title, or press Enter to search all content"
+      placeholder="Search names, tags, or collections…"
+      aria-label="Search artifacts by name, tag, or collection; press Enter to search content"
       testId="library-search"
       hotkey
       onAsk={(v) => askFromField(v)}
