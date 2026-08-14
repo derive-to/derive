@@ -1,4 +1,5 @@
-import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
+import { Captions, ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
+import { useState } from "react"
 import type { Viewer } from "@/api"
 import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
@@ -105,6 +106,7 @@ export function VideoBar({
     durationMs: number
     positionMs: number
     totalDurationMs: number
+    caption: string
   }
   onPrev: () => void
   onNext: () => void
@@ -113,6 +115,7 @@ export function VideoBar({
   onSeek: (ms: number) => void
   onPresent: () => void
 }) {
+  const [captions, setCaptions] = useState(true)
   const clock = (ms: number) => {
     const sec = Math.max(0, Math.floor(ms / 1000))
     return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
@@ -120,71 +123,94 @@ export function VideoBar({
   return (
     <div
       data-testid="video-bar"
-      className="absolute bottom-3.5 left-1/2 z-5 flex min-w-72 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)]"
+      className="absolute bottom-3.5 left-1/2 z-5 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-col items-center gap-2"
     >
-      <Button
-        data-testid="video-restart"
-        variant="outline"
-        size="icon-xs"
-        onClick={onRestart}
-        aria-label="Restart video"
-      >
-        <RotateCcw />
-      </Button>
-      <Button
-        data-testid="video-prev"
-        variant="outline"
-        size="icon-xs"
-        onClick={onPrev}
-        disabled={video.i <= 0}
-        aria-label="Previous scene"
-      >
-        <ChevronLeft />
-      </Button>
-      <Button
-        data-testid="video-play-pause"
-        variant="default"
-        size="icon-xs"
-        onClick={onToggle}
-        aria-label={video.playing ? "Pause video" : "Play video"}
-      >
-        {video.playing ? <Pause /> : <Play />}
-      </Button>
-      <Button
-        data-testid="video-next"
-        variant="outline"
-        size="icon-xs"
-        onClick={onNext}
-        disabled={video.i >= video.total - 1}
-        aria-label="Next scene"
-      >
-        <ChevronRight />
-      </Button>
-      <span className="min-w-13 text-center font-mono text-2xs tabular-nums text-muted-foreground">
-        {video.i + 1} / {video.total}
-      </span>
-      <input
-        data-testid="video-seek"
-        type="range"
-        min={0}
-        max={Math.max(1, video.totalDurationMs)}
-        value={Math.min(video.positionMs, video.totalDurationMs)}
-        onChange={(e) => onSeek(Number(e.target.value))}
-        className="h-4 min-w-24 flex-1 accent-primary"
-        aria-label="Video position"
-      />
-      <span className="font-mono text-2xs tabular-nums text-muted-foreground">
-        {clock(video.positionMs)} / {clock(video.totalDurationMs)}
-      </span>
-      <Button
-        variant="outline"
-        size="icon-xs"
-        data-testid="video-fullscreen"
-        onClick={onPresent}
-        aria-label="View video fullscreen"
-      >
-        <Icon name="present" />
-      </Button>
+      {captions && video.caption && (
+        <p
+          data-testid="video-caption"
+          aria-live="polite"
+          className="m-0 max-w-xl rounded-lg bg-background/90 px-3 py-1.5 text-center text-sm leading-5 text-foreground shadow-[var(--shadow)] backdrop-blur-sm"
+        >
+          {video.caption}
+        </p>
+      )}
+      <div className="flex min-w-72 max-w-full items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)]">
+        <Button
+          data-testid="video-restart"
+          variant="outline"
+          size="icon-xs"
+          onClick={onRestart}
+          aria-label="Restart video"
+        >
+          <RotateCcw />
+        </Button>
+        <Button
+          data-testid="video-prev"
+          variant="outline"
+          size="icon-xs"
+          onClick={onPrev}
+          disabled={video.i <= 0}
+          aria-label="Previous scene"
+        >
+          <ChevronLeft />
+        </Button>
+        <Button
+          data-testid="video-play-pause"
+          variant="default"
+          size="icon-xs"
+          onClick={onToggle}
+          aria-label={video.playing ? "Pause video" : "Play video"}
+        >
+          {video.playing ? <Pause /> : <Play />}
+        </Button>
+        <Button
+          data-testid="video-next"
+          variant="outline"
+          size="icon-xs"
+          onClick={onNext}
+          disabled={video.i >= video.total - 1}
+          aria-label="Next scene"
+        >
+          <ChevronRight />
+        </Button>
+        <span className="min-w-13 text-center font-mono text-2xs tabular-nums text-muted-foreground">
+          {video.i + 1} / {video.total}
+        </span>
+        <input
+          data-testid="video-seek"
+          type="range"
+          min={0}
+          max={Math.max(1, video.totalDurationMs)}
+          value={Math.min(video.positionMs, video.totalDurationMs)}
+          onChange={(e) => onSeek(Number(e.target.value))}
+          className="h-4 min-w-24 flex-1 accent-primary"
+          aria-label="Video position"
+        />
+        <span className="font-mono text-2xs tabular-nums text-muted-foreground">
+          {clock(video.positionMs)} / {clock(video.totalDurationMs)}
+        </span>
+        {video.caption && (
+          <Button
+            variant={captions ? "secondary" : "outline"}
+            size="icon-xs"
+            data-testid="video-captions"
+            onClick={() => setCaptions((shown) => !shown)}
+            aria-label={captions ? "Hide captions" : "Show captions"}
+            aria-pressed={captions}
+          >
+            <Captions />
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="icon-xs"
+          data-testid="video-fullscreen"
+          onClick={onPresent}
+          aria-label="View video fullscreen"
+        >
+          <Icon name="present" />
+        </Button>
+      </div>
     </div>
   )
 }
