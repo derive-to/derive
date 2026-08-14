@@ -445,11 +445,33 @@ export function runStoreContract(
       expect((await store.listWorkspaceFacts(ORG, { limit: 1 })).length).toBe(1)
     })
 
-    it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
+    it("filters listArtifacts by artifact title, tag, or collection title and by id set", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(
         a.id,
       )
+      await store.setArtifactTags(a.id, ["Finance Planning"])
+      expect((await store.listArtifacts({ q: "finance" })).map((x) => x.id)).toContain(a.id)
+
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Board Materials",
+        created_by: "amy",
+      })
+      await store.addCollectionItem(col.id, a.id)
+      expect((await store.listArtifacts({ q: "board material" })).map((x) => x.id)).toContain(a.id)
+      expect(
+        (
+          await store.listArtifacts({ q: "board material", collectionSearchViewerId: "stranger" })
+        ).map((x) => x.id),
+      ).not.toContain(a.id)
+      expect(
+        (await store.listArtifacts({ q: "board material", collectionSearchViewerId: "amy" })).map(
+          (x) => x.id,
+        ),
+      ).toContain(a.id)
+
       expect((await store.listArtifacts({ ids: [a.id] })).map((x) => x.id)).toEqual([a.id])
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })

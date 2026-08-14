@@ -754,6 +754,7 @@ export const api = {
   sendVerificationEmail: (email: string, callbackURL: string): Promise<unknown> =>
     f("/api/auth/send-verification-email", opts({ email, callbackURL })).then(authJson),
 
+  // `q` searches artifact titles, tags, and the titles of containing collections.
   listArtifacts: (
     params?: {
       q?: string
