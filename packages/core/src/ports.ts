@@ -190,8 +190,12 @@ export interface ListArtifactsOpts {
    *  `listArtifacts` honors this; `listUserWorks`/`countUserWorks` ignore it and always order
    *  created-desc. */
   sort?: SortMode
-  /** Case-insensitive title search. */
+  /** Case-insensitive metadata search across artifact titles, tags, and collection titles. */
   q?: string
+  /** Which user's accessible collections may contribute collection-title matches.
+   * `undefined` trusts the caller and searches every collection (operator/internal jobs);
+   * `null` searches no collection titles. Artifact-title and tag matching are unaffected. */
+  collectionSearchViewerId?: string | null
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */
   ids?: string[]
   /** Scope to a collection by JOINing its membership rather than materializing every
@@ -742,7 +746,8 @@ export interface CommentStore {
 export interface ArtifactQueryStore {
   /**
    * Newest-first artifact page. `cursor` is keyset pagination on created_at
-   * (rows strictly older than it); `q` is a case-insensitive title search;
+   * (rows strictly older than it); `q` is a case-insensitive metadata search across
+   * artifact titles, tags, and collection titles visible to `collectionSearchViewerId`;
    * `ids` restricts to a set (tag / favorite filters resolve to ids) — an empty
    * `ids` array matches nothing.
    */
