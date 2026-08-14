@@ -426,6 +426,44 @@ describe("template libraries: pinned reusable starters", () => {
     expect(
       privateOnly.libraries.every((library: { scope: string }) => library.scope === "private"),
     ).toBe(true)
+    const searched = await (
+      await app.request("/v1/template-libraries?q=page%20b&limit=100", {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(searched.libraries.map((library: { title: string }) => library.title)).toEqual([
+      "Page B",
+    ])
+
+    const filteredFirst = (await (
+      await app.request("/v1/template-libraries?q=page&limit=2", {
+        headers: as(owner.email),
+      })
+    ).json()) as {
+      libraries: Array<{ id: string; title: string }>
+      truncated: boolean
+      next_cursor: string | null
+    }
+    expect(filteredFirst.libraries).toHaveLength(2)
+    expect(filteredFirst.truncated).toBe(true)
+    expect(filteredFirst.next_cursor).toBeTruthy()
+    expect(
+      filteredFirst.libraries.every((library) => library.title.toLowerCase().includes("page")),
+    ).toBe(true)
+    const filteredSecond = (await (
+      await app.request(
+        `/v1/template-libraries?q=page&limit=2&cursor=${encodeURIComponent(filteredFirst.next_cursor ?? "")}`,
+        { headers: as(owner.email) },
+      )
+    ).json()) as { libraries: Array<{ id: string; title: string }> }
+    expect(filteredSecond.libraries).toHaveLength(2)
+    const filteredFirstIds = new Set(filteredFirst.libraries.map((library) => library.id))
+    expect(filteredSecond.libraries.filter((library) => filteredFirstIds.has(library.id))).toEqual(
+      [],
+    )
+    expect(
+      filteredSecond.libraries.every((library) => library.title.toLowerCase().includes("page")),
+    ).toBe(true)
 
     const firstResponse = await app.request("/v1/template-libraries?limit=2", {
       headers: as(owner.email),

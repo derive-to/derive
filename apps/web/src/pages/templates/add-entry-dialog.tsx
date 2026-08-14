@@ -15,7 +15,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { initialAddEntryState, reduceAddEntry } from "./add-entry-state"
 import { ArtifactSourcePicker } from "./artifact-source-picker"
-import { csv, inputsFromLines, templateLibraryKeys } from "./template-library-helpers"
+import { artifactTemplateFormat } from "./artifact-template-format"
+import { csv, inputsFromLines } from "./template-library-helpers"
+import { templateLibraryInvalidation } from "./template-library-queries"
 
 export function AddEntryDialog({
   libraryId,
@@ -53,29 +55,30 @@ export function AddEntryDialog({
         inputs: inputsFromLines(inputs),
         tags: csv(tags),
       }),
-    invalidate: templateLibraryKeys(libraryId),
+    invalidate: templateLibraryInvalidation,
     success: "Reusable starter published",
     onSuccess: () => {
       dispatch({ type: "reset" })
       onOpenChange(false)
     },
   })
+  const closeAndReset = () => {
+    if (create.isPending) return
+    dispatch({ type: "reset" })
+    onOpenChange(false)
+  }
   const chooseSource = (artifact: Artifact) => {
     dispatch({ type: "select-source", artifact })
   }
   const sourceType = selectedSource
-    ? selectedSource.current_content_type === "text/x-derive-deck"
-      ? "Derive deck"
-      : selectedSource.current_content_type === "text/markdown"
-        ? "Markdown"
-        : "HTML"
+    ? (artifactTemplateFormat(selectedSource.current_content_type)?.label ?? "Unsupported format")
     : "Format detected when published"
   return (
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) dispatch({ type: "reset" })
-        onOpenChange(nextOpen)
+        if (nextOpen) onOpenChange(true)
+        else closeAndReset()
       }}
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
@@ -261,8 +264,9 @@ export function AddEntryDialog({
               onClick={() =>
                 step === "details"
                   ? dispatch({ type: "set-step", step: "source" })
-                  : onOpenChange(false)
+                  : closeAndReset()
               }
+              disabled={create.isPending}
             >
               {step === "details" ? "Back" : "Cancel"}
             </Button>

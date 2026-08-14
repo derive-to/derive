@@ -11,7 +11,8 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { AddEntryDialog } from "./add-entry-dialog"
 import { LibrarySettingsDialog } from "./library-dialogs"
 import { TemplateEntryCard } from "./template-entry-card"
-import { matches, scopeCopy, templateLibraryKeys } from "./template-library-helpers"
+import { matches, scopeCopy } from "./template-library-helpers"
+import { templateLibraryInvalidation, templateLibraryQuery } from "./template-library-queries"
 
 export function LibraryDetail({
   libraryId,
@@ -22,10 +23,7 @@ export function LibraryDetail({
   onBack: () => void
   onUse: (entry: TemplateLibraryEntry) => void
 }) {
-  const detail = useQuery({
-    queryKey: ["template-library", libraryId] as const,
-    queryFn: () => api.getTemplateLibrary(libraryId),
-  })
+  const detail = useQuery(templateLibraryQuery(libraryId))
   const [addOpen, setAddOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -33,7 +31,7 @@ export function LibraryDetail({
   const remove = useApiMutation({
     mutationFn: (entry: TemplateLibraryEntry) =>
       api.deleteTemplateLibraryEntry(libraryId, entry.id),
-    invalidate: templateLibraryKeys(libraryId),
+    invalidate: templateLibraryInvalidation,
     success: "Starter removed",
     onSuccess: () => setPendingDelete(null),
   })

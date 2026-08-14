@@ -9,16 +9,6 @@ export const scopeCopy: Record<
   public: { label: "Public", detail: "Discoverable by anyone and MCP.", icon: "globe" },
 }
 
-export const templateLibraryListKeys = [
-  ["template-libraries"] as const,
-  ["public-template-libraries"] as const,
-]
-export const templateLibraryKeys = (id: string) => [
-  ...templateLibraryListKeys,
-  ["template-library", id] as const,
-  ["public-template-library", id] as const,
-]
-
 export const csv = (value: string) =>
   value
     .split(",")

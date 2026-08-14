@@ -63,11 +63,52 @@ describe("stdio Template resources", () => {
     registerWorkspaceTemplateResources(server, client as never)
 
     expect(requests).toBe(0)
-    expect(registrations).toHaveLength(3)
+    expect(registrations).toHaveLength(4)
     expect(registrations.map((args) => args[0])).toEqual([
       "template-libraries:catalog",
+      "template-libraries:page",
       "template-library",
       "template-library-entry",
     ])
+  })
+
+  it("continues a truncated authored-library catalog through a resource URI", async () => {
+    const registrations: unknown[][] = []
+    const cursors: Array<string | undefined> = []
+    const server = {
+      registerResource: (...args: unknown[]) => {
+        registrations.push(args)
+      },
+    } as TemplateResourceRegistrar
+    const cursor = "2026-08-13T12:00:00.000Z~tlb_next"
+    const client = {
+      listTemplateLibraries: async (value?: string) => {
+        cursors.push(value)
+        return {
+          libraries: [],
+          truncated: value === undefined,
+          next_cursor: value === undefined ? cursor : null,
+        }
+      },
+    }
+    registerWorkspaceTemplateResources(server, client as never)
+
+    const catalog = registrations.find(([name]) => name === "template-libraries:catalog")
+    const page = registrations.find(([name]) => name === "template-libraries:page")
+    if (!catalog || !page) throw new Error("catalog resources were not registered")
+    const first = await (catalog[3] as (uri: URL) => Promise<{ contents: { text: string }[] }>)(
+      new URL("derive://template-libraries"),
+    )
+    const firstBody = JSON.parse(first.contents[0]?.text ?? "{}") as { next_uri?: string }
+    expect(firstBody.next_uri).toBe(
+      `derive://template-libraries?cursor=${encodeURIComponent(cursor)}`,
+    )
+    await (
+      page[3] as (
+        uri: URL,
+        variables: { cursor: string },
+      ) => Promise<{ contents: { text: string }[] }>
+    )(new URL(firstBody.next_uri as string), { cursor: encodeURIComponent(cursor) })
+    expect(cursors).toEqual([undefined, cursor])
   })
 })

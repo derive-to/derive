@@ -314,7 +314,7 @@ export interface DeriveClient {
   /** Aggregated view analytics. */
   viewStats(shortId: string): Promise<ViewStatsJson>
   /** Accessible public + workspace + personal libraries, for MCP resources only. */
-  listTemplateLibraries(): Promise<TemplateLibraryPageJson>
+  listTemplateLibraries(cursor?: string): Promise<TemplateLibraryPageJson>
   getTemplateLibrary(id: string): Promise<TemplateLibraryJson>
   getTemplateStarter(libraryId: string, entryId: string): Promise<TemplateStarterJson>
 }
@@ -678,9 +678,11 @@ export function createClient(opts: ClientOptions): DeriveClient {
       ) as Promise<ViewStatsJson>
     },
 
-    async listTemplateLibraries() {
+    async listTemplateLibraries(cursor) {
+      const query = new URLSearchParams({ limit: "100" })
+      if (cursor) query.set("cursor", cursor)
       return ok(
-        await f(`${base}/v1/template-libraries?limit=100`, { headers: authHeaders }),
+        await f(`${base}/v1/template-libraries?${query}`, { headers: authHeaders }),
       ) as Promise<TemplateLibraryPageJson>
     },
 

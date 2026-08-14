@@ -4177,6 +4177,110 @@ export function runStoreContract(
       await store.releaseTemplateLibraryMutation(library.id, "holder-c")
     })
 
+    it("keeps template-library listing and search behavior identical across dialects", async () => {
+      const org = `org_tpl_catalog_${uuid()}`
+      const otherOrg = `org_tpl_other_${uuid()}`
+      const owner = `tpl_owner_${uuid()}`
+      const otherOwner = `tpl_other_${uuid()}`
+      const createLibrary = (
+        title: string,
+        scope: "private" | "workspace" | "public",
+        createdBy = owner,
+        orgId = org,
+      ) =>
+        store.createTemplateLibrary({
+          id: uuid(),
+          org_id: orgId,
+          title,
+          description: `${title} reusable catalog`,
+          scope,
+          created_by: createdBy,
+        })
+      const privateMine = await createLibrary("Alpha private needle", "private")
+      const workspace = await createLibrary("Alpha workspace needle", "workspace")
+      const privateOther = await createLibrary("Alpha hidden needle", "private", otherOwner)
+      const publicOther = await createLibrary("Alpha public needle", "public", otherOwner, otherOrg)
+      await createLibrary("Unrelated workspace", "workspace")
+
+      expect(
+        (await store.listTemplateLibraries({ orgId: org, scope: "private", createdBy: owner })).map(
+          (library) => library.id,
+        ),
+      ).toEqual([privateMine.id])
+      expect(
+        new Set(
+          (await store.listTemplateLibraries({ orgId: org, query: "ALPHA", limit: 20 })).map(
+            (library) => library.id,
+          ),
+        ),
+      ).toEqual(new Set([privateMine.id, workspace.id, privateOther.id]))
+
+      const ordered = await store.listTemplateLibraries({ orgId: org, limit: 20 })
+      const first = ordered[0]
+      if (!first) throw new Error("expected template libraries")
+      expect(
+        await store.listTemplateLibraries({
+          orgId: org,
+          before: { createdAt: first.created_at, id: first.id },
+          limit: 20,
+        }),
+      ).toEqual(ordered.slice(1))
+
+      const entryFor = (libraryId: string, title: string) =>
+        store.createTemplateLibraryEntry({
+          id: uuid(),
+          library_id: libraryId,
+          source_artifact_id: uuid(),
+          source_version: 1,
+          source_blob_key: `blob_${uuid()}`,
+          source_content_type: "text/markdown",
+          kind: "artifact",
+          category: "Doc",
+          format: "md",
+          title,
+          description: "Needle discovery contract",
+          outcome: "Find the right starter.",
+          sections_json: "[]",
+          inputs_json: "[]",
+          tags_json: '["needle"]',
+          created_by: owner,
+        })
+      await Promise.all([
+        entryFor(privateMine.id, "Private result"),
+        entryFor(workspace.id, "Workspace result"),
+        entryFor(privateOther.id, "Hidden result"),
+        entryFor(publicOther.id, "Public result"),
+      ])
+
+      const visible = await store.searchTemplateLibraryEntries({
+        orgId: org,
+        ownerId: owner,
+        query: "needle",
+        limit: 20,
+      })
+      expect(new Set(visible.map(({ library }) => library.id))).toEqual(
+        new Set([privateMine.id, workspace.id, publicOther.id]),
+      )
+      expect(
+        await store.searchTemplateLibraryEntries({
+          orgId: org,
+          ownerId: owner,
+          query: "needle",
+          limit: 2,
+        }),
+      ).toHaveLength(2)
+      expect(
+        (
+          await store.searchTemplateLibraryEntries({
+            orgId: org,
+            ownerId: null,
+            query: "private result",
+            limit: 20,
+          })
+        ).map(({ entry }) => entry.id),
+      ).toEqual([])
+    })
+
     it("deleteUserData: removes the user's rows, anonymizes authorship, keeps others' content", async () => {
       const org = `org_del_${uuid()}`
       const leaver = `leaver_${uuid()}`

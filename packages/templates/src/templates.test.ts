@@ -34,12 +34,23 @@ describe("Derive built-in Templates catalog", () => {
     expect(first?.source.match(/^\s*<section class="slide" data-derive-slide=/gm)).toHaveLength(
       first?.template.sections.length ?? 0,
     )
-    expect(first?.origin).toEqual({
+    expect(first?.template).toMatchObject({
       libraryId: BUILT_INS_LIBRARY_ID,
-      templateId: "narrative-pitch",
+      id: "narrative-pitch",
       catalogVersion: TEMPLATE_CATALOG_VERSION,
     })
     expect(first?.message).toBe("Created from derive/built-ins/narrative-pitch catalog v1")
+  })
+
+  it("locks the built-in count by artifact category", () => {
+    expect(
+      Object.fromEntries(
+        (["Deck", "Doc", "Report", "Site", "Agent"] as const).map((category) => [
+          category,
+          listTemplates({ kind: "artifact", category }).length,
+        ]),
+      ),
+    ).toEqual({ Deck: 6, Doc: 8, Report: 3, Site: 2, Agent: 5 })
   })
 
   it("renders every deck through the canonical supported slide slot", () => {

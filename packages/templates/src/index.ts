@@ -21,6 +21,5 @@ export {
   type TemplateFormat,
   type TemplateInput,
   type TemplateKind,
-  type TemplateRef,
   type TemplateResource,
 } from "./types"

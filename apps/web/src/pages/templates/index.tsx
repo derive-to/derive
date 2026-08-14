@@ -53,6 +53,7 @@ export function Templates() {
   const artifactCategories = [...new Set(artifactTemplates.map((template) => template.category))]
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
   const [requestedTemplateError, setRequestedTemplateError] = useState("")
+  const [sourceArtifactError, setSourceArtifactError] = useState("")
   const sourceArtifact = search.source
   const requestedTemplate = search.use
   useEffect(() => {
@@ -68,6 +69,7 @@ export function Templates() {
   }, [requestedTemplate, nav, catalogState.isPending, builtIns])
   useEffect(() => {
     if (!sourceArtifact) return
+    setSourceArtifactError("")
     let active = true
     void api
       .getArtifact(sourceArtifact)
@@ -77,6 +79,10 @@ export function Templates() {
         void nav({ search: (previous) => ({ ...previous, source: undefined }), replace: true })
       })
       .catch(() => {
+        if (!active) return
+        setSourceArtifactError(
+          `Derive couldn’t open “${sourceArtifact}”. Check that it still exists and that you have access, then try another artifact.`,
+        )
         void nav({
           search: (previous) => ({ ...previous, source: undefined, derive: true }),
           replace: true,
@@ -98,7 +104,8 @@ export function Templates() {
         templates[0])
       : undefined
 
-  const setTab = (next: TemplateTab) =>
+  const setTab = (next: TemplateTab) => {
+    setSourceArtifactError("")
     nav({
       search: {
         tab: next,
@@ -106,6 +113,7 @@ export function Templates() {
         library: undefined,
       },
     })
+  }
 
   const openTemplate = (template = selectedTemplate) => {
     if (!template) return
@@ -126,7 +134,10 @@ export function Templates() {
             <Button
               variant="outline"
               data-testid="templates-create-existing"
-              onClick={() => nav({ search: { ...search, derive: true } })}
+              onClick={() => {
+                setSourceArtifactError("")
+                void nav({ search: { ...search, derive: true } })
+              }}
             >
               <Icon name="derive" /> From an artifact
             </Button>
@@ -177,10 +188,22 @@ export function Templates() {
         />
       ) : null}
 
+      {sourceArtifactError ? (
+        <StatusPanel
+          tone="warning"
+          layout="inline"
+          title="Source artifact unavailable"
+          description={sourceArtifactError}
+        />
+      ) : null}
+
       {search.derive && (
         <DeriveSource
           autoFocus={!!search.derive}
-          onUse={(artifact) => setAgentTarget(targetFromArtifact(artifact))}
+          onUse={(artifact) => {
+            setSourceArtifactError("")
+            setAgentTarget(targetFromArtifact(artifact))
+          }}
         />
       )}
 

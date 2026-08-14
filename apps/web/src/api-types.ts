@@ -5858,6 +5858,7 @@ export interface paths {
                     cursor?: string;
                     limit?: number;
                     scope?: "private" | "workspace" | "public";
+                    q?: string;
                 };
                 header?: never;
                 path?: never;

@@ -8,6 +8,19 @@ import type { DeriveClient, TemplateLibraryEntryJson, TemplateLibraryJson } from
 // portable package; neither server owns a second catalog.
 export type TemplateResourceRegistrar = Pick<McpServer, "registerResource">
 
+const TEMPLATE_LIBRARY_CATALOG_URI = "derive://template-libraries"
+const TEMPLATE_LIBRARY_ID = /^[A-Za-z0-9_-]+$/
+// MCP is intentionally an HTTP-only client and cannot import core at runtime.
+// Keep one validating formatter at this boundary instead of interpolating URIs
+// throughout each resource serializer.
+const templateLibraryUri = (libraryId: string, entryId?: string): string => {
+  if (!TEMPLATE_LIBRARY_ID.test(libraryId) || (entryId && !TEMPLATE_LIBRARY_ID.test(entryId)))
+    throw new Error("invalid template library URI id")
+  return entryId
+    ? `${TEMPLATE_LIBRARY_CATALOG_URI}/${libraryId}/${entryId}`
+    : `${TEMPLATE_LIBRARY_CATALOG_URI}/${libraryId}`
+}
+
 export function registerTemplateResources(server: TemplateResourceRegistrar): void {
   const catalog = catalogResource()
   server.registerResource(
@@ -45,13 +58,45 @@ export function registerTemplateResources(server: TemplateResourceRegistrar): vo
 
 const libraryEntry = (library: TemplateLibraryJson, entry: TemplateLibraryEntryJson) => ({
   ...entry,
-  uri: `derive://template-libraries/${library.id}/${entry.id}`,
+  uri: templateLibraryUri(library.id, entry.id),
 })
 
 const pathVariable = (variables: Variables, name: string): string => {
   const value = variables[name]
   if (typeof value !== "string") throw new Error(`missing URI variable ${name}`)
   return value
+}
+
+const templateLibraryPage = async (uri: URL, client: DeriveClient, cursor?: string) => {
+  const page = await client.listTemplateLibraries(cursor)
+  const nextUri = page.next_cursor
+    ? `${TEMPLATE_LIBRARY_CATALOG_URI}?cursor=${encodeURIComponent(page.next_cursor)}`
+    : undefined
+  return {
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json" as const,
+        text: JSON.stringify(
+          {
+            libraries: page.libraries.map((library) => ({
+              id: library.id,
+              title: library.title,
+              description: library.description,
+              scope: library.scope,
+              entry_count: library.entry_count,
+              uri: templateLibraryUri(library.id),
+            })),
+            truncated: page.truncated,
+            next_uri: nextUri,
+            next: nextUri ? "Read next_uri for the next catalog page." : undefined,
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+  }
 }
 
 /** Register one lazy catalog plus URI templates; startup cost stays constant. */
@@ -61,7 +106,7 @@ export function registerWorkspaceTemplateResources(
 ): void {
   server.registerResource(
     "template-libraries:catalog",
-    "derive://template-libraries",
+    TEMPLATE_LIBRARY_CATALOG_URI,
     {
       title: "Derive template libraries",
       description:
@@ -69,41 +114,23 @@ export function registerWorkspaceTemplateResources(
       mimeType: "application/json",
       annotations: { audience: ["assistant"], priority: 0.82 },
     },
-    async (uri: URL) => {
-      const page = await client
-        .listTemplateLibraries()
-        .catch(() => ({ libraries: [], truncated: false, next_cursor: null }))
-      return {
-        contents: [
-          {
-            uri: uri.href,
-            mimeType: "application/json" as const,
-            text: JSON.stringify(
-              {
-                libraries: page.libraries.map((library) => ({
-                  id: library.id,
-                  title: library.title,
-                  description: library.description,
-                  scope: library.scope,
-                  entry_count: library.entry_count,
-                  uri: `derive://template-libraries/${library.id}`,
-                })),
-                truncated: page.truncated,
-                next: page.truncated
-                  ? "Use find with templates:true to search the full catalog."
-                  : undefined,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      }
+    async (uri: URL) => templateLibraryPage(uri, client),
+  )
+  server.registerResource(
+    "template-libraries:page",
+    new ResourceTemplate(`${TEMPLATE_LIBRARY_CATALOG_URI}{?cursor}`, { list: undefined }),
+    {
+      title: "Derive template library catalog page",
+      description: "Continue an accessible template-library catalog from its next cursor.",
+      mimeType: "application/json",
+      annotations: { audience: ["assistant"], priority: 0.78 },
     },
+    async (uri, variables) =>
+      templateLibraryPage(uri, client, decodeURIComponent(pathVariable(variables, "cursor"))),
   )
   server.registerResource(
     "template-library",
-    new ResourceTemplate("derive://template-libraries/{libraryId}", { list: undefined }),
+    new ResourceTemplate(`${TEMPLATE_LIBRARY_CATALOG_URI}/{libraryId}`, { list: undefined }),
     {
       title: "Derive template library",
       description: "One accessible authored library and its starter URIs.",
@@ -132,7 +159,7 @@ export function registerWorkspaceTemplateResources(
   )
   server.registerResource(
     "template-library-entry",
-    new ResourceTemplate("derive://template-libraries/{libraryId}/{entryId}", {
+    new ResourceTemplate(`${TEMPLATE_LIBRARY_CATALOG_URI}/{libraryId}/{entryId}`, {
       list: undefined,
     }),
     {

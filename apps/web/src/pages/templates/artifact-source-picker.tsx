@@ -5,6 +5,7 @@ import { LoadError } from "@/components/shared/load-error"
 import { SearchField } from "@/components/shared/search-field"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { artifactTemplateFormat } from "./artifact-template-format"
 
 export function ArtifactSourcePicker({
   value,
@@ -49,13 +50,18 @@ export function ArtifactSourcePicker({
         <div className="grid max-h-48 gap-1 overflow-y-auto rounded-lg border bg-background p-1.5">
           {items.map((artifact) => {
             const selected = value === artifact.short_id
+            const format =
+              artifact.kind === "file"
+                ? artifactTemplateFormat(artifact.current_content_type)
+                : null
             return (
               <button
                 key={artifact.short_id}
                 type="button"
+                disabled={!format}
                 onClick={() => onSelect(artifact)}
-                className={`flex min-w-0 items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
-                  selected ? "bg-secondary" : "hover:bg-secondary/70"
+                className={`flex min-w-0 items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left outline-none transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50 ${
+                  selected ? "bg-secondary" : format ? "hover:bg-secondary/70" : ""
                 }`}
                 data-testid={`template-library-source-select-${artifact.short_id}`}
               >
@@ -68,11 +74,7 @@ export function ArtifactSourcePicker({
                   </span>
                 </span>
                 <Badge variant="outline" shape="pill">
-                  {artifact.current_content_type === "text/x-derive-deck"
-                    ? "Deck"
-                    : artifact.current_content_type === "text/markdown"
-                      ? "Markdown"
-                      : "HTML"}
+                  {format?.label ?? "Not supported"}
                 </Badge>
               </button>
             )

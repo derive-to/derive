@@ -1,4 +1,5 @@
 import type { Artifact } from "@/api"
+import { artifactTemplateFormat } from "./artifact-template-format"
 
 export type AddEntryState = {
   step: "source" | "details"
@@ -28,13 +29,6 @@ export const initialAddEntryState = (): AddEntryState => ({
   tags: "",
 })
 
-export const sourceCategory = (artifact: Artifact): string =>
-  artifact.current_content_type === "text/x-derive-deck"
-    ? "Deck"
-    : artifact.current_content_type === "text/markdown"
-      ? "Doc"
-      : "Site"
-
 type TextField = Exclude<keyof AddEntryState, "step" | "selectedSource" | "kind">
 
 export type AddEntryAction =
@@ -57,13 +51,16 @@ export const reduceAddEntry = (state: AddEntryState, action: AddEntryAction): Ad
       return { ...state, [action.field]: action.value }
     case "paste-source":
       return { ...initialAddEntryState(), source: action.source }
-    case "select-source":
+    case "select-source": {
+      const format = artifactTemplateFormat(action.artifact.current_content_type)
+      if (!format || action.artifact.kind !== "file") return state
       return {
         ...initialAddEntryState(),
         source: action.artifact.short_id,
         selectedSource: action.artifact,
         title: action.artifact.title || "Reusable starter",
-        category: sourceCategory(action.artifact),
+        category: format.category,
       }
+    }
   }
 }

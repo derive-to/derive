@@ -1726,6 +1726,7 @@ export interface TemplateLibraryStore {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    query?: string
     before?: { createdAt: string; id: string }
     limit?: number
   }): Promise<TemplateLibraryRecord[]>

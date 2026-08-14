@@ -1,13 +1,10 @@
 import type { Artifact, TemplateLibraryEntry } from "@/api"
 import type { AgentTemplateTarget } from "./agent-handoff"
+import { artifactTemplateFormat } from "./artifact-template-format"
 import type { BuiltInTemplate } from "./types"
 
 const artifactCategory = (artifact: Artifact): string =>
-  artifact.current_content_type === "text/x-derive-deck"
-    ? "Deck"
-    : artifact.current_content_type === "text/markdown"
-      ? "Doc"
-      : "Site"
+  artifactTemplateFormat(artifact.current_content_type)?.category ?? "Artifact"
 
 export const targetFromBuiltIn = (template: BuiltInTemplate): AgentTemplateTarget => ({
   uri: `derive://templates/${template.id}`,

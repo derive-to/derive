@@ -27,12 +27,6 @@ export type TemplateDefinition = {
   starterPrompts?: readonly string[]
 }
 
-export type TemplateRef = {
-  libraryId: typeof BUILT_INS_LIBRARY_ID
-  templateId: string
-  catalogVersion: typeof TEMPLATE_CATALOG_VERSION
-}
-
 export type BuiltInTemplate = TemplateDefinition & {
   libraryId: typeof BUILT_INS_LIBRARY_ID
   catalogVersion: typeof TEMPLATE_CATALOG_VERSION
@@ -44,9 +38,7 @@ export type TemplateDraft = {
   mimeType: "text/markdown" | "text/html"
   title: string
   message: string
-  format: TemplateFormat
   template: BuiltInTemplate
-  origin: TemplateRef
 }
 
 export type TemplateResource = {

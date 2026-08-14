@@ -9,6 +9,7 @@ export const TemplateLibraryListQuerySchema = z.object({
   cursor: z.string().max(500).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   scope: TemplateLibraryScopeSchema.optional(),
+  q: z.string().trim().max(200).optional(),
 })
 
 export const TemplateInputSchema = z.object({

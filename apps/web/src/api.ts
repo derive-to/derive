@@ -1481,7 +1481,7 @@ export const api = {
   listBuiltInTemplates: (): Promise<{ templates: BuiltInTemplate[] }> =>
     f("/v1/templates", { credentials: "include" }).then(j),
   listTemplateLibraries: (
-    params: { cursor?: string; limit?: number; scope?: TemplateLibraryScope } = {},
+    params: { cursor?: string; limit?: number; scope?: TemplateLibraryScope; q?: string } = {},
   ): Promise<{
     libraries: TemplateLibrary[]
     truncated: boolean
@@ -1491,6 +1491,7 @@ export const api = {
     if (params.cursor) query.set("cursor", params.cursor)
     if (params.limit) query.set("limit", String(params.limit))
     if (params.scope) query.set("scope", params.scope)
+    if (params.q) query.set("q", params.q)
     const suffix = query.size ? `?${query.toString()}` : ""
     return f(`/v1/template-libraries${suffix}`, { credentials: "include" }).then(j)
   },

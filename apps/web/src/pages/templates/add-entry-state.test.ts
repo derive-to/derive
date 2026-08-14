@@ -3,7 +3,7 @@ import type { Artifact } from "@/api"
 import { initialAddEntryState, reduceAddEntry } from "./add-entry-state"
 
 const artifact = (id: string, title: string, contentType: string) =>
-  ({ short_id: id, title, current_content_type: contentType }) as Artifact
+  ({ short_id: id, title, kind: "file", current_content_type: contentType }) as Artifact
 
 describe("add-entry state", () => {
   it("replaces derived metadata when the source changes", () => {
@@ -33,5 +33,15 @@ describe("add-entry state", () => {
       ...initialAddEntryState(),
       source: "another",
     })
+  })
+
+  it("does not select unsupported files as reusable starters", () => {
+    const initial = initialAddEntryState()
+    expect(
+      reduceAddEntry(initial, {
+        type: "select-source",
+        artifact: artifact("data", "Raw data", "application/json"),
+      }),
+    ).toBe(initial)
   })
 })

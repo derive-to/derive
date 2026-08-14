@@ -279,13 +279,16 @@ export function registerFindTool(tc: ToolContext): void {
         }))
         const allResults = [...builtIns, ...authoredRows]
         const results = allResults.slice(0, cap)
+        const truncated = builtIns.length > cap || authoredAll.length > authoredCapacity
         return json({
           workspace: t.org,
           ...(query ? { query } : {}),
           count: results.length,
           results,
-          truncated: builtIns.length > cap || authoredAll.length > authoredCapacity,
-          next: "Read a result's uri, adapt its starter to the person's request, publish with lineage, then inspect the render.",
+          truncated,
+          next: truncated
+            ? "Refine query to narrow the catalog, then read a result's uri. Adapt its starter, publish with lineage, and inspect the render."
+            : "Read a result's uri, adapt its starter to the person's request, publish with lineage, then inspect the render.",
         })
       }
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with

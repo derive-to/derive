@@ -60,14 +60,6 @@ export const collectionFoldersQuery = (collectionId: string) =>
     queryFn: () => api.collectionFolders(collectionId),
   })
 
-export const templateLibrariesQuery = (scope?: "private" | "workspace" | "public") =>
-  infiniteQueryOptions({
-    queryKey: ["template-libraries", scope ?? "all"] as const,
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => api.listTemplateLibraries({ cursor: pageParam, limit: 30, scope }),
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
-  })
-
 // Workspaces only change via create/switch/delete — all of which hard-reload — so
 // this is effectively fetch-once per session.
 export const workspacesQuery = () =>

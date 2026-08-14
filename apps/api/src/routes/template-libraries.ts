@@ -107,12 +107,18 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       const canReadWorkspace = await workspaceCan(c, "read")
       const [publicLibraries, workspaceLibraries, personalLibraries] = await Promise.all([
         !query.scope || query.scope === "public"
-          ? meta.listTemplateLibraries({ scope: "public", before, limit: limit + 1 })
+          ? meta.listTemplateLibraries({
+              scope: "public",
+              query: query.q,
+              before,
+              limit: limit + 1,
+            })
           : [],
         canReadWorkspace && (!query.scope || query.scope === "workspace")
           ? meta.listTemplateLibraries({
               orgId,
               scope: "workspace",
+              query: query.q,
               before,
               limit: limit + 1,
             })
@@ -122,6 +128,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
               orgId,
               scope: "private",
               createdBy: owner,
+              query: query.q,
               before,
               limit: limit + 1,
             })
@@ -183,8 +190,6 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       const owner = await managerFor(c)
       if (!owner) return bail(fail(c, 401, "unauthenticated"))
       const orgId = await activeWorkspace(c)
-      if ((await meta.listTemplateLibraries({ orgId, createdBy: owner, limit: 100 })).length >= 100)
-        return bail(fail(c, 409, "template library limit reached for this workspace"))
       const body = await readJson(c, CreateTemplateLibrarySchema)
       if (body instanceof Response) return bail(body)
       const library = await meta.createTemplateLibrary({

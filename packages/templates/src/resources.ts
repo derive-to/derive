@@ -24,29 +24,34 @@ const summaryOf = (template: (typeof BUILT_IN_TEMPLATES)[number]) => ({
   uri: `derive://templates/${template.id}`,
 })
 
+const artifactCount = BUILT_IN_TEMPLATES.filter((template) => template.kind === "artifact").length
+const contextCount = BUILT_IN_TEMPLATES.length - artifactCount
+const catalogDescription = `${BUILT_IN_TEMPLATES.length} curated starts: ${artifactCount} artifact Templates and ${contextCount} safe Context manifests. Read an entry resource for its exact starter source, then use publish to create an independent artifact.`
+// The built-in catalog changes only with a deployment. Serialize its 30 entries
+// once instead of rebuilding ~37 KB of identical JSON for every remote MCP request.
+const catalogText = stableJson({
+  schema_version: TEMPLATE_RESOURCE_SCHEMA_VERSION,
+  catalog_version: TEMPLATE_CATALOG_VERSION,
+  library: {
+    id: BUILT_INS_LIBRARY_ID,
+    title: "Derive built-ins",
+    visibility: "public",
+    release: TEMPLATE_CATALOG_VERSION,
+  },
+  counts: {
+    artifacts: artifactCount,
+    contexts: contextCount,
+  },
+  templates: BUILT_IN_TEMPLATES.map(summaryOf),
+})
+
 export function catalogResource(): TemplateResource {
-  const artifactCount = BUILT_IN_TEMPLATES.filter((template) => template.kind === "artifact").length
-  const contextCount = BUILT_IN_TEMPLATES.length - artifactCount
   return {
     uri: TEMPLATE_CATALOG_URI,
     title: "Derive built-in Templates",
-    description: `${BUILT_IN_TEMPLATES.length} curated starts: ${artifactCount} artifact Templates and ${contextCount} safe Context manifests. Read an entry resource for its exact starter source, then use publish to create an independent artifact.`,
+    description: catalogDescription,
     mimeType: "application/json",
-    text: stableJson({
-      schema_version: TEMPLATE_RESOURCE_SCHEMA_VERSION,
-      catalog_version: TEMPLATE_CATALOG_VERSION,
-      library: {
-        id: BUILT_INS_LIBRARY_ID,
-        title: "Derive built-ins",
-        visibility: "public",
-        release: TEMPLATE_CATALOG_VERSION,
-      },
-      counts: {
-        artifacts: artifactCount,
-        contexts: contextCount,
-      },
-      templates: BUILT_IN_TEMPLATES.map(summaryOf),
-    }),
+    text: catalogText,
   }
 }
 
@@ -70,9 +75,9 @@ export function templateResource(id: string | undefined): TemplateResource | und
         source: draft.source,
       },
       provenance: {
-        library_id: draft.origin.libraryId,
-        template_id: draft.origin.templateId,
-        catalog_version: draft.origin.catalogVersion,
+        library_id: template.libraryId,
+        template_id: template.id,
+        catalog_version: template.catalogVersion,
         note: "The published result is an independent artifact; this Template never remains a live dependency.",
       },
       context_safety:

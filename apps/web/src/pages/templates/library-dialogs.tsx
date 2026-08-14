@@ -14,7 +14,8 @@ import {
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { scopeCopy, templateLibraryKeys, templateLibraryListKeys } from "./template-library-helpers"
+import { scopeCopy } from "./template-library-helpers"
+import { templateLibraryInvalidation } from "./template-library-queries"
 
 function ScopePicker({
   value,
@@ -111,21 +112,35 @@ export function CreateLibraryDialog({
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
   const [scope, setScope] = useState<TemplateLibraryScope>("workspace")
+  const resetForm = () => {
+    setTitle("")
+    setDescription("")
+    setScope("workspace")
+  }
   const create = useApiMutation({
     mutationFn: () =>
       api.createTemplateLibrary({ title: title.trim(), description: description.trim(), scope }),
-    invalidate: [...templateLibraryListKeys],
+    invalidate: templateLibraryInvalidation,
     success: "Template library created",
     onSuccess: (library) => {
-      setTitle("")
-      setDescription("")
-      setScope("workspace")
+      resetForm()
       onOpenChange(false)
       onCreated(library)
     },
   })
+  const closeAndReset = () => {
+    if (create.isPending) return
+    resetForm()
+    onOpenChange(false)
+  }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) onOpenChange(true)
+        else closeAndReset()
+      }}
+    >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Create a template library</DialogTitle>
@@ -154,7 +169,8 @@ export function CreateLibraryDialog({
             <Button
               type="button"
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={closeAndReset}
+              disabled={create.isPending}
               data-testid="template-library-create-cancel"
             >
               Cancel
@@ -195,22 +211,28 @@ export function LibrarySettingsDialog({
         description: description.trim(),
         scope,
       }),
-    invalidate: templateLibraryKeys(library.id),
+    invalidate: templateLibraryInvalidation,
     success: "Library settings saved",
     onSuccess: () => onOpenChange(false),
   })
   const remove = useApiMutation({
     mutationFn: () => api.deleteTemplateLibrary(library.id),
-    invalidate: templateLibraryKeys(library.id),
+    invalidate: templateLibraryInvalidation,
     success: "Template library deleted",
     onSuccess: () => {
       onOpenChange(false)
       onDeleted()
     },
   })
+  const busy = update.isPending || remove.isPending
   return (
     <>
-      <Dialog open={open && !deleteOpen} onOpenChange={onOpenChange}>
+      <Dialog
+        open={open && !deleteOpen}
+        onOpenChange={(nextOpen) => {
+          if (!busy) onOpenChange(nextOpen)
+        }}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Library settings</DialogTitle>
@@ -240,6 +262,7 @@ export function LibrarySettingsDialog({
                 type="button"
                 variant="ghost"
                 onClick={() => setDeleteOpen(true)}
+                disabled={busy}
                 data-testid="template-library-settings-delete"
               >
                 <Icon name="delete" /> Delete library
@@ -249,13 +272,14 @@ export function LibrarySettingsDialog({
                   type="button"
                   variant="outline"
                   onClick={() => onOpenChange(false)}
+                  disabled={busy}
                   data-testid="template-library-settings-cancel"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
-                  disabled={!title.trim() || update.isPending}
+                  disabled={!title.trim() || busy}
                   data-testid="template-library-settings-save"
                 >
                   Save settings
@@ -267,7 +291,9 @@ export function LibrarySettingsDialog({
       </Dialog>
       <ConfirmDialog
         open={deleteOpen}
-        onOpenChange={setDeleteOpen}
+        onOpenChange={(nextOpen) => {
+          if (!remove.isPending) setDeleteOpen(nextOpen)
+        }}
         title={`Delete ${library.title}?`}
         description="This removes the library and its published starters. Source artifacts and adopted work stay untouched."
         confirmLabel="Delete library"

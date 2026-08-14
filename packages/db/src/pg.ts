@@ -3286,9 +3286,11 @@ export class PgMetaStore implements MetaStore {
     orgId?: string
     scope?: TemplateLibraryScope
     createdBy?: string
+    query?: string
     before?: { createdAt: string; id: string }
     limit?: number
   }): Promise<TemplateLibraryRecord[]> {
+    const needle = opts?.query?.trim().toLowerCase()
     return this.db
       .select()
       .from(templateLibrary)
@@ -3297,6 +3299,9 @@ export class PgMetaStore implements MetaStore {
           opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
           opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
           opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibrary.description}) like ${`%${needle}%`}`
+            : undefined,
           opts?.before
             ? or(
                 lt(templateLibrary.created_at, opts.before.createdAt),

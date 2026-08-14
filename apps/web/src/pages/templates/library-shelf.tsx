@@ -1,15 +1,15 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useDeferredValue, useState } from "react"
 import { ApiError, type TemplateLibraryEntry, type TemplateLibraryScope } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { templateLibrariesQuery } from "@/lib/queries"
 import { LibraryDetail } from "./library-detail"
 import { CreateLibraryDialog } from "./library-dialogs"
 import { TemplateLibraryCard } from "./template-library-card"
-import { matches, scopeCopy } from "./template-library-helpers"
+import { scopeCopy } from "./template-library-helpers"
+import { templateLibrariesQuery } from "./template-library-queries"
 
 export function LibraryShelf({
   selectedId,
@@ -21,25 +21,21 @@ export function LibraryShelf({
   onUse: (entry: TemplateLibraryEntry) => void
 }) {
   const [scope, setScope] = useState<"all" | TemplateLibraryScope>("all")
-  const libraries = useInfiniteQuery(templateLibrariesQuery(scope === "all" ? undefined : scope))
+  const [query, setQuery] = useState("")
+  const deferredQuery = useDeferredValue(query)
+  const libraries = useInfiniteQuery(
+    templateLibrariesQuery({
+      scope: scope === "all" ? undefined : scope,
+      query: deferredQuery,
+    }),
+  )
   const libraryRows = libraries.data?.pages.flatMap((page) => page.libraries) ?? []
   const [createOpen, setCreateOpen] = useState(false)
-  const [query, setQuery] = useState("")
   const schemaPending =
     libraries.error instanceof ApiError &&
     libraries.error.code === "template_library_schema_unavailable"
   if (selectedId)
     return <LibraryDetail libraryId={selectedId} onBack={() => onSelect(undefined)} onUse={onUse} />
-  const visibleLibraries = libraryRows.filter(
-    (library) =>
-      (scope === "all" || library.scope === scope) &&
-      matches(query, [
-        library.title,
-        library.description,
-        library.scope,
-        library.publisher.name ?? undefined,
-      ]),
-  )
   return (
     <section className="flex flex-col gap-5" data-testid="template-libraries">
       <div className="flex flex-wrap items-end justify-between gap-4 border-y py-5">
@@ -56,7 +52,7 @@ export function LibraryShelf({
           </p>
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:flex-nowrap">
-          {libraryRows.length > 1 && (
+          {(query || libraryRows.length > 1) && (
             <label className="min-w-48 flex-1 sm:w-56 sm:flex-none">
               <span className="sr-only">Search libraries</span>
               <Input
@@ -95,9 +91,9 @@ export function LibraryShelf({
           </a>
         </Button>
       </div>
-      {libraries.isPending ? (
+      {libraries.isPending || libraries.isPlaceholderData ? (
         <div className="grid min-h-64 place-items-center border-y text-sm text-muted-foreground">
-          Loading libraries…
+          {libraries.isPlaceholderData ? "Searching libraries…" : "Loading libraries…"}
         </div>
       ) : schemaPending ? (
         <EmptyState
@@ -120,9 +116,9 @@ export function LibraryShelf({
             </Button>
           }
         />
-      ) : libraryRows.length && visibleLibraries.length ? (
+      ) : libraryRows.length ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleLibraries.map((library) => (
+          {libraryRows.map((library) => (
             <TemplateLibraryCard
               key={library.id}
               library={library}
@@ -131,7 +127,7 @@ export function LibraryShelf({
             />
           ))}
         </div>
-      ) : libraryRows.length ? (
+      ) : query.trim() ? (
         <EmptyState
           icon={<Icon name="templates" />}
           title="No matching libraries"
@@ -153,7 +149,7 @@ export function LibraryShelf({
           description="Turn a trusted artifact into a library entry, then share it privately, with your workspace, or publicly."
         />
       )}
-      {libraries.hasNextPage ? (
+      {libraries.hasNextPage && !libraries.isPlaceholderData ? (
         <div className="flex justify-center">
           <Button
             variant="outline"

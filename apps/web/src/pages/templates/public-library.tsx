@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import { getRouteApi, Link } from "@tanstack/react-router"
-import { useEffect, useRef, useState } from "react"
-import { ApiError, api } from "@/api"
+import { useDeferredValue, useEffect, useRef, useState } from "react"
+import { ApiError } from "@/api"
 import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -17,6 +17,7 @@ import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentTemplateDialog, type AgentTemplateTarget } from "./agent-template-dialog"
 import { TemplateEntryCard } from "./template-entry-card"
 import { TemplateLibraryCard } from "./template-library-card"
+import { templateLibrariesQuery, templateLibraryQuery } from "./template-library-queries"
 import { targetFromLibraryEntry } from "./template-target"
 
 const route = getRouteApi("/template-libraries/$id")
@@ -38,13 +39,10 @@ export function PublicTemplateLibraryCatalog() {
 
 function PublicTemplateLibraryCatalogInner() {
   const [query, setQuery] = useState("")
-  const libraries = useInfiniteQuery({
-    queryKey: ["public-template-libraries"] as const,
-    initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) =>
-      api.listTemplateLibraries({ cursor: pageParam, limit: 30, scope: "public" }),
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
-  })
+  const deferredQuery = useDeferredValue(query)
+  const libraries = useInfiniteQuery(
+    templateLibrariesQuery({ scope: "public", query: deferredQuery }),
+  )
   useDocumentTitle("Public template libraries")
   if (libraries.isPending)
     return (
@@ -71,18 +69,7 @@ function PublicTemplateLibraryCatalogInner() {
         />
       </PageShell>
     )
-  const needle = query.trim().toLocaleLowerCase()
-  const publicLibraries = (libraries.data?.pages.flatMap((page) => page.libraries) ?? []).filter(
-    (library) =>
-      library.scope === "public" &&
-      (!needle ||
-        [
-          library.title,
-          library.description,
-          library.publisher.name,
-          library.publisher.username,
-        ].some((value) => value?.toLocaleLowerCase().includes(needle))),
-  )
+  const publicLibraries = libraries.data?.pages.flatMap((page) => page.libraries) ?? []
   return (
     <PageShell width="wide" className="flex flex-col gap-8">
       <section className="border-b pb-7">
@@ -102,12 +89,16 @@ function PublicTemplateLibraryCatalogInner() {
             data-testid="public-template-libraries-search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search libraries, publishers, or topics"
+            placeholder="Search libraries or topics"
             aria-label="Search public libraries"
           />
         </label>
       </section>
-      {publicLibraries.length ? (
+      {libraries.isPlaceholderData ? (
+        <div className="grid min-h-48 place-items-center border-y text-sm text-muted-foreground">
+          Searching libraries…
+        </div>
+      ) : publicLibraries.length ? (
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {publicLibraries.map((library) => (
             <TemplateLibraryCard
@@ -117,11 +108,11 @@ function PublicTemplateLibraryCatalogInner() {
             />
           ))}
         </section>
-      ) : needle ? (
+      ) : query.trim() ? (
         <EmptyState
           icon={<Icon name="templates" />}
           title="No public libraries match that search"
-          description="Try a broader topic, library name, or publisher."
+          description="Try a broader topic or library name."
           action={
             <Button
               variant="outline"
@@ -139,7 +130,7 @@ function PublicTemplateLibraryCatalogInner() {
           description="The first public starter kit will appear here."
         />
       )}
-      {libraries.hasNextPage && (
+      {libraries.hasNextPage && !libraries.isPlaceholderData && (
         <div className="flex justify-center">
           <Button
             variant="outline"
@@ -162,11 +153,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
   const [resumeError, setResumeError] = useState("")
   const resumed = useRef<string | null>(null)
-  const library = useQuery({
-    queryKey: ["public-template-library", id] as const,
-    queryFn: () => api.getTemplateLibrary(id),
-    retry: false,
-  })
+  const library = useQuery({ ...templateLibraryQuery(id), retry: false })
   useDocumentTitle(library.data?.title ? `${library.data.title} · Templates` : "Template library")
   useEffect(() => {
     if (!me || !resumeEntryId || !library.data) return

@@ -117,12 +117,6 @@ export function renderTemplate(templateId: string | undefined): TemplateDraft | 
     mimeType: template.format === "md" ? "text/markdown" : "text/html",
     title: template.defaultTitle,
     message: `Created from ${template.libraryId}/${template.id} catalog v${template.catalogVersion}`,
-    format: template.format,
     template,
-    origin: {
-      libraryId: template.libraryId,
-      templateId: template.id,
-      catalogVersion: template.catalogVersion,
-    },
   }
 }

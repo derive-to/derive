@@ -45,6 +45,17 @@ export function AgentTemplateDialog({
   target: AgentTemplateTarget | null
   onOpenChange: (open: boolean) => void
 }) {
+  if (!target) return null
+  return <AgentTemplateDialogInner key={target.uri} target={target} onOpenChange={onOpenChange} />
+}
+
+function AgentTemplateDialogInner({
+  target,
+  onOpenChange,
+}: {
+  target: AgentTemplateTarget
+  onOpenChange: (open: boolean) => void
+}) {
   const {
     brief,
     setBrief,
@@ -67,7 +78,6 @@ export function AgentTemplateDialog({
     openModelPlans,
   } = useAgentTemplateHandoff(target, onOpenChange)
 
-  if (!target) return null
   const isContext = target.kind === "context"
 
   return (

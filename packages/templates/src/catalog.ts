@@ -1,7 +1,9 @@
+import { AGENT_ARTIFACT_TEMPLATE_DEFINITIONS } from "./built-ins/agent-artifacts"
 import { CONTEXT_TEMPLATE_DEFINITIONS } from "./built-ins/contexts"
 import { DECK_TEMPLATE_DEFINITIONS } from "./built-ins/decks"
 import { DOC_TEMPLATE_DEFINITIONS } from "./built-ins/docs"
-import { REPORT_SITE_AGENT_TEMPLATE_DEFINITIONS } from "./built-ins/reports-sites-agents"
+import { REPORT_TEMPLATE_DEFINITIONS } from "./built-ins/reports"
+import { SITE_TEMPLATE_DEFINITIONS } from "./built-ins/sites"
 import {
   BUILT_INS_LIBRARY_ID,
   type BuiltInTemplate,
@@ -14,7 +16,9 @@ import {
 const ARTIFACT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
   ...DECK_TEMPLATE_DEFINITIONS,
   ...DOC_TEMPLATE_DEFINITIONS,
-  ...REPORT_SITE_AGENT_TEMPLATE_DEFINITIONS,
+  ...REPORT_TEMPLATE_DEFINITIONS,
+  ...SITE_TEMPLATE_DEFINITIONS,
+  ...AGENT_ARTIFACT_TEMPLATE_DEFINITIONS,
 ]
 
 const builtIn = (template: TemplateDefinition): BuiltInTemplate => ({
