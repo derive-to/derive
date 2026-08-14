@@ -392,6 +392,10 @@ export function registerReadTool(tc: ToolContext): void {
           return json({
             uri: short_id,
             truncated: allLibraries.length > libraries.length,
+            next:
+              allLibraries.length > libraries.length
+                ? "Use find with templates:true to search the full catalog."
+                : undefined,
             libraries: libraries.map((library) => ({
               id: library.id,
               title: library.title,

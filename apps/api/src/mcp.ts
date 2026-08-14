@@ -66,9 +66,9 @@ import {
   type Role,
   SKILL_CONTENT_TYPE,
 } from "@derive/core"
-import { templateResources } from "@derive-to/templates"
+import { catalogResource, templateResource } from "@derive-to/templates"
 import { StreamableHTTPTransport } from "@hono/mcp"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
@@ -385,27 +385,40 @@ async function buildServer(
     )
   }
 
-  // Built-ins are the same portable resources the stdio server exposes. Register
-  // them here too so the instructions, resource list, and read tool cannot drift
-  // across transports.
-  for (const resource of templateResources()) {
-    server.registerResource(
-      `templates:${resource.uri}`,
-      resource.uri,
-      {
-        title: resource.title,
-        description: resource.description,
-        mimeType: resource.mimeType,
-        annotations: {
-          audience: ["assistant"],
-          priority: resource.uri.endsWith("/catalog") ? 0.85 : 0.7,
-        },
-      },
-      async (uri) => ({
+  // One small catalog plus a lazy URI template keeps the request-scoped server
+  // constant-cost. Exact starter bytes are generated only when an agent reads one.
+  const builtInCatalog = catalogResource()
+  server.registerResource(
+    "templates:catalog",
+    builtInCatalog.uri,
+    {
+      title: builtInCatalog.title,
+      description: builtInCatalog.description,
+      mimeType: builtInCatalog.mimeType,
+      annotations: { audience: ["assistant"], priority: 0.85 },
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, mimeType: builtInCatalog.mimeType, text: builtInCatalog.text }],
+    }),
+  )
+  server.registerResource(
+    "templates:entry",
+    new ResourceTemplate("derive://templates/{id}", { list: undefined }),
+    {
+      title: "Derive built-in Template",
+      description: "One exact built-in starter with metadata and immutable provenance.",
+      mimeType: "application/json",
+      annotations: { audience: ["assistant"], priority: 0.7 },
+    },
+    async (uri, variables) => {
+      const id = variables.id
+      const resource = typeof id === "string" ? templateResource(id) : undefined
+      if (!resource) throw new Error(`No built-in template "${String(id)}".`)
+      return {
         contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text }],
-      }),
-    )
-  }
+      }
+    },
+  )
 
   // Authored libraries keep one stable resource pointer. Discovery and access
   // checks happen lazily through find/read, so rebuilding the request-scoped MCP

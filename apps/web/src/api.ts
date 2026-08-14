@@ -1481,7 +1481,7 @@ export const api = {
   listBuiltInTemplates: (): Promise<{ templates: BuiltInTemplate[] }> =>
     f("/v1/templates", { credentials: "include" }).then(j),
   listTemplateLibraries: (
-    params: { cursor?: string; limit?: number } = {},
+    params: { cursor?: string; limit?: number; scope?: TemplateLibraryScope } = {},
   ): Promise<{
     libraries: TemplateLibrary[]
     truncated: boolean
@@ -1490,6 +1490,7 @@ export const api = {
     const query = new URLSearchParams()
     if (params.cursor) query.set("cursor", params.cursor)
     if (params.limit) query.set("limit", String(params.limit))
+    if (params.scope) query.set("scope", params.scope)
     const suffix = query.size ? `?${query.toString()}` : ""
     return f(`/v1/template-libraries${suffix}`, { credentials: "include" }).then(j)
   },
@@ -1533,15 +1534,6 @@ export const api = {
       `/v1/template-libraries/${encodeURIComponent(libraryId)}/entries/${encodeURIComponent(entryId)}`,
       { method: "DELETE", credentials: "include" },
     ).then(() => undefined),
-  getTemplateStarter: (
-    libraryId: string,
-    entryId: string,
-  ): Promise<{ entry: TemplateLibraryEntry; source: string; mime_type: string }> =>
-    f(
-      `/v1/template-libraries/${encodeURIComponent(libraryId)}/entries/${encodeURIComponent(entryId)}/starter`,
-      { credentials: "include" },
-    ).then(j),
-
   listWebhooks: (): Promise<{ webhooks: Webhook[]; event_options: string[] }> =>
     f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {

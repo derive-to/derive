@@ -1,24 +1,22 @@
-import {
-  type ArtifactRecord,
-  newId,
-  parseRef,
-  type TemplateLibraryEntryRecord,
-  type TemplateLibraryRecord,
-} from "@derive/core"
-import {
-  BUILT_INS_LIBRARY_ID,
-  listTemplates,
-  TEMPLATE_CATALOG_VERSION,
-  unsafeHtmlTemplateBindings,
-} from "@derive-to/templates"
+import { newId, parseRef, type TemplateLibraryRecord } from "@derive/core"
+import { listTemplates, unsafeHtmlTemplateBindings } from "@derive-to/templates"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
-import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson } from "../lib/http"
 import { likelySecrets } from "../lib/secret-scan"
-import { canReadTemplateLibrary } from "../lib/template-library-access"
+import {
+  BuiltInTemplateSchema,
+  CreateTemplateLibraryEntrySchema,
+  CreateTemplateLibrarySchema,
+  TemplateLibraryEntrySchema,
+  TemplateLibraryListQuerySchema,
+  TemplateLibrarySchema,
+  UpdateTemplateLibrarySchema,
+} from "../lib/template-library-contract"
+import { parseTemplateLibraryCursor, templateLibraryCursor } from "../lib/template-library-cursor"
 import { templateLibraryEntryJson } from "../lib/template-library-entry"
+import { createTemplateLibraryService } from "../lib/template-library-service"
 
 /**
  * Reusable template libraries.
@@ -30,254 +28,21 @@ import { templateLibraryEntryJson } from "../lib/template-library-entry"
  * in one place instead of silently broadening artifact access.
  */
 export const templateLibraryRoutes = (ctx: AppContext) => {
-  const {
-    activeWorkspace,
-    authorize,
-    authorizeStanding,
-    isToken,
-    limited,
-    managementPrincipal,
-    membershipOf,
-    meta,
-    privateOwnerId,
-    publishLimiter,
-    sourceText,
-    workspaceCan,
-  } = ctx
+  const { activeWorkspace, authorize, limited, meta, publishLimiter, sourceText, workspaceCan } =
+    ctx
   const app = new OpenAPIHono<BlankEnv>()
 
-  const Scope = z.enum(["private", "workspace", "public"])
-  const EntryKind = z.enum(["artifact", "context"])
-  const EntryFormat = z.enum(["md", "html"])
-  const ListQuery = z.object({
-    cursor: z.string().max(500).optional(),
-    limit: z.coerce.number().int().min(1).max(100).optional(),
-  })
-  const Input = z.object({
-    name: z.string().trim().min(1).max(80),
-    description: z.string().trim().min(1).max(240),
-    required: z.boolean().optional(),
-  })
-  const BuiltInTemplate = z
-    .object({
-      id: z.string(),
-      kind: EntryKind,
-      category: z.enum(["Deck", "Doc", "Report", "Site", "Agent"]),
-      format: EntryFormat,
-      title: z.string(),
-      defaultTitle: z.string(),
-      description: z.string(),
-      outcome: z.string(),
-      sections: z.array(z.string()),
-      inputs: z.array(Input),
-      tags: z.array(z.string()),
-      featured: z.boolean().optional(),
-      starterPrompts: z.array(z.string()).optional(),
-      libraryId: z.literal(BUILT_INS_LIBRARY_ID),
-      catalogVersion: z.literal(TEMPLATE_CATALOG_VERSION),
-    })
-    .openapi("BuiltInTemplate")
-
-  const Entry = z
-    .object({
-      id: z.string(),
-      library_id: z.string(),
-      source_version: z.number().describe("Pinned source version captured on publication."),
-      kind: EntryKind,
-      category: z.string(),
-      format: EntryFormat,
-      title: z.string(),
-      description: z.string(),
-      outcome: z.string(),
-      sections: z.array(z.string()),
-      inputs: z.array(Input),
-      tags: z.array(z.string()),
-      created_at: z.string(),
-    })
-    .openapi("TemplateLibraryEntry")
-
-  const Publisher = z.object({
-    name: z.string().nullable(),
-    username: z.string().nullable(),
-    image: z.string().nullable(),
-  })
-
-  const Library = z
-    .object({
-      id: z.string(),
-      title: z.string(),
-      description: z.string(),
-      scope: Scope.describe(
-        "private = owner only; workspace = workspace members; public = anyone with the library URL or catalog.",
-      ),
-      created_at: z.string(),
-      updated_at: z.string().nullable(),
-      entry_count: z.number(),
-      entries: z.array(Entry).optional(),
-      publisher: Publisher,
-      can_manage: z.boolean().optional(),
-    })
-    .openapi("TemplateLibrary")
-
-  // A read-scoped OAuth agent may use its grantor's private library. Only a
-  // manage-scoped principal may mutate one, so keep these identities separate.
-  const readerFor = async (c: Context): Promise<string | null> =>
-    (await privateOwnerId(c)) ?? (isToken(c) ? "token" : null)
-  const managerFor = async (c: Context): Promise<string | null> =>
-    (await managementPrincipal(c)) ?? (isToken(c) ? "token" : null)
-
-  const canRead = async (c: Context, library: TemplateLibraryRecord): Promise<boolean> => {
-    const workspaceReachable =
-      (await activeWorkspace(c)) === library.org_id && (await workspaceCan(c, "read"))
-    return canReadTemplateLibrary(library, {
-      ownerId: await readerFor(c),
-      workspaceReachable,
-      isMember: workspaceReachable,
-      isOperator: isToken(c),
-    })
-  }
-  const canManage = async (c: Context, library: TemplateLibraryRecord): Promise<boolean> => {
-    const owner = await managerFor(c)
-    const active = await activeWorkspace(c)
-    if (active !== library.org_id || !(await workspaceCan(c, "publish"))) return false
-    if (isToken(c) || library.created_by === owner) return true
-    return !!owner && (await membershipOf(c, library.org_id, owner))?.role === "owner"
-  }
-
-  /** Copying a pinned source into a wider library is a share operation, not merely a read. */
-  const canDistribute = async (
-    c: Context,
-    source: ArtifactRecord,
-    scope: "private" | "workspace" | "public",
-    targetOrg: string,
-  ): Promise<boolean> => {
-    if (scope === "private" || isToken(c)) return true
-    if (
-      scope === "workspace" &&
-      source.org_id === targetOrg &&
-      source.workspace_access === "member"
-    )
-      return true
-    // A world link grants consumption, never redistribution. Otherwise anyone who
-    // happens to receive an unlisted viewer link could turn it into a globally
-    // discoverable public starter. Public publication requires standing share
-    // authority (membership or an explicit artifact grant), exactly like widening
-    // the artifact's own reach.
-    return authorizeStanding(c, "share", source)
-  }
-
-  const scopeCanDistributeEntries = async (
-    c: Context,
-    library: TemplateLibraryRecord,
-    scope: "private" | "workspace" | "public",
-  ): Promise<boolean> => {
-    if (scope === "private") return true
-    const entries = await meta.listTemplateLibraryEntries(library.id)
-    const sources = new Map(
-      (await meta.getArtifactsByIds(entries.map((entry) => entry.source_artifact_id))).map(
-        (source) => [source.id, source],
-      ),
-    )
-    const allowed = await Promise.all(
-      entries.map(async (entry) => {
-        const source = sources.get(entry.source_artifact_id)
-        if (!source || source.removed_at) return false
-        const starter =
-          scope === "public"
-            ? await sourceText({
-                blob_key: entry.source_blob_key,
-                content_type: entry.source_content_type,
-              })
-            : ""
-        return !(
-          (scope === "public" && (starter === null || likelySecrets(starter).length > 0)) ||
-          !(await canDistribute(c, source, scope, library.org_id))
-        )
-      }),
-    )
-    return allowed.every(Boolean)
-  }
-
-  const libraryJson = async (
-    c: Context,
-    library: TemplateLibraryRecord,
-    opts?: {
-      entries?: TemplateLibraryEntryRecord[]
-      entryCount?: number
-      publisher?: { name: string | null; username: string | null; image: string | null }
-    },
-  ) => {
-    const entries = opts?.entries
-    const entryCount =
-      opts?.entryCount ??
-      entries?.length ??
-      (await meta.countTemplateLibraryEntries([library.id]))[library.id] ??
-      0
-    const publisher = opts?.publisher ??
-      (await meta.getUsers([library.created_by]))[0] ?? { name: null, username: null, image: null }
-    return {
-      id: library.id,
-      title: library.title,
-      description: library.description,
-      scope: library.scope,
-      created_at: library.created_at,
-      updated_at: library.updated_at,
-      entry_count: entryCount,
-      ...(entries ? { entries: entries.map(templateLibraryEntryJson) } : {}),
-      publisher: {
-        name: publisher.name ?? publisher.username ?? null,
-        username: publisher.username ?? null,
-        image: publisher.image ?? null,
-      },
-      can_manage: await canManage(c, library),
-    }
-  }
-
-  const requireLibrary = async (c: Context): Promise<TemplateLibraryRecord | Response> => {
-    const id = c.req.param("id")
-    const library = id ? await meta.getTemplateLibrary(id) : null
-    if (!library || !(await canRead(c, library))) return fail(c, 404, "not found")
-    return library
-  }
-  const requireManagedLibrary = async (c: Context): Promise<TemplateLibraryRecord | Response> => {
-    const library = await requireLibrary(c)
-    if (library instanceof Response) return library
-    if (!(await canManage(c, library))) return fail(c, 403, "forbidden")
-    return library
-  }
-
-  const beginManagedMutation = async (
-    c: Context,
-    library: TemplateLibraryRecord,
-  ): Promise<{ library: TemplateLibraryRecord; token: string } | Response> => {
-    const token = newId("tlm")
-    const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString()
-    if (!(await meta.acquireTemplateLibraryMutation(library.id, token, staleBefore)))
-      return fail(c, 409, "template library is changing; retry")
-
-    // Re-read scope and authorization only after acquiring the lease. This
-    // closes the validate-private / publish-public race between concurrent calls.
-    const fresh = await meta.getTemplateLibrary(library.id)
-    if (!fresh || !(await canManage(c, fresh))) {
-      await meta.releaseTemplateLibraryMutation(library.id, token)
-      return fail(c, fresh ? 403 : 404, fresh ? "forbidden" : "not found")
-    }
-    return { library: fresh, token }
-  }
-
-  const parseLibraryCursor = (
-    cursor?: string,
-  ): { createdAt: string; id: string } | undefined | null => {
-    if (!cursor) return undefined
-    const split = cursor.lastIndexOf("~")
-    if (split < 1) return null
-    const createdAt = cursor.slice(0, split)
-    const id = cursor.slice(split + 1)
-    if (!id || Number.isNaN(Date.parse(createdAt))) return null
-    return { createdAt, id }
-  }
-  const libraryCursor = (library: TemplateLibraryRecord): string =>
-    `${library.created_at}~${library.id}`
+  const {
+    readerFor,
+    managerFor,
+    canDistribute,
+    scopeCanDistributeEntries,
+    libraryJson,
+    requireLibrary,
+    requireManagedLibrary,
+    beginManagedMutation,
+    renewManagedMutation,
+  } = createTemplateLibraryService(ctx)
 
   app.openapi(
     createRoute({
@@ -289,7 +54,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
         200: {
           description: "Portable built-in template metadata; starter source remains agent-only.",
           content: {
-            "application/json": { schema: z.object({ templates: z.array(BuiltInTemplate) }) },
+            "application/json": { schema: z.object({ templates: z.array(BuiltInTemplateSchema) }) },
           },
         },
       },
@@ -315,7 +80,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       path: "/v1/template-libraries",
       tags: ["Templates"],
       summary: "List public libraries plus libraries accessible in the active workspace.",
-      request: { query: ListQuery },
+      request: { query: TemplateLibraryListQuerySchema },
       responses: {
         200: {
           description:
@@ -323,7 +88,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
           content: {
             "application/json": {
               schema: z.object({
-                libraries: z.array(Library),
+                libraries: z.array(TemplateLibrarySchema),
                 truncated: z.boolean(),
                 next_cursor: z.string().nullable(),
               }),
@@ -334,15 +99,17 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       const query = c.req.valid("query")
-      const before = parseLibraryCursor(query.cursor)
+      const before = parseTemplateLibraryCursor(query.cursor)
       if (before === null) return bail(fail(c, 422, "invalid template-library cursor"))
       const limit = query.limit ?? 100
       const owner = await readerFor(c)
       const orgId = await activeWorkspace(c)
       const canReadWorkspace = await workspaceCan(c, "read")
       const [publicLibraries, workspaceLibraries, personalLibraries] = await Promise.all([
-        meta.listTemplateLibraries({ scope: "public", before, limit: limit + 1 }),
-        canReadWorkspace
+        !query.scope || query.scope === "public"
+          ? meta.listTemplateLibraries({ scope: "public", before, limit: limit + 1 })
+          : [],
+        canReadWorkspace && (!query.scope || query.scope === "workspace")
           ? meta.listTemplateLibraries({
               orgId,
               scope: "workspace",
@@ -350,7 +117,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
               limit: limit + 1,
             })
           : [],
-        owner
+        owner && (!query.scope || query.scope === "private")
           ? meta.listTemplateLibraries({
               orgId,
               scope: "private",
@@ -390,7 +157,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
         truncated: allLibraries.length > libraries.length,
         next_cursor:
           allLibraries.length > libraries.length && libraries.length
-            ? libraryCursor(libraries[libraries.length - 1] as TemplateLibraryRecord)
+            ? templateLibraryCursor(libraries[libraries.length - 1] as TemplateLibraryRecord)
             : null,
       })
     },
@@ -405,7 +172,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       responses: {
         201: {
           description: "The newly created empty library.",
-          content: { "application/json": { schema: Library } },
+          content: { "application/json": { schema: TemplateLibrarySchema } },
         },
       },
     }),
@@ -418,14 +185,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       const orgId = await activeWorkspace(c)
       if ((await meta.listTemplateLibraries({ orgId, createdBy: owner, limit: 100 })).length >= 100)
         return bail(fail(c, 409, "template library limit reached for this workspace"))
-      const body = await readJson(
-        c,
-        z.object({
-          title: z.string().trim().min(1).max(120),
-          description: z.string().trim().max(500).optional(),
-          scope: Scope.optional(),
-        }),
-      )
+      const body = await readJson(c, CreateTemplateLibrarySchema)
       if (body instanceof Response) return bail(body)
       const library = await meta.createTemplateLibrary({
         id: newId("tlb"),
@@ -449,7 +209,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description: "Library and entries.",
-          content: { "application/json": { schema: Library } },
+          content: { "application/json": { schema: TemplateLibrarySchema } },
         },
       },
     }),
@@ -474,7 +234,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description: "Updated library.",
-          content: { "application/json": { schema: Library } },
+          content: { "application/json": { schema: TemplateLibrarySchema } },
         },
       },
     }),
@@ -483,14 +243,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       if (library instanceof Response) return bail(library)
       const rateLimited = await limited(c, publishLimiter)
       if (rateLimited) return bail(rateLimited)
-      const body = await readJson(
-        c,
-        z.object({
-          title: z.string().trim().min(1).max(120).optional(),
-          description: z.string().trim().max(500).optional(),
-          scope: Scope.optional(),
-        }),
-      )
+      const body = await readJson(c, UpdateTemplateLibrarySchema)
       if (body instanceof Response) return bail(body)
       const mutation = await beginManagedMutation(c, library)
       if (mutation instanceof Response) return bail(mutation)
@@ -508,6 +261,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
               "one or more starters cannot be shared at that library scope; change their access or remove them first",
             ),
           )
+        const staleMutation = await renewManagedMutation(c, mutation)
+        if (staleMutation) return bail(staleMutation)
         const updated = await meta.updateTemplateLibrary(fresh.id, body)
         if (!updated) return bail(fail(c, 404, "not found"))
         return c.json(await libraryJson(c, updated))
@@ -534,6 +289,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       const mutation = await beginManagedMutation(c, library)
       if (mutation instanceof Response) return bail(mutation)
       try {
+        const staleMutation = await renewManagedMutation(c, mutation)
+        if (staleMutation) return bail(staleMutation)
         await meta.deleteTemplateLibrary(mutation.library.id)
         return c.body(null, 204)
       } finally {
@@ -552,7 +309,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       responses: {
         201: {
           description: "Published entry.",
-          content: { "application/json": { schema: Entry } },
+          content: { "application/json": { schema: TemplateLibraryEntrySchema } },
         },
       },
     }),
@@ -561,21 +318,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       if (library instanceof Response) return bail(library)
       const rateLimited = await limited(c, publishLimiter)
       if (rateLimited) return bail(rateLimited)
-      const body = await readJson(
-        c,
-        z.object({
-          source_short_id: z.string().trim().min(1),
-          source_version: z.number().int().positive().optional(),
-          kind: EntryKind,
-          category: z.string().trim().min(1).max(64),
-          title: z.string().trim().min(1).max(120),
-          description: z.string().trim().max(500),
-          outcome: z.string().trim().max(300),
-          sections: z.array(z.string().trim().min(1).max(120)).max(30),
-          inputs: z.array(Input).max(20),
-          tags: z.array(z.string().trim().min(1).max(48)).max(20),
-        }),
-      )
+      const body = await readJson(c, CreateTemplateLibraryEntrySchema)
       if (body instanceof Response) return bail(body)
       // Match ordinary Derive links as well as a bare short id. A publisher can
       // paste `decision-memo-ab12cd34@v4` from the address bar without first
@@ -649,6 +392,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
               `template looks like it contains ${secrets.join(", ")}; replace credentials with named bindings such as {{API_KEY}}`,
             ),
           )
+        const staleMutation = await renewManagedMutation(c, mutation)
+        if (staleMutation) return bail(staleMutation)
         const entry = await meta.createTemplateLibraryEntry({
           id: newId("tpl"),
           library_id: fresh.id,
@@ -694,6 +439,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
         const entry = await meta.getTemplateLibraryEntry(c.req.param("entryId"))
         if (!entry || entry.library_id !== mutation.library.id)
           return bail(fail(c, 404, "not found"))
+        const staleMutation = await renewManagedMutation(c, mutation)
+        if (staleMutation) return bail(staleMutation)
         await meta.deleteTemplateLibraryEntry(entry.id)
         return c.body(null, 204)
       } finally {
@@ -714,7 +461,11 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
           description: "A stable source snapshot. Editing it never changes the template entry.",
           content: {
             "application/json": {
-              schema: z.object({ entry: Entry, source: z.string(), mime_type: z.string() }),
+              schema: z.object({
+                entry: TemplateLibraryEntrySchema,
+                source: z.string(),
+                mime_type: z.string(),
+              }),
             },
           },
         },

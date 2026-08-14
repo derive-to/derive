@@ -210,6 +210,11 @@ export interface TemplateLibraryJson {
   entry_count: number
   entries?: TemplateLibraryEntryJson[]
 }
+export interface TemplateLibraryPageJson {
+  libraries: TemplateLibraryJson[]
+  truncated: boolean
+  next_cursor: string | null
+}
 export interface TemplateStarterJson {
   entry: TemplateLibraryEntryJson
   source: string
@@ -309,7 +314,7 @@ export interface DeriveClient {
   /** Aggregated view analytics. */
   viewStats(shortId: string): Promise<ViewStatsJson>
   /** Accessible public + workspace + personal libraries, for MCP resources only. */
-  listTemplateLibraries(): Promise<TemplateLibraryJson[]>
+  listTemplateLibraries(): Promise<TemplateLibraryPageJson>
   getTemplateLibrary(id: string): Promise<TemplateLibraryJson>
   getTemplateStarter(libraryId: string, entryId: string): Promise<TemplateStarterJson>
 }
@@ -674,10 +679,9 @@ export function createClient(opts: ClientOptions): DeriveClient {
     },
 
     async listTemplateLibraries() {
-      const r = (await ok(await f(`${base}/v1/template-libraries`, { headers: authHeaders }))) as {
-        libraries: TemplateLibraryJson[]
-      }
-      return r.libraries
+      return ok(
+        await f(`${base}/v1/template-libraries?limit=100`, { headers: authHeaders }),
+      ) as Promise<TemplateLibraryPageJson>
     },
 
     async getTemplateLibrary(id) {

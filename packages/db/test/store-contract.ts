@@ -4158,6 +4158,8 @@ export function runStoreContract(
       expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
         false,
       )
+      expect(await store.renewTemplateLibraryMutation(library.id, "not-the-holder")).toBe(false)
+      expect(await store.renewTemplateLibraryMutation(library.id, "holder-a")).toBe(true)
       await store.releaseTemplateLibraryMutation(library.id, "not-the-holder")
       expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
         false,
@@ -4166,7 +4168,13 @@ export function runStoreContract(
       expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
         true,
       )
-      await store.releaseTemplateLibraryMutation(library.id, "holder-b")
+      const forceExpired = new Date(Date.now() + 60_000).toISOString()
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-c", forceExpired)).toBe(
+        true,
+      )
+      expect(await store.renewTemplateLibraryMutation(library.id, "holder-b")).toBe(false)
+      expect(await store.renewTemplateLibraryMutation(library.id, "holder-c")).toBe(true)
+      await store.releaseTemplateLibraryMutation(library.id, "holder-c")
     })
 
     it("deleteUserData: removes the user's rows, anonymizes authorship, keeps others' content", async () => {

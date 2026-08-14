@@ -15,6 +15,9 @@ import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentTemplateDialog, type AgentTemplateTarget } from "./agent-template-dialog"
+import { TemplateEntryCard } from "./template-entry-card"
+import { TemplateLibraryCard } from "./template-library-card"
+import { targetFromLibraryEntry } from "./template-target"
 
 const route = getRouteApi("/template-libraries/$id")
 
@@ -38,7 +41,8 @@ function PublicTemplateLibraryCatalogInner() {
   const libraries = useInfiniteQuery({
     queryKey: ["public-template-libraries"] as const,
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => api.listTemplateLibraries({ cursor: pageParam, limit: 30 }),
+    queryFn: ({ pageParam }) =>
+      api.listTemplateLibraries({ cursor: pageParam, limit: 30, scope: "public" }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   })
   useDocumentTitle("Public template libraries")
@@ -106,43 +110,11 @@ function PublicTemplateLibraryCatalogInner() {
       {publicLibraries.length ? (
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {publicLibraries.map((library) => (
-            <article
+            <TemplateLibraryCard
               key={library.id}
-              className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <Badge variant="outline" shape="pill">
-                  <Icon name="globe" size={12} /> Public
-                </Badge>
-                <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-                  {library.entry_count} starters
-                </span>
-              </div>
-              <div>
-                <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
-                  {library.title}
-                </h2>
-                <p className="mt-1 text-sm text-pretty text-muted-foreground [overflow-wrap:anywhere]">
-                  {library.description || "Reusable Derive starters."}
-                </p>
-              </div>
-              <AuthorChip
-                name={library.publisher.name}
-                login={null}
-                avatar={library.publisher.image}
-                handle={library.publisher.username}
-                size="xs"
-              />
-              <Button
-                asChild
-                className="mt-auto"
-                data-testid={`public-template-library-open-${library.id}`}
-              >
-                <Link to="/template-libraries/$id" params={{ id: library.id }}>
-                  Browse starters <Icon name="arrow" />
-                </Link>
-              </Button>
-            </article>
+              library={library}
+              testId={`public-template-library-open-${library.id}`}
+            />
           ))}
         </section>
       ) : needle ? (
@@ -188,7 +160,8 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
   const { use: resumeEntryId } = route.useSearch()
   const navigate = route.useNavigate()
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
-  const resumed = useRef(false)
+  const [resumeError, setResumeError] = useState("")
+  const resumed = useRef<string | null>(null)
   const library = useQuery({
     queryKey: ["public-template-library", id] as const,
     queryFn: () => api.getTemplateLibrary(id),
@@ -196,18 +169,16 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
   })
   useDocumentTitle(library.data?.title ? `${library.data.title} · Templates` : "Template library")
   useEffect(() => {
-    if (!me || !resumeEntryId || !library.data || resumed.current) return
-    resumed.current = true
+    if (!me || !resumeEntryId || !library.data) return
+    const resumeKey = `${library.data.id}:${resumeEntryId}`
+    if (resumed.current === resumeKey) return
+    resumed.current = resumeKey
     const entry = library.data.entries?.find((candidate) => candidate.id === resumeEntryId)
     if (entry) {
-      setAgentTarget({
-        uri: `derive://template-libraries/${library.data.id}/${entry.id}`,
-        title: entry.title,
-        description: entry.description,
-        kind: entry.kind,
-        category: entry.category,
-        inputs: entry.inputs,
-      })
+      setResumeError("")
+      setAgentTarget(targetFromLibraryEntry(library.data.id, entry))
+    } else {
+      setResumeError("That starter is no longer available in this library.")
     }
     void navigate({ search: {}, replace: true })
   }, [library.data, me, navigate, resumeEntryId])
@@ -320,75 +291,49 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
           </Button>
         </div>
       </section>
+      {resumeError ? (
+        <StatusPanel
+          tone="warning"
+          layout="inline"
+          title="Starter unavailable"
+          description={resumeError}
+        />
+      ) : null}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {(data.entries ?? []).map((entry) => (
-          <article
+          <TemplateEntryCard
             key={entry.id}
-            className="flex min-w-0 flex-col gap-4 rounded-xl border bg-card p-4"
-          >
-            <div className="flex flex-wrap gap-1.5">
-              <Badge variant="outline" shape="pill">
-                {entry.kind === "context" ? "Context" : entry.category}
-              </Badge>
-              <Badge variant="outline" shape="pill">
-                Source v{entry.source_version}
-              </Badge>
-            </div>
-            <div>
-              <h2 className="font-serif text-2xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
-                {entry.title}
-              </h2>
-              <p className="mt-1 text-sm text-pretty text-muted-foreground">{entry.description}</p>
-            </div>
-            {entry.sections.length > 0 && (
-              <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">
-                {entry.sections.join(" · ")}
-              </p>
-            )}
-            {entry.inputs.length > 0 && (
-              <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                Needs:{" "}
-                {entry.inputs
-                  .map((input) => `${input.name}${input.required ? " · required" : ""}`)
-                  .join(" · ")}
-              </p>
-            )}
-            {me ? (
-              <Button
-                className="mt-auto"
-                data-testid={`public-template-library-use-${entry.id}`}
-                onClick={() =>
-                  setAgentTarget({
-                    uri: `derive://template-libraries/${data.id}/${entry.id}`,
-                    title: entry.title,
-                    description: entry.description,
-                    kind: entry.kind,
-                    category: entry.category,
-                    inputs: entry.inputs,
-                  })
-                }
-              >
-                <Icon name="sparkles" />
-                {entry.kind === "context" ? "Make it ours" : "Make it mine"}
-              </Button>
-            ) : (
-              <Button
-                asChild
-                className="mt-auto"
-                data-testid={`public-template-library-use-${entry.id}`}
-              >
-                <Link
-                  to="/login"
-                  search={{
-                    signup: true,
-                    return_to: `/template-libraries/${data.id}?use=${encodeURIComponent(entry.id)}`,
-                  }}
+            entry={entry}
+            actions={
+              me ? (
+                <Button
+                  className="w-full"
+                  data-testid={`public-template-library-use-${entry.id}`}
+                  onClick={() => setAgentTarget(targetFromLibraryEntry(data.id, entry))}
                 >
-                  <Icon name="sparkles" /> Make it mine
-                </Link>
-              </Button>
-            )}
-          </article>
+                  <Icon name="sparkles" />
+                  {entry.kind === "context" ? "Make it ours" : "Make it mine"}
+                </Button>
+              ) : (
+                <Button
+                  asChild
+                  className="w-full"
+                  data-testid={`public-template-library-use-${entry.id}`}
+                >
+                  <Link
+                    to="/login"
+                    search={{
+                      signup: true,
+                      return_to: `/template-libraries/${data.id}?use=${encodeURIComponent(entry.id)}`,
+                    }}
+                  >
+                    <Icon name="sparkles" />
+                    {entry.kind === "context" ? "Make it ours" : "Make it mine"}
+                  </Link>
+                </Button>
+              )
+            }
+          />
         ))}
       </section>
       {(data.entries ?? []).length === 0 && (

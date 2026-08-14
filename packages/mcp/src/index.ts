@@ -1041,7 +1041,7 @@ for (const [name, body] of Object.entries(GUIDE_REFERENCES)) {
 }
 
 registerTemplateResources(server)
-await registerWorkspaceTemplateResources(server, client)
+registerWorkspaceTemplateResources(server, client)
 
 // Every account/workspace signed in on THIS machine, with the local `description`
 // each was given via `derive workspace describe` — the context a bare name can't

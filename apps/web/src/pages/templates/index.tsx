@@ -12,11 +12,12 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { AgentTemplateDialog, type AgentTemplateTarget } from "./agent-template-dialog"
-import { getTemplate, TEMPLATE_CATEGORIES, templateMatches } from "./catalog"
+import { getTemplate, templateMatches } from "./catalog"
 import { DeriveSource } from "./derive-source"
 import { LibraryShelf } from "./library-shelf"
 import { TemplateCard } from "./template-card"
 import { TemplateDetail } from "./template-detail"
+import { targetFromArtifact, targetFromBuiltIn, targetFromLibraryEntry } from "./template-target"
 import type { TemplateTab } from "./types"
 
 const TAB_COPY: Record<TemplateTab, { title: string; description: string }> = {
@@ -49,22 +50,21 @@ export function Templates() {
   const builtIns = catalogState.data?.templates ?? []
   const artifactTemplates = builtIns.filter((template) => template.kind === "artifact")
   const contextTemplates = builtIns.filter((template) => template.kind === "context")
+  const artifactCategories = [...new Set(artifactTemplates.map((template) => template.category))]
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
+  const [requestedTemplateError, setRequestedTemplateError] = useState("")
   const sourceArtifact = search.source
   const requestedTemplate = search.use
   useEffect(() => {
     if (!requestedTemplate || catalogState.isPending) return
     const template = getTemplate(builtIns, requestedTemplate)
     void nav({ search: (previous) => ({ ...previous, use: undefined }), replace: true })
-    if (!template) return
-    setAgentTarget({
-      uri: `derive://templates/${template.id}`,
-      title: template.title,
-      description: template.description,
-      kind: template.kind,
-      category: template.category,
-      inputs: template.inputs,
-    })
+    if (!template) {
+      setRequestedTemplateError("That built-in template is no longer available.")
+      return
+    }
+    setRequestedTemplateError("")
+    setAgentTarget(targetFromBuiltIn(template))
   }, [requestedTemplate, nav, catalogState.isPending, builtIns])
   useEffect(() => {
     if (!sourceArtifact) return
@@ -73,18 +73,7 @@ export function Templates() {
       .getArtifact(sourceArtifact)
       .then((artifact) => {
         if (!active) return
-        setAgentTarget({
-          uri: artifact.short_id,
-          title: artifact.title || "Untitled artifact",
-          description: "A new, agent-authored result grounded in this artifact.",
-          kind: "artifact",
-          category:
-            artifact.current_content_type === "text/x-derive-deck"
-              ? "Deck"
-              : artifact.current_content_type === "text/markdown"
-                ? "Doc"
-                : "Site",
-        })
+        setAgentTarget(targetFromArtifact(artifact))
         void nav({ search: (previous) => ({ ...previous, source: undefined }), replace: true })
       })
       .catch(() => {
@@ -120,14 +109,7 @@ export function Templates() {
 
   const openTemplate = (template = selectedTemplate) => {
     if (!template) return
-    setAgentTarget({
-      uri: `derive://templates/${template.id}`,
-      title: template.title,
-      description: template.description,
-      kind: template.kind,
-      category: template.category,
-      inputs: template.inputs,
-    })
+    setAgentTarget(targetFromBuiltIn(template))
   }
 
   const noResults = templates.length === 0
@@ -186,23 +168,19 @@ export function Templates() {
         </TabsList>
       </Tabs>
 
+      {requestedTemplateError ? (
+        <StatusPanel
+          tone="warning"
+          layout="inline"
+          title="Template unavailable"
+          description={requestedTemplateError}
+        />
+      ) : null}
+
       {search.derive && (
         <DeriveSource
           autoFocus={!!search.derive}
-          onUse={(artifact) =>
-            setAgentTarget({
-              uri: artifact.short_id,
-              title: artifact.title || "Untitled artifact",
-              description: "A new, agent-authored result grounded in this artifact.",
-              kind: "artifact",
-              category:
-                artifact.current_content_type === "text/x-derive-deck"
-                  ? "Deck"
-                  : artifact.current_content_type === "text/markdown"
-                    ? "Doc"
-                    : "Site",
-            })
-          }
+          onUse={(artifact) => setAgentTarget(targetFromArtifact(artifact))}
         />
       )}
 
@@ -231,7 +209,7 @@ export function Templates() {
               >
                 All
               </Button>
-              {TEMPLATE_CATEGORIES.map((category) => (
+              {artifactCategories.map((category) => (
                 <Button
                   key={category}
                   size="xs"
@@ -259,16 +237,7 @@ export function Templates() {
         <LibraryShelf
           selectedId={search.library}
           onSelect={(library) => nav({ search: { tab: "libraries", library } })}
-          onUse={(entry) =>
-            setAgentTarget({
-              uri: `derive://template-libraries/${entry.library_id}/${entry.id}`,
-              title: entry.title,
-              description: entry.description,
-              kind: entry.kind,
-              category: entry.category,
-              inputs: entry.inputs,
-            })
-          }
+          onUse={(entry) => setAgentTarget(targetFromLibraryEntry(entry.library_id, entry))}
         />
       ) : catalogState.isPending ? (
         <div className="grid min-h-64 place-items-center border-y py-12 text-center" role="status">

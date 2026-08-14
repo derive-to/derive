@@ -1736,6 +1736,8 @@ export interface TemplateLibraryStore {
   /** Serialize mutations whose validation depends on the library's current
    * scope and entries. A stale holder may be replaced after `staleBefore`. */
   acquireTemplateLibraryMutation(id: string, token: string, staleBefore: string): Promise<boolean>
+  /** Refresh only the current holder's lease immediately before its protected write. */
+  renewTemplateLibraryMutation(id: string, token: string): Promise<boolean>
   releaseTemplateLibraryMutation(id: string, token: string): Promise<void>
   deleteTemplateLibrary(id: string): Promise<void>
   createTemplateLibraryEntry(x: NewTemplateLibraryEntry): Promise<TemplateLibraryEntryRecord>

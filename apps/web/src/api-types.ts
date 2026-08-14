@@ -5857,6 +5857,7 @@ export interface paths {
                 query?: {
                     cursor?: string;
                     limit?: number;
+                    scope?: "private" | "workspace" | "public";
                 };
                 header?: never;
                 path?: never;

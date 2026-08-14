@@ -1,6 +1,4 @@
-import type { BuiltInTemplate, TemplateCategory } from "./types"
-
-export const TEMPLATE_CATEGORIES: readonly TemplateCategory[] = ["Deck", "Doc", "Report", "Site"]
+import type { BuiltInTemplate } from "./types"
 
 export function getTemplate(
   templates: readonly BuiltInTemplate[],

@@ -3343,6 +3343,14 @@ export class PgMetaStore implements MetaStore {
       .returning({ id: templateLibrary.id })
     return rows.length > 0
   }
+  async renewTemplateLibraryMutation(id: string, token: string): Promise<boolean> {
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ mutation_started_at: new Date().toISOString() })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+      .returning({ id: templateLibrary.id })
+    return rows.length > 0
+  }
   async releaseTemplateLibraryMutation(id: string, token: string): Promise<void> {
     await this.db
       .update(templateLibrary)

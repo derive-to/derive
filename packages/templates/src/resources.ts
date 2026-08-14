@@ -1,4 +1,4 @@
-import { BUILT_IN_TEMPLATES, getTemplate } from "./catalog"
+import { BUILT_IN_TEMPLATES } from "./catalog"
 import { renderTemplate } from "./render"
 import { BUILT_INS_LIBRARY_ID, TEMPLATE_CATALOG_VERSION, type TemplateResource } from "./types"
 
@@ -25,11 +25,12 @@ const summaryOf = (template: (typeof BUILT_IN_TEMPLATES)[number]) => ({
 })
 
 export function catalogResource(): TemplateResource {
+  const artifactCount = BUILT_IN_TEMPLATES.filter((template) => template.kind === "artifact").length
+  const contextCount = BUILT_IN_TEMPLATES.length - artifactCount
   return {
     uri: TEMPLATE_CATALOG_URI,
     title: "Derive built-in Templates",
-    description:
-      "30 curated starts: 24 ordinary artifact Templates and 6 safe Context manifests. Read an entry resource for its exact starter source, then use the existing publish tool to create an independent artifact.",
+    description: `${BUILT_IN_TEMPLATES.length} curated starts: ${artifactCount} artifact Templates and ${contextCount} safe Context manifests. Read an entry resource for its exact starter source, then use publish to create an independent artifact.`,
     mimeType: "application/json",
     text: stableJson({
       schema_version: TEMPLATE_RESOURCE_SCHEMA_VERSION,
@@ -41,8 +42,8 @@ export function catalogResource(): TemplateResource {
         release: TEMPLATE_CATALOG_VERSION,
       },
       counts: {
-        artifacts: BUILT_IN_TEMPLATES.filter((template) => template.kind === "artifact").length,
-        contexts: BUILT_IN_TEMPLATES.filter((template) => template.kind === "context").length,
+        artifacts: artifactCount,
+        contexts: contextCount,
       },
       templates: BUILT_IN_TEMPLATES.map(summaryOf),
     }),
@@ -50,9 +51,9 @@ export function catalogResource(): TemplateResource {
 }
 
 export function templateResource(id: string | undefined): TemplateResource | undefined {
-  const template = getTemplate(id)
   const draft = renderTemplate(id)
-  if (!template || !draft) return undefined
+  if (!draft) return undefined
+  const { template } = draft
   return {
     uri: `derive://templates/${template.id}`,
     title: template.title,
@@ -80,15 +81,4 @@ export function templateResource(id: string | undefined): TemplateResource | und
           : undefined,
     }),
   }
-}
-
-export function templateResources(): readonly TemplateResource[] {
-  return [
-    catalogResource(),
-    ...BUILT_IN_TEMPLATES.map((template) => {
-      const resource = templateResource(template.id)
-      if (!resource) throw new Error(`Built-in Template ${template.id} could not be serialized.`)
-      return resource
-    }),
-  ]
 }

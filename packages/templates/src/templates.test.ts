@@ -1,21 +1,22 @@
 import { describe, expect, it } from "vitest"
 import {
-  ARTIFACT_TEMPLATES,
   BUILT_INS_LIBRARY_ID,
-  CONTEXT_TEMPLATES,
   catalogResource,
+  listTemplates,
   renderTemplate,
   TEMPLATE_CATALOG_URI,
   TEMPLATE_CATALOG_VERSION,
   templateResource,
-  templateResources,
 } from "./index"
+
+const artifactTemplates = listTemplates({ kind: "artifact" })
+const contextTemplates = listTemplates({ kind: "context" })
 
 describe("Derive built-in Templates catalog", () => {
   it("ships the planned artifact and Context starts with durable refs", () => {
-    expect(ARTIFACT_TEMPLATES).toHaveLength(24)
-    expect(CONTEXT_TEMPLATES).toHaveLength(6)
-    const all = [...ARTIFACT_TEMPLATES, ...CONTEXT_TEMPLATES]
+    expect(artifactTemplates).toHaveLength(24)
+    expect(contextTemplates).toHaveLength(6)
+    const all = [...artifactTemplates, ...contextTemplates]
     expect(new Set(all.map((template) => template.id)).size).toBe(all.length)
     expect(all.every((template) => template.libraryId === BUILT_INS_LIBRARY_ID)).toBe(true)
     expect(all.every((template) => template.catalogVersion === TEMPLATE_CATALOG_VERSION)).toBe(true)
@@ -42,7 +43,7 @@ describe("Derive built-in Templates catalog", () => {
   })
 
   it("renders every deck through the canonical supported slide slot", () => {
-    for (const template of ARTIFACT_TEMPLATES.filter((item) => item.category === "Deck")) {
+    for (const template of artifactTemplates.filter((item) => item.category === "Deck")) {
       const draft = renderTemplate(template.id)
       expect(draft?.source, template.id).toContain("<!-- derive:slides:start -->")
       expect(draft?.source, template.id).toContain("<!-- derive:slides:end -->")
@@ -52,32 +53,6 @@ describe("Derive built-in Templates catalog", () => {
       ).toHaveLength(template.sections.length)
       expect(draft?.source, template.id).toContain('source: "derive-deck"')
     }
-  })
-
-  it("renders a supplied brief into built-in artifacts without exposing source bindings", () => {
-    const deck = renderTemplate("narrative-pitch", {
-      Audience: "Product and GTM leaders",
-      Objective: "Commit to the October launch plan",
-      Evidence: "24 design partners and $2.4M qualified pipeline",
-    })
-    expect(deck?.source).toContain("Product and GTM leaders")
-    expect(deck?.source).toContain("Commit to the October launch plan")
-    expect(deck?.source).toContain("24 design partners and $2.4M qualified pipeline")
-    expect(deck?.source).not.toContain("{{Audience}}")
-
-    const page = renderTemplate("launch-page", {
-      Offer: "Derive Templates",
-      Audience: "Teams shipping repeatable work",
-    })
-    expect(page?.source).toContain("Derive Templates")
-    expect(page?.source).toContain("Teams shipping repeatable work")
-
-    const doc = renderTemplate("decision-memo", {
-      Decision: "Ship the source-free adoption workbench",
-    })
-    expect(doc?.source).toContain(
-      "**Decision · required:** Ship the source-free adoption workbench",
-    )
   })
 
   it("keeps Context manifests portable and secret-free", () => {
@@ -102,6 +77,5 @@ describe("Derive built-in Templates catalog", () => {
     const entry = templateResource("decision-memo")
     expect(entry?.uri).toBe("derive://templates/decision-memo")
     expect(entry?.text).toContain("# Decision memo")
-    expect(templateResources()).toHaveLength(31)
   })
 })

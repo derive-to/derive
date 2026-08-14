@@ -1,4 +1,4 @@
-import { templateResources } from "@derive-to/templates"
+import { catalogResource, templateResource } from "@derive-to/templates"
 import { type McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js"
 import type { DeriveClient, TemplateLibraryEntryJson, TemplateLibraryJson } from "./client"
@@ -9,24 +9,38 @@ import type { DeriveClient, TemplateLibraryEntryJson, TemplateLibraryJson } from
 export type TemplateResourceRegistrar = Pick<McpServer, "registerResource">
 
 export function registerTemplateResources(server: TemplateResourceRegistrar): void {
-  for (const resource of templateResources()) {
-    server.registerResource(
-      `templates:${resource.uri}`,
-      resource.uri,
-      {
-        title: resource.title,
-        description: resource.description,
-        mimeType: resource.mimeType,
-        annotations: {
-          audience: ["assistant"],
-          priority: resource.uri.endsWith("/catalog") ? 0.85 : 0.7,
-        },
-      },
-      async (uri: URL) => ({
+  const catalog = catalogResource()
+  server.registerResource(
+    "templates:catalog",
+    catalog.uri,
+    {
+      title: catalog.title,
+      description: catalog.description,
+      mimeType: catalog.mimeType,
+      annotations: { audience: ["assistant"], priority: 0.85 },
+    },
+    async (uri: URL) => ({
+      contents: [{ uri: uri.href, mimeType: catalog.mimeType, text: catalog.text }],
+    }),
+  )
+  server.registerResource(
+    "templates:entry",
+    new ResourceTemplate("derive://templates/{id}", { list: undefined }),
+    {
+      title: "Derive built-in Template",
+      description: "One exact built-in starter with metadata and immutable provenance.",
+      mimeType: "application/json",
+      annotations: { audience: ["assistant"], priority: 0.7 },
+    },
+    async (uri, variables) => {
+      const id = pathVariable(variables, "id")
+      const resource = templateResource(id)
+      if (!resource) throw new Error(`No built-in template "${id}".`)
+      return {
         contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text }],
-      }),
-    )
-  }
+      }
+    },
+  )
 }
 
 const libraryEntry = (library: TemplateLibraryJson, entry: TemplateLibraryEntryJson) => ({
@@ -41,10 +55,10 @@ const pathVariable = (variables: Variables, name: string): string => {
 }
 
 /** Register one lazy catalog plus URI templates; startup cost stays constant. */
-export async function registerWorkspaceTemplateResources(
+export function registerWorkspaceTemplateResources(
   server: TemplateResourceRegistrar,
   client: DeriveClient,
-): Promise<void> {
+): void {
   server.registerResource(
     "template-libraries:catalog",
     "derive://template-libraries",
@@ -56,7 +70,9 @@ export async function registerWorkspaceTemplateResources(
       annotations: { audience: ["assistant"], priority: 0.82 },
     },
     async (uri: URL) => {
-      const libraries = await client.listTemplateLibraries().catch(() => [])
+      const page = await client
+        .listTemplateLibraries()
+        .catch(() => ({ libraries: [], truncated: false, next_cursor: null }))
       return {
         contents: [
           {
@@ -64,7 +80,7 @@ export async function registerWorkspaceTemplateResources(
             mimeType: "application/json" as const,
             text: JSON.stringify(
               {
-                libraries: libraries.map((library) => ({
+                libraries: page.libraries.map((library) => ({
                   id: library.id,
                   title: library.title,
                   description: library.description,
@@ -72,6 +88,10 @@ export async function registerWorkspaceTemplateResources(
                   entry_count: library.entry_count,
                   uri: `derive://template-libraries/${library.id}`,
                 })),
+                truncated: page.truncated,
+                next: page.truncated
+                  ? "Use find with templates:true to search the full catalog."
+                  : undefined,
               },
               null,
               2,

@@ -6,7 +6,7 @@ import {
 } from "../src/template-resources"
 
 describe("stdio Template resources", () => {
-  it("registers the portable catalog and exact source-bearing entry set", async () => {
+  it("registers one portable catalog and a lazy source-bearing entry route", async () => {
     const registrations: unknown[][] = []
     const server = {
       registerResource: (...args: unknown[]) => {
@@ -15,11 +15,8 @@ describe("stdio Template resources", () => {
     } as TemplateResourceRegistrar
     registerTemplateResources(server)
 
-    expect(registrations).toHaveLength(31)
-    expect(registrations.map(([, uri]) => uri)).toContain("derive://templates/narrative-pitch")
-    expect(registrations.map(([, uri]) => uri)).toContain(
-      "derive://templates/weekly-research-context",
-    )
+    expect(registrations).toHaveLength(2)
+    expect(registrations.map((args) => args[0])).toEqual(["templates:catalog", "templates:entry"])
     const catalog = registrations.find(([, uri]) => uri === "derive://templates/catalog")
     if (!catalog) throw new Error("catalog was not registered")
     expect((catalog[2] as { annotations: unknown }).annotations).toEqual({
@@ -32,6 +29,16 @@ describe("stdio Template resources", () => {
     expect(JSON.parse(body.contents[0]?.text ?? "{}")).toMatchObject({
       counts: { artifacts: 24, contexts: 6 },
       library: { id: "derive/built-ins" },
+    })
+
+    const entry = registrations.find(([name]) => name === "templates:entry")
+    if (!entry) throw new Error("entry route was not registered")
+    const exact = await (
+      entry[3] as (uri: URL, variables: { id: string }) => Promise<{ contents: { text: string }[] }>
+    )(new URL("derive://templates/decision-memo"), { id: "decision-memo" })
+    expect(JSON.parse(exact.contents[0]?.text ?? "{}")).toMatchObject({
+      template: { template_id: "decision-memo" },
+      starter: { mime_type: "text/markdown" },
     })
   })
 
@@ -53,7 +60,7 @@ describe("stdio Template resources", () => {
       },
     )
 
-    await registerWorkspaceTemplateResources(server, client as never)
+    registerWorkspaceTemplateResources(server, client as never)
 
     expect(requests).toBe(0)
     expect(registrations).toHaveLength(3)

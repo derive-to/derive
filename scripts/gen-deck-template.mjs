@@ -2,14 +2,10 @@
 // Generates the deck starter into every surface that scaffolds one, from ONE source:
 // packages/core/src/deck-template.html.
 //
-// Three surfaces hand a person or an agent a starting deck — the MCP template resource
-// (derive://decks/template), `derive init --template slides`, and the library's "Start a
-// deck" — and they must hand over the SAME deck, because the decks skill documents one
-// pattern. They can't share a module: the CLI is deliberately standalone (no @derive/core)
-// and the web client never pulls core into its bundle. So the canonical deck is a real
-// .html file (editable and previewable as what it is, like the skills are real .md files)
-// and this script inlines it into a committed module per surface — the deterministic-gate
-// pattern, same as scripts/build-anchor-client.mjs.
+// Two runtime surfaces hand a person or an agent a starting deck — the core MCP resource
+// and `derive init --template slides` — and they must hand over the SAME deck. The CLI is
+// deliberately standalone (no @derive/core), so this script inlines one canonical HTML
+// source into each runtime package. Browser tests import the core copy directly.
 //
 //   node scripts/gen-deck-template.mjs           # write the generated modules
 //   node scripts/gen-deck-template.mjs --check   # fail if any is stale (CI)
@@ -111,11 +107,10 @@ const moduleFor = (lang) => {
   )
 }
 
-// One target per surface that hands over a starting deck. The CLI gets plain JS (it ships
-// as source and depends on nothing); core serves the MCP resource; web prefills the editor.
+// One target per runtime surface. The CLI gets plain JS (it ships as source and
+// depends on nothing); core serves the MCP resource and browser tests.
 const TARGETS = [
   { path: join(ROOT, "packages/core/src/deck-template.gen.ts"), lang: "ts" },
-  { path: join(ROOT, "apps/web/src/lib/deck-template.gen.ts"), lang: "ts" },
   { path: join(ROOT, "packages/cli/src/deck-template.gen.js"), lang: "js" },
 ]
 

@@ -60,11 +60,11 @@ export const collectionFoldersQuery = (collectionId: string) =>
     queryFn: () => api.collectionFolders(collectionId),
   })
 
-export const templateLibrariesQuery = () =>
+export const templateLibrariesQuery = (scope?: "private" | "workspace" | "public") =>
   infiniteQueryOptions({
-    queryKey: ["template-libraries"] as const,
+    queryKey: ["template-libraries", scope ?? "all"] as const,
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => api.listTemplateLibraries({ cursor: pageParam, limit: 30 }),
+    queryFn: ({ pageParam }) => api.listTemplateLibraries({ cursor: pageParam, limit: 30, scope }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   })
 

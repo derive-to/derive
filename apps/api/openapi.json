@@ -9809,6 +9809,19 @@
             "required": false,
             "name": "limit",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "private",
+                "workspace",
+                "public"
+              ]
+            },
+            "required": false,
+            "name": "scope",
+            "in": "query"
           }
         ],
         "responses": {

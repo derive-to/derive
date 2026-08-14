@@ -1,5 +1,5 @@
+import { DECK_TEMPLATE } from "@derive/core"
 import type { Page } from "@playwright/test"
-import { DECK_TEMPLATE } from "../src/lib/deck-template.gen"
 import { expect, openArtifact, publishArtifact, test } from "./fixtures"
 
 /**

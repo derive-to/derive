@@ -1,34 +1,4 @@
-import type { TemplateFormat, TemplateInput } from "./types"
-
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-
-const escapeHtmlText = (value: string) =>
-  value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;")
-
-/** Fill explicit {{name}} text bindings while preserving every other source byte. */
-export function fillTemplateSource(
-  source: string,
-  inputs: readonly TemplateInput[],
-  values: Readonly<Record<string, string>>,
-  format: TemplateFormat,
-): string {
-  return inputs.reduce((next, input) => {
-    const raw = values[input.name]?.trim()
-    if (!raw) return next
-    const value = format === "html" ? escapeHtmlText(raw) : raw
-    const spellings = [input.name, input.name.replace(/\s+/g, "_"), input.name.replace(/\s+/g, "-")]
-    return spellings.reduce(
-      (text, name) =>
-        text.replace(new RegExp(`\\{\\{\\s*${escapeRegex(name)}\\s*\\}\\}`, "gi"), () => value),
-      next,
-    )
-  }, source)
-}
+import type { TemplateInput } from "./types"
 
 /**
  * Beta HTML bindings are deliberately text-only. Refusing placeholders inside

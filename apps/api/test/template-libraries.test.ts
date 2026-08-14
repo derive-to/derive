@@ -398,6 +398,34 @@ describe("template libraries: pinned reusable starters", () => {
           )
         ).status,
       ).toBe(201)
+    for (const scope of ["private", "workspace"] as const)
+      expect(
+        (
+          await app.request(
+            "/v1/template-libraries",
+            jsonAs(as(owner.email), { title: `${scope} page`, scope }),
+          )
+        ).status,
+      ).toBe(201)
+
+    const publicOnly = await (
+      await app.request("/v1/template-libraries?scope=public&limit=100", {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(publicOnly.libraries.length).toBeGreaterThan(0)
+    expect(
+      publicOnly.libraries.every((library: { scope: string }) => library.scope === "public"),
+    ).toBe(true)
+    const privateOnly = await (
+      await app.request("/v1/template-libraries?scope=private&limit=100", {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(privateOnly.libraries.length).toBeGreaterThan(0)
+    expect(
+      privateOnly.libraries.every((library: { scope: string }) => library.scope === "private"),
+    ).toBe(true)
 
     const firstResponse = await app.request("/v1/template-libraries?limit=2", {
       headers: as(owner.email),

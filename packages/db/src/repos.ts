@@ -2721,6 +2721,15 @@ export function makeRepos(db: SqliteDb) {
       .get()
     return !!row
   }
+  const renewTemplateLibraryMutation = async (id: string, token: string): Promise<boolean> => {
+    const row = await db
+      .update(templateLibrary)
+      .set({ mutation_started_at: new Date().toISOString() })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+      .returning({ id: templateLibrary.id })
+      .get()
+    return !!row
+  }
   const releaseTemplateLibraryMutation = async (id: string, token: string): Promise<void> => {
     await db
       .update(templateLibrary)
@@ -5178,6 +5187,7 @@ export function makeRepos(db: SqliteDb) {
     listTemplateLibraries,
     updateTemplateLibrary,
     acquireTemplateLibraryMutation,
+    renewTemplateLibraryMutation,
     releaseTemplateLibraryMutation,
     deleteTemplateLibrary,
     createTemplateLibraryEntry,
