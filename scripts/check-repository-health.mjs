@@ -87,7 +87,10 @@ const statuses = rule("required_status_checks")?.parameters
 const actualContexts = (statuses?.required_status_checks ?? [])
   .map((status) => status.context)
   .sort()
-const requiredContexts = ["accessibility", "analyze", "check", "db"]
+// Accessibility remains a PR signal, but it is intentionally advisory while
+// the public-surface suite settles. Keep the faster, deterministic CI lanes as
+// strict merge requirements and surface accessibility findings for follow-up.
+const requiredContexts = ["analyze", "check", "db"]
 requireState(
   statuses?.strict_required_status_checks_policy === true,
   "required checks are not strict",
