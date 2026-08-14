@@ -3,8 +3,10 @@ import type {
   GithubUserMapping,
   MetaStore,
   NewView,
+  ProposalApproval,
   UserDir,
   UserProfile,
+  VersionRecord,
   ViewStats,
 } from "@derive/core"
 import { sql } from "drizzle-orm"
@@ -36,9 +38,8 @@ const VIEW_WINDOW_MS = 30 * 86400_000
  * Apply deploy/d1-schema.sql once before first use (generated from the shared
  * SCHEMA_STATEMENTS; see src/d1-schema.ts).
  *
- * Experimental: the shared query logic rides on the SQLite suite and the schema on
- * schema-conformance, but the D1-specific runtime path has no integration test yet
- * and Derive ships no Worker entrypoint. Treat as unverified. See DEPLOY.md.
+ * The shared store contract also runs against a real D1 database in CI. Derive
+ * still ships no D1 Worker entrypoint; deployments provide that composition.
  */
 export function createD1Store(d1: D1Database): MetaStore {
   const db = drizzle(d1, { schema })
@@ -61,6 +62,62 @@ export function createD1Store(d1: D1Database): MetaStore {
     | "orgContext"
   > = {
     ...repos,
+
+    approveOpenProposal: async (
+      id: string,
+      approval: ProposalApproval,
+    ): Promise<VersionRecord | null> => {
+      const now = new Date().toISOString()
+      // D1 has no interactive transaction, but batch() is transactional. Each
+      // statement predicates on the proposal still being open; concurrent batches
+      // serialize, so only the first inserts a version and advances the artifact.
+      const results = await d1.batch([
+        d1
+          .prepare(
+            `INSERT INTO version
+              (id, artifact_id, n, blob_key, content_type, size_bytes, author, author_id, message, name)
+             SELECT ?, p.artifact_id, a.current_version + 1, p.blob_key, p.content_type, ?,
+                    p.author, p.author_id, coalesce(p.message, 'Approved proposal'), NULL
+             FROM proposal p JOIN artifact a ON a.id = p.artifact_id
+             WHERE p.id = ? AND p.state = 'open'`,
+          )
+          .bind(approval.version_id, approval.size_bytes, id),
+        d1
+          .prepare(
+            `UPDATE artifact
+             SET current_version = current_version + 1,
+                 current_content_type = (SELECT content_type FROM proposal WHERE id = ? AND state = 'open'),
+                 updated_at = ?,
+                 author_name = (SELECT author FROM proposal WHERE id = ? AND state = 'open'),
+                 author_login = NULL,
+                 author_avatar = NULL,
+                 author_gh_id = NULL,
+                 author_id = (SELECT author_id FROM proposal WHERE id = ? AND state = 'open')
+             WHERE id = (SELECT artifact_id FROM proposal WHERE id = ? AND state = 'open')`,
+          )
+          .bind(id, now, id, id, id),
+        d1
+          .prepare(
+            `UPDATE proposal
+             SET state = 'approved', decided_by = ?, decided_by_id = ?,
+                 decided_version = (SELECT current_version FROM artifact WHERE id = proposal.artifact_id),
+                 decision_note = ?, decided_at = ?
+             WHERE id = ? AND state = 'open'`,
+          )
+          .bind(
+            approval.decided_by,
+            approval.decided_by_id,
+            approval.decision_note ?? null,
+            now,
+            id,
+          ),
+      ])
+      if ((results[0]?.meta.changes ?? 0) !== 1) return null
+      const decided = await repos.getProposal(id)
+      if (!decided || decided.decided_version === null)
+        throw new Error(`approved proposal did not record a version: ${id}`)
+      return repos.getVersion(decided.artifact_id, decided.decided_version)
+    },
 
     // ---- View analytics (raw SQL) ----------------------------------------
     recordView: async (v: NewView): Promise<void> => {

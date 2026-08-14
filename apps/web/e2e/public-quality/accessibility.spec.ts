@@ -42,7 +42,7 @@ const surfaces: Surface[] = [
 ]
 
 for (const surface of surfaces) {
-  test(`${surface.name} has no WCAG A/AA violations`, async ({ page }) => {
+  test(`${surface.name} has no axe-detectable WCAG A/AA violations`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" })
     if (surface.theme) {
       await page.emulateMedia({ colorScheme: surface.theme })

@@ -469,7 +469,7 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (proposal.state !== "open") return bail(fail(c, 409, `proposal is ${proposal.state}`))
       const body = await readJson(c, z.object({ note: z.unknown().optional() }))
       if (body instanceof Response) return bail(body)
-      await requestChangesAction(
+      const decided = await requestChangesAction(
         { meta, blobs, bus, notify },
         artifact,
         proposal,
@@ -477,6 +477,7 @@ export const proposalRoutes = (ctx: AppContext) => {
         str(body.note) ?? null,
         decider.id,
       )
+      if (!decided) return bail(fail(c, 409, "proposal is no longer open"))
       const fresh = (await meta.getProposal(proposal.id)) as ProposalRecord
       return c.json(proposalJson(artifact, fresh, await bylinesFor([fresh])))
     },
@@ -510,12 +511,13 @@ export const proposalRoutes = (ctx: AppContext) => {
       if (!isAuthor && !(await authorize(c, "manage", artifact)))
         return bail(fail(c, 403, "forbidden"))
       if (proposal.state !== "open") return bail(fail(c, 409, `proposal is ${proposal.state}`))
-      await meta.decideProposal(proposal.id, {
+      const decided = await meta.decideProposal(proposal.id, {
         state: "withdrawn",
         decided_by: acting?.name ?? null,
         decided_by_id: acting?.id ?? null,
         decided_version: null,
       })
+      if (!decided) return bail(fail(c, 409, "proposal is no longer open"))
       // Retracting the proposal reopens the threads it had staged as addressed.
       for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
         bus.publish(artifact.id, { type: "comment.addressed", thread_id: threadId, state: "open" })

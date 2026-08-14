@@ -23,7 +23,7 @@ describe("cookieless signup attribution", () => {
     expect(signupAttribution("usr_1", "src_1", { source_kind: "<script>" })).toBeNull()
     expect(
       signupAttribution("usr_1", "src_1", {
-        source_kind: "docs_home",
+        source_kind: "hn-launch",
         source_artifact: "not an id",
         landing_path: "https://tracker.example/person",
       }),

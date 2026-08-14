@@ -21,29 +21,31 @@ Signup volume is diagnostic; retained completed work is the outcome.
 
 ## Cookieless first-party attribution
 
-Public signup links carry a bounded source token, optional artifact short id, and coarse
-landing path in their query string. Beta access emails carry the same explicit handoff.
-After authentication, the app submits it once during a short account-creation window and
-`signup_attribution` keeps the first write. There is no attribution cookie, browser storage,
-fingerprint, raw referrer, or third-party request; abandoning or reloading the flow may lose
-attribution, which is the intended privacy tradeoff.
+Only a link or form that explicitly hands a person into account creation carries a bounded
+source token, optional artifact short id, and coarse landing path. Beta access emails carry
+the form's same explicit handoff. After authentication, the app submits it once during a short
+account-creation window and `signup_attribution` keeps the first write. There is no attribution
+cookie, browser storage, fingerprint, raw referrer, or third-party request; abandoning or
+reloading the flow may lose attribution, which is the intended privacy tradeoff.
+
+Page views and interest actions are deliberately not signup attribution. Opening an example,
+copying a command, or jumping to the pricing form may show intent, but none of those actions is
+stored unless the person later chooses a source-bearing account or beta-access handoff.
 
 Each source token is stable, lowercase, and names a surface rather than copy that may
-change. Current public-site tokens include:
+change. Current public account-handoff tokens include:
 
 | Token | Intent |
 | --- | --- |
-| `hero_agent_prompt` | Selected the homepage agent setup prompt during the same page view |
-| `homepage_example` | Opened the homepage proof artifact |
-| `copy_skill`, `copy_mcp`, `copy_draft` | Copied a concrete setup/publish command |
 | `homepage_waitlist`, `pricing_waitlist` | Submitted a beta access form |
-| `pricing_cta` | Chose a pricing-tier access CTA |
 | `nav_signin`, `examples_signin` | Entered the account flow |
-| `docs_nav`, `docs_home`, `docs_hosted` | Entered the hosted product from docs.derive.to |
-| `official_examples` | Opened a live official artifact from the examples page |
+| `public_frame`, `make_your_own` | Chose the signup CTA on a public surface or artifact |
+| `comment_wall` | Entered the account flow to leave attributable feedback |
+| `badge` | Chose the Made with Derive signup CTA on a public artifact |
 
-Campaign URLs use the same bounded `src` parameter, for example
-`https://derive.to/?src=hn-launch`. Do not put personal data, free-form copy, or channel
+Campaigns link directly into the same account handoff, for example
+`https://derive.to/login?signup=1&src=hn-launch&landing=/`. A campaign parameter on an
+intermediate page is not preserved. Do not put personal data, free-form copy, or channel
 secrets in a source token.
 
 ## Reading the evidence

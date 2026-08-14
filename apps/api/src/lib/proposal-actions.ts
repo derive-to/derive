@@ -1,8 +1,8 @@
 // The approve / request-changes side-effect chains for a proposal, extracted so both the
 // HTTP route (routes/proposals.ts) and the Slack interactivity handler run the EXACT same
 // pipeline — publish the new version (approve), re-anchor threads, release the threads the
-// proposal addressed, fan out the event. Callers own authorization + the open-state check;
-// these just execute the decided action.
+// proposal addressed, fan out the event. Callers own authorization; the store owns
+// the single-winner open-state transition before these emit any side effects.
 
 import {
   type ArtifactRecord,
@@ -99,15 +99,16 @@ export const requestChangesAction = async (
   note: string | null,
   /** As approveProposalAction — the human decider's stable id. */
   actorId: string,
-): Promise<void> => {
+): Promise<boolean> => {
   const { meta, bus, notify } = deps
-  await meta.decideProposal(proposal.id, {
+  const decided = await meta.decideProposal(proposal.id, {
     state: "changes_requested",
     decided_by: reviewer,
     decided_by_id: actorId,
     decided_version: null,
     decision_note: note,
   })
+  if (!decided) return false
   bus.publish(artifact.id, { type: "proposal.changes_requested", proposal_id: proposal.id })
   // The fix didn't land — reopen the threads it had staged as addressed.
   for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
@@ -117,4 +118,5 @@ export const requestChangesAction = async (
     reviewer,
     actor_id: actorId,
   })
+  return true
 }

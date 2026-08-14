@@ -93,10 +93,12 @@ describe("signup attribution handoff", () => {
     const signup = await signUp("retry@example.com")
     const userId = (await signup.clone().json()).user.id as string
     const cookie = sessionCookies(signup)
-    expect((await record(cookie, { source_kind: "docs_home", landing_path: "/" })).status).toBe(200)
+    expect((await record(cookie, { source_kind: "nav_signin", landing_path: "/" })).status).toBe(
+      200,
+    )
     expect((await record(cookie, { source_kind: "badge", landing_path: "/x" })).status).toBe(200)
     expect(await meta.getSignupAttribution(userId)).toMatchObject({
-      source_kind: "docs_home",
+      source_kind: "nav_signin",
       landing_path: "/",
     })
   })

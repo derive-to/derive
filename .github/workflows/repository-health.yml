@@ -17,5 +17,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Verify public repository and vulnerability-reporting settings
+      - name: Verify public repository, security, and main-ruleset settings
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/check-repository-health.mjs

@@ -82,7 +82,7 @@ export default defineConfig({
           items: [
             {
               label: "Open Derive",
-              link: "https://derive.to/?src=docs_nav",
+              link: "https://derive.to/",
               attrs: { rel: "external" },
             },
             {

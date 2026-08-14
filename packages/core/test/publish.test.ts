@@ -88,10 +88,50 @@ const makeMeta = (): MetaStore => {
       return rec
     },
     getProposal: async (id: string) => proposals.get(id) ?? null,
+    approveOpenProposal: async (
+      id: string,
+      approval: {
+        version_id: string
+        size_bytes: number
+        decided_by: string
+        decided_by_id: string
+        decision_note?: string | null
+      },
+    ) => {
+      const p = proposals.get(id)
+      if (p?.state !== "open") return null
+      const list = versions.get(p.artifact_id) ?? []
+      const rec: FakeVersion = {
+        id: approval.version_id,
+        artifact_id: p.artifact_id,
+        n: list.length + 1,
+        blob_key: p.blob_key,
+        content_type: p.content_type,
+        size_bytes: approval.size_bytes,
+        author: p.author,
+        author_id: p.author_id ?? null,
+        message: p.message ?? "Approved proposal",
+        name: null,
+        created_at: "t",
+      }
+      list.push(rec)
+      versions.set(p.artifact_id, list)
+      const art = byId.get(p.artifact_id)
+      if (art) art.current_version = rec.n
+      Object.assign(p, {
+        state: "approved",
+        decided_by: approval.decided_by,
+        decided_by_id: approval.decided_by_id,
+        decided_version: rec.n,
+        decision_note: approval.decision_note ?? null,
+      })
+      return rec
+    },
     decideProposal: async (id: string, f: Record<string, unknown>) => {
       const p = proposals.get(id)
-      if (p) Object.assign(p, f)
-      return p ?? null
+      if (p?.state !== "open") return null
+      Object.assign(p, f)
+      return p
     },
     setVersionPreview: async () => {},
   }

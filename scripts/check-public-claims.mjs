@@ -126,6 +126,51 @@ requireText(
   "use the exact CI check gate",
 )
 
+// Signup attribution is an explicit account handoff, not ambient click tracking.
+// Pin the small supported set so public copy cannot promise a token that a route
+// silently drops, and static interest controls cannot masquerade as measurement.
+for (const [path, marker] of [
+  ["apps/web/public/site/index.html", 'href="/login?src=nav_signin"'],
+  ["apps/web/public/site/examples.html", 'href="/login?src=examples_signin"'],
+  ["apps/web/public/site/index.html", 'data-derive-source="homepage_waitlist"'],
+  ["apps/web/public/site/pricing.html", 'data-derive-source="pricing_waitlist"'],
+  ["apps/web/src/components/shared/public-frame.tsx", 'signupSourceSearch("public_frame"'],
+  ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("make_your_own"'],
+  ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("comment_wall"'],
+  ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("badge"'],
+  ["docs/GROWTH-MEASUREMENT.md", "/login?signup=1&src=hn-launch&landing=/"],
+])
+  requireText(path, marker, "keep attribution on an explicit account-creation handoff")
+
+const attributionSurfaces = [
+  "docs/GROWTH-MEASUREMENT.md",
+  "apps/docs/astro.config.mjs",
+  "apps/docs/content/index.mdx",
+  "apps/web/public/site/index.html",
+  "apps/web/public/site/pricing.html",
+  "apps/web/public/site/examples.html",
+]
+for (const token of [
+  "hero_agent_prompt",
+  "homepage_example",
+  "copy_skill",
+  "copy_mcp",
+  "copy_draft",
+  "pricing_cta",
+  "docs_nav",
+  "docs_home",
+  "docs_hosted",
+  "official_examples",
+])
+  for (const path of attributionSurfaces)
+    if (read(path).includes(token))
+      fail(`${path} contains inert attribution token ${token}; only account handoffs are measured`)
+
+for (const path of attributionSurfaces.filter((path) => path.endsWith(".html")))
+  for (const [index, line] of read(path).split("\n").entries())
+    if (line.includes("data-derive-source") && !line.includes("<form data-waitlist"))
+      fail(`${path}:${index + 1}: data-derive-source belongs only on the beta-access form`)
+
 const pullRequestTemplate = read(".github/PULL_REQUEST_TEMPLATE.md")
 for (const stale of [/\[ \].*pnpm typecheck/, /\[ \].*biome ci/, /\[ \].*pnpm test(?:\s|`)/])
   if (stale.test(pullRequestTemplate))

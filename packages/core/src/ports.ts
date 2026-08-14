@@ -1427,7 +1427,11 @@ export interface ReviewStore {
   listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]>
   /** How many proposals are still awaiting a decision (for badges, no N+1). */
   openProposalCounts(artifactIds: string[]): Promise<Record<string, number>>
-  /** Record a reviewer's decision (approve / request changes / withdraw). */
+  /** Promote one still-open proposal and record its approval in the same database
+   * transaction. Null means another decision already won. */
+  approveOpenProposal(id: string, approval: ProposalApproval): Promise<VersionRecord | null>
+  /** Record a non-publishing decision on a still-open proposal. Null means another
+   * decision already won. */
   decideProposal(
     id: string,
     fields: {
@@ -2666,8 +2670,8 @@ export interface SignupAttributionRecord {
   id: string
   /** The Better Auth user this attribution belongs to (no FK; auth owns its tables). */
   user_id: string
-  /** The sourcing surface: an artifact surface (badge, comment_wall, duplicate,
-   *  share_chrome, artifact_visit) or a campaign token (hn-launch, …). */
+  /** The explicit account handoff: a public CTA (badge, comment_wall,
+   *  make_your_own), beta form, sign-in link, or campaign token (hn-launch, …). */
   source_kind: string
   /** The artifact (short id) the sourcing surface lived on, when known. */
   source_artifact: string | null
@@ -2807,6 +2811,16 @@ export interface NewProposal {
   author_id?: string | null
   on_behalf_of?: string | null
   base_version: number
+}
+
+/** The non-content inputs needed to promote one still-open proposal. The store
+ * owns the proposal bytes/byline and commits the version + decision together. */
+export interface ProposalApproval {
+  version_id: string
+  size_bytes: number
+  decided_by: string
+  decided_by_id: string
+  decision_note?: string | null
 }
 
 /** A review round's lifecycle. `pending` = the agent asked and is waiting;

@@ -1922,6 +1922,74 @@ export function runStoreContract(
       expect(decided?.state).toBe("approved")
       expect((await store.openProposalCounts([a.id]))[a.id] ?? 0).toBe(0)
     })
+
+    it("lets exactly one concurrent proposal decision publish", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const p = await store.createProposal({
+        id: uuid(),
+        artifact_id: a.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        title: null,
+        message: "candidate",
+        author: "agent",
+        author_id: "agent_1",
+        base_version: 0,
+      })
+      const [amy, bob] = await Promise.all([
+        store.approveOpenProposal(p.id, {
+          version_id: uuid(),
+          size_bytes: 10,
+          decided_by: "Amy",
+          decided_by_id: "u_amy",
+        }),
+        store.approveOpenProposal(p.id, {
+          version_id: uuid(),
+          size_bytes: 10,
+          decided_by: "Bob",
+          decided_by_id: "u_bob",
+        }),
+      ])
+      expect([amy, bob].filter(Boolean)).toHaveLength(1)
+      expect(await store.listVersions(a.id)).toHaveLength(1)
+      expect((await store.getArtifactById(a.id))?.current_version).toBe(1)
+      expect((await store.getProposal(p.id))?.decided_by_id).toBe(amy ? "u_amy" : "u_bob")
+      await expect(
+        store.decideProposal(p.id, {
+          state: "changes_requested",
+          decided_by: "late",
+          decided_version: null,
+        }),
+      ).resolves.toBeNull()
+    })
+
+    it("lets exactly one concurrent review-round settlement win", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const round = await store.createReviewRound({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 0,
+        requested_by: "agent_1",
+        requested_for: "u_amy",
+      })
+      const [approved, sentBack] = await Promise.all([
+        store.resolveReviewRound(round.id, {
+          state: "approved",
+          resolved_by: "u_amy",
+          resolved_by_name: "Amy",
+        }),
+        store.resolveReviewRound(round.id, {
+          state: "sent_back",
+          resolved_by: "u_bob",
+          resolved_by_name: "Bob",
+        }),
+      ])
+      expect([approved, sentBack].filter(Boolean)).toHaveLength(1)
+      const settled = (await store.listReviewRounds(a.id)).find((item) => item.id === round.id)
+      expect(settled?.state).toBe(approved ? "approved" : "sent_back")
+      expect(settled?.resolved_by).toBe(approved ? "u_amy" : "u_bob")
+    })
   })
 
   describe(`${label}: views + analytics`, () => {
