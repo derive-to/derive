@@ -113,7 +113,6 @@ export function useAgentTemplateHandoff(
     error,
     planRequired,
     showHandoff,
-    setShowHandoff,
     setSelectedContext,
     copied,
     descriptionId,
