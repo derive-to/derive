@@ -113,22 +113,7 @@ describe("template libraries: pinned reusable starters", () => {
     const reusable = await publicStarter.json()
     expect(reusable.source).toContain("First version")
 
-    // Adoption remains the ordinary publish endpoint, but a validated template
-    // entry records structured lineage even when the adopter cannot read the
-    // original private source artifact.
-    const adopted = await publishAs(
-      app,
-      reusable.source,
-      { template_library_id: library.id, template_entry_id: entry.id },
-      as(teammate.email),
-    )
-    expect(adopted.status).toBe(201)
-    const adoptedJson = await adopted.json()
-    const [sourceRow, adoptedRow] = await Promise.all([
-      meta.getByShortId(source.short_id),
-      meta.getByShortId(adoptedJson.short_id),
-    ])
-    expect(adoptedRow?.derived_from).toBe(sourceRow?.id)
+    const sourceRow = await meta.getByShortId(source.short_id)
     if (!sourceRow) throw new Error("missing template source")
     await meta.deleteArtifact(sourceRow.id, sourceRow.org_id)
     const afterSourceDelete = await app.request(

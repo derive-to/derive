@@ -1131,11 +1131,6 @@ export const api = {
     body_md: string
     model?: string
     purpose?: "context_builder"
-    template_start?: {
-      uri: string
-      title: string
-      kind: "artifact" | "context"
-    }
   }): Promise<{ session: Session; messages: SessionMessage[] }> =>
     f("/v1/chat-session", opts(input)).then(j),
   askContext: (

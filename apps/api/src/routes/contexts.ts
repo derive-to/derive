@@ -52,7 +52,6 @@ import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
-import { resolveTemplateStart, TemplateStartSchema } from "../lib/template-start"
 import { log } from "../log"
 
 /**
@@ -271,20 +270,6 @@ export const contextRoutes = (ctx: AppContext) => {
       return
     }
     const transcript = await meta.listSessionMessages(s.id)
-    const templateStart = (() => {
-      for (const message of transcript) {
-        if (message.author_kind !== "asker" || !message.meta) continue
-        try {
-          const value = (JSON.parse(message.meta) as { template_start?: unknown }).template_start
-          const parsed = TemplateStartSchema.safeParse(value)
-          if (parsed.success) return parsed.data
-        } catch {
-          // Old or runner-authored metadata can be malformed; it is unrelated to
-          // serving the turn and must not take the conversation down.
-        }
-      }
-      return undefined
-    })()
     const ws = await meta.getWorkspace(s.org_id).catch(() => null)
     const settings = await meta.getOrgSettings(s.org_id).catch(() => null)
     // WHICH MODEL, read fresh every turn so an admin can change it mid-conversation.
@@ -336,10 +321,9 @@ export const contextRoutes = (ctx: AppContext) => {
     // Seeded with the newest stored card off this transcript, so a confirmation on a LATER turn
     // creates from the draft the person was actually shown rather than one the model writes
     // again from memory (see StoredBuilderCard).
-    const builderSeed = s.subject_ref === BUILDER_SUBJECT ? latestBuilderCard(transcript) : null
     const builderTools =
       s.subject_ref === BUILDER_SUBJECT
-        ? buildContextBuilderTools(ctx, who, builderSeed, templateStart)
+        ? buildContextBuilderTools(ctx, who, latestBuilderCard(transcript))
         : null
     const tools = builderTools ?? buildChatTools(ctx, who)
     // ONE METER, serving both readers of it: the per-turn log line and the timings persisted on
@@ -357,8 +341,6 @@ export const contextRoutes = (ctx: AppContext) => {
           workspaceName: ws?.name ?? "this workspace",
           asker: { name: me.name ?? me.username ?? null, role: seat.role },
           skills: tools.skills,
-          ...(templateStart ? { templateStart } : {}),
-          ...(templateStart && builderSeed ? { templatePrepared: true } : {}),
           ...(builderTools ? { purpose: "context_builder" as const } : {}),
         },
       ),
@@ -2082,7 +2064,6 @@ export const contextRoutes = (ctx: AppContext) => {
             .optional()
             .describe("A model id from /v1/chat/models; omitted = this deploy's default."),
           purpose: z.enum(["context_builder"]).optional(),
-          template_start: TemplateStartSchema.optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -2104,26 +2085,6 @@ export const contextRoutes = (ctx: AppContext) => {
       // that opens and then answers with something they did not choose.
       if (b.model && !(await ctx.modelsFor(c)).catalog?.resolve(b.model))
         return bail(fail(c, 400, `unknown model "${b.model}"`))
-      const templateStart = b.template_start
-        ? await resolveTemplateStart(b.template_start, {
-            meta,
-            userId: me.id,
-            workspaceId: b.workspace,
-            canReadArtifact: (artifact) => authorize(c, "read", artifact),
-            sourceText,
-            membership: (orgId, userId) => meta.getMembership(orgId, userId),
-          })
-        : null
-      if (templateStart && !templateStart.ok)
-        return bail(
-          fail(
-            c,
-            templateStart.reason === "kind_mismatch" ? 422 : 404,
-            templateStart.reason === "kind_mismatch"
-              ? "this starter is not the requested template kind"
-              : "template starter not found or unavailable",
-          ),
-        )
       const created = await meta.createSessionWithMessage(
         {
           id: newId("ses"),
@@ -2134,13 +2095,7 @@ export const contextRoutes = (ctx: AppContext) => {
           asker_id: me.id,
           subject_ref: b.purpose === "context_builder" ? BUILDER_SUBJECT : null,
         },
-        {
-          id: newId("sm"),
-          author_kind: "asker",
-          author_id: me.id,
-          body_md: b.body_md,
-          meta: templateStart?.ok ? JSON.stringify({ template_start: templateStart.value }) : null,
-        },
+        { id: newId("sm"), author_kind: "asker", author_id: me.id, body_md: b.body_md },
         "open",
       )
       // Detached, exactly like the document lane: the transcript is what the surface follows,

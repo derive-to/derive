@@ -29,7 +29,7 @@ const setup = async (
 ) => {
   const users = [{ id: "u-ws", email: "ws@x.com", name: "Wes" }, ...(opts?.extraUsers ?? [])]
   const seen: { system: string; tools: string[] }[] = []
-  const { app, meta, ctx } = makeAuthedApp(name, users, undefined, {
+  const { app, meta } = makeAuthedApp(name, users, undefined, {
     deps: {
       callModel: async (req) => {
         seen.push({ system: req.system, tools: req.tools.map((t) => t.name) })
@@ -67,7 +67,7 @@ const setup = async (
     // is closed (and the flag-off case below proves the gate).
     chatBeta: opts?.chatBeta ?? true,
   })
-  return { app, meta, blobs: ctx.blobs, seen }
+  return { app, meta, seen }
 }
 
 /** Open a workspace chat and wait for the reply to land. `serveAttended` is detached, so the
@@ -186,199 +186,6 @@ describe("what a workspace turn costs to route", () => {
 })
 
 describe("the workspace chat", () => {
-  it("turns a catalog choice into a real read → adapt → publish agent job", async () => {
-    let turn = 0
-    let sawTemplateBody = false
-    let sawWorkspaceEvidence = false
-    let sawRenderPixels = false
-    let renderMessage = ""
-    let evidenceShortId = ""
-    let testMeta: Awaited<ReturnType<typeof setup>>["meta"]
-    let testBlobs: Awaited<ReturnType<typeof setup>>["blobs"]
-    const setupResult = await setup("ws-template-agent", async (req) => {
-      turn++
-      if (turn === 1)
-        return {
-          text: "",
-          toolUses: [
-            {
-              id: "read-template",
-              name: "read",
-              input: { short_id: "derive://templates/narrative-pitch" },
-            },
-            {
-              id: "find-evidence",
-              name: "find",
-              input: { query: "onboarding" },
-            },
-          ],
-          costUsd: null,
-          done: false,
-        }
-      if (turn === 2) {
-        sawTemplateBody = JSON.stringify(req.messages.at(-1)?.content).includes("Narrative pitch")
-        return {
-          text: "",
-          toolUses: [
-            {
-              id: "read-evidence",
-              name: "read",
-              input: { short_id: evidenceShortId },
-            },
-          ],
-          costUsd: null,
-          done: false,
-        }
-      }
-      if (turn === 3) {
-        sawWorkspaceEvidence = JSON.stringify(req.messages.at(-1)?.content).includes(
-          "24 design partners",
-        )
-        return {
-          text: "",
-          toolUses: [
-            {
-              id: "publish-draft",
-              name: "publish",
-              input: {
-                title: "Acme onboarding narrative",
-                content:
-                  "<!doctype html><html><body><main><h1>Make the first day feel obvious</h1><p>A tailored narrative for Acme’s new-customer onboarding, grounded in 24 design partners.</p></main></body></html>",
-                workspace_access: "member",
-                derived_from: evidenceShortId,
-                message:
-                  "Built from Narrative pitch and workspace evidence for the onboarding brief.",
-              },
-            },
-          ],
-          costUsd: null,
-          done: false,
-        }
-      }
-      if (turn === 4) {
-        const result = (await testMeta.listArtifacts({ orgId: "default" })).find(
-          (artifact) => artifact.title === "Acme onboarding narrative",
-        )
-        if (result) {
-          const previewKey = await testBlobs.put(
-            new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]),
-          )
-          await testMeta.setVersionPreview(result.id, result.current_version, {
-            preview_status: "ready",
-            preview_key: previewKey,
-          })
-          return {
-            text: "",
-            toolUses: [
-              {
-                id: "inspect-render",
-                name: "read",
-                input: { short_id: result.short_id, render: "top", wait: 1 },
-              },
-            ],
-            costUsd: null,
-            done: false,
-          }
-        }
-      }
-      if (turn === 5) {
-        renderMessage = JSON.stringify(req.messages.at(-1)?.content)
-        sawRenderPixels = renderMessage.includes("image-data")
-      }
-      return {
-        text: "I made and published your tailored onboarding narrative. Open the draft to review it.",
-        toolUses: [],
-        costUsd: null,
-        done: true,
-      }
-    })
-    const { app, meta, blobs, seen } = setupResult
-    testMeta = meta
-    testBlobs = blobs
-
-    const evidence = await publishAs(
-      app,
-      "# Onboarding evidence\n\n24 design partners completed the guided onboarding path.",
-      { title: "Onboarding evidence" },
-      as("ws@x.com"),
-    )
-    evidenceShortId = ((await evidence.json()) as { short_id: string }).short_id
-
-    const { res, msgs } = await ask(
-      app,
-      meta,
-      "Use the Narrative pitch template to make a customer-onboarding story for Acme.",
-      {
-        template_start: {
-          uri: "derive://templates/narrative-pitch",
-          title: "Spoofed client title",
-          kind: "artifact",
-          sourceArtifactId: "art_client_cannot_choose_lineage",
-        },
-      },
-    )
-
-    expect(res.status).toBe(201)
-    const opened = (await res.json()) as { messages: Array<{ body_md: string; meta: unknown }> }
-    expect(opened.messages[0]?.body_md).toContain("customer-onboarding story")
-    expect(opened.messages[0]?.meta).toBeNull()
-    expect(seen[0]?.system).toContain("derive://templates/narrative-pitch")
-    expect(seen[0]?.system).toContain("Narrative pitch")
-    expect(seen[0]?.system).not.toContain("Spoofed client title")
-    expect(seen[0]?.system).toContain("Never expose raw source")
-    expect(sawTemplateBody).toBe(true)
-    expect(sawWorkspaceEvidence).toBe(true)
-    expect(renderMessage).toContain("image-data")
-    expect(sawRenderPixels).toBe(true)
-    expect(turn).toBe(5)
-    expect(msgs.at(-1)?.body_md).toContain("published")
-    const storedStart = JSON.parse(msgs[0]?.meta ?? "{}") as {
-      template_start?: { sourceArtifactId?: string }
-    }
-    expect(storedStart.template_start?.sourceArtifactId).toBeUndefined()
-    const artifacts = await meta.listArtifacts({ orgId: "default" })
-    const result = artifacts.find((artifact) => artifact.title === "Acme onboarding narrative")
-    expect(result?.derived_from).toBe((await meta.getByShortId(evidenceShortId))?.id)
-  })
-
-  it("rejects invented template references before starting a model turn", async () => {
-    const { app, meta, seen } = await setup("ws-template-refusal", async () => ({
-      text: "should not run",
-      toolUses: [],
-      costUsd: null,
-      done: true,
-    }))
-    const { res } = await ask(app, meta, "make it mine", {
-      template_start: {
-        uri: "https://evil.example/template",
-        title: "Not a Derive template",
-        kind: "artifact",
-      },
-    })
-    expect(res.status).toBe(400)
-    expect(seen).toHaveLength(0)
-
-    const missing = await ask(app, meta, "make it mine", {
-      template_start: {
-        uri: "derive://templates/not-a-real-template",
-        title: "Plausible but missing",
-        kind: "artifact",
-      },
-    })
-    expect(missing.res.status).toBe(404)
-    expect(seen).toHaveLength(0)
-
-    const wrongKind = await ask(app, meta, "make it mine", {
-      template_start: {
-        uri: "derive://templates/narrative-pitch",
-        title: "Narrative pitch",
-        kind: "context",
-      },
-    })
-    expect(wrongKind.res.status).toBe(422)
-    expect(seen).toHaveLength(0)
-  })
-
   it("answers using the real find tool, over the asker's own artifacts", async () => {
     const { app, meta, seen } = await setup(
       "ws-find",

@@ -2,8 +2,6 @@ import type { components } from "@/api-types"
 
 export type BuiltInTemplate = components["schemas"]["BuiltInTemplate"]
 export type TemplateCategory = BuiltInTemplate["category"]
-export type TemplateFormat = BuiltInTemplate["format"]
-export type TemplateInput = BuiltInTemplate["inputs"][number]
 
 export type TemplateTab = "artifacts" | "contexts" | "libraries"
 

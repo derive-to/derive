@@ -1648,9 +1648,13 @@ export interface ContextStore {
  * template is deterministic and later edits to the source cannot silently alter
  * another person's starting point.
  */
-export type TemplateLibraryScope = "private" | "workspace" | "public"
-export type TemplateEntryKind = "artifact" | "context"
-export type TemplateEntryFormat = "md" | "html"
+export const TEMPLATE_LIBRARY_SCOPES = ["private", "workspace", "public"] as const
+export const TEMPLATE_ENTRY_KINDS = ["artifact", "context"] as const
+export const TEMPLATE_ENTRY_FORMATS = ["md", "html"] as const
+
+export type TemplateLibraryScope = (typeof TEMPLATE_LIBRARY_SCOPES)[number]
+export type TemplateEntryKind = (typeof TEMPLATE_ENTRY_KINDS)[number]
+export type TemplateEntryFormat = (typeof TEMPLATE_ENTRY_FORMATS)[number]
 
 export interface TemplateLibraryRecord {
   id: string

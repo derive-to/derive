@@ -1,6 +1,6 @@
 import type { TemplateLibraryEntryRecord } from "@derive/core"
 
-export type TemplateInputMetadata = {
+type TemplateInputMetadata = {
   name: string
   description: string
   required?: boolean

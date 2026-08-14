@@ -1,9 +1,10 @@
+import { TEMPLATE_ENTRY_FORMATS, TEMPLATE_ENTRY_KINDS, TEMPLATE_LIBRARY_SCOPES } from "@derive/core"
 import { BUILT_INS_LIBRARY_ID, TEMPLATE_CATALOG_VERSION } from "@derive-to/templates"
 import { z } from "@hono/zod-openapi"
 
-export const TemplateLibraryScopeSchema = z.enum(["private", "workspace", "public"])
-export const TemplateEntryKindSchema = z.enum(["artifact", "context"])
-export const TemplateEntryFormatSchema = z.enum(["md", "html"])
+const TemplateLibraryScopeSchema = z.enum(TEMPLATE_LIBRARY_SCOPES)
+const TemplateEntryKindSchema = z.enum(TEMPLATE_ENTRY_KINDS)
+const TemplateEntryFormatSchema = z.enum(TEMPLATE_ENTRY_FORMATS)
 
 export const TemplateLibraryListQuerySchema = z.object({
   cursor: z.string().max(500).optional(),
@@ -12,7 +13,7 @@ export const TemplateLibraryListQuerySchema = z.object({
   q: z.string().trim().max(200).optional(),
 })
 
-export const TemplateInputSchema = z.object({
+const TemplateInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(240),
   required: z.boolean().optional(),

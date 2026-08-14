@@ -166,13 +166,6 @@ const resultText = (value: unknown): string => {
   }
 }
 
-/** A multimodal MCP result already translated to the AI SDK's tool-result output shape. */
-const isRichToolResult = (value: unknown): value is { type: "content"; value: unknown[] } =>
-  !!value &&
-  typeof value === "object" &&
-  (value as { type?: unknown }).type === "content" &&
-  Array.isArray((value as { value?: unknown }).value)
-
 /**
  * How much tool output ONE RUN may put in front of the model, across every turn.
  *
@@ -270,18 +263,11 @@ export const runAgentLoop = async (input: AgentLoopInput): Promise<AgentLoopResu
       // Sequential, not parallel: tools here are brokered calls into other people's systems, and
       // a model that asks for six at once should not become six concurrent writes to someone's
       // Gmail. Latency is the right thing to trade for that.
-      const results: { tool_use_id: string; content: unknown }[] = []
+      const results: { tool_use_id: string; content: string }[] = []
       for (const use of turn.toolUses) {
         let text: string
         try {
-          const value = await input.executeTool(use.name, use.input)
-          if (isRichToolResult(value)) {
-            // Render screenshots must reach the model as pixels. Flattening this to JSON would
-            // let a template job claim it inspected the page while never seeing it.
-            results.push({ tool_use_id: use.id, content: value })
-            continue
-          }
-          text = resultText(value)
+          text = resultText(await input.executeTool(use.name, use.input))
         } catch (e) {
           // An error is a diagnosis, not payload: it is short, and it must never be squeezed out
           // by a budget the successful calls spent.

@@ -57,14 +57,8 @@ export const storedCardFromMeta = (raw: string | null): StoredBuilderCard | null
 /** Parse message metadata and replace any stored builder card with its public projection. */
 export const metaForWire = (raw: string | null): Record<string, unknown> | null => {
   const meta = jsonObject(raw)
-  if (!meta) return meta
-  // Product navigation metadata belongs in the agent's system context, not in
-  // the transcript payload or the UI. The person sees the template name in the
-  // natural-language request; its internal URI never leaks as chat chrome.
-  const { template_start: _templateStart, ...visible } = meta
-  if (Object.keys(visible).length === 0) return null
-  if (!("card" in visible)) return visible
-  const { card, ...rest } = visible
+  if (!meta || !("card" in meta)) return meta
+  const { card, ...rest } = meta
   const publicCard = cardForWire(card)
   return publicCard ? { ...rest, card: publicCard } : rest
 }

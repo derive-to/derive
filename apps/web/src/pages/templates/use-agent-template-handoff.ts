@@ -8,7 +8,7 @@ import { runnerStatus } from "@/pages/context/runner-status"
 import { type AgentTemplateTarget, localAgentHandoff, localAgentLaunchUrl } from "./agent-handoff"
 
 export function useAgentTemplateHandoff(
-  target: AgentTemplateTarget | null,
+  target: AgentTemplateTarget,
   onOpenChange: (open: boolean) => void,
 ) {
   const navigate = useNavigate()
@@ -29,7 +29,7 @@ export function useAgentTemplateHandoff(
   const selectedRunner =
     onlineContexts.find((context) => context.id === selectedContext) ?? onlineContexts[0] ?? null
   const busy = dispatching
-  const handoff = target ? localAgentHandoff(target, brief) : ""
+  const handoff = localAgentHandoff(target, brief)
 
   useEffect(() => {
     mounted.current = true
@@ -39,20 +39,12 @@ export function useAgentTemplateHandoff(
   }, [])
 
   useEffect(() => {
-    if (!target) return
-    setBrief("")
-    setError("")
-    setPlanRequired(false)
-    setShowHandoff(false)
-  }, [target])
-
-  useEffect(() => {
     if (onlineContexts.length && !onlineContexts.some((context) => context.id === selectedContext))
       setSelectedContext(onlineContexts[0]?.id ?? "")
   }, [onlineContexts, selectedContext])
 
   const copyForLocalAgent = async () => {
-    if (!target || !brief.trim() || busy) return
+    if (!brief.trim() || busy) return
     setError("")
     const ok = await copy(handoff, {
       success: "Copied — paste it into your agent",
@@ -65,7 +57,7 @@ export function useAgentTemplateHandoff(
   }
 
   const openInLocalAgent = (agent: "codex" | "claude-code") => {
-    if (!target || !brief.trim() || busy) return
+    if (!brief.trim() || busy) return
     const url = localAgentLaunchUrl(agent, target, brief)
     if (!url) {
       setShowHandoff(true)
@@ -77,7 +69,7 @@ export function useAgentTemplateHandoff(
   }
 
   const runOnConnectedMachine = async () => {
-    if (!target || !brief.trim() || !selectedRunner || busy) return
+    if (!brief.trim() || !selectedRunner || busy) return
     setDispatching(true)
     setError("")
     setPlanRequired(false)

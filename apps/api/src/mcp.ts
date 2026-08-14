@@ -65,6 +65,7 @@ import {
   profileState,
   type Role,
   SKILL_CONTENT_TYPE,
+  TEMPLATE_LIBRARY_CATALOG_URI,
 } from "@derive/core"
 import { catalogResource, templateResource } from "@derive-to/templates"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -425,7 +426,7 @@ async function buildServer(
   // server never adds database round trips to unrelated tools.
   server.registerResource(
     "template-libraries:catalog",
-    "derive://template-libraries",
+    TEMPLATE_LIBRARY_CATALOG_URI,
     {
       title: "Derive template libraries",
       description: "Accessible authored template libraries. Read to discover reusable starters.",
@@ -437,7 +438,7 @@ async function buildServer(
         {
           uri: uri.href,
           mimeType: "application/json",
-          text: JSON.stringify({ read: "derive://template-libraries" }),
+          text: JSON.stringify({ read: TEMPLATE_LIBRARY_CATALOG_URI }),
         },
       ],
     }),

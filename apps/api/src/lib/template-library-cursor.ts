@@ -1,6 +1,6 @@
 import type { TemplateLibraryRecord } from "@derive/core"
 
-export type TemplateLibraryCursor = { createdAt: string; id: string }
+type TemplateLibraryCursor = { createdAt: string; id: string }
 
 export const parseTemplateLibraryCursor = (
   cursor?: string,

@@ -76,34 +76,4 @@ describe("chat turn purpose", () => {
     )
     expect(system).not.toContain("set up a context")
   })
-
-  it("gives both agent paths the exact chosen template without putting it in user prose", async () => {
-    for (const purpose of [undefined, "context_builder"] as const) {
-      let system = ""
-      await runChatTurn(
-        {
-          model: {
-            id: "m",
-            label: "M",
-            isDefault: true,
-            callModel: async (args: { system: string }) => {
-              system = args.system
-              return { text: "hi", toolUses: [], costUsd: null, done: true }
-            },
-          },
-        },
-        {
-          ...baseInput(purpose),
-          templateStart: {
-            uri: "derive://templates/narrative-pitch",
-            title: "Narrative pitch",
-            kind: purpose ? "context" : "artifact",
-          },
-        },
-      )
-      expect(system).toContain("derive://templates/narrative-pitch")
-      expect(system).toMatch(/read that exact (template|reference|URI)/i)
-      expect(system).toMatch(/adapt|substantially authored/i)
-    }
-  })
 })
