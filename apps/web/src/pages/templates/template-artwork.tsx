@@ -1,145 +1,27 @@
 import { cn } from "@/lib/utils"
 import type { BuiltInTemplate } from "./types"
 
-type TemplateMotif = "editorial" | "operator" | "field" | "institutional" | "signal"
-
-const MOTIF_SURFACE: Record<TemplateMotif, string> = {
-  editorial: "bg-card text-card-foreground",
-  operator: "bg-foreground text-background",
-  field: "bg-secondary text-secondary-foreground",
-  institutional: "bg-muted text-foreground",
-  signal: "bg-primary text-primary-foreground",
+const SURFACE_BY_CATEGORY: Record<string, string> = {
+  Deck: "bg-card text-card-foreground",
+  Doc: "bg-muted text-foreground",
+  Report: "bg-foreground text-background",
+  Site: "bg-secondary text-secondary-foreground",
+  Agent: "bg-primary text-primary-foreground",
 }
 
-function Line({ width, strong = false }: { width: string; strong?: boolean }) {
+function Line({ className, strong = false }: { className: string; strong?: boolean }) {
   return (
     <span
       className={cn(
-        "block h-1 rounded-full",
-        strong ? "bg-current opacity-80" : "bg-current opacity-25",
-        width,
+        "block h-1 rounded-full bg-current",
+        strong ? "opacity-80" : "opacity-25",
+        className,
       )}
     />
   )
 }
 
-function DeckArtwork({ template }: { template: BuiltInTemplate }) {
-  return (
-    <div className="grid h-full grid-cols-[1fr_4.5rem] grid-rows-[auto_1fr_auto] gap-3 p-4">
-      <span className="font-mono text-2xs tracking-widest opacity-55">DERIVE / 01</span>
-      <span className="text-right font-mono text-2xs tabular-nums opacity-55">
-        {template.sections.length} slides
-      </span>
-      <div className="self-center">
-        <Line width="w-4/5" strong />
-        <div className="mt-2 flex flex-col gap-1.5">
-          <Line width="w-full" />
-          <Line width="w-2/3" />
-        </div>
-      </div>
-      <div className="self-end">
-        <div className="mb-2 size-5 border border-current opacity-40" />
-        <Line width="w-full" />
-      </div>
-      <div className="col-span-2 border-t border-current opacity-25" />
-    </div>
-  )
-}
-
-function DocumentArtwork({ template }: { template: BuiltInTemplate }) {
-  return (
-    <div className="flex h-full justify-center p-4">
-      <div className="flex w-3/4 flex-col border border-current bg-card p-3 text-card-foreground shadow-[var(--shadow-sm)]">
-        <span className="font-mono text-2xs uppercase tracking-widest opacity-50">
-          {template.category}
-        </span>
-        <div className="mt-3 flex flex-col gap-1.5">
-          <Line width="w-4/5" strong />
-          <Line width="w-1/2" />
-        </div>
-        <div className="mt-auto grid grid-cols-[2.2rem_1fr] gap-2 border-t border-current pt-2 opacity-60">
-          <span className="font-mono text-2xs">01</span>
-          <div className="flex flex-col gap-1.5">
-            <Line width="w-full" />
-            <Line width="w-3/4" />
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function ReportArtwork() {
-  return (
-    <div className="grid h-full grid-cols-[4rem_1fr] gap-3 p-4">
-      <div className="flex flex-col justify-between border-r border-current pr-3 opacity-45">
-        <span className="font-mono text-2xs">NOW</span>
-        <span className="font-mono text-2xs">NEXT</span>
-      </div>
-      <div className="grid grid-rows-[auto_1fr] gap-4">
-        <div className="flex items-start justify-between">
-          <Line width="w-1/2" strong />
-          <span className="size-2 rounded-full bg-current opacity-75" />
-        </div>
-        <div className="grid grid-cols-3 items-end gap-2 border-b border-current pb-2 opacity-55">
-          <span className="h-1/3 bg-current" />
-          <span className="h-3/4 bg-current" />
-          <span className="h-1/2 bg-current" />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function SiteArtwork() {
-  return (
-    <div className="flex h-full flex-col p-4">
-      <div className="flex items-center justify-between border-b border-current pb-2 opacity-55">
-        <span className="font-mono text-2xs tracking-widest">PROJECT / HUB</span>
-        <span className="flex gap-1">
-          <i className="size-1 rounded-full bg-current" />
-          <i className="size-1 rounded-full bg-current" />
-          <i className="size-1 rounded-full bg-current" />
-        </span>
-      </div>
-      <div className="grid flex-1 grid-cols-[1.25fr_.75fr] gap-3 pt-4">
-        <div className="flex flex-col justify-center gap-2">
-          <Line width="w-full" strong />
-          <Line width="w-2/3" strong />
-          <Line width="w-1/2" />
-        </div>
-        <div className="grid grid-cols-2 gap-1.5 opacity-35">
-          <span className="border border-current" />
-          <span className="border border-current" />
-          <span className="col-span-2 border border-current" />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function AgentArtwork({ context }: { context: boolean }) {
-  return (
-    <div className="grid h-full place-items-center p-4">
-      <div className="relative grid w-full grid-cols-[1fr_2.5rem_1fr] items-center">
-        <div className="border border-current p-2">
-          <span className="block font-mono text-2xs opacity-55">
-            {context ? "MANIFEST" : "SOURCE"}
-          </span>
-          <Line width="mt-2 w-3/4" strong />
-        </div>
-        <span className="h-px bg-current opacity-40" />
-        <div className="border border-current bg-current p-2 text-background">
-          <span className="block font-mono text-2xs opacity-75">
-            {context ? "CONTEXT" : "OUTPUT"}
-          </span>
-          <Line width="mt-2 w-full" strong />
-        </div>
-      </div>
-    </div>
-  )
-}
-
+/** A compact abstract preview: enough category signal without pretending to render source. */
 export function TemplateArtwork({
   template,
   className,
@@ -147,36 +29,41 @@ export function TemplateArtwork({
   template: BuiltInTemplate
   className?: string
 }) {
-  const motif: TemplateMotif =
-    template.category === "Deck"
-      ? "editorial"
-      : template.category === "Report"
-        ? "operator"
-        : template.category === "Site"
-          ? "field"
-          : template.category === "Agent"
-            ? "signal"
-            : "institutional"
+  const isAgent = template.category === "Agent"
+  const label = isAgent
+    ? template.kind === "context"
+      ? "CONTEXT"
+      : "AGENT"
+    : template.category.toUpperCase()
   return (
     <div
       aria-hidden="true"
       className={cn(
-        "relative aspect-[16/10] overflow-hidden rounded-lg border border-current/15",
-        MOTIF_SURFACE[motif],
+        "relative aspect-[16/10] overflow-hidden rounded-lg border border-current/15 p-4",
+        SURFACE_BY_CATEGORY[template.category] ?? SURFACE_BY_CATEGORY.Doc,
         className,
       )}
     >
-      {template.category === "Deck" ? (
-        <DeckArtwork template={template} />
-      ) : template.category === "Doc" ? (
-        <DocumentArtwork template={template} />
-      ) : template.category === "Report" ? (
-        <ReportArtwork />
-      ) : template.category === "Site" ? (
-        <SiteArtwork />
-      ) : (
-        <AgentArtwork context={template.kind === "context"} />
-      )}
+      <div className="flex items-center justify-between font-mono text-2xs tracking-widest opacity-55">
+        <span>DERIVE / {label}</span>
+        <span className="tabular-nums">
+          {template.sections.length} {isAgent ? "steps" : "sections"}
+        </span>
+      </div>
+      <div className="grid h-[calc(100%-1rem)] grid-cols-[1fr_4.5rem] items-center gap-3">
+        <div>
+          <Line className="w-4/5" strong />
+          <div className="mt-2 grid gap-1.5">
+            <Line className="w-full" />
+            <Line className="w-2/3" />
+          </div>
+        </div>
+        <div className="self-end pb-3">
+          <div className="mb-2 size-5 border border-current opacity-40" />
+          <Line className="w-full" />
+        </div>
+      </div>
+      <div className="absolute inset-x-4 bottom-4 border-t border-current opacity-25" />
     </div>
   )
 }

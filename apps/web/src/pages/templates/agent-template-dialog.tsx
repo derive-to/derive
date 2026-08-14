@@ -1,5 +1,5 @@
+import { Fragment } from "react"
 import { Icon } from "@/components/icons"
-import { ConnectAgentDialogContent } from "@/components/shared/connect-agent"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -54,10 +54,7 @@ export function AgentTemplateDialog({
     planRequired,
     showHandoff,
     setShowHandoff,
-    connectOpen,
-    setConnectOpen,
     setSelectedContext,
-    openedAgent,
     copied,
     descriptionId,
     contextsState,
@@ -68,15 +65,14 @@ export function AgentTemplateDialog({
     openInLocalAgent,
     runOnConnectedMachine,
     openModelPlans,
-    openContexts,
   } = useAgentTemplateHandoff(target, onOpenChange)
 
   if (!target) return null
   const isContext = target.kind === "context"
 
   return (
-    <>
-      <Dialog open={!connectOpen} onOpenChange={(open) => !busy && onOpenChange(open)}>
+    <Fragment key={target.uri}>
+      <Dialog open onOpenChange={(open) => !busy && onOpenChange(open)}>
         <DialogContent
           className="max-h-[min(92dvh,760px)] gap-4 overflow-y-auto sm:max-w-2xl"
           aria-describedby={descriptionId}
@@ -259,7 +255,7 @@ export function AgentTemplateDialog({
               <div className="grid gap-2 sm:grid-cols-3">
                 <Button
                   type="button"
-                  variant={openedAgent === "codex" ? "secondary" : "outline"}
+                  variant="outline"
                   size="lg"
                   className="justify-between"
                   disabled={!brief.trim() || busy}
@@ -272,11 +268,11 @@ export function AgentTemplateDialog({
                     </span>
                     <span className="text-xs font-normal text-muted-foreground">Open task</span>
                   </span>
-                  <Icon name={openedAgent === "codex" ? "check" : "arrow"} />
+                  <Icon name="arrow" />
                 </Button>
                 <Button
                   type="button"
-                  variant={openedAgent === "claude-code" ? "secondary" : "outline"}
+                  variant="outline"
                   size="lg"
                   className="justify-between"
                   disabled={!brief.trim() || busy}
@@ -289,7 +285,7 @@ export function AgentTemplateDialog({
                     </span>
                     <span className="text-xs font-normal text-muted-foreground">Open task</span>
                   </span>
-                  <Icon name={openedAgent === "claude-code" ? "check" : "arrow"} />
+                  <Icon name="arrow" />
                 </Button>
                 <Button
                   type="button"
@@ -311,12 +307,6 @@ export function AgentTemplateDialog({
                   <Icon name={copied ? "check" : "arrow"} />
                 </Button>
               </div>
-              {openedAgent ? (
-                <p className="px-0.5 text-xs text-success" role="status">
-                  Opened {openedAgent === "codex" ? "Codex" : "Claude Code"} — the task is ready for
-                  you to review and send.
-                </p>
-              ) : null}
             </section>
 
             {showHandoff ? (
@@ -344,20 +334,7 @@ export function AgentTemplateDialog({
               </div>
             ) : null}
 
-            <div className="grid gap-2 rounded-xl border border-dashed px-3 py-2.5 sm:grid-cols-3 sm:gap-3">
-              {[
-                ["01", "Reads the exact reference"],
-                ["02", "Adapts it to your brief"],
-                ["03", isContext ? "Creates the new Context" : "Publishes and inspects it"],
-              ].map(([step, title]) => (
-                <div key={step} className="flex items-center gap-2">
-                  <span className="font-mono text-2xs text-muted-foreground">{step}</span>
-                  <p className="text-xs font-medium text-foreground">{title}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-between gap-3 px-1 text-xs">
+            <div className="flex items-center px-1 text-xs">
               <Button
                 type="button"
                 variant="link"
@@ -369,49 +346,10 @@ export function AgentTemplateDialog({
               >
                 {showHandoff ? "Hide agent instructions" : "Review agent instructions"}
               </Button>
-              <Button
-                type="button"
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-xs text-muted-foreground"
-                onClick={() => setConnectOpen(true)}
-                disabled={busy}
-                data-testid="template-agent-connect"
-              >
-                Connect Derive to your agent
-              </Button>
             </div>
-
-            {onlineContexts.length === 0 ? (
-              <div
-                className="flex flex-col gap-2 rounded-xl border border-dashed px-3.5 py-3 sm:flex-row sm:items-center"
-                data-testid="template-agent-no-runner"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium text-foreground">
-                    Want one-click pickup later?
-                  </p>
-                  <p className="mt-0.5 text-xs text-pretty text-muted-foreground">
-                    Connect this machine once and future template tasks can arrive automatically.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={openContexts}
-                  data-testid="template-agent-setup-runner"
-                >
-                  Connect this machine <Icon name="arrow" />
-                </Button>
-              </div>
-            ) : null}
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
-        <ConnectAgentDialogContent testidPrefix="template-agent-connect-dialog" />
-      </Dialog>
-    </>
+    </Fragment>
   )
 }

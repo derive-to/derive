@@ -5,12 +5,7 @@ import { ApiError, api } from "@/api"
 import { useCopy } from "@/lib/clipboard"
 import { contextSessionsQuery, contextsQuery } from "@/lib/queries"
 import { runnerStatus } from "@/pages/context/runner-status"
-import {
-  type AgentTemplateTarget,
-  type LocalAgentKind,
-  localAgentHandoff,
-  localAgentLaunchUrl,
-} from "./agent-handoff"
+import { type AgentTemplateTarget, localAgentHandoff, localAgentLaunchUrl } from "./agent-handoff"
 
 export function useAgentTemplateHandoff(
   target: AgentTemplateTarget | null,
@@ -23,9 +18,7 @@ export function useAgentTemplateHandoff(
   const [error, setError] = useState("")
   const [planRequired, setPlanRequired] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
-  const [connectOpen, setConnectOpen] = useState(false)
   const [selectedContext, setSelectedContext] = useState("")
-  const [openedAgent, setOpenedAgent] = useState<LocalAgentKind | null>(null)
   const { copied, copy } = useCopy(4000)
   const mounted = useRef(true)
   const descriptionId = useId()
@@ -51,8 +44,6 @@ export function useAgentTemplateHandoff(
     setError("")
     setPlanRequired(false)
     setShowHandoff(false)
-    setConnectOpen(false)
-    setOpenedAgent(null)
   }, [target])
 
   useEffect(() => {
@@ -73,7 +64,7 @@ export function useAgentTemplateHandoff(
     }
   }
 
-  const openInLocalAgent = (agent: LocalAgentKind) => {
+  const openInLocalAgent = (agent: "codex" | "claude-code") => {
     if (!target || !brief.trim() || busy) return
     const url = localAgentLaunchUrl(agent, target, brief)
     if (!url) {
@@ -82,7 +73,6 @@ export function useAgentTemplateHandoff(
       return
     }
     setError("")
-    setOpenedAgent(agent)
     window.location.href = url
   }
 
@@ -124,10 +114,7 @@ export function useAgentTemplateHandoff(
     planRequired,
     showHandoff,
     setShowHandoff,
-    connectOpen,
-    setConnectOpen,
     setSelectedContext,
-    openedAgent,
     copied,
     descriptionId,
     contextsState,
@@ -140,10 +127,6 @@ export function useAgentTemplateHandoff(
     openModelPlans: () => {
       onOpenChange(false)
       void navigate({ to: "/settings/$section", params: { section: "model-plans" } })
-    },
-    openContexts: () => {
-      onOpenChange(false)
-      void navigate({ to: "/contexts" })
     },
   }
 }
