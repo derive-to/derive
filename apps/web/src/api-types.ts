@@ -6529,6 +6529,8 @@ export interface components {
             org_id?: string;
             /** @description Signed, short-lived token for fetching raw content; detail responses only. */
             raw_token?: string;
+            /** @description Expiry of raw_token as an ISO timestamp; detail responses only. */
+            raw_token_expires_at?: string;
             /** @description true when the bundle is a single-page app (all paths route to the entry). */
             spa?: boolean;
             /** @description Latest version number; 0 before any content is published. */

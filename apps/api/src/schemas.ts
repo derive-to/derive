@@ -156,6 +156,10 @@ export const Artifact = z
       .string()
       .optional()
       .describe("Signed, short-lived token for fetching raw content; detail responses only."),
+    raw_token_expires_at: z
+      .string()
+      .optional()
+      .describe("Expiry of raw_token as an ISO timestamp; detail responses only."),
     spa: z
       .boolean()
       .optional()

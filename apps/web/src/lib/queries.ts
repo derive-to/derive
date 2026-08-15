@@ -328,6 +328,11 @@ export const artifactQuery = (shortId: string, client?: QueryClient) =>
   queryOptions({
     queryKey: ["artifact", shortId] as const,
     queryFn: () => api.getArtifact(shortId),
+    // Detail responses contain a short-lived raw-content capability. Persisting the
+    // whole record for 24 hours made an expired token the first value rendered after
+    // boot; the background refresh arrived too late because the iframe had pinned it.
+    // List rows are persisted and still seed the instant header paint below.
+    meta: { persist: false },
     placeholderData: client
       ? () => {
           for (const [, data] of client.getQueriesData<ArtifactListCache>({

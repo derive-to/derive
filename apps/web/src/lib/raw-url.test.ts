@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { rawArtifactUrl } from "./queries"
+import { artifactQuery, rawArtifactUrl } from "./queries"
 
 // The regression this guards: the prefetch and the viewer frame each built the raw
 // URL themselves, and they built DIFFERENT ones. The frame loads a tokenized URL
@@ -23,5 +23,11 @@ describe("rawArtifactUrl", () => {
 
   it("distinguishes tokened from tokenless — the mismatch that caused the bug", () => {
     expect(rawArtifactUrl("abc123", 4, "tok")).not.toBe(rawArtifactUrl("abc123", 4))
+  })
+})
+
+describe("artifactQuery", () => {
+  it("does not persist the detail record because it contains a short-lived capability", () => {
+    expect(artifactQuery("abc123").meta).toEqual({ persist: false })
   })
 })

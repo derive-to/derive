@@ -15,6 +15,10 @@ const tokenUrlFor = async (
 ) => {
   const rec = await (await app.request(`/v1/artifacts/${shortId}`, { headers })).json()
   expect(rec.raw_token, "the record should carry a raw token for the viewer").toBeTruthy()
+  expect(
+    Date.parse(rec.raw_token_expires_at),
+    "the record should say when its cached raw capability expires",
+  ).toBeGreaterThan(Date.now())
   return `/raw/${shortId}/v/${rec.current_version}/t/${rec.raw_token}/index.html`
 }
 
