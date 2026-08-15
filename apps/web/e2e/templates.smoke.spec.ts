@@ -58,16 +58,9 @@ test.describe("templates", () => {
 
   test("one portable prompt replaces desktop-specific launch links", async ({ owner: page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
-    await page.route("**/v1/me/connected-agents", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ agents: [] }),
-      }),
-    )
     await page.goto("/templates")
     await page.getByTestId("template-use-narrative-pitch").click()
-    await expect(page.getByText("Connect Derive before the handoff")).toBeVisible()
+    await expect(page.getByText("Connect Derive before the handoff")).toHaveCount(0)
     await page.getByTestId("template-agent-brief").fill("Make a launch narrative for Acme.")
     await expect(page.getByTestId("template-agent-open-codex")).toHaveCount(0)
     await expect(page.getByTestId("template-agent-open-claude")).toHaveCount(0)
@@ -234,7 +227,8 @@ test.describe("templates", () => {
     await expect(page.getByTestId("template-agent-open-codex")).toHaveCount(0)
     await expect(page.getByTestId("template-agent-open-claude")).toHaveCount(0)
     await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
-    await expect(page.getByTestId("template-agent-contexts-retry")).toBeVisible()
+    await expect(page.getByTestId("template-agent-contexts-retry")).toHaveCount(0)
+    await expect(page.getByText("Connected-machine pickup is unavailable.")).toHaveCount(0)
     await expect(page.getByText("hosted", { exact: false })).toHaveCount(0)
     await expect(page.getByTestId("template-agent-build-beta")).toHaveCount(0)
     await page.getByTestId("template-agent-copy").click()

@@ -3,12 +3,7 @@ import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useId, useRef, useState } from "react"
 import { ApiError, api, workspaceDisplayName } from "@/api"
 import { useCopy } from "@/lib/clipboard"
-import {
-  connectedAgentsQuery,
-  contextSessionsQuery,
-  contextsQuery,
-  workspacesQuery,
-} from "@/lib/queries"
+import { contextSessionsQuery, contextsQuery, workspacesQuery } from "@/lib/queries"
 import { runnerStatus } from "@/pages/context/runner-status"
 import { type AgentTemplateTarget, localAgentHandoff } from "./agent-handoff"
 
@@ -28,7 +23,6 @@ export function useAgentTemplateHandoff(
   const mounted = useRef(true)
   const descriptionId = useId()
   const contextsState = useQuery(contextsQuery())
-  const connectedAgentsState = useQuery(connectedAgentsQuery())
   const workspacesState = useQuery(workspacesQuery())
   const activeWorkspaceSummary = workspacesState.data?.workspaces.find(
     (workspace) => workspace.id === workspacesState.data.active,
@@ -112,8 +106,6 @@ export function useAgentTemplateHandoff(
     setSelectedContext,
     copied,
     descriptionId,
-    contextsState,
-    connectedAgentsState,
     onlineContexts,
     selectedRunner,
     activeWorkspace,

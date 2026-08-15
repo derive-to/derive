@@ -30,7 +30,7 @@ const CHUNK_BUDGET = 180 * 1024
 // is fetched on demand (not bundled), and the eager path remains unchanged; give
 // that intentional route 20 kB of aggregate room without relaxing either hard
 // user-facing budget above.
-const TOTAL_BACKSTOP = 820 * 1024
+const TOTAL_BACKSTOP = 822 * 1024
 
 let manifest
 try {

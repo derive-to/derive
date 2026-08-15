@@ -1,5 +1,4 @@
 import { Icon } from "@/components/icons"
-import { ConnectAgentButton } from "@/components/shared/connect-agent"
 import { FormField } from "@/components/shared/form-field"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
@@ -68,11 +67,8 @@ function AgentTemplateDialogInner({
     setSelectedContext,
     copied,
     descriptionId,
-    contextsState,
-    connectedAgentsState,
     onlineContexts,
     selectedRunner,
-    activeWorkspace,
     handoff,
     copyForLocalAgent,
     runOnConnectedMachine,
@@ -174,78 +170,6 @@ function AgentTemplateDialogInner({
               data-testid="template-agent-brief"
             />
           </FormField>
-
-          {contextsState.isError ? (
-            <StatusPanel
-              tone="warning"
-              layout="inline"
-              title="Connected-machine pickup is unavailable."
-              description="You can still copy the prepared prompt into Codex, Claude Code, or any other local agent below."
-              action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void contextsState.refetch()}
-                  data-testid="template-agent-contexts-retry"
-                >
-                  Retry
-                </Button>
-              }
-            />
-          ) : null}
-
-          {onlineContexts.length === 0 &&
-          !connectedAgentsState.isPending &&
-          connectedAgentsState.data?.length === 0 ? (
-            <StatusPanel
-              tone="warning"
-              layout="inline"
-              icon={<Icon name="context" />}
-              title="Connect Derive before the handoff"
-              description="This task uses find, read, and publish in your active workspace. Connect once so the local agent can resolve the reference and return the result."
-              action={
-                <ConnectAgentButton
-                  variant="outline"
-                  size="sm"
-                  testId="template-agent-connect-derive"
-                />
-              }
-            />
-          ) : onlineContexts.length === 0 && connectedAgentsState.isError ? (
-            <StatusPanel
-              tone="warning"
-              layout="inline"
-              title="Derive connection could not be confirmed"
-              description="You can continue if this agent already uses Derive, or retry the connection check."
-              action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void connectedAgentsState.refetch()}
-                  data-testid="template-agent-connection-retry"
-                >
-                  Retry
-                </Button>
-              }
-            />
-          ) : onlineContexts.length === 0 && connectedAgentsState.data?.length ? (
-            <div
-              className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-secondary/45 px-3 py-2.5 text-xs"
-              data-testid="template-agent-preflight"
-            >
-              <span className="flex items-center gap-2 font-medium text-foreground">
-                <span className="size-2 rounded-full bg-success" aria-hidden />
-                Derive connection detected
-              </span>
-              {activeWorkspace ? (
-                <span className="text-muted-foreground">
-                  Publishing to <span className="text-foreground">{activeWorkspace.name}</span>
-                </span>
-              ) : null}
-            </div>
-          ) : null}
 
           {onlineContexts.length > 0 ? (
             <section

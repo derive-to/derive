@@ -31,7 +31,7 @@ export function PublicFrame({ returnTo, children }: { returnTo: string; children
             to="/login"
             search={{
               signup: true,
-              return_to: "/new",
+              return_to: returnTo,
               ...signupSourceSearch("public_frame", null, returnTo),
             }}
           >
