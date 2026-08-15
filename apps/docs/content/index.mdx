@@ -1,36 +1,147 @@
-import { CardGrid, LinkButton, LinkCard } from '@astrojs/starlight/components';
+<div class="home-hero" data-pagefind-body>
+  <div class="home-overline">
+    <span>Derive documentation</span>
+    <span>One URL · every version · named approval</span>
+  </div>
 
-Derive gives every plan, report, page, or deck one durable URL. People review the exact
-work, a compatible agent reads the feedback and revises it, and a named approval closes
-the loop.
+  <h1>Turn agent output into approved work.</h1>
 
-<LinkButton href="/start/first-artifact/">Publish your first artifact</LinkButton>{' '}
-<LinkButton href="https://derive.to/" variant="secondary" icon="external">
-  Open hosted Derive
-</LinkButton>
+  <p class="home-lede">
+    Publish the real artifact, review the exact work, and revise it with any compatible
+    agent—without losing the history or changing the URL.
+  </p>
 
-## Choose your path
+  <div class="home-actions">
+    <a class="button button-primary" href="/start/first-artifact/">Publish your first artifact <span aria-hidden="true">→</span></a>
+    <a class="button" href="/agents/connect/">Connect an agent</a>
+  </div>
 
-<CardGrid>
-  <LinkCard title="Try it without an account" href="/start/first-artifact/" description="Publish an anonymous draft with one HTTP request and inspect the rendered result." />
-  <LinkCard title="Connect an agent" href="/agents/connect/" description="Use the remote MCP server or install Derive's skill in a compatible coding agent." />
-  <LinkCard title="Self-host Derive" href="/self-hosting/quickstart/" description="Run the complete product in one container with SQLite and local storage by default." />
-  <LinkCard title="Build against the API" href="/reference/api/" description="Use the OpenAPI document, interactive reference, and standard discovery endpoints." />
-</CardGrid>
+  <div class="workflow-figure" aria-label="The Derive review loop">
+    <div class="workflow-caption"><span>FIG. 01</span><span>The loop, intact</span></div>
+    <ol class="workflow-steps">
+      <li>
+        <span class="workflow-number">01</span>
+        <strong>Publish</strong>
+        <small>HTML · Markdown · site</small>
+      </li>
+      <li>
+        <span class="workflow-number">02</span>
+        <strong>Review</strong>
+        <small>Anchored feedback</small>
+      </li>
+      <li>
+        <span class="workflow-number">03</span>
+        <strong>Revise</strong>
+        <small>Same durable URL</small>
+      </li>
+      <li class="workflow-approved">
+        <span class="workflow-number">04</span>
+        <strong>Approve</strong>
+        <small>Named decision · v3</small>
+      </li>
+    </ol>
+  </div>
+</div>
 
-## The shortest useful explanation
+<section class="home-section path-section">
+  <header class="home-section-header">
+    <span>01 / Find your path</span>
+    <div>
+      <h2>Start with the thing you need to ship.</h2>
+      <p>Derive is useful before setup gets interesting. Choose the shortest path to a live artifact.</p>
+    </div>
+  </header>
 
-1. Publish HTML, Markdown, or a complete static site.
-2. Share the artifact's durable URL with the people who should review it.
-3. Reviewers comment on exact text and approve a named version or request changes.
-4. Your agent reads open feedback, revises the same artifact, and asks for review again.
+  <div class="path-grid">
+    <a href="/start/first-artifact/">
+      <span>01</span>
+      <h3>Try it without an account</h3>
+      <p>Publish an anonymous draft with one HTTP request and inspect the rendered result.</p>
+      <strong>30-second start →</strong>
+    </a>
+    <a href="/agents/connect/">
+      <span>02</span>
+      <h3>Connect an agent</h3>
+      <p>Give Claude Code, Codex, Cursor, or another MCP client a durable place to publish.</p>
+      <strong>Agent setup →</strong>
+    </a>
+    <a href="/self-hosting/quickstart/">
+      <span>03</span>
+      <h3>Self-host Derive</h3>
+      <p>Run the complete product in one container with SQLite and local storage by default.</p>
+      <strong>Self-hosting guide →</strong>
+    </a>
+    <a href="/reference/api/">
+      <span>04</span>
+      <h3>Build against the API</h3>
+      <p>Use OpenAPI, MCP, OAuth, agent discovery, and raw artifact endpoints.</p>
+      <strong>API reference →</strong>
+    </a>
+  </div>
+</section>
 
-The content, every version, each thread, and the final decision stay together. The source
-of truth is the artifact—not one model's chat history.
+<section class="home-section quickstart-section">
+  <header class="home-section-header">
+    <span>02 / First artifact</span>
+    <div>
+      <h2>A real URL in one command.</h2>
+      <p>No account, token, SDK, or configuration file. Claim it later if the work is worth keeping.</p>
+    </div>
+  </header>
 
-## Hosted and self-hosted are the same product
+  <div class="quickstart-terminal">
+    <div class="terminal-bar">
+      <span>TERMINAL / ANONYMOUS DRAFT</span>
+      <span>NO AUTH</span>
+    </div>
 
-The hosted service at [derive.to](https://derive.to/) is the fastest way
-to start. The self-hosted image exposes the same web application, API, MCP server, and
-review model on your infrastructure. Derive is Fair Source today; see
-[Licensing](/reference/licensing/) for the exact terms and conversion schedule.
+```bash
+curl -F file=@page.html https://derive.to/v1/drafts
+```
+
+    <div class="terminal-result">
+      <span>→</span>
+      <div>
+        <strong>https://quiet-sun-4f2c.derive.page/</strong>
+        <small>Live for 72 hours · claim link returned privately</small>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="home-section principle-section">
+  <header class="home-section-header">
+    <span>03 / The model</span>
+    <div>
+      <h2>The artifact is the source of truth.</h2>
+      <p>Not a chat transcript, an exported PDF, or the latest file someone happened to attach.</p>
+    </div>
+  </header>
+
+  <div class="principle-grid">
+    <div>
+      <span>ONE</span>
+      <strong>Durable URL</strong>
+      <p>The link survives every revision and always carries its version history.</p>
+    </div>
+    <div>
+      <span>EXACT</span>
+      <strong>Anchored feedback</strong>
+      <p>Comments stay attached to the work they describe, across agent revisions.</p>
+    </div>
+    <div>
+      <span>HUMAN</span>
+      <strong>Named approval</strong>
+      <p>A directly signed-in person closes the loop on a specific version.</p>
+    </div>
+  </div>
+</section>
+
+<section class="home-closing">
+  <p>Hosted and self-hosted are the same product.</p>
+  <h2>Keep the work. Keep the context. Keep control.</h2>
+  <div>
+    <a class="button button-primary" href="/start/first-artifact/">Start publishing <span aria-hidden="true">→</span></a>
+    <a class="button" href="https://github.com/derive-to/derive">View source on GitHub <span aria-hidden="true">↗</span></a>
+  </div>
+</section>

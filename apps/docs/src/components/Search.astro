@@ -1,0 +1,151 @@
+<dialog class="search-dialog" id="docs-search" aria-labelledby="search-title" data-pagefind-ignore>
+  <div class="search-panel">
+    <div class="search-field">
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="8.75" cy="8.75" r="5.75"></circle>
+        <path d="m13 13 4 4"></path>
+      </svg>
+      <label class="sr-only" id="search-title" for="docs-search-input">Search documentation</label>
+      <input
+        id="docs-search-input"
+        type="search"
+        placeholder="Search documentation…"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button class="search-close" type="button" data-search-close aria-label="Close search">Esc</button>
+    </div>
+    <div class="search-status" id="search-status" aria-live="polite">
+      Search for guides, concepts, commands, or configuration.
+    </div>
+    <ol class="search-results" id="search-results"></ol>
+    <footer class="search-footer">
+      <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+      <span><kbd>↵</kbd> open</span>
+    </footer>
+  </div>
+</dialog>
+
+<script>
+  const dialog = document.querySelector<HTMLDialogElement>("#docs-search")
+  const input = document.querySelector<HTMLInputElement>("#docs-search-input")
+  const results = document.querySelector<HTMLOListElement>("#search-results")
+  const status = document.querySelector<HTMLElement>("#search-status")
+  interface PagefindResultData {
+    url: string
+    excerpt: string
+    meta: { title?: string }
+  }
+  interface PagefindModule {
+    init: () => Promise<void>
+    search: (query: string) => Promise<{
+      results: Array<{ data: () => Promise<PagefindResultData> }>
+    }>
+  }
+  let pagefind: PagefindModule | undefined
+  let resultLinks: HTMLAnchorElement[] = []
+  let selectedIndex = -1
+  let queryVersion = 0
+
+  const plainText = (value: string) => {
+    const element = document.createElement("span")
+    element.innerHTML = value
+    return element.textContent ?? ""
+  }
+
+  const selectResult = (index: number) => {
+    if (!resultLinks.length) return
+    selectedIndex = (index + resultLinks.length) % resultLinks.length
+    for (const [linkIndex, link] of resultLinks.entries()) {
+      const selected = linkIndex === selectedIndex
+      link.toggleAttribute("data-selected", selected)
+      if (selected) link.scrollIntoView({ block: "nearest" })
+    }
+  }
+
+  const renderSearch = async () => {
+    if (!input || !results || !status) return
+    const query = input.value.trim()
+    const version = ++queryVersion
+    results.replaceChildren()
+    resultLinks = []
+    selectedIndex = -1
+    if (!query) {
+      status.textContent = "Search for guides, concepts, commands, or configuration."
+      return
+    }
+
+    status.textContent = "Searching…"
+    try {
+      let searchApi = pagefind
+      if (!searchApi) {
+        // @ts-expect-error: Pagefind generates this browser module after Astro finishes building.
+        searchApi = (await import(/* @vite-ignore */ "/pagefind/pagefind.js")) as PagefindModule
+        pagefind = searchApi
+      }
+      await searchApi.init()
+      const search = await searchApi.search(query)
+      const entries = await Promise.all(search.results.slice(0, 8).map((result) => result.data()))
+      if (version !== queryVersion) return
+      status.textContent = entries.length
+        ? `${entries.length} ${entries.length === 1 ? "result" : "results"}`
+        : `No results for “${query}”`
+
+      for (const entry of entries) {
+        const item = document.createElement("li")
+        const link = document.createElement("a")
+        const title = document.createElement("strong")
+        const excerpt = document.createElement("span")
+        const arrow = document.createElement("span")
+        link.href = entry.url
+        title.textContent = entry.meta.title || "Untitled page"
+        excerpt.textContent = plainText(entry.excerpt)
+        arrow.textContent = "↗"
+        arrow.setAttribute("aria-hidden", "true")
+        link.append(title, excerpt, arrow)
+        item.append(link)
+        results.append(item)
+        resultLinks.push(link)
+      }
+      if (resultLinks.length) selectResult(0)
+    } catch {
+      if (version !== queryVersion) return
+      status.textContent = "Search is available in a production build."
+    }
+  }
+
+  const openSearch = () => {
+    if (!dialog || !input) return
+    if (!dialog.open) dialog.showModal()
+    window.setTimeout(() => input.focus(), 0)
+  }
+
+  const closeSearch = () => dialog?.close()
+
+  document.querySelectorAll<HTMLElement>("[data-search-open]").forEach((trigger) => {
+    trigger.addEventListener("click", openSearch)
+  })
+  document.querySelector<HTMLElement>("[data-search-close]")?.addEventListener("click", closeSearch)
+  input?.addEventListener("input", renderSearch)
+  input?.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault()
+      selectResult(selectedIndex + 1)
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault()
+      selectResult(selectedIndex - 1)
+    } else if (event.key === "Enter" && selectedIndex >= 0) {
+      event.preventDefault()
+      resultLinks[selectedIndex]?.click()
+    }
+  })
+  dialog?.addEventListener("click", (event) => {
+    if (event.target === dialog) closeSearch()
+  })
+  document.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault()
+      openSearch()
+    }
+  })
+</script>

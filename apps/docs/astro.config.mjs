@@ -1,7 +1,7 @@
 import { unified } from "@astrojs/markdown-remark"
-import starlight from "@astrojs/starlight"
+import mdx from "@astrojs/mdx"
+import sitemap from "@astrojs/sitemap"
 import { defineConfig } from "astro/config"
-import { docsSections } from "./docs-manifest.mjs"
 
 const buildSha = process.env.GITHUB_SHA ?? "dev"
 
@@ -25,74 +25,10 @@ export default defineConfig({
   site: "https://docs.derive.to",
   trailingSlash: "always",
   markdown: { processor: unified({ rehypePlugins: [keyboardScrollableTables] }) },
-  integrations: [
-    starlight({
-      title: "Derive Docs",
-      description:
-        "Publish agent-made work, collect exact feedback, revise it, and record approval at one durable URL.",
-      favicon: "/favicon.svg",
-      customCss: ["./src/styles/custom.css"],
-      social: [
-        {
-          icon: "github",
-          label: "GitHub",
-          href: "https://github.com/derive-to/derive",
-        },
-      ],
-      head: [
-        {
-          tag: "meta",
-          attrs: { name: "theme-color", content: "#5f45ff" },
-        },
-        {
-          tag: "meta",
-          attrs: { name: "derive-docs-build", content: buildSha },
-        },
-        {
-          tag: "meta",
-          attrs: {
-            property: "og:image",
-            content: "https://derive.to/site/og-approval.png",
-          },
-        },
-        {
-          tag: "meta",
-          attrs: {
-            name: "twitter:image",
-            content: "https://derive.to/site/og-approval.png",
-          },
-        },
-        {
-          tag: "link",
-          attrs: { rel: "alternate", type: "text/plain", href: "/llms.txt", title: "LLM index" },
-        },
-      ],
-      lastUpdated: true,
-      pagination: true,
-      disable404Route: true,
-      sidebar: [
-        { label: "Documentation home", link: "/" },
-        ...docsSections.map(({ label, pages }) => ({
-          label,
-          items: pages.map(({ slug }) => ({ slug })),
-        })),
-        {
-          label: "Links",
-          collapsed: true,
-          items: [
-            {
-              label: "Open Derive",
-              link: "https://derive.to/",
-              attrs: { rel: "external" },
-            },
-            {
-              label: "GitHub repository",
-              link: "https://github.com/derive-to/derive",
-              attrs: { rel: "external" },
-            },
-          ],
-        },
-      ],
-    }),
-  ],
+  integrations: [mdx(), sitemap()],
+  vite: {
+    define: {
+      __DERIVE_DOCS_BUILD__: JSON.stringify(buildSha),
+    },
+  },
 })

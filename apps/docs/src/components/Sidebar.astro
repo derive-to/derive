@@ -1,0 +1,46 @@
+---
+import navigation from "../generated/navigation.json"
+
+interface Props {
+  activeSlug: string
+  mobile?: boolean
+}
+
+const { activeSlug, mobile = false } = Astro.props
+const hrefFor = (slug: string) => (slug === "index" ? "/" : `/${slug}/`)
+---
+
+<nav class:list={["docs-navigation", { "docs-navigation-mobile": mobile }]} aria-label="Documentation">
+  <a
+    class="navigation-home"
+    href="/"
+    aria-current={activeSlug === "index" ? "page" : undefined}
+  >
+    <span>Documentation home</span>
+    <span class="navigation-arrow" aria-hidden="true">↗</span>
+  </a>
+
+  {navigation.sections.map((section) => (
+    <section class="navigation-section">
+      <p>{section.label}</p>
+      <ul>
+        {section.pages.map((page) => (
+          <li>
+            <a
+              href={hrefFor(page.slug)}
+              aria-current={page.slug === activeSlug ? "page" : undefined}
+            >
+              {page.title}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ))}
+
+  <div class="navigation-meta">
+    <span>Public beta</span>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/derive-to/derive">Fair Source</a>
+  </div>
+</nav>

@@ -1,23 +1,20 @@
 ---
-import StarlightPage from "@astrojs/starlight/components/StarlightPage.astro"
+import DocsLayout from "../layouts/DocsLayout.astro"
 ---
 
-<StarlightPage
-  frontmatter={{
-    title: "Page not found",
-    description: "That Derive documentation page does not exist.",
-    editUrl: false,
-    template: "splash",
-    head: [
-      {
-        tag: "meta",
-        attrs: { name: "robots", content: "noindex, nofollow" },
-      },
-    ],
-  }}
+<DocsLayout
+  slug="404"
+  title="Page not found"
+  description="That Derive documentation page does not exist."
+  noindex
 >
-  <div data-pagefind-ignore>
-    <p>Check the URL, use documentation search, or return to the documentation home.</p>
-    <p><a href="/">Documentation home</a></p>
+  <div class="not-found" data-pagefind-ignore>
+    <span>404 / LOST ARTIFACT</span>
+    <h2>This page left no version behind.</h2>
+    <p>Check the URL, search the documentation, or return to the start.</p>
+    <div>
+      <a class="button button-primary" href="/">Documentation home</a>
+      <button class="button" type="button" data-search-open>Search documentation</button>
+    </div>
   </div>
-</StarlightPage>
+</DocsLayout>

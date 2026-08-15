@@ -12,11 +12,12 @@ import {
 } from "node:fs"
 import { dirname, extname, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
-import { docsPages } from "../docs-manifest.mjs"
+import { docsHome, docsPages, docsSections } from "../docs-manifest.mjs"
 
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const REPO_ROOT = resolve(APP_ROOT, "../..")
 const CONTENT_ROOT = join(APP_ROOT, "src/content/docs")
+const GENERATED_ROOT = join(APP_ROOT, "src/generated")
 const PUBLIC_ROOT = join(APP_ROOT, "public")
 const GENERATED_MARKER =
   "<!-- Generated from the canonical repository source; do not edit here. -->"
@@ -99,6 +100,7 @@ const renderPage = (page) => {
   const updated = lastUpdated(source)
   const frontmatter = [
     "---",
+    `slug: ${yamlString(page.slug)}`,
     `title: ${yamlString(page.title)}`,
     `description: ${yamlString(page.description)}`,
     `editUrl: ${yamlString(`https://github.com/derive-to/derive/edit/main/${page.source}`)}`,
@@ -158,6 +160,12 @@ for (const path of generatedFiles(CONTENT_ROOT)) {
     )
   unlinkSync(path)
 }
+
+mkdirSync(GENERATED_ROOT, { recursive: true })
+writeFileSync(
+  join(GENERATED_ROOT, "navigation.json"),
+  `${JSON.stringify({ home: docsHome, sections: docsSections, pages: docsPages }, null, 2)}\n`,
+)
 
 mkdirSync(join(PUBLIC_ROOT, "fonts"), { recursive: true })
 copyFileSync(join(REPO_ROOT, "apps/web/public/brand/favicon.svg"), join(PUBLIC_ROOT, "favicon.svg"))
