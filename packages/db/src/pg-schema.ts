@@ -1036,8 +1036,9 @@ const TABLES = [
   modelCredential,
 ]
 
-/** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables
- *  + perf indexes, then the idempotent ADD COLUMN IF NOT EXISTS migrations. Pure;
+/** Build the Postgres boot DDL: table CREATEs + placeholder tables, then the idempotent
+ *  ADD COLUMN IF NOT EXISTS reconciliation, and only then every index — an index may
+ *  reference a column the reconciliation just added on an existing database. Pure;
  *  exported for the conformance test. */
 // Full-text search index (workspace search substrate) — the Postgres twin of the SQLite
 // fts5 virtual table. A real table holding a precomputed `tsvector` per artifact, with a
