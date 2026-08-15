@@ -75,11 +75,8 @@ test.describe("templates", () => {
     expect(new URL(page.url()).pathname).toBe("/templates")
   })
 
-  test("an online Context runner picks up the complete template job automatically", async ({
-    owner: page,
-  }) => {
+  test("connected-agent execution stays out of the copy-only workflow", async ({ owner: page }) => {
     const now = new Date().toISOString()
-    let queuedBody: Record<string, unknown> | null = null
     await page.route("**/v1/contexts", (route) =>
       route.fulfill({
         status: 200,
@@ -104,105 +101,17 @@ test.describe("templates", () => {
         }),
       }),
     )
-    await page.route("**/v1/contexts/ctx_local_codex/sessions", async (route) => {
-      if (route.request().method() === "POST") {
-        queuedBody = route.request().postDataJSON() as Record<string, unknown>
-        await route.fulfill({
-          status: 201,
-          contentType: "application/json",
-          body: JSON.stringify({ session: { id: "ses_template_local" }, messages: [] }),
-        })
-        return
-      }
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ sessions: [], next_cursor: null }),
-      })
-    })
-    await page.route("**/v1/contexts/ctx_local_codex", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          id: "ctx_local_codex",
-          name: "My local Codex",
-          agent_id: "ag_local_codex",
-          manifest_short_id: "manifest_local_codex",
-          created_by: "usr_owner",
-          created_at: now,
-          runner_seen_at: now,
-          ask_policy: "workspace",
-          connection_ids: [],
-          skills: [],
-        }),
-      }),
-    )
 
     await page.goto("/templates")
     await page.getByTestId("template-use-narrative-pitch").click()
-    await expect(page.getByTestId("template-agent-connected-runner")).toBeVisible()
-    await expect(page.getByText("Connect Derive before the handoff")).toHaveCount(0)
-    await expect(page.getByTestId("template-agent-run-connected")).toContainText(
-      "Send to My local Codex",
-    )
+    await expect(page.getByTestId("template-agent-connected-runner")).toHaveCount(0)
+    await expect(page.getByText("Send to this machine")).toHaveCount(0)
+    await expect(page.getByTestId("template-agent-copy")).toContainText("Copy as prompt")
     await page
       .getByTestId("template-agent-brief")
       .fill("Make an evidence-led onboarding deck for Acme's executive team.")
-    await page.getByTestId("template-agent-run-connected").click()
-
-    await expect(page).toHaveURL(/\/contexts\/ctx_local_codex/)
-    expect(queuedBody).toMatchObject({
-      body_md: expect.stringContaining("derive://templates/narrative-pitch"),
-    })
-    expect(JSON.stringify(queuedBody)).toContain("evidence-led onboarding deck")
-    expect(JSON.stringify(queuedBody)).toContain("Use Derive's read tool")
-  })
-
-  test("automatic pickup explains the one-time model-plan setup instead of leaking a billing error", async ({
-    owner: page,
-  }) => {
-    const now = new Date().toISOString()
-    await page.route("**/v1/contexts", (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          contexts: [
-            {
-              id: "ctx_needs_plan",
-              name: "My local Claude",
-              agent_id: "ag_needs_plan",
-              manifest_short_id: "manifest_needs_plan",
-              created_by: "usr_owner",
-              created_at: now,
-              runner_seen_at: now,
-              ask_policy: "workspace",
-              connection_ids: [],
-            },
-          ],
-        }),
-      }),
-    )
-    await page.route("**/v1/contexts/ctx_needs_plan/sessions", (route) =>
-      route.fulfill({
-        status: 402,
-        contentType: "application/json",
-        body: JSON.stringify({ error: "no model plan is connected for this work" }),
-      }),
-    )
-
-    await page.goto("/templates")
-    await page.getByTestId("template-use-narrative-pitch").click()
-    await page.getByTestId("template-agent-brief").fill("Make a customer proof deck.")
-    await page.getByTestId("template-agent-run-connected").click()
-
-    await expect(
-      page.getByText("This machine is online, but it still needs a model plan."),
-    ).toBeVisible()
-    await expect(page.getByTestId("template-agent-connect-plan")).toBeVisible()
-    await expect(page.getByText("no model plan is connected", { exact: false })).toHaveCount(0)
     await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
+    await expect(page).toHaveURL(/\/templates$/)
   })
 
   test("the default workflow exposes one portable local-agent path", async ({ owner: page }) => {

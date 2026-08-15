@@ -1,6 +1,5 @@
 import { Icon } from "@/components/icons"
 import { FormField } from "@/components/shared/form-field"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -10,13 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import type { AgentTemplateTarget } from "./agent-handoff"
 import { useAgentTemplateHandoff } from "./use-agent-template-handoff"
@@ -56,36 +48,16 @@ function AgentTemplateDialogInner({
   target: AgentTemplateTarget
   onOpenChange: (open: boolean) => void
 }) {
-  const {
-    brief,
-    setBrief,
-    busy,
-    dispatching,
-    error,
-    planRequired,
-    showHandoff,
-    setSelectedContext,
-    copied,
-    descriptionId,
-    onlineContexts,
-    selectedRunner,
-    handoff,
-    copyForLocalAgent,
-    runOnConnectedMachine,
-    openModelPlans,
-  } = useAgentTemplateHandoff(target, onOpenChange)
+  const { brief, setBrief, error, showHandoff, copied, descriptionId, handoff, copyForLocalAgent } =
+    useAgentTemplateHandoff(target)
 
   const isContext = target.kind === "context"
 
   return (
-    <Dialog open onOpenChange={(open) => !busy && onOpenChange(open)}>
+    <Dialog open onOpenChange={onOpenChange}>
       <DialogContent
         className="max-h-[min(92dvh,760px)] gap-3 overflow-y-auto sm:max-w-2xl"
         aria-describedby={descriptionId}
-        aria-busy={busy}
-        showCloseButton={!busy}
-        onEscapeKeyDown={(event) => busy && event.preventDefault()}
-        onPointerDownOutside={(event) => busy && event.preventDefault()}
       >
         <DialogHeader className="pr-7">
           <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -148,13 +120,7 @@ function AgentTemplateDialogInner({
           ) : null}
         </div>
 
-        <form
-          className="grid gap-3"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (selectedRunner) void runOnConnectedMachine()
-          }}
-        >
+        <form className="grid gap-3" onSubmit={(event) => event.preventDefault()}>
           <FormField
             label="What should your agent make?"
             htmlFor="template-agent-brief-field"
@@ -171,88 +137,9 @@ function AgentTemplateDialogInner({
             />
           </FormField>
 
-          {onlineContexts.length > 0 ? (
-            <section
-              className="grid gap-3 rounded-xl border bg-secondary/45 p-3.5"
-              aria-label="Automatic local pickup"
-              data-testid="template-agent-connected-runner"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                    <span className="size-2 rounded-full bg-success" aria-hidden />
-                    Send to this machine
-                  </div>
-                  <p className="mt-1 text-xs text-pretty text-muted-foreground">
-                    Your connected local agent is ready. Send the complete task without copying or
-                    switching apps.
-                  </p>
-                </div>
-                <Badge variant="outline" shape="pill">
-                  Local
-                </Badge>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Select
-                  value={selectedRunner?.id ?? ""}
-                  onValueChange={setSelectedContext}
-                  disabled={busy}
-                >
-                  <SelectTrigger
-                    className="h-10 w-full sm:flex-1"
-                    aria-label="Connected local agent"
-                    data-testid="template-agent-runner-select"
-                  >
-                    <SelectValue placeholder="Choose a connected agent" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {onlineContexts.map((context) => (
-                      <SelectItem key={context.id} value={context.id}>
-                        {context.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="submit"
-                  size="lg"
-                  loading={dispatching}
-                  disabled={!brief.trim() || busy}
-                  data-testid="template-agent-run-connected"
-                >
-                  <Icon name="arrow" />
-                  {dispatching ? "Sending…" : `Send to ${selectedRunner?.name ?? "agent"}`}
-                </Button>
-              </div>
-              {planRequired ? (
-                <StatusPanel
-                  tone="warning"
-                  layout="inline"
-                  title="This machine is online, but it still needs a model plan."
-                  description="Connect Codex or Claude once, then send this job again. You can still copy the prompt below."
-                  action={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={openModelPlans}
-                      data-testid="template-agent-connect-plan"
-                    >
-                      Connect a plan <Icon name="arrow" />
-                    </Button>
-                  }
-                />
-              ) : null}
-            </section>
-          ) : null}
-
           <section className="grid gap-2" aria-label="Copy for a local agent">
             <div className="px-0.5">
-              <p className="text-sm font-medium text-foreground">
-                {onlineContexts.length > 0
-                  ? "Or continue in another agent"
-                  : "Continue in your agent"}
-              </p>
+              <p className="text-sm font-medium text-foreground">Continue in your agent</p>
               <p className="text-xs text-muted-foreground">
                 Copy the complete prompt, then paste it into Codex, Claude Code, or any other agent.
               </p>
@@ -261,7 +148,7 @@ function AgentTemplateDialogInner({
               type="button"
               size="lg"
               className="w-full justify-between"
-              disabled={!brief.trim() || busy}
+              disabled={!brief.trim()}
               onClick={() => void copyForLocalAgent()}
               data-testid="template-agent-copy"
             >
