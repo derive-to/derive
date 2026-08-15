@@ -12,7 +12,7 @@ const visibleHeadings = headings.filter(({ depth }) => depth === 2 || depth === 
 {visibleHeadings.length > 0 && (
   <nav class="table-of-contents" aria-label="On this page" data-pagefind-ignore>
     <h2>On this page</h2>
-    <ul>
+    <ul role="list">
       {visibleHeadings.map((heading) => (
         <li class:list={{ nested: heading.depth === 3 }}>
           <a href={`#${heading.slug}`} data-toc-link={heading.slug}>{heading.text}</a>

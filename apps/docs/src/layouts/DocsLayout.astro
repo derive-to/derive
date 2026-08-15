@@ -36,6 +36,9 @@ const contentPages = navigation.pages.filter((page) => page.slug !== "index")
 const pageIndex = contentPages.findIndex((page) => page.slug === slug)
 const previousPage = pageIndex > 0 ? contentPages[pageIndex - 1] : undefined
 const nextPage = pageIndex >= 0 ? contentPages[pageIndex + 1] : undefined
+const activeSection = navigation.sections.find((section) =>
+  section.pages.some((page) => page.slug === slug),
+)
 const hrefFor = (page: { slug: string }) => `/${page.slug}/`
 const updatedLabel = lastUpdated
   ? new Intl.DateTimeFormat("en", { year: "numeric", month: "short", day: "numeric" }).format(
@@ -54,7 +57,9 @@ const updatedLabel = lastUpdated
       (() => {
         let saved
         try { saved = localStorage.getItem("derive-docs-theme") } catch {}
-        const dark = saved !== "light"
+        const dark = saved
+          ? saved === "dark"
+          : window.matchMedia("(prefers-color-scheme: dark)").matches
         document.documentElement.classList.toggle("dark", dark)
         document.documentElement.classList.toggle("light", !dark)
       })()
@@ -100,11 +105,11 @@ const updatedLabel = lastUpdated
         ) : (
           <article class="docs-article" data-pagefind-body>
             <header class="article-header">
-              <div class="article-overline">
-                <span>Derive documentation</span>
+              <nav class="article-breadcrumbs" aria-label="Breadcrumb">
+                <a href="/">Docs</a>
                 <span aria-hidden="true">/</span>
-                <span>{String(pageIndex + 1).padStart(2, "0")}</span>
-              </div>
+                <span>{activeSection?.label ?? "Documentation"}</span>
+              </nav>
               <h1>{title}</h1>
               <p>{description}</p>
             </header>
@@ -145,7 +150,7 @@ const updatedLabel = lastUpdated
     </div>
 
     <footer class="site-footer" data-pagefind-ignore>
-      <span>Derive</span>
+      <span>Derive Docs</span>
       <span>Make things worth keeping.</span>
       <div>
         <a href="https://derive.to/">Product</a>

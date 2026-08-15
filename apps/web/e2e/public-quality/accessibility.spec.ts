@@ -83,3 +83,11 @@ test("marketing skip link moves focus to the primary content", async ({ page }) 
   await page.keyboard.press("Enter")
   await expect(page.locator("#main-content")).toBeFocused()
 })
+
+test("docs search loads the local browser index", async ({ page }) => {
+  await page.goto(`${docsOrigin}/`)
+  await page.locator("[data-search-open]").first().click()
+  await page.locator("#docs-search-input").fill("self-host")
+  await expect(page.locator('.search-results a[href="/self-hosting/quickstart/"]')).toBeVisible()
+  await expect(page.locator("#search-status")).not.toContainText("could not load")
+})

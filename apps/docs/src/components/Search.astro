@@ -8,6 +8,7 @@
       <label class="sr-only" id="search-title" for="docs-search-input">Search documentation</label>
       <input
         id="docs-search-input"
+        name="query"
         type="search"
         placeholder="Search documentation…"
         autocomplete="off"
@@ -25,6 +26,12 @@
     </footer>
   </div>
 </dialog>
+
+<!-- Keep Pagefind outside Vite's module graph: the search bundle is generated
+     after Astro builds, so only the production browser can resolve this import. -->
+<script is:inline type="module">
+  window.__deriveLoadPagefind = () => import("/pagefind/pagefind.js")
+</script>
 
 <script>
   const dialog = document.querySelector<HTMLDialogElement>("#docs-search")
@@ -79,8 +86,13 @@
     try {
       let searchApi = pagefind
       if (!searchApi) {
-        // @ts-expect-error: Pagefind generates this browser module after Astro finishes building.
-        searchApi = (await import(/* @vite-ignore */ "/pagefind/pagefind.js")) as PagefindModule
+        const loadPagefind = (
+          window as typeof window & {
+            __deriveLoadPagefind?: () => Promise<PagefindModule>
+          }
+        ).__deriveLoadPagefind
+        if (!loadPagefind) throw new Error("Pagefind loader is unavailable")
+        searchApi = await loadPagefind()
         pagefind = searchApi
       }
       await searchApi.init()
@@ -110,7 +122,7 @@
       if (resultLinks.length) selectResult(0)
     } catch {
       if (version !== queryVersion) return
-      status.textContent = "Search is available in a production build."
+      status.textContent = "Search could not load. Refresh and try again."
     }
   }
 

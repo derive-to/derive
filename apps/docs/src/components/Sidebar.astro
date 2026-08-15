@@ -16,14 +16,13 @@ const hrefFor = (slug: string) => (slug === "index" ? "/" : `/${slug}/`)
     href="/"
     aria-current={activeSlug === "index" ? "page" : undefined}
   >
-    <span>Documentation home</span>
-    <span class="navigation-arrow" aria-hidden="true">↗</span>
+    <span>Overview</span>
   </a>
 
   {navigation.sections.map((section) => (
     <section class="navigation-section">
       <p>{section.label}</p>
-      <ul>
+      <ul role="list">
         {section.pages.map((page) => (
           <li>
             <a
