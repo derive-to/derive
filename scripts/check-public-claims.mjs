@@ -21,7 +21,7 @@ const walkText = (directory) => {
 const publicCopyFiles = new Set([
   "README.md",
   "SECURITY.md",
-  "SUPPORT.md",
+  ".github/SUPPORT.md",
   ...walkText("apps/docs/content"),
   ...walkText("apps/web/public"),
   "apps/docs/docs-manifest.mjs",
@@ -64,14 +64,18 @@ const forbidden = [
   },
 ]
 
+const licensingPath = "apps/docs/content/reference/licensing.md"
+
 for (const path of publicCopyFiles) {
   if (!existsSync(join(ROOT, path))) {
     fail(`missing public-copy surface ${path}`)
     continue
   }
   for (const [index, line] of read(path).split("\n").entries()) {
-    for (const { pattern, reason } of forbidden)
+    for (const { pattern, reason } of forbidden) {
+      if (path === licensingPath && pattern.source === "\\bopen[- ]source\\b") continue
       if (pattern.test(line)) fail(`${path}:${index + 1}: ${reason}\n  ${line.trim()}`)
+    }
   }
 }
 
@@ -82,7 +86,7 @@ const requireText = (path, expected, reason) => {
 
 // License, access, agent compatibility, and the human decision boundary are
 // promises a copy edit must not broaden.
-requireText("LICENSING.md", "Strictly speaking, no.", "state the current license status plainly")
+requireText(licensingPath, "Strictly speaking, no.", "state the current license status plainly")
 requireText("SECURITY.md", "Anonymous callers are always read-only", "match effectiveRole")
 requireText("apps/web/public/site/index.html", "Fair Source and self-hostable", "accurate metadata")
 requireText(

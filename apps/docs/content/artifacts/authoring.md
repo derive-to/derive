@@ -1,4 +1,4 @@
-# The Derive content standard
+# The Derive artifact authoring standard
 
 Derive artifacts are ordinary HTML, Markdown, or static bundles. Two conventions
 make them work well in the review loop: authoring so comments stay anchored, and

@@ -47,7 +47,8 @@ the bundled SPA when present.
   human it acts `onBehalfOf` (delegation as data, not a heuristic). `permissions.ts` is the
   one authorization gate (`can(actor, action, visibility, generalRole)`): `actorFor`
   *narrows* the Principal to a per-artifact `Actor` and asks `can`. `effectiveRole` there is
-  the source of truth for the access matrix (anonymous is always view-only; see SECURITY.md).
+  the source of truth for the access matrix (anonymous is always view-only; see
+  [SECURITY.md](../../../../SECURITY.md)).
 - **Workspaces** are keyed by a real `org_id` (never a magic constant). Every
   signed-in user owns a personal workspace (provisioned on first login) and can
   create/switch; the active workspace is resolved per request (cookie → membership
@@ -68,9 +69,9 @@ the bundled SPA when present.
 separate Cloudflare Worker from the hosted product: documentation releases, static caching, and
 failure modes do not share the API, database, storage, or application-secret bindings.
 
-`apps/docs/docs-manifest.mjs` is the route and source inventory. Docs-specific onboarding lives
-in `apps/docs/content/`; durable repository documents such as `DEPLOY.md`, `SECURITY.md`, and the
-CLI/MCP READMEs remain canonical. The sync step generates Starlight content, source edit links,
+`apps/docs/docs-manifest.mjs` is the route and source inventory. Public documentation lives in
+`apps/docs/content/`, with community health files and CLI/MCP READMEs reused where appropriate.
+The sync step generates Starlight content, source edit links,
 last-updated dates, rewritten internal links, `robots.txt`, and both concise and full LLM indexes.
 The build guard validates the declared routes, local Pagefind index, canonical URLs, sitemap,
 internal links, and real 404 output before deployment.
@@ -118,4 +119,4 @@ to a workspace role. See `packages/core/src/ports.ts` for the full record shapes
 
 Arrow functions, no semicolons, 100-char width, double quotes — enforced by Biome
 (`biome.json`). No `any`. Inline `import type`. Kebab-case filenames. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for the full gate.
+[CONTRIBUTING.md](../../../../CONTRIBUTING.md) for the full gate.

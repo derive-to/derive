@@ -18,8 +18,9 @@ manifest source, not its generated copy.
 
 ## Content model
 
-- `content/` holds docs-specific onboarding and reference pages.
-- Repository documents such as `DEPLOY.md`, `SECURITY.md`, and package READMEs remain canonical.
+- `content/` holds the authored product documentation, organized by subject.
+- Community health files such as `SECURITY.md` and package READMEs remain canonical where they
+  already serve another repository-facing purpose.
 - `scripts/sync-content.mjs` adds site metadata and rewrites repository-relative links.
 - `scripts/check-built.mjs` verifies every declared route, canonical URL, internal link, search
   index, sitemap, and real 404 behavior after each build.

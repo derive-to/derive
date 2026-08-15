@@ -2,10 +2,11 @@
 // The quick start is an executable interface, not marketing copy. Keep the two supported paths
 // complete and keep their commands aligned with the Compose and release files that implement them.
 import { existsSync, readFileSync } from "node:fs"
+import { dirname, resolve } from "node:path"
 
-const QUICKSTART = "QUICKSTART.md"
+const QUICKSTART = "apps/docs/content/self-hosting/quickstart.md"
 const README = "README.md"
-const DEPLOY = "DEPLOY.md"
+const DEPLOY = "apps/docs/content/self-hosting/configuration.md"
 const COMPOSE = "deploy/compose.yml"
 const BUILD_COMPOSE = "deploy/compose.build.yml"
 const RELEASE = ".github/workflows/release-images.yml"
@@ -90,7 +91,7 @@ for (const variable of [
 for (const capacity of ["4 GB of free Docker storage", "10 GB free"])
   requireText(quickstart, capacity, `${QUICKSTART} capacity requirements`)
 
-for (const target of ["CONTRIBUTING.md", "DEPLOY.md"])
+for (const target of ["CONTRIBUTING.md", "deployment guide"])
   requireText(quickstart, target, `${QUICKSTART} path chooser`)
 
 for (const asset of ["compose.yml", "selfhost.env.example"]) {
@@ -175,8 +176,12 @@ for (const boundary of [
 ])
   requireText(smokeClient, boundary, SMOKE_CLIENT)
 
-requireText(readme, "[self-hosting quick start](QUICKSTART.md)", README)
-requireText(deploy, "[QUICKSTART.md](QUICKSTART.md)", DEPLOY)
+requireText(
+  readme,
+  "[self-hosting quick start](https://docs.derive.to/self-hosting/quickstart/)",
+  README,
+)
+requireText(deploy, "[self-hosting quickstart](quickstart.md)", DEPLOY)
 if (readme.includes("docker compose -f deploy/compose.yml up -d"))
   fail(
     `${README} contains the old incomplete start command; new users need image selection, ` +
@@ -186,7 +191,7 @@ if (readme.includes("docker compose -f deploy/compose.yml up -d"))
 // Catch renamed or moved local Markdown targets before a reader finds the dead link.
 for (const match of quickstart.matchAll(/\]\(([^)]+\.md)(?:#[^)]+)?\)/g)) {
   const target = match[1]
-  if (!target.startsWith("http") && !existsSync(target))
+  if (!target.startsWith("http") && !existsSync(resolve(dirname(QUICKSTART), target)))
     fail(`${QUICKSTART} links to missing local file ${target}`)
 }
 

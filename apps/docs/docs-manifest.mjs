@@ -71,7 +71,7 @@ export const docsSections = [
     label: "Build artifacts",
     pages: [
       {
-        source: "STANDARD.md",
+        source: "apps/docs/content/artifacts/authoring.md",
         slug: "artifacts/authoring",
         title: "Artifact authoring standard",
         description:
@@ -90,14 +90,14 @@ export const docsSections = [
     label: "Self-host",
     pages: [
       {
-        source: "QUICKSTART.md",
+        source: "apps/docs/content/self-hosting/quickstart.md",
         slug: "self-hosting/quickstart",
         title: "Self-hosting quickstart",
         description:
           "Run Derive in one container with secure bootstrap, readiness checks, and a backup.",
       },
       {
-        source: "DEPLOY.md",
+        source: "apps/docs/content/self-hosting/configuration.md",
         slug: "self-hosting/configuration",
         title: "Deployment and configuration",
         description: "Configure storage, databases, authentication, email, domains, and scaling.",
@@ -122,13 +122,13 @@ export const docsSections = [
         stripHeading: false,
       },
       {
-        source: "ARCHITECTURE.md",
+        source: "apps/docs/content/reference/architecture.md",
         slug: "reference/architecture",
         title: "Architecture",
         description: "Derive's ports-and-adapters structure and deployment topology.",
       },
       {
-        source: "LICENSING.md",
+        source: "apps/docs/content/reference/licensing.md",
         slug: "reference/licensing",
         title: "Licensing",
         description: "Derive's Fair Source license and scheduled Apache-2.0 conversion.",
