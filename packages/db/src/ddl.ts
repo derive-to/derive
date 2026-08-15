@@ -43,14 +43,21 @@ const renderDefault = (c: Any, o: DdlOptions): string | null =>
 export const isMigratable = (c: Any): boolean =>
   !c.primary && !isTimestampDefault(c) && (!c.notNull || literalDefault(c) !== null)
 
-/** Generate per-dialect boot DDL from the drizzle tables. Returns the table/index
- *  CREATEs and the idempotent ADD COLUMN migrations separately, since SQLite runs
- *  them through different boot paths (CREATE direct, ALTER in a try/catch). */
-export function generateDdl(
-  tables: Any[],
-  getConfig: (t: Any) => Any,
-  o: DdlOptions,
-): { creates: string[]; alters: string[] } {
+export interface DdlPlan {
+  /** Create the complete current table shape for a new database. */
+  createTables: string[]
+  /** Reconcile columns that can be added safely to an existing populated table. */
+  addColumns: string[]
+  /** Create non-unique secondary indexes after every table and migrated column exists. */
+  createIndexes: string[]
+}
+
+/** Generate dependency-ordered boot DDL from the drizzle tables.
+ *
+ * Keeping tables, additive column migrations, and indexes as distinct phases is
+ * load-bearing: CREATE TABLE IF NOT EXISTS does not update an existing table, and
+ * an index may reference a column that only the migration phase can add. */
+export function generateDdl(tables: Any[], getConfig: (t: Any) => Any, o: DdlOptions): DdlPlan {
   const tableName = (t: Any): string => getConfig(t).name
   const columnDef = (c: Any): string => {
     const p = [c.name, sqlType(c)]
@@ -85,21 +92,26 @@ export function generateDdl(
     return p.join(" ")
   }
 
-  const creates: string[] = []
-  const alters: string[] = []
+  const tableStatements: string[] = []
+  const columnStatements: string[] = []
+  const indexStatements: string[] = []
   for (const t of tables) {
     const cfg = getConfig(t)
-    creates.push(createTable(cfg))
+    tableStatements.push(createTable(cfg))
     for (const idx of cfg.indexes)
       if (!idx.config.unique)
-        creates.push(
+        indexStatements.push(
           `CREATE INDEX IF NOT EXISTS ${idx.config.name} ON ${cfg.name} (${idx.config.columns
             .map((x: Any) => x.name)
             .join(", ")})`,
         )
-    for (const c of cfg.columns) if (isMigratable(c)) alters.push(addColumn(cfg.name, c))
+    for (const c of cfg.columns) if (isMigratable(c)) columnStatements.push(addColumn(cfg.name, c))
   }
-  return { creates, alters }
+  return {
+    createTables: tableStatements,
+    addColumns: columnStatements,
+    createIndexes: indexStatements,
+  }
 }
 
 /** The not-yet-queried placeholder tables (no drizzle def), created up front so

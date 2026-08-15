@@ -273,8 +273,6 @@ CREATE TABLE IF NOT EXISTS invitation (
   UNIQUE (token)
 );
 
-CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
-
 CREATE TABLE IF NOT EXISTS artifact_invite (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,
@@ -288,8 +286,6 @@ CREATE TABLE IF NOT EXISTS artifact_invite (
   UNIQUE (token)
 );
 
-CREATE INDEX IF NOT EXISTS artifact_invite_artifact_email ON artifact_invite (artifact_id, email);
-
 CREATE TABLE IF NOT EXISTS collection_invite (
   id TEXT PRIMARY KEY,
   collection_id TEXT NOT NULL,
@@ -302,8 +298,6 @@ CREATE TABLE IF NOT EXISTS collection_invite (
   accepted_at TEXT,
   UNIQUE (token)
 );
-
-CREATE INDEX IF NOT EXISTS collection_invite_collection_email ON collection_invite (collection_id, email);
 
 CREATE TABLE IF NOT EXISTS beta_signup (
   id TEXT PRIMARY KEY,
@@ -540,8 +534,6 @@ CREATE TABLE IF NOT EXISTS slack_user_link (
   UNIQUE (team_id, slack_user_id)
 );
 
-CREATE INDEX IF NOT EXISTS slack_user_link_user ON slack_user_link (team_id, user_id);
-
 CREATE TABLE IF NOT EXISTS slack_subscription (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -556,8 +548,6 @@ CREATE TABLE IF NOT EXISTS slack_subscription (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (org_id, channel_id, scope_kind, scope_id)
 );
-
-CREATE INDEX IF NOT EXISTS slack_subscription_org ON slack_subscription (org_id, active);
 
 CREATE TABLE IF NOT EXISTS user_notification_pref (
   id TEXT PRIMARY KEY,
@@ -637,8 +627,6 @@ CREATE TABLE IF NOT EXISTS review_round (
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
 
-CREATE INDEX IF NOT EXISTS review_round_artifact ON review_round (artifact_id, requested_for);
-
 CREATE TABLE IF NOT EXISTS context (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -684,10 +672,6 @@ CREATE TABLE IF NOT EXISTS context_session (
   FOREIGN KEY (context_id) REFERENCES context(id)
 );
 
-CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at);
-
-CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at);
-
 CREATE TABLE IF NOT EXISTS session_message (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
@@ -698,8 +682,6 @@ CREATE TABLE IF NOT EXISTS session_message (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   FOREIGN KEY (session_id) REFERENCES context_session(id)
 );
-
-CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS report (
   id TEXT PRIMARY KEY,
@@ -733,8 +715,6 @@ CREATE TABLE IF NOT EXISTS asset (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
-
 CREATE TABLE IF NOT EXISTS principal (
     id TEXT PRIMARY KEY,
     org_id TEXT NOT NULL,
@@ -751,6 +731,26 @@ CREATE TABLE IF NOT EXISTS view (
     viewer_kind TEXT NOT NULL DEFAULT 'anon',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
+
+CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
+
+CREATE INDEX IF NOT EXISTS artifact_invite_artifact_email ON artifact_invite (artifact_id, email);
+
+CREATE INDEX IF NOT EXISTS collection_invite_collection_email ON collection_invite (collection_id, email);
+
+CREATE INDEX IF NOT EXISTS slack_user_link_user ON slack_user_link (team_id, user_id);
+
+CREATE INDEX IF NOT EXISTS slack_subscription_org ON slack_subscription (org_id, active);
+
+CREATE INDEX IF NOT EXISTS review_round_artifact ON review_round (artifact_id, requested_for);
+
+CREATE INDEX IF NOT EXISTS context_session_queue ON context_session (context_id, state, created_at);
+
+CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, created_at);
+
+CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
+
+CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
 
 CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id);
 
