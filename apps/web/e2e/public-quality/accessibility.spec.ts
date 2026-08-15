@@ -87,7 +87,44 @@ test("marketing skip link moves focus to the primary content", async ({ page }) 
 test("docs search loads the local browser index", async ({ page }) => {
   await page.goto(`${docsOrigin}/`)
   await page.locator("[data-search-open]").first().click()
-  await page.locator("#docs-search-input").fill("self-host")
+  const search = page.getByRole("combobox", { name: "Search documentation" })
+  await expect(search).toHaveAttribute("aria-expanded", "true")
+  await search.fill("self-host")
   await expect(page.locator('.search-results a[href="/self-hosting/quickstart/"]')).toBeVisible()
+  await expect(page.locator(".search-result-section").first()).not.toBeEmpty()
+  await expect(page.getByRole("option").first()).toHaveAttribute("aria-selected", "true")
+  await expect(search).toHaveAttribute("aria-activedescendant", /docs-search-result-\d+/)
   await expect(page.locator("#search-status")).not.toContainText("could not load")
+
+  const { violations } = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+    .analyze()
+  expect(violations).toEqual([])
+})
+
+test("docs pages expose and copy their canonical Markdown", async ({ context, page }, testInfo) => {
+  const markdown = await page.request.get(`${docsOrigin}/start/first-artifact.md`)
+  expect(markdown.ok()).toBe(true)
+  expect(markdown.headers()["content-type"]).toContain("text/markdown")
+  expect(await markdown.text()).toContain("# Publish your first artifact")
+
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: docsOrigin })
+  await page.goto(`${docsOrigin}/start/first-artifact/`)
+  await expect(page.locator('link[rel="alternate"][type="text/markdown"]')).toHaveAttribute(
+    "href",
+    "/start/first-artifact.md",
+  )
+
+  const copy = page.locator("[data-copy-page]:visible").first()
+  await copy.click()
+  await expect(copy).toHaveText("Copied")
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+    "# Publish your first artifact",
+  )
+
+  if (testInfo.project.name === "mobile") {
+    const outline = page.locator(".mobile-page-tools details")
+    await outline.getByText("On this page").click()
+    await expect(outline.getByRole("link", { name: "Make the artifact durable" })).toBeVisible()
+  }
 })

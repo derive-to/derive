@@ -39,7 +39,25 @@ for (const path of required) if (!existsSync(join(DIST, path))) fail(`missing bu
 
 for (const page of docsPages) {
   const path = page.slug === "index" ? "index.html" : `${page.slug}/index.html`
-  if (!existsSync(join(DIST, path))) fail(`manifest page did not build: ${path}`)
+  const htmlFile = join(DIST, path)
+  if (!existsSync(htmlFile)) fail(`manifest page did not build: ${path}`)
+  else {
+    const html = readFileSync(htmlFile, "utf8")
+    if (!html.includes(`type="text/markdown" href="/${page.slug}.md"`))
+      fail(`${path} does not advertise its Markdown representation`)
+    if (page.slug !== "index" && !html.includes(`data-copy-url="/${page.slug}.md"`))
+      fail(`${path} does not expose its Markdown copy action`)
+  }
+  const markdownPath = `${page.slug}.md`
+  const markdownFile = join(DIST, markdownPath)
+  if (!existsSync(markdownFile)) fail(`manifest Markdown page did not build: ${markdownPath}`)
+  else {
+    const markdown = readFileSync(markdownFile, "utf8")
+    if (!markdown.includes(`\n# ${page.title}\n`))
+      fail(`${markdownPath} does not preserve its canonical page title`)
+    if (!markdown.includes("Generated from the canonical repository source"))
+      fail(`${markdownPath} is not marked as generated`)
+  }
 }
 
 const htmlFiles = filesUnder(DIST).filter((path) => extname(path) === ".html")
@@ -50,8 +68,15 @@ for (const path of htmlFiles) {
     fail(`${label} has no docs.derive.to canonical URL`)
   if (label === "404.html" && !/name="robots" content="noindex/.test(html))
     fail("404.html must be noindex")
-  if (/href="\/[^"]+\.md(?:#|\?|")/.test(html))
-    fail(`${label} contains an internal source Markdown link`)
+  const expectedMarkdownHref =
+    label === "index.html"
+      ? "/index.md"
+      : label.endsWith("/index.html")
+        ? `/${label.slice(0, -"/index.html".length)}.md`
+        : undefined
+  for (const match of html.matchAll(/href="(\/[^"]+\.md)(?:#|\?|")/g))
+    if (match[1] !== expectedMarkdownHref)
+      fail(`${label} contains an unexpected internal Markdown link ${match[1]}`)
   if (/<p\b[^>]*>\s*<p\b/i.test(html)) fail(`${label} contains nested paragraph markup`)
 
   for (const match of html.matchAll(/href="([^"]+)"/g)) {

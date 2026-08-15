@@ -10,6 +10,10 @@
         id="docs-search-input"
         name="query"
         type="search"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-controls="docs-search-results"
+        aria-expanded="false"
         placeholder="Search documentation…"
         autocomplete="off"
         spellcheck="false"
@@ -19,8 +23,8 @@
     <div class="search-status" id="search-status" aria-live="polite">
       Search for guides, concepts, commands, or configuration.
     </div>
-    <ol class="search-results" id="search-results"></ol>
-    <footer class="search-footer">
+    <div class="search-results" id="docs-search-results" role="listbox"></div>
+    <footer class="search-footer" aria-hidden="true">
       <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
       <span><kbd>↵</kbd> open</span>
     </footer>
@@ -36,12 +40,12 @@
 <script>
   const dialog = document.querySelector<HTMLDialogElement>("#docs-search")
   const input = document.querySelector<HTMLInputElement>("#docs-search-input")
-  const results = document.querySelector<HTMLOListElement>("#search-results")
+  const results = document.querySelector<HTMLElement>("#docs-search-results")
   const status = document.querySelector<HTMLElement>("#search-status")
   interface PagefindResultData {
     url: string
     excerpt: string
-    meta: { title?: string }
+    meta: { title?: string; section?: string }
   }
   interface PagefindModule {
     init: () => Promise<void>
@@ -53,6 +57,7 @@
   let resultLinks: HTMLAnchorElement[] = []
   let selectedIndex = -1
   let queryVersion = 0
+  let searchTimer: number | undefined
 
   const plainText = (value: string) => {
     const element = document.createElement("span")
@@ -66,8 +71,10 @@
     for (const [linkIndex, link] of resultLinks.entries()) {
       const selected = linkIndex === selectedIndex
       link.toggleAttribute("data-selected", selected)
+      link.setAttribute("aria-selected", String(selected))
       if (selected) link.scrollIntoView({ block: "nearest" })
     }
+    input?.setAttribute("aria-activedescendant", resultLinks[selectedIndex]?.id ?? "")
   }
 
   const renderSearch = async () => {
@@ -77,6 +84,7 @@
     results.replaceChildren()
     resultLinks = []
     selectedIndex = -1
+    input.removeAttribute("aria-activedescendant")
     if (!query) {
       status.textContent = "Search for guides, concepts, commands, or configuration."
       return
@@ -104,19 +112,26 @@
         : `No results for “${query}”`
 
       for (const entry of entries) {
-        const item = document.createElement("li")
         const link = document.createElement("a")
+        const section = document.createElement("span")
         const title = document.createElement("strong")
         const excerpt = document.createElement("span")
         const arrow = document.createElement("span")
+        const resultId = `docs-search-result-${resultLinks.length}`
         link.href = entry.url
+        link.id = resultId
+        link.setAttribute("role", "option")
+        link.setAttribute("aria-selected", "false")
+        section.className = "search-result-section"
+        section.textContent = entry.meta.section || "Documentation"
         title.textContent = entry.meta.title || "Untitled page"
         excerpt.textContent = plainText(entry.excerpt)
-        arrow.textContent = "↗"
+        excerpt.className = "search-result-excerpt"
+        arrow.className = "search-result-arrow"
+        arrow.textContent = "→"
         arrow.setAttribute("aria-hidden", "true")
-        link.append(title, excerpt, arrow)
-        item.append(link)
-        results.append(item)
+        link.append(section, title, excerpt, arrow)
+        results.append(link)
         resultLinks.push(link)
       }
       if (resultLinks.length) selectResult(0)
@@ -129,6 +144,7 @@
   const openSearch = () => {
     if (!dialog || !input) return
     if (!dialog.open) dialog.showModal()
+    input.setAttribute("aria-expanded", "true")
     window.setTimeout(() => input.focus(), 0)
   }
 
@@ -138,7 +154,11 @@
     trigger.addEventListener("click", openSearch)
   })
   document.querySelector<HTMLElement>("[data-search-close]")?.addEventListener("click", closeSearch)
-  input?.addEventListener("input", renderSearch)
+  input?.addEventListener("input", () => {
+    queryVersion += 1
+    window.clearTimeout(searchTimer)
+    searchTimer = window.setTimeout(renderSearch, 120)
+  })
   input?.addEventListener("keydown", (event) => {
     if (event.key === "ArrowDown") {
       event.preventDefault()
@@ -148,9 +168,14 @@
       selectResult(selectedIndex - 1)
     } else if (event.key === "Enter" && selectedIndex >= 0) {
       event.preventDefault()
-      resultLinks[selectedIndex]?.click()
+      const selected = resultLinks[selectedIndex]
+      if (!selected) return
+      if (event.shiftKey || event.metaKey || event.ctrlKey)
+        window.open(selected.href, "_blank", "noopener")
+      else selected.click()
     }
   })
+  dialog?.addEventListener("close", () => input?.setAttribute("aria-expanded", "false"))
   dialog?.addEventListener("click", (event) => {
     if (event.target === dialog) closeSearch()
   })

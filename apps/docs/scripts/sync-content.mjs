@@ -88,7 +88,7 @@ const lastUpdated = (source) => {
 
 const yamlString = (value) => JSON.stringify(value)
 
-const renderPage = (page) => {
+const pageSource = (page) => {
   const source = resolve(REPO_ROOT, page.source)
   if (!withinRepo(source) || !existsSync(source))
     throw new Error(`missing docs source: ${page.source}`)
@@ -97,6 +97,11 @@ const renderPage = (page) => {
   body = rewriteLinks(body, source)
     .replace(/^```caddyfile$/gm, "```text")
     .trim()
+  return { body, source }
+}
+
+const renderPage = (page) => {
+  const { body, source } = pageSource(page)
   const updated = lastUpdated(source)
   const frontmatter = [
     "---",
@@ -109,6 +114,24 @@ const renderPage = (page) => {
   ].join("\n")
   const marker = extname(page.source) === ".mdx" ? GENERATED_MDX_MARKER : GENERATED_MARKER
   return `${frontmatter}\n\n${marker}\n\n${body}\n`
+}
+
+const renderMarkdownPage = (page) => {
+  if (page.slug === "index") {
+    const sections = docsSections.flatMap((section) => [
+      `## ${section.label}`,
+      "",
+      ...section.pages.map(
+        (entry) => `- [${entry.title}](/${entry.slug}.md) — ${entry.description}`,
+      ),
+      "",
+    ])
+    return [GENERATED_MARKER, "", `# ${page.title}`, "", page.description, "", ...sections].join(
+      "\n",
+    )
+  }
+  const { body } = pageSource(page)
+  return [GENERATED_MARKER, "", `# ${page.title}`, "", page.description, "", body, ""].join("\n")
 }
 
 const generatedFiles = (directory) => {
@@ -149,6 +172,17 @@ for (const page of docsPages) {
   writeFileSync(output, renderPage(page))
 }
 
+// Every documentation URL has a neighboring Markdown representation for agents,
+// search tools, and readers who prefer the source. Keep these static so the
+// capability adds no runtime service or client dependency.
+const expectedMarkdown = new Set()
+for (const page of docsPages) {
+  const output = join(PUBLIC_ROOT, `${page.slug}.md`)
+  expectedMarkdown.add(output)
+  mkdirSync(dirname(output), { recursive: true })
+  writeFileSync(output, renderMarkdownPage(page))
+}
+
 // Remove only files carrying our ownership marker. An unexpected hand-authored
 // file fails closed instead of being deleted by a generator.
 for (const path of generatedFiles(CONTENT_ROOT)) {
@@ -159,6 +193,12 @@ for (const path of generatedFiles(CONTENT_ROOT)) {
       `unexpected non-generated file in generated docs tree: ${relative(APP_ROOT, path)}`,
     )
   unlinkSync(path)
+}
+
+for (const path of generatedFiles(PUBLIC_ROOT)) {
+  if (extname(path) !== ".md" || expectedMarkdown.has(path)) continue
+  const content = readFileSync(path, "utf8")
+  if (content.includes(GENERATED_MARKER)) unlinkSync(path)
 }
 
 mkdirSync(GENERATED_ROOT, { recursive: true })
@@ -220,7 +260,7 @@ const indexLines = [
   "## Pages",
   "",
   ...docsPages.map(
-    (page) => `- [${page.title}](https://docs.derive.to${webPath(page)}) — ${page.description}`,
+    (page) => `- [${page.title}](https://docs.derive.to/${page.slug}.md) — ${page.description}`,
   ),
   "",
 ]

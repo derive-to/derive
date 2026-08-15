@@ -103,6 +103,7 @@ button {
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
+summary:focus-visible,
 [tabindex="0"]:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 3px;
@@ -276,12 +277,17 @@ input:focus-visible,
   padding: 0 0.8rem;
   align-items: center;
   gap: 0.4rem;
-  border: 1px solid var(--ink);
+  border: 1px solid var(--line);
   border-radius: 0.375rem;
-  background: var(--ink);
-  color: var(--canvas);
+  background: transparent;
+  color: var(--ink);
   font-size: 0.8125rem;
   font-weight: 560;
+}
+
+.open-derive:hover {
+  border-color: var(--ink-faint);
+  background: var(--surface-muted);
 }
 
 .mobile-navigation-trigger {
@@ -476,6 +482,20 @@ input:focus-visible,
 .docs-content h4 {
   margin: 1.75rem 0 0.6rem;
   font-size: 1rem;
+}
+
+.docs-content :is(h2, h3) .heading-anchor {
+  display: inline-flex;
+  margin-left: 0.5rem;
+  color: var(--ink-faint);
+  font-weight: 450;
+  opacity: 0;
+  text-decoration: none;
+}
+
+.docs-content :is(h2, h3):hover .heading-anchor,
+.heading-anchor:focus-visible {
+  opacity: 1;
 }
 
 .docs-content p,
@@ -693,8 +713,30 @@ input:focus-visible,
   border-top: 1px solid var(--line-soft);
 }
 
-.table-of-contents .toc-feedback {
+.toc-actions {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.toc-actions button,
+.toc-actions a {
+  width: 100%;
+  padding: 0.35rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
   font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.toc-actions button:hover,
+.toc-actions a:hover {
+  color: var(--ink);
+}
+
+.table-of-contents-mobile {
+  display: none;
 }
 
 /* Buttons and links */
@@ -1161,9 +1203,11 @@ input:focus-visible,
 .search-results a {
   position: relative;
   display: flex;
-  padding: 0.75rem 2.4rem 0.75rem 0.75rem;
+  min-height: 5.25rem;
+  padding: 0.7rem 2.4rem 0.8rem 0.75rem;
   flex-direction: column;
-  gap: 0.2rem;
+  justify-content: center;
+  gap: 0.12rem;
   border-radius: 0.35rem;
 }
 
@@ -1173,11 +1217,17 @@ input:focus-visible,
 }
 
 .search-results strong {
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
   font-weight: 580;
 }
 
-.search-results a > span:first-of-type {
+.search-result-section {
+  color: var(--ink-faint);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.search-result-excerpt {
   overflow: hidden;
   color: var(--ink-soft);
   font-size: 0.8125rem;
@@ -1185,7 +1235,7 @@ input:focus-visible,
   white-space: nowrap;
 }
 
-.search-results a > span:last-of-type {
+.search-result-arrow {
   position: absolute;
   top: 50%;
   right: 0.9rem;
@@ -1307,6 +1357,82 @@ input:focus-visible,
   .toc-column {
     display: none;
   }
+
+  .table-of-contents-mobile {
+    position: static;
+    display: block;
+    max-height: none;
+    margin-top: 1.25rem;
+    overflow: visible;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .mobile-page-tools {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .mobile-page-tools details {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .mobile-page-tools summary,
+  .mobile-page-tools > button {
+    display: flex;
+    min-height: 3rem;
+    padding: 0.7rem 0.75rem;
+    align-items: center;
+    border: 0;
+    background: transparent;
+    color: var(--ink-soft);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    list-style: none;
+  }
+
+  .mobile-page-tools summary {
+    justify-content: space-between;
+    cursor: pointer;
+  }
+
+  .mobile-page-tools summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .mobile-page-tools summary > span:last-child {
+    margin-left: 1rem;
+  }
+
+  .mobile-page-tools details[open] summary > span:last-child {
+    transform: rotate(180deg);
+  }
+
+  .mobile-page-tools > button {
+    flex: none;
+  }
+
+  .mobile-page-tools details + button {
+    border-left: 1px solid var(--line);
+  }
+
+  .mobile-page-tools :is(summary, button):hover {
+    color: var(--ink);
+  }
+
+  .mobile-page-tools nav {
+    padding: 0.2rem 0.75rem 1rem;
+  }
+
+  .mobile-page-tools nav a {
+    padding: 0.35rem 0;
+    font-size: 0.875rem;
+  }
+
+  .mobile-page-tools nav li.nested a {
+    padding-left: 0.85rem;
+  }
 }
 
 @media (max-width: 58rem) {
@@ -1384,7 +1510,8 @@ input:focus-visible,
 
   .docs-navigation-mobile .navigation-home,
   .docs-navigation-mobile .navigation-section a,
-  .search-results a > span:first-of-type {
+  .search-result-excerpt,
+  .mobile-page-tools nav a {
     font-size: 1rem;
   }
 
