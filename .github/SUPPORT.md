@@ -18,7 +18,7 @@ underlying workflow or outcome for a feature request.
 ## Security and abuse
 
 Do not report exploitable vulnerabilities in a public issue or discussion. Follow
-[SECURITY.md](SECURITY.md) and email `security@derive.to`. Report phishing, malware,
+[the security policy](../SECURITY.md) and email `security@derive.to`. Report phishing, malware,
 impersonation, or other abusive hosted content to `abuse@derive.to` with the full URL.
 
 ## Hosted account and billing help

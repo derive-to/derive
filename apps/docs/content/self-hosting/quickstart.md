@@ -14,8 +14,8 @@ At the end, you will have:
 |---|---|
 | Run Derive on a server | [Install a published release](#install-a-published-release-recommended) |
 | Test `main`, a branch, or a pull request | [Build the current checkout](#build-the-current-checkout) |
-| Change Derive code with live reload | [CONTRIBUTING.md](CONTRIBUTING.md#setup) |
-| Use Postgres, S3/R2, multiple containers, or Cloudflare | [DEPLOY.md](DEPLOY.md#deployment-tiers) |
+| Change Derive code with live reload | [CONTRIBUTING.md](../../../../CONTRIBUTING.md#setup) |
+| Use Postgres, S3/R2, multiple containers, or Cloudflare | [deployment guide](configuration.md#deployment-tiers) |
 
 Use only one installation procedure. A release is the normal server path because its image is
 versioned and pinned by digest. Build from a checkout when you intentionally need unreleased code.
@@ -347,9 +347,9 @@ use, or a `BASE_URL` that does not match the URL in the browser.
 
 ## Next steps
 
-- Read [DEPLOY.md](DEPLOY.md#backup-restore-and-password-recovery) for scheduled backups, restore,
+- Read the [deployment guide](configuration.md#backup-restore-and-password-recovery) for scheduled backups, restore,
   password recovery, updates, Postgres/S3 deployments, SSO, Slack, and other optional features.
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) if you want the live-reload development stack rather than
+- Read [CONTRIBUTING.md](../../../../CONTRIBUTING.md) if you want the live-reload development stack rather than
   the production container build.
 - Keep Internet-facing instances on `DERIVE_SIGNUP_MODE=invite` or `closed`. Existing users can
   still sign in in either mode.

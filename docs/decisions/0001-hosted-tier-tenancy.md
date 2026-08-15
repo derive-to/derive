@@ -72,7 +72,7 @@ is exactly the control plane that architecture requires.
 ## Follow-ups
 
 1. ~~Wire Postgres into the Workers entry.~~ Done 2026-07-02: Hyperdrive → Neon
-   via `lib/edge-pg.ts`, live at derive.to; DEPLOY.md "Cloudflare Scale" documents
+   via `lib/edge-pg.ts`, live at derive.to; the deployment guide's "Cloudflare Scale" section documents
    it.
 2. **Workspace-bound tokens, both halves.** Server: per-user workspace-scoped
    tokens (extend the `agent` token pattern; scope or retire the instance-wide

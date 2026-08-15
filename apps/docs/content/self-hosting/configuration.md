@@ -1,11 +1,11 @@
 # Deploying Derive
 
-For a new single-container installation, follow [QUICKSTART.md](QUICKSTART.md). It covers the
+For a new single-container installation, follow the [self-hosting quickstart](quickstart.md). It covers the
 released-image and source-build paths, creates the first operator while the service is offline,
 waits for readiness, and verifies a first backup. This document is the reference for choosing a
 topology and operating or extending an installation.
 
-For the normal self-hosted path, start with [Install a published release](QUICKSTART.md#install-a-published-release-recommended).
+For the normal self-hosted path, start with [Install a published release](quickstart.md#install-a-published-release-recommended).
 That path downloads the release Compose and environment files, pins the tested image digest,
 and verifies `SHA256SUMS` before starting. The optional GitHub CLI checks also verify the
 immutable release asset and its build attestation.
@@ -33,7 +33,7 @@ All tiers run the same codebase and are additive: Lite + `DATABASE_URL` = Node B
 One container gives you a complete, working Derive — sign-in, publish, comments, reviews,
 notifications, the sandboxed viewer — all served from `http://localhost:8080`.
 
-Use the [self-hosting quick start](QUICKSTART.md#choose-one-path) for a fresh install. The
+Use the [self-hosting quick start](quickstart.md#choose-one-path) for a fresh install. The
 commands there explicitly load the environment file, validate the rendered Compose model, create
 the first operator before the service starts, wait for readiness, and prove the first backup.
 
@@ -53,7 +53,7 @@ same-origin, so there's nothing else to host. State (SQLite + artifact blobs) li
 in the `/data` volume. Use the online backup command below; copying a live WAL-mode
 volume is not a consistent backup.
 
-For upgrades, follow [Upgrade a published installation](QUICKSTART.md#upgrade-a-published-installation).
+For upgrades, follow [Upgrade a published installation](quickstart.md#upgrade-a-published-installation).
 The named data volume is retained and the new image applies SQLite and Better Auth schema changes
 at boot. Back up and verify first, keep the previous digest and volume, and validate the upgraded
 instance before removing anything.

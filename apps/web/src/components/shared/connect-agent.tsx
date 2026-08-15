@@ -47,7 +47,7 @@ Please:
 
 Once connected you can publish a page, read its review comments, and run the propose -> review -> revise loop — all over MCP.`
 
-// Self-host: run Derive yourself first, then connect. Mirrors DEPLOY.md's single-
+// Self-host: run Derive yourself first, then connect. Mirrors the deployment guide's single-
 // container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
 const selfHostPrompt = () =>
   `Set up a self-hosted Derive for me, then connect this agent to it. Derive is a Fair Source review-and-approval tool for agent-made work (durable versioned URLs + inline review comments) that is itself a remote MCP server.
