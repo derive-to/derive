@@ -1,9 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "@tanstack/react-router"
 import { useEffect, useId, useRef, useState } from "react"
-import { ApiError, api } from "@/api"
+import { ApiError, api, workspaceDisplayName } from "@/api"
 import { useCopy } from "@/lib/clipboard"
-import { contextSessionsQuery, contextsQuery } from "@/lib/queries"
+import {
+  connectedAgentsQuery,
+  contextSessionsQuery,
+  contextsQuery,
+  workspacesQuery,
+} from "@/lib/queries"
 import { runnerStatus } from "@/pages/context/runner-status"
 import { type AgentTemplateTarget, localAgentHandoff, localAgentLaunchUrl } from "./agent-handoff"
 
@@ -19,17 +24,32 @@ export function useAgentTemplateHandoff(
   const [planRequired, setPlanRequired] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
   const [selectedContext, setSelectedContext] = useState("")
+  const [launchReceipt, setLaunchReceipt] = useState<{
+    agent: "Codex" | "Claude Code"
+    fallbackCopied: boolean
+  } | null>(null)
   const { copied, copy } = useCopy(4000)
   const mounted = useRef(true)
   const descriptionId = useId()
   const contextsState = useQuery(contextsQuery())
+  const connectedAgentsState = useQuery(connectedAgentsQuery())
+  const workspacesState = useQuery(workspacesQuery())
+  const activeWorkspaceSummary = workspacesState.data?.workspaces.find(
+    (workspace) => workspace.id === workspacesState.data.active,
+  )
+  const activeWorkspace = activeWorkspaceSummary
+    ? {
+        id: activeWorkspaceSummary.id,
+        name: workspaceDisplayName(activeWorkspaceSummary),
+      }
+    : undefined
   const onlineContexts = (contextsState.data ?? []).filter(
     (context) => runnerStatus(context.runner_seen_at).online,
   )
   const selectedRunner =
     onlineContexts.find((context) => context.id === selectedContext) ?? onlineContexts[0] ?? null
   const busy = dispatching
-  const handoff = localAgentHandoff(target, brief)
+  const handoff = localAgentHandoff(target, brief, activeWorkspace)
 
   useEffect(() => {
     mounted.current = true
@@ -46,6 +66,7 @@ export function useAgentTemplateHandoff(
   const copyForLocalAgent = async () => {
     if (!brief.trim() || busy) return
     setError("")
+    setLaunchReceipt(null)
     const ok = await copy(handoff, {
       success: "Copied — paste it into your agent",
       error: null,
@@ -56,16 +77,27 @@ export function useAgentTemplateHandoff(
     }
   }
 
-  const openInLocalAgent = (agent: "codex" | "claude-code") => {
+  const openInLocalAgent = async (agent: "codex" | "claude-code") => {
     if (!brief.trim() || busy) return
-    const url = localAgentLaunchUrl(agent, target, brief)
+    const url = localAgentLaunchUrl(agent, target, brief, activeWorkspace)
     if (!url) {
       setShowHandoff(true)
       setError("This handoff is too detailed for that app’s launch link. Copy it below instead.")
       return
     }
     setError("")
-    window.location.href = url
+    const fallbackCopied = await copy(handoff, { error: null })
+    if (!mounted.current) return
+    setLaunchReceipt({
+      agent: agent === "codex" ? "Codex" : "Claude Code",
+      fallbackCopied,
+    })
+    if (!fallbackCopied) setShowHandoff(true)
+    // Let React paint the receipt before the browser hands the custom scheme to
+    // the OS. If no handler exists, the person still sees a concrete fallback.
+    window.setTimeout(() => {
+      window.location.href = url
+    }, 0)
   }
 
   const runOnConnectedMachine = async () => {
@@ -109,8 +141,11 @@ export function useAgentTemplateHandoff(
     copied,
     descriptionId,
     contextsState,
+    connectedAgentsState,
     onlineContexts,
     selectedRunner,
+    activeWorkspace,
+    launchReceipt,
     handoff,
     copyForLocalAgent,
     openInLocalAgent,

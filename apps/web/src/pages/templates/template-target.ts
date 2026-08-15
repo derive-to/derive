@@ -12,6 +12,9 @@ export const targetFromBuiltIn = (template: BuiltInTemplate): AgentTemplateTarge
   description: template.description,
   kind: template.kind,
   category: template.category,
+  format: template.format,
+  outcome: template.outcome,
+  sections: template.sections,
   inputs: template.inputs,
 })
 
@@ -32,5 +35,8 @@ export const targetFromLibraryEntry = (
   description: entry.description,
   kind: entry.kind,
   category: entry.category,
+  format: entry.format,
+  outcome: entry.outcome,
+  sections: entry.sections,
   inputs: entry.inputs,
 })

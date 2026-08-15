@@ -272,12 +272,16 @@ export const Artifact = z
       .optional()
       .describe("Source path (e.g. the repo path of a synced artifact); null when none."),
     derived_from: z
-      .object({ short_id: z.string(), title: z.string().nullable() })
+      .object({
+        short_id: z.string(),
+        title: z.string().nullable(),
+        kind: z.enum(["artifact", "template"]).optional(),
+      })
       .nullable()
       .optional()
       .describe(
-        'The artifact this one was copied from ("use as template"). Detail responses ' +
-          "only; null when the source no longer resolves, absent when not derived.",
+        'The artifact or built-in Template this one was copied from ("use as template"). ' +
+          "Detail responses only; null when the source no longer resolves, absent when not derived.",
       ),
     created_at: z.string().optional(),
     updated_at: z

@@ -17,8 +17,18 @@ describe("template agent handoffs", () => {
     expect(handoff).toContain("read tool")
     expect(handoff).toContain("Use find")
     expect(handoff).toContain("publish a new artifact")
+    expect(handoff).toContain('derived_from: "derive://templates/narrative-pitch"')
     expect(handoff).toContain("visually inspect")
     expect(handoff).not.toContain("{{")
+  })
+
+  it("pins the destination workspace into the portable task", () => {
+    const handoff = localAgentHandoff(artifact, "Make the launch story.", {
+      id: "ws_product",
+      name: "Product",
+    })
+    expect(handoff).toContain("Destination workspace: Product (ws_product)")
+    expect(handoff).toContain("confirm the active workspace is Product")
   })
 
   it("adapts the contract to Context creation", () => {

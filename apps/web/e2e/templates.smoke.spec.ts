@@ -41,6 +41,7 @@ test.describe("templates", () => {
     await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
     await expect(page.getByText("Use your own agent")).toBeVisible()
     await expect(page.getByText("Continue locally")).toBeVisible()
+    await expect(page.getByTestId("template-agent-inheritance-preview")).toContainText("The change")
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
     await page
       .getByTestId("template-agent-brief")
@@ -52,6 +53,33 @@ test.describe("templates", () => {
     expect(handoff).toContain("Use Derive's read tool")
     expect(handoff).toContain("Use find")
     expect(handoff).toContain("visually inspect")
+    expect(new URL(page.url()).pathname).toBe("/templates")
+  })
+
+  test("local launch leaves a visible receipt and copy-backed fallback", async ({
+    owner: page,
+  }) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+    await page.route("**/v1/me/connected-agents", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ agents: [] }),
+      }),
+    )
+    await page.goto("/templates")
+    await page.getByTestId("template-use-narrative-pitch").click()
+    await expect(page.getByText("Connect Derive before the handoff")).toBeVisible()
+    await page.getByTestId("template-agent-brief").fill("Make a launch narrative for Acme.")
+    await page.getByTestId("template-agent-open-codex").click()
+
+    await expect(page.getByText("Codex task prepared")).toBeVisible()
+    await expect(page.getByTestId("template-agent-launch-copy-fallback")).toContainText(
+      "Copy again",
+    )
+    const handoff = await page.evaluate(() => navigator.clipboard.readText())
+    expect(handoff).toContain('derived_from: "derive://templates/narrative-pitch"')
+    expect(handoff).toContain("Destination workspace:")
     expect(new URL(page.url()).pathname).toBe("/templates")
   })
 
@@ -122,6 +150,7 @@ test.describe("templates", () => {
     await page.goto("/templates")
     await page.getByTestId("template-use-narrative-pitch").click()
     await expect(page.getByTestId("template-agent-connected-runner")).toBeVisible()
+    await expect(page.getByText("Connect Derive before the handoff")).toHaveCount(0)
     await expect(page.getByTestId("template-agent-run-connected")).toContainText(
       "Send to My local Codex",
     )

@@ -18,6 +18,7 @@ import {
   slotShapeDriftAdvisories,
   TEMPLATE_LIBRARY_CATALOG_URI,
 } from "@derive/core"
+import { getTemplate as getBuiltInTemplate } from "@derive-to/templates"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
 import { markAddressed } from "../lib/addressed"
@@ -227,11 +228,11 @@ export function registerPublishTool(tc: ToolContext): void {
         derived_from: z
           .string()
           .regex(
-            /^(?:[0-9a-z]{6,12}|derive:\/\/template-libraries\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)$/,
+            /^(?:[0-9a-z]{6,12}|derive:\/\/templates\/[a-zA-Z0-9_-]+|derive:\/\/template-libraries\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)$/,
           )
           .optional()
           .describe(
-            "NEW artifact only: preserve lineage to an artifact short id or the exact derive://template-libraries/<library>/<entry> URI you read. Omit on revisions and built-in templates.",
+            "NEW artifact only: preserve lineage to an artifact short id, exact derive://templates/<id> built-in URI, or exact derive://template-libraries/<library>/<entry> URI you read. Omit on revisions.",
           ),
         tags: z
           .array(z.string())
@@ -474,14 +475,24 @@ export function registerPublishTool(tc: ToolContext): void {
       // Creation lineage uses the same access rules as reading the starting
       // point. Library entries are immutable snapshots, so the copy can outlive
       // its source; the stored edge points to that source artifact when present.
+      // Built-ins have no backing artifact row, so their immutable URI is stored
+      // directly in the same non-FK lineage field and resolved from the catalog.
       let derivedFromId: string | null = null
+      const builtInTemplateId = derived_from?.startsWith("derive://templates/")
+        ? derived_from.slice("derive://templates/".length)
+        : null
+      const builtInTemplate = builtInTemplateId ? getBuiltInTemplate(builtInTemplateId) : null
       const authoredTemplate = derived_from ? parseTemplateLibraryUri(derived_from) : null
+      if (builtInTemplateId && !builtInTemplate)
+        return err(`No built-in template "${derived_from}" exists in this release.`)
       if (
         derived_from?.startsWith(`${TEMPLATE_LIBRARY_CATALOG_URI}/`) &&
         !authoredTemplate?.entryId
       )
         return err(`No template starter "${derived_from}" you can reach.`)
-      if (authoredTemplate?.entryId) {
+      if (builtInTemplate) {
+        derivedFromId = derived_from ?? null
+      } else if (authoredTemplate?.entryId) {
         const { libraryId, entryId } = authoredTemplate
         const [library, entry] = await Promise.all([
           ctx.meta.getTemplateLibrary(libraryId),

@@ -31,7 +31,7 @@ export function StatusPanel({
   className,
 }: {
   tone?: Tone
-  layout?: "center" | "inline"
+  layout?: "center" | "inline" | "compact"
   /** A size-4 lucide glyph; tinted with the tone ink. */
   icon?: ReactNode
   title: ReactNode
@@ -42,6 +42,36 @@ export function StatusPanel({
   // Danger is announced assertively (role="alert"); everything else stays a
   // polite status — the live-region grammar, not just a visual tone.
   const role = tone === "danger" ? "alert" : "status"
+
+  if (layout === "compact") {
+    return (
+      <div
+        role={role}
+        className={cn(
+          "flex flex-col gap-3 rounded-xl p-3 ring-1 ring-inset sm:flex-row sm:items-center",
+          TONES[tone].panel,
+          className,
+        )}
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-2.5">
+          {icon ? (
+            <div
+              className={cn("flex h-lh shrink-0 items-center [&_svg]:size-4", TONES[tone].title)}
+            >
+              {icon}
+            </div>
+          ) : null}
+          <div className="min-w-0 text-sm">
+            <p className={cn("font-medium", TONES[tone].title)}>{title}</p>
+            {description ? (
+              <p className="mt-0.5 text-pretty text-muted-foreground">{description}</p>
+            ) : null}
+          </div>
+        </div>
+        {action ? <div className="shrink-0 sm:self-center">{action}</div> : null}
+      </div>
+    )
+  }
 
   if (layout === "inline") {
     return (

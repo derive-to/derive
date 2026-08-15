@@ -1200,6 +1200,29 @@ describe("remote MCP endpoint (/mcp)", () => {
       await call(app, token, "read", { short_id: "derive://templates/decision-memo" }),
     )
     expect(builtInRead).toMatch(/Decision/i)
+    const builtInAdoption = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Adapted decision memo",
+          content: "# Adapted decision memo\n\nA specific call for this team.",
+          derived_from: "derive://templates/decision-memo",
+        }),
+      ),
+    ) as { short_id: string; derived_from?: string }
+    expect(builtInAdoption.derived_from).toBe("derive://templates/decision-memo")
+    expect((await meta.getByShortId(builtInAdoption.short_id))?.derived_from).toBe(
+      "derive://templates/decision-memo",
+    )
+    const builtInDetail = (await (
+      await app.request(`/v1/artifacts/${builtInAdoption.short_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    ).json()) as { derived_from?: { short_id: string; title: string; kind?: string } }
+    expect(builtInDetail.derived_from).toEqual({
+      short_id: "derive://templates/decision-memo",
+      title: "Decision memo",
+      kind: "template",
+    })
     const found = JSON.parse(toolText(await call(app, token, "find", { templates: true }))) as {
       results: { uri: string }[]
     }
@@ -1207,6 +1230,15 @@ describe("remote MCP endpoint (/mcp)", () => {
       "derive://template-libraries/tlb_mcp/tpl_mcp",
     )
     expect(found.results.some((result) => result.uri.startsWith("derive://templates/"))).toBe(true)
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Missing built-in",
+          content: "# No",
+          derived_from: "derive://templates/not-in-this-release",
+        }),
+      ),
+    ).toContain("No built-in template")
 
     // Canonical URIs fail closed. Extra path segments must never be silently
     // interpreted as the valid starter that happens to prefix them.

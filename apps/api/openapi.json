@@ -460,13 +460,20 @@
               "title": {
                 "type": "string",
                 "nullable": true
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "artifact",
+                  "template"
+                ]
               }
             },
             "required": [
               "short_id",
               "title"
             ],
-            "description": "The artifact this one was copied from (\"use as template\"). Detail responses only; null when the source no longer resolves, absent when not derived."
+            "description": "The artifact or built-in Template this one was copied from (\"use as template\"). Detail responses only; null when the source no longer resolves, absent when not derived."
           },
           "created_at": {
             "type": "string"

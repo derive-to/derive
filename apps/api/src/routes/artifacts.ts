@@ -41,6 +41,7 @@ import {
   toMarkdown,
   type WorkspaceAccess,
 } from "@derive/core"
+import { getTemplate as getBuiltInTemplate } from "@derive-to/templates"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import { setCookie } from "hono/cookie"
@@ -1655,9 +1656,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       const bylineByUserId = bylinesFrom(detail.bylines)
       // Remix provenance for the derived-from banner: resolve the source to its public
       // identity. Detail-only (the list would N+1), and only for derived rows.
-      const derivedFrom = artifact.derived_from
-        ? await meta.getArtifactById(artifact.derived_from)
+      const builtInTemplateId = artifact.derived_from?.startsWith("derive://templates/")
+        ? artifact.derived_from.slice("derive://templates/".length)
         : null
+      const builtInTemplate = builtInTemplateId ? getBuiltInTemplate(builtInTemplateId) : null
+      const derivedFrom =
+        artifact.derived_from && !builtInTemplateId
+          ? await meta.getArtifactById(artifact.derived_from)
+          : null
       const base = toJson(deps.baseUrl, artifact, versions)
       const rawTokenIssuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
@@ -1711,9 +1717,18 @@ export const artifactRoutes = (ctx: AppContext) => {
         org_id: artifact.org_id,
         ...(artifact.derived_from
           ? {
-              derived_from:
-                derivedFrom && !derivedFrom.removed_at
-                  ? { short_id: derivedFrom.short_id, title: derivedFrom.title }
+              derived_from: builtInTemplate
+                ? {
+                    short_id: artifact.derived_from,
+                    title: builtInTemplate.title,
+                    kind: "template" as const,
+                  }
+                : derivedFrom && !derivedFrom.removed_at
+                  ? {
+                      short_id: derivedFrom.short_id,
+                      title: derivedFrom.title,
+                      kind: "artifact" as const,
+                    }
                   : null,
             }
           : {}),
