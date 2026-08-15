@@ -65,6 +65,8 @@ export function ArtifactTopBar(props: {
   canLock: boolean
   /** Whether the artifact is currently locked (changes go through approval). */
   locked: boolean
+  archived: boolean
+  canArchive: boolean
   /** Owner-only: may move this artifact to a different workspace. */
   canMove: boolean
   /** BETA: automations are off per workspace. Hidden rather than shown-and-refused, since the
@@ -82,6 +84,7 @@ export function ArtifactTopBar(props: {
   onToggleComments: () => void
   onPresent: () => void
   onLockToggle: () => void
+  onArchive: () => void
   /** Enter focus/hero mode — strip the chrome to just the render. */
   onFocus: () => void
 }) {
@@ -201,7 +204,7 @@ export function ArtifactTopBar(props: {
             )}
 
             {/* Manage. */}
-            {(props.showEdit || props.canLock) && <DropdownMenuSeparator />}
+            {(props.showEdit || props.canLock || props.canArchive) && <DropdownMenuSeparator />}
             {props.showEdit && (
               <DropdownMenuItem data-testid="artifact-edit" onSelect={props.onStartEdit}>
                 <Icon name="edit" size={16} />
@@ -212,6 +215,12 @@ export function ArtifactTopBar(props: {
               <DropdownMenuItem data-testid="artifact-lock" onSelect={props.onLockToggle}>
                 <Icon name={props.locked ? "unlock" : "lock"} size={16} />
                 {props.locked ? "Unlock changes" : "Lock changes"}
+              </DropdownMenuItem>
+            )}
+            {props.canArchive && (
+              <DropdownMenuItem data-testid="artifact-archive" onSelect={props.onArchive}>
+                <Icon name={props.archived ? "undo" : "archive"} size={16} />
+                {props.archived ? "Restore to library" : "Archive"}
               </DropdownMenuItem>
             )}
             {props.canMove && (

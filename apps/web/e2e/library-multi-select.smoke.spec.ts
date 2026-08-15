@@ -95,6 +95,34 @@ test("star a set from the bar, then unstar it", async ({ owner }) => {
   await expect(owner.getByTestId(`artifact-card-open-${a}`)).toBeHidden()
 })
 
+test("archive is immediate and its toast undo restores the whole set", async ({ owner }) => {
+  const [a, b, c] = await seedLibrary(owner, 3)
+
+  await owner.getByTestId(`artifact-card-select-${a}`).click()
+  await owner.getByTestId(`artifact-card-select-${b}`).click()
+  await owner.getByTestId("library-selection-archive").click()
+
+  // No confirmation: the selected cards leave the live shelf immediately.
+  await expect(owner.getByText("Archived 2 artifacts")).toBeVisible()
+  await expect(owner.getByTestId(`artifact-card-open-${a}`)).toBeHidden()
+  await expect(owner.getByTestId(`artifact-card-open-${b}`)).toBeHidden()
+  await expect(owner.getByTestId(`artifact-card-open-${c}`)).toBeVisible()
+  const archived = (await (await owner.request.get("/v1/artifacts?scope=archived")).json()) as {
+    artifacts: { short_id: string }[]
+  }
+  expect(archived.artifacts.map((x) => x.short_id).sort()).toEqual([a, b].sort())
+
+  // Undo is a real reverse write, not a local visual trick: both cards return and the
+  // archive shelf reads empty from the server.
+  await owner.getByRole("button", { name: "Undo" }).click()
+  await expect(owner.getByTestId(`artifact-card-open-${a}`)).toBeVisible()
+  await expect(owner.getByTestId(`artifact-card-open-${b}`)).toBeVisible()
+  const afterUndo = (await (await owner.request.get("/v1/artifacts?scope=archived")).json()) as {
+    artifacts: { short_id: string }[]
+  }
+  expect(afterUndo.artifacts).toHaveLength(0)
+})
+
 test("deleting a set requires typing 'delete', then removes them", async ({ owner }) => {
   const [a, b, c] = await seedLibrary(owner, 3)
 
@@ -166,7 +194,7 @@ test.describe("mobile", () => {
 
     // Every action is reachable — they collapse to icons, they don't disappear into
     // an overflow menu.
-    for (const id of ["collections", "favorite", "delete"]) {
+    for (const id of ["collections", "favorite", "archive", "delete"]) {
       await expect(owner.getByTestId(`library-selection-${id}`)).toBeVisible()
     }
   })

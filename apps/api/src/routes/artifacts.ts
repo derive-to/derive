@@ -236,6 +236,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const favOnly = c.req.query("favorite") === "true"
       // ?author=<github login> narrows to artifacts whose current author is that login.
       const author = c.req.query("author")?.trim().slice(0, 100) || undefined
+      const archivedOnly = c.req.query("scope") === "archived"
 
       // The FAVORITES FEED needs the star list before the list query, because it narrows
       // by it. Every other listing only needs to know which rows on the page it got back
@@ -372,6 +373,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // (all items) would outrun the list (only your explicitly-shared items).
         viewerId:
           isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
+        archived: archivedOnly ? ("only" as const) : ("exclude" as const),
       }
       // THE COLD BOOT'S CRITICAL PATH. After the rest of this PR, nothing is queued in
       // front of this request any more — the first card paints 43ms after it lands — so
@@ -491,6 +493,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 total: z.number().describe("Total artifacts in the workspace."),
+                archived: z.number().describe("Artifacts on the reversible archive shelf."),
                 favorites: z.number().describe("The caller's favorite count in this workspace."),
                 mine: z.number().describe("Count of artifacts the caller owns ('Created by me')."),
                 mine_private: z
@@ -520,6 +523,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!(await isMember(c, org)))
         return c.json({
           total: 0,
+          archived: 0,
           favorites: 0,
           mine: 0,
           mine_private: 0,
@@ -537,6 +541,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const tags = [...summary.tags].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
       return c.json({
         total: summary.total,
+        archived: summary.archived,
         favorites: summary.favorites,
         mine: summary.mine,
         mine_private: summary.minePrivate,
@@ -1873,6 +1878,70 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       await meta.setLocked(artifact.id, b.locked ? 1 : 0)
       return c.json({ locked: b.locked })
+    },
+  )
+
+  // Archive changes discovery only; direct reads and related records remain intact.
+  for (const archived of [true, false] as const) {
+    app.openapi(
+      createRoute({
+        method: archived ? "put" : "delete",
+        path: "/v1/artifacts/{shortId}/archive",
+        tags: ["Artifacts"],
+        summary: archived ? "Archive an artifact (editors)." : "Restore an archived artifact.",
+        request: { params: z.object({ shortId: z.string() }) },
+        responses: {
+          200: {
+            description: archived ? "Archived." : "Restored to the library.",
+            content: { "application/json": { schema: z.object({ archived: z.boolean() }) } },
+          },
+        },
+      }),
+      async (c) => {
+        const artifact = await requireArtifact(c, "publish")
+        if (artifact instanceof Response) return bail(artifact)
+        if (archived && artifact.removed_at)
+          return bail(fail(c, 409, "removed artifacts cannot be archived"))
+        await meta.setArtifactArchived(artifact.id, archived ? new Date().toISOString() : null)
+        return c.json({ archived })
+      },
+    )
+  }
+
+  // Bulk archive and restore preserve the per-artifact authorization contract.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/bulk/archive",
+      tags: ["Artifacts"],
+      summary: "Archive or restore many artifacts (editor-gated per artifact).",
+      responses: {
+        200: {
+          description: "How many were archived or restored / skipped / failed.",
+          content: { "application/json": { schema: BulkSummarySchema } },
+        },
+      },
+    }),
+    async (c) => {
+      const body = await readJson(
+        c,
+        z.object({
+          shortIds: z.array(z.string()).min(1).max(BULK_MAX),
+          archived: z.boolean(),
+        }),
+      )
+      if (body instanceof Response) return bail(body)
+      const timestamp = body.archived ? new Date().toISOString() : null
+      const summary = await bulkArtifactOp(
+        body.shortIds,
+        (ids) => meta.getByShortIds(ids),
+        async (a) => {
+          if (body.archived && a.removed_at) return false
+          return authorize(c, "publish", a)
+        },
+        (a) => meta.setArtifactArchived(a.id, timestamp),
+      )
+      return c.json(summary)
     },
   )
 

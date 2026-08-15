@@ -220,6 +220,7 @@ export function artifactListConditions(
     org_id: Column
     listed: Column
     removed_at: Column
+    archived_at: Column
   },
   opts?: ListArtifactsOpts,
 ): SQL[] {
@@ -228,6 +229,8 @@ export function artifactListConditions(
   // ON for content-reading callers like search so a moderated artifact's text can't be
   // grepped out of the index. See ListArtifactsOpts.excludeRemoved.
   if (opts?.excludeRemoved) conds.push(isNull(art.removed_at))
+  if (opts?.archived === "only") conds.push(isNotNull(art.archived_at))
+  else if (opts?.archived !== "include") conds.push(isNull(art.archived_at))
   // Anonymous / non-member callers only ever see the public directory — a
   // workspace-listed title must not leak to someone outside the workspace.
   if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
@@ -574,6 +577,7 @@ export function makeRepos(db: SqliteDb) {
           eq(artifact.org_id, orgId),
           inArray(artifact.source_path, paths),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
         ),
       )
       .all()
@@ -854,7 +858,9 @@ export function makeRepos(db: SqliteDb) {
         artifact,
         and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
       )
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .where(
+        and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), isNull(artifact.archived_at)),
+      )
       .orderBy(asc(versionData.slot))
       .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
       .all()
@@ -864,9 +870,8 @@ export function makeRepos(db: SqliteDb) {
     slot: string,
     opts?: { tag?: string; limit?: number },
   ) => {
-    // Joined on artifact.current_version, so a SUPERSEDED row can never be reported as
-    // the current state — the failure that would make this quietly wrong rather than
-    // visibly broken. Retired artifacts are excluded: they are out of the library.
+    // Joined on artifact.current_version, so a superseded row cannot be reported as the
+    // current state. Tombstoned and archived artifacts are outside ordinary discovery.
     const tagged = opts?.tag
       ? db
           .select({ id: artifactTag.artifact_id })
@@ -892,6 +897,7 @@ export function makeRepos(db: SqliteDb) {
           eq(artifact.org_id, orgId),
           eq(versionData.slot, slot),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -950,6 +956,7 @@ export function makeRepos(db: SqliteDb) {
           eq(versionData.slot, LINKS_FACT),
           like(versionData.json, `%"${ref}"%`),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -1160,6 +1167,15 @@ export function makeRepos(db: SqliteDb) {
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
 
+  const countArchivedArtifacts = async (orgId: string): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(artifact)
+        .where(and(eq(artifact.org_id, orgId), isNotNull(artifact.archived_at)))
+        .get()
+    )?.c ?? 0
+
   const countOwnedBy = async (orgId: string, userId: string, listed?: Listed): Promise<number> =>
     (
       await db
@@ -1169,7 +1185,13 @@ export function makeRepos(db: SqliteDb) {
           artifactMember,
           and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
         )
-        .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
+        .where(
+          and(
+            eq(artifact.org_id, orgId),
+            isNull(artifact.archived_at),
+            listed ? eq(artifact.listed, listed) : undefined,
+          ),
+        )
         .get()
     )?.c ?? 0
 
@@ -1195,7 +1217,8 @@ export function makeRepos(db: SqliteDb) {
       .select({ tag: artifactTag.tag, count: count() })
       .from(artifactTag)
       .innerJoin(artifact, eq(artifact.id, artifactTag.artifact_id))
-    return (orgId ? base.where(eq(artifact.org_id, orgId)) : base)
+    return base
+      .where(and(orgId ? eq(artifact.org_id, orgId) : undefined, isNull(artifact.archived_at)))
       .groupBy(artifactTag.tag)
       .orderBy(asc(artifactTag.tag))
       .all()
@@ -1207,6 +1230,17 @@ export function makeRepos(db: SqliteDb) {
   const setArtifactsRemoved = async (ids: string[], removedAt: string | null): Promise<void> => {
     if (ids.length === 0) return
     await db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids)).run()
+  }
+  const setArtifactArchived = async (id: string, archivedAt: string | null): Promise<void> => {
+    await db.update(artifact).set({ archived_at: archivedAt }).where(eq(artifact.id, id)).run()
+  }
+  const setArtifactsArchived = async (ids: string[], archivedAt: string | null): Promise<void> => {
+    if (ids.length === 0) return
+    await db
+      .update(artifact)
+      .set({ archived_at: archivedAt })
+      .where(inArray(artifact.id, ids))
+      .run()
   }
   const setArtifactTitle = async (
     id: string,
@@ -1493,6 +1527,7 @@ export function makeRepos(db: SqliteDb) {
       .where(
         and(
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           isNull(version.preview_status),
           notExists(
             db
@@ -1784,6 +1819,7 @@ export function makeRepos(db: SqliteDb) {
             eq(artifactFavorite.user_id, userId),
             eq(artifact.org_id, orgId),
             isNull(artifact.removed_at),
+            isNull(artifact.archived_at),
           ),
         )
         .all()
@@ -1957,7 +1993,13 @@ export function makeRepos(db: SqliteDb) {
         version,
         and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
       )
-      .where(and(inArray(collectionItem.collection_id, collectionIds), isNull(artifact.removed_at)))
+      .where(
+        and(
+          inArray(collectionItem.collection_id, collectionIds),
+          isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
+        ),
+      )
       .all()
     // Newest first, tie-broken on id: two artifacts published in the same millisecond
     // would otherwise land in whatever order the driver returned them, and a strip that
@@ -2094,7 +2136,7 @@ export function makeRepos(db: SqliteDb) {
     const rows = await db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at), match))
       .all()
     return rows.map((r) => r.id)
   }
@@ -2356,7 +2398,7 @@ export function makeRepos(db: SqliteDb) {
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
       .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
-      .where(isNull(artifact.removed_at))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at)))
       .groupBy(collectionItem.collection_id)
       .all()
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
@@ -4785,6 +4827,7 @@ export function makeRepos(db: SqliteDb) {
     artifactIdsByAuthor,
     artifactIdsOwnedBy,
     countArtifacts,
+    countArchivedArtifacts,
     countOwnedBy,
     storageBytes,
     tagCounts,
@@ -4792,6 +4835,8 @@ export function makeRepos(db: SqliteDb) {
     moveArtifactOrg,
     setArtifactRemoved,
     setArtifactsRemoved,
+    setArtifactArchived,
+    setArtifactsArchived,
     setArtifactTitle,
     setArtifactSourcePath,
     setArtifactUpdatedAt,

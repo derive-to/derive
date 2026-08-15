@@ -237,6 +237,7 @@ export interface ModelLibraryView {
 export interface BootstrapPayload {
   summary: {
     total: number
+    archived: number
     favorites: number
     mine: number
     mine_private: number
@@ -469,7 +470,7 @@ export const artifactsListPath = (params?: {
   collection?: string
   favorite?: boolean
   author?: string
-  scope?: "shared" | "following" | "needs_feedback" | "mine"
+  scope?: "shared" | "following" | "needs_feedback" | "mine" | "archived"
   cursor?: string
   limit?: number
   sort?: SortMode
@@ -772,8 +773,9 @@ export const api = {
        *  (followed GitHub authors + repo path prefixes) — the activity feed.
        *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
        *  "mine" → everything you published by hand in the active workspace, any
-       *  visibility included — the library's "Created by me" filter. */
-      scope?: "shared" | "following" | "needs_feedback" | "mine"
+       *  visibility included — the library's "Created by me" filter.
+       *  "archived" → the reversible archive shelf. */
+      scope?: "shared" | "following" | "needs_feedback" | "mine" | "archived"
       cursor?: string
       limit?: number
       /** Grid order. Omit to get the route's default, created-desc (the library always sends
@@ -798,6 +800,7 @@ export const api = {
     f("/v1/bootstrap", opts(undefined, init)).then(j),
   browseSummary: (): Promise<{
     total: number
+    archived: number
     favorites: number
     /** The caller's owned artifacts — badges the library's "Created by me" filter. */
     mine: number
@@ -981,12 +984,17 @@ export const api = {
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
 
+  archive: (id: string, on: boolean): Promise<{ archived: boolean }> =>
+    f(`/v1/artifacts/${id}/archive`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
+
   // Bulk organize — the library multi-select bar. Each is ONE call over a set of
   // short_ids; the server authorizes every artifact on its own and returns a
   // {ok, skipped, failed} tally (skipped = not yours to touch), so the client sends the
   // whole selection and shows what actually landed.
   bulkFavorite: (shortIds: string[], favorite: boolean): Promise<BulkSummary> =>
     f("/v1/bulk/favorite", opts({ shortIds, favorite })).then(j),
+  bulkArchive: (shortIds: string[], archived: boolean): Promise<BulkSummary> =>
+    f("/v1/bulk/archive", opts({ shortIds, archived })).then(j),
   bulkAddToCollections: (shortIds: string[], collectionIds: string[]): Promise<BulkSummary> =>
     f("/v1/bulk/collections", opts({ shortIds, collectionIds })).then(j),
   bulkDelete: (shortIds: string[]): Promise<BulkSummary> =>

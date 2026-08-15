@@ -685,6 +685,31 @@ export function Artifact() {
     // concurrent edit to the same key (a favorite/tag toggle) that landed mid-flight.
     invalidate: [artifactQuery(shortId).queryKey],
   })
+  const undoArchive = useApiMutation({
+    mutationFn: () => api.archive(shortId, false),
+    invalidate: [["artifacts"], artifactQuery(shortId).queryKey, ["summary"]],
+  })
+  const archiveMut = useApiMutation({
+    mutationFn: (next: boolean) => api.archive(shortId, next),
+    optimistic: (next, client) => {
+      const rollback = snapshot(client, artifactQuery(shortId).queryKey)
+      client.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+        a ? { ...a, archived: next } : a,
+      )
+      return rollback
+    },
+    invalidate: [["artifacts"], artifactQuery(shortId).queryKey, ["summary"]],
+    onSuccess: (_data, next) => {
+      if (!next) {
+        toast.success("Restored to library")
+        return
+      }
+      void nav({ to: "/" })
+      toast("Artifact archived", {
+        action: { label: "Undo", onClick: () => undoArchive.mutate() },
+      })
+    },
+  })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   // `failed && !art`: only show the full error page when there's NO artifact to show. A
@@ -1071,8 +1096,11 @@ export function Artifact() {
               canMove={canMove}
               automateBeta={automateBeta}
               locked={isLocked}
+              archived={!!art.archived}
+              canArchive={canPublish}
               onPresent={present.toggle}
               onLockToggle={() => lockMut.mutate(!isLocked)}
+              onArchive={() => archiveMut.mutate(!art.archived)}
               onFavorite={(fav) =>
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                   a ? { ...a, favorite: fav } : a,

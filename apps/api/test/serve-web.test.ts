@@ -31,7 +31,14 @@ describe("serve-web: SPA vs API path contract", () => {
       "/.well-known/oauth-protected-resource",
     ])
       expect(isApiPath(p)).toBe(true)
-    for (const p of ["/", "/artifacts/abc123", "/login", "/settings/agents", "/library"])
+    for (const p of [
+      "/",
+      "/archived",
+      "/artifacts/abc123",
+      "/login",
+      "/settings/agents",
+      "/library",
+    ])
       expect(isApiPath(p)).toBe(false)
   })
 

@@ -14,6 +14,7 @@ export type Filter =
   // "Needs your feedback": artifacts with an open thread you're tagged in or have
   // commented on — the triage feed.
   | { kind: "feedback" }
+  | { kind: "archived" }
   // "Created by me": every artifact you own in the active workspace (your owner
   // member row — written at creation, agents' on-behalf publishes included), any
   // visibility.
@@ -22,6 +23,7 @@ export type Filter =
 
 export type Summary = {
   total: number
+  archived: number
   favorites: number
   mine: number
   // Owned docs still private — the "waiting to be shared" signal.
@@ -30,9 +32,9 @@ export type Summary = {
 }
 
 // The base library feed, chosen by ROUTE (path), not a query param: "/" = all,
-// "/favorites", "/following", "/shared", "/feedback". Path = the feed you're viewing;
-// query (LibrarySearch) = how it's filtered. See routes/favorites.tsx + docs/decisions/0002.
-export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedback"
+// "/favorites", "/following", "/shared", "/feedback", "/archived". Path = the feed;
+// query (LibrarySearch) = how it is filtered. See docs/decisions/0002.
+export type LibraryView = "all" | "favorites" | "following" | "shared" | "feedback" | "archived"
 
 // The library's URL-encoded filters + search (query params on the home route), so
 // the persistent nav rail can drive them from any page and a filtered/searched

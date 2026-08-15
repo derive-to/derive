@@ -9,6 +9,7 @@
  */
 const SPA_EXACT = new Set([
   "/",
+  "/archived",
   "/brandprint",
   "/chat",
   "/contexts",

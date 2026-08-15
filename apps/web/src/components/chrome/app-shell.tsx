@@ -329,6 +329,7 @@ function PageLabel({ pathname }: { pathname: string }) {
   if (pathname === "/") return "Library"
   if (pathname === "/favorites") return "Favorites"
   if (pathname === "/following") return "Following"
+  if (pathname === "/archived") return "Archived"
   if (pathname === "/new") return "New artifact"
   if (pathname === "/chat") return "Chat"
   if (pathname.startsWith("/settings")) return "Settings"

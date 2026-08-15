@@ -117,7 +117,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     expect(out.state.undo).toBeUndefined()
     expect(out.state.note).toContain("cannot be undone")
     // And it points at the reversible option, since that is usually what was meant.
-    expect(out.state.note).toContain("removed")
+    expect(out.state.note).toContain("archived")
   })
 
   it("deletes an artifact that has logged views (the raw-DDL view table's FK)", async () => {
@@ -158,7 +158,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     )
     expect(out.state.deleted).toBe(0)
     expect(out.state.needs_manage).toEqual([a.short_id])
-    expect(out.state.needs_manage_note).toContain("removed")
+    expect(out.state.needs_manage_note).toContain("archived")
     // Still there, which is the whole point.
     expect(await meta.getByShortId(a.short_id)).toBeTruthy()
   })

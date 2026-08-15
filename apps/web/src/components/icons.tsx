@@ -6,6 +6,7 @@
 // muted, unfavourited star); pass weight="fill" for a filled state (favorited
 // star, pinned pin) — it fills the glyph with the current ink.
 import {
+  Archive,
   ArrowRightLeft,
   AtSign,
   Ban,
@@ -67,6 +68,7 @@ import { cn } from "@/lib/utils"
 const REG = {
   // nav
   all: Layers,
+  archive: Archive,
   favorites: Star,
   // The activity feed of followed authors + repo paths.
   following: Users,

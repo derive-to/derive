@@ -83,8 +83,9 @@ export type LibraryParams = {
   // "following" → the activity feed (followed authors + repo path prefixes);
   // "shared" → artifacts explicitly shared with you (can span workspaces);
   // "needs_feedback" → artifacts with an open thread you're tagged in or commented on;
-  // "mine" → everything you've published by hand, any visibility included.
-  scope?: "following" | "shared" | "needs_feedback" | "mine"
+  // "mine" → everything you've published by hand, any visibility included;
+  // "archived" → the reversible archive shelf.
+  scope?: "following" | "shared" | "needs_feedback" | "mine" | "archived"
   // Grid order; the query key already includes the whole params object, so each sort caches
   // independently. Absent ⇒ the API default (created); the library passes DEFAULT_SORT.
   sort?: SortMode

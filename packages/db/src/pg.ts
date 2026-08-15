@@ -358,29 +358,32 @@ const addRunCost = (micros: number | null | undefined) =>
 // Positional params are stable across every consumer: $1 = org id, $2 = user id
 // (nullable text), $3 = notifications page limit (bootstrap only).
 type SummaryRow = { kind: string; k: string | null; n: number | null }
-const WORKSPACE_SUMMARY_SQL = `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1
+const WORKSPACE_SUMMARY_SQL = `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1 AND archived_at IS NULL
+       UNION ALL
+       SELECT 'archived', NULL, count(*)::int FROM artifact WHERE org_id = $1 AND archived_at IS NOT NULL
        UNION ALL
        SELECT 'tag', t.tag, count(*)::int FROM artifact_tag t
          JOIN artifact a ON a.id = t.artifact_id
-        WHERE a.org_id = $1 GROUP BY t.tag
+        WHERE a.org_id = $1 AND a.archived_at IS NULL GROUP BY t.tag
        UNION ALL
        SELECT 'workspace', w.name, NULL FROM workspace w WHERE w.id = $1
        UNION ALL
        SELECT 'favorites', NULL, count(*)::int FROM artifact_favorite f
          JOIN artifact a ON a.id = f.artifact_id
         WHERE $2::text IS NOT NULL AND f.user_id = $2
-          AND a.org_id = $1 AND a.removed_at IS NULL
+          AND a.org_id = $1 AND a.removed_at IS NULL AND a.archived_at IS NULL
        UNION ALL
        SELECT 'mine', NULL, count(*)::int FROM artifact a
          JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
-        WHERE $2::text IS NOT NULL AND a.org_id = $1
+        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.archived_at IS NULL
        UNION ALL
        SELECT 'mine_private', NULL, count(*)::int FROM artifact a
          JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
-        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none'`
+        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none' AND a.archived_at IS NULL`
 const mapSummaryRows = (rows: SummaryRow[]): WorkspaceSummary => {
   const out: WorkspaceSummary = {
     total: 0,
+    archived: 0,
     tags: [],
     workspace: null,
     favorites: 0,
@@ -391,6 +394,9 @@ const mapSummaryRows = (rows: SummaryRow[]): WorkspaceSummary => {
     switch (r.kind) {
       case "total":
         out.total = r.n ?? 0
+        break
+      case "archived":
+        out.archived = r.n ?? 0
         break
       case "tag":
         if (r.k !== null) out.tags.push({ tag: r.k, count: r.n ?? 0 })
@@ -457,7 +463,7 @@ const PREVIEW_STRIP_SQL = `SELECT ci.collection_id, a.id, a.short_id, a.title, a
                     ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id DESC) rn
              FROM collection_item ci
              JOIN collection c ON c.id = ci.collection_id AND c.org_id = $1
-             JOIN artifact a ON a.id = ci.artifact_id AND a.removed_at IS NULL
+             JOIN artifact a ON a.id = ci.artifact_id AND a.removed_at IS NULL AND a.archived_at IS NULL
              LEFT JOIN "version" v ON v.artifact_id = a.id AND v.n = a.current_version`
 
 // `bylines` joins the Better Auth "user" table, which fresh self-hosts may not have —
@@ -472,7 +478,7 @@ const collectionsOverviewSql = (
          FROM collection c
          LEFT JOIN (
            SELECT ci2.collection_id, count(*)::int cnt FROM collection_item ci2
-             JOIN artifact a2 ON a2.id = ci2.artifact_id AND a2.removed_at IS NULL
+             JOIN artifact a2 ON a2.id = ci2.artifact_id AND a2.removed_at IS NULL AND a2.archived_at IS NULL
             GROUP BY ci2.collection_id
          ) ci ON ci.collection_id = c.id
          WHERE c.org_id = $1
@@ -703,6 +709,7 @@ export class PgMetaStore implements MetaStore {
           eq(artifact.org_id, orgId),
           inArray(artifact.source_path, paths),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
         ),
       )
     return rows.filter((r): r is typeof r & { source_path: string } => r.source_path != null)
@@ -1005,7 +1012,9 @@ export class PgMetaStore implements MetaStore {
         artifact,
         and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
       )
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .where(
+        and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), isNull(artifact.archived_at)),
+      )
       .orderBy(asc(versionData.slot))
       .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
   }
@@ -1014,8 +1023,8 @@ export class PgMetaStore implements MetaStore {
     slot: string,
     opts?: { tag?: string; limit?: number },
   ) {
-    // Joined on artifact.current_version so a superseded row can never be reported as the
-    // current state. Retired artifacts are excluded: they are out of the library.
+    // Joined on artifact.current_version so a superseded row cannot be reported as the
+    // current state. Tombstoned and archived artifacts are outside ordinary discovery.
     const tagged = opts?.tag
       ? this.db
           .select({ id: artifactTag.artifact_id })
@@ -1041,6 +1050,7 @@ export class PgMetaStore implements MetaStore {
           eq(artifact.org_id, orgId),
           eq(versionData.slot, slot),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -1097,6 +1107,7 @@ export class PgMetaStore implements MetaStore {
           eq(versionData.slot, LINKS_FACT),
           like(versionData.json, `%"${ref}"%`),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -1799,12 +1810,25 @@ export class PgMetaStore implements MetaStore {
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
+  async countArchivedArtifacts(orgId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(artifact)
+      .where(and(eq(artifact.org_id, orgId), isNotNull(artifact.archived_at)))
+    return Number(rows[0]?.c ?? 0)
+  }
   async countOwnedBy(orgId: string, userId: string, listed?: Listed): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
       .innerJoin(artifactMember, this.ownerRowJoin(userId))
-      .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          isNull(artifact.archived_at),
+          listed ? eq(artifact.listed, listed) : undefined,
+        ),
+      )
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {
@@ -1923,7 +1947,8 @@ export class PgMetaStore implements MetaStore {
       .select({ tag: artifactTag.tag, count: count() })
       .from(artifactTag)
       .innerJoin(artifact, eq(artifact.id, artifactTag.artifact_id))
-    const rows = await (orgId ? base.where(eq(artifact.org_id, orgId)) : base)
+    const rows = await base
+      .where(and(orgId ? eq(artifact.org_id, orgId) : undefined, isNull(artifact.archived_at)))
       .groupBy(artifactTag.tag)
       .orderBy(asc(artifactTag.tag))
     return rows.map((r) => ({ tag: r.tag, count: Number(r.count) }))
@@ -2110,6 +2135,7 @@ export class PgMetaStore implements MetaStore {
       .where(
         and(
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           isNull(version.preview_status),
           notExists(
             this.db
@@ -2500,6 +2526,7 @@ export class PgMetaStore implements MetaStore {
             eq(artifactFavorite.user_id, userId),
             eq(artifact.org_id, orgId),
             isNull(artifact.removed_at),
+            isNull(artifact.archived_at),
           ),
         )
       return rows.map((r) => r.id)
@@ -2620,7 +2647,13 @@ export class PgMetaStore implements MetaStore {
         version,
         and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
       )
-      .where(and(inArray(collectionItem.collection_id, collectionIds), isNull(artifact.removed_at)))
+      .where(
+        and(
+          inArray(collectionItem.collection_id, collectionIds),
+          isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
+        ),
+      )
     // Newest first, tie-broken on id: two artifacts published in the same millisecond
     // would otherwise land in whatever order the driver returned them, and a strip that
     // reshuffles between page loads reads as churn.
@@ -2742,7 +2775,7 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at), match))
     return rows.map((r) => r.id)
   }
   // ---- People profiles: works, shared workspaces, follower/following -----
@@ -2977,7 +3010,7 @@ export class PgMetaStore implements MetaStore {
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
       .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
-      .where(isNull(artifact.removed_at))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at)))
       .groupBy(collectionItem.collection_id)
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
@@ -5608,6 +5641,13 @@ export class PgMetaStore implements MetaStore {
   async setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void> {
     if (ids.length === 0) return
     await this.db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids))
+  }
+  async setArtifactArchived(id: string, archivedAt: string | null): Promise<void> {
+    await this.db.update(artifact).set({ archived_at: archivedAt }).where(eq(artifact.id, id))
+  }
+  async setArtifactsArchived(ids: string[], archivedAt: string | null): Promise<void> {
+    if (ids.length === 0) return
+    await this.db.update(artifact).set({ archived_at: archivedAt }).where(inArray(artifact.id, ids))
   }
   async setArtifactTitle(id: string, title: string, slug?: string | null): Promise<void> {
     await this.db

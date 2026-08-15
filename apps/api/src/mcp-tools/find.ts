@@ -161,6 +161,10 @@ export function registerFindTool(tc: ToolContext): void {
           .describe(
             "Browse only: list only skills (bundles with a SKILL.md — reusable agent procedure).",
           ),
+        archived: z
+          .boolean()
+          .optional()
+          .describe("Browse only: true lists the archive shelf instead of the live library."),
         case_sensitive: z.boolean().optional(),
         in: z
           .enum(["source", "text"])
@@ -195,6 +199,7 @@ export function registerFindTool(tc: ToolContext): void {
       data,
       links_to,
       skills,
+      archived,
       case_sensitive,
       in: scope,
       context,
@@ -202,6 +207,10 @@ export function registerFindTool(tc: ToolContext): void {
       version,
       workspace,
     }) => {
+      if (archived && (query || short_id || data !== undefined || links_to !== undefined))
+        return err(
+          "`archived:true` applies only to browse mode (omit query/short_id/data/links_to).",
+        )
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with
       // "`query` is required to grep" — the wrong error for a caller who asked a different
       // question. Backlinks reach artifacts by content across the workspace; the other three
@@ -454,7 +463,12 @@ export function registerFindTool(tc: ToolContext): void {
       const arts =
         ids && ids.length === 0
           ? []
-          : await ctx.meta.listArtifacts({ orgId: t.org, ids, viewerId: actingFor?.id ?? agent.id })
+          : await ctx.meta.listArtifacts({
+              orgId: t.org,
+              ids,
+              viewerId: actingFor?.id ?? agent.id,
+              archived: archived ? "only" : "exclude",
+            })
       // Skill-ness isn't a store-level filter (it's the denormalized content type).
       const rows = skills ? arts.filter((a) => a.current_content_type === SKILL_CONTENT_TYPE) : arts
       const tagMap = await ctx.meta.tagsForArtifacts(rows.map((a) => a.id))
@@ -463,7 +477,7 @@ export function registerFindTool(tc: ToolContext): void {
         ...summarizeArtifact(a),
         tags: tagMap[a.id] ?? [],
       }))
-      const contextRows = await contextFindRows(t.org)
+      const contextRows = archived ? [] : await contextFindRows(t.org)
       return json({
         workspace: t.org,
         count: artifactRows.length + contextRows.length,

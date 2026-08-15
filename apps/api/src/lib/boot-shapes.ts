@@ -250,6 +250,7 @@ export const enrich = (
  *  stay identical. */
 export const summaryJson = (summary: WorkspaceSummary) => ({
   total: summary.total,
+  archived: summary.archived,
   favorites: summary.favorites,
   mine: summary.mine,
   mine_private: summary.minePrivate,

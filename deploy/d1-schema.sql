@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
   removed_at TEXT,
+  archived_at TEXT,
   expires_at TEXT,
   first_foreign_view_at TEXT,
   public_history INTEGER,
@@ -716,6 +717,8 @@ CREATE TABLE IF NOT EXISTS view (
   );
 
 CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id);
+
+CREATE INDEX IF NOT EXISTS artifact_org_archived_created ON artifact (org_id, archived_at, created_at, id);
 
 CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at);
 

@@ -62,6 +62,8 @@ export const artifact = pgTable("artifact", {
   // Set on every new version; null until first versioned (coalesces to created_at).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Reversible discovery-only archive.
+  archived_at: text("archived_at"),
   // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
   // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
   expires_at: text("expires_at"),

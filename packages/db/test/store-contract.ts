@@ -319,6 +319,11 @@ export function runStoreContract(
       expect(byId.get(a.short_id)?.json).toBe('{"pass":2}') // the current version, not v1
       expect(byId.get(a.short_id)?.n).toBe(v2.n)
       expect(byId.get(b.short_id)?.json).toBe('{"pass":9}')
+      await store.setArtifactArchived(b.id, "2026-01-02T00:00:00.000Z")
+      expect(
+        (await store.listFactAcrossArtifacts(ORG, "xchecks")).map((row) => row.short_id),
+      ).not.toContain(b.short_id)
+      await store.setArtifactArchived(b.id, null)
       // A fact nobody carries is empty, not an error.
       expect(await store.listFactAcrossArtifacts(ORG, "nosuch")).toEqual([])
       // The limit bounds the payload.
@@ -383,6 +388,12 @@ export function runStoreContract(
       expect(ids).toContain(substring.short_id)
       expect(confirmed.map((r) => r.short_id)).not.toContain(substring.short_id)
 
+      await store.setArtifactArchived(linker.id, "2026-01-02T00:00:00.000Z")
+      expect(
+        (await store.listArtifactsLinkingTo(ORG, target)).map((r) => r.short_id),
+      ).not.toContain(linker.short_id)
+      await store.setArtifactArchived(linker.id, null)
+
       // CASE: SQLite's LIKE is ASCII case-insensitive and Postgres's is not. Whatever each
       // dialect's candidate set, the confirmed answer must be identical on both.
       const upper = await store.createArtifact(newArtifact({ title: "Upper" }))
@@ -443,6 +454,13 @@ export function runStoreContract(
       expect(checks[0]?.at).toBeTruthy()
       expect(rows.every((r) => !!r.artifact_id)).toBe(true)
       expect((await store.listWorkspaceFacts(ORG, { limit: 1 })).length).toBe(1)
+      const archivedId = checks[0]?.artifact_id
+      if (!archivedId) throw new Error("expected an artifact carrying xchecks")
+      await store.setArtifactArchived(archivedId, "2026-01-02T00:00:00.000Z")
+      expect((await store.listWorkspaceFacts(ORG)).map((r) => r.artifact_id)).not.toContain(
+        archivedId,
+      )
+      await store.setArtifactArchived(archivedId, null)
     })
 
     it("filters listArtifacts by artifact title, tag, or collection title and by id set", async () => {
@@ -2242,6 +2260,25 @@ export function runStoreContract(
       expect((await store.getArtifactById(a2.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
     })
 
+    it("setArtifactsArchived moves many artifacts off the default shelf without deleting them", async () => {
+      const a1 = await store.createArtifact(newArtifact({ title: "Archive one" }))
+      const a2 = await store.createArtifact(newArtifact({ title: "Archive two" }))
+      await store.setArtifactsArchived([]) // no-op
+      expect((await store.getArtifactById(a1.id))?.archived_at ?? null).toBeNull()
+
+      await store.setArtifactsArchived([a1.id, a2.id], "2026-01-02T00:00:00.000Z")
+      expect((await store.getArtifactById(a1.id))?.archived_at).toBe("2026-01-02T00:00:00.000Z")
+      expect((await store.getArtifactById(a2.id))?.archived_at).toBe("2026-01-02T00:00:00.000Z")
+      expect((await store.listArtifacts({ orgId: ORG })).map((a) => a.id)).not.toContain(a1.id)
+      expect(
+        (await store.listArtifacts({ orgId: ORG, archived: "only" })).map((a) => a.id).sort(),
+      ).toEqual([a1.id, a2.id].sort())
+
+      await store.setArtifactArchived(a1.id, null)
+      expect((await store.getArtifactById(a1.id))?.archived_at).toBeNull()
+      expect((await store.listArtifacts({ orgId: ORG })).map((a) => a.id)).toContain(a1.id)
+    })
+
     it("enqueueDeliveries inserts a whole subscriber fan-out in one call (empty ⇒ no-op)", async () => {
       const a = await store.createArtifact(newArtifact())
       const hook = await store.createWebhook({
@@ -2831,10 +2868,21 @@ export function runStoreContract(
       const removed = await store.createArtifact(newArtifact({ org_id: org }))
       await store.setFavorite(removed.id, me)
       await store.setArtifactsRemoved([removed.id], "2026-01-01T00:00:00.000Z")
+      const archived = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: archived.id,
+        user_id: me,
+        role: "owner",
+      })
+      await store.setArtifactTags(archived.id, ["alpha"])
+      await store.setFavorite(archived.id, me)
+      await store.setArtifactArchived(archived.id, "2026-01-02T00:00:00.000Z")
 
       const s = await store.workspaceSummary(org, me)
       // Indistinguishable from the calls it replaces.
-      expect(s.total).toBe(await store.countArtifacts(org))
+      expect(s.total).toBe((await store.countArtifacts(org)) - 1)
+      expect(s.archived).toBe(1)
       expect([...s.tags].sort((a, b) => a.tag.localeCompare(b.tag))).toEqual(
         await store.tagCounts(org),
       )
@@ -2853,6 +2901,7 @@ export function runStoreContract(
       // An anonymous caller gets the workspace-level facts and zero per-user counts.
       const anon = await store.workspaceSummary(org, null)
       expect(anon.total).toBe(s.total)
+      expect(anon.archived).toBe(1)
       expect(anon.workspace).toBe("Summary WS")
       expect(anon.favorites).toBe(0)
       expect(anon.mine).toBe(0)
@@ -2862,6 +2911,7 @@ export function runStoreContract(
       const missing = await store.workspaceSummary(`org_${uuid()}`, me)
       expect(missing.workspace).toBeNull()
       expect(missing.total).toBe(0)
+      expect(missing.archived).toBe(0)
       expect(missing.tags).toEqual([])
       expect(missing.favorites).toBe(0)
     })

@@ -3,7 +3,6 @@ import type {
   ArtifactDetailOpts,
   AutomationRecord,
   BootstrapRead,
-  CollectionRecord,
   CollectionsOverviewRead,
   CollectionsViewer,
   CommentListOpts,
@@ -14,7 +13,6 @@ import type {
   MetaStore,
   NotificationsPage,
   OrgSettings,
-  RepoSourceRecord,
   Role,
   VersionRecord,
   WorkspaceRecord,
@@ -207,13 +205,19 @@ export const composeBootstrap = async (
 export const composeWorkspaceSummary = async (
   store: Pick<
     MetaStore,
-    "countArtifacts" | "tagCounts" | "getWorkspace" | "listUserFavoriteIds" | "countOwnedBy"
+    | "countArtifacts"
+    | "countArchivedArtifacts"
+    | "tagCounts"
+    | "getWorkspace"
+    | "listUserFavoriteIds"
+    | "countOwnedBy"
   >,
   orgId: string,
   userId: string | null,
 ): Promise<WorkspaceSummary> => {
-  const [total, tags, ws, favIds, mine, minePrivate] = await Promise.all([
+  const [all, archived, tags, ws, favIds, mine, minePrivate] = await Promise.all([
     store.countArtifacts(orgId),
+    store.countArchivedArtifacts(orgId),
     store.tagCounts(orgId),
     store.getWorkspace(orgId),
     userId ? store.listUserFavoriteIds(userId, orgId) : Promise.resolve<string[]>([]),
@@ -221,7 +225,8 @@ export const composeWorkspaceSummary = async (
     userId ? store.countOwnedBy(orgId, userId, "none") : Promise.resolve(0),
   ])
   return {
-    total,
+    total: Math.max(0, all - archived),
+    archived,
     tags,
     workspace: ws?.name ?? null,
     favorites: favIds.length,

@@ -387,6 +387,10 @@
             "type": "boolean",
             "description": "true when the artifact has been taken down (tombstone)."
           },
+          "archived": {
+            "type": "boolean",
+            "description": "true when the artifact is on the reversible archive shelf."
+          },
           "managed": {
             "type": "boolean",
             "description": "true when mirrored from a GitHub sync — read-only in Derive."
@@ -4681,6 +4685,10 @@
                       "type": "number",
                       "description": "Total artifacts in the workspace."
                     },
+                    "archived": {
+                      "type": "number",
+                      "description": "Artifacts on the reversible archive shelf."
+                    },
                     "favorites": {
                       "type": "number",
                       "description": "The caller's favorite count in this workspace."
@@ -4720,6 +4728,7 @@
                   },
                   "required": [
                     "total",
+                    "archived",
                     "favorites",
                     "mine",
                     "mine_private",
@@ -4930,6 +4939,100 @@
                   "required": [
                     "locked"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/archive": {
+      "put": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Archive an artifact (editors).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archived.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "archived": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "archived"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Restore an archived artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Restored to the library.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "archived": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "archived"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/bulk/archive": {
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Archive or restore many artifacts (editor-gated per artifact).",
+        "responses": {
+          "200": {
+            "description": "How many were archived or restored / skipped / failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkSummary"
                 }
               }
             }
@@ -7155,6 +7258,9 @@
                         "total": {
                           "type": "number"
                         },
+                        "archived": {
+                          "type": "number"
+                        },
                         "favorites": {
                           "type": "number"
                         },
@@ -7189,6 +7295,7 @@
                       },
                       "required": [
                         "total",
+                        "archived",
                         "favorites",
                         "mine",
                         "mine_private",

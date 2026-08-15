@@ -35,6 +35,7 @@ export function ArtifactGrid({
   onOpen,
   onToggleFavorite,
   onAddToCollection,
+  onArchive,
   onDelete,
   onPrefetch,
   selection,
@@ -52,6 +53,7 @@ export function ArtifactGrid({
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
   onAddToCollection: (a: Artifact) => void
+  onArchive: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
   // Multi-select. The grid only threads it through: the set lives in the library body,
@@ -148,7 +150,9 @@ export function ArtifactGrid({
                   artifact={a}
                   onOpen={() => onOpen(a)}
                   onToggleFavorite={() => onToggleFavorite(a)}
+                  onPickAuthor={onPickAuthor}
                   onAddToCollection={() => onAddToCollection(a)}
+                  onArchive={() => onArchive(a)}
                   onDelete={() => onDelete(a)}
                   onPrefetch={() => onPrefetch(a)}
                   selected={selection?.selected.has(a.short_id)}
@@ -162,6 +166,7 @@ export function ArtifactGrid({
                   onOpen={() => onOpen(a)}
                   onToggleFavorite={() => onToggleFavorite(a)}
                   onAddToCollection={() => onAddToCollection(a)}
+                  onArchive={() => onArchive(a)}
                   onDelete={() => onDelete(a)}
                   onPrefetch={() => onPrefetch(a)}
                   selected={selection?.selected.has(a.short_id)}

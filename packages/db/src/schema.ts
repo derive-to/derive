@@ -83,6 +83,9 @@ export const artifact = sqliteTable("artifact", {
   // existing DBs (SQLite forbids a non-constant default there).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Reversible library cleanup. Unlike removed_at (moderation/sync tombstone), this
+  // only changes discovery: direct URLs and bytes remain readable.
+  archived_at: text("archived_at"),
   // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
   // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
   expires_at: text("expires_at"),

@@ -241,6 +241,10 @@ export const Artifact = z
       .boolean()
       .optional()
       .describe("true when the artifact has been taken down (tombstone)."),
+    archived: z
+      .boolean()
+      .optional()
+      .describe("true when the artifact is on the reversible archive shelf."),
     managed: z
       .boolean()
       .optional()
