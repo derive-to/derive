@@ -9,73 +9,83 @@
   </div>
 
   <ol class="workflow-list" aria-label="The Derive review loop">
-    <li><span>01</span><strong>Publish</strong></li>
-    <li><span>02</span><strong>Review</strong></li>
-    <li><span>03</span><strong>Revise</strong></li>
-    <li><span>04</span><strong>Approve</strong></li>
+    <li><span>01</span>Publish</li>
+    <li><span>02</span>Review</li>
+    <li><span>03</span>Revise</li>
+    <li><span>04</span>Approve</li>
   </ol>
 </div>
 
-<section class="home-section quickstart-section" aria-labelledby="quickstart-title">
-  <div class="quickstart-copy">
-    <p class="section-kicker">Try it now</p>
-    <h2 id="quickstart-title">A live review URL in one command.</h2>
-    <p>No account, token, SDK, or configuration file. Claim the artifact later if it is worth keeping.</p>
-    <a class="text-link" href="/start/first-artifact/">Read the first-artifact guide <span aria-hidden="true">→</span></a>
-  </div>
+<section class="home-section start-section" aria-labelledby="start-title">
+  <header class="home-section-header">
+    <div class="section-eyebrow"><p class="section-kicker">Start here</p><span aria-hidden="true"></span></div>
+    <h2 id="start-title">Choose what you need to do.</h2>
+    <p>Pick the task in front of you. Each path ends in the same publish, review, revise, and approve loop.</p>
+  </header>
 
-  <div class="quickstart-terminal">
-    <div class="terminal-bar">
-      <span>Terminal</span>
-      <span>Anonymous draft</span>
+  <ol class="start-list" role="list">
+    <li>
+      <a href="/start/first-artifact/">
+        <span class="start-number">01</span>
+        <span class="start-copy"><span class="start-label">Publish</span><strong>Your first artifact</strong><span>Publish an anonymous draft with one HTTP request and inspect the rendered result.</span></span>
+        <span class="start-arrow" aria-hidden="true">→</span>
+      </a>
+    </li>
+    <li>
+      <a href="/agents/connect/">
+        <span class="start-number">02</span>
+        <span class="start-copy"><span class="start-label">Automate</span><strong>Connect an agent</strong><span>Give Claude Code, Codex, Cursor, or another MCP client a durable place to publish.</span></span>
+        <span class="start-arrow" aria-hidden="true">→</span>
+      </a>
+    </li>
+    <li>
+      <a href="/self-hosting/quickstart/">
+        <span class="start-number">03</span>
+        <span class="start-copy"><span class="start-label">Deploy</span><strong>Run your own instance</strong><span>Run the complete product in one container with SQLite and local storage by default.</span></span>
+        <span class="start-arrow" aria-hidden="true">→</span>
+      </a>
+    </li>
+  </ol>
+</section>
+
+<section class="home-section quickstart-section" aria-labelledby="quickstart-title">
+  <header class="home-section-header">
+    <div class="section-eyebrow"><p class="section-kicker">Try it now</p><span aria-hidden="true"></span></div>
+    <h2 id="quickstart-title">Publish a live review URL in one command.</h2>
+    <p>No account, token, SDK, or configuration file. Claim the artifact later if it is worth keeping.</p>
+  </header>
+
+  <div class="quickstart-body">
+    <div class="quickstart-note">
+      <strong>Anonymous draft</strong>
+      <p>Live for 72 hours. The response includes a private claim link.</p>
+      <a class="text-link" href="/start/first-artifact/">First-artifact guide <span aria-hidden="true">→</span></a>
     </div>
+
+    <div class="quickstart-terminal">
+      <div class="terminal-bar">
+        <span>Terminal</span>
+        <span>POST /v1/drafts</span>
+      </div>
 
 ```bash
 curl -F file=@page.html https://derive.to/v1/drafts
 ```
 
-    <div class="terminal-result">
-      <span aria-hidden="true">✓</span>
-      <div>
-        <strong>https://quiet-sun-4f2c.derive.page/</strong>
-        <small>Live for 72 hours · claim link returned privately</small>
+      <div class="terminal-result">
+        <span aria-hidden="true">✓</span>
+        <div>
+          <strong>https://quiet-sun-4f2c.derive.page/</strong>
+          <small>Ready to review</small>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<section class="home-section" aria-labelledby="start-title">
-  <header class="home-section-header">
-    <p class="section-kicker">Start here</p>
-    <h2 id="start-title">Choose the shortest path to useful.</h2>
-    <p>Begin with the job in front of you. Every path leads to the same publish, review, revise, and approve loop.</p>
-  </header>
-
-  <div class="start-grid">
-    <a href="/start/first-artifact/">
-      <span class="start-label">Publish</span>
-      <h3>Your first artifact</h3>
-      <p>Publish an anonymous draft with one HTTP request and inspect the rendered result.</p>
-      <span class="start-arrow" aria-hidden="true">→</span>
-    </a>
-    <a href="/agents/connect/">
-      <span class="start-label">Automate</span>
-      <h3>Connect an agent</h3>
-      <p>Give Claude Code, Codex, Cursor, or another MCP client a durable place to publish.</p>
-      <span class="start-arrow" aria-hidden="true">→</span>
-    </a>
-    <a href="/self-hosting/quickstart/">
-      <span class="start-label">Deploy</span>
-      <h3>Run your own instance</h3>
-      <p>Run the complete product in one container with SQLite and local storage by default.</p>
-      <span class="start-arrow" aria-hidden="true">→</span>
-    </a>
-  </div>
-</section>
-
 <section class="home-section" aria-labelledby="browse-title">
   <header class="home-section-header">
-    <p class="section-kicker">Explore</p>
+    <div class="section-eyebrow"><p class="section-kicker">Explore</p><span aria-hidden="true"></span></div>
     <h2 id="browse-title">Browse the documentation.</h2>
     <p>Guides for using Derive, building durable artifacts, operating your own instance, and integrating with the platform.</p>
   </header>
@@ -111,8 +121,11 @@ curl -F file=@page.html https://derive.to/v1/drafts
   </div>
 </section>
 
-<section class="home-principle" aria-label="The Derive model">
-  <p>The artifact is the source of truth.</p>
+<section class="home-section home-principle" aria-labelledby="principle-title">
+  <header class="home-section-header">
+    <div class="section-eyebrow"><p class="section-kicker">The model</p><span aria-hidden="true"></span></div>
+    <h2 id="principle-title">The artifact is the source of truth.</h2>
+  </header>
   <dl>
     <div><dt>Durable URL</dt><dd>One link across every revision.</dd></div>
     <div><dt>Anchored feedback</dt><dd>Comments stay with the work they describe.</dd></div>
