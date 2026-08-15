@@ -99,10 +99,15 @@ for (const brandedContract of [
   'class="site-header"',
   'class="docs-navigation',
   'class="workflow-list"',
+  'class="start-list"',
   "Turn agent output into approved work.",
 ])
   if (!homeHtml.includes(brandedContract))
     fail(`documentation home lacks branded shell contract ${brandedContract}`)
+const startPosition = homeHtml.indexOf('class="home-section start-section"')
+const quickstartPosition = homeHtml.indexOf('class="home-section quickstart-section"')
+if (startPosition < 0 || quickstartPosition < 0 || startPosition > quickstartPosition)
+  fail("documentation home must place the task-first start section before the quickstart")
 if (/starlight/i.test(homeHtml)) fail("documentation build still contains Starlight chrome")
 
 const llmsFull = readFileSync(join(DIST, "llms-full.txt"), "utf8")
