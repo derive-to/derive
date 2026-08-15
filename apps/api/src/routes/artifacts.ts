@@ -83,6 +83,7 @@ import {
   linkRoleOf,
   listedOf,
   MAX_UPLOAD_BYTES,
+  RAW_TOKEN_MAX_AGE_MS,
   RAW_TOKEN_WINDOW_MS,
   readJson,
   str,
@@ -1653,6 +1654,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         ? await meta.getArtifactById(artifact.derived_from)
         : null
       const base = toJson(deps.baseUrl, artifact, versions)
+      const rawTokenIssuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
       // which actions to surface; `open_proposals` badges the review queue while
@@ -1739,11 +1741,11 @@ export const artifactRoutes = (ctx: AppContext) => {
         // a different URL every fetch, which silently defeated the cache — measured, an
         // open whose URL matched served in 13ms from cache; the next one re-downloaded
         // 15KB. Validity is unchanged (verifyState still enforces the same max age).
-        raw_token: signState(
-          { rid: artifact.id },
-          deps.encryptionKey ?? "",
-          bucketedNow(RAW_TOKEN_WINDOW_MS),
-        ),
+        raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? "", rawTokenIssuedAt),
+        // The detail record can outlive the capability in the browser query cache.
+        // Make the lifetime explicit so the viewer never pins an expired token while
+        // React Query refreshes the record in the background.
+        raw_token_expires_at: new Date(rawTokenIssuedAt + RAW_TOKEN_MAX_AGE_MS).toISOString(),
       })
     },
   )
