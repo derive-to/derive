@@ -1,8 +1,8 @@
 // The approve / request-changes side-effect chains for a proposal, extracted so both the
 // HTTP route (routes/proposals.ts) and the Slack interactivity handler run the EXACT same
 // pipeline — publish the new version (approve), re-anchor threads, release the threads the
-// proposal addressed, fan out the event. Callers own authorization + the open-state check;
-// these just execute the decided action.
+// proposal addressed, fan out the event. Callers own authorization; the store owns
+// the single-winner open-state transition before these emit any side effects.
 
 import {
   type ArtifactRecord,
@@ -46,14 +46,14 @@ export const approveProposalAction = async (
   deps: ProposalActionDeps,
   artifact: ArtifactRecord,
   proposal: ProposalRecord,
-  approver: string | null,
+  approver: string,
   note: string | null,
-  /** The decider's stable id. `approver` is a display name and can't be classified; this is
-   *  what tells a subscription's human/agent filter who acted. */
-  actorId?: string | null,
+  /** The human decider's stable id. `approver` is only the audit-display snapshot; this id is
+   *  persisted on the proposal and tells subscriptions who acted. */
+  actorId: string,
 ): Promise<VersionRecord> => {
   const { meta, blobs, bus, notify, notifyRender, search } = deps
-  const version = await approveProposal(meta, blobs, proposal, approver, note)
+  const version = await approveProposal(meta, blobs, proposal, approver, actorId, note)
   bus.publish(artifact.id, { type: "proposal.approved", proposal_id: proposal.id, n: version.n })
   // The approved candidate is now live content: run the shared version-bump core (announce
   // the version so open tabs reload, enqueue the preview render, re-anchor existing threads).
@@ -85,7 +85,7 @@ export const approveProposalAction = async (
     proposal_id: proposal.id,
     version: version.n,
     approver,
-    actor_id: actorId ?? null,
+    actor_id: actorId,
   })
   return version
 }
@@ -95,18 +95,20 @@ export const requestChangesAction = async (
   deps: ProposalActionDeps,
   artifact: ArtifactRecord,
   proposal: ProposalRecord,
-  reviewer: string | null,
+  reviewer: string,
   note: string | null,
-  /** As approveProposalAction — the decider's stable id, for the author filter. */
-  actorId?: string | null,
-): Promise<void> => {
+  /** As approveProposalAction — the human decider's stable id. */
+  actorId: string,
+): Promise<boolean> => {
   const { meta, bus, notify } = deps
-  await meta.decideProposal(proposal.id, {
+  const decided = await meta.decideProposal(proposal.id, {
     state: "changes_requested",
     decided_by: reviewer,
+    decided_by_id: actorId,
     decided_version: null,
     decision_note: note,
   })
+  if (!decided) return false
   bus.publish(artifact.id, { type: "proposal.changes_requested", proposal_id: proposal.id })
   // The fix didn't land — reopen the threads it had staged as addressed.
   for (const threadId of await releaseAddressed(meta, artifact.id, proposal.id, "open"))
@@ -114,6 +116,7 @@ export const requestChangesAction = async (
   await notify(artifact, "proposal.changes_requested", {
     proposal_id: proposal.id,
     reviewer,
-    actor_id: actorId ?? null,
+    actor_id: actorId,
   })
+  return true
 }

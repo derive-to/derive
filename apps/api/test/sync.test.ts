@@ -263,7 +263,8 @@ describe("GitHub sync engine", () => {
       { path: "notitle.md", sha: "t-plain", type: "blob" },
     ]
     blobs["t-md"] = "---\nx: 1\n---\n# Taxonomy System\n\nbody"
-    blobs["t-html"] = "<html><head><title>The Page</title></head><body><h1>x</h1></body></html>"
+    blobs["t-html"] =
+      '<html><head><title data-note="> value">The Page</title></head><body><h1>x</h1></body></html>'
     blobs["t-plain"] = "no heading here, just prose"
     await runSync(meta, blobStore, src, NOW)
     const map = JSON.parse((await meta.getRepoSource(src.id))?.files ?? "{}") as FileMap

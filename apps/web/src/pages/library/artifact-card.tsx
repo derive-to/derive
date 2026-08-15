@@ -33,6 +33,7 @@ export function ArtifactCard({
   onOpen,
   onToggleFavorite,
   onAddToCollection,
+  onArchive,
   onDelete,
   onPrefetch,
   selected = false,
@@ -46,6 +47,7 @@ export function ArtifactCard({
   // Collections apply to any signed-in viewer (you're organizing your
   // collections, not mutating the artifact).
   onAddToCollection?: () => void
+  onArchive?: () => void
   onDelete?: () => void
   // Warm the artifact (metadata + comments + rendered HTML) when the card is
   // hovered or focused, so the click that follows opens instantly.
@@ -62,7 +64,9 @@ export function ArtifactCard({
   const titleRef = useRef<HTMLSpanElement>(null)
   const isOwner = a.my_role === "owner"
   const showDelete = isOwner && !!onDelete
-  const showMenu = !!onAddToCollection || showDelete
+  const canEdit = a.my_role === "owner" || a.my_role === "editor"
+  const showArchive = canEdit && !a.removed && !!onArchive
+  const showMenu = !!onAddToCollection || showArchive || showDelete
   const author = a.author ?? null
   // Every card names its author, including yours. Hiding it on your own work made the
   // row's meaning depend on who was looking: a card with no chip could mean "you made
@@ -172,9 +176,18 @@ export function ArtifactCard({
                     Add to collection
                   </DropdownMenuItem>
                 )}
+                {showArchive && (
+                  <DropdownMenuItem
+                    data-testid={`artifact-card-archive-${a.short_id}`}
+                    onSelect={() => onArchive?.()}
+                  >
+                    <Icon name={a.archived ? "undo" : "archive"} size={16} />
+                    {a.archived ? "Restore to library" : "Archive"}
+                  </DropdownMenuItem>
+                )}
                 {showDelete && (
                   <>
-                    {onAddToCollection && <DropdownMenuSeparator />}
+                    {(onAddToCollection || showArchive) && <DropdownMenuSeparator />}
                     <DropdownMenuItem
                       data-testid={`artifact-card-delete-${a.short_id}`}
                       variant="destructive"

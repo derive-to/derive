@@ -43,6 +43,7 @@
     "@derive/core": "workspace:*",
     "@derive/db": "workspace:*",
     "@derive/storage": "workspace:*",
+    "@derive-to/templates": "workspace:*",
     "@hono/mcp": "^0.3.0",
     "@hono/node-server": "^2.1.0",
     "@hono/zod-openapi": "1.0.2",

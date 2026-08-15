@@ -70,6 +70,8 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewSlackSubscription,
+  NewTemplateLibrary,
+  NewTemplateLibraryEntry,
   NewVersion,
   NewVersionData,
   NewWebhook,
@@ -104,6 +106,9 @@ import type {
   SortMode,
   SubscriptionRecord,
   TakedownInput,
+  TemplateLibraryEntryRecord,
+  TemplateLibraryRecord,
+  TemplateLibraryScope,
   UserNotificationPrefRecord,
   UserProfile,
   VersionDataRecord,
@@ -195,6 +200,8 @@ import {
   slackThreadLink,
   slackUserLink,
   subscription,
+  templateLibrary,
+  templateLibraryEntry,
   userNotificationPref,
   version,
   versionData,
@@ -204,7 +211,7 @@ import {
 } from "./schema"
 
 /**
- * The WHERE conditions for the artifact list (title search, keyset cursor, id
+ * The WHERE conditions for the artifact list (metadata search, keyset cursor, id
  * restriction, workspace scope). The drizzle operators are dialect-agnostic and
  * only the `artifact` columns differ between SQLite/D1 and Postgres, so both
  * drivers build the same filter through this one helper — a new filter is added
@@ -220,6 +227,7 @@ export function artifactListConditions(
     org_id: Column
     listed: Column
     removed_at: Column
+    archived_at: Column
   },
   opts?: ListArtifactsOpts,
 ): SQL[] {
@@ -228,6 +236,8 @@ export function artifactListConditions(
   // ON for content-reading callers like search so a moderated artifact's text can't be
   // grepped out of the index. See ListArtifactsOpts.excludeRemoved.
   if (opts?.excludeRemoved) conds.push(isNull(art.removed_at))
+  if (opts?.archived === "only") conds.push(isNotNull(art.archived_at))
+  else if (opts?.archived !== "include") conds.push(isNull(art.archived_at))
   // Anonymous / non-member callers only ever see the public directory — a
   // workspace-listed title must not leak to someone outside the workspace.
   if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
@@ -244,7 +254,49 @@ export function artifactListConditions(
     conds.push(sql`(${art.listed} != 'none' OR ${isMember})`)
   }
   // A trusted caller (operator token / internal jobs, no viewerId) sees everything.
-  if (opts?.q) conds.push(like(sql`lower(${art.title})`, `%${opts.q.toLowerCase()}%`))
+  if (opts?.q) {
+    const pattern = `%${opts.q.toLowerCase()}%`
+    const collectionAccess =
+      opts.collectionSearchViewerId === undefined
+        ? sql`1 = 1`
+        : opts.collectionSearchViewerId === null
+          ? sql`1 = 0`
+          : sql`(
+              c.created_by = ${opts.collectionSearchViewerId}
+              OR EXISTS (
+                SELECT 1 FROM collection_member cm
+                WHERE cm.collection_id = c.id AND cm.user_id = ${opts.collectionSearchViewerId}
+              )
+              OR (
+                c.workspace_access = 'member'
+                AND EXISTS (
+                  SELECT 1 FROM membership m
+                  WHERE m.org_id = c.org_id AND m.user_id = ${opts.collectionSearchViewerId}
+                )
+              )
+            )`
+    // One metadata search contract for every artifact-list consumer: an artifact
+    // matches its own title, any of its tags, or the title of any collection that
+    // contains it. EXISTS avoids duplicate artifact rows when several tags/collections
+    // match and, unlike expanding matching relations into an id IN (...), stays safe
+    // for large workspaces under D1's bound-parameter limit. These table names are
+    // deliberately shared by the SQLite/D1 and Postgres schemas, just like the
+    // artifact_member visibility subquery above.
+    conds.push(sql`(
+      lower(${art.title}) LIKE ${pattern}
+      OR EXISTS (
+        SELECT 1 FROM artifact_tag at
+        WHERE at.artifact_id = ${art.id} AND lower(at.tag) LIKE ${pattern}
+      )
+      OR EXISTS (
+        SELECT 1 FROM collection_item ci
+        INNER JOIN collection c ON c.id = ci.collection_id
+        WHERE ci.artifact_id = ${art.id}
+          AND lower(c.title) LIKE ${pattern}
+          AND ${collectionAccess}
+      )
+    )`)
+  }
   if (opts?.cursor) {
     const { field, dir } = sortFields(opts.sort ?? "created")
     const col = artifactSortExpr(art, field)
@@ -333,6 +385,8 @@ export const schema = {
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   githubApp,
   githubInstallation,
@@ -379,6 +433,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   folder: true,
+  templateLibrary: true,
+  templateLibraryEntry: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -532,6 +588,7 @@ export function makeRepos(db: SqliteDb) {
           eq(artifact.org_id, orgId),
           inArray(artifact.source_path, paths),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
         ),
       )
       .all()
@@ -812,7 +869,9 @@ export function makeRepos(db: SqliteDb) {
         artifact,
         and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
       )
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .where(
+        and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), isNull(artifact.archived_at)),
+      )
       .orderBy(asc(versionData.slot))
       .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
       .all()
@@ -822,9 +881,8 @@ export function makeRepos(db: SqliteDb) {
     slot: string,
     opts?: { tag?: string; limit?: number },
   ) => {
-    // Joined on artifact.current_version, so a SUPERSEDED row can never be reported as
-    // the current state — the failure that would make this quietly wrong rather than
-    // visibly broken. Retired artifacts are excluded: they are out of the library.
+    // Joined on artifact.current_version, so a superseded row cannot be reported as the
+    // current state. Tombstoned and archived artifacts are outside ordinary discovery.
     const tagged = opts?.tag
       ? db
           .select({ id: artifactTag.artifact_id })
@@ -850,6 +908,7 @@ export function makeRepos(db: SqliteDb) {
           eq(artifact.org_id, orgId),
           eq(versionData.slot, slot),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -908,6 +967,7 @@ export function makeRepos(db: SqliteDb) {
           eq(versionData.slot, LINKS_FACT),
           like(versionData.json, `%"${ref}"%`),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -1118,6 +1178,15 @@ export function makeRepos(db: SqliteDb) {
     return (await (orgId ? q.where(eq(artifact.org_id, orgId)) : q).get())?.c ?? 0
   }
 
+  const countArchivedArtifacts = async (orgId: string): Promise<number> =>
+    (
+      await db
+        .select({ c: count() })
+        .from(artifact)
+        .where(and(eq(artifact.org_id, orgId), isNotNull(artifact.archived_at)))
+        .get()
+    )?.c ?? 0
+
   const countOwnedBy = async (orgId: string, userId: string, listed?: Listed): Promise<number> =>
     (
       await db
@@ -1127,7 +1196,13 @@ export function makeRepos(db: SqliteDb) {
           artifactMember,
           and(eq(artifactMember.artifact_id, artifact.id), ownedBy(userId)),
         )
-        .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
+        .where(
+          and(
+            eq(artifact.org_id, orgId),
+            isNull(artifact.archived_at),
+            listed ? eq(artifact.listed, listed) : undefined,
+          ),
+        )
         .get()
     )?.c ?? 0
 
@@ -1153,7 +1228,8 @@ export function makeRepos(db: SqliteDb) {
       .select({ tag: artifactTag.tag, count: count() })
       .from(artifactTag)
       .innerJoin(artifact, eq(artifact.id, artifactTag.artifact_id))
-    return (orgId ? base.where(eq(artifact.org_id, orgId)) : base)
+    return base
+      .where(and(orgId ? eq(artifact.org_id, orgId) : undefined, isNull(artifact.archived_at)))
       .groupBy(artifactTag.tag)
       .orderBy(asc(artifactTag.tag))
       .all()
@@ -1165,6 +1241,17 @@ export function makeRepos(db: SqliteDb) {
   const setArtifactsRemoved = async (ids: string[], removedAt: string | null): Promise<void> => {
     if (ids.length === 0) return
     await db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids)).run()
+  }
+  const setArtifactArchived = async (id: string, archivedAt: string | null): Promise<void> => {
+    await db.update(artifact).set({ archived_at: archivedAt }).where(eq(artifact.id, id)).run()
+  }
+  const setArtifactsArchived = async (ids: string[], archivedAt: string | null): Promise<void> => {
+    if (ids.length === 0) return
+    await db
+      .update(artifact)
+      .set({ archived_at: archivedAt })
+      .where(inArray(artifact.id, ids))
+      .run()
   }
   const setArtifactTitle = async (
     id: string,
@@ -1451,6 +1538,7 @@ export function makeRepos(db: SqliteDb) {
       .where(
         and(
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           isNull(version.preview_status),
           notExists(
             db
@@ -1595,6 +1683,22 @@ export function makeRepos(db: SqliteDb) {
       .returning()
       .get()) as WorkspaceRecord
   const deleteWorkspace = async (orgId: string): Promise<void> => {
+    // A library has no workspace FK because public snapshots must remain readable
+    // independently of their source artifacts. Delete its entries explicitly before
+    // removing the workspace so a workspace teardown cannot strand either row type.
+    await db
+      .delete(templateLibraryEntry)
+      .where(
+        inArray(
+          templateLibraryEntry.library_id,
+          db
+            .select({ id: templateLibrary.id })
+            .from(templateLibrary)
+            .where(eq(templateLibrary.org_id, orgId)),
+        ),
+      )
+      .run()
+    await db.delete(templateLibrary).where(eq(templateLibrary.org_id, orgId)).run()
     await db.delete(membership).where(eq(membership.org_id, orgId)).run()
     // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
@@ -1742,6 +1846,7 @@ export function makeRepos(db: SqliteDb) {
             eq(artifactFavorite.user_id, userId),
             eq(artifact.org_id, orgId),
             isNull(artifact.removed_at),
+            isNull(artifact.archived_at),
           ),
         )
         .all()
@@ -1915,7 +2020,13 @@ export function makeRepos(db: SqliteDb) {
         version,
         and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
       )
-      .where(and(inArray(collectionItem.collection_id, collectionIds), isNull(artifact.removed_at)))
+      .where(
+        and(
+          inArray(collectionItem.collection_id, collectionIds),
+          isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
+        ),
+      )
       .all()
     // Newest first, tie-broken on id: two artifacts published in the same millisecond
     // would otherwise land in whatever order the driver returned them, and a strip that
@@ -2052,7 +2163,7 @@ export function makeRepos(db: SqliteDb) {
     const rows = await db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at), match))
       .all()
     return rows.map((r) => r.id)
   }
@@ -2314,7 +2425,7 @@ export function makeRepos(db: SqliteDb) {
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
       .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
-      .where(isNull(artifact.removed_at))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at)))
       .groupBy(collectionItem.collection_id)
       .all()
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
@@ -2537,6 +2648,179 @@ export function makeRepos(db: SqliteDb) {
     const out: Record<string, Role> = {}
     for (const r of [...explicit, ...seat]) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
+  }
+
+  // ---- Template libraries ------------------------------------------------
+  const createTemplateLibrary = async (x: NewTemplateLibrary): Promise<TemplateLibraryRecord> =>
+    (await db.insert(templateLibrary).values(x).returning().get()) as TemplateLibraryRecord
+  const getTemplateLibrary = async (id: string): Promise<TemplateLibraryRecord | null> =>
+    (await db.select().from(templateLibrary).where(eq(templateLibrary.id, id)).get()) ?? null
+  const listTemplateLibraries = async (opts?: {
+    orgId?: string
+    scope?: TemplateLibraryScope
+    createdBy?: string
+    query?: string
+    before?: { createdAt: string; id: string }
+    limit?: number
+  }): Promise<TemplateLibraryRecord[]> => {
+    const needle = opts?.query?.trim().toLowerCase()
+    const rows = await db
+      .select()
+      .from(templateLibrary)
+      .where(
+        and(
+          opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
+          opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
+          opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibrary.description}) like ${`%${needle}%`}`
+            : undefined,
+          opts?.before
+            ? or(
+                lt(templateLibrary.created_at, opts.before.createdAt),
+                and(
+                  eq(templateLibrary.created_at, opts.before.createdAt),
+                  lt(templateLibrary.id, opts.before.id),
+                ),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibrary.created_at), desc(templateLibrary.id))
+      .limit(Math.min(Math.max(opts?.limit ?? 1_000, 1), 1_000))
+      .all()
+    return rows
+  }
+  const updateTemplateLibrary = async (
+    id: string,
+    fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibraryRecord | null> => {
+    if (Object.keys(fields).length === 0) return getTemplateLibrary(id)
+    return (
+      (await db
+        .update(templateLibrary)
+        .set({ ...fields, updated_at: new Date().toISOString() })
+        .where(eq(templateLibrary.id, id))
+        .returning()
+        .get()) ?? null
+    )
+  }
+  const acquireTemplateLibraryMutation = async (
+    id: string,
+    token: string,
+    staleBefore: string,
+  ): Promise<boolean> => {
+    const row = await db
+      .update(templateLibrary)
+      .set({ mutation_token: token, mutation_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(templateLibrary.id, id),
+          or(
+            isNull(templateLibrary.mutation_token),
+            lt(templateLibrary.mutation_started_at, staleBefore),
+          ),
+        ),
+      )
+      .returning({ id: templateLibrary.id })
+      .get()
+    return !!row
+  }
+  const renewTemplateLibraryMutation = async (id: string, token: string): Promise<boolean> => {
+    const row = await db
+      .update(templateLibrary)
+      .set({ mutation_started_at: new Date().toISOString() })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+      .returning({ id: templateLibrary.id })
+      .get()
+    return !!row
+  }
+  const releaseTemplateLibraryMutation = async (id: string, token: string): Promise<void> => {
+    await db
+      .update(templateLibrary)
+      .set({ mutation_token: null, mutation_started_at: null })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+      .run()
+  }
+  // Explicit cascade keeps SQLite/D1 and Postgres behavior identical without
+  // relying on every deployment's foreign-key pragma/default.
+  const deleteTemplateLibrary = async (id: string): Promise<void> => {
+    await db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.library_id, id)).run()
+    await db.delete(templateLibrary).where(eq(templateLibrary.id, id)).run()
+  }
+  const createTemplateLibraryEntry = async (
+    x: NewTemplateLibraryEntry,
+  ): Promise<TemplateLibraryEntryRecord> =>
+    (await db
+      .insert(templateLibraryEntry)
+      .values(x)
+      .returning()
+      .get()) as TemplateLibraryEntryRecord
+  const getTemplateLibraryEntry = async (id: string): Promise<TemplateLibraryEntryRecord | null> =>
+    (await db.select().from(templateLibraryEntry).where(eq(templateLibraryEntry.id, id)).get()) ??
+    null
+  const listTemplateLibraryEntries = async (
+    libraryId: string,
+  ): Promise<TemplateLibraryEntryRecord[]> =>
+    db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.library_id, libraryId))
+      .orderBy(desc(templateLibraryEntry.created_at))
+      .all()
+  const searchTemplateLibraryEntries = async (opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>> => {
+    const needle = opts.query?.trim().toLowerCase()
+    return db
+      .select({ library: templateLibrary, entry: templateLibraryEntry })
+      .from(templateLibraryEntry)
+      .innerJoin(templateLibrary, eq(templateLibrary.id, templateLibraryEntry.library_id))
+      .where(
+        and(
+          or(
+            eq(templateLibrary.scope, "public"),
+            and(
+              eq(templateLibrary.org_id, opts.orgId),
+              or(
+                eq(templateLibrary.scope, "workspace"),
+                opts.ownerId
+                  ? and(
+                      eq(templateLibrary.scope, "private"),
+                      eq(templateLibrary.created_by, opts.ownerId),
+                    )
+                  : undefined,
+              ),
+            ),
+          ),
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibraryEntry.title} || ' ' || ${templateLibraryEntry.description} || ' ' || ${templateLibraryEntry.outcome} || ' ' || ${templateLibraryEntry.category} || ' ' || ${templateLibraryEntry.tags_json}) like ${`%${needle}%`}`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibraryEntry.created_at), desc(templateLibraryEntry.id))
+      .limit(Math.min(Math.max(opts.limit, 1), 1_000))
+      .all() as Promise<
+      Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>
+    >
+  }
+  const countTemplateLibraryEntries = async (
+    libraryIds: string[],
+  ): Promise<Record<string, number>> => {
+    if (!libraryIds.length) return {}
+    const rows = await db
+      .select({ library_id: templateLibraryEntry.library_id, total: count() })
+      .from(templateLibraryEntry)
+      .where(inArray(templateLibraryEntry.library_id, libraryIds))
+      .groupBy(templateLibraryEntry.library_id)
+      .all()
+    return Object.fromEntries(rows.map((row) => [row.library_id, Number(row.total)]))
+  }
+  const deleteTemplateLibraryEntry = async (id: string): Promise<void> => {
+    await db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id)).run()
   }
 
   // ---- GitHub sync sources -----------------------------------------------
@@ -3020,6 +3304,7 @@ export function makeRepos(db: SqliteDb) {
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -3027,7 +3312,7 @@ export function makeRepos(db: SqliteDb) {
     (await db
       .update(proposal)
       .set({ ...fields, decided_at: new Date().toISOString() })
-      .where(eq(proposal.id, id))
+      .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
       .returning()
       .get()) ?? null
 
@@ -3076,12 +3361,17 @@ export function makeRepos(db: SqliteDb) {
       .all()
   const resolveReviewRound = async (
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null> =>
     (await db
       .update(reviewRound)
       .set({ ...fields, resolved_at: new Date().toISOString() })
-      .where(eq(reviewRound.id, id))
+      .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
       .get()) ?? null
 
@@ -4470,6 +4760,63 @@ export function makeRepos(db: SqliteDb) {
 
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   const deleteUserData = async (userId: string): Promise<void> => {
+    // Private libraries and everything in the departing user's personal workspace
+    // belong to that account, so remove them with their entries. Shared/public
+    // libraries in a surviving workspace are durable team/public resources instead:
+    // hand their management to an owner (then an editor) deterministically. If no
+    // eligible member remains, use the route-recognized sentinel rather than retain
+    // the deleted account id in an API-visible publisher field.
+    const personalOrg = `ws_p_${userId}`
+    const ownedLibraries = await db
+      .select()
+      .from(templateLibrary)
+      .where(eq(templateLibrary.created_by, userId))
+      .all()
+    const deletedLibraryIds = ownedLibraries
+      .filter((library) => library.scope === "private" || library.org_id === personalOrg)
+      .map((library) => library.id)
+    if (deletedLibraryIds.length) {
+      await db
+        .delete(templateLibraryEntry)
+        .where(inArray(templateLibraryEntry.library_id, deletedLibraryIds))
+        .run()
+      await db.delete(templateLibrary).where(inArray(templateLibrary.id, deletedLibraryIds)).run()
+    }
+    for (const library of ownedLibraries) {
+      if (deletedLibraryIds.includes(library.id)) continue
+      const managers = await db
+        .select()
+        .from(membership)
+        .where(and(eq(membership.org_id, library.org_id), ne(membership.user_id, userId)))
+        .orderBy(asc(membership.created_at), asc(membership.user_id))
+        .all()
+      const manager =
+        managers.find((member) => member.role === "owner") ??
+        managers.find((member) => member.role === "editor")
+      const replacement = manager?.user_id ?? "__deleted_template_library_owner__"
+      await db
+        .update(templateLibrary)
+        .set({ created_by: replacement, updated_at: new Date().toISOString() })
+        .where(eq(templateLibrary.id, library.id))
+        .run()
+      await db
+        .update(templateLibraryEntry)
+        .set({ created_by: replacement })
+        .where(
+          and(
+            eq(templateLibraryEntry.library_id, library.id),
+            eq(templateLibraryEntry.created_by, userId),
+          ),
+        )
+        .run()
+    }
+    // The user may have contributed an entry to a library owned by somebody else.
+    // The library survives, but account deletion must still scrub that attribution.
+    await db
+      .update(templateLibraryEntry)
+      .set({ created_by: "__deleted_template_library_owner__" })
+      .where(eq(templateLibraryEntry.created_by, userId))
+      .run()
     // The user's own association rows go entirely.
     await db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId)).run()
     await db.delete(membership).where(eq(membership.user_id, userId)).run()
@@ -4504,10 +4851,7 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(collectionInvite.invited_by, userId))
       .run()
     // Drop the personal workspace row (removes the "<name>'s Workspace" label).
-    await db
-      .delete(workspace)
-      .where(eq(workspace.id, `ws_p_${userId}`))
-      .run()
+    await db.delete(workspace).where(eq(workspace.id, personalOrg)).run()
   }
   const listPendingAgentMentions = async (
     agentId: string,
@@ -4737,6 +5081,7 @@ export function makeRepos(db: SqliteDb) {
     artifactIdsByAuthor,
     artifactIdsOwnedBy,
     countArtifacts,
+    countArchivedArtifacts,
     countOwnedBy,
     storageBytes,
     tagCounts,
@@ -4744,6 +5089,8 @@ export function makeRepos(db: SqliteDb) {
     moveArtifactOrg,
     setArtifactRemoved,
     setArtifactsRemoved,
+    setArtifactArchived,
+    setArtifactsArchived,
     setArtifactTitle,
     setArtifactSourcePath,
     setArtifactUpdatedAt,
@@ -4840,6 +5187,20 @@ export function makeRepos(db: SqliteDb) {
     collectionRolesForArtifact,
     collectionRolesForUser,
     collectionMemberCounts,
+    createTemplateLibrary,
+    getTemplateLibrary,
+    listTemplateLibraries,
+    updateTemplateLibrary,
+    acquireTemplateLibraryMutation,
+    renewTemplateLibraryMutation,
+    releaseTemplateLibraryMutation,
+    deleteTemplateLibrary,
+    createTemplateLibraryEntry,
+    getTemplateLibraryEntry,
+    listTemplateLibraryEntries,
+    searchTemplateLibraryEntries,
+    countTemplateLibraryEntries,
+    deleteTemplateLibraryEntry,
     createRepoSource,
     getRepoSource,
     listRepoSources,

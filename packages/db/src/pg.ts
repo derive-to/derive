@@ -80,6 +80,8 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewSlackSubscription,
+  NewTemplateLibrary,
+  NewTemplateLibraryEntry,
   NewVersion,
   NewVersionData,
   NewView,
@@ -92,6 +94,7 @@ import type {
   PlanKind,
   PlanRecord,
   PreviewStatus,
+  ProposalApproval,
   ProposalRecord,
   ProposalState,
   RenderJobRecord,
@@ -115,6 +118,9 @@ import type {
   SlackUserLinkRecord,
   SubscriptionRecord,
   TakedownInput,
+  TemplateLibraryEntryRecord,
+  TemplateLibraryRecord,
+  TemplateLibraryScope,
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
@@ -209,6 +215,8 @@ import {
   slackThreadLink,
   slackUserLink,
   subscription,
+  templateLibrary,
+  templateLibraryEntry,
   userNotificationPref,
   version,
   versionData,
@@ -272,6 +280,8 @@ export const schema = {
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   githubApp,
   githubInstallation,
@@ -318,6 +328,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   folder: true,
+  templateLibrary: true,
+  templateLibraryEntry: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -357,29 +369,32 @@ const addRunCost = (micros: number | null | undefined) =>
 // Positional params are stable across every consumer: $1 = org id, $2 = user id
 // (nullable text), $3 = notifications page limit (bootstrap only).
 type SummaryRow = { kind: string; k: string | null; n: number | null }
-const WORKSPACE_SUMMARY_SQL = `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1
+const WORKSPACE_SUMMARY_SQL = `SELECT 'total' kind, NULL k, count(*)::int n FROM artifact WHERE org_id = $1 AND archived_at IS NULL
+       UNION ALL
+       SELECT 'archived', NULL, count(*)::int FROM artifact WHERE org_id = $1 AND archived_at IS NOT NULL
        UNION ALL
        SELECT 'tag', t.tag, count(*)::int FROM artifact_tag t
          JOIN artifact a ON a.id = t.artifact_id
-        WHERE a.org_id = $1 GROUP BY t.tag
+        WHERE a.org_id = $1 AND a.archived_at IS NULL GROUP BY t.tag
        UNION ALL
        SELECT 'workspace', w.name, NULL FROM workspace w WHERE w.id = $1
        UNION ALL
        SELECT 'favorites', NULL, count(*)::int FROM artifact_favorite f
          JOIN artifact a ON a.id = f.artifact_id
         WHERE $2::text IS NOT NULL AND f.user_id = $2
-          AND a.org_id = $1 AND a.removed_at IS NULL
+          AND a.org_id = $1 AND a.removed_at IS NULL AND a.archived_at IS NULL
        UNION ALL
        SELECT 'mine', NULL, count(*)::int FROM artifact a
          JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
-        WHERE $2::text IS NOT NULL AND a.org_id = $1
+        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.archived_at IS NULL
        UNION ALL
        SELECT 'mine_private', NULL, count(*)::int FROM artifact a
          JOIN artifact_member m ON m.artifact_id = a.id AND m.user_id = $2 AND m.role = 'owner'
-        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none'`
+        WHERE $2::text IS NOT NULL AND a.org_id = $1 AND a.listed = 'none' AND a.archived_at IS NULL`
 const mapSummaryRows = (rows: SummaryRow[]): WorkspaceSummary => {
   const out: WorkspaceSummary = {
     total: 0,
+    archived: 0,
     tags: [],
     workspace: null,
     favorites: 0,
@@ -390,6 +405,9 @@ const mapSummaryRows = (rows: SummaryRow[]): WorkspaceSummary => {
     switch (r.kind) {
       case "total":
         out.total = r.n ?? 0
+        break
+      case "archived":
+        out.archived = r.n ?? 0
         break
       case "tag":
         if (r.k !== null) out.tags.push({ tag: r.k, count: r.n ?? 0 })
@@ -456,7 +474,7 @@ const PREVIEW_STRIP_SQL = `SELECT ci.collection_id, a.id, a.short_id, a.title, a
                     ORDER BY COALESCE(a.updated_at, a.created_at) DESC, a.id DESC) rn
              FROM collection_item ci
              JOIN collection c ON c.id = ci.collection_id AND c.org_id = $1
-             JOIN artifact a ON a.id = ci.artifact_id AND a.removed_at IS NULL
+             JOIN artifact a ON a.id = ci.artifact_id AND a.removed_at IS NULL AND a.archived_at IS NULL
              LEFT JOIN "version" v ON v.artifact_id = a.id AND v.n = a.current_version`
 
 // `bylines` joins the Better Auth "user" table, which fresh self-hosts may not have —
@@ -471,7 +489,7 @@ const collectionsOverviewSql = (
          FROM collection c
          LEFT JOIN (
            SELECT ci2.collection_id, count(*)::int cnt FROM collection_item ci2
-             JOIN artifact a2 ON a2.id = ci2.artifact_id AND a2.removed_at IS NULL
+             JOIN artifact a2 ON a2.id = ci2.artifact_id AND a2.removed_at IS NULL AND a2.archived_at IS NULL
             GROUP BY ci2.collection_id
          ) ci ON ci.collection_id = c.id
          WHERE c.org_id = $1
@@ -702,6 +720,7 @@ export class PgMetaStore implements MetaStore {
           eq(artifact.org_id, orgId),
           inArray(artifact.source_path, paths),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
         ),
       )
     return rows.filter((r): r is typeof r & { source_path: string } => r.source_path != null)
@@ -1004,7 +1023,9 @@ export class PgMetaStore implements MetaStore {
         artifact,
         and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
       )
-      .where(and(eq(artifact.org_id, orgId), isNull(artifact.removed_at)))
+      .where(
+        and(eq(artifact.org_id, orgId), isNull(artifact.removed_at), isNull(artifact.archived_at)),
+      )
       .orderBy(asc(versionData.slot))
       .limit(opts?.limit ?? WORKSPACE_FACT_ROW_CAP)
   }
@@ -1013,8 +1034,8 @@ export class PgMetaStore implements MetaStore {
     slot: string,
     opts?: { tag?: string; limit?: number },
   ) {
-    // Joined on artifact.current_version so a superseded row can never be reported as the
-    // current state. Retired artifacts are excluded: they are out of the library.
+    // Joined on artifact.current_version so a superseded row cannot be reported as the
+    // current state. Tombstoned and archived artifacts are outside ordinary discovery.
     const tagged = opts?.tag
       ? this.db
           .select({ id: artifactTag.artifact_id })
@@ -1040,6 +1061,7 @@ export class PgMetaStore implements MetaStore {
           eq(artifact.org_id, orgId),
           eq(versionData.slot, slot),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -1096,6 +1118,7 @@ export class PgMetaStore implements MetaStore {
           eq(versionData.slot, LINKS_FACT),
           like(versionData.json, `%"${ref}"%`),
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           tagged ? inArray(artifact.id, tagged) : undefined,
         ),
       )
@@ -1798,12 +1821,25 @@ export class PgMetaStore implements MetaStore {
     const rows = await (orgId ? q.where(eq(artifact.org_id, orgId)) : q)
     return Number(rows[0]?.c ?? 0)
   }
+  async countArchivedArtifacts(orgId: string): Promise<number> {
+    const rows = await this.db
+      .select({ c: count() })
+      .from(artifact)
+      .where(and(eq(artifact.org_id, orgId), isNotNull(artifact.archived_at)))
+    return Number(rows[0]?.c ?? 0)
+  }
   async countOwnedBy(orgId: string, userId: string, listed?: Listed): Promise<number> {
     const rows = await this.db
       .select({ c: count() })
       .from(artifact)
       .innerJoin(artifactMember, this.ownerRowJoin(userId))
-      .where(and(eq(artifact.org_id, orgId), listed ? eq(artifact.listed, listed) : undefined))
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          isNull(artifact.archived_at),
+          listed ? eq(artifact.listed, listed) : undefined,
+        ),
+      )
     return Number(rows[0]?.c ?? 0)
   }
   async storageBytes(orgId: string): Promise<number> {
@@ -1922,7 +1958,8 @@ export class PgMetaStore implements MetaStore {
       .select({ tag: artifactTag.tag, count: count() })
       .from(artifactTag)
       .innerJoin(artifact, eq(artifact.id, artifactTag.artifact_id))
-    const rows = await (orgId ? base.where(eq(artifact.org_id, orgId)) : base)
+    const rows = await base
+      .where(and(orgId ? eq(artifact.org_id, orgId) : undefined, isNull(artifact.archived_at)))
       .groupBy(artifactTag.tag)
       .orderBy(asc(artifactTag.tag))
     return rows.map((r) => ({ tag: r.tag, count: Number(r.count) }))
@@ -2109,6 +2146,7 @@ export class PgMetaStore implements MetaStore {
       .where(
         and(
           isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
           isNull(version.preview_status),
           notExists(
             this.db
@@ -2264,6 +2302,20 @@ export class PgMetaStore implements MetaStore {
     return one(rows)
   }
   async deleteWorkspace(orgId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(templateLibraryEntry)
+        .where(
+          inArray(
+            templateLibraryEntry.library_id,
+            tx
+              .select({ id: templateLibrary.id })
+              .from(templateLibrary)
+              .where(eq(templateLibrary.org_id, orgId)),
+          ),
+        )
+      await tx.delete(templateLibrary).where(eq(templateLibrary.org_id, orgId))
+    })
     await this.db.delete(membership).where(eq(membership.org_id, orgId))
     // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
@@ -2499,6 +2551,7 @@ export class PgMetaStore implements MetaStore {
             eq(artifactFavorite.user_id, userId),
             eq(artifact.org_id, orgId),
             isNull(artifact.removed_at),
+            isNull(artifact.archived_at),
           ),
         )
       return rows.map((r) => r.id)
@@ -2619,7 +2672,13 @@ export class PgMetaStore implements MetaStore {
         version,
         and(eq(version.artifact_id, artifact.id), eq(version.n, artifact.current_version)),
       )
-      .where(and(inArray(collectionItem.collection_id, collectionIds), isNull(artifact.removed_at)))
+      .where(
+        and(
+          inArray(collectionItem.collection_id, collectionIds),
+          isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
+        ),
+      )
     // Newest first, tie-broken on id: two artifacts published in the same millisecond
     // would otherwise land in whatever order the driver returned them, and a strip that
     // reshuffles between page loads reads as churn.
@@ -2741,7 +2800,7 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(isNull(artifact.removed_at), match))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at), match))
     return rows.map((r) => r.id)
   }
   // ---- People profiles: works, shared workspaces, follower/following -----
@@ -2976,7 +3035,7 @@ export class PgMetaStore implements MetaStore {
       .select({ id: collectionItem.collection_id, c: count() })
       .from(collectionItem)
       .innerJoin(artifact, eq(artifact.id, collectionItem.artifact_id))
-      .where(isNull(artifact.removed_at))
+      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at)))
       .groupBy(collectionItem.collection_id)
     const cmap = new Map(counts.map((r) => [r.id, Number(r.c)]))
     return rows.map((r) => ({ ...r, count: cmap.get(r.id) ?? 0 }))
@@ -3212,6 +3271,170 @@ export class PgMetaStore implements MetaStore {
     const out: Record<string, Role> = {}
     for (const r of rows) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
+  }
+
+  // ---- Template libraries ------------------------------------------------
+  async createTemplateLibrary(x: NewTemplateLibrary): Promise<TemplateLibraryRecord> {
+    const rows = await this.db.insert(templateLibrary).values(x).returning()
+    return one(rows)
+  }
+  async getTemplateLibrary(id: string): Promise<TemplateLibraryRecord | null> {
+    const rows = await this.db.select().from(templateLibrary).where(eq(templateLibrary.id, id))
+    return rows[0] ?? null
+  }
+  async listTemplateLibraries(opts?: {
+    orgId?: string
+    scope?: TemplateLibraryScope
+    createdBy?: string
+    query?: string
+    before?: { createdAt: string; id: string }
+    limit?: number
+  }): Promise<TemplateLibraryRecord[]> {
+    const needle = opts?.query?.trim().toLowerCase()
+    return this.db
+      .select()
+      .from(templateLibrary)
+      .where(
+        and(
+          opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
+          opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
+          opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibrary.description}) like ${`%${needle}%`}`
+            : undefined,
+          opts?.before
+            ? or(
+                lt(templateLibrary.created_at, opts.before.createdAt),
+                and(
+                  eq(templateLibrary.created_at, opts.before.createdAt),
+                  lt(templateLibrary.id, opts.before.id),
+                ),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibrary.created_at), desc(templateLibrary.id))
+      .limit(Math.min(Math.max(opts?.limit ?? 1_000, 1), 1_000))
+  }
+  async updateTemplateLibrary(
+    id: string,
+    fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibraryRecord | null> {
+    if (Object.keys(fields).length === 0) return this.getTemplateLibrary(id)
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ ...fields, updated_at: new Date().toISOString() })
+      .where(eq(templateLibrary.id, id))
+      .returning()
+    return rows[0] ?? null
+  }
+  async acquireTemplateLibraryMutation(
+    id: string,
+    token: string,
+    staleBefore: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ mutation_token: token, mutation_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(templateLibrary.id, id),
+          or(
+            isNull(templateLibrary.mutation_token),
+            lt(templateLibrary.mutation_started_at, staleBefore),
+          ),
+        ),
+      )
+      .returning({ id: templateLibrary.id })
+    return rows.length > 0
+  }
+  async renewTemplateLibraryMutation(id: string, token: string): Promise<boolean> {
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ mutation_started_at: new Date().toISOString() })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+      .returning({ id: templateLibrary.id })
+    return rows.length > 0
+  }
+  async releaseTemplateLibraryMutation(id: string, token: string): Promise<void> {
+    await this.db
+      .update(templateLibrary)
+      .set({ mutation_token: null, mutation_started_at: null })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+  }
+  async deleteTemplateLibrary(id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(templateLibraryEntry).where(eq(templateLibraryEntry.library_id, id))
+      await tx.delete(templateLibrary).where(eq(templateLibrary.id, id))
+    })
+  }
+  async createTemplateLibraryEntry(
+    x: NewTemplateLibraryEntry,
+  ): Promise<TemplateLibraryEntryRecord> {
+    const rows = await this.db.insert(templateLibraryEntry).values(x).returning()
+    return one(rows)
+  }
+  async getTemplateLibraryEntry(id: string): Promise<TemplateLibraryEntryRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.id, id))
+    return rows[0] ?? null
+  }
+  listTemplateLibraryEntries(libraryId: string): Promise<TemplateLibraryEntryRecord[]> {
+    return this.db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.library_id, libraryId))
+      .orderBy(desc(templateLibraryEntry.created_at))
+  }
+  async searchTemplateLibraryEntries(opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>> {
+    const needle = opts.query?.trim().toLowerCase()
+    return this.db
+      .select({ library: templateLibrary, entry: templateLibraryEntry })
+      .from(templateLibraryEntry)
+      .innerJoin(templateLibrary, eq(templateLibrary.id, templateLibraryEntry.library_id))
+      .where(
+        and(
+          or(
+            eq(templateLibrary.scope, "public"),
+            and(
+              eq(templateLibrary.org_id, opts.orgId),
+              or(
+                eq(templateLibrary.scope, "workspace"),
+                opts.ownerId
+                  ? and(
+                      eq(templateLibrary.scope, "private"),
+                      eq(templateLibrary.created_by, opts.ownerId),
+                    )
+                  : undefined,
+              ),
+            ),
+          ),
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibraryEntry.title} || ' ' || ${templateLibraryEntry.description} || ' ' || ${templateLibraryEntry.outcome} || ' ' || ${templateLibraryEntry.category} || ' ' || ${templateLibraryEntry.tags_json}) like ${`%${needle}%`}`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibraryEntry.created_at), desc(templateLibraryEntry.id))
+      .limit(Math.min(Math.max(opts.limit, 1), 1_000))
+  }
+  async countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>> {
+    if (!libraryIds.length) return {}
+    const rows = await this.db
+      .select({ library_id: templateLibraryEntry.library_id, total: count() })
+      .from(templateLibraryEntry)
+      .where(inArray(templateLibraryEntry.library_id, libraryIds))
+      .groupBy(templateLibraryEntry.library_id)
+    return Object.fromEntries(rows.map((row) => [row.library_id, Number(row.total)]))
+  }
+  async deleteTemplateLibraryEntry(id: string): Promise<void> {
+    await this.db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id))
   }
 
   // ---- GitHub sync sources -----------------------------------------------
@@ -3724,11 +3947,77 @@ export class PgMetaStore implements MetaStore {
     for (const r of rows) out[r.artifact_id] = r.c
     return out
   }
+  async approveOpenProposal(id: string, approval: ProposalApproval): Promise<VersionRecord | null> {
+    return this.db.transaction(async (tx) => {
+      // Lock the proposal first: exactly one caller may observe it as open. The
+      // version append and audit decision then commit or roll back together.
+      const open = await tx
+        .select()
+        .from(proposal)
+        .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
+        .for("update")
+      const p = open[0]
+      if (!p) return null
+
+      const current = await tx
+        .select({ cv: artifact.current_version })
+        .from(artifact)
+        .where(eq(artifact.id, p.artifact_id))
+        .for("update")
+      if (!current[0]) throw new Error(`artifact not found: ${p.artifact_id}`)
+      const n = current[0].cv + 1
+      const now = new Date().toISOString()
+
+      await tx.insert(version).values({
+        id: approval.version_id,
+        artifact_id: p.artifact_id,
+        n,
+        blob_key: p.blob_key,
+        content_type: p.content_type,
+        size_bytes: approval.size_bytes,
+        author: p.author,
+        author_id: p.author_id,
+        message: p.message ?? "Approved proposal",
+        name: null,
+      })
+      await tx
+        .update(artifact)
+        .set({
+          current_version: n,
+          current_content_type: p.content_type,
+          updated_at: now,
+          author_name: p.author,
+          author_login: null,
+          author_avatar: null,
+          author_gh_id: null,
+          author_id: p.author_id,
+        })
+        .where(eq(artifact.id, p.artifact_id))
+      await tx
+        .update(proposal)
+        .set({
+          state: "approved",
+          decided_by: approval.decided_by,
+          decided_by_id: approval.decided_by_id,
+          decided_version: n,
+          decision_note: approval.decision_note ?? null,
+          decided_at: now,
+        })
+        .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
+
+      const rows = await tx
+        .select()
+        .from(version)
+        .where(and(eq(version.artifact_id, p.artifact_id), eq(version.n, n)))
+      return one(rows)
+    })
+  }
   async decideProposal(
     id: string,
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -3736,7 +4025,7 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .update(proposal)
       .set({ ...fields, decided_at: new Date().toISOString() })
-      .where(eq(proposal.id, id))
+      .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
       .returning()
     return rows[0] ?? null
   }
@@ -3785,12 +4074,17 @@ export class PgMetaStore implements MetaStore {
   }
   async resolveReviewRound(
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null> {
     const rows = await this.db
       .update(reviewRound)
       .set({ ...fields, resolved_at: new Date().toISOString() })
-      .where(eq(reviewRound.id, id))
+      .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
     return rows[0] ?? null
   }
@@ -5444,6 +5738,51 @@ export class PgMetaStore implements MetaStore {
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   async deleteUserData(userId: string): Promise<void> {
     await this.db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId))
+    const personalOrg = `ws_p_${userId}`
+    const ownedLibraries = await this.db
+      .select()
+      .from(templateLibrary)
+      .where(eq(templateLibrary.created_by, userId))
+    const deletedLibraryIds = ownedLibraries
+      .filter((library) => library.scope === "private" || library.org_id === personalOrg)
+      .map((library) => library.id)
+    if (deletedLibraryIds.length) {
+      await this.db.transaction(async (tx) => {
+        await tx
+          .delete(templateLibraryEntry)
+          .where(inArray(templateLibraryEntry.library_id, deletedLibraryIds))
+        await tx.delete(templateLibrary).where(inArray(templateLibrary.id, deletedLibraryIds))
+      })
+    }
+    for (const library of ownedLibraries) {
+      if (deletedLibraryIds.includes(library.id)) continue
+      const managers = await this.db
+        .select()
+        .from(membership)
+        .where(and(eq(membership.org_id, library.org_id), ne(membership.user_id, userId)))
+        .orderBy(asc(membership.created_at), asc(membership.user_id))
+      const manager =
+        managers.find((member) => member.role === "owner") ??
+        managers.find((member) => member.role === "editor")
+      const replacement = manager?.user_id ?? "__deleted_template_library_owner__"
+      await this.db
+        .update(templateLibrary)
+        .set({ created_by: replacement, updated_at: new Date().toISOString() })
+        .where(eq(templateLibrary.id, library.id))
+      await this.db
+        .update(templateLibraryEntry)
+        .set({ created_by: replacement })
+        .where(
+          and(
+            eq(templateLibraryEntry.library_id, library.id),
+            eq(templateLibraryEntry.created_by, userId),
+          ),
+        )
+    }
+    await this.db
+      .update(templateLibraryEntry)
+      .set({ created_by: "__deleted_template_library_owner__" })
+      .where(eq(templateLibraryEntry.created_by, userId))
     await this.db.delete(membership).where(eq(membership.user_id, userId))
     await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
     await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))
@@ -5470,7 +5809,7 @@ export class PgMetaStore implements MetaStore {
       .update(collectionInvite)
       .set({ invited_by: null })
       .where(eq(collectionInvite.invited_by, userId))
-    await this.db.delete(workspace).where(eq(workspace.id, `ws_p_${userId}`))
+    await this.db.delete(workspace).where(eq(workspace.id, personalOrg))
   }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
     return this.db
@@ -5536,6 +5875,13 @@ export class PgMetaStore implements MetaStore {
   async setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void> {
     if (ids.length === 0) return
     await this.db.update(artifact).set({ removed_at: removedAt }).where(inArray(artifact.id, ids))
+  }
+  async setArtifactArchived(id: string, archivedAt: string | null): Promise<void> {
+    await this.db.update(artifact).set({ archived_at: archivedAt }).where(eq(artifact.id, id))
+  }
+  async setArtifactsArchived(ids: string[], archivedAt: string | null): Promise<void> {
+    if (ids.length === 0) return
+    await this.db.update(artifact).set({ archived_at: archivedAt }).where(inArray(artifact.id, ids))
   }
   async setArtifactTitle(id: string, title: string, slug?: string | null): Promise<void> {
     await this.db

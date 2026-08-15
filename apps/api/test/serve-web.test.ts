@@ -2,7 +2,8 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Hono } from "hono"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { API_PATHS, isApiPath, mountWeb, workerFirstGlobs } from "../src/lib/serve-web"
+import { API_PATHS, isApiPath, mountWeb } from "../src/lib/serve-web"
+import { isServerRenderedPath, isSpaPath, isStaticRootPath } from "../src/lib/spa-paths"
 
 const apiDir = join(import.meta.dirname, "..")
 
@@ -30,11 +31,18 @@ describe("serve-web: SPA vs API path contract", () => {
       "/.well-known/oauth-protected-resource",
     ])
       expect(isApiPath(p)).toBe(true)
-    for (const p of ["/", "/artifacts/abc123", "/login", "/settings/agents", "/library"])
+    for (const p of [
+      "/",
+      "/archived",
+      "/artifacts/abc123",
+      "/login",
+      "/settings/agents",
+      "/library",
+    ])
       expect(isApiPath(p)).toBe(false)
   })
 
-  it("falls back to the SPA shell for non-API GETs, JSON 404 for unknown API paths", async () => {
+  it("serves the shell only for real client routes and returns real 404s elsewhere", async () => {
     const app = makeApp("SHELL_MARKER")
     expect((await app.request("/v1/ping")).status).toBe(200) // a real API route still wins
     for (const p of ["/", "/artifacts/xyz", "/settings/agents"]) {
@@ -45,6 +53,59 @@ describe("serve-web: SPA vs API path contract", () => {
     const miss = await app.request("/v1/nope")
     expect(miss.status).toBe(404) // unknown API path → JSON 404, never the shell
     expect(await miss.json()).toEqual({ error: "not found" })
+    const pageMiss = await app.request("/definitely-not-a-route")
+    expect(pageMiss.status).toBe(404)
+    expect(await pageMiss.text()).toBe("not found")
+  })
+
+  it("keeps the route allowlist aligned with the generated client tree", () => {
+    for (const path of [
+      "/",
+      "/artifacts/a1b2c3d4",
+      "/claim/token",
+      "/collections/collection-id",
+      "/contexts/context-id",
+      "/invite/token",
+      "/invite/a/token",
+      "/invite/c/token",
+      "/settings/members",
+      "/showcase",
+      "/users/maya",
+    ])
+      expect(isSpaPath(path)).toBe(true)
+    for (const path of [
+      "/artifacts",
+      "/collections",
+      "/invite/a/b/c",
+      "/users",
+      "/unknown",
+      "/settings/a/b",
+    ])
+      expect(isSpaPath(path)).toBe(false)
+
+    const routeTree = readFileSync(join(apiDir, "../web/src/routeTree.gen.ts"), "utf8")
+    const generatedPaths = [...routeTree.matchAll(/fullPath: '([^']+)'/g)].map(
+      (match) => match[1] ?? "",
+    )
+    expect(generatedPaths.length).toBeGreaterThan(20)
+    for (const generatedPath of generatedPaths) {
+      const sample = generatedPath.replace(/\$[^/]+/g, "example")
+      expect(isSpaPath(sample), `${generatedPath} must be represented by isSpaPath`).toBe(true)
+    }
+  })
+
+  it("keeps server-rendered setup and unfurl paths on the app", () => {
+    for (const path of [
+      "/",
+      "/guides",
+      "/artifacts/example-a1b2c3d4",
+      "/settings/github/app/new",
+      "/settings/slack/app/new",
+      "/users/maya",
+    ])
+      expect(isServerRenderedPath(path)).toBe(true)
+    for (const path of ["/showcase", "/settings/security", "/not-a-route"])
+      expect(isServerRenderedPath(path)).toBe(false)
   })
 })
 
@@ -63,6 +124,7 @@ describe("serve-web: static trust-signal files are not swallowed by the shell", 
     mkdirSync(join(rootAbs, ".well-known"), { recursive: true })
     writeFileSync(join(rootAbs, ".well-known", "security.txt"), "Contact: mailto:security@x\n")
     writeFileSync(join(rootAbs, "sitemap.xml"), '<?xml version="1.0"?><urlset/>')
+    writeFileSync(join(rootAbs, "security.html"), "<!doctype html><h1>Security</h1>")
   })
   afterAll(() => rmSync(rootAbs, { recursive: true, force: true }))
 
@@ -82,6 +144,11 @@ describe("serve-web: static trust-signal files are not swallowed by the shell", 
     const map = await app().request("/sitemap.xml")
     expect(map.status).toBe(200)
     expect(await map.text()).toContain("<urlset/>")
+
+    const page = await app().request("/security")
+    expect(page.status).toBe(200)
+    expect(page.headers.get("content-type")).toContain("text/html")
+    expect(await page.text()).toContain("<h1>Security</h1>")
   })
 
   it("does not shadow server-owned well-knowns", async () => {
@@ -96,10 +163,10 @@ describe("serve-web: static trust-signal files are not swallowed by the shell", 
     expect(await miss.json()).toEqual({ error: "not found" })
   })
 
-  it("still falls back to the shell for a missing dot-directory file", async () => {
+  it("returns a real 404 for a missing dot-directory file", async () => {
     const r = await app().request("/.well-known/nothing-here.txt")
-    expect(r.status).toBe(200)
-    expect(await r.text()).toContain("SHELL_MARKER")
+    expect(r.status).toBe(404)
+    expect(await r.text()).toBe("not found")
   })
 })
 
@@ -107,11 +174,22 @@ describe("serve-web: static trust-signal files are not swallowed by the shell", 
 // the Node server (the contract above), the Cloudflare Worker, and the dev proxy.
 // These assert the other two never drift from the contract.
 describe("serve-web: every declaration of the path set agrees", () => {
-  it("wrangler.toml run_worker_first == the contract", () => {
+  it("routes every navigation through the Worker so unknown paths can be real 404s", () => {
     const toml = readFileSync(join(apiDir, "wrangler.toml"), "utf8")
-    const m = toml.match(/run_worker_first\s*=\s*\[([^\]]*)\]/)
-    if (!m) throw new Error("run_worker_first not found in wrangler.toml")
-    expect(quoted(m[1] ?? "").sort()).toEqual([...workerFirstGlobs()].sort())
+    expect(toml).toMatch(/run_worker_first\s*=\s*true/)
+  })
+
+  it("sends the canonical security URL and trust-signal files to static assets", () => {
+    for (const path of [
+      "/security",
+      "/security.html",
+      "/.well-known/security.txt",
+      "/llms.txt",
+      "/robots.txt",
+      "/sitemap.xml",
+    ])
+      expect(isStaticRootPath(path), `${path} must reach the asset binding`).toBe(true)
+    expect(isStaticRootPath("/definitely-not-a-static-file")).toBe(false)
   })
 
   it("the Vite dev proxy list == the contract", () => {

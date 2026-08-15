@@ -28,6 +28,9 @@ import type {
   SlackAuthorFilter,
   SlackScopeKind,
   SlackThreadSurface,
+  TemplateEntryFormat,
+  TemplateEntryKind,
+  TemplateLibraryScope,
   VersionSource,
   WebhookKind,
   WorkspaceAccess,
@@ -83,6 +86,9 @@ export const artifact = sqliteTable("artifact", {
   // existing DBs (SQLite forbids a non-constant default there).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Reversible library cleanup. Unlike removed_at (moderation/sync tombstone), this
+  // only changes discovery: direct URLs and bytes remain readable.
+  archived_at: text("archived_at"),
   // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
   // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
   expires_at: text("expires_at"),
@@ -485,9 +491,9 @@ export const betaSignup = sqliteTable(
   (t) => [uniqueIndex("beta_signup_email").on(t.email)],
 )
 
-// Where a signup came from. One row per user, written by the auth
-// layer's user-create hook from the `d_src` cookie the capture middleware stamped;
-// first write wins — the attribution of record is the one at signup time. No FK to
+// Where a signup came from. One row per user, written from the explicit source
+// carried by the signup URL during the short post-auth window; first write wins.
+// No FK to
 // Better Auth's user table: auth owns its tables out-of-band, like beta_signup.
 export const signupAttribution = sqliteTable(
   "signup_attribution",
@@ -499,7 +505,8 @@ export const signupAttribution = sqliteTable(
     source_kind: text("source_kind").notNull(),
     // The artifact (short id) the sourcing surface lived on, when known.
     source_artifact: text("source_artifact"),
-    // Path of the page that stamped the cookie, and the referrer host at stamp time.
+    // Coarse public landing path. `referrer` remains for backward-compatible rows;
+    // cookieless attribution deliberately writes null for new signups.
     landing_path: text("landing_path"),
     referrer: text("referrer"),
     created_at: text("created_at").notNull().default(now),
@@ -687,6 +694,54 @@ export const collectionFavorite = sqliteTable(
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("collection_favorite_user").on(t.collection_id, t.user_id)],
+)
+
+// A library is deliberately a content-sharing boundary of its own. Entries
+// snapshot a source artifact version below, so making a library public is an
+// explicit publication action—not a live widening of the source artifact.
+export const templateLibrary = sqliteTable("template_library", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  scope: text("scope").$type<TemplateLibraryScope>().notNull().default("private"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().default(now),
+  updated_at: text("updated_at"),
+  mutation_token: text("mutation_token"),
+  mutation_started_at: text("mutation_started_at"),
+})
+
+// An entry owns the exact starter bytes it publishes through source_blob_key +
+// source_content_type. source_artifact_id/source_version are provenance only;
+// consumers never read the source artifact to adopt this template.
+export const templateLibraryEntry = sqliteTable(
+  "template_library_entry",
+  {
+    id: text("id").primaryKey(),
+    library_id: text("library_id")
+      .notNull()
+      .references(() => templateLibrary.id),
+    // Deliberately not an FK: this is immutable provenance. A creator may
+    // delete the original artifact without breaking an already-published
+    // library snapshot (the bytes are held by source_blob_key).
+    source_artifact_id: text("source_artifact_id").notNull(),
+    source_version: integer("source_version").notNull(),
+    source_blob_key: text("source_blob_key").notNull(),
+    source_content_type: text("source_content_type").notNull(),
+    kind: text("kind").$type<TemplateEntryKind>().notNull(),
+    category: text("category").notNull(),
+    format: text("format").$type<TemplateEntryFormat>().notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    outcome: text("outcome").notNull(),
+    sections_json: text("sections_json").notNull().default("[]"),
+    inputs_json: text("inputs_json").notNull().default("[]"),
+    tags_json: text("tags_json").notNull().default("[]"),
+    created_by: text("created_by").notNull(),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [index("template_library_entry_library").on(t.library_id, t.created_at)],
 )
 
 // A GitHub repo mirrored into a collection, one-way. `files` is a JSON path→
@@ -958,6 +1013,8 @@ export const proposal = sqliteTable("proposal", {
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
+  // Stable decider identity. Nullable for historical rows that stored only a name.
+  decided_by_id: text("decided_by_id"),
   decided_version: integer("decided_version"),
   decision_note: text("decision_note"),
   decided_at: text("decided_at"),
@@ -984,6 +1041,9 @@ export const reviewRound = sqliteTable(
     requested_for: text("requested_for").notNull(),
     state: text("state").$type<ReviewRoundState>().notNull().default("pending"),
     note: text("note"),
+    // `requested_for` is who was asked; these record who actually settled it.
+    resolved_by: text("resolved_by"),
+    resolved_by_name: text("resolved_by_name"),
     created_at: text("created_at").notNull().default(now),
     resolved_at: text("resolved_at"),
   },
@@ -1234,6 +1294,8 @@ const TABLES = [
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   orgSettings,
   subscription,

@@ -37,6 +37,11 @@ describe("reflowHtml", () => {
     expect(out.indexOf("data-derive-reflow")).toBeLessThan(out.indexOf("<title>"))
   })
 
+  it("does not mistake a quoted > for the end of an opening tag", () => {
+    const out = reflowHtml('<html><head data-note="> value"><title>x</title></head></html>')
+    expect(out).toContain('<head data-note="> value"><meta name="viewport"')
+  })
+
   it("leaves an already-responsive document byte-for-byte unchanged", () => {
     const src =
       '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>x</title></head><body>hi</body></html>'

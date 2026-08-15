@@ -17,7 +17,6 @@ import { configWarnings } from "./config-manifest"
 import { restEmbedder } from "./embedder"
 import { loadLocalEmbedder } from "./embedder-local"
 import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
-import { signupAttributionHook } from "./lib/attribution"
 import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nodeSandbox } from "./lib/code-sandbox-node"
@@ -231,8 +230,6 @@ const auth = makeAuth(authDb, cfg.baseUrl, authSecret, {
   // billable in (see purgeUserDataAndSyncSeats) — otherwise a vacated editor/owner
   // seat keeps being billed until an unrelated membership change happens to heal it.
   purgeUserData: (userId) => purgeUserDataAndSyncSeats(meta, billing, userId),
-  // The d_src stamp (lib/attribution.ts) becomes the account's signup_attribution row.
-  recordSignupAttribution: signupAttributionHook(meta),
 })
 await migrateAuth(auth)
 
@@ -306,15 +303,18 @@ const readSitePage = (name: string): string | null => {
     return null
   }
 }
+const notFoundHtml = cfg.serveWeb ? readSitePage("../404.html") : null
 const marketingHome = cfg.serveWeb ? readSitePage("index.html") : null
 const marketingPricing = cfg.serveWeb ? readSitePage("pricing.html") : null
 const marketingPrivacy = cfg.serveWeb ? readSitePage("privacy.html") : null
+const marketingExamples = cfg.serveWeb ? readSitePage("examples.html") : null
 const marketing =
-  marketingHome || marketingPricing || marketingPrivacy
+  marketingHome || marketingPricing || marketingPrivacy || marketingExamples
     ? {
         home: async () => marketingHome,
         pricing: async () => marketingPricing,
         privacy: async () => marketingPrivacy,
+        examples: async () => marketingExamples,
       }
     : undefined
 
@@ -577,6 +577,7 @@ if (cfg.serveWeb && shellHtml !== undefined)
   mountWeb(app, {
     webRoot: relative(process.cwd(), cfg.webDir) || ".",
     shellHtml,
+    notFoundHtml: notFoundHtml ?? undefined,
   })
 
 // Analytics retention: views are a rolling window (default 365 days). A daily

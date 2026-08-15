@@ -5,18 +5,18 @@
   </picture>
 </p>
 
-<h1 align="center">Publish, review, and own your AI artifacts.</h1>
+<h1 align="center">Turn agent output into approved work.</h1>
 
 <p align="center">
-Permanent versioned URLs and a review loop your team and its agents share, on infrastructure you control. Hosted, or one self-hosted container.
+One durable URL for every version, comment, revision, and decision. Your team reviews the work; any compatible agent can act on the feedback. Hosted, or one self-hosted container.
 </p>
 
 <p align="center">
   <a href="https://derive.to"><b>Try free</b></a>
   &nbsp;·&nbsp;
-  <a href="QUICKSTART.md">Self-host</a>
+  <a href="https://docs.derive.to/self-hosting/quickstart/">Self-host</a>
   &nbsp;·&nbsp;
-  <a href="STANDARD.md">Docs</a>
+  <a href="https://docs.derive.to">Docs</a>
 </p>
 
 <p align="center">
@@ -46,7 +46,7 @@ npx skills add derive-to/derive --skill derive        # any agent that reads ski
 claude mcp add --transport http derive https://derive.to/mcp   # or connect over MCP
 ```
 
-Or paste this into any agent and let it set itself up:
+Or paste this into a compatible coding agent and let it set itself up:
 
 ```text
 I'd like you to set up Derive — where the work we make gets published, reviewed, and kept.
@@ -59,7 +59,7 @@ Then pick something real we've worked on recently — a plan, a report, a design
 
 ## What is Derive
 
-Derive gives any static artifact, an HTML page, a Markdown doc, or a whole built site, a permanent URL with version history. Publish it from the CLI, the HTTP API, or an agent over MCP. View it rendered inside a sandboxed iframe. Share it with your team, gather comments pinned to the exact text, and approve revisions in a review loop that people and agents run together.
+Derive is review and approval for work made by AI agents. Give an HTML page, a Markdown doc, or a whole built site a durable URL with its complete version history. Publish from the CLI, HTTP API, or a compatible agent over MCP. Your team reviews the rendered work, leaves comments pinned to the exact text, requests revisions, and records a named approval at the same URL.
 
 And the context travels with the work. Every artifact carries its content, its versions, and every review comment, so the context stays alive as it moves between people and tools. That kept context is what makes Derive model-agnostic: keep collaborating by hand or with your model of choice, and hand off without losing the thread, because the source of truth lives with the document, not inside any one AI chat.
 
@@ -124,15 +124,14 @@ Also included:
 - ✅ **Real-time collaboration.** Comments, approvals, and who-else-is-here presence stream live over Server-Sent Events.
 - ✅ **Rich share unfurls.** Every share link unfurls as a card in Slack, Discord, X, and Notion, showing the artifact itself, not a generic placeholder.
 - ✅ **CLI-first.** Scaffold and publish from the terminal.
-- ✅ **Remote MCP server.** Connect any agent with one command.
+- ✅ **Remote MCP server.** Connect a compatible agent with one command.
 - ✅ **Visibility controls.** Private, org, or public, with an optional password to lock public links.
 
 ## Roadmap
 
-The roadmap is a living Derive artifact — maintained through its own review loop,
-versioned on every revision — at **[derive.to/roadmap](https://derive.to/roadmap)**
-(themes snapshot in [ROADMAP.md](ROADMAP.md)). The direction in one line: pages you
-ask for and never maintain.
+The roadmap is a living Derive artifact — maintained through its own review loop and
+versioned on every revision — at **[derive.to/roadmap](https://derive.to/roadmap)**.
+The direction in one line: pages you ask for and never maintain.
 
 - **Living pages.** Describe a page in one sentence. A context builds it; a schedule keeps it current. Same URL, new version each run.
 - **Provenance.** Every generated artifact names the context and brief that produced it. Feedback goes on the brief; the next run picks it up.
@@ -164,13 +163,20 @@ You get a library, in-browser publishing, and the comment loop in about a minute
 One container is the whole product: API, web, sign-in, publishing, comments, and the
 sandboxed viewer, with SQLite and blobs in one volume.
 
-Follow the **[self-hosting quick start](QUICKSTART.md)** to install a digest-pinned release or
-build the current checkout. It includes secure first-user bootstrap, readiness checks, and a
-verified first backup. See [DEPLOY.md](DEPLOY.md) for Postgres, S3/R2, and cloud hosts.
+Follow the
+**[self-hosting quick start](https://docs.derive.to/self-hosting/quickstart/)** to install a
+digest-pinned release or build the current checkout. It includes secure first-user bootstrap,
+readiness checks, and a verified first backup. See the
+[deployment guide](https://docs.derive.to/self-hosting/configuration/) for Postgres, S3/R2, and
+cloud hosts.
 
 </td>
 </tr>
 </table>
+
+Want a complete artifact rather than a blank starter? Open or publish one of the
+**[official workflow examples](https://derive.to/examples)**: a designed launch page, a research
+brief, or a living status report, each with a review prompt and no invented customer claims.
 
 ### From the terminal
 
@@ -233,24 +239,34 @@ packages/cli      derive init (md/html/slides) · derive publish <file|dir> · d
 packages/mcp      Local compatibility MCP: eight agent tools + derive://guide
 ```
 
-Every artifact ships OG and Twitter meta plus an oEmbed document, serves a live Server-Sent Events stream, and renders under a strict sandbox CSP on an opaque origin. See [STANDARD.md](STANDARD.md) for the authoring and embed details.
+Every artifact ships OG and Twitter meta plus an oEmbed document, serves a live Server-Sent
+Events stream, and renders under a strict sandbox CSP on an opaque origin. See the
+[artifact authoring standard](https://docs.derive.to/artifacts/authoring/) for authoring and
+embed details.
 
 ## Deploy
 
 The single-container image runs on any host with a persistent volume.
 
-For a fresh installation, start with **[QUICKSTART.md](QUICKSTART.md)**. The full deployment
-reference below covers managed hosts, external storage, scaling, and optional services.
+For a fresh installation, start with the
+**[self-hosting quickstart](https://docs.derive.to/self-hosting/quickstart/)**. The full
+deployment reference below covers managed hosts, external storage, scaling, and optional
+services.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
 &nbsp;&nbsp;
-[![Deploy to Fly.io](https://img.shields.io/badge/Deploy%20to-Fly.io-8B5CF6)](DEPLOY.md)
+[![Deploy to Fly.io](https://img.shields.io/badge/Deploy%20to-Fly.io-8B5CF6)](https://docs.derive.to/self-hosting/configuration/)
 
 - **Railway:** New Project → Deploy from GitHub repo → this repo. Add a Volume mounted at `/data` so SQLite and blobs persist, or attach Railway Postgres and set `DATABASE_URL`.
 - **Fly.io:** `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`, then `fly deploy`.
 
-Both auto-detect their assigned URL for auth cookies and share links; set `BASE_URL` only for a custom domain. Full guide: [DEPLOY.md](DEPLOY.md).
+Both auto-detect their assigned URL for auth cookies and share links; set `BASE_URL` only for a
+custom domain. See the
+[full deployment guide](https://docs.derive.to/self-hosting/configuration/).
 
 ## License
 
-[Functional Source License (FSL-1.1-ALv2)](LICENSE), fair source. Run, modify, and self-host Derive freely for any purpose except offering it as a competing commercial product or service. Each release automatically converts to Apache-2.0 two years after it ships. The plain-English version: [LICENSING.md](LICENSING.md).
+[Functional Source License (FSL-1.1-ALv2)](LICENSE), fair source. Run, modify, and self-host
+Derive freely for any purpose except offering it as a competing commercial product or service.
+Each release automatically converts to Apache-2.0 two years after it ships. See the
+[plain-English licensing guide](https://docs.derive.to/reference/licensing/).

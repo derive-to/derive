@@ -83,8 +83,9 @@ export type LibraryParams = {
   // "following" → the activity feed (followed authors + repo path prefixes);
   // "shared" → artifacts explicitly shared with you (can span workspaces);
   // "needs_feedback" → artifacts with an open thread you're tagged in or commented on;
-  // "mine" → everything you've published by hand, any visibility included.
-  scope?: "following" | "shared" | "needs_feedback" | "mine"
+  // "mine" → everything you've published by hand, any visibility included;
+  // "archived" → the reversible archive shelf.
+  scope?: "following" | "shared" | "needs_feedback" | "mine" | "archived"
   // Grid order; the query key already includes the whole params object, so each sort caches
   // independently. Absent ⇒ the API default (created); the library passes DEFAULT_SORT.
   sort?: SortMode
@@ -328,6 +329,11 @@ export const artifactQuery = (shortId: string, client?: QueryClient) =>
   queryOptions({
     queryKey: ["artifact", shortId] as const,
     queryFn: () => api.getArtifact(shortId),
+    // Detail responses contain a short-lived raw-content capability. Persisting the
+    // whole record for 24 hours made an expired token the first value rendered after
+    // boot; the background refresh arrived too late because the iframe had pinned it.
+    // List rows are persisted and still seed the instant header paint below.
+    meta: { persist: false },
     placeholderData: client
       ? () => {
           for (const [, data] of client.getQueriesData<ArtifactListCache>({

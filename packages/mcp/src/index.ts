@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { createClient } from "./client"
 import { fallbackFilename } from "./filename"
+import { registerTemplateResources, registerWorkspaceTemplateResources } from "./template-resources"
 
 // Stdio MCP server for self-hosters: `npx @derive-to/mcp` talks to a Derive instance over
 // the /v1 HTTP API (DERIVE_SERVER). It exposes the SAME tools as the remote /mcp
@@ -226,11 +227,12 @@ server.registerTool(
         .string()
         .optional()
         .describe("Only artifacts carrying this browse tag (case-insensitive)."),
+      archived: z.boolean().optional().describe("List the archive shelf instead."),
       workspace: wsArg,
     },
   },
-  async ({ query, tag, workspace: ws }) => {
-    const arts = await clientFor(ws).list(query, tag)
+  async ({ query, tag, archived, workspace: ws }) => {
+    const arts = await clientFor(ws).list(query, tag, archived)
     return json({ count: arts.length, artifacts: arts })
   },
 )
@@ -691,14 +693,13 @@ server.registerTool(
       "Tags and collections in one tool — the library's findability layer.\n" +
       "• READ (no `short_ids`): the workspace's tag vocabulary (tag → count) and its collections. Call this before tagging to reuse an existing tag over a near-duplicate.\n" +
       "• READ (with `short_ids`): those artifacts' current tags + collections, plus `suggested` tags drawn from the most semantically-similar docs (when one id is given).\n" +
-      "• WRITE: pass `add`/`remove`/`set` to change tags (add never drops existing; set replaces the whole set), and/or `collection` (an id, or a name — created if new) to fold the artifacts into a collection. Each artifact is authorized on its own; ones you can't touch are skipped.\n" +
+      "• WRITE: pass `add`/`remove`/`set` to change tags, `collection` to file artifacts, or `state:'archived'`/`'live'` to archive and restore. Each artifact is authorized on its own; ones you can't touch are skipped.\n" +
       "Tag freely and reuse the vocabulary — a well-tagged library is findable. Collections are heavier: a tag for plain findability, a collection when a set is a real unit.",
     annotations: {
       title: "Organize the library",
       readOnlyHint: false,
-      // Unlike the remote organize (whose destructive hint is earned by its
-      // state:'deleted' cascade), this tool only tags and collects; `set` replaces a
-      // tag list but the read mode recovers the prior set, so nothing is irreversible.
+      // This local surface supports only reversible state changes; permanent deletion is
+      // intentionally absent.
       destructiveHint: false,
       openWorldHint: false,
     },
@@ -717,19 +718,51 @@ server.registerTool(
         .string()
         .optional()
         .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
+      state: z
+        .enum(["archived", "live"])
+        .optional()
+        .describe("Archive artifacts, or restore them to the live library."),
       workspace: wsArg,
     },
   },
-  async ({ short_ids, add, remove, set, collection, workspace: ws }) => {
+  async ({ short_ids, add, remove, set, collection, state, workspace: ws }) => {
     const client = clientFor(ws)
     try {
       // WRITE
-      if (add || remove || set || collection) {
+      if (add || remove || set || collection || state) {
         if (!short_ids?.length)
-          return text("Pass `short_ids` to organize (with add/remove/set and/or collection).")
+          return text(
+            "Pass `short_ids` to organize (with add/remove/set, collection and/or state).",
+          )
         const out: Record<string, unknown> = {}
         if (add || remove || set) out.tagged = await client.tag(short_ids, { add, remove, set })
         if (collection) out.collected = await client.collect(short_ids, collection)
+        if (state) {
+          const archived = state === "archived"
+          const results = await Promise.all(
+            [...new Set(short_ids)].map(async (id) => {
+              try {
+                await client.archive(id, archived)
+                return { id, changed: true }
+              } catch {
+                return { id, changed: false }
+              }
+            }),
+          )
+          const changed = results.filter((r) => r.changed).map((r) => r.id)
+          const skipped = results.filter((r) => !r.changed).map((r) => r.id)
+          out.state = {
+            state,
+            changed: changed.length,
+            skipped: skipped.length,
+            undo: changed.length
+              ? {
+                  tool: "organize",
+                  arguments: { short_ids: changed, state: archived ? "live" : "archived" },
+                }
+              : undefined,
+          }
+        }
         return json(out)
       }
       // READ: inspect specific artifacts
@@ -1006,6 +1039,9 @@ for (const [name, body] of Object.entries(GUIDE_REFERENCES)) {
     async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: body }] }),
   )
 }
+
+registerTemplateResources(server)
+registerWorkspaceTemplateResources(server, client)
 
 // Every account/workspace signed in on THIS machine, with the local `description`
 // each was given via `derive workspace describe` — the context a bare name can't

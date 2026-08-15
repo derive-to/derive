@@ -1,5 +1,5 @@
 // What Derive knows about slide decks. A deck is not a separate artifact kind — it is a
-// single-file HTML page that speaks the `derive-deck` protocol (STANDARD.md §3), which is
+// single-file HTML page that speaks the `derive-deck` protocol (artifact authoring standard §3), which is
 // what turns on the host's deck bar, Present mode, and slide-pinned comments. Both places
 // that care — the content-type sniff in publish.ts and the "you built slides but never
 // announced them" advisory — resolve it through the ONE pair of predicates here, so what

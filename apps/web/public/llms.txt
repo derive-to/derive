@@ -1,12 +1,12 @@
 # Derive
 
-> Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
+> Review and approve agent-made work — HTML pages, Markdown docs, slide decks — with every version, exact-text comment, revision, and decision at one durable URL.
 
 ## What it is
 
-Derive gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+Derive turns agent output into accountable work: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop with a named human decision.
 
-Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to.
+Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to. The FSL license converts each release to Apache-2.0 after two years.
 
 ## Artifact types
 
@@ -101,6 +101,7 @@ Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 - /skill.md — the Derive agent skill, self-contained (when to use it, the tool surface, the loop)
 - /.well-known/agent.json — machine-readable capability manifest for this instance
 - /openapi.json — the OpenAPI spec; /docs — its reference UI
+- https://docs.derive.to/ — human documentation; /examples — official live workflow examples and source
 - /llms-full.txt — the long-form version of this file
 
 ## Scope and drift
@@ -113,5 +114,5 @@ Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 ## Links
 
 - GitHub: https://github.com/derive-to/derive
-- Deploy guide: DEPLOY.md in the repo
+- Deployment guide: https://docs.derive.to/self-hosting/configuration/
 - MCP skill: packages/mcp/SKILL.md (also served at /skill.md and as derive://guide)

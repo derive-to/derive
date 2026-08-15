@@ -32,11 +32,10 @@ its own; ones you can't edit come back as `skipped`, never failing the batch.
 The same tool retires, restores, and deletes — so the way back is never a separate thing to
 discover. Pass `short_ids` plus `state`:
 
-- **`state:'removed'`** — retire from the library. The url reads as removed, **nothing is
-  deleted**, and the response hands you the exact call that undoes it. This is the one to
-  reach for by default: experiments you made should not become permanent litter, and a
-  reversible cleanup needs no deliberation.
-- **`state:'live'`** — put a retired artifact back.
+- **`state:'archived'`** — hide it from ordinary library views and search while keeping
+  its URL, content, versions, comments and shares intact. The response hands you the exact
+  undo call. Use this for experiments and transient work.
+- **`state:'live'`** — restore an archived artifact to the library.
 - **`state:'deleted'`** — **permanent**. Every version, comment and proposal goes, contexts
   running from the artifact go with it, and there is no undo. The response says so and
   carries no reversing call, because there isn't one.
@@ -46,8 +45,8 @@ Two things worth knowing before reaching for `deleted`:
 - It needs a **manage-level** grant on the artifact, a higher bar than publishing to it.
   A publish-grade connection gets `needs_manage` back with the reversible alternative
   named. That is deliberate: creating an artifact and destroying one are different acts.
-- Prefer `removed` unless permanence is the actual goal. "I want this out of the library"
-  is almost always `removed`; `deleted` is for content that must not exist.
+- Prefer `archived` unless permanence is the actual goal. "I want this out of the library"
+  is almost always `archived`; `deleted` is for content that must not exist.
 
 From a shell, the same three live on the CLI: `derive delete <short_id…>` (which asks you
 to type the id back, or takes `--yes`).

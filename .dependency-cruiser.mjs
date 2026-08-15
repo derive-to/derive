@@ -34,6 +34,17 @@ export default {
       to: { path: "^(packages/(mcp|cli|runner)|apps)/" },
     },
     {
+      name: "templates-import-core-only",
+      severity: "error",
+      comment:
+        "@derive-to/templates is portable starter data built on the canonical core primitives, never an app, adapter, or client.",
+      from: { path: "^packages/templates/src" },
+      to: {
+        path: "^(packages|apps)/",
+        pathNot: "^packages/(templates|core)/",
+      },
+    },
+    {
       name: "clients-no-core-at-runtime",
       severity: "error",
       comment:

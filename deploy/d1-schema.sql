@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
   removed_at TEXT,
+  archived_at TEXT,
   expires_at TEXT,
   first_foreign_view_at TEXT,
   public_history INTEGER,
@@ -415,6 +416,42 @@ CREATE TABLE IF NOT EXISTS folder (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS template_library (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT 'private',
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT,
+  mutation_token TEXT,
+  mutation_started_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS template_library_entry (
+  id TEXT PRIMARY KEY,
+  library_id TEXT NOT NULL,
+  source_artifact_id TEXT NOT NULL,
+  source_version INTEGER NOT NULL,
+  source_blob_key TEXT NOT NULL,
+  source_content_type TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  category TEXT NOT NULL,
+  format TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  sections_json TEXT NOT NULL DEFAULT '[]',
+  inputs_json TEXT NOT NULL DEFAULT '[]',
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  FOREIGN KEY (library_id) REFERENCES template_library(id)
+);
+
+CREATE INDEX IF NOT EXISTS template_library_entry_library ON template_library_entry (library_id, created_at);
+
 CREATE TABLE IF NOT EXISTS repo_source (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL DEFAULT 'local',
@@ -577,6 +614,7 @@ CREATE TABLE IF NOT EXISTS proposal (
   base_version INTEGER NOT NULL,
   state TEXT NOT NULL DEFAULT 'open',
   decided_by TEXT,
+  decided_by_id TEXT,
   decided_version INTEGER,
   decision_note TEXT,
   decided_at TEXT,
@@ -592,6 +630,8 @@ CREATE TABLE IF NOT EXISTS review_round (
   requested_for TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'pending',
   note TEXT,
+  resolved_by TEXT,
+  resolved_by_name TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   resolved_at TEXT,
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
@@ -714,6 +754,8 @@ CREATE TABLE IF NOT EXISTS view (
 
 CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id);
 
+CREATE INDEX IF NOT EXISTS artifact_org_archived_created ON artifact (org_id, archived_at, created_at, id);
+
 CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at);
 
 CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at);
@@ -735,6 +777,12 @@ CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag);
 CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id);
 
 CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id);
+
+CREATE INDEX IF NOT EXISTS template_library_org_scope ON template_library (org_id, scope, created_at);
+
+CREATE INDEX IF NOT EXISTS template_library_scope_time ON template_library (scope, created_at, id);
+
+CREATE INDEX IF NOT EXISTS template_library_owner ON template_library (created_by, created_at);
 
 CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);
 

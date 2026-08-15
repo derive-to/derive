@@ -1,17 +1,13 @@
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { type Artifact, api } from "@/api"
+import { toast } from "@/components/ui/sonner"
 import { type LibraryParams, libraryArtifactsQuery, summaryQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
+import { removeArtifactsFromFeed } from "./artifact-feed-cache"
 
-// The library feed as a hook: the infinite keyset query plus the two optimistic
-// mutations that write across every cached page (star + delete) — now routed through the
-// one governed primitive so their feedback can't drift from the rest of the app.
-// Optimistic write across ALL pages, drop-on-unstar in the Favorites view, and on failure
-// roll back AND refetch the list: a whole-key snapshot can't be trusted alone, because
-// star + delete write the SAME key, so a concurrent one may have moved the list on since we
-// snapshotted (restoring the stale snapshot would resurrect a just-deleted row). The sidebar
-// counts reconcile on settle. Keyed by the active filter params, so each view caches
-// independently and switching views keeps the current grid (keepPreviousData).
+// The infinite feed and its row-level mutations share one cache key. Failed optimistic
+// writes restore their snapshot and refetch because another mutation may have changed the
+// same pages while the request was in flight.
 export function useLibraryFeed(params: LibraryParams) {
   const listQuery = libraryArtifactsQuery(params)
   const query = useInfiniteQuery(listQuery)
@@ -36,7 +32,7 @@ export function useLibraryFeed(params: LibraryParams) {
             }
           : old,
       )
-      // Roll back, then refetch — a concurrent star/delete may have outdated the snapshot.
+      // Reconcile after rollback in case another row mutation changed the same pages.
       return () => {
         rollback()
         void qc.invalidateQueries({ queryKey: listQuery.queryKey })
@@ -50,17 +46,9 @@ export function useLibraryFeed(params: LibraryParams) {
     optimistic: (a, qc) => {
       const rollback = snapshot(qc, listQuery.queryKey)
       qc.setQueryData(listQuery.queryKey, (old) =>
-        old
-          ? {
-              ...old,
-              pages: old.pages.map((pg) => ({
-                ...pg,
-                artifacts: pg.artifacts.filter((x) => x.short_id !== a.short_id),
-              })),
-            }
-          : old,
+        removeArtifactsFromFeed(old, new Set([a.short_id])),
       )
-      // Roll back, then refetch — a concurrent star/delete may have outdated the snapshot.
+      // Reconcile after rollback in case another row mutation changed the same pages.
       return () => {
         rollback()
         void qc.invalidateQueries({ queryKey: listQuery.queryKey })
@@ -71,11 +59,43 @@ export function useLibraryFeed(params: LibraryParams) {
     invalidate: [summaryQuery().queryKey],
   })
 
+  const undoArchive = useApiMutation({
+    mutationFn: (a: Artifact) => api.archive(a.short_id, false),
+    invalidate: [["artifacts"], summaryQuery().queryKey],
+  })
+
+  const archive = useApiMutation({
+    mutationFn: ({ a, on }: { a: Artifact; on: boolean }) => api.archive(a.short_id, on),
+    optimistic: ({ a }, qc) => {
+      const rollback = snapshot(qc, listQuery.queryKey)
+      // Either direction moves the row to the other shelf, so it leaves the current one
+      // immediately. The server reconciliation repopulates a cached destination shelf.
+      qc.setQueryData(listQuery.queryKey, (old) =>
+        removeArtifactsFromFeed(old, new Set([a.short_id])),
+      )
+      return rollback
+    },
+    onSuccess: (_data, vars) => {
+      if (!vars.on) {
+        toast.success("Restored to library")
+        return
+      }
+      toast("Artifact archived", {
+        action: {
+          label: "Undo",
+          onClick: () => undoArchive.mutate(vars.a),
+        },
+      })
+    },
+    invalidate: [["artifacts"], summaryQuery().queryKey],
+  })
+
   return {
     query,
     items,
     listQuery,
     toggleFavorite: (a: Artifact) => favorite.mutate({ a, on: !a.favorite }),
+    archiveArtifact: (a: Artifact) => archive.mutate({ a, on: !a.archived }),
     deleteArtifact: (a: Artifact) => remove.mutate(a),
   }
 }

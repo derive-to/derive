@@ -9,6 +9,7 @@ const SHELL =
 const HOME = "<!doctype html><html><body>MARKETING HOME</body></html>"
 const PRICING = "<!doctype html><html><body>MARKETING PRICING</body></html>"
 const PRIVACY = "<!doctype html><html><body>MARKETING PRIVACY</body></html>"
+const EXAMPLES = "<!doctype html><html><body>MARKETING EXAMPLES</body></html>"
 
 // Worker-shaped deps: no serveWeb (assets come from the platform binding), the shell
 // arrives via the async provider. `/`, `/pricing`, and `/privacy` are routed
@@ -18,6 +19,7 @@ const workerApp = (marketing?: {
   home: () => Promise<string | null>
   pricing: () => Promise<string | null>
   privacy: () => Promise<string | null>
+  examples: () => Promise<string | null>
 }) =>
   createApp({
     meta,
@@ -32,6 +34,7 @@ const MARKETING = {
   home: async () => HOME,
   pricing: async () => PRICING,
   privacy: async () => PRIVACY,
+  examples: async () => EXAMPLES,
 }
 
 describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", () => {
@@ -78,6 +81,22 @@ describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", 
     expect(res.headers.get("cache-control")).toContain("public")
   })
 
+  it("sends the old guides URL to the dedicated documentation site", async () => {
+    const res = await workerApp(MARKETING).request("/guides", { redirect: "manual" })
+    expect(res.status).toBe(308)
+    expect(res.headers.get("location")).toBe("https://docs.derive.to/")
+  })
+
+  it("serves the examples page to everyone, shared-cacheable", async () => {
+    const a = workerApp(MARKETING)
+    const res = await a.request("/examples", {
+      headers: { cookie: "better-auth.session_token=abc" },
+    })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain("MARKETING EXAMPLES")
+    expect(res.headers.get("cache-control")).toContain("public")
+  })
+
   it("never serves the API-origin placeholder when a shell exists (the launch-day bug)", async () => {
     // Regression: system.ts's placeholder `/` used to register whenever serveWeb was
     // off — which is the Worker's shape — and, mounted first, shadowed both the
@@ -88,13 +107,13 @@ describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", 
       string
     >[]) {
       const html = await (await a.request("/", { headers })).text()
-      expect(html).not.toContain("An open home for AI-generated artifacts")
+      expect(html).not.toContain("Review and approval for work made by AI agents")
     }
   })
 
   it("falls back to the SPA shell when marketing is off (worker-first paths must not 404)", async () => {
     const a = workerApp(undefined)
-    for (const path of ["/", "/pricing", "/privacy"]) {
+    for (const path of ["/", "/pricing", "/privacy", "/examples"]) {
       const res = await a.request(path)
       expect(res.status).toBe(200)
       expect(await res.text()).toContain("id=root")
@@ -110,7 +129,7 @@ describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", 
     })
     const res = await a.request("/")
     expect(res.status).toBe(200)
-    expect(await res.text()).toContain("An open home for AI-generated artifacts")
+    expect(await res.text()).toContain("Review and approval for work made by AI agents")
   })
 
   it("falls back to the shell when a marketing page is missing from the build", async () => {
@@ -118,6 +137,7 @@ describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", 
       home: async () => null,
       pricing: async () => null,
       privacy: async () => null,
+      examples: async () => null,
     })
     const res = await a.request("/")
     expect(res.status).toBe(200)

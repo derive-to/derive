@@ -19,6 +19,7 @@ import {
   rawArtifactUrl,
   workspaceSettingsQuery,
 } from "@/lib/queries"
+import { rawTokenNeedsRefresh } from "@/lib/raw-token"
 import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -140,10 +141,22 @@ export function Artifact() {
   const {
     data: art,
     isPlaceholderData: seeded,
+    isFetching: refreshingArtifact,
     isError: failed,
     error,
+    dataUpdatedAt: artifactFetchedAt,
     refetch,
   } = useQuery(artifactQuery(shortId, qc))
+
+  // A restored/in-memory detail can carry a raw capability that expired long before
+  // this click. Refresh it before the iframe gets a src; otherwise the first token is
+  // pinned for the render and the later background response cannot repair its 404.
+  const rawTokenStale =
+    !!art?.raw_token && rawTokenNeedsRefresh(art.raw_token_expires_at, artifactFetchedAt)
+  useEffect(() => {
+    if (!rawTokenStale || refreshingArtifact || failed) return
+    void refetch()
+  }, [rawTokenStale, refreshingArtifact, failed, refetch])
 
   // Deferred use-as-template: the public viewer's "Make your own" sends a signed-out
   // clicker through login with `?use=1`, and the copy fires here, right after auth.
@@ -688,6 +701,31 @@ export function Artifact() {
     // concurrent edit to the same key (a favorite/tag toggle) that landed mid-flight.
     invalidate: [artifactQuery(shortId).queryKey],
   })
+  const undoArchive = useApiMutation({
+    mutationFn: () => api.archive(shortId, false),
+    invalidate: [["artifacts"], artifactQuery(shortId).queryKey, ["summary"]],
+  })
+  const archiveMut = useApiMutation({
+    mutationFn: (next: boolean) => api.archive(shortId, next),
+    optimistic: (next, client) => {
+      const rollback = snapshot(client, artifactQuery(shortId).queryKey)
+      client.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+        a ? { ...a, archived: next } : a,
+      )
+      return rollback
+    },
+    invalidate: [["artifacts"], artifactQuery(shortId).queryKey, ["summary"]],
+    onSuccess: (_data, next) => {
+      if (!next) {
+        toast.success("Restored to library")
+        return
+      }
+      void nav({ to: "/" })
+      toast("Artifact archived", {
+        action: { label: "Undo", onClick: () => undoArchive.mutate() },
+      })
+    },
+  })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   // `failed && !art`: only show the full error page when there's NO artifact to show. A
@@ -731,6 +769,12 @@ export function Artifact() {
   // While inline editing, the shown version stays frozen at the mode-entry head so
   // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
+  const pinnedForShown =
+    pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
+  // A background failure may leave old metadata available, but an expired capability
+  // cannot render it. Surface the retry state instead of leaving Loading preview… forever.
+  if (failed && rawTokenStale && !pinnedForShown)
+    return <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
   // The public-history gate, client half: an anonymous @vN link on an artifact whose
   // owner kept history private is a 404, not a downgrade — the server already
   // refuses the old version's bytes (raw.ts), so render the same not-found the
@@ -755,6 +799,7 @@ export function Artifact() {
   // only ever reloads for a reason (a real version change), not a coincidental refetch.
   if (
     art.raw_token &&
+    !rawTokenStale &&
     (!pinnedRawToken.current ||
       pinnedRawToken.current.shortId !== shortId ||
       pinnedRawToken.current.version !== shown)
@@ -771,7 +816,8 @@ export function Artifact() {
   // rawArtifactUrl is SHARED with the prefetch (lib/queries) so the two can never build
   // different URLs again — when they did, hover prefetching warmed a response the frame
   // never requested.
-  const rawSrc = seeded ? null : rawArtifactUrl(shortId, shown, rawToken)
+  const rawSrc =
+    seeded || (rawTokenStale && !pinnedForShown) ? null : rawArtifactUrl(shortId, shown, rawToken)
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
@@ -1073,8 +1119,12 @@ export function Artifact() {
               canMove={canMove}
               automateBeta={automateBeta}
               locked={isLocked}
+              archived={!!art.archived}
+              canArchive={canPublish}
               onPresent={present.toggle}
+              onCreateFrom={() => nav({ to: "/templates", search: { source: shortId } })}
               onLockToggle={() => lockMut.mutate(!isLocked)}
+              onArchive={() => archiveMut.mutate(!art.archived)}
               onFavorite={(fav) =>
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                   a ? { ...a, favorite: fav } : a,

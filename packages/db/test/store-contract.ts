@@ -319,6 +319,11 @@ export function runStoreContract(
       expect(byId.get(a.short_id)?.json).toBe('{"pass":2}') // the current version, not v1
       expect(byId.get(a.short_id)?.n).toBe(v2.n)
       expect(byId.get(b.short_id)?.json).toBe('{"pass":9}')
+      await store.setArtifactArchived(b.id, "2026-01-02T00:00:00.000Z")
+      expect(
+        (await store.listFactAcrossArtifacts(ORG, "xchecks")).map((row) => row.short_id),
+      ).not.toContain(b.short_id)
+      await store.setArtifactArchived(b.id, null)
       // A fact nobody carries is empty, not an error.
       expect(await store.listFactAcrossArtifacts(ORG, "nosuch")).toEqual([])
       // The limit bounds the payload.
@@ -383,6 +388,12 @@ export function runStoreContract(
       expect(ids).toContain(substring.short_id)
       expect(confirmed.map((r) => r.short_id)).not.toContain(substring.short_id)
 
+      await store.setArtifactArchived(linker.id, "2026-01-02T00:00:00.000Z")
+      expect(
+        (await store.listArtifactsLinkingTo(ORG, target)).map((r) => r.short_id),
+      ).not.toContain(linker.short_id)
+      await store.setArtifactArchived(linker.id, null)
+
       // CASE: SQLite's LIKE is ASCII case-insensitive and Postgres's is not. Whatever each
       // dialect's candidate set, the confirmed answer must be identical on both.
       const upper = await store.createArtifact(newArtifact({ title: "Upper" }))
@@ -443,13 +454,42 @@ export function runStoreContract(
       expect(checks[0]?.at).toBeTruthy()
       expect(rows.every((r) => !!r.artifact_id)).toBe(true)
       expect((await store.listWorkspaceFacts(ORG, { limit: 1 })).length).toBe(1)
+      const archivedId = checks[0]?.artifact_id
+      if (!archivedId) throw new Error("expected an artifact carrying xchecks")
+      await store.setArtifactArchived(archivedId, "2026-01-02T00:00:00.000Z")
+      expect((await store.listWorkspaceFacts(ORG)).map((r) => r.artifact_id)).not.toContain(
+        archivedId,
+      )
+      await store.setArtifactArchived(archivedId, null)
     })
 
-    it("filters listArtifacts by title search and by id set (empty ⇒ none)", async () => {
+    it("filters listArtifacts by artifact title, tag, or collection title and by id set", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(
         a.id,
       )
+      await store.setArtifactTags(a.id, ["Finance Planning"])
+      expect((await store.listArtifacts({ q: "finance" })).map((x) => x.id)).toContain(a.id)
+
+      const col = await store.createCollection({
+        id: uuid(),
+        org_id: ORG,
+        title: "Board Materials",
+        created_by: "amy",
+      })
+      await store.addCollectionItem(col.id, a.id)
+      expect((await store.listArtifacts({ q: "board material" })).map((x) => x.id)).toContain(a.id)
+      expect(
+        (
+          await store.listArtifacts({ q: "board material", collectionSearchViewerId: "stranger" })
+        ).map((x) => x.id),
+      ).not.toContain(a.id)
+      expect(
+        (await store.listArtifacts({ q: "board material", collectionSearchViewerId: "amy" })).map(
+          (x) => x.id,
+        ),
+      ).toContain(a.id)
+
       expect((await store.listArtifacts({ ids: [a.id] })).map((x) => x.id)).toEqual([a.id])
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })
@@ -1922,6 +1962,74 @@ export function runStoreContract(
       expect(decided?.state).toBe("approved")
       expect((await store.openProposalCounts([a.id]))[a.id] ?? 0).toBe(0)
     })
+
+    it("lets exactly one concurrent proposal decision publish", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const p = await store.createProposal({
+        id: uuid(),
+        artifact_id: a.id,
+        blob_key: `blob_${uuid()}`,
+        content_type: "text/html",
+        kind: "file",
+        title: null,
+        message: "candidate",
+        author: "agent",
+        author_id: "agent_1",
+        base_version: 0,
+      })
+      const [amy, bob] = await Promise.all([
+        store.approveOpenProposal(p.id, {
+          version_id: uuid(),
+          size_bytes: 10,
+          decided_by: "Amy",
+          decided_by_id: "u_amy",
+        }),
+        store.approveOpenProposal(p.id, {
+          version_id: uuid(),
+          size_bytes: 10,
+          decided_by: "Bob",
+          decided_by_id: "u_bob",
+        }),
+      ])
+      expect([amy, bob].filter(Boolean)).toHaveLength(1)
+      expect(await store.listVersions(a.id)).toHaveLength(1)
+      expect((await store.getArtifactById(a.id))?.current_version).toBe(1)
+      expect((await store.getProposal(p.id))?.decided_by_id).toBe(amy ? "u_amy" : "u_bob")
+      await expect(
+        store.decideProposal(p.id, {
+          state: "changes_requested",
+          decided_by: "late",
+          decided_version: null,
+        }),
+      ).resolves.toBeNull()
+    })
+
+    it("lets exactly one concurrent review-round settlement win", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const round = await store.createReviewRound({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 0,
+        requested_by: "agent_1",
+        requested_for: "u_amy",
+      })
+      const [approved, sentBack] = await Promise.all([
+        store.resolveReviewRound(round.id, {
+          state: "approved",
+          resolved_by: "u_amy",
+          resolved_by_name: "Amy",
+        }),
+        store.resolveReviewRound(round.id, {
+          state: "sent_back",
+          resolved_by: "u_bob",
+          resolved_by_name: "Bob",
+        }),
+      ])
+      expect([approved, sentBack].filter(Boolean)).toHaveLength(1)
+      const settled = (await store.listReviewRounds(a.id)).find((item) => item.id === round.id)
+      expect(settled?.state).toBe(approved ? "approved" : "sent_back")
+      expect(settled?.resolved_by).toBe(approved ? "u_amy" : "u_bob")
+    })
   })
 
   describe(`${label}: views + analytics`, () => {
@@ -2150,6 +2258,25 @@ export function runStoreContract(
       await store.setArtifactsRemoved([a1.id, a2.id], "2026-01-01T00:00:00.000Z")
       expect((await store.getArtifactById(a1.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
       expect((await store.getArtifactById(a2.id))?.removed_at).toBe("2026-01-01T00:00:00.000Z")
+    })
+
+    it("setArtifactsArchived moves many artifacts off the default shelf without deleting them", async () => {
+      const a1 = await store.createArtifact(newArtifact({ title: "Archive one" }))
+      const a2 = await store.createArtifact(newArtifact({ title: "Archive two" }))
+      await store.setArtifactsArchived([]) // no-op
+      expect((await store.getArtifactById(a1.id))?.archived_at ?? null).toBeNull()
+
+      await store.setArtifactsArchived([a1.id, a2.id], "2026-01-02T00:00:00.000Z")
+      expect((await store.getArtifactById(a1.id))?.archived_at).toBe("2026-01-02T00:00:00.000Z")
+      expect((await store.getArtifactById(a2.id))?.archived_at).toBe("2026-01-02T00:00:00.000Z")
+      expect((await store.listArtifacts({ orgId: ORG })).map((a) => a.id)).not.toContain(a1.id)
+      expect(
+        (await store.listArtifacts({ orgId: ORG, archived: "only" })).map((a) => a.id).sort(),
+      ).toEqual([a1.id, a2.id].sort())
+
+      await store.setArtifactArchived(a1.id, null)
+      expect((await store.getArtifactById(a1.id))?.archived_at).toBeNull()
+      expect((await store.listArtifacts({ orgId: ORG })).map((a) => a.id)).toContain(a1.id)
     })
 
     it("enqueueDeliveries inserts a whole subscriber fan-out in one call (empty ⇒ no-op)", async () => {
@@ -2741,10 +2868,21 @@ export function runStoreContract(
       const removed = await store.createArtifact(newArtifact({ org_id: org }))
       await store.setFavorite(removed.id, me)
       await store.setArtifactsRemoved([removed.id], "2026-01-01T00:00:00.000Z")
+      const archived = await store.createArtifact(newArtifact({ org_id: org }))
+      await store.setArtifactMember({
+        id: uuid(),
+        artifact_id: archived.id,
+        user_id: me,
+        role: "owner",
+      })
+      await store.setArtifactTags(archived.id, ["alpha"])
+      await store.setFavorite(archived.id, me)
+      await store.setArtifactArchived(archived.id, "2026-01-02T00:00:00.000Z")
 
       const s = await store.workspaceSummary(org, me)
       // Indistinguishable from the calls it replaces.
-      expect(s.total).toBe(await store.countArtifacts(org))
+      expect(s.total).toBe((await store.countArtifacts(org)) - 1)
+      expect(s.archived).toBe(1)
       expect([...s.tags].sort((a, b) => a.tag.localeCompare(b.tag))).toEqual(
         await store.tagCounts(org),
       )
@@ -2763,6 +2901,7 @@ export function runStoreContract(
       // An anonymous caller gets the workspace-level facts and zero per-user counts.
       const anon = await store.workspaceSummary(org, null)
       expect(anon.total).toBe(s.total)
+      expect(anon.archived).toBe(1)
       expect(anon.workspace).toBe("Summary WS")
       expect(anon.favorites).toBe(0)
       expect(anon.mine).toBe(0)
@@ -2772,6 +2911,7 @@ export function runStoreContract(
       const missing = await store.workspaceSummary(`org_${uuid()}`, me)
       expect(missing.workspace).toBeNull()
       expect(missing.total).toBe(0)
+      expect(missing.archived).toBe(0)
       expect(missing.tags).toEqual([])
       expect(missing.favorites).toBe(0)
     })
@@ -4002,6 +4142,145 @@ export function runStoreContract(
       expect((await store.listSlackSubscriptions(org)).map((x) => x.channel_id)).toEqual(["C-keep"])
     })
 
+    it("serializes template-library mutations and only lets the holder release", async () => {
+      const library = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: ORG,
+        title: "Lease-protected starters",
+        scope: "private",
+        created_by: "u-template-owner",
+      })
+      const oldEnough = new Date(Date.now() - 2 * 60_000).toISOString()
+
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-a", oldEnough)).toBe(
+        true,
+      )
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
+        false,
+      )
+      expect(await store.renewTemplateLibraryMutation(library.id, "not-the-holder")).toBe(false)
+      expect(await store.renewTemplateLibraryMutation(library.id, "holder-a")).toBe(true)
+      await store.releaseTemplateLibraryMutation(library.id, "not-the-holder")
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
+        false,
+      )
+      await store.releaseTemplateLibraryMutation(library.id, "holder-a")
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-b", oldEnough)).toBe(
+        true,
+      )
+      const forceExpired = new Date(Date.now() + 60_000).toISOString()
+      expect(await store.acquireTemplateLibraryMutation(library.id, "holder-c", forceExpired)).toBe(
+        true,
+      )
+      expect(await store.renewTemplateLibraryMutation(library.id, "holder-b")).toBe(false)
+      expect(await store.renewTemplateLibraryMutation(library.id, "holder-c")).toBe(true)
+      await store.releaseTemplateLibraryMutation(library.id, "holder-c")
+    })
+
+    it("keeps template-library listing and search behavior identical across dialects", async () => {
+      const org = `org_tpl_catalog_${uuid()}`
+      const otherOrg = `org_tpl_other_${uuid()}`
+      const owner = `tpl_owner_${uuid()}`
+      const otherOwner = `tpl_other_${uuid()}`
+      const createLibrary = (
+        title: string,
+        scope: "private" | "workspace" | "public",
+        createdBy = owner,
+        orgId = org,
+      ) =>
+        store.createTemplateLibrary({
+          id: uuid(),
+          org_id: orgId,
+          title,
+          description: `${title} reusable catalog`,
+          scope,
+          created_by: createdBy,
+        })
+      const privateMine = await createLibrary("Alpha private needle", "private")
+      const workspace = await createLibrary("Alpha workspace needle", "workspace")
+      const privateOther = await createLibrary("Alpha hidden needle", "private", otherOwner)
+      const publicOther = await createLibrary("Alpha public needle", "public", otherOwner, otherOrg)
+      await createLibrary("Unrelated workspace", "workspace")
+
+      expect(
+        (await store.listTemplateLibraries({ orgId: org, scope: "private", createdBy: owner })).map(
+          (library) => library.id,
+        ),
+      ).toEqual([privateMine.id])
+      expect(
+        new Set(
+          (await store.listTemplateLibraries({ orgId: org, query: "ALPHA", limit: 20 })).map(
+            (library) => library.id,
+          ),
+        ),
+      ).toEqual(new Set([privateMine.id, workspace.id, privateOther.id]))
+
+      const ordered = await store.listTemplateLibraries({ orgId: org, limit: 20 })
+      const first = ordered[0]
+      if (!first) throw new Error("expected template libraries")
+      expect(
+        await store.listTemplateLibraries({
+          orgId: org,
+          before: { createdAt: first.created_at, id: first.id },
+          limit: 20,
+        }),
+      ).toEqual(ordered.slice(1))
+
+      const entryFor = (libraryId: string, title: string) =>
+        store.createTemplateLibraryEntry({
+          id: uuid(),
+          library_id: libraryId,
+          source_artifact_id: uuid(),
+          source_version: 1,
+          source_blob_key: `blob_${uuid()}`,
+          source_content_type: "text/markdown",
+          kind: "artifact",
+          category: "Doc",
+          format: "md",
+          title,
+          description: "Needle discovery contract",
+          outcome: "Find the right starter.",
+          sections_json: "[]",
+          inputs_json: "[]",
+          tags_json: '["needle"]',
+          created_by: owner,
+        })
+      await Promise.all([
+        entryFor(privateMine.id, "Private result"),
+        entryFor(workspace.id, "Workspace result"),
+        entryFor(privateOther.id, "Hidden result"),
+        entryFor(publicOther.id, "Public result"),
+      ])
+
+      const visible = await store.searchTemplateLibraryEntries({
+        orgId: org,
+        ownerId: owner,
+        query: "needle",
+        limit: 20,
+      })
+      expect(new Set(visible.map(({ library }) => library.id))).toEqual(
+        new Set([privateMine.id, workspace.id, publicOther.id]),
+      )
+      expect(
+        await store.searchTemplateLibraryEntries({
+          orgId: org,
+          ownerId: owner,
+          query: "needle",
+          limit: 2,
+        }),
+      ).toHaveLength(2)
+      expect(
+        (
+          await store.searchTemplateLibraryEntries({
+            orgId: org,
+            ownerId: null,
+            query: "private result",
+            limit: 20,
+          })
+        ).map(({ entry }) => entry.id),
+      ).toEqual([])
+    })
+
     it("deleteUserData: removes the user's rows, anonymizes authorship, keeps others' content", async () => {
       const org = `org_del_${uuid()}`
       const leaver = `leaver_${uuid()}`
@@ -4010,7 +4289,9 @@ export function runStoreContract(
       await store.setWorkspace(org, "Shared")
       await store.setWorkspace(`ws_p_${leaver}`, "Leaver's Workspace")
       await store.setMembership({ id: uuid(), org_id: org, user_id: leaver, role: "owner" })
-      await store.setMembership({ id: uuid(), org_id: org, user_id: other, role: "owner" })
+      // Deliberately an editor: account deletion must fall back to a workspace
+      // editor when no other owner is available to manage a surviving library.
+      await store.setMembership({ id: uuid(), org_id: org, user_id: other, role: "editor" })
       await store.setMembership({
         id: uuid(),
         org_id: `ws_p_${leaver}`,
@@ -4046,6 +4327,58 @@ export function runStoreContract(
       await store.setModelCredential(mkCred(other, "enc-other"))
       await store.setModelCredential(mkCred("__workspace_pool__", "enc-pool"))
 
+      const privateLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Private leaver library",
+        scope: "private",
+        created_by: leaver,
+      })
+      const sharedLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Shared team library",
+        scope: "workspace",
+        created_by: leaver,
+      })
+      const personalLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: `ws_p_${leaver}`,
+        title: "Personal public library",
+        scope: "public",
+        created_by: leaver,
+      })
+      const otherOwnedLibrary = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Other member's library",
+        scope: "workspace",
+        created_by: other,
+      })
+      const entryFor = async (libraryId: string) =>
+        store.createTemplateLibraryEntry({
+          id: uuid(),
+          library_id: libraryId,
+          source_artifact_id: uuid(),
+          source_version: 1,
+          source_blob_key: `blob_${uuid()}`,
+          source_content_type: "text/markdown",
+          kind: "artifact",
+          category: "Doc",
+          format: "md",
+          title: "Starter",
+          description: "A durable starter.",
+          outcome: "A useful result.",
+          sections_json: "[]",
+          inputs_json: "[]",
+          tags_json: "[]",
+          created_by: leaver,
+        })
+      const privateEntry = await entryFor(privateLibrary.id)
+      const sharedEntry = await entryFor(sharedLibrary.id)
+      const personalEntry = await entryFor(personalLibrary.id)
+      const contributedEntry = await entryFor(otherOwnedLibrary.id)
+
       await store.deleteUserData(leaver)
 
       // Their memberships are gone (both shared + personal); the other member stays.
@@ -4055,6 +4388,23 @@ export function runStoreContract(
       // Their personal workspace row is dropped; the shared one survives.
       expect(await store.getWorkspace(`ws_p_${leaver}`)).toBeNull()
       expect(await store.getWorkspace(org)).not.toBeNull()
+      // Account-owned libraries disappear with their entries. Shared/public
+      // libraries survive, but no response-visible publisher field retains the
+      // deleted user: the remaining editor now manages both the library and entry.
+      expect(await store.getTemplateLibrary(privateLibrary.id)).toBeNull()
+      expect(await store.getTemplateLibraryEntry(privateEntry.id)).toBeNull()
+      expect(await store.getTemplateLibrary(personalLibrary.id)).toBeNull()
+      expect(await store.getTemplateLibraryEntry(personalEntry.id)).toBeNull()
+      expect(await store.getTemplateLibrary(sharedLibrary.id)).toMatchObject({ created_by: other })
+      expect(await store.getTemplateLibraryEntry(sharedEntry.id)).toMatchObject({
+        created_by: other,
+      })
+      expect(await store.getTemplateLibrary(otherOwnedLibrary.id)).toMatchObject({
+        created_by: other,
+      })
+      expect(await store.getTemplateLibraryEntry(contributedEntry.id)).toMatchObject({
+        created_by: "__deleted_template_library_owner__",
+      })
       // Associations cleared.
       expect(await store.listUserFavoriteIds(leaver)).toEqual([])
       expect(await store.listFollows(leaver, org)).toEqual([])
@@ -4069,6 +4419,47 @@ export function runStoreContract(
       expect((await store.getModelCredential(org, "__workspace_pool__", "codex"))?.secret).toBe(
         "enc-pool",
       )
+    })
+
+    it("deleteUserData: leaves a scrubbed public library recoverable when no manager remains", async () => {
+      const org = `org_tpl_orphan_${uuid()}`
+      const leaver = `tpl_orphan_${uuid()}`
+      await store.setWorkspace(org, "Orphaned templates")
+      await store.setMembership({ id: uuid(), org_id: org, user_id: leaver, role: "owner" })
+      const library = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Public community library",
+        scope: "public",
+        created_by: leaver,
+      })
+      const entry = await store.createTemplateLibraryEntry({
+        id: uuid(),
+        library_id: library.id,
+        source_artifact_id: uuid(),
+        source_version: 1,
+        source_blob_key: `blob_${uuid()}`,
+        source_content_type: "text/html",
+        kind: "artifact",
+        category: "Site",
+        format: "html",
+        title: "Public starter",
+        description: "Still readable after account deletion.",
+        outcome: "A reusable public page.",
+        sections_json: "[]",
+        inputs_json: "[]",
+        tags_json: "[]",
+        created_by: leaver,
+      })
+
+      await store.deleteUserData(leaver)
+
+      expect(await store.getTemplateLibrary(library.id)).toMatchObject({
+        created_by: "__deleted_template_library_owner__",
+      })
+      expect(await store.getTemplateLibraryEntry(entry.id)).toMatchObject({
+        created_by: "__deleted_template_library_owner__",
+      })
     })
 
     it("removeMembership + deleteWorkspace purge model_credential (incl. the pool sentinel)", async () => {
@@ -4090,6 +4481,31 @@ export function runStoreContract(
       await store.setMembership({ id: uuid(), org_id: org, user_id: member, role: "editor" })
       await store.setModelCredential(cred(member, "enc-member"))
       await store.setModelCredential(cred("__workspace_pool__", "enc-pool"))
+      const library = await store.createTemplateLibrary({
+        id: uuid(),
+        org_id: org,
+        title: "Workspace lifecycle library",
+        scope: "workspace",
+        created_by: member,
+      })
+      const entry = await store.createTemplateLibraryEntry({
+        id: uuid(),
+        library_id: library.id,
+        source_artifact_id: uuid(),
+        source_version: 1,
+        source_blob_key: `blob_${uuid()}`,
+        source_content_type: "text/markdown",
+        kind: "artifact",
+        category: "Doc",
+        format: "md",
+        title: "Workspace starter",
+        description: "Must not be orphaned.",
+        outcome: "No orphan rows.",
+        sections_json: "[]",
+        inputs_json: "[]",
+        tags_json: "[]",
+        created_by: member,
+      })
 
       // Removing a member drops only their credential; the pool row stays.
       await store.removeMembership(org, member)
@@ -4101,6 +4517,8 @@ export function runStoreContract(
       // Deleting the workspace clears the pool sentinel too — nothing orphaned.
       await store.deleteWorkspace(org)
       expect(await store.getModelCredential(org, "__workspace_pool__", "codex")).toBeNull()
+      expect(await store.getTemplateLibrary(library.id)).toBeNull()
+      expect(await store.getTemplateLibraryEntry(entry.id)).toBeNull()
     })
   })
 

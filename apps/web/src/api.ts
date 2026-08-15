@@ -249,6 +249,7 @@ export interface ModelLibraryView {
 export interface BootstrapPayload {
   summary: {
     total: number
+    archived: number
     favorites: number
     mine: number
     mine_private: number
@@ -409,6 +410,11 @@ export type SessionMessage = components["schemas"]["SessionMessage"]
 /** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
 export type Session = components["schemas"]["Session"]
 export type SessionState = Session["state"]
+/** A shareable catalog of immutable starters. Generated from the Templates API contract. */
+export type TemplateLibrary = components["schemas"]["TemplateLibrary"]
+export type TemplateLibraryEntry = components["schemas"]["TemplateLibraryEntry"]
+export type BuiltInTemplate = components["schemas"]["BuiltInTemplate"]
+export type TemplateLibraryScope = TemplateLibrary["scope"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */
@@ -481,7 +487,7 @@ export const artifactsListPath = (params?: {
   collection?: string
   favorite?: boolean
   author?: string
-  scope?: "shared" | "following" | "needs_feedback" | "mine"
+  scope?: "shared" | "following" | "needs_feedback" | "mine" | "archived"
   cursor?: string
   limit?: number
   sort?: SortMode
@@ -724,6 +730,11 @@ export const api = {
     f("/api/auth/sign-in/email", opts({ email, password })).then(authJson),
   signup: (email: string, password: string, name: string): Promise<unknown> =>
     f("/api/auth/sign-up/email", opts({ email, password, name: name || email })).then(authJson),
+  recordSignupAttribution: (source: {
+    source_kind: string
+    source_artifact?: string | null
+    landing_path?: string | null
+  }): Promise<unknown> => f("/v1/me/signup-attribution", opts(source)).then(j),
   logout: () => f("/api/auth/sign-out", opts({})).then((r) => r.json().catch(() => ({}))),
   // The auth capabilities of THIS instance — which sign-in methods + flows are live
   // here (drives the login page + Security hub; capability-adaptive).
@@ -766,6 +777,7 @@ export const api = {
   sendVerificationEmail: (email: string, callbackURL: string): Promise<unknown> =>
     f("/api/auth/send-verification-email", opts({ email, callbackURL })).then(authJson),
 
+  // `q` searches artifact titles, tags, and the titles of containing collections.
   listArtifacts: (
     params?: {
       q?: string
@@ -778,8 +790,9 @@ export const api = {
        *  (followed GitHub authors + repo path prefixes) — the activity feed.
        *  "needs_feedback" → artifacts with an open thread you're tagged in or commented on.
        *  "mine" → everything you published by hand in the active workspace, any
-       *  visibility included — the library's "Created by me" filter. */
-      scope?: "shared" | "following" | "needs_feedback" | "mine"
+       *  visibility included — the library's "Created by me" filter.
+       *  "archived" → the reversible archive shelf. */
+      scope?: "shared" | "following" | "needs_feedback" | "mine" | "archived"
       cursor?: string
       limit?: number
       /** Grid order. Omit to get the route's default, created-desc (the library always sends
@@ -804,6 +817,7 @@ export const api = {
     f("/v1/bootstrap", opts(undefined, init)).then(j),
   browseSummary: (): Promise<{
     total: number
+    archived: number
     favorites: number
     /** The caller's owned artifacts — badges the library's "Created by me" filter. */
     mine: number
@@ -987,12 +1001,17 @@ export const api = {
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
 
+  archive: (id: string, on: boolean): Promise<{ archived: boolean }> =>
+    f(`/v1/artifacts/${id}/archive`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
+
   // Bulk organize — the library multi-select bar. Each is ONE call over a set of
   // short_ids; the server authorizes every artifact on its own and returns a
   // {ok, skipped, failed} tally (skipped = not yours to touch), so the client sends the
   // whole selection and shows what actually landed.
   bulkFavorite: (shortIds: string[], favorite: boolean): Promise<BulkSummary> =>
     f("/v1/bulk/favorite", opts({ shortIds, favorite })).then(j),
+  bulkArchive: (shortIds: string[], archived: boolean): Promise<BulkSummary> =>
+    f("/v1/bulk/archive", opts({ shortIds, archived })).then(j),
   bulkAddToCollections: (shortIds: string[], collectionIds: string[]): Promise<BulkSummary> =>
     f("/v1/bulk/collections", opts({ shortIds, collectionIds })).then(j),
   bulkDelete: (shortIds: string[]): Promise<BulkSummary> =>
@@ -1464,6 +1483,65 @@ export const api = {
       { ...opts({}), method: "POST" },
     ).then(j),
 
+  // Template libraries are explicit distribution boundaries for version-pinned
+  // starters. MCP reads the same records as resources and keeps using publish.
+  listBuiltInTemplates: (): Promise<{ templates: BuiltInTemplate[] }> =>
+    f("/v1/templates", { credentials: "include" }).then(j),
+  listTemplateLibraries: (
+    params: { cursor?: string; limit?: number; scope?: TemplateLibraryScope; q?: string } = {},
+  ): Promise<{
+    libraries: TemplateLibrary[]
+    truncated: boolean
+    next_cursor: string | null
+  }> => {
+    const query = new URLSearchParams()
+    if (params.cursor) query.set("cursor", params.cursor)
+    if (params.limit) query.set("limit", String(params.limit))
+    if (params.scope) query.set("scope", params.scope)
+    if (params.q) query.set("q", params.q)
+    const suffix = query.size ? `?${query.toString()}` : ""
+    return f(`/v1/template-libraries${suffix}`, { credentials: "include" }).then(j)
+  },
+  getTemplateLibrary: (id: string): Promise<TemplateLibrary> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}`, { credentials: "include" }).then(j),
+  createTemplateLibrary: (body: {
+    title: string
+    description?: string
+    scope?: TemplateLibraryScope
+  }): Promise<TemplateLibrary> => f("/v1/template-libraries", opts(body)).then(j),
+  updateTemplateLibrary: (
+    id: string,
+    body: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibrary> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}`, { ...opts(body), method: "PATCH" }).then(
+      j,
+    ),
+  deleteTemplateLibrary: (id: string): Promise<void> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  createTemplateLibraryEntry: (
+    id: string,
+    body: {
+      source_short_id: string
+      source_version?: number
+      kind: "artifact" | "context"
+      category: string
+      title: string
+      description: string
+      outcome: string
+      sections: string[]
+      inputs: { name: string; description: string; required?: boolean }[]
+      tags: string[]
+    },
+  ): Promise<TemplateLibraryEntry> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}/entries`, opts(body)).then(j),
+  deleteTemplateLibraryEntry: (libraryId: string, entryId: string): Promise<void> =>
+    f(
+      `/v1/template-libraries/${encodeURIComponent(libraryId)}/entries/${encodeURIComponent(entryId)}`,
+      { method: "DELETE", credentials: "include" },
+    ).then(() => undefined),
   listWebhooks: (): Promise<{ webhooks: Webhook[]; event_options: string[] }> =>
     f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {

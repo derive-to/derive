@@ -146,7 +146,8 @@ export function CommandPalette() {
     setResults(fuzzyTitles(cachedArtifactRows(qc), query))
   }, [query, paletteOpen, qc])
 
-  // Debounced server search for artifacts while open (authoritative pass).
+  // Debounced server search for artifacts by title, tag, or containing collection
+  // (authoritative pass).
   useEffect(() => {
     if (!paletteOpen) return
     let alive = true
@@ -266,6 +267,7 @@ export function CommandPalette() {
   const showAll = "all artifacts".includes(q) || "library".includes(q)
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
+  const showTemplates = "templates".includes(q) || "start from a template".includes(q)
   // The way back to the connect instructions after onboarding — /welcome stays the
   // app's connect-an-agent surface (see pages/welcome).
   const showConnect =
@@ -290,6 +292,7 @@ export function CommandPalette() {
     !showAll &&
     !showFav &&
     !showFollowing &&
+    !showTemplates &&
     !showConnect
 
   return (
@@ -374,7 +377,7 @@ export function CommandPalette() {
               </CommandGroup>
             )}
 
-            {(showAll || showFav || showFollowing || showConnect) && (
+            {(showAll || showFav || showFollowing || showTemplates || showConnect) && (
               <CommandGroup heading="Jump to">
                 {showAll && (
                   <CommandItem
@@ -398,6 +401,14 @@ export function CommandPalette() {
                     onSelect={() => go(() => nav({ to: "/following" }))}
                   >
                     <Icon name="following" size={16} /> Following
+                  </CommandItem>
+                )}
+                {showTemplates && (
+                  <CommandItem
+                    value="jump-templates"
+                    onSelect={() => go(() => nav({ to: "/templates" }))}
+                  >
+                    <Icon name="templates" size={16} /> Templates
                   </CommandItem>
                 )}
                 {showConnect && (

@@ -21,7 +21,7 @@ head_sampling_rate = 1
 binding = "DB"
 database_name = "derive"
 # Placeholder — run `wrangler d1 create derive` and put your own id here (see
-# DEPLOY.md). The hosted deploy injects its id from a repo secret in CI
+# deployment guide). The hosted deploy injects its id from a repo secret in CI
 # (.github/workflows/ci.yml, "Inject production binding ids") before this file is
 # read. NOTE: with the HYPERDRIVE binding below, metadata + auth live in Postgres
 # and this database sits idle — the binding stays only because the runtime
@@ -51,7 +51,7 @@ bucket_name = "derive-blobs"
 # vector store. Bind AI (with HYPERDRIVE) to enable it; omit AI to stay lexical-only (self-host
 # parity — the worker gates on `env.AI && env.HYPERDRIVE`). The pgvector table is created out of
 # band by `deploy:pg-schema`; then backfill per workspace corpus: POST /v1/system/search-reindex
-# with the operator token. See DEPLOY.md.
+# with the operator token. See the deployment guide.
 [ai]
 binding = "AI"
 
@@ -234,7 +234,10 @@ crons = ["* * * * *"]
 [assets]
 directory = "../web/dist/client"
 binding = "ASSETS"
-run_worker_first = ["/v1/*", "/api/*", "/raw/*", "/blob/*", "/oauth/*", "/.well-known/skills/index.json", "/.well-known/skills/derive/SKILL.md", "/settings/github/*", "/settings/slack/*", "/artifacts/*", "/users/*", "/assets/*", "/site/*", "/brand/*", "/healthz", "/readyz", "/mcp", "/openapi.json", "/docs", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/.well-known/openid-configuration", "/skill.md", "/.well-known/agent.json", "/", "/pricing", "/privacy"]
+# Route every navigation through the Worker so unknown URLs can return a real
+# 404 instead of Cloudflare's SPA-mode 200 shell. worker.ts sends known client
+# routes and exact static files back through ASSETS without touching the database.
+run_worker_first = true
 not_found_handling = "single-page-application"
 
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
@@ -308,7 +311,7 @@ BASE_URL = "https://derive.to"
 #   wrangler secret put SLACK_CLIENT_SECRET
 #   wrangler secret put SLACK_SIGNING_SECRET
 # Create the app from Settings → Integrations → Set up Slack app (the manifest,
-# pre-filled, is served at /v1/slack/manifest.json); see DEPLOY.md → Slack app.
+# pre-filled, is served at /v1/slack/manifest.json); see the deployment guide's Slack section.
 #
 # Sender for all transactional + notification mail (reset / verify / invites / comments).
 # Must be an address on the onboarded Email Sending domain (send.derive.to). The CF adapter

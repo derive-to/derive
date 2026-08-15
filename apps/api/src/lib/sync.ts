@@ -100,6 +100,57 @@ const stripExt = (path: string): string => {
   return dot > 0 ? b.slice(0, dot) : b
 }
 
+const plainTitleText = (value: string): string => {
+  let out = ""
+  let inTag = false
+  let whitespace = false
+  for (const char of value) {
+    if (char === "<") {
+      inTag = true
+      whitespace = out.length > 0
+      continue
+    }
+    if (inTag) {
+      if (char === ">") inTag = false
+      continue
+    }
+    if (char === "`" || char === "*" || char === "_") continue
+    if (/\s/.test(char)) {
+      whitespace = out.length > 0
+      continue
+    }
+    if (whitespace && out.length < 200) out += " "
+    whitespace = false
+    if (out.length < 200) out += char
+    if (out.length === 200) break
+  }
+  return out.trim()
+}
+
+const htmlTagEnd = (text: string, from: number): number => {
+  let quote: '"' | "'" | null = null
+  for (let at = from; at < text.length; at++) {
+    const char = text[at]
+    if (quote) {
+      if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'") quote = char
+    else if (char === ">") return at
+  }
+  return -1
+}
+
+const contentsOf = (text: string, tagName: string): string | null => {
+  const lower = text.toLowerCase()
+  const openStart = lower.indexOf(`<${tagName}`)
+  if (openStart < 0) return null
+  const openEnd = htmlTagEnd(text, openStart + tagName.length + 1)
+  if (openEnd < 0) return null
+  const close = lower.indexOf(`</${tagName}>`, openEnd + 1)
+  return close < 0 ? null : text.slice(openEnd + 1, close)
+}
+
 /**
  * A human display title for a synced file: the doc's own heading, so the library
  * shows "Taxonomy System" not "packages/core/ai-services/TAXONOMY.md" (the path
@@ -107,24 +158,15 @@ const stripExt = (path: string): string => {
  * first `<h1>`; otherwise the basename without extension.
  */
 const extractTitle = (bytes: Uint8Array, path: string): string => {
-  const clean = (s: string) =>
-    s
-      .replace(/<[^>]+>/g, "")
-      .replace(/[`*_]/g, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 200)
   const text = new TextDecoder().decode(bytes)
   if (isHtml(path)) {
-    const title = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]
-    const h1 = text.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]
-    const got = clean(title || h1 || "")
+    const got = plainTitleText(contentsOf(text, "title") || contentsOf(text, "h1") || "")
     if (got) return got
   } else if (/\.(md|markdown)$/i.test(path)) {
     for (const line of text.split("\n").slice(0, 60)) {
       const m = line.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/)
       if (m?.[1]) {
-        const got = clean(m[1])
+        const got = plainTitleText(m[1])
         if (got) return got
       }
     }

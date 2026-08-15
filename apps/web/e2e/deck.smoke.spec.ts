@@ -1,5 +1,5 @@
+import { DECK_TEMPLATE } from "@derive/core"
 import type { Page } from "@playwright/test"
-import { DECK_TEMPLATE } from "../src/lib/deck-template.gen"
 import { expect, openArtifact, publishArtifact, test } from "./fixtures"
 
 /**
@@ -144,18 +144,22 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-position")).toHaveCount(0)
   })
 
-  test("the library's Start a deck opens the editor on the canonical starter", async ({
+  test("the library's deck template path hands the visual reference to the agent", async ({
     owner: page,
   }) => {
-    // The human entry point. It has to arrive with the real starter in the editor —
-    // an empty editor here is the whole feature failing silently.
+    // The canonical deck is an agent reference, never a source-code editor or
+    // old-school field-by-field WYSIWYG flow.
     await page.goto("/")
     await page.getByTestId("library-new").click()
-    await page.getByTestId("library-new-deck").click()
-    await expect(page).toHaveURL(/\/new\?start=deck/)
-    const editor = page.getByTestId("artifact-source-editor")
-    await expect(editor).toContainText("data-derive-slide")
-    await expect(editor).toContainText("derive-deck")
+    await page.getByTestId("library-new-template").click()
+    await expect(page).toHaveURL(/\/templates/)
+    await page.getByTestId("template-use-narrative-pitch").click()
+    await page
+      .getByTestId("template-agent-brief")
+      .fill("Make a launch narrative for product leaders that earns approval for the plan.")
+    await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
+    await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
+    await expect(page.getByTestId("template-agent-open-codex")).toHaveCount(0)
   })
 
   /* ── The other half: a deck that announces NOTHING ─────────────────────────

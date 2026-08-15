@@ -3,7 +3,7 @@
 // authorized AS the clicking user's linked Derive account — the whole reason account linking is a
 // prerequisite. Runs the same proposal-actions pipeline the HTTP route does.
 
-import { type Actor, can, maxRole } from "@derive/core"
+import { type Actor, can, maxRole, PublishError } from "@derive/core"
 import {
   approveProposalAction,
   type ProposalActionDeps,
@@ -75,10 +75,7 @@ export const runSlackProposalAction = async (
     await eph("You don't have permission to approve proposals on this artifact.")
     return
   }
-  // Fresh open-state check (the proposal was just re-read), so a click on a card whose proposal
-  // was already decided elsewhere no-ops with a message. NOTE: this is not a lock — two truly
-  // concurrent decisions can still both pass (a pre-existing race the HTTP approve route shares;
-  // the real fix is an atomic decide in core, out of scope here).
+  // Fast stale-card check; the store transition below is the actual concurrency gate.
   if (proposal.state !== "open") {
     await eph(`This proposal is already ${proposal.state}.`)
     return
@@ -104,10 +101,18 @@ export const runSlackProposalAction = async (
       const version = await approveProposalAction(deps, artifact, proposal, who, null, link.user_id)
       await replaceCard(`:white_check_mark: Approved by ${display} — now v${version.n}`)
     } else {
-      await requestChangesAction(deps, artifact, proposal, who, null, link.user_id)
+      const decided = await requestChangesAction(deps, artifact, proposal, who, null, link.user_id)
+      if (!decided) {
+        await eph("That proposal was just decided somewhere else.")
+        return
+      }
       await replaceCard(`:leftwards_arrow_with_hook: Changes requested by ${display}`)
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof PublishError && error.statusCode === 409) {
+      await eph("That proposal was just decided somewhere else.")
+      return
+    }
     await eph("Sorry — that didn't go through. Try approving in Derive.")
   }
 }

@@ -46,18 +46,20 @@ export function NewArtifactButton() {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem data-testid="library-new-write" onSelect={() => nav({ to: "/new" })}>
-            <Icon name="edit" size={16} /> Write or paste
-          </DropdownMenuItem>
-          {/* Decks were the one thing Derive could do that nothing in the product said it
-              could: the badge only appears after you've already built one. This is the
-              entry point, and it opens the editor on the same canonical starter the CLI
-              scaffolds and the MCP serves. */}
           <DropdownMenuItem
-            data-testid="library-new-deck"
-            onSelect={() => nav({ to: "/new", search: { start: "deck" } })}
+            data-testid="library-new-template"
+            onSelect={() => nav({ to: "/templates" })}
           >
-            <Icon name="present" size={16} /> Start a deck
+            <Icon name="templates" size={16} /> From a template
+          </DropdownMenuItem>
+          <DropdownMenuItem data-testid="library-new-write" onSelect={() => nav({ to: "/new" })}>
+            <Icon name="edit" size={16} /> Blank artifact
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            data-testid="library-new-from-existing"
+            onSelect={() => nav({ to: "/templates", search: { derive: true } })}
+          >
+            <Icon name="derive" size={16} /> From an artifact
           </DropdownMenuItem>
           <DropdownMenuItem data-testid="library-upload" onSelect={() => fileRef.current?.click()}>
             <Upload className="size-4" aria-hidden /> Upload a file

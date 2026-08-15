@@ -1,7 +1,8 @@
 version: 2
 updates:
   # App + package dependencies (pnpm workspace, resolved from the root lockfile).
-  # Grouped into one PR per week so the queue stays reviewable.
+  # Routine updates are grouped; majors stay isolated so their migrations and
+  # risk are reviewed on their own evidence.
   - package-ecosystem: npm
     directory: "/"
     schedule:
@@ -9,8 +10,9 @@ updates:
       day: monday
     open-pull-requests-limit: 10
     groups:
-      npm:
+      npm-routine:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: "chore(deps)"
 
@@ -26,3 +28,16 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "chore(ci)"
+
+  # Refresh digest-pinned Node bases and the runner Dockerfile without giving up
+  # reproducible builds between update PRs.
+  - package-ecosystem: docker
+    directory: "/deploy"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      container-bases:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(images)"

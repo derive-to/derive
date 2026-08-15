@@ -1,10 +1,10 @@
 # Derive — full reference for LLMs
 
-> Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
+> Review and approve agent-made work — HTML pages, Markdown docs, slide decks — with every version, exact-text comment, revision, and decision at one durable URL.
 
-Derive gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+Derive turns agent output into accountable work: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop with a named human decision.
 
-Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to.
+Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to. The FSL license converts each release to Apache-2.0 after two years.
 
 ---
 
@@ -56,6 +56,8 @@ role grants viewer or better are readable without auth.
 If this file and the live API disagree, trust the live API — fetched copies go stale.
 The current capability surface is at `/.well-known/agent.json`, the agent skill at
 `/skill.md`, and the full spec at `/openapi.json` (reference UI at `/docs`).
+Human documentation is at `https://docs.derive.to/`; official live workflow examples and their source are
+at `/examples`.
 
 ### Publish an anonymous draft (no account)
 

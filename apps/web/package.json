@@ -14,8 +14,9 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "test:e2e:smoke": "playwright test --project=smoke",
+    "test:e2e:smoke": "playwright test --project=smoke --project=templates-deep",
     "test:e2e:fidelity": "playwright test --project=render-fidelity",
+    "test:e2e:public": "pnpm build && pnpm --filter @derive/docs build && playwright test --config playwright.public.config.ts",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
     "test:e2e:typecheck": "tsc -p e2e/tsconfig.json"
@@ -57,6 +58,7 @@
     "xss": "^1.0.15"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@babel/core": "^7.29.7",
     "@derive/core": "workspace:*",
     "@playwright/test": "^1.61.0",

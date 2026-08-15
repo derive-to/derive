@@ -1,13 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
-// SHELVING on `organize` — the authoring path for removal, and the way back.
-//
-// The tombstone itself is old: sync retires an artifact whose file was deleted, moderation
-// takes one down, PR-preview teardown sweeps a batch. What never existed was a path for the
-// PERSON (or agent) who made a thing to remove it, which meant every experiment in a real
-// workspace was permanent litter. Both directions live on ONE parameter so the way back is
-// never a separate thing to discover.
+// Reversible archive and legacy tombstone state transitions exposed by `organize`.
 
 const owner: TestUser = { id: "u_shelf", email: "shelf@derive.test", name: "Owner" }
 type App = ReturnType<typeof makeAuthedApp>["app"]
@@ -58,6 +52,41 @@ const setup = async (name: string) => {
 }
 
 describe("organize state — retire an artifact and put it back", () => {
+  it("archives reversibly: hidden from normal discovery, still readable, and findable on the archive shelf", async () => {
+    const { app, meta, token } = await setup("archive-roundtrip")
+    const pub = await call(app, token, "publish", {
+      title: "Transient probe",
+      content: "# Transient probe\n\nbody",
+    })
+
+    const gone = await call(app, token, "organize", {
+      short_ids: [pub.short_id],
+      state: "archived",
+    })
+    expect(gone.state.changed).toBe(1)
+    expect(gone.state.undo).toMatchObject({
+      tool: "organize",
+      arguments: { short_ids: [pub.short_id], state: "live" },
+    })
+    expect((await meta.getByShortId(pub.short_id))?.archived_at).toBeTruthy()
+    expect((await callRaw(app, token, "read", { short_id: pub.short_id })).isError).toBe(false)
+
+    const normal = await call(app, token, "find", { query: "Transient probe" })
+    expect(JSON.stringify(normal)).not.toContain(pub.short_id)
+    const shelf = await call(app, token, "find", { archived: true })
+    expect(JSON.stringify(shelf)).toContain(pub.short_id)
+
+    const back = await call(app, token, "organize", {
+      short_ids: [pub.short_id],
+      state: "live",
+    })
+    expect(back.state.changed).toBe(1)
+    expect((await meta.getByShortId(pub.short_id))?.archived_at).toBeNull()
+    expect(JSON.stringify(await call(app, token, "find", { query: "Transient probe" }))).toContain(
+      pub.short_id,
+    )
+  })
+
   it("round-trips: removed hides it, live restores it, and the record survives both", async () => {
     const { app, meta, token } = await setup("shelve-roundtrip")
     const pub = await call(app, token, "publish", { title: "Probe", content: "# Probe\n\nbody" })
@@ -114,7 +143,7 @@ describe("organize state — retire an artifact and put it back", () => {
     // A growth-prone discriminator: checked server-side so a client with a cached schema
     // can still reach a value shipped after it connected, and a wrong one is named
     // alongside the values that do exist.
-    expect(bad.text).toContain("removed, live, deleted")
+    expect(bad.text).toContain("archived, removed, live, deleted")
     expect(bad.isError).toBe(true)
   })
 

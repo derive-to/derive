@@ -127,6 +127,7 @@ export const placeholderTables = (iso: string): string[] => [
  *  in each table's CREATE). Applied after every table + placeholder exists. */
 export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id)`,
+  `CREATE INDEX IF NOT EXISTS artifact_org_archived_created ON artifact (org_id, archived_at, created_at, id)`,
   `CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at)`,
@@ -139,6 +140,9 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS tag_name ON artifact_tag (tag)`,
   `CREATE INDEX IF NOT EXISTS collection_item_artifact ON collection_item (artifact_id)`,
   `CREATE INDEX IF NOT EXISTS collection_member_user ON collection_member (user_id)`,
+  `CREATE INDEX IF NOT EXISTS template_library_org_scope ON template_library (org_id, scope, created_at)`,
+  `CREATE INDEX IF NOT EXISTS template_library_scope_time ON template_library (scope, created_at, id)`,
+  `CREATE INDEX IF NOT EXISTS template_library_owner ON template_library (created_by, created_at)`,
   `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
   `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
   `CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state)`,

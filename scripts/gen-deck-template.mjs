@@ -2,14 +2,10 @@
 // Generates the deck starter into every surface that scaffolds one, from ONE source:
 // packages/core/src/deck-template.html.
 //
-// Three surfaces hand a person or an agent a starting deck — the MCP template resource
-// (derive://decks/template), `derive init --template slides`, and the library's "Start a
-// deck" — and they must hand over the SAME deck, because the decks skill documents one
-// pattern. They can't share a module: the CLI is deliberately standalone (no @derive/core)
-// and the web client never pulls core into its bundle. So the canonical deck is a real
-// .html file (editable and previewable as what it is, like the skills are real .md files)
-// and this script inlines it into a committed module per surface — the deterministic-gate
-// pattern, same as scripts/build-anchor-client.mjs.
+// Two runtime surfaces hand a person or an agent a starting deck — the core MCP resource
+// and `derive init --template slides` — and they must hand over the SAME deck. The CLI is
+// deliberately standalone (no @derive/core), so this script inlines one canonical HTML
+// source into each runtime package. Browser tests import the core copy directly.
 //
 //   node scripts/gen-deck-template.mjs           # write the generated modules
 //   node scripts/gen-deck-template.mjs --check   # fail if any is stale (CI)
@@ -28,6 +24,8 @@ const SRC = join(ROOT, "packages/core/src/deck-template.html")
 // The title the starter names itself with, swapped by deckTemplate(title). It appears in
 // <title>, the opening eyebrow, and the <h1> — all three are the deck naming itself.
 const TITLE_SENTINEL = "New deck"
+const SLIDES_START = "<!-- derive:slides:start -->"
+const SLIDES_END = "<!-- derive:slides:end -->"
 
 /** The load-bearing contract. Each entry: what to find, and what breaks without it. */
 const CONTRACT = [
@@ -43,6 +41,8 @@ const html = readFileSync(SRC, "utf8")
 const problems = []
 for (const [needle, why] of CONTRACT)
   if (!html.includes(needle)) problems.push(`missing ${needle} — ${why}`)
+if (html.split(SLIDES_START).length !== 2 || html.split(SLIDES_END).length !== 2)
+  problems.push("the canonical deck needs exactly one stable slide-slot marker pair")
 // The same count the runtime uses (packages/core/src/decks.ts): real slide tags only, and
 // HTML comments stripped first — this file's own annotated header describes a slide element
 // in prose, and prose about decks must never count as one. Comment stripping mirrors the
@@ -87,6 +87,8 @@ const BANNER = (lang) =>
   `// imports, safe in every build.\n`
 
 const DOC = `/** The canonical deck starter, with its own title. Pass the deck's title to name it. */`
+const SLOT_DOC = `/** Put authored slide sections into the canonical deck's supported slide slot. */`
+const generatedInterpolation = (expression) => `\${${expression}}`
 
 /** The generated module text for a target. `lang` is "ts" or "js". */
 const moduleFor = (lang) => {
@@ -94,15 +96,21 @@ const moduleFor = (lang) => {
   return (
     `${BANNER(lang)}\nexport const DECK_TEMPLATE${typed ? ": string" : ""} = ${JSON.stringify(html)}\n\n` +
     `${DOC}\nexport const deckTemplate = (title${typed ? ": string" : ""})${typed ? ": string" : ""} =>\n` +
-    `  DECK_TEMPLATE.replaceAll(${JSON.stringify(TITLE_SENTINEL)}, title)\n`
+    `  DECK_TEMPLATE.replaceAll(${JSON.stringify(TITLE_SENTINEL)}, title)\n\n` +
+    `${SLOT_DOC}\nexport const deckTemplateWithSlides = (title${typed ? ": string" : ""}, slides${typed ? ": string" : ""})${typed ? ": string" : ""} => {\n` +
+    `  const deck = deckTemplate(title)\n` +
+    `  const start = deck.indexOf(${JSON.stringify(SLIDES_START)})\n` +
+    `  const end = deck.indexOf(${JSON.stringify(SLIDES_END)})\n` +
+    `  if (start < 0 || end <= start) throw new Error("canonical deck slide slot is missing")\n` +
+    `  return \`${generatedInterpolation(`deck.slice(0, start + ${SLIDES_START.length})`)}\n${generatedInterpolation("slides.trim()")}\n${generatedInterpolation("deck.slice(end)")}\`\n` +
+    `}\n`
   )
 }
 
-// One target per surface that hands over a starting deck. The CLI gets plain JS (it ships
-// as source and depends on nothing); core serves the MCP resource; web prefills the editor.
+// One target per runtime surface. The CLI gets plain JS (it ships as source and
+// depends on nothing); core serves the MCP resource and browser tests.
 const TARGETS = [
   { path: join(ROOT, "packages/core/src/deck-template.gen.ts"), lang: "ts" },
-  { path: join(ROOT, "apps/web/src/lib/deck-template.gen.ts"), lang: "ts" },
   { path: join(ROOT, "packages/cli/src/deck-template.gen.js"), lang: "js" },
 ]
 

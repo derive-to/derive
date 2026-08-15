@@ -2,6 +2,7 @@ import type {
   GithubUserMapping,
   MetaStore,
   NewVersion,
+  ProposalApproval,
   UserDir,
   UserProfile,
   VersionRecord,
@@ -197,6 +198,15 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
   > & { close(): void } = {
     ...repos,
 
+    // The shared repo keeps ordering portable, but this destructive pair must
+    // be all-or-nothing on the embedded driver as it already is on Postgres.
+    deleteTemplateLibrary: async (id: string): Promise<void> => {
+      raw.transaction((libraryId: string) => {
+        raw.prepare("DELETE FROM template_library_entry WHERE library_id = ?").run(libraryId)
+        raw.prepare("DELETE FROM template_library WHERE id = ?").run(libraryId)
+      })(id)
+    },
+
     // Synchronous transaction: a concurrent increment can't interleave between
     // the read and the write, so version numbers never collide.
     addVersion: async (artifactId: string, v: NewVersion): Promise<VersionRecord> => {
@@ -228,6 +238,69 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         return next
       })
       return (await repos.getVersion(artifactId, n)) as VersionRecord
+    },
+
+    approveOpenProposal: async (
+      id: string,
+      approval: ProposalApproval,
+    ): Promise<VersionRecord | null> => {
+      const approved = db.transaction((tx) => {
+        const p = tx
+          .select()
+          .from(proposal)
+          .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
+          .get()
+        if (!p) return null
+        const current = tx
+          .select({ cv: artifact.current_version })
+          .from(artifact)
+          .where(eq(artifact.id, p.artifact_id))
+          .get()
+        if (!current) throw new Error(`artifact not found: ${p.artifact_id}`)
+        const n = current.cv + 1
+        const now = new Date().toISOString()
+
+        tx.insert(version)
+          .values({
+            id: approval.version_id,
+            artifact_id: p.artifact_id,
+            n,
+            blob_key: p.blob_key,
+            content_type: p.content_type,
+            size_bytes: approval.size_bytes,
+            author: p.author,
+            author_id: p.author_id,
+            message: p.message ?? "Approved proposal",
+            name: null,
+          })
+          .run()
+        tx.update(artifact)
+          .set({
+            current_version: n,
+            current_content_type: p.content_type,
+            updated_at: now,
+            author_name: p.author,
+            author_login: null,
+            author_avatar: null,
+            author_gh_id: null,
+            author_id: p.author_id,
+          })
+          .where(eq(artifact.id, p.artifact_id))
+          .run()
+        tx.update(proposal)
+          .set({
+            state: "approved",
+            decided_by: approval.decided_by,
+            decided_by_id: approval.decided_by_id,
+            decided_version: n,
+            decision_note: approval.decision_note ?? null,
+            decided_at: now,
+          })
+          .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
+          .run()
+        return { artifactId: p.artifact_id, n }
+      })
+      return approved ? await repos.getVersion(approved.artifactId, approved.n) : null
     },
 
     setArtifactTags: async (artifactId: string, tags: string[]): Promise<void> => {

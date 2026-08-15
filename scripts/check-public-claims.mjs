@@ -1,0 +1,192 @@
+#!/usr/bin/env node
+// Public language is a product contract. Keep this guard limited to claims whose
+// implementation cannot be inferred from a successful docs build or route test.
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { extname, join } from "node:path"
+
+const ROOT = process.cwd()
+const TEXT_EXTENSIONS = new Set([".html", ".json", ".md", ".mdx", ".txt", ".xml"])
+
+const walkText = (directory) => {
+  const files = []
+  for (const name of readdirSync(join(ROOT, directory))) {
+    const path = join(directory, name)
+    const stat = statSync(join(ROOT, path))
+    if (stat.isDirectory()) files.push(...walkText(path))
+    else if (TEXT_EXTENSIONS.has(extname(name))) files.push(path)
+  }
+  return files
+}
+
+const publicCopyFiles = new Set([
+  "README.md",
+  "SECURITY.md",
+  ".github/SUPPORT.md",
+  ...walkText("apps/docs/content"),
+  ...walkText("apps/web/public"),
+  "apps/docs/docs-manifest.mjs",
+  "apps/web/src/pages/login.tsx",
+  "apps/web/src/pages/roadmap.tsx",
+  "apps/web/src/pages/settings/billing-plans.ts",
+  "apps/web/src/components/shared/connect-agent.tsx",
+  "apps/web/src/components/showcase/showcase.tsx",
+  "apps/api/src/routes/agent-discovery.ts",
+  "apps/api/src/routes/embeds.ts",
+  "apps/api/src/routes/system.ts",
+  "packages/cli/README.md",
+  "packages/mcp/README.md",
+])
+
+const failures = []
+const fail = (message) => failures.push(message)
+const read = (path) => readFileSync(join(ROOT, path), "utf8")
+
+const forbidden = [
+  {
+    pattern: /\bopen[- ]source\b/i,
+    reason: "Derive is Fair Source today; reserve open-source comparisons for LICENSING.md",
+  },
+  {
+    pattern: /people outside your team never need an account/i,
+    reason: "anonymous users may view but must sign in before commenting or editing",
+  },
+  {
+    pattern: /every agent speaks MCP/i,
+    reason: "MCP support applies to compatible clients, not every agent",
+  },
+  {
+    pattern: /(?:connect|give|paste (?:this )?into) any agent/i,
+    reason: "do not make universal agent-compatibility claims",
+  },
+  {
+    pattern: /whatever your team runs/i,
+    reason: "name tested clients or say MCP-compatible",
+  },
+]
+
+const licensingPath = "apps/docs/content/reference/licensing.md"
+
+for (const path of publicCopyFiles) {
+  if (!existsSync(join(ROOT, path))) {
+    fail(`missing public-copy surface ${path}`)
+    continue
+  }
+  for (const [index, line] of read(path).split("\n").entries()) {
+    for (const { pattern, reason } of forbidden) {
+      if (path === licensingPath && pattern.source === "\\bopen[- ]source\\b") continue
+      if (pattern.test(line)) fail(`${path}:${index + 1}: ${reason}\n  ${line.trim()}`)
+    }
+  }
+}
+
+const requireText = (path, expected, reason) => {
+  if (!read(path).includes(expected))
+    fail(`${path} must contain ${JSON.stringify(expected)} — ${reason}`)
+}
+
+// License, access, agent compatibility, and the human decision boundary are
+// promises a copy edit must not broaden.
+requireText(licensingPath, "Strictly speaking, no.", "state the current license status plainly")
+requireText("SECURITY.md", "Anonymous callers are always read-only", "match effectiveRole")
+requireText("apps/web/public/site/index.html", "Fair Source and self-hostable", "accurate metadata")
+requireText(
+  "apps/web/public/site/index.html",
+  "commenting or editing requires sign-in",
+  "match the anonymous read-only invariant",
+)
+requireText("apps/web/src/pages/login.tsx", "Fair Source.", "do not claim OSI status")
+requireText(
+  "apps/web/src/components/shared/connect-agent.tsx",
+  "Fair Source review-and-approval tool",
+  "describe the current license",
+)
+requireText(
+  "apps/web/public/.well-known/security.txt",
+  "server is source available",
+  "describe the current license",
+)
+requireText("README.md", "any compatible agent can act", "scope agent compatibility")
+requireText("README.md", "a proposal a human approves", "preserve human approval")
+
+// Keep one canonical documentation origin and one deterministic contributor gate.
+requireText("README.md", 'href="https://docs.derive.to"', "link to the documentation site")
+for (const path of [
+  "apps/web/public/site/index.html",
+  "apps/web/public/site/pricing.html",
+  "apps/web/public/site/privacy.html",
+  "apps/web/public/site/examples.html",
+])
+  requireText(path, "https://docs.derive.to/", "send readers to the canonical docs host")
+requireText(
+  "apps/api/src/routes/marketing.ts",
+  'c.redirect("https://docs.derive.to/", 308)',
+  "keep the former guides URL as a permanent redirect",
+)
+requireText("apps/docs/wrangler.toml", 'pattern = "docs.derive.to"', "deploy on the docs host")
+requireText("CONTRIBUTING.md", "pnpm verify", "use the exact CI check gate")
+requireText(
+  ".github/PULL_REQUEST_TEMPLATE.md",
+  "`pnpm verify` passes",
+  "use the exact CI check gate",
+)
+
+// Signup attribution is an explicit account handoff, not ambient click tracking.
+// Pin the small supported set so public copy cannot promise a token that a route
+// silently drops, and static interest controls cannot masquerade as measurement.
+for (const [path, marker] of [
+  ["apps/web/public/site/index.html", 'href="/login?src=nav_signin"'],
+  ["apps/web/public/site/examples.html", 'href="/login?src=examples_signin"'],
+  ["apps/web/public/site/index.html", 'data-derive-source="homepage_waitlist"'],
+  ["apps/web/public/site/pricing.html", 'data-derive-source="pricing_waitlist"'],
+  ["apps/web/src/components/shared/public-frame.tsx", 'signupSourceSearch("public_frame"'],
+  ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("make_your_own"'],
+  ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("comment_wall"'],
+  ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("badge"'],
+  ["docs/GROWTH-MEASUREMENT.md", "/login?signup=1&src=hn-launch&landing=/"],
+])
+  requireText(path, marker, "keep attribution on an explicit account-creation handoff")
+
+const attributionSurfaces = [
+  "docs/GROWTH-MEASUREMENT.md",
+  "apps/docs/astro.config.mjs",
+  "apps/docs/content/index.mdx",
+  "apps/web/public/site/index.html",
+  "apps/web/public/site/pricing.html",
+  "apps/web/public/site/examples.html",
+]
+for (const token of [
+  "hero_agent_prompt",
+  "homepage_example",
+  "copy_skill",
+  "copy_mcp",
+  "copy_draft",
+  "pricing_cta",
+  "docs_nav",
+  "docs_home",
+  "docs_hosted",
+  "official_examples",
+])
+  for (const path of attributionSurfaces)
+    if (read(path).includes(token))
+      fail(`${path} contains inert attribution token ${token}; only account handoffs are measured`)
+
+for (const path of attributionSurfaces.filter((path) => path.endsWith(".html")))
+  for (const [index, line] of read(path).split("\n").entries())
+    if (line.includes("data-derive-source") && !line.includes("<form data-waitlist"))
+      fail(`${path}:${index + 1}: data-derive-source belongs only on the beta-access form`)
+
+const pullRequestTemplate = read(".github/PULL_REQUEST_TEMPLATE.md")
+for (const stale of [/\[ \].*pnpm typecheck/, /\[ \].*biome ci/, /\[ \].*pnpm test(?:\s|`)/])
+  if (stale.test(pullRequestTemplate))
+    fail(".github/PULL_REQUEST_TEMPLATE.md must use pnpm verify, not partial gates")
+
+if (failures.length) {
+  console.error("check-public-claims: public contract drifted\n")
+  for (const message of failures) console.error(`  ✖ ${message}`)
+  console.error("\nFix the claim or its implementation; do not weaken the contract.")
+  process.exit(1)
+}
+
+console.log(
+  `check-public-claims: ok — ${publicCopyFiles.size} surfaces preserve license, access, agent, approval, docs, and gate claims`,
+)

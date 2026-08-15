@@ -9,12 +9,16 @@
 # the context's .mcp.json expects. The API resolves that credential from the requester,
 # an explicitly lending agent owner, or the workspace pool; no model key is baked in.
 # See runner.compose.example.yml.
-FROM node:24-slim
+FROM node:24-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
 
 # git: repo pointers clone at boot. python3 + gh: what context manifests most
 # commonly shell out to (doctor checks both, warn-only). uv: the launcher
 # python MCP servers ship with (`uvx <server>` in .mcp.json) — the Analytics
 # dress rehearsal found the Snowflake MCP dead in the water without it.
+ARG UV_VERSION=0.12.4
+ARG UV_AMD64_SHA256=c8c60f47e6f88d18dbf6f33d7279fb1fbf7ae76631768152cf5578c3d65729b4
+ARG UV_ARM64_SHA256=49d881b3403187e1f1789720881e77e4251ad4259d86c4844862657d2a35d13f
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl git python3 \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -23,11 +27,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+    && case "$TARGETARCH" in \
+         amd64) uv_arch=x86_64; uv_digest="$UV_AMD64_SHA256" ;; \
+         arm64) uv_arch=aarch64; uv_digest="$UV_ARM64_SHA256" ;; \
+         *) exit 1 ;; \
+       esac \
+    && uv_asset="uv-${uv_arch}-unknown-linux-gnu.tar.gz" \
+    && curl -fsSLO "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_asset}" \
+    && printf '%s  %s\n' "$uv_digest" "$uv_asset" | sha256sum --check --strict \
+    && tar -xzf "$uv_asset" --strip-components=1 -C /usr/local/bin \
+       "uv-${uv_arch}-unknown-linux-gnu/uv" "uv-${uv_arch}-unknown-linux-gnu/uvx" \
+    && rm "$uv_asset"
 
 # Claude Code and the verified Codex CLI from npm; the Derive CLI from THIS checkout, so the image always runs
 # the runner that shipped with the repo that built it — no npm-publish lag.
-ARG CLAUDE_CODE_VERSION=latest
+ARG CLAUDE_CODE_VERSION=2.1.232
 ARG CODEX_VERSION=0.147.0
 RUN npm install -g \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \

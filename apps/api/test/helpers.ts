@@ -264,6 +264,7 @@ export const json = (obj: unknown) => ({
 // token keeps the instance secured, so an unauthenticated caller is NOT owner.
 export type TestUser = {
   id: string
+  createdAt?: string
   email: string
   name: string | null
   image?: string | null
@@ -278,7 +279,16 @@ const fakeAuth = (users: TestUser[]): AppDeps["auth"] =>
     api: {
       getSession: async ({ headers }: { headers: Headers }) => {
         const u = users.find((x) => x.email === headers.get("x-test-user"))
-        return u ? { user: u } : null
+        return u
+          ? {
+              user: {
+                ...u,
+                // Most fixtures predate signup attribution. Keep them outside its
+                // deliberately short acceptance window unless a test opts in.
+                createdAt: u.createdAt ?? "2020-01-01T00:00:00.000Z",
+              },
+            }
+          : null
       },
     },
   }) as unknown as AppDeps["auth"]

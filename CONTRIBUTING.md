@@ -3,6 +3,17 @@
 Thanks for helping build Derive. This guide covers local setup, the checks your change
 must pass, and how we structure commits and PRs.
 
+Before starting a substantial change, open an issue or Discussion and agree on the
+problem and direction. This is required for new public capabilities, protocol or access
+changes, new operational dependencies, and changes with a meaningful long-term maintenance
+cost. A focused bug fix or documentation correction can go straight to a pull request.
+
+AI-assisted contributions are welcome, but the author remains accountable for every line.
+The pull request must explain the problem and tradeoffs, include proportionate tests, and be
+something the author can review and maintain. Large generated patches without demonstrated
+understanding may be closed even when they appear to work. See the
+[governance guide](.github/GOVERNANCE.md) for the decision and review model.
+
 ## Setup
 
 Requires Node 24+ and pnpm 10+.
@@ -23,17 +34,33 @@ so open the web port. (Container/deploy builds serve both from one origin on 808
 
 By default the API uses embedded SQLite and the local filesystem — no external
 services. Postgres + S3/R2 are opt-in via env: copy `.env.example` to `.env`
-(git-ignored, auto-loaded in dev) and fill in what you need. See [DEPLOY.md](DEPLOY.md).
+(git-ignored, auto-loaded in dev) and fill in what you need. See the
+[deployment guide](apps/docs/content/self-hosting/configuration.md).
+
+Public documentation runs independently at `docs.derive.to`. To edit it locally:
+
+```bash
+pnpm --filter @derive/docs dev
+```
+
+The docs workspace generates its content collection from canonical repository documents and
+the pages in `apps/docs/content/`. Add or move pages through
+[`apps/docs/docs-manifest.mjs`](apps/docs/docs-manifest.mjs); do not edit the ignored generated
+files under `apps/docs/src/content/docs/`. See the [docs workspace README](apps/docs/README.md)
+for the content and deployment contract.
 
 ## The gate
 
-Every change must pass all three before it's pushed. CI runs the same checks.
+Every change must pass the same deterministic gate as CI before it is pushed:
 
 ```bash
-pnpm typecheck            # tsgo across all packages
-pnpm exec biome ci .      # lint + format check — must report 0 errors
-pnpm test                 # vitest across all packages
+pnpm verify
 ```
+
+That command runs `pnpm run ci`, `pnpm typecheck`, and `pnpm test:coverage` in the
+same order as CI's `check` job. Do not substitute `pnpm test`: it skips the coverage
+ratchet and can pass when the required gate fails. Run the three constituent commands
+individually while iterating if that makes failures easier to isolate.
 
 Quick fixes:
 
@@ -54,7 +81,8 @@ it mostly takes care of itself:
 
 ## Architecture
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Two rules matter most:
+Read the [architecture guide](apps/docs/content/reference/architecture.md) first. Two rules
+matter most:
 
 - **The dependency rule.** `packages/core` depends on nothing internal; everything
   depends inward on it. `core` owns the `MetaStore`/`BlobStore` ports; `db`/`storage`

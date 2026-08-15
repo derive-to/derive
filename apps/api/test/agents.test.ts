@@ -95,7 +95,7 @@ describe("agents: @mention → pull inbox → propose → ack", () => {
     expect(art.open_proposals).toBe(1)
   })
 
-  it("the agent cannot approve its own proposal (commenter, not editor)", async () => {
+  it("the default commenter agent cannot approve its own proposal", async () => {
     const open = await (
       await app.request(`/v1/artifacts/${shortId}/proposals?state=open`, {
         headers: as(owner.email),

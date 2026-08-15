@@ -14,13 +14,13 @@
   c.toggle('light', light); c.toggle('dark', !light);
 })();
 </script>
-<title>Derive — The self-hostable home for AI artifacts.</title>
-<meta name="description" content="You've never made more, and never kept less. Derive is where your team and its agents publish, review, and revise work. Open source and self-hostable.">
+<title>Derive — Review and approval for agent-made work.</title>
+<meta name="description" content="Turn agent output into approved work. Keep every version, comment, revision, and decision at one durable URL. Fair Source and self-hostable.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Derive — The self-hostable home for AI artifacts.">
-<meta property="og:description" content="You've never made more, and never kept less. Derive is where your team and its agents publish, review, and revise work.">
+<meta property="og:title" content="Derive — Turn agent output into approved work.">
+<meta property="og:description" content="One durable URL for every version, comment, revision, and decision. Hosted or self-hosted.">
 <meta property="og:url" content="https://derive.to/">
-<meta property="og:image" content="https://derive.to/site/og.png">
+<meta property="og:image" content="https://derive.to/site/og-approval.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
@@ -57,7 +57,7 @@
       "applicationCategory": "BusinessApplication",
       "operatingSystem": "Web",
       "url": "https://derive.to/",
-      "description": "Derive is where your team and its agents publish, review, and revise work. Open source and self-hostable.",
+      "description": "Derive is review and approval for work made by AI agents. It is Fair Source and self-hostable.",
       "isAccessibleForFree": true,
       "publisher": { "@id": "https://derive.to/#organization" }
     }
@@ -80,7 +80,7 @@
 :root{
   color-scheme:dark;
   --bg:#0a0b0d; --fg:#f3f4f6; --card:#101216; --secondary:#16181d;
-  --muted:#969aa2; --faint:#5c616b; --accent:#1b1d23; --border:#23252b; --border-soft:#191b1f;
+  --muted:#969aa2; --faint:#7f8590; --accent:#1b1d23; --border:#23252b; --border-soft:#191b1f;
   --primary:#f3f4f6; --primary-fg:#0a0b0d; --primary-hover:#fff;
   --success:#74b085; --warning:#fb923c;
   --gold:#c2a15e; --share:#8781b0;
@@ -97,9 +97,9 @@
 html.light{
   color-scheme:light;
   --bg:#f7f7f5; --fg:#16171b; --card:#fdfdfc; --secondary:#eeeeeb;
-  --muted:#5d626b; --faint:#9aa0a8; --accent:#e9e9e6; --border:#d9d9d4; --border-soft:#e7e7e2;
+  --muted:#5d626b; --faint:#666b74; --accent:#e9e9e6; --border:#d9d9d4; --border-soft:#e7e7e2;
   --primary:#16171b; --primary-fg:#f7f7f5; --primary-hover:#000;
-  --success:#2f7d4d; --warning:#b45309;
+  --success:#286b41; --warning:#b45309;
   --gold:#8f6f2f; --share:#5f5a94;
   --ink-top:#000000; --ink-bot:rgba(22,23,27,.62);
   --wire:#3f444c; --wire-dim:#b9bdc3; --key-fill:#2b2d33; --ph-line:#c7cacf;
@@ -114,6 +114,9 @@ body{
   -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
   overflow-x:hidden;
 }
+.skip-link{position:fixed;top:8px;left:8px;z-index:1000;padding:9px 12px;border-radius:6px;background:var(--fg);color:var(--bg);transform:translateY(-150%)}
+.skip-link:focus{transform:translateY(0)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--fg);outline-offset:4px}
 ::selection{background:color-mix(in srgb,var(--fg) 18%,transparent)}
 a{color:inherit;text-decoration:none;cursor:default}
 button{cursor:default;font:inherit;background:none;border:0;color:inherit;padding:0}
@@ -230,6 +233,7 @@ html.light .wordmark .wm-light{display:block}
 .hero-cta{height:50px;padding:0 26px;font-size:15.5px;cursor:pointer}
 .hero-cta svg{flex:none;opacity:.75}
 .hero-cta.copied{background:var(--primary-hover)}
+.hero-proof{margin-top:10px;height:42px;font-size:14px}
 .hero-cta-note{
   margin-top:14px;font-size:13.5px;color:var(--muted);max-width:56ch;text-align:center;line-height:1.6;text-wrap:balance;
 }
@@ -289,9 +293,9 @@ html.light .wordmark .wm-light{display:block}
 .doc .lnav .lb{margin-left:auto;color:var(--fg);border-bottom:1px solid var(--fg);padding-bottom:1px}
 .doc .lhero{display:flex;gap:38px;align-items:flex-start;margin-top:28px}
 .doc .lcol{flex:none;width:270px}
-.doc h3.lphead{font-size:32px;letter-spacing:-0.03em;line-height:1.1;margin:0;font-weight:500;min-height:74px}
-.doc h3.lphead em{font-style:normal;position:relative}
-.doc h3.lphead em::after{content:"";position:absolute;left:0;right:0;bottom:1px;height:2px;background:var(--fg);border-radius:2px}
+.doc .lphead{font-size:32px;letter-spacing:-0.03em;line-height:1.1;margin:0;font-weight:500;min-height:74px}
+.doc .lphead em{font-style:normal;position:relative}
+.doc .lphead em::after{content:"";position:absolute;left:0;right:0;bottom:1px;height:2px;background:var(--fg);border-radius:2px}
 .doc .lsub{margin-top:12px;font-size:13.5px;line-height:1.6;color:var(--muted);min-height:64px}
 .doc .lbtn{display:inline-block;margin-top:16px;background:var(--fg);color:var(--bg);border-radius:7px;padding:8px 16px;font-size:12.5px;font-weight:600}
 .doc .lprice{margin-top:11px;font-family:var(--mono);font-size:11px;color:var(--faint);min-height:16px}
@@ -330,17 +334,17 @@ html.light .wordmark .wm-light{display:block}
 .doc.v1 .lnav{color:#787f88}
 .doc.v1 .lnav .wm{color:#9aa0a8;font-weight:500}
 .doc.v1 .lnav .lb{color:#9aa0a8;border-bottom-color:#4a4f57}
-.doc.v1 h3.lphead{font-size:23px;letter-spacing:-0.01em;color:#c6cad1;font-weight:600}
+.doc.v1 .lphead{font-size:23px;letter-spacing:-0.01em;color:#c6cad1;font-weight:600}
 .doc.v1 .lsub{color:#787f88}
 .doc.v1 .lbtn{background:none;border:1px solid #4a4f57;color:#c6cad1;font-weight:400}
 /* v1 stays washed-out and generic on paper too */
-html.light .doc.v1 .lnav{color:#9aa0a8}
-html.light .doc.v1 .lnav .wm{color:#7d838b}
-html.light .doc.v1 .lnav .lb{color:#7d838b;border-bottom-color:#c3c7cc}
-html.light .doc.v1 h3.lphead{color:#6f747c}
-html.light .doc.v1 .lsub{color:#9aa0a8}
+html.light .doc.v1 .lnav{color:var(--faint)}
+html.light .doc.v1 .lnav .wm{color:#6f747c}
+html.light .doc.v1 .lnav .lb{color:#6f747c;border-bottom-color:#c3c7cc}
+html.light .doc.v1 .lphead{color:#6f747c}
+html.light .doc.v1 .lsub{color:var(--faint)}
 html.light .doc.v1 .lbtn{border-color:#c3c7cc;color:#6f747c}
-@media(max-width:840px){.doc .lhero{flex-wrap:wrap}.doc .lcol{width:100%}.doc h3.lphead,.doc .lsub{min-height:0}}
+@media(max-width:840px){.doc .lhero{flex-wrap:wrap}.doc .lcol{width:100%}.doc .lphead,.doc .lsub{min-height:0}}
 .flash{animation:flash 1.1s ease-out}
 @keyframes flash{0%{background:color-mix(in srgb,var(--fg) 9%,transparent)}100%{background:transparent}}
 .demo-comments{border-left:1px solid var(--border-soft);padding:20px 18px;display:flex;flex-direction:column;gap:11px;text-align:left}
@@ -362,7 +366,7 @@ html.light .doc.v1 .lbtn{border-color:#c3c7cc;color:#6f747c}
 .dcomment .text{margin-top:8px;font-size:13px;color:var(--fg)}
 .dcomment .state{margin-top:10px;font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--muted)}
 .dcomment.resolved .state{color:var(--success)}
-.dcomment.resolved{opacity:.62}
+.dcomment.resolved{border-color:color-mix(in srgb,var(--success) 34%,var(--border-soft))}
 .comments-empty{font-size:13px;color:var(--muted);margin:auto 0;text-align:center;opacity:.7}
 .timeline{margin-top:26px}
 .scrub{position:relative;height:44px;display:flex;align-items:center}
@@ -518,7 +522,7 @@ html.light .pcursor .flag{color:#fff}
 .spec-body{padding:16px 18px;font-family:var(--mono);font-size:12.5px;line-height:1.9;color:var(--muted)}
 .spec-body .c{color:var(--fg)}
 .spec-body .ok{color:var(--success)}
-.spec-body .dim{opacity:.6}
+.spec-body .dim{color:var(--faint)}
 
 /* share-dialog specimen */
 .share-dlg{padding:16px 18px;display:flex;flex-direction:column;gap:0;font-size:13px}
@@ -568,7 +572,7 @@ html.light .pcursor .flag{color:#fff}
 .bigterm .ln{display:block;white-space:pre-wrap;overflow-wrap:break-word}
 .bigterm .ln .p{color:var(--fg)}
 .bigterm .ln .ok{color:var(--success)}
-.bigterm .ln .dim{opacity:.6}
+.bigterm .ln .dim{color:var(--faint)}
 .bigterm .cursor{display:inline-block;width:.55em;height:1.1em;background:var(--fg);vertical-align:text-bottom;animation:blink 1.1s steps(1) infinite;margin-left:2px}
 @keyframes blink{50%{opacity:0}}
 .loop .cast{
@@ -672,7 +676,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   .demo-body{min-height:0}
   .doc{padding:22px 18px 26px}
   .doc .lhero{margin-top:20px;gap:22px}
-  .doc h3.lphead{font-size:26px}
+  .doc .lphead{font-size:26px}
   .doc .lph,.doc .draw3d,.doc .lpsvg{height:200px}
   .doc .lspecs .sp{flex:1 1 calc(50% - 14px);min-width:0}
   .doc .lspecs .sp:nth-child(2n){border-right:0;margin-right:0}
@@ -728,6 +732,8 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Skip to content</a>
+
 <nav id="nav">
   <div class="nav-inner">
     <a class="wordmark" href="#">
@@ -735,6 +741,8 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
       <img class="wm-light" src="/brand/wordmark-dark.svg" alt="Derive">
     </a>
     <div class="nav-right">
+      <a href="https://docs.derive.to/">Docs</a>
+      <a href="/examples">Examples</a>
       <a href="/pricing">Pricing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
       <button class="theme-btn" id="themeBtn" type="button" data-mode="dark" aria-label="Theme: dark" title="Theme: dark">
@@ -742,29 +750,31 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
         <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="nav-signin" href="/login">Sign in to Beta <span class="arr">→</span></a>
+      <a class="nav-signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr">→</span></a>
     </div>
   </div>
 </nav>
 
+<main id="main-content" tabindex="-1">
 <!-- ══════════ HERO ══════════ -->
 <header class="hero" id="hero">
   <div class="stage">
-    <div class="eyebrow hero-eyebrow">Make things worth keeping</div>
-    <h1 class="derivation grad-ink">The self-hostable home for&nbsp;AI&nbsp;artifacts.</h1>
-    <p class="sub"><strong>You've never made more, and never kept less.</strong> Derive is your team's library for the work you and your agents make: publish it, share it anywhere with a link, and revise it together until it's right. One URL, every version, yours.</p>
+    <div class="eyebrow hero-eyebrow">Review and approval for agent-made work</div>
+    <h1 class="derivation grad-ink">Turn agent output into approved&nbsp;work.</h1>
+    <p class="sub">Give every plan, report, page, or deck one durable URL. People review the exact work, a compatible agent reads the feedback and revises it, and a named approval closes the loop. <strong>Hosted or self-hosted.</strong></p>
     <div class="cta-row">
       <button class="btn btn-primary hero-cta" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — now paste it into your agent">
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M9.5 4.5v-2a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 2.5V8A1.5 1.5 0 0 0 3 9.5h1.5" stroke="currentColor" stroke-width="1.3"/></svg>
         <span class="copy-label">Copy instructions for my agent</span>
       </button>
-      <p class="hero-cta-note">Get a live link for your artifacts in the next 30 seconds.</p>
+      <a class="btn btn-ghost hero-proof" href="https://derive.to/artifacts/example-launch-page-5cmep9l9">Open a live example <span aria-hidden="true">→</span></a>
+      <p class="hero-cta-note">Publish a real page and get its review link in about 30 seconds.</p>
     </div>
   </div>
 
-  <!-- the hero artifact: the loop, running live -->
+  <!-- Product walkthrough: representative UI, not a live customer artifact. -->
   <div class="demo">
-    <div class="fig">FIG. 01 — a live artifact · the loop, running</div>
+    <div class="fig">FIG. 01 — product walkthrough · the review loop</div>
     <div class="demo-stage">
       <span class="tick tl" aria-hidden="true"></span><span class="tick tr" aria-hidden="true"></span>
       <span class="tick bl" aria-hidden="true"></span><span class="tick br" aria-hidden="true"></span>
@@ -772,12 +782,12 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
         <div class="demo-titlebar">
           <span class="doc-title">derive.to/artifacts/osc8-launch</span>
           <span class="doc-meta" id="docMeta">HTML · v1</span>
-          <span class="tb-lock" aria-label="Password protected">
+          <span class="tb-lock">
             <svg width="10" height="10" viewBox="0 0 11 11" fill="none" aria-hidden="true"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
             password
           </span>
           <span class="spacer"></span>
-          <span class="face" aria-label="Who's here">
+          <span class="face" aria-hidden="true">
             <span class="fc g">M</span><span class="fc v">A</span><span class="fc n">C</span><span class="fc y" id="youChip">Y</span>
           </span>
           <span class="face-label" id="faceLabel">3 here</span>
@@ -791,7 +801,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
             <div class="lnav"><span class="wm">OSC-8</span><span>Voices</span><span>Specs</span><span class="lb">Preorder</span></div>
             <div class="lhero" id="lpHero">
               <div class="lcol">
-                <h3 class="lphead" id="lpH">OSC-8 Synthesizer</h3>
+                <div class="lphead" id="lpH">OSC-8 Synthesizer</div>
                 <p class="lsub" id="lpSub"></p>
                 <span class="lbtn" id="lpBtn">Preorder — €249</span>
                 <div class="lprice" id="lpPrice"></div>
@@ -831,7 +841,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
                 <div class="figcapline"><span id="lpFig"></span><span id="lpHint"></span></div>
               </div>
             </div>
-            <div class="lspecs" id="lpSpecs" aria-label="Measured specifications">
+            <div class="lspecs" id="lpSpecs" role="group" aria-label="Measured specifications">
               <div class="sp"><div class="v">8<small>voices</small></div><div class="k">Polyphony</div></div>
               <div class="sp"><div class="v">22<small>h</small></div><div class="k">Battery · measured</div></div>
               <div class="sp"><div class="v">1.8<small>ms</small></div><div class="k">Key → sound</div></div>
@@ -1007,7 +1017,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
     <div>
       <p class="ch-lede reveal">Your team's library, anyone's link.</p>
       <p class="ch-text reveal">Everything your team publishes lands in one library, so "where's that thing?" always has the same answer. When work needs to leave the building, you send a link: <strong>put a password on it for a client, open it to anyone who has it, or keep it inside the team.</strong> Whoever opens it sees the real, rendered page in their browser, not a zip or a PDF export.</p>
-      <p class="ch-text reveal">Every link carries a role you chose: viewer, commenter, or editor. <strong>People outside your team never need an account</strong>, their feedback lands in the same place yours does, and you can revoke a link the moment you change your mind.</p>
+      <p class="ch-text reveal">Every link carries a role you chose: viewer, commenter, or editor. <strong>Anyone with viewing access can read without an account; commenting or editing requires sign-in</strong>, so feedback has an accountable author. You can revoke a link the moment you change your mind.</p>
     </div>
     <div class="ch-spec reveal">
       <div class="spec-card">
@@ -1096,7 +1106,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   <div class="section-head">
     <div class="eyebrow reveal">Agent-native</div>
     <h2 class="reveal">Where agents put their work.</h2>
-    <p class="l-sub reveal">Every agent speaks MCP, and Derive has an MCP server built in: one command connects Claude Code, Codex, Cursor, or whatever your team runs. From then on the agent stops pasting walls of HTML into chat and starts publishing <strong>real pages at real URLs, with visibility you control</strong>, while you read and review them in an interface built for people. Leave a comment and the agent answers with a revision.</p>
+    <p class="l-sub reveal">Derive has an MCP server built in: one command connects compatible clients such as Claude Code, Codex, and Cursor. From then on the agent stops pasting walls of HTML into chat and starts publishing <strong>real pages at real URLs, with visibility you control</strong>, while you read and review them in an interface built for people. Leave a comment and the agent can answer with a revision.</p>
   </div>
   <div class="bigterm reveal">
     <div class="tb">
@@ -1114,11 +1124,11 @@ Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://de
 Then pick something real we've worked on recently — a plan, a report, a designed page — and publish it. If I'm not connected to Derive, use the anonymous draft flow: no account needed, and it returns a live URL plus a claim link. Send me both so I can see it and claim it.</script>
   <div class="hk-lead reveal">
     <button class="btn btn-primary" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — paste it into your agent">Copy instructions for my agent</button>
-    <span class="hk-leadnote">one paste into any agent — it sets itself up and publishes your first page</span>
+    <span class="hk-leadnote">one paste into a compatible agent — it connects and publishes your first page</span>
   </div>
   <div class="hookup reveal">
     <button class="hk-row" type="button" data-copy="npx skills add derive-to/derive --skill derive" title="Copy">
-      <span class="hk-what">Give any agent the skill</span>
+      <span class="hk-what">Give a compatible agent the skill</span>
       <code>npx skills add derive-to/derive --skill derive</code>
       <span class="hk-copy" aria-hidden="true">COPY</span>
     </button>
@@ -1161,7 +1171,7 @@ Then pick something real we've worked on recently — a plan, a report, a design
   </h2>
   <p class="f-sub">Nothing you're proud of ships in one pass. It's free while we're in beta, so sign up and we'll email your access link, or clone the repo and run the whole thing tonight.</p>
   <div class="waitlist">
-    <form data-waitlist action="/v1/beta/signup" method="post" novalidate>
+    <form data-waitlist data-derive-source="homepage_waitlist" action="/v1/beta/signup" method="post" novalidate>
       <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
       <button class="btn btn-primary" type="submit">Get beta access</button>
     </form>
@@ -1178,6 +1188,8 @@ Then pick something real we've worked on recently — a plan, a report, a design
   </p>
 </section>
 
+</main>
+
 <footer>
   <div class="watermark" aria-hidden="true">Derive</div>
   <div class="foot-inner">
@@ -1193,7 +1205,7 @@ Then pick something real we've worked on recently — a plan, a report, a design
       <a href="/privacy">Privacy</a>
       <a href="/security">Security</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
-      <a href="/login">Log in</a>
+      <a href="/login?src=nav_signin">Log in</a>
     </div>
     <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0 · Prices in USD</span>
   </div>
@@ -1251,7 +1263,7 @@ document.querySelectorAll('[data-waitlist]').forEach(form => {
     btn.disabled = true; btn.textContent = 'Sending…';
     let ok = false;
     try {
-      const res = await fetch(form.action, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email})});
+      const res = await fetch(form.action, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source_kind:form.dataset.deriveSource, landing_path:location.pathname})});
       ok = res.ok;
     } catch {}
     if (!ok) {
