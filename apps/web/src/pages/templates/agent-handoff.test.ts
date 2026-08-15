@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { localAgentHandoff, localAgentLaunchUrl } from "./agent-handoff"
+import { localAgentHandoff } from "./agent-handoff"
 
 const artifact = {
   uri: "derive://templates/narrative-pitch",
@@ -39,24 +39,5 @@ describe("template agent handoffs", () => {
     expect(handoff).toContain("procedures, sources, and operating decisions")
     expect(handoff).toContain("automate with create_context")
     expect(handoff).not.toContain("visually inspect")
-  })
-
-  it("opens Codex and Claude Code with the complete portable handoff prefilled", () => {
-    const brief = "Make the launch story."
-    const handoff = localAgentHandoff(artifact, brief)
-    const codex = new URL(localAgentLaunchUrl("codex", artifact, brief) as string)
-    const claude = new URL(localAgentLaunchUrl("claude-code", artifact, brief) as string)
-
-    expect(codex.protocol).toBe("codex:")
-    expect(codex.hostname).toBe("new")
-    expect(codex.searchParams.get("prompt")).toBe(handoff)
-    expect(claude.protocol).toBe("claude-cli:")
-    expect(claude.hostname).toBe("open")
-    expect(claude.searchParams.get("q")).toBe(handoff)
-  })
-
-  it("refuses to silently truncate a Claude Code deep link", () => {
-    expect(localAgentLaunchUrl("claude-code", artifact, "x".repeat(5_000))).toBeNull()
-    expect(localAgentLaunchUrl("codex", artifact, "x".repeat(5_000))).toContain("codex://new")
   })
 })

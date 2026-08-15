@@ -24,12 +24,6 @@ import { useAgentTemplateHandoff } from "./use-agent-template-handoff"
 
 export type { AgentTemplateTarget } from "./agent-handoff"
 
-const LOCAL_AGENTS = [
-  { id: "codex", label: "Codex", launch: "codex", icon: "context" },
-  { id: "claude", label: "Claude Code", launch: "claude-code", icon: "context" },
-  { id: "any", label: "Any agent", launch: null, icon: "copy" },
-] as const
-
 const exampleBrief = (target: AgentTemplateTarget) => {
   const namedInputs = target.inputs?.slice(0, 3).map((input) => input.name.toLowerCase()) ?? []
   if (namedInputs.length)
@@ -79,10 +73,8 @@ function AgentTemplateDialogInner({
     onlineContexts,
     selectedRunner,
     activeWorkspace,
-    launchReceipt,
     handoff,
     copyForLocalAgent,
-    openInLocalAgent,
     runOnConnectedMachine,
     openModelPlans,
   } = useAgentTemplateHandoff(target, onOpenChange)
@@ -188,7 +180,7 @@ function AgentTemplateDialogInner({
               tone="warning"
               layout="inline"
               title="Connected-machine pickup is unavailable."
-              description="You can still open the prepared task in Codex, Claude Code, or any other local agent below."
+              description="You can still copy the prepared prompt into Codex, Claude Code, or any other local agent below."
               action={
                 <Button
                   type="button"
@@ -313,7 +305,7 @@ function AgentTemplateDialogInner({
                   tone="warning"
                   layout="inline"
                   title="This machine is online, but it still needs a model plan."
-                  description="Connect Codex or Claude once, then send this job again. You can still open the task locally below."
+                  description="Connect Codex or Claude once, then send this job again. You can still copy the prompt below."
                   action={
                     <Button
                       type="button"
@@ -330,81 +322,32 @@ function AgentTemplateDialogInner({
             </section>
           ) : null}
 
-          <section className="grid gap-2" aria-label="Open in a local agent">
-            <div className="flex items-end justify-between gap-3 px-0.5">
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  {onlineContexts.length > 0 ? "Or open another local agent" : "Continue locally"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Choose your agent. The complete task is prepared for you—no source code or setup
-                  form.
-                </p>
-              </div>
+          <section className="grid gap-2" aria-label="Copy for a local agent">
+            <div className="px-0.5">
+              <p className="text-sm font-medium text-foreground">
+                {onlineContexts.length > 0
+                  ? "Or continue in another agent"
+                  : "Continue in your agent"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Copy the complete prompt, then paste it into Codex, Claude Code, or any other agent.
+              </p>
             </div>
-            <div className="grid gap-2 sm:grid-cols-3">
-              {LOCAL_AGENTS.map((agent) => {
-                const copyAction = agent.launch === null
-                return (
-                  <Button
-                    key={agent.id}
-                    type="button"
-                    variant="outline"
-                    size="lg"
-                    className="justify-between"
-                    disabled={!brief.trim() || busy}
-                    onClick={() =>
-                      copyAction ? void copyForLocalAgent() : void openInLocalAgent(agent.launch)
-                    }
-                    data-testid={
-                      copyAction ? "template-agent-copy" : `template-agent-open-${agent.id}`
-                    }
-                  >
-                    <span className="grid min-w-0 gap-0.5 text-left">
-                      <span className="flex items-center gap-2 font-medium">
-                        <Icon name={agent.icon} /> {agent.label}
-                      </span>
-                      <span className="text-xs font-normal text-muted-foreground">
-                        {copyAction && copied
-                          ? "Ready to paste"
-                          : copyAction
-                            ? "Copy task"
-                            : launchReceipt?.agent === agent.label
-                              ? "Open again"
-                              : "Open task"}
-                      </span>
-                    </span>
-                    <Icon name={copyAction && copied ? "check" : "arrow"} />
-                  </Button>
-                )
-              })}
-            </div>
+            <Button
+              type="button"
+              size="lg"
+              className="w-full justify-between"
+              disabled={!brief.trim() || busy}
+              onClick={() => void copyForLocalAgent()}
+              data-testid="template-agent-copy"
+            >
+              <span className="flex items-center gap-2 font-medium">
+                <Icon name={copied ? "check" : "copy"} />
+                {copied ? "Copied — paste into your agent" : "Copy as prompt"}
+              </span>
+              <Icon name={copied ? "check" : "arrow"} />
+            </Button>
           </section>
-
-          {launchReceipt ? (
-            <StatusPanel
-              tone="brand"
-              layout="inline"
-              icon={<Icon name="check" />}
-              title={`${launchReceipt.agent} task prepared`}
-              description={
-                launchReceipt.fallbackCopied
-                  ? `${launchReceipt.agent} should open in a new composer. The complete task is also copied, so you can paste it if the app did not open.`
-                  : `${launchReceipt.agent} should open in a new composer. Clipboard access was blocked, so the complete task is available below if the app did not open.`
-              }
-              action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void copyForLocalAgent()}
-                  data-testid="template-agent-launch-copy-fallback"
-                >
-                  <Icon name="copy" /> {launchReceipt.fallbackCopied ? "Copy again" : "Copy task"}
-                </Button>
-              }
-            />
-          ) : null}
 
           {showHandoff ? (
             <div className="grid gap-2" data-testid="template-agent-handoff-preview">

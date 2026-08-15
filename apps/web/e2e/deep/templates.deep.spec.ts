@@ -21,7 +21,7 @@ test("a Context Template prepares an agentic handoff", async ({ owner }) => {
   await expect(
     owner.getByRole("heading", { name: "Make Weekly research brief yours" }),
   ).toBeVisible()
-  await expect(owner.getByText("Continue locally")).toBeVisible()
+  await expect(owner.getByText("Continue in your agent")).toBeVisible()
   await owner
     .getByTestId("template-agent-brief")
     .fill("Research the template ecosystem using approved sources every Monday.")

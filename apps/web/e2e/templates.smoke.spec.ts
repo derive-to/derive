@@ -40,7 +40,7 @@ test.describe("templates", () => {
 
     await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
     await expect(page.getByText("Use your own agent")).toBeVisible()
-    await expect(page.getByText("Continue locally")).toBeVisible()
+    await expect(page.getByText("Continue in your agent")).toBeVisible()
     await expect(page.getByTestId("template-agent-inheritance-preview")).toContainText("The change")
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
     await page
@@ -56,9 +56,7 @@ test.describe("templates", () => {
     expect(new URL(page.url()).pathname).toBe("/templates")
   })
 
-  test("local launch leaves a visible receipt and copy-backed fallback", async ({
-    owner: page,
-  }) => {
+  test("one portable prompt replaces desktop-specific launch links", async ({ owner: page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     await page.route("**/v1/me/connected-agents", (route) =>
       route.fulfill({
@@ -71,11 +69,12 @@ test.describe("templates", () => {
     await page.getByTestId("template-use-narrative-pitch").click()
     await expect(page.getByText("Connect Derive before the handoff")).toBeVisible()
     await page.getByTestId("template-agent-brief").fill("Make a launch narrative for Acme.")
-    await page.getByTestId("template-agent-open-codex").click()
-
-    await expect(page.getByText("Codex task prepared")).toBeVisible()
-    await expect(page.getByTestId("template-agent-launch-copy-fallback")).toContainText(
-      "Copy again",
+    await expect(page.getByTestId("template-agent-open-codex")).toHaveCount(0)
+    await expect(page.getByTestId("template-agent-open-claude")).toHaveCount(0)
+    await expect(page.getByTestId("template-agent-copy")).toContainText("Copy as prompt")
+    await page.getByTestId("template-agent-copy").click()
+    await expect(page.getByTestId("template-agent-copy")).toContainText(
+      "Copied — paste into your agent",
     )
     const handoff = await page.evaluate(() => navigator.clipboard.readText())
     expect(handoff).toContain('derived_from: "derive://templates/narrative-pitch"')
@@ -210,10 +209,10 @@ test.describe("templates", () => {
     ).toBeVisible()
     await expect(page.getByTestId("template-agent-connect-plan")).toBeVisible()
     await expect(page.getByText("no model plan is connected", { exact: false })).toHaveCount(0)
-    await expect(page.getByTestId("template-agent-open-codex")).toBeEnabled()
+    await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
   })
 
-  test("the default workflow exposes only local-agent paths", async ({ owner: page }) => {
+  test("the default workflow exposes one portable local-agent path", async ({ owner: page }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
     let hostedStarts = 0
     await page.route("**/v1/contexts", (route) =>
@@ -231,9 +230,9 @@ test.describe("templates", () => {
     await page.getByTestId("template-use-narrative-pitch").click()
     await page.getByTestId("template-agent-brief").fill("Make a customer launch story.")
 
-    await expect(page.getByText("Continue locally")).toBeVisible()
-    await expect(page.getByTestId("template-agent-open-codex")).toBeEnabled()
-    await expect(page.getByTestId("template-agent-open-claude")).toBeEnabled()
+    await expect(page.getByText("Continue in your agent")).toBeVisible()
+    await expect(page.getByTestId("template-agent-open-codex")).toHaveCount(0)
+    await expect(page.getByTestId("template-agent-open-claude")).toHaveCount(0)
     await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
     await expect(page.getByTestId("template-agent-contexts-retry")).toBeVisible()
     await expect(page.getByText("hosted", { exact: false })).toHaveCount(0)
@@ -292,7 +291,10 @@ test.describe("templates", () => {
     await page.goto("/templates")
     const firstCard = page.getByTestId("template-card-narrative-pitch")
     await expect(firstCard).toBeInViewport()
+    await expect(firstCard.getByRole("button", { name: "Preview" })).toBeVisible()
     await expect(firstCard.getByRole("button", { name: "Make it mine" })).toBeVisible()
+    await firstCard.getByRole("button", { name: "Preview" }).click()
+    await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
   })
 
   test("a preview ahead of additive schema explains the beta release state", async ({

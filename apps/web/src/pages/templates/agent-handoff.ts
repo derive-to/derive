@@ -12,8 +12,6 @@ export type AgentTemplateTarget = {
 
 export type AgentHandoffWorkspace = { id: string; name: string }
 
-export type LocalAgentKind = "codex" | "claude-code"
-
 const cleanBrief = (brief: string) => brief.trim()
 
 /**
@@ -58,26 +56,4 @@ Work agentically—not as a form fill or a literal clone:
 3. Leave the original unchanged and publish a new artifact with \`derived_from: "${target.uri}"\` so Derive records the exact reference.
 4. Render and visually inspect the finished result before reporting success. Revise it if the rendered result is weak.
 5. Return the new shareable Derive URL and briefly explain the important adaptations.`
-}
-
-/**
- * Supported local-app launch links. Both products intentionally stop at a
- * populated composer so the person can review the externally supplied task
- * before sending it. Automatic execution uses Derive's paired Context runner
- * instead (see AgentTemplateDialog), never an undocumented URL flag.
- */
-export const localAgentLaunchUrl = (
-  agent: LocalAgentKind,
-  target: AgentTemplateTarget,
-  brief: string,
-  workspace?: AgentHandoffWorkspace,
-) => {
-  const prompt = localAgentHandoff(target, brief, workspace)
-  if (agent === "claude-code") {
-    // Claude Code's documented q parameter is capped at 5,000 characters. Do
-    // not truncate an agent contract; the UI falls back to portable copy.
-    if (prompt.length > 5_000) return null
-    return `claude-cli://open?q=${encodeURIComponent(prompt)}`
-  }
-  return `codex://new?prompt=${encodeURIComponent(prompt)}`
 }

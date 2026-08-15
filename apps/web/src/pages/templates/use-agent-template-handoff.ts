@@ -10,7 +10,7 @@ import {
   workspacesQuery,
 } from "@/lib/queries"
 import { runnerStatus } from "@/pages/context/runner-status"
-import { type AgentTemplateTarget, localAgentHandoff, localAgentLaunchUrl } from "./agent-handoff"
+import { type AgentTemplateTarget, localAgentHandoff } from "./agent-handoff"
 
 export function useAgentTemplateHandoff(
   target: AgentTemplateTarget,
@@ -24,10 +24,6 @@ export function useAgentTemplateHandoff(
   const [planRequired, setPlanRequired] = useState(false)
   const [showHandoff, setShowHandoff] = useState(false)
   const [selectedContext, setSelectedContext] = useState("")
-  const [launchReceipt, setLaunchReceipt] = useState<{
-    agent: "Codex" | "Claude Code"
-    fallbackCopied: boolean
-  } | null>(null)
   const { copied, copy } = useCopy(4000)
   const mounted = useRef(true)
   const descriptionId = useId()
@@ -66,7 +62,6 @@ export function useAgentTemplateHandoff(
   const copyForLocalAgent = async () => {
     if (!brief.trim() || busy) return
     setError("")
-    setLaunchReceipt(null)
     const ok = await copy(handoff, {
       success: "Copied — paste it into your agent",
       error: null,
@@ -75,29 +70,6 @@ export function useAgentTemplateHandoff(
       setShowHandoff(true)
       setError("Clipboard access was blocked. Select the handoff below and copy it manually.")
     }
-  }
-
-  const openInLocalAgent = async (agent: "codex" | "claude-code") => {
-    if (!brief.trim() || busy) return
-    const url = localAgentLaunchUrl(agent, target, brief, activeWorkspace)
-    if (!url) {
-      setShowHandoff(true)
-      setError("This handoff is too detailed for that app’s launch link. Copy it below instead.")
-      return
-    }
-    setError("")
-    const fallbackCopied = await copy(handoff, { error: null })
-    if (!mounted.current) return
-    setLaunchReceipt({
-      agent: agent === "codex" ? "Codex" : "Claude Code",
-      fallbackCopied,
-    })
-    if (!fallbackCopied) setShowHandoff(true)
-    // Let React paint the receipt before the browser hands the custom scheme to
-    // the OS. If no handler exists, the person still sees a concrete fallback.
-    window.setTimeout(() => {
-      window.location.href = url
-    }, 0)
   }
 
   const runOnConnectedMachine = async () => {
@@ -145,10 +117,8 @@ export function useAgentTemplateHandoff(
     onlineContexts,
     selectedRunner,
     activeWorkspace,
-    launchReceipt,
     handoff,
     copyForLocalAgent,
-    openInLocalAgent,
     runOnConnectedMachine,
     openModelPlans: () => {
       onOpenChange(false)

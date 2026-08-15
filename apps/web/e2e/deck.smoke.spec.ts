@@ -158,8 +158,8 @@ test.describe("deck", () => {
       .getByTestId("template-agent-brief")
       .fill("Make a launch narrative for product leaders that earns approval for the plan.")
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
-    await expect(page.getByTestId("template-agent-open-codex")).toBeEnabled()
-    await expect(page.getByTestId("template-agent-open-claude")).toBeEnabled()
+    await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
+    await expect(page.getByTestId("template-agent-open-codex")).toHaveCount(0)
   })
 
   /* ── The other half: a deck that announces NOTHING ─────────────────────────

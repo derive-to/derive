@@ -35,13 +35,16 @@ export function TemplateCard({
           </span>
         </span>
       </CardContent>
-      <CardFooter className="mt-auto p-2">
+      <CardFooter className="mt-auto grid grid-cols-2 gap-2 p-2">
         <Button
-          className="w-full"
+          variant="outline"
           size="sm"
           onClick={onUse}
-          data-testid={`template-use-${template.id}`}
+          data-testid={`template-preview-${template.id}`}
         >
+          <Icon name="views" /> Preview
+        </Button>
+        <Button size="sm" onClick={onUse} data-testid={`template-use-${template.id}`}>
           <Icon name="sparkles" /> {template.kind === "context" ? "Make it ours" : "Make it mine"}
         </Button>
       </CardFooter>
