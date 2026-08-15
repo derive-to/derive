@@ -13,13 +13,17 @@ import {
   newId,
   type OutlineSection,
   outlineOf,
+  parseTemplateLibraryUri,
   refsOf,
   resolveNode,
   sectionOf,
+  TEMPLATE_LIBRARY_CATALOG_URI,
+  templateLibraryUri,
   toMarkdown,
   type VersionDataRecord,
   type VersionRecord,
 } from "@derive/core"
+import { catalogResource, templateResource } from "@derive-to/templates"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
 import { cleanPath } from "../lib/bundle"
@@ -29,6 +33,8 @@ import { pickVariant } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
+import { canReadTemplateLibrary } from "../lib/template-library-access"
+import { templateLibraryEntryJson } from "../lib/template-library-entry"
 import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -149,6 +155,7 @@ export function registerReadTool(tc: ToolContext): void {
     staleNote,
     actingFor,
     ownerId,
+    inGrant,
     resolveWs,
     askableContexts,
   } = tc
@@ -327,6 +334,115 @@ export function registerReadTool(tc: ToolContext): void {
             `No deck resource "${short_id}". The starter is derive://decks/template; the guide is derive://skills/decks.`,
           )
         return json({ uri: short_id, mimeType: "text/html", content: DECK_TEMPLATE })
+      }
+      const BUILT_IN_TEMPLATES = "derive://templates/"
+      if (short_id.startsWith(BUILT_IN_TEMPLATES)) {
+        const resource =
+          short_id === "derive://templates/catalog"
+            ? catalogResource()
+            : templateResource(short_id.slice(BUILT_IN_TEMPLATES.length))
+        if (!resource)
+          return err(
+            `No built-in template "${short_id}". Read derive://templates/catalog to find one.`,
+          )
+        return json({
+          uri: resource.uri,
+          mimeType: resource.mimeType,
+          content: JSON.parse(resource.text),
+        })
+      }
+      const authoredRef = parseTemplateLibraryUri(short_id)
+      if (short_id === TEMPLATE_LIBRARY_CATALOG_URI || authoredRef) {
+        const canReadLibrary = async (library: Parameters<typeof canReadTemplateLibrary>[0]) => {
+          const workspaceReachable = !!ownerId && inGrant(library.org_id)
+          const member = workspaceReachable
+            ? await ctx.meta.getMembership(library.org_id, ownerId as string)
+            : null
+          return canReadTemplateLibrary(library, {
+            ownerId,
+            workspaceReachable,
+            isMember: !!member,
+          })
+        }
+        if (short_id === TEMPLATE_LIBRARY_CATALOG_URI) {
+          const ws = await resolveWs(workspace)
+          if ("error" in ws) return err(ws.error)
+          const [publicLibraries, workspaceLibraries, privateLibraries] = await Promise.all([
+            ctx.meta.listTemplateLibraries({ scope: "public", limit: 101 }),
+            ctx.meta.listTemplateLibraries({ orgId: ws.org, scope: "workspace", limit: 101 }),
+            ownerId
+              ? ctx.meta.listTemplateLibraries({
+                  orgId: ws.org,
+                  scope: "private",
+                  createdBy: ownerId,
+                  limit: 101,
+                })
+              : [],
+          ])
+          const allLibraries = [...privateLibraries, ...workspaceLibraries, ...publicLibraries]
+            .filter(
+              (library, index, all) =>
+                all.findIndex((candidate) => candidate.id === library.id) === index,
+            )
+            .sort((a, b) => b.created_at.localeCompare(a.created_at))
+          const libraries = allLibraries.slice(0, 100)
+          const counts = await ctx.meta.countTemplateLibraryEntries(
+            libraries.map((library) => library.id),
+          )
+          return json({
+            uri: short_id,
+            truncated: allLibraries.length > libraries.length,
+            next:
+              allLibraries.length > libraries.length
+                ? "Use find with templates:true to search the full catalog."
+                : undefined,
+            libraries: libraries.map((library) => ({
+              id: library.id,
+              title: library.title,
+              description: library.description,
+              scope: library.scope,
+              entry_count: counts[library.id] ?? 0,
+              read: templateLibraryUri(library.id),
+            })),
+          })
+        }
+        const { libraryId, entryId } = authoredRef as NonNullable<typeof authoredRef>
+        const library = await ctx.meta.getTemplateLibrary(libraryId)
+        if (!library || !(await canReadLibrary(library)))
+          return err(
+            `No template library "${libraryId}" you can reach. Read derive://template-libraries to find one.`,
+          )
+        const entries = await ctx.meta.listTemplateLibraryEntries(library.id)
+        if (!entryId)
+          return json({
+            uri: short_id,
+            id: library.id,
+            title: library.title,
+            description: library.description,
+            scope: library.scope,
+            entries: entries.map((entry) => ({
+              ...templateLibraryEntryJson(entry),
+              read: templateLibraryUri(library.id, entry.id),
+            })),
+          })
+        const entry = entries.find((candidate) => candidate.id === entryId)
+        if (!entry) return err(`No starter "${entryId}" in template library "${libraryId}".`)
+        const source = await ctx.sourceText({
+          blob_key: entry.source_blob_key,
+          content_type: entry.source_content_type,
+        })
+        if (source === null) return err(`Starter "${entry.title}" is unavailable.`)
+        const metadata = templateLibraryEntryJson(entry)
+        return json({
+          uri: short_id,
+          ...metadata,
+          starter: {
+            source,
+            filename: `${entry.id}.${entry.format}`,
+            mime_type: entry.source_content_type,
+            message: `Created from ${library.title}/${entry.title} · source v${entry.source_version}`,
+          },
+        })
       }
       // A CONTEXT id or name loads the PACKAGE rather than a document: manifest inline,
       // skills and sources as pointers. Same gate as asking — askableContexts is the

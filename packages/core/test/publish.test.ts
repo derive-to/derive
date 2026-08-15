@@ -357,6 +357,14 @@ describe("publish: bundles (zip)", () => {
 })
 
 describe("publish: republish an existing artifact", () => {
+  it("records validated derivation lineage on creation", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const source = await publish(meta, blobs, file("source"))
+    const copy = await publish(meta, blobs, { ...file("copy"), derivedFrom: source.artifact.id })
+    expect(copy.artifact.derived_from).toBe(source.artifact.id)
+  })
+
   it("appends a version under the same short id", async () => {
     const meta = makeMeta()
     const blobs = makeBlobs()

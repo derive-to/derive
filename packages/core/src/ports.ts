@@ -1639,6 +1639,126 @@ export interface ContextStore {
   ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]>
 }
 
+/**
+ * A template library is a named collection of reusable, version-pinned starters.
+ *
+ * `private` is visible only to its creator; `workspace` is visible to members of
+ * its workspace; `public` is intentionally world-readable. Entries hold a
+ * snapshot of an artifact version rather than a live pointer, so adopting a
+ * template is deterministic and later edits to the source cannot silently alter
+ * another person's starting point.
+ */
+export const TEMPLATE_LIBRARY_SCOPES = ["private", "workspace", "public"] as const
+export const TEMPLATE_ENTRY_KINDS = ["artifact", "context"] as const
+export const TEMPLATE_ENTRY_FORMATS = ["md", "html"] as const
+
+export type TemplateLibraryScope = (typeof TEMPLATE_LIBRARY_SCOPES)[number]
+export type TemplateEntryKind = (typeof TEMPLATE_ENTRY_KINDS)[number]
+export type TemplateEntryFormat = (typeof TEMPLATE_ENTRY_FORMATS)[number]
+
+export interface TemplateLibraryRecord {
+  id: string
+  org_id: string
+  title: string
+  description: string
+  scope: TemplateLibraryScope
+  created_by: string
+  created_at: string
+  updated_at: string | null
+  /** Short-lived server-side mutex for scope/entry mutations. Never serialized. */
+  mutation_token: string | null
+  mutation_started_at: string | null
+}
+
+/** The durable, independently-readable starter stored in one library. */
+export interface TemplateLibraryEntryRecord {
+  id: string
+  library_id: string
+  /** The artifact this entry was made from; provenance only, never dereferenced for use. */
+  source_artifact_id: string
+  /** The source artifact version captured when the entry was published. */
+  source_version: number
+  /** Exact version bytes, retained as the entry's stable starter snapshot. */
+  source_blob_key: string
+  source_content_type: string
+  kind: TemplateEntryKind
+  category: string
+  format: TemplateEntryFormat
+  title: string
+  description: string
+  outcome: string
+  sections_json: string
+  inputs_json: string
+  tags_json: string
+  created_by: string
+  created_at: string
+}
+
+export interface NewTemplateLibrary {
+  id: string
+  org_id: string
+  title: string
+  description?: string
+  scope?: TemplateLibraryScope
+  created_by: string
+}
+
+export interface NewTemplateLibraryEntry {
+  id: string
+  library_id: string
+  source_artifact_id: string
+  source_version: number
+  source_blob_key: string
+  source_content_type: string
+  kind: TemplateEntryKind
+  category: string
+  format: TemplateEntryFormat
+  title: string
+  description: string
+  outcome: string
+  sections_json: string
+  inputs_json: string
+  tags_json: string
+  created_by: string
+}
+
+export interface TemplateLibraryStore {
+  createTemplateLibrary(x: NewTemplateLibrary): Promise<TemplateLibraryRecord>
+  getTemplateLibrary(id: string): Promise<TemplateLibraryRecord | null>
+  /** Narrow filters compose with AND; callers combine queries for access unions. */
+  listTemplateLibraries(opts?: {
+    orgId?: string
+    scope?: TemplateLibraryScope
+    createdBy?: string
+    query?: string
+    before?: { createdAt: string; id: string }
+    limit?: number
+  }): Promise<TemplateLibraryRecord[]>
+  updateTemplateLibrary(
+    id: string,
+    fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibraryRecord | null>
+  /** Serialize mutations whose validation depends on the library's current
+   * scope and entries. A stale holder may be replaced after `staleBefore`. */
+  acquireTemplateLibraryMutation(id: string, token: string, staleBefore: string): Promise<boolean>
+  /** Refresh only the current holder's lease immediately before its protected write. */
+  renewTemplateLibraryMutation(id: string, token: string): Promise<boolean>
+  releaseTemplateLibraryMutation(id: string, token: string): Promise<void>
+  deleteTemplateLibrary(id: string): Promise<void>
+  createTemplateLibraryEntry(x: NewTemplateLibraryEntry): Promise<TemplateLibraryEntryRecord>
+  getTemplateLibraryEntry(id: string): Promise<TemplateLibraryEntryRecord | null>
+  listTemplateLibraryEntries(libraryId: string): Promise<TemplateLibraryEntryRecord[]>
+  /** Search entry + library metadata under the caller's discoverable access union. */
+  searchTemplateLibraryEntries(opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>>
+  countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>>
+  deleteTemplateLibraryEntry(id: string): Promise<void>
+}
+
 export interface DirectoryStore {
   // ---- User directory (reads Better Auth's `user` table) ----------------
   findUserByEmail(email: string): Promise<UserDir | null>
@@ -2206,6 +2326,7 @@ export interface MetaStore
     IntegrationStore,
     ReviewStore,
     ContextStore,
+    TemplateLibraryStore,
     DirectoryStore,
     AgentStore,
     ModerationStore,

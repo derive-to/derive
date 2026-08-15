@@ -80,6 +80,8 @@ import type {
   NewSessionMessage,
   NewSignupAttribution,
   NewSlackSubscription,
+  NewTemplateLibrary,
+  NewTemplateLibraryEntry,
   NewVersion,
   NewVersionData,
   NewView,
@@ -116,6 +118,9 @@ import type {
   SlackUserLinkRecord,
   SubscriptionRecord,
   TakedownInput,
+  TemplateLibraryEntryRecord,
+  TemplateLibraryRecord,
+  TemplateLibraryScope,
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
@@ -210,6 +215,8 @@ import {
   slackThreadLink,
   slackUserLink,
   subscription,
+  templateLibrary,
+  templateLibraryEntry,
   userNotificationPref,
   version,
   versionData,
@@ -273,6 +280,8 @@ export const schema = {
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   githubApp,
   githubInstallation,
@@ -319,6 +328,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   collection: true,
   collectionMember: true,
   folder: true,
+  templateLibrary: true,
+  templateLibraryEntry: true,
   repoSource: true,
   githubApp: true,
   githubInstallation: true,
@@ -2291,6 +2302,20 @@ export class PgMetaStore implements MetaStore {
     return one(rows)
   }
   async deleteWorkspace(orgId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(templateLibraryEntry)
+        .where(
+          inArray(
+            templateLibraryEntry.library_id,
+            tx
+              .select({ id: templateLibrary.id })
+              .from(templateLibrary)
+              .where(eq(templateLibrary.org_id, orgId)),
+          ),
+        )
+      await tx.delete(templateLibrary).where(eq(templateLibrary.org_id, orgId))
+    })
     await this.db.delete(membership).where(eq(membership.org_id, orgId))
     // Every connected plan for this org, INCLUDING the workspace-pool sentinel row, so no
     // encrypted token is orphaned (the pool row would otherwise have no API path left to
@@ -3246,6 +3271,170 @@ export class PgMetaStore implements MetaStore {
     const out: Record<string, Role> = {}
     for (const r of rows) out[r.id] = maxRole(out[r.id] ?? null, r.role) as Role
     return out
+  }
+
+  // ---- Template libraries ------------------------------------------------
+  async createTemplateLibrary(x: NewTemplateLibrary): Promise<TemplateLibraryRecord> {
+    const rows = await this.db.insert(templateLibrary).values(x).returning()
+    return one(rows)
+  }
+  async getTemplateLibrary(id: string): Promise<TemplateLibraryRecord | null> {
+    const rows = await this.db.select().from(templateLibrary).where(eq(templateLibrary.id, id))
+    return rows[0] ?? null
+  }
+  async listTemplateLibraries(opts?: {
+    orgId?: string
+    scope?: TemplateLibraryScope
+    createdBy?: string
+    query?: string
+    before?: { createdAt: string; id: string }
+    limit?: number
+  }): Promise<TemplateLibraryRecord[]> {
+    const needle = opts?.query?.trim().toLowerCase()
+    return this.db
+      .select()
+      .from(templateLibrary)
+      .where(
+        and(
+          opts?.orgId ? eq(templateLibrary.org_id, opts.orgId) : undefined,
+          opts?.scope ? eq(templateLibrary.scope, opts.scope) : undefined,
+          opts?.createdBy ? eq(templateLibrary.created_by, opts.createdBy) : undefined,
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibrary.description}) like ${`%${needle}%`}`
+            : undefined,
+          opts?.before
+            ? or(
+                lt(templateLibrary.created_at, opts.before.createdAt),
+                and(
+                  eq(templateLibrary.created_at, opts.before.createdAt),
+                  lt(templateLibrary.id, opts.before.id),
+                ),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibrary.created_at), desc(templateLibrary.id))
+      .limit(Math.min(Math.max(opts?.limit ?? 1_000, 1), 1_000))
+  }
+  async updateTemplateLibrary(
+    id: string,
+    fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibraryRecord | null> {
+    if (Object.keys(fields).length === 0) return this.getTemplateLibrary(id)
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ ...fields, updated_at: new Date().toISOString() })
+      .where(eq(templateLibrary.id, id))
+      .returning()
+    return rows[0] ?? null
+  }
+  async acquireTemplateLibraryMutation(
+    id: string,
+    token: string,
+    staleBefore: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ mutation_token: token, mutation_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(templateLibrary.id, id),
+          or(
+            isNull(templateLibrary.mutation_token),
+            lt(templateLibrary.mutation_started_at, staleBefore),
+          ),
+        ),
+      )
+      .returning({ id: templateLibrary.id })
+    return rows.length > 0
+  }
+  async renewTemplateLibraryMutation(id: string, token: string): Promise<boolean> {
+    const rows = await this.db
+      .update(templateLibrary)
+      .set({ mutation_started_at: new Date().toISOString() })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+      .returning({ id: templateLibrary.id })
+    return rows.length > 0
+  }
+  async releaseTemplateLibraryMutation(id: string, token: string): Promise<void> {
+    await this.db
+      .update(templateLibrary)
+      .set({ mutation_token: null, mutation_started_at: null })
+      .where(and(eq(templateLibrary.id, id), eq(templateLibrary.mutation_token, token)))
+  }
+  async deleteTemplateLibrary(id: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.delete(templateLibraryEntry).where(eq(templateLibraryEntry.library_id, id))
+      await tx.delete(templateLibrary).where(eq(templateLibrary.id, id))
+    })
+  }
+  async createTemplateLibraryEntry(
+    x: NewTemplateLibraryEntry,
+  ): Promise<TemplateLibraryEntryRecord> {
+    const rows = await this.db.insert(templateLibraryEntry).values(x).returning()
+    return one(rows)
+  }
+  async getTemplateLibraryEntry(id: string): Promise<TemplateLibraryEntryRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.id, id))
+    return rows[0] ?? null
+  }
+  listTemplateLibraryEntries(libraryId: string): Promise<TemplateLibraryEntryRecord[]> {
+    return this.db
+      .select()
+      .from(templateLibraryEntry)
+      .where(eq(templateLibraryEntry.library_id, libraryId))
+      .orderBy(desc(templateLibraryEntry.created_at))
+  }
+  async searchTemplateLibraryEntries(opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>> {
+    const needle = opts.query?.trim().toLowerCase()
+    return this.db
+      .select({ library: templateLibrary, entry: templateLibraryEntry })
+      .from(templateLibraryEntry)
+      .innerJoin(templateLibrary, eq(templateLibrary.id, templateLibraryEntry.library_id))
+      .where(
+        and(
+          or(
+            eq(templateLibrary.scope, "public"),
+            and(
+              eq(templateLibrary.org_id, opts.orgId),
+              or(
+                eq(templateLibrary.scope, "workspace"),
+                opts.ownerId
+                  ? and(
+                      eq(templateLibrary.scope, "private"),
+                      eq(templateLibrary.created_by, opts.ownerId),
+                    )
+                  : undefined,
+              ),
+            ),
+          ),
+          needle
+            ? sql`lower(${templateLibrary.title} || ' ' || ${templateLibraryEntry.title} || ' ' || ${templateLibraryEntry.description} || ' ' || ${templateLibraryEntry.outcome} || ' ' || ${templateLibraryEntry.category} || ' ' || ${templateLibraryEntry.tags_json}) like ${`%${needle}%`}`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(templateLibraryEntry.created_at), desc(templateLibraryEntry.id))
+      .limit(Math.min(Math.max(opts.limit, 1), 1_000))
+  }
+  async countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>> {
+    if (!libraryIds.length) return {}
+    const rows = await this.db
+      .select({ library_id: templateLibraryEntry.library_id, total: count() })
+      .from(templateLibraryEntry)
+      .where(inArray(templateLibraryEntry.library_id, libraryIds))
+      .groupBy(templateLibraryEntry.library_id)
+    return Object.fromEntries(rows.map((row) => [row.library_id, Number(row.total)]))
+  }
+  async deleteTemplateLibraryEntry(id: string): Promise<void> {
+    await this.db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id))
   }
 
   // ---- GitHub sync sources -----------------------------------------------
@@ -5549,6 +5738,51 @@ export class PgMetaStore implements MetaStore {
   // ---- Account deletion cascade (see MetaStore.deleteUserData) ------------
   async deleteUserData(userId: string): Promise<void> {
     await this.db.delete(instanceOperator).where(eq(instanceOperator.user_id, userId))
+    const personalOrg = `ws_p_${userId}`
+    const ownedLibraries = await this.db
+      .select()
+      .from(templateLibrary)
+      .where(eq(templateLibrary.created_by, userId))
+    const deletedLibraryIds = ownedLibraries
+      .filter((library) => library.scope === "private" || library.org_id === personalOrg)
+      .map((library) => library.id)
+    if (deletedLibraryIds.length) {
+      await this.db.transaction(async (tx) => {
+        await tx
+          .delete(templateLibraryEntry)
+          .where(inArray(templateLibraryEntry.library_id, deletedLibraryIds))
+        await tx.delete(templateLibrary).where(inArray(templateLibrary.id, deletedLibraryIds))
+      })
+    }
+    for (const library of ownedLibraries) {
+      if (deletedLibraryIds.includes(library.id)) continue
+      const managers = await this.db
+        .select()
+        .from(membership)
+        .where(and(eq(membership.org_id, library.org_id), ne(membership.user_id, userId)))
+        .orderBy(asc(membership.created_at), asc(membership.user_id))
+      const manager =
+        managers.find((member) => member.role === "owner") ??
+        managers.find((member) => member.role === "editor")
+      const replacement = manager?.user_id ?? "__deleted_template_library_owner__"
+      await this.db
+        .update(templateLibrary)
+        .set({ created_by: replacement, updated_at: new Date().toISOString() })
+        .where(eq(templateLibrary.id, library.id))
+      await this.db
+        .update(templateLibraryEntry)
+        .set({ created_by: replacement })
+        .where(
+          and(
+            eq(templateLibraryEntry.library_id, library.id),
+            eq(templateLibraryEntry.created_by, userId),
+          ),
+        )
+    }
+    await this.db
+      .update(templateLibraryEntry)
+      .set({ created_by: "__deleted_template_library_owner__" })
+      .where(eq(templateLibraryEntry.created_by, userId))
     await this.db.delete(membership).where(eq(membership.user_id, userId))
     await this.db.delete(artifactMember).where(eq(artifactMember.user_id, userId))
     await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))
@@ -5575,7 +5809,7 @@ export class PgMetaStore implements MetaStore {
       .update(collectionInvite)
       .set({ invited_by: null })
       .where(eq(collectionInvite.invited_by, userId))
-    await this.db.delete(workspace).where(eq(workspace.id, `ws_p_${userId}`))
+    await this.db.delete(workspace).where(eq(workspace.id, personalOrg))
   }
   listPendingAgentMentions(agentId: string, limit: number): Promise<AgentMentionRecord[]> {
     return this.db

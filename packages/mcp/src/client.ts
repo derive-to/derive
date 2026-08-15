@@ -184,6 +184,43 @@ export interface ViewStatsJson {
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 
+/** A library is an access-scoped catalog of immutable template starters. */
+export interface TemplateLibraryEntryJson {
+  id: string
+  library_id: string
+  source_version: number
+  kind: "artifact" | "context"
+  category: string
+  format: "md" | "html"
+  title: string
+  description: string
+  outcome: string
+  sections: string[]
+  inputs: { name: string; description: string; required?: boolean }[]
+  tags: string[]
+  created_at: string
+}
+export interface TemplateLibraryJson {
+  id: string
+  title: string
+  description: string
+  scope: "private" | "workspace" | "public"
+  created_at: string
+  updated_at: string | null
+  entry_count: number
+  entries?: TemplateLibraryEntryJson[]
+}
+export interface TemplateLibraryPageJson {
+  libraries: TemplateLibraryJson[]
+  truncated: boolean
+  next_cursor: string | null
+}
+export interface TemplateStarterJson {
+  entry: TemplateLibraryEntryJson
+  source: string
+  mime_type: string
+}
+
 export interface ContentOpts {
   version?: number
   /** A heading slug (single-file) or page path (bundle, optionally page#slug). */
@@ -276,6 +313,10 @@ export interface DeriveClient {
   restore(shortId: string, version: number): Promise<ArtifactJson>
   /** Aggregated view analytics. */
   viewStats(shortId: string): Promise<ViewStatsJson>
+  /** Accessible public + workspace + personal libraries, for MCP resources only. */
+  listTemplateLibraries(cursor?: string): Promise<TemplateLibraryPageJson>
+  getTemplateLibrary(id: string): Promise<TemplateLibraryJson>
+  getTemplateStarter(libraryId: string, entryId: string): Promise<TemplateStarterJson>
 }
 
 export interface ClientOptions {
@@ -635,6 +676,31 @@ export function createClient(opts: ClientOptions): DeriveClient {
       return ok(
         await f(`${base}/v1/artifacts/${shortId}/analytics`, { headers: authHeaders }),
       ) as Promise<ViewStatsJson>
+    },
+
+    async listTemplateLibraries(cursor) {
+      const query = new URLSearchParams({ limit: "100" })
+      if (cursor) query.set("cursor", cursor)
+      return ok(
+        await f(`${base}/v1/template-libraries?${query}`, { headers: authHeaders }),
+      ) as Promise<TemplateLibraryPageJson>
+    },
+
+    async getTemplateLibrary(id) {
+      return ok(
+        await f(`${base}/v1/template-libraries/${encodeURIComponent(id)}`, {
+          headers: authHeaders,
+        }),
+      ) as Promise<TemplateLibraryJson>
+    },
+
+    async getTemplateStarter(libraryId, entryId) {
+      return ok(
+        await f(
+          `${base}/v1/template-libraries/${encodeURIComponent(libraryId)}/entries/${encodeURIComponent(entryId)}/starter`,
+          { headers: authHeaders },
+        ),
+      ) as Promise<TemplateStarterJson>
     },
   }
 }

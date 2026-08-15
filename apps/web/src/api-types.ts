@@ -5806,6 +5806,307 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the built-in template catalog. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Portable built-in template metadata; starter source remains agent-only. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            templates: components["schemas"]["BuiltInTemplate"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/template-libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List public libraries plus libraries accessible in the active workspace. */
+        get: {
+            parameters: {
+                query?: {
+                    cursor?: string;
+                    limit?: number;
+                    scope?: "private" | "workspace" | "public";
+                    q?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Libraries the caller can discover. Public libraries are available anonymously. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            libraries: components["schemas"]["TemplateLibrary"][];
+                            truncated: boolean;
+                            next_cursor: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a template library in the active workspace. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The newly created empty library. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TemplateLibrary"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/template-libraries/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one accessible library and its reusable entries. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Library and entries. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TemplateLibrary"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete a library and its entries; source artifacts remain untouched. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Rename, describe, or change a library's distribution scope. */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Updated library. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TemplateLibrary"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/v1/template-libraries/{id}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish a pinned artifact version as a reusable template entry. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Published entry. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TemplateLibraryEntry"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/template-libraries/{id}/entries/{entryId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a reusable entry without changing its source artifact. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    entryId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted. */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/template-libraries/{id}/entries/{entryId}/starter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read an accessible entry's pinned starter source and provenance. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    entryId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A stable source snapshot. Editing it never changes the template entry. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            entry: components["schemas"]["TemplateLibraryEntry"];
+                            source: string;
+                            mime_type: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/presence": {
         parameters: {
             query?: never;
@@ -6709,10 +7010,12 @@ export interface components {
             };
             /** @description Source path (e.g. the repo path of a synced artifact); null when none. */
             source_path?: string | null;
-            /** @description The artifact this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
+            /** @description The artifact or built-in Template this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
             derived_from?: {
                 short_id: string;
                 title: string | null;
+                /** @enum {string} */
+                kind?: "artifact" | "template";
             } | null;
             created_at?: string;
             /** @description Last-update timestamp; null when never updated since creation. */
@@ -7600,6 +7903,74 @@ export interface components {
             label: string;
             /** @description The one a turn uses when nobody chose. */
             is_default: boolean;
+        };
+        BuiltInTemplate: {
+            id: string;
+            /** @enum {string} */
+            kind: "artifact" | "context";
+            /** @enum {string} */
+            category: "Deck" | "Doc" | "Report" | "Site" | "Agent";
+            /** @enum {string} */
+            format: "md" | "html";
+            title: string;
+            defaultTitle: string;
+            description: string;
+            outcome: string;
+            sections: string[];
+            inputs: {
+                name: string;
+                description: string;
+                required?: boolean;
+            }[];
+            tags: string[];
+            featured?: boolean;
+            starterPrompts?: string[];
+            /** @enum {string} */
+            libraryId: "derive/built-ins";
+            /** @enum {number} */
+            catalogVersion: 1;
+        };
+        TemplateLibrary: {
+            id: string;
+            title: string;
+            description: string;
+            /**
+             * @description private = owner only; workspace = workspace members; public = anyone with the library URL or catalog.
+             * @enum {string}
+             */
+            scope: "private" | "workspace" | "public";
+            created_at: string;
+            updated_at: string | null;
+            entry_count: number;
+            entries?: components["schemas"]["TemplateLibraryEntry"][];
+            publisher: {
+                name: string | null;
+                username: string | null;
+                image: string | null;
+            };
+            can_manage?: boolean;
+        };
+        TemplateLibraryEntry: {
+            id: string;
+            library_id: string;
+            /** @description Pinned source version captured on publication. */
+            source_version: number;
+            /** @enum {string} */
+            kind: "artifact" | "context";
+            category: string;
+            /** @enum {string} */
+            format: "md" | "html";
+            title: string;
+            description: string;
+            outcome: string;
+            sections: string[];
+            inputs: {
+                name: string;
+                description: string;
+                required?: boolean;
+            }[];
+            tags: string[];
+            created_at: string;
         };
         Viewer: {
             /** @description The viewer's id: a signed-in user's id, or a stable anonymous viewer id */

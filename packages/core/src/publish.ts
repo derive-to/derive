@@ -85,6 +85,9 @@ export interface PublishInput {
   /** Expiring anonymous draft (create only): ISO instant after which the draft is
    *  served 410 and swept. Omit for every ordinary publish. */
   expiresAt?: string
+  /** Provenance for a NEW artifact created from another artifact or a pinned
+   * template entry. The API validates read access before passing the internal id. */
+  derivedFrom?: string | null
 }
 
 export interface PublishResult {
@@ -335,6 +338,7 @@ export async function publish(
     kind,
     spa: input.spa ? 1 : 0,
     expires_at: input.expiresAt ?? null,
+    derived_from: input.derivedFrom ?? null,
   })
   const version = await meta.addVersion(artifact.id, {
     id: newId("v"),

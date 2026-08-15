@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "test:e2e:smoke": "playwright test --project=smoke",
+    "test:e2e:smoke": "playwright test --project=smoke --project=templates-deep",
     "test:e2e:fidelity": "playwright test --project=render-fidelity",
     "test:e2e:public": "pnpm build && pnpm --filter @derive/docs build && playwright test --config playwright.public.config.ts",
     "test:e2e:ui": "playwright test --ui",

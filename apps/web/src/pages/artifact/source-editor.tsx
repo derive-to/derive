@@ -153,7 +153,7 @@ export function SourceEditor({
             variant="outline"
             size="sm"
             data-testid="artifact-preview-toggle"
-            onClick={() => setPreviewOpen((v) => !v)}
+            onClick={() => setPreviewOpen((value) => !value)}
             title={previewOpen ? "Hide preview" : "Show preview"}
             aria-pressed={previewOpen}
             // Pressed toggles are a neutral wash — the ink accent is reserved.

@@ -398,6 +398,11 @@ export type SessionMessage = components["schemas"]["SessionMessage"]
 /** An ask-conversation with a context's agent. Generated from the OpenAPI spec. */
 export type Session = components["schemas"]["Session"]
 export type SessionState = Session["state"]
+/** A shareable catalog of immutable starters. Generated from the Templates API contract. */
+export type TemplateLibrary = components["schemas"]["TemplateLibrary"]
+export type TemplateLibraryEntry = components["schemas"]["TemplateLibraryEntry"]
+export type BuiltInTemplate = components["schemas"]["BuiltInTemplate"]
+export type TemplateLibraryScope = TemplateLibrary["scope"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */
@@ -1466,6 +1471,65 @@ export const api = {
       { ...opts({}), method: "POST" },
     ).then(j),
 
+  // Template libraries are explicit distribution boundaries for version-pinned
+  // starters. MCP reads the same records as resources and keeps using publish.
+  listBuiltInTemplates: (): Promise<{ templates: BuiltInTemplate[] }> =>
+    f("/v1/templates", { credentials: "include" }).then(j),
+  listTemplateLibraries: (
+    params: { cursor?: string; limit?: number; scope?: TemplateLibraryScope; q?: string } = {},
+  ): Promise<{
+    libraries: TemplateLibrary[]
+    truncated: boolean
+    next_cursor: string | null
+  }> => {
+    const query = new URLSearchParams()
+    if (params.cursor) query.set("cursor", params.cursor)
+    if (params.limit) query.set("limit", String(params.limit))
+    if (params.scope) query.set("scope", params.scope)
+    if (params.q) query.set("q", params.q)
+    const suffix = query.size ? `?${query.toString()}` : ""
+    return f(`/v1/template-libraries${suffix}`, { credentials: "include" }).then(j)
+  },
+  getTemplateLibrary: (id: string): Promise<TemplateLibrary> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}`, { credentials: "include" }).then(j),
+  createTemplateLibrary: (body: {
+    title: string
+    description?: string
+    scope?: TemplateLibraryScope
+  }): Promise<TemplateLibrary> => f("/v1/template-libraries", opts(body)).then(j),
+  updateTemplateLibrary: (
+    id: string,
+    body: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibrary> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}`, { ...opts(body), method: "PATCH" }).then(
+      j,
+    ),
+  deleteTemplateLibrary: (id: string): Promise<void> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(() => undefined),
+  createTemplateLibraryEntry: (
+    id: string,
+    body: {
+      source_short_id: string
+      source_version?: number
+      kind: "artifact" | "context"
+      category: string
+      title: string
+      description: string
+      outcome: string
+      sections: string[]
+      inputs: { name: string; description: string; required?: boolean }[]
+      tags: string[]
+    },
+  ): Promise<TemplateLibraryEntry> =>
+    f(`/v1/template-libraries/${encodeURIComponent(id)}/entries`, opts(body)).then(j),
+  deleteTemplateLibraryEntry: (libraryId: string, entryId: string): Promise<void> =>
+    f(
+      `/v1/template-libraries/${encodeURIComponent(libraryId)}/entries/${encodeURIComponent(entryId)}`,
+      { method: "DELETE", credentials: "include" },
+    ).then(() => undefined),
   listWebhooks: (): Promise<{ webhooks: Webhook[]; event_options: string[] }> =>
     f("/v1/webhooks", opts()).then(j),
   createWebhook: (body: {

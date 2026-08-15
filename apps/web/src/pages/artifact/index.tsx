@@ -1099,6 +1099,7 @@ export function Artifact() {
               archived={!!art.archived}
               canArchive={canPublish}
               onPresent={present.toggle}
+              onCreateFrom={() => nav({ to: "/templates", search: { source: shortId } })}
               onLockToggle={() => lockMut.mutate(!isLocked)}
               onArchive={() => archiveMut.mutate(!art.archived)}
               onFavorite={(fav) =>
