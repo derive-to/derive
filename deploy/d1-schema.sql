@@ -444,8 +444,6 @@ CREATE TABLE IF NOT EXISTS template_library_entry (
   FOREIGN KEY (library_id) REFERENCES template_library(id)
 );
 
-CREATE INDEX IF NOT EXISTS template_library_entry_library ON template_library_entry (library_id, created_at);
-
 CREATE TABLE IF NOT EXISTS repo_source (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL DEFAULT 'local',
@@ -737,6 +735,8 @@ CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
 CREATE INDEX IF NOT EXISTS artifact_invite_artifact_email ON artifact_invite (artifact_id, email);
 
 CREATE INDEX IF NOT EXISTS collection_invite_collection_email ON collection_invite (collection_id, email);
+
+CREATE INDEX IF NOT EXISTS template_library_entry_library ON template_library_entry (library_id, created_at);
 
 CREATE INDEX IF NOT EXISTS slack_user_link_user ON slack_user_link (team_id, user_id);
 
