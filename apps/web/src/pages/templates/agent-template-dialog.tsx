@@ -186,7 +186,7 @@ function AgentTemplateDialogInner({
           {contextsState.isError ? (
             <StatusPanel
               tone="warning"
-              layout="compact"
+              layout="inline"
               title="Connected-machine pickup is unavailable."
               description="You can still open the prepared task in Codex, Claude Code, or any other local agent below."
               action={
@@ -208,7 +208,7 @@ function AgentTemplateDialogInner({
           connectedAgentsState.data?.length === 0 ? (
             <StatusPanel
               tone="warning"
-              layout="compact"
+              layout="inline"
               icon={<Icon name="context" />}
               title="Connect Derive before the handoff"
               description="This task uses find, read, and publish in your active workspace. Connect once so the local agent can resolve the reference and return the result."
@@ -223,7 +223,7 @@ function AgentTemplateDialogInner({
           ) : onlineContexts.length === 0 && connectedAgentsState.isError ? (
             <StatusPanel
               tone="warning"
-              layout="compact"
+              layout="inline"
               title="Derive connection could not be confirmed"
               description="You can continue if this agent already uses Derive, or retry the connection check."
               action={
@@ -384,7 +384,7 @@ function AgentTemplateDialogInner({
           {launchReceipt ? (
             <StatusPanel
               tone="brand"
-              layout="compact"
+              layout="inline"
               icon={<Icon name="check" />}
               title={`${launchReceipt.agent} task prepared`}
               description={
