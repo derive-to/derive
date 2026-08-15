@@ -52,6 +52,7 @@ for (const path of htmlFiles) {
     fail("404.html must be noindex")
   if (/href="\/[^"]+\.md(?:#|\?|")/.test(html))
     fail(`${label} contains an internal source Markdown link`)
+  if (/<p\b[^>]*>\s*<p\b/i.test(html)) fail(`${label} contains nested paragraph markup`)
 
   for (const match of html.matchAll(/href="([^"]+)"/g)) {
     const href = match[1]
@@ -72,7 +73,7 @@ const homeHtml = readFileSync(join(DIST, "index.html"), "utf8")
 for (const brandedContract of [
   'class="site-header"',
   'class="docs-navigation',
-  'class="workflow-figure"',
+  'class="workflow-list"',
   "Turn agent output into approved work.",
 ])
   if (!homeHtml.includes(brandedContract))
