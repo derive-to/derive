@@ -128,3 +128,19 @@ test("docs pages expose and copy their canonical Markdown", async ({ context, pa
     await expect(outline.getByRole("link", { name: "Make the artifact durable" })).toBeVisible()
   }
 })
+
+test("docs table of contents tracks the visible section", async ({ page }) => {
+  await page.goto(`${docsOrigin}/concepts/access/`)
+
+  const firstLink = page.locator('[data-toc-link="choose-an-audience"]').first()
+  const secondLink = page.locator('[data-toc-link="understand-workspace-roles"]').first()
+  await expect(firstLink).toHaveAttribute("aria-current", "location")
+
+  await page.locator("#understand-workspace-roles").evaluate((heading) => {
+    document.documentElement.style.scrollBehavior = "auto"
+    window.scrollTo(0, window.scrollY + heading.getBoundingClientRect().top - 100)
+  })
+
+  await expect(secondLink).toHaveAttribute("aria-current", "location")
+  await expect(firstLink).not.toHaveAttribute("aria-current")
+})

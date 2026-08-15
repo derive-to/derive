@@ -249,8 +249,10 @@ const updatedLabel = lastUpdated
             ?? [...observedHeadings].reverse()
               .find((heading) => heading.getBoundingClientRect().top <= 112)?.id
             ?? observedHeadings[0]?.id
-          for (const link of tocLinks)
-            link.toggleAttribute("aria-current", link.dataset.tocLink === active)
+          for (const link of tocLinks) {
+            if (link.dataset.tocLink === active) link.setAttribute("aria-current", "location")
+            else link.removeAttribute("aria-current")
+          }
         }, { rootMargin: "-96px 0px -70%" })
         observedHeadings.forEach((heading) => observer.observe(heading))
       }

@@ -692,20 +692,34 @@ summary:focus-visible,
 }
 
 .table-of-contents a {
+  position: relative;
   display: block;
-  padding: 0.3rem 0;
+  padding: 0.3rem 0.5rem 0.3rem 0.75rem;
+  border-radius: 0.3rem;
   color: var(--ink-faint);
   font-size: 0.75rem;
   line-height: 1.5;
 }
 
 .table-of-contents a:hover,
-.table-of-contents a[aria-current="true"] {
+.table-of-contents a[aria-current="location"] {
+  background: var(--surface-muted);
   color: var(--ink);
 }
 
+.table-of-contents a[aria-current="location"]::before {
+  position: absolute;
+  top: 0.45rem;
+  bottom: 0.45rem;
+  left: 0;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--ink);
+  content: "";
+}
+
 .table-of-contents li.nested a {
-  padding-left: 0.75rem;
+  padding-left: 1.5rem;
 }
 
 .toc-rule {
