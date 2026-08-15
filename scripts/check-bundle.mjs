@@ -26,11 +26,12 @@ const MANIFEST = join(CLIENT, ".vite/manifest.json")
 // deliberately (in a PR) when a feature earns it.
 const EAGER_BUDGET = 300 * 1024
 const CHUNK_BUDGET = 180 * 1024
-// Templates adds a fully lazy catalog + library-management surface. Its metadata
-// is fetched on demand (not bundled), and the eager path remains unchanged; give
-// that intentional route 20 kB of aggregate room without relaxing either hard
+// Templates adds a fully lazy catalog + library-management surface, while video
+// adds lightweight editing affordances to the existing artifact route. Their
+// metadata is fetched on demand, and the eager path remains unchanged; give
+// those intentional surfaces aggregate room without relaxing either hard
 // user-facing budget above.
-const TOTAL_BACKSTOP = 822 * 1024
+const TOTAL_BACKSTOP = 824 * 1024
 
 let manifest
 try {
