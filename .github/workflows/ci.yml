@@ -516,8 +516,8 @@ jobs:
             if [ -n "$asset" ]; then
               asset_headers=$(curl -fsSI --max-time 15 "https://docs.derive.to$asset" | tr -d '\r' || true)
             fi
-            if printf '%s' "$page" | grep -Fq \
-              "<meta name=\"derive-docs-build\" content=\"$GITHUB_SHA\"/>" \
+            if printf '%s' "$page" | grep -Eq \
+              "<meta name=\"derive-docs-build\" content=\"$GITHUB_SHA\"[[:space:]]*/?>" \
               && printf '%s' "$headers" | grep -Eiq '^content-security-policy:' \
               && printf '%s' "$headers" | grep -Eiq '^x-content-type-options: nosniff$' \
               && printf '%s' "$asset_headers" | grep -Eiq \
