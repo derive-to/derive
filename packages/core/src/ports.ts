@@ -142,6 +142,9 @@ export interface ArtifactRecord {
   updated_at: string | null
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
+  /** Reversible library archive. Archived artifacts stay readable by direct URL, but
+   *  are excluded from ordinary discovery until restored. */
+  archived_at: string | null
   /** Expiring anonymous draft (the claim flow): ISO instant after which the draft is
    *  served 410 and swept. Null for every ordinary artifact; cleared on claim. */
   expires_at: string | null
@@ -223,11 +226,16 @@ export interface ListArtifactsOpts {
    *  the read path's 410 tombstone. `listArtifacts` alone is therefore NOT a complete
    *  visibility gate for content — this flag closes the tombstone hole. */
   excludeRemoved?: boolean
+  /** Archive shelf. Omitted/`exclude` is the ordinary live library; `only` powers
+   *  the Archived view; `include` is for trusted maintenance reads. */
+  archived?: "exclude" | "only" | "include"
 }
 
 /** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */
 export interface WorkspaceSummary {
   total: number
+  /** Artifacts on the reversible archive shelf. */
+  archived: number
   tags: { tag: string; count: number }[]
   /** The workspace's display name, or null when there is no workspace row. */
   workspace: string | null
@@ -806,6 +814,8 @@ export interface ArtifactQueryStore {
   artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
+  /** Count on the reversible archive shelf in one workspace. */
+  countArchivedArtifacts(orgId: string): Promise<number>
   /** Count of the artifacts `artifactIdsOwnedBy` would return — the "Created by
    *  me" badge. `listed` narrows to one discovery state (e.g. `none` = the
    *  not-in-any-feed pending count). */
@@ -2097,6 +2107,11 @@ export interface ModerationStore {
   /** Tombstone many artifacts at once (id ∈ ids) in ONE update — the PR-preview
    *  teardown. Empty ids ⇒ no-op. Use over a per-id setArtifactRemoved loop. */
   setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void>
+  /** Set or clear the reversible archive timestamp. Unlike `removed_at`, this never
+   *  changes direct-read behavior or serves a tombstone. */
+  setArtifactArchived(id: string, archivedAt: string | null): Promise<void>
+  /** Batch twin used by MCP cleanup. Empty ids ⇒ no-op. */
+  setArtifactsArchived(ids: string[], archivedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open
    *  report against it (→ actioned), and write the audit entry — all in one
    *  transaction so a crash mid-way can't leave a half-applied takedown (removed

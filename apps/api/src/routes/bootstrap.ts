@@ -49,6 +49,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
               schema: z.object({
                 summary: z.object({
                   total: z.number(),
+                  archived: z.number(),
                   favorites: z.number(),
                   mine: z.number(),
                   mine_private: z.number(),

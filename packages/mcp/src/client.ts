@@ -224,7 +224,9 @@ export interface SearchOpts {
 
 export interface DeriveClient {
   /** List the workspace's artifacts (optionally filtered by a title query and/or a browse tag). */
-  list(query?: string, tag?: string): Promise<ArtifactSummaryJson[]>
+  list(query?: string, tag?: string, archived?: boolean): Promise<ArtifactSummaryJson[]>
+  /** Move an artifact onto or off the reversible archive shelf. */
+  archive(shortId: string, archived: boolean): Promise<{ archived: boolean }>
   /** The workspace tag vocabulary (tag → count, most-used first). */
   listTags(): Promise<TagCountJson[]>
   /** Suggest tags for an artifact: its current tags, neighbors' tags, and the vocabulary. */
@@ -303,15 +305,25 @@ export function createClient(opts: ClientOptions): DeriveClient {
   }
 
   return {
-    async list(query, tag) {
+    async list(query, tag, archived) {
       const qs = new URLSearchParams()
       if (query) qs.set("query", query)
       if (tag) qs.set("tag", tag.trim().toLowerCase())
+      if (archived) qs.set("scope", "archived")
       const q = qs.toString() ? `?${qs}` : ""
       const r = (await ok(await f(`${base}/v1/artifacts${q}`, { headers: authHeaders }))) as {
         artifacts: ArtifactSummaryJson[]
       }
       return r.artifacts
+    },
+
+    async archive(shortId, archived) {
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/archive`, {
+          method: archived ? "PUT" : "DELETE",
+          headers: authHeaders,
+        }),
+      ) as Promise<{ archived: boolean }>
     },
 
     async listTags() {

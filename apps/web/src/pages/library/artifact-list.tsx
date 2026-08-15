@@ -145,7 +145,9 @@ export function ArtifactListRow({
   artifact: a,
   onOpen,
   onToggleFavorite,
+  onPickAuthor,
   onAddToCollection,
+  onArchive,
   onDelete,
   onPrefetch,
   selected = false,
@@ -156,7 +158,9 @@ export function ArtifactListRow({
   artifact: Artifact
   onOpen: () => void
   onToggleFavorite: () => void
+  onPickAuthor?: (login: string) => void
   onAddToCollection?: () => void
+  onArchive?: () => void
   onDelete?: () => void
   onPrefetch?: () => void
   selected?: boolean
@@ -170,11 +174,13 @@ export function ArtifactListRow({
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
   const awaitingReview =
     (a.my_role === "owner" || a.my_role === "editor") && (a.open_proposals ?? 0) > 0
+  const showArchive = !a.removed && (a.my_role === "owner" || a.my_role === "editor") && !!onArchive
   // The 10px gutter is reserved, always. A row that wants you takes an ink bar in it, so
   // the flag never widens the row or shoves its neighbours — and because the gutter is
   // usually empty, the one row that isn't reads from across the screen.
   const flagged = a.mentions_me || a.i_participated || awaitingReview
   const author = a.author ?? null
+  const authorLogin = author?.login ?? a.author_login ?? null
 
   return (
     <div
@@ -244,12 +250,13 @@ export function ArtifactListRow({
       <span className={cn(COL.author, "min-w-0 pr-3")}>
         <AuthorChip
           name={author?.name ?? a.author_name ?? null}
-          login={author?.login ?? a.author_login ?? null}
+          login={authorLogin}
           avatar={author?.avatar ?? a.author_avatar ?? null}
           handle={author?.handle ?? null}
           size="xs"
           className="relative z-20 min-w-0"
           data-testid={`artifact-list-author-${a.short_id}`}
+          onClick={authorLogin && onPickAuthor ? () => onPickAuthor(authorLogin) : undefined}
         />
       </span>
 
@@ -313,7 +320,7 @@ export function ArtifactListRow({
               className={a.favorite ? "text-primary" : "text-muted-foreground"}
             />
           </button>
-          {(onAddToCollection || onDelete) && (
+          {(onAddToCollection || showArchive || onDelete) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
@@ -338,9 +345,18 @@ export function ArtifactListRow({
                     <Icon name="collections" size={16} /> Add to collection
                   </DropdownMenuItem>
                 )}
+                {showArchive && (
+                  <DropdownMenuItem
+                    data-testid={`artifact-list-archive-${a.short_id}`}
+                    onSelect={() => onArchive?.()}
+                  >
+                    <Icon name={a.archived ? "undo" : "archive"} size={16} />
+                    {a.archived ? "Restore to library" : "Archive"}
+                  </DropdownMenuItem>
+                )}
                 {onDelete && (
                   <>
-                    {onAddToCollection && <DropdownMenuSeparator />}
+                    {(onAddToCollection || showArchive) && <DropdownMenuSeparator />}
                     <DropdownMenuItem
                       data-testid={`artifact-list-delete-${a.short_id}`}
                       variant="destructive"

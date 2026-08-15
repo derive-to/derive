@@ -465,6 +465,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   created_at: a.created_at,
   /** Bumped on each new version; drives "most recently updated" sort + the label. */
   updated_at: a.updated_at,
+  archived: !!a.archived_at,
   /** Repo path for a GitHub-synced artifact (drives the folder view); null otherwise. */
   source_path: a.source_path,
   /** The CURRENT (last) author, denormalized — drives "who last changed this" + the

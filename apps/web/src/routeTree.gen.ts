@@ -25,6 +25,7 @@ import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FavoritesRouteImport } from './routes/favorites'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as BrandprintRouteImport } from './routes/brandprint'
+import { Route as ArchivedRouteImport } from './routes/archived'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
@@ -119,6 +120,11 @@ const BrandprintRoute = BrandprintRouteImport.update({
   path: '/brandprint',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ArchivedRoute = ArchivedRouteImport.update({
+  id: '/archived',
+  path: '/archived',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -187,6 +193,7 @@ const InviteATokenRoute = InviteATokenRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
@@ -218,6 +225,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
@@ -249,6 +257,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
@@ -282,6 +291,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/archived'
     | '/brandprint'
     | '/chat'
     | '/favorites'
@@ -313,6 +323,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/archived'
     | '/brandprint'
     | '/chat'
     | '/favorites'
@@ -343,6 +354,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/archived'
     | '/brandprint'
     | '/chat'
     | '/favorites'
@@ -375,6 +387,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ArchivedRoute: typeof ArchivedRoute
   BrandprintRoute: typeof BrandprintRoute
   ChatRoute: typeof ChatRoute
   FavoritesRoute: typeof FavoritesRoute
@@ -517,6 +530,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrandprintRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/archived': {
+      id: '/archived'
+      path: '/archived'
+      fullPath: '/archived'
+      preLoaderRoute: typeof ArchivedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -627,6 +647,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ArchivedRoute: ArchivedRoute,
   BrandprintRoute: BrandprintRoute,
   ChatRoute: ChatRoute,
   FavoritesRoute: FavoritesRoute,

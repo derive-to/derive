@@ -59,14 +59,8 @@ import { useLibraryFeed } from "./use-library-feed"
 import { type LibrarySelection, useLibrarySelection } from "./use-library-selection"
 import { ViewSwitch } from "./view-switch"
 
-// The library surface, shared by five routes: "/" (your work), "/favorites",
-// "/following", "/shared", and "/feedback". The base feed comes from the route (the
-// `view` prop); the collection/author filters + free-text search come from the URL
-// query. The persistent AppShell owns the rail/pod + auth gate, so this renders the
-// library body only. Reconceived from a 660-line god-component: the feed + its optimistic
-// mutations live in useLibraryFeed; the promoted "needs feedback" / "shared" card-strips
-// are their OWN routes now (a quiet triage line points at /feedback), so the home is one
-// job — your work, most-recently-updated.
+// Shared library body for the home and named feed routes. The route selects the base feed;
+// URL search params add collection, author, text, and sort filters.
 export function Library({ view }: { view: LibraryView }) {
   return <LibraryBody view={view} />
 }
@@ -83,6 +77,7 @@ function deriveFilter(
   if (view === "following") return { kind: "following" }
   if (view === "shared") return { kind: "shared" }
   if (view === "feedback") return { kind: "feedback" }
+  if (view === "archived") return { kind: "archived" }
   if (search.filter === "needs-you") return { kind: "feedback" }
   if (search.filter === "mine") return { kind: "mine" }
   if (search.filter === "shared") return { kind: "shared" }
@@ -98,7 +93,7 @@ function deriveFilter(
 
 function LibraryBody({ view }: { view: LibraryView }) {
   const nav = useNavigate()
-  // Read the query params loosely: this one body renders under five routes, so it can't
+  // Read search params loosely because this body renders under several routes and cannot
   // bind to a single route's search shape.
   const search = useSearch({ strict: false }) as LibrarySearch
   const { me } = useAuth()
@@ -149,12 +144,18 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
   const filter = deriveFilter(view, search, collections)
 
-  // Server-side search + filter + keyset pagination, plus the optimistic star/delete —
-  // all in the feed hook, keyed by the active filter.
+  // Server-side filtering and keyset pagination, plus row mutations, share the feed key.
   // Same builder every library route's loader uses, so an intent hover warms the exact
   // key this body reads (see ./params.ts).
   const params = libraryFeedParams(view, search, debouncedQ)
-  const { query: feed, items, listQuery, toggleFavorite, deleteArtifact } = useLibraryFeed(params)
+  const {
+    query: feed,
+    items,
+    listQuery,
+    toggleFavorite,
+    archiveArtifact,
+    deleteArtifact,
+  } = useLibraryFeed(params)
   const { isPending, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = feed
   // Multi-select, scoped to THIS feed: the params are the feed's identity, so changing
   // the tab, filter, or search drops the selection rather than carrying ids off-screen
@@ -381,9 +382,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
             ? "Shared with you"
             : filter.kind === "feedback"
               ? "Needs your feedback"
-              : filter.kind === "mine"
-                ? "Created by me"
-                : collectionTitle
+              : filter.kind === "archived"
+                ? "Archived"
+                : filter.kind === "mine"
+                  ? "Created by me"
+                  : collectionTitle
   // The tab names the view — a collection, Favorites, Created by me… —
   // while the unfiltered home stays plain "Derive".
   useDocumentTitle(filter.kind === "all" ? null : heading)
@@ -398,9 +401,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
         ? summary?.favorites
         : filter.kind === "mine"
           ? summary?.mine
-          : filter.kind === "collection"
-            ? activeCollection?.count
-            : undefined
+          : filter.kind === "archived"
+            ? summary?.archived
+            : filter.kind === "collection"
+              ? activeCollection?.count
+              : undefined
 
   const connectNudge = useConnectNudge()
   // The page's one primary action, and it is STABLE: it does not blink out while you
@@ -672,6 +677,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
             onToggleFavorite={toggleFavorite}
             onPickAuthor={pickAuthor}
             onAddToCollection={setPendingCollections}
+            onArchive={archiveArtifact}
             onDelete={setPendingDelete}
             onPrefetch={(a) => prefetch(a.short_id)}
             selection={selection}
@@ -695,6 +701,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
             }
             onToggleFavorite={toggleFavorite}
             onAddToCollection={setPendingCollections}
+            onArchive={archiveArtifact}
             onDelete={setPendingDelete}
             onPrefetch={(a) => prefetch(a.short_id)}
             selection={selection}
@@ -716,6 +723,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
               }
               onToggleFavorite={toggleFavorite}
               onAddToCollection={setPendingCollections}
+              onArchive={archiveArtifact}
               onDelete={setPendingDelete}
               onPrefetch={(a) => prefetch(a.short_id)}
               selection={selection}
@@ -772,8 +780,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
 
 // A mirrored repo/PR collection: a flat, most-recently-updated list by default, with the
 // folder tree available behind a toggle (off by default). Split out of the render switch
-// A mirrored repo/PR collection: a flat, most-recently-updated list by default, with the
-// folder tree available behind a toggle (off by default). Split out of the render switch
 // so the body reads top-to-bottom.
 function SyncedCollection({
   items,
@@ -786,6 +792,7 @@ function SyncedCollection({
   onToggleFavorite,
   onPickAuthor,
   onAddToCollection,
+  onArchive,
   onDelete,
   onPrefetch,
   selection,
@@ -800,6 +807,7 @@ function SyncedCollection({
   onToggleFavorite: (a: Artifact) => void
   onPickAuthor: (login: string) => void
   onAddToCollection: (a: Artifact) => void
+  onArchive: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
   selection?: LibrarySelection
@@ -834,6 +842,7 @@ function SyncedCollection({
           onToggleFavorite={onToggleFavorite}
           onPickAuthor={onPickAuthor}
           onAddToCollection={onAddToCollection}
+          onArchive={onArchive}
           onDelete={onDelete}
           onPrefetch={onPrefetch}
           selection={selection}
@@ -847,7 +856,9 @@ function SyncedCollection({
                 artifact={a}
                 onOpen={() => onOpen(a)}
                 onToggleFavorite={() => onToggleFavorite(a)}
+                onPickAuthor={onPickAuthor}
                 onAddToCollection={() => onAddToCollection(a)}
+                onArchive={() => onArchive(a)}
                 onDelete={() => onDelete(a)}
                 onPrefetch={() => onPrefetch(a)}
                 selected={selection?.selected.has(a.short_id)}
@@ -931,6 +942,12 @@ function emptyStateFor(
         icon: <Icon name="check" strokeWidth={1.75} />,
         title: "You’re all caught up.",
         description: "Artifacts with an open thread that needs you show up here.",
+      }
+    case "archived":
+      return {
+        icon: <Icon name="archive" strokeWidth={1.75} />,
+        title: "Your archive is empty.",
+        description: "Archived artifacts stay readable and can be restored at any time.",
       }
     case "collection":
       return {

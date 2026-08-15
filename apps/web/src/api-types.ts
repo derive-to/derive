@@ -1370,6 +1370,8 @@ export interface paths {
                         "application/json": {
                             /** @description Total artifacts in the workspace. */
                             total: number;
+                            /** @description Artifacts on the reversible archive shelf. */
+                            archived: number;
                             /** @description The caller's favorite count in this workspace. */
                             favorites: number;
                             /** @description Count of artifacts the caller owns ('Created by me'). */
@@ -1575,6 +1577,106 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/v1/artifacts/{shortId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Archive an artifact (editors). */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Archived. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            archived: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Restore an archived artifact. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Restored to the library. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            archived: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/bulk/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive or restore many artifacts (editor-gated per artifact). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description How many were archived or restored / skipped / failed. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BulkSummary"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/bulk/delete": {
@@ -3892,6 +3994,7 @@ export interface paths {
                         "application/json": {
                             summary: {
                                 total: number;
+                                archived: number;
                                 favorites: number;
                                 mine: number;
                                 mine_private: number;
@@ -6584,6 +6687,8 @@ export interface components {
             collection_access?: components["schemas"]["CollectionGrant"][];
             /** @description true when the artifact has been taken down (tombstone). */
             removed?: boolean;
+            /** @description true when the artifact is on the reversible archive shelf. */
+            archived?: boolean;
             /** @description true when mirrored from a GitHub sync — read-only in Derive. */
             managed?: boolean;
             /** @description Present for a markdown bundle (skill or docs folder): entry, file tree, identity. */

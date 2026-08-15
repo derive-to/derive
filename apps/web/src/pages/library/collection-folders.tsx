@@ -24,6 +24,7 @@ interface CardHandlers {
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
   onAddToCollection: (a: Artifact) => void
+  onArchive: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
   selection?: LibrarySelection
@@ -325,6 +326,7 @@ function Section({
                 onOpen={() => handlers.onOpen(a)}
                 onToggleFavorite={() => handlers.onToggleFavorite(a)}
                 onAddToCollection={() => handlers.onAddToCollection(a)}
+                onArchive={() => handlers.onArchive(a)}
                 onDelete={() => handlers.onDelete(a)}
                 onPrefetch={() => handlers.onPrefetch(a)}
                 selected={handlers.selection?.selected.has(a.short_id)}

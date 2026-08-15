@@ -13,16 +13,21 @@ import type { LibrarySearch, LibraryView } from "./types"
 // route carried two copies of this and a comment asking the next person to keep them in
 // step; this is that comment made structural.
 
-/** A route view's base feed scope. `all` and `favorites` carry none — favorites rides the
- *  `favorite` flag instead, because it narrows by an id set the API already has. */
-export const scopeFor = (view: LibraryView): LibraryParams["scope"] =>
-  view === "following"
-    ? "following"
-    : view === "shared"
-      ? "shared"
-      : view === "feedback"
-        ? "needs_feedback"
-        : undefined
+/** Map a named route to its API scope. Favorites uses the separate favorite flag. */
+export function scopeFor(view: LibraryView): LibraryParams["scope"] {
+  switch (view) {
+    case "archived":
+      return "archived"
+    case "following":
+      return "following"
+    case "shared":
+      return "shared"
+    case "feedback":
+      return "needs_feedback"
+    default:
+      return undefined
+  }
+}
 
 /** `q` is an override for the body, which keys off the DEBOUNCED input rather than the
  *  URL: the two converge (both settle on the same 280ms), but mid-keystroke the body must
