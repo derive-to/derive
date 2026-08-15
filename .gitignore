@@ -78,4 +78,5 @@ apps/api/wrangler.perf.toml
 # Generated from the canonical repository Markdown by apps/docs/scripts/sync-content.mjs.
 apps/docs/.astro/
 apps/docs/src/content/docs/
+apps/docs/src/generated/
 apps/docs/public/

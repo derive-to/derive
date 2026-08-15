@@ -1,0 +1,27 @@
+---
+import type { MarkdownHeading } from "astro"
+
+interface Props {
+  headings: MarkdownHeading[]
+}
+
+const { headings } = Astro.props
+const visibleHeadings = headings.filter(({ depth }) => depth === 2 || depth === 3)
+---
+
+{visibleHeadings.length > 0 && (
+  <nav class="table-of-contents" aria-label="On this page" data-pagefind-ignore>
+    <h2>On this page</h2>
+    <ul>
+      {visibleHeadings.map((heading) => (
+        <li class:list={{ nested: heading.depth === 3 }}>
+          <a href={`#${heading.slug}`} data-toc-link={heading.slug}>{heading.text}</a>
+        </li>
+      ))}
+    </ul>
+    <div class="toc-rule" aria-hidden="true"></div>
+    <a class="toc-feedback" href="https://github.com/derive-to/derive/issues/new/choose">
+      Documentation feedback <span aria-hidden="true">↗</span>
+    </a>
+  </nav>
+)}

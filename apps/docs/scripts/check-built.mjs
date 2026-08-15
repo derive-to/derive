@@ -68,6 +68,17 @@ for (const path of htmlFiles) {
   }
 }
 
+const homeHtml = readFileSync(join(DIST, "index.html"), "utf8")
+for (const brandedContract of [
+  'class="site-header"',
+  'class="docs-navigation',
+  'class="workflow-figure"',
+  "Turn agent output into approved work.",
+])
+  if (!homeHtml.includes(brandedContract))
+    fail(`documentation home lacks branded shell contract ${brandedContract}`)
+if (/starlight/i.test(homeHtml)) fail("documentation build still contains Starlight chrome")
+
 const llmsFull = readFileSync(join(DIST, "llms-full.txt"), "utf8")
 for (const maintainerPhrase of [
   "Migration (from production",
