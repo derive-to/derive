@@ -3,25 +3,65 @@ import type { MarkdownHeading } from "astro"
 
 interface Props {
   headings: MarkdownHeading[]
+  markdownUrl: string
+  mobile?: boolean
 }
 
-const { headings } = Astro.props
+const { headings, markdownUrl, mobile = false } = Astro.props
 const visibleHeadings = headings.filter(({ depth }) => depth === 2 || depth === 3)
 ---
 
-{visibleHeadings.length > 0 && (
-  <nav class="table-of-contents" aria-label="On this page" data-pagefind-ignore>
-    <h2>On this page</h2>
-    <ul role="list">
-      {visibleHeadings.map((heading) => (
-        <li class:list={{ nested: heading.depth === 3 }}>
-          <a href={`#${heading.slug}`} data-toc-link={heading.slug}>{heading.text}</a>
-        </li>
-      ))}
-    </ul>
-    <div class="toc-rule" aria-hidden="true"></div>
-    <a class="toc-feedback" href="https://github.com/derive-to/derive/issues/new/choose">
-      Documentation feedback <span aria-hidden="true">↗</span>
-    </a>
-  </nav>
-)}
+<div
+  class:list={["table-of-contents", { "table-of-contents-mobile": mobile }]}
+  data-pagefind-ignore
+>
+  {mobile ? (
+    <div class="mobile-page-tools">
+      {visibleHeadings.length > 0 && (
+        <details>
+          <summary>
+            <span>On this page</span>
+            <span aria-hidden="true">⌄</span>
+          </summary>
+          <nav aria-label="On this page">
+            <ul role="list">
+              {visibleHeadings.map((heading) => (
+                <li class:list={{ nested: heading.depth === 3 }}>
+                  <a href={`#${heading.slug}`} data-toc-link={heading.slug}>{heading.text}</a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </details>
+      )}
+      <button type="button" data-copy-page data-copy-url={markdownUrl} aria-live="polite">
+        Copy page
+      </button>
+    </div>
+  ) : (
+    <>
+      {visibleHeadings.length > 0 && (
+        <nav aria-label="On this page">
+          <h2>On this page</h2>
+          <ul role="list">
+            {visibleHeadings.map((heading) => (
+              <li class:list={{ nested: heading.depth === 3 }}>
+                <a href={`#${heading.slug}`} data-toc-link={heading.slug}>{heading.text}</a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+      <div class="toc-rule" aria-hidden="true"></div>
+      <div class="toc-actions">
+        <button type="button" data-copy-page data-copy-url={markdownUrl} aria-live="polite">
+          Copy page as Markdown
+        </button>
+        <a href={markdownUrl}>View Markdown <span aria-hidden="true">↗</span></a>
+        <a href="https://github.com/derive-to/derive/issues/new/choose">
+          Documentation feedback <span aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </>
+  )}
+</div>

@@ -28,6 +28,7 @@ const {
 } = Astro.props
 const isHome = slug === "index"
 const pagePath = isHome ? "/" : `/${slug}/`
+const markdownPath = `/${slug}.md`
 const canonical = new URL(pagePath, Astro.site)
 const pageTitle = isHome
   ? "Derive Docs — Turn agent output into approved work"
@@ -72,6 +73,9 @@ const updatedLabel = lastUpdated
     {noindex && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonical} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    {!noindex && (
+      <link rel="alternate" type="text/markdown" href={markdownPath} title={`${title} as Markdown`} />
+    )}
     <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content={pageTitle} />
@@ -108,11 +112,12 @@ const updatedLabel = lastUpdated
               <nav class="article-breadcrumbs" aria-label="Breadcrumb">
                 <a href="/">Docs</a>
                 <span aria-hidden="true">/</span>
-                <span>{activeSection?.label ?? "Documentation"}</span>
+                <span data-pagefind-meta="section">{activeSection?.label ?? "Documentation"}</span>
               </nav>
-              <h1>{title}</h1>
+              <h1 data-pagefind-meta="title">{title}</h1>
               <p>{description}</p>
             </header>
+            {!noindex && <TableOfContents headings={headings} markdownUrl={markdownPath} mobile />}
             <div class="docs-content">
               <slot />
             </div>
@@ -142,9 +147,9 @@ const updatedLabel = lastUpdated
         )}
       </main>
 
-      {!isHome && (
+      {!isHome && !noindex && (
         <aside class="toc-column">
-          <TableOfContents headings={headings} />
+          <TableOfContents headings={headings} markdownUrl={markdownPath} />
         </aside>
       )}
     </div>
@@ -202,12 +207,38 @@ const updatedLabel = lastUpdated
         wrapper.append(button)
       }
 
-      const tocLinks = new Map(
-        Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-toc-link]"))
-          .map((link) => [link.dataset.tocLink, link]),
+      for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy-page]")) {
+        const initialLabel = button.textContent ?? "Copy page"
+        button.addEventListener("click", async () => {
+          const url = button.dataset.copyUrl
+          if (!url) return
+          try {
+            const response = await fetch(url)
+            if (!response.ok) throw new Error("Markdown unavailable")
+            await navigator.clipboard.writeText(await response.text())
+            button.textContent = "Copied"
+          } catch {
+            button.textContent = "Copy failed"
+          }
+          window.setTimeout(() => { button.textContent = initialLabel }, 1600)
+        })
+      }
+
+      for (const heading of document.querySelectorAll<HTMLElement>(".docs-content :is(h2, h3)")) {
+        if (!heading.id) continue
+        const anchor = document.createElement("a")
+        anchor.className = "heading-anchor"
+        anchor.href = `#${heading.id}`
+        anchor.textContent = "#"
+        anchor.setAttribute("aria-label", `Link to ${heading.textContent ?? "section"}`)
+        heading.append(anchor)
+      }
+
+      const tocLinks = Array.from(
+        document.querySelectorAll<HTMLAnchorElement>("[data-toc-link]"),
       )
       const observedHeadings = Array.from(document.querySelectorAll<HTMLElement>(".docs-content :is(h2, h3)"))
-      if (tocLinks.size && observedHeadings.length) {
+      if (tocLinks.length && observedHeadings.length) {
         const visible = new Set<string>()
         const observer = new IntersectionObserver((entries) => {
           for (const entry of entries) {
@@ -215,7 +246,11 @@ const updatedLabel = lastUpdated
             else visible.delete(entry.target.id)
           }
           const active = observedHeadings.find((heading) => visible.has(heading.id))?.id
-          for (const [id, link] of tocLinks) link.toggleAttribute("aria-current", id === active)
+            ?? [...observedHeadings].reverse()
+              .find((heading) => heading.getBoundingClientRect().top <= 112)?.id
+            ?? observedHeadings[0]?.id
+          for (const link of tocLinks)
+            link.toggleAttribute("aria-current", link.dataset.tocLink === active)
         }, { rootMargin: "-96px 0px -70%" })
         observedHeadings.forEach((heading) => observer.observe(heading))
       }
