@@ -11,8 +11,8 @@ cost. A focused bug fix or documentation correction can go straight to a pull re
 AI-assisted contributions are welcome, but the author remains accountable for every line.
 The pull request must explain the problem and tradeoffs, include proportionate tests, and be
 something the author can review and maintain. Large generated patches without demonstrated
-understanding may be closed even when they appear to work. See [MAINTAINERS.md](MAINTAINERS.md)
-for the decision and review model.
+understanding may be closed even when they appear to work. See the
+[governance guide](.github/GOVERNANCE.md) for the decision and review model.
 
 ## Setup
 
@@ -34,7 +34,8 @@ so open the web port. (Container/deploy builds serve both from one origin on 808
 
 By default the API uses embedded SQLite and the local filesystem — no external
 services. Postgres + S3/R2 are opt-in via env: copy `.env.example` to `.env`
-(git-ignored, auto-loaded in dev) and fill in what you need. See [DEPLOY.md](DEPLOY.md).
+(git-ignored, auto-loaded in dev) and fill in what you need. See the
+[deployment guide](apps/docs/content/self-hosting/configuration.md).
 
 Public documentation runs independently at `docs.derive.to`. To edit it locally:
 
@@ -80,7 +81,8 @@ it mostly takes care of itself:
 
 ## Architecture
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) first. Two rules matter most:
+Read the [architecture guide](apps/docs/content/reference/architecture.md) first. Two rules
+matter most:
 
 - **The dependency rule.** `packages/core` depends on nothing internal; everything
   depends inward on it. `core` owns the `MetaStore`/`BlobStore` ports; `db`/`storage`

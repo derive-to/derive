@@ -26,7 +26,7 @@ const OAUTH_BETA = "oauth-2025-04-20"
  * It is an ANTHROPIC model id, and that is the whole point of the constant. The deploy-level
  * `DERIVE_MODEL_NAME` is the GATEWAY's model id (a Fireworks path, an OpenRouter slug), and it
  * used to be handed to this client, which 404s `model_not_found` on every hosted run of every
- * deployment that had set it — which DEPLOY.md tells operators to do, for chat.
+ * deployment that had set it — which the deployment guide tells operators to do, for chat.
  *
  * Sonnet for the reason the CLI runner defaults to it: an automation is latency- and
  * tool-call-bound, so depth buys less than turnaround. `DERIVE_LOOP_MODEL` overrides it.

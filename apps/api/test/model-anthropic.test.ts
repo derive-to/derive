@@ -67,7 +67,7 @@ describe("how a connected plan authenticates", () => {
 
   it("talks to an ANTHROPIC model id, never the gateway's", async () => {
     // Handing this client the deploy-level gateway model name 404s `model_not_found` on every
-    // hosted run — and DEPLOY.md tells operators to set that name.
+    // hosted run — and the deployment guide tells operators to set that name.
     const { calls, impl } = captured()
     await anthropicModel({ credential: { kind: "api_key", value: "k" }, fetchImpl: impl })({
       system: "s",

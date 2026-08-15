@@ -9,6 +9,7 @@ directory holds maintainer and design records that should not be published as pr
 - [Hosted runs](hosted-runs.md): context execution, isolation, and rollout controls.
 - [Design system](design-system.md): product UI rules and tokens.
 - [Growth measurement](GROWTH-MEASUREMENT.md): privacy-safe acquisition measurement.
+- [Governance](../.github/GOVERNANCE.md): ownership, decisions, and review expectations.
 - [Sources](sources.md): research and asset acknowledgements.
 - [Architecture decisions](decisions/): durable technical decisions.
 
@@ -17,8 +18,8 @@ not current product documentation.
 
 ## Public documentation sources
 
-The Starlight site reuses canonical repository documents such as `QUICKSTART.md`, `DEPLOY.md`,
-`SECURITY.md`, package READMEs, and files under `apps/docs/content/`.
+The Starlight site uses authored product documentation under `apps/docs/content/` and reuses
+community health files such as `SECURITY.md` and package READMEs where appropriate.
 [`apps/docs/docs-manifest.mjs`](../apps/docs/docs-manifest.mjs) is the single source for public
 page membership and navigation order. The build generates copies, search indexes, `llms.txt`, and
 stable routes; do not edit generated files under `apps/docs/src/content/docs/`.

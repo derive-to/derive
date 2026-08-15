@@ -80,7 +80,7 @@ const PREVIEW_NAME = "previews"
  *
  * Schema (app + Better Auth) is applied to D1 out of band via `wrangler d1 execute`,
  * not at runtime: D1 forbids the sqlite_master introspection Better Auth's migrator
- * needs (SQLITE_AUTH); generate that DDL with gen-auth-schema.ts. See DEPLOY.md.
+ * needs (SQLITE_AUTH); generate that DDL with gen-auth-schema.ts. See the deployment guide.
  *
  * Webhook delivery runs on this tier via the `WebhookOutbox` Durable Object (the edge
  * counterpart to the Node interval worker): the app enqueues to the shared outbox and
@@ -611,7 +611,7 @@ async function withHostedDispatch(
   // serves an ask through the session claim, so there is nothing left to split.
   //
   // THE MODEL ID IS `DERIVE_LOOP_MODEL`, NOT `DERIVE_MODEL_NAME`. The latter names the model on
-  // the operator's OpenAI-compatible GATEWAY — DEPLOY.md tells operators to set it, for chat —
+  // the operator's OpenAI-compatible GATEWAY — the deployment guide tells operators to set it —
   // and it was being handed to the loop as the ANTHROPIC model id, which 404s `model_not_found`
   // on 100% of hosted runs for any deploy that had configured chat. Unset is the right default:
   // the loop falls back to its own Anthropic model id.

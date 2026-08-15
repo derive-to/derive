@@ -8,12 +8,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) once it reache
 
 The first tagged release with the self-hosting distribution path. It includes the
 published GHCR image, a release-bundled Compose/env pair, pinned image digest,
-SHA-256 checksums, and GitHub build attestation. See [QUICKSTART.md](QUICKSTART.md)
+SHA-256 checksums, and GitHub build attestation. See the
+[self-hosting quickstart](apps/docs/content/self-hosting/quickstart.md)
 for the recommended install and verification flow.
 
 ## [Unreleased]
 
 ### Added
+- **Reversible artifact archiving.** Artifacts can leave the active library without being
+  deleted, appear in a dedicated archive, and be restored later.
+- **A standalone public documentation site.** `docs.derive.to` now publishes the product,
+  self-hosting, architecture, API, and agent guides from canonical sources in this repository,
+  with local search and Markdown representations for agents.
+- **Collection and tag filters in search.** Artifact discovery can be narrowed to a collection
+  or tag instead of relying on a free-text query alone.
+- **Shareable collections.** Collections can be shared through role-bearing links and protected
+  with a password, using the same hardened access model as artifacts.
 - **What links here.** `find(links_to:"<short id or URL>")` returns every artifact in the
   workspace whose current version references that one. Until now the only way to ask was
   `find(query:"<short id>")`, which ranks and caps a guess at relevance — on the real
@@ -171,6 +181,10 @@ for the recommended install and verification flow.
   `CODE_OF_CONDUCT.md`, issue + PR templates, `.editorconfig`.
 
 ### Fixed
+- Artifact previews now refresh their raw-content token after expiry instead of leaving an
+  otherwise accessible artifact with a broken preview.
+- Account deletion preserves resources that were transferred to another owner, and ownership
+  checks now stay scoped to the active workspace.
 - `@derive-to/mcp` 0.5.1 — the stdio `read` tool now accepts `format:'html'`. Its
   schema only allowed markdown/text while the publish description said "read
   format:'html' first" before `edits` — following the server's own guidance was a

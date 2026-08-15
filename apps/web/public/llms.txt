@@ -114,5 +114,5 @@ Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 ## Links
 
 - GitHub: https://github.com/derive-to/derive
-- Deploy guide: DEPLOY.md in the repo
+- Deployment guide: https://docs.derive.to/self-hosting/configuration/
 - MCP skill: packages/mcp/SKILL.md (also served at /skill.md and as derive://guide)

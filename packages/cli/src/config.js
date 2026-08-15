@@ -1048,7 +1048,7 @@ same URL, and reviewers can comment on the rendered page.
 
 Comments anchor to the words they're attached to. They survive edits best when
 surrounding text stays recognizable — keep headings stable and avoid rewording
-a sentence end to end when you only meant to tweak it. See STANDARD.md.
+a sentence end to end when you only meant to tweak it. See the artifact authoring standard.
 `
 
 const starterSiteIndex = (title) => `<!doctype html>
@@ -1170,7 +1170,7 @@ include \`resolves=<commentId,...>\` in the publish request.
 
 Anchors are text quotes with surrounding context. They survive edits when prose
 stays recognizable. Prefer small, local edits over wholesale rewrites; keep
-headings and distinctive phrases stable. Full guidance: STANDARD.md.
+headings and distinctive phrases stable. Full guidance: the artifact authoring standard.
 
 ## Using an agent harness
 

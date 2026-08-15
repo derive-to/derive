@@ -1,4 +1,4 @@
-# Maintainers and project decisions
+# Governance and maintainers
 
 Derive is maintained by the Derive organization. Maintainers are responsible for the
 technical direction, release quality, security response, community moderation, and the
@@ -48,5 +48,5 @@ not granted solely by contribution count. An existing maintainer proposes the ch
 another maintainer approves it.
 
 For support, contribution, conduct, and vulnerability-reporting channels, see
-[SUPPORT.md](SUPPORT.md), [CONTRIBUTING.md](CONTRIBUTING.md),
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md).
+[support](SUPPORT.md), [contributing](../CONTRIBUTING.md),
+[code of conduct](../CODE_OF_CONDUCT.md), and [security](../SECURITY.md) policies.

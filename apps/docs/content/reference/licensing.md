@@ -1,6 +1,6 @@
 # Licensing at Derive
 
-Derive is fair source. The code is public, you can self-host the whole product, and you can read every line before you trust it with your work. This page is the plain-English version of [the license](LICENSE): what you can do, the one thing you can't, and why we set it up this way.
+Derive is fair source. The code is public, you can self-host the whole product, and you can read every line before you trust it with your work. This page is the plain-English version of [the license](../../../../LICENSE): what you can do, the one thing you can't, and why we set it up this way.
 
 The license is the [Functional Source License](https://fsl.software) (FSL-1.1-ALv2). We didn't write it, Sentry did. We adopted it because it already says exactly what we mean.
 
@@ -52,7 +52,7 @@ Armin Ronacher's [FSL vs AGPL piece](https://lucumr.pocoo.org/2024/9/23/fsl-agpl
 
 ## Contributions
 
-Inbound = outbound. Contributions are licensed the same way as the project, future Apache-2.0 grant included. The practical workflow is in [CONTRIBUTING.md](CONTRIBUTING.md).
+Inbound = outbound. Contributions are licensed the same way as the project, future Apache-2.0 grant included. The practical workflow is in [CONTRIBUTING.md](../../../../CONTRIBUTING.md).
 
 ## Questions
 
