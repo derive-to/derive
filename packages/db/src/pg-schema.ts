@@ -1098,18 +1098,21 @@ BEGIN
 END $$`
 
 export const buildPgSchemaStatements = (): string[] => {
-  const { creates, alters } = generateDdl(TABLES, getTableConfig, {
+  const ddl = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
     timestampDefault: PG_TIMESTAMP_DEFAULT,
   })
   return [
-    ...creates,
+    ...ddl.createTables,
     ...placeholderTables(PG_TIMESTAMP_DEFAULT),
+    // CREATE TABLE IF NOT EXISTS does not reconcile an existing table. Add every safe
+    // column before creating derived objects that may reference the current schema.
+    ...ddl.addColumns,
+    ...ddl.createIndexes,
     ...PERF_INDEXES,
     ...ARTIFACT_SEARCH_PG,
-    ...alters,
-    // After the alters: partial indexes reference columns the alters add on a populated DB
-    // (dedupe_key), and the PG boot has no per-statement try/catch, so ordering is load-bearing.
+    // Partial indexes follow the same dependency rule: their predicates reference columns
+    // that the additive phase may just have introduced on a populated database.
     CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
     RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG,
     // A session no longer requires a context (chat with a document). Postgres can say this

@@ -25,7 +25,7 @@ if (PG_URL) {
     let client: PoolClient
 
     beforeAll(async () => {
-      pool = new Pool({ connectionString: PG_URL, max: 1 })
+      pool = new Pool({ connectionString: PG_URL, max: 2 })
       client = await pool.connect()
       await client.query(`CREATE SCHEMA ${ns}`)
       // Unqualified CREATE TABLEs land in this schema; the boot path is the same.
@@ -62,6 +62,44 @@ if (PG_URL) {
         expect(defined).toEqual(live)
       })
     }
+
+    it("upgrades a populated legacy schema before creating dependent indexes", async () => {
+      const legacyNs = `t_upgrade_${process.pid}_${uuid().replace(/-/g, "")}`
+      const legacy = await pool.connect()
+      try {
+        await legacy.query(`CREATE SCHEMA ${legacyNs}`)
+        await legacy.query(`SET search_path TO ${legacyNs}`)
+
+        const currentArtifactCreate = PG_SCHEMA_STATEMENTS.find((statement) =>
+          statement.startsWith("CREATE TABLE IF NOT EXISTS artifact ("),
+        )
+        if (!currentArtifactCreate) throw new Error("artifact CREATE statement is missing")
+        expect(currentArtifactCreate).toContain("\n  archived_at TEXT,")
+        const legacyArtifactCreate = currentArtifactCreate.replace("\n  archived_at TEXT,", "")
+        expect(legacyArtifactCreate).not.toContain("archived_at")
+        await legacy.query(legacyArtifactCreate)
+        await legacy.query(
+          `INSERT INTO artifact (id, short_id, kind) VALUES ('legacy-artifact', 'legacy', 'document')`,
+        )
+
+        for (const statement of PG_SCHEMA_STATEMENTS) await legacy.query(statement)
+        // Reapplying the complete plan is the deployment contract, not a special migration path.
+        for (const statement of PG_SCHEMA_STATEMENTS) await legacy.query(statement)
+
+        const column = await legacy.query<{ archived_at: string | null }>(
+          `SELECT archived_at FROM artifact WHERE id = 'legacy-artifact'`,
+        )
+        expect(column.rows).toEqual([{ archived_at: null }])
+        const index = await legacy.query<{ indexname: string }>(
+          `SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND indexname = $2`,
+          [legacyNs, "artifact_org_archived_created"],
+        )
+        expect(index.rows).toEqual([{ indexname: "artifact_org_archived_created" }])
+      } finally {
+        await legacy.query(`DROP SCHEMA IF EXISTS ${legacyNs} CASCADE`)
+        legacy.release()
+      }
+    })
   })
 } else {
   // Keep the file non-empty for the default (no-Postgres) run.

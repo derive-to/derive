@@ -1324,8 +1324,9 @@ const RUN_SCHEDULE_OCCURRENCE_UNIQUE =
   `AND scheduled_for IS NOT NULL`
 
 export const SCHEMA_STATEMENTS: string[] = [
-  ...ddl.creates,
+  ...ddl.createTables,
   ...placeholderTables(SQLITE_TIMESTAMP_DEFAULT),
+  ...ddl.createIndexes,
   ...PERF_INDEXES,
   ARTIFACT_SEARCH_FTS5,
   CONTEXT_SESSION_DEDUPE_UNIQUE,
@@ -1339,7 +1340,7 @@ export const SCHEMA_STATEMENTS: string[] = [
  * to a populated table (nullable or constant-default), so a new column can't be
  * forgotten here.
  */
-export const MIGRATION_STATEMENTS: string[] = ddl.alters
+export const MIGRATION_STATEMENTS: string[] = ddl.addColumns
 
 /**
  * NOT-NULL RELAXATIONS for existing databases.
