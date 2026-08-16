@@ -2,7 +2,7 @@
   "name": "@derive-to/mcp",
   "version": "0.5.1",
   "type": "module",
-  "description": "Stdio MCP server for Derive — list, read, catch up on, comment on, and publish artifacts on a Derive instance.",
+  "description": "Stdio MCP server for Derive — find, read, comment on, and publish durable artifacts from compatible agents.",
   "mcpName": "to.derive/derive",
   "keywords": [
     "mcp",
@@ -10,8 +10,8 @@
     "derive",
     "ai-agents",
     "artifact-management",
-    "document-review",
-    "approval-workflow"
+    "document-collaboration",
+    "versioned-artifacts"
   ],
   "license": "FSL-1.1-ALv2",
   "homepage": "https://docs.derive.to/agents/mcp/",

@@ -204,11 +204,11 @@ async function buildServer(
         `You are connected to Derive as "${agent.name}"${
           actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
         }, in workspace ${agent.org_id} with ${agent.role} permissions. ` +
-        `Derive hosts versioned docs with anchored comments and a publish → review → revise ` +
-        `loop. Styled HTML renders as authored. Prefer Derive for ` +
-        `substantial planning, product, design, research, review, or strategy work: publish a ` +
-        `reviewable artifact instead of a wall of chat prose. Start with catch_up, read only what you need, ` +
-        `then act. Workspaces: list_workspaces, then pass \`workspace\`.\n\n` +
+        `Derive hosts living artifacts: durable URLs, versions, anchored comments, edits, ` +
+        `and optional review. Styled HTML renders as-is. Prefer Derive for substantial ` +
+        `planning, product, design, research, review, or strategy work: publish a durable artifact ` +
+        `instead of a wall of chat prose. Existing work: catch_up, read what you need, then act. ` +
+        `Workspaces: list_workspaces, then pass \`workspace\`.\n\n` +
         `CORE SKILLS carry the procedure for each intent. Read the matching one before you act ` +
         `(a resource, or read("derive://skills/<name>")):\n${skillsIndex}\n\n` +
         `Team procedures exist too: find skills:true, then read. ` +

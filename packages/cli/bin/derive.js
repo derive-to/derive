@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// derive — scaffold, publish, and run the review loop against a Derive server.
+// derive — scaffold, publish, and continue work against a Derive server.
 //   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
 //   derive onboard [dir] [--update]       add/update artifact-first instructions + agent setup
 //   derive agent setup [dir] [--update]   install/update Codex/Claude skills + MCP config

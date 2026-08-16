@@ -14,7 +14,7 @@ import { SESSION_COOKIE_NAMES } from "../lib/http"
  *   GET /pricing   the pricing page, for everyone.
  *   GET /privacy   the privacy page, for everyone.
  *   GET /guides    permanent redirect to the separate docs.derive.to site.
- *   GET /examples  complete workflow examples, for everyone.
+ *   GET /examples  artifact examples with inspectable source, for everyone.
  *
  * Always on when the web build ships the pages (deps.marketing); a build without
  * them keeps today's behavior, where the SPA fallback owns these paths. The session

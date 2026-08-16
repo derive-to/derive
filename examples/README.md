@@ -1,14 +1,15 @@
-# Derive workflow examples
+# Derive artifact examples
 
-These are official, publishable examples of work that benefits from Derive's complete
-publish → review → revise → approve loop. They demonstrate the product; they are not
-customer work, testimonials, or synthetic case studies presented as real outcomes.
+These are official, publishable examples of agent-made work worth keeping at a durable URL.
+Each shows a different useful shape; none prescribes a required workflow. They demonstrate
+the product, but they are not customer work, testimonials, or synthetic case studies
+presented as real outcomes.
 
-| Example | Live artifact | Review job |
+| Example | Live artifact | What it demonstrates |
 | --- | --- | --- |
-| [Launch page source](launch-page/) | [Open artifact](https://derive.to/artifacts/example-launch-page-5cmep9l9) | Review message, evidence, layout, and final release approval |
-| [Research brief source](research-brief/) | [Open artifact](https://derive.to/artifacts/example-research-brief-ms66yju2) | Challenge sources and conclusions before a decision |
-| [Living status source](living-status/) | [Open artifact](https://derive.to/artifacts/example-living-status-f49k4yvg) | Review changing metrics, risks, owners, and decisions at one URL |
+| [Launch page source](launch-page/) | [Open artifact](https://derive.to/artifacts/example-launch-page-5cmep9l9) | Keep a designed result, not a flattened chat transcript |
+| [Research brief source](research-brief/) | [Open artifact](https://derive.to/artifacts/a-durable-home-for-agent-made-work-official-deri-ms66yju2) | Keep sources, uncertainty, and recommendations together |
+| [Living status source](living-status/) | [Open artifact](https://derive.to/artifacts/active-agent-work-official-derive-example-f49k4yvg) | Update current work, risks, owners, and decisions at one URL |
 
 ## Publish an example
 
@@ -25,15 +26,14 @@ derive publish
 After the first publish, the CLI writes the artifact ID to `derive.json`. Do not commit
 that instance-specific ID when using these examples as templates.
 
-## Run the loop
+## Continue the work when useful
 
-1. Publish the first version and choose the intended link role in Derive.
-2. Send the artifact URL to a real reviewer. Viewing may be anonymous; feedback requires
-   sign-in so it has an accountable author.
-3. Ask a connected agent to call `catch_up`, address every open thread, and publish a
-   focused revision.
-4. Have the named reviewer approve or send the revision back.
-5. Inspect the version and decision history at the same URL.
+1. Publish the first version and choose the intended access in Derive.
+2. Keep it private or share the URL with the people who need it.
+3. If feedback arrives, ask a connected agent to call `catch_up`, address the relevant
+   threads, and publish a focused revision.
+4. Use formal approval only when the work needs a named decision.
+5. Return later to inspect or update the same artifact and its history.
 
-The useful output of an example is not the page alone. It is the visible record of what
-changed, why it changed, and who decided it was ready.
+The useful output is the page and its continuity: the current result, earlier versions,
+authorship, and any conversation or decision that belongs with it.

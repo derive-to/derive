@@ -31,8 +31,8 @@ Publishing the same project again creates a new version at the existing URL. See
 
 ## What to publish first
 
-Choose something another person can make a real decision about: a launch page, proposal,
-research brief, report, or designed plan. A blank test document proves transport; a real
-artifact proves the review loop.
+Choose something worth finding again: a launch page, research brief, report, designed plan,
+demo, or handoff. A blank test document proves transport; a real artifact shows the value of
+a durable link, readable history, and a place to continue the work.
 
 If you want a complete starting point, use an [official example](/artifacts/examples/).

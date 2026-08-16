@@ -32,9 +32,9 @@ export const publicUrl = () =>
 
 // Hosted: Derive is already running (this instance, or any you point at). The fastest
 // on-ramp — Derive is itself a remote MCP server, so one line connects an agent and it
-// gets every Derive tool. No CLI needed for the publish/review loop.
+// gets every Derive tool. No CLI needed to publish and continue work.
 const hostedPrompt = (url: string) =>
-  `Connect me to Derive, a living-docs tool that hosts pages/docs at permanent, versioned URLs with inline review comments. Derive is a remote MCP server.
+  `Connect me to Derive, a workspace for agent-made artifacts at permanent, versioned URLs with comments, direct edits, and sharing controls. Derive is a remote MCP server.
 
 Derive is running at: ${url}
 
@@ -45,12 +45,12 @@ Please:
    The first call opens a browser consent (OAuth); the scope I grant maps to my Derive role.
 2. Confirm it's connected by calling the "find" MCP tool to list what's there (your identity, workspace, and role are already in the server instructions).
 
-Once connected you can publish a page, read its review comments, and run the propose -> review -> revise loop — all over MCP.`
+Once connected, use Derive to publish useful work, find it later, read comments, and update the same artifact. Use a proposal or formal review only when I ask for one or the permissions require it.`
 
 // Self-host: run Derive yourself first, then connect. Mirrors the deployment guide's single-
 // container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
 const selfHostPrompt = () =>
-  `Set up a self-hosted Derive for me, then connect this agent to it. Derive is a Fair Source review-and-approval tool for agent-made work (durable versioned URLs + inline review comments) that is itself a remote MCP server.
+  `Set up a self-hosted Derive for me, then connect this agent to it. Derive is a Fair Source workspace for agent-made artifacts (durable versioned URLs, comments, editing, and sharing controls) that is itself a remote MCP server.
 
 Please:
 1. From a Derive checkout (the directory with deploy/Dockerfile), run the single-container image (state lives in the derive_data volume):
@@ -65,7 +65,7 @@ Please:
    The first call opens a browser consent (OAuth).
 3. Confirm by calling the "find" MCP tool to list what's there.
 
-Then you can publish, read review comments, and run the propose -> review -> revise loop over MCP.`
+Then use Derive to publish useful work, find it later, read comments, and update the same artifact over MCP. Use formal review only when I ask for it or the permissions require a proposal.`
 
 /**
  * The connect surface: one tab per agent, each showing the lightest possible setup
@@ -84,8 +84,8 @@ export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?
   const cursorJson = `{ "mcpServers": { "derive": { "url": "${mcp}" } } }`
   const consentHint = (
     <p className="text-sm text-pretty text-muted-foreground">
-      The first call opens your browser once to approve — then it can publish, review, and revise
-      for you.
+      The first call opens your browser once to approve access — then it can publish, find, and
+      update work for you.
     </p>
   )
   // Radix unmounts inactive TabsContent, so this is layout-only.
@@ -171,7 +171,7 @@ function AnyAgentPrompt({ testidPrefix, url }: { testidPrefix: string; url: stri
       <p className="text-sm text-pretty text-muted-foreground">
         {devMode
           ? "Spin up your own Derive, then connect your agent to it. Paste this into an MCP-capable agent."
-          : "Paste this into any MCP-capable agent — it connects Derive so the agent can publish, review, and revise for you."}
+          : "Paste this into any MCP-capable agent — it connects Derive so the agent can publish, find, and update work for you."}
       </p>
       {/* The self-host switch rides just above the snippet it swaps — a rarely-
           touched option, so it sits quiet and right-aligned, not in the header. */}

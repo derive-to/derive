@@ -100,7 +100,7 @@ for (const brandedContract of [
   'class="docs-navigation',
   'class="workflow-list"',
   'class="start-list"',
-  "Turn agent output into approved work.",
+  "Turn agent output into work you can keep, share, and improve.",
 ])
   if (!homeHtml.includes(brandedContract))
     fail(`documentation home lacks branded shell contract ${brandedContract}`)
@@ -108,6 +108,12 @@ const startPosition = homeHtml.indexOf('class="home-section start-section"')
 const quickstartPosition = homeHtml.indexOf('class="home-section quickstart-section"')
 if (startPosition < 0 || quickstartPosition < 0 || startPosition > quickstartPosition)
   fail("documentation home must place the task-first start section before the quickstart")
+if (homeHtml.includes("quiet-sun-"))
+  fail("documentation home must not present an expired draft URL as live output")
+if (!homeHtml.includes("&lt;draft-id&gt;.derive.page"))
+  fail("documentation home must mark generated draft URLs as example output")
+if (/publish, review, revise, and approve loop/i.test(homeHtml))
+  fail("documentation home must not present formal approval as every artifact's required path")
 if (/starlight/i.test(homeHtml)) fail("documentation build still contains Starlight chrome")
 
 const llmsFull = readFileSync(join(DIST, "llms-full.txt"), "utf8")

@@ -84,7 +84,7 @@ describe("scaffold", () => {
     for (const file of ["AGENTS.md", "CLAUDE.md"]) {
       const instructions = readFileSync(join(d, file), "utf8")
       expect(instructions).toContain("<!-- derive:artifact-first:start -->")
-      expect(instructions).toContain("reviewable Derive artifact")
+      expect(instructions).toContain("durable Derive artifact")
     }
     const codexSkill = readFileSync(join(d, ".agents/skills/derive/SKILL.md"), "utf8")
     const claudeSkill = readFileSync(join(d, ".claude/skills/derive/SKILL.md"), "utf8")

@@ -1,7 +1,7 @@
 # `@derive-to/mcp`
 
 The local stdio compatibility server for [Derive](https://derive.to). It gives an
-MCP-compatible agent the same publish, review, revision, and context tools exposed by
+MCP-compatible agent the same find, publish, comment, revision, and context tools exposed by
 a Derive instance's remote `/mcp` endpoint.
 
 ## Prefer the remote server

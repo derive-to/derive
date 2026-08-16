@@ -22,9 +22,9 @@ const flag = (key: string): boolean => {
 /**
  * The getting-started pill: onboarding as a STATE the app is in, not a page that
  * vanished. Sits above the account pod until the user has activated — connected an
- * agent, had it publish, shared a link — then retires itself for good. Each row
- * completes from a real signal (the server's onboarding endpoint, or the share
- * dialog's copy-link flag), never from clicks. Dismiss is one click and permanent
+ * agent and had it publish — then retires itself for good. Each row completes from
+ * a real signal from the server's onboarding endpoint, never from clicks. Dismiss
+ * is one click and permanent
  * (per-browser); the instructions stay reachable via ⌘K → "Connect an agent".
  * Rendered for EVERY signed-in user who hasn't finished or dismissed it — including
  * accounts onboarded before this shipped: they are the unactivated cohort this
@@ -36,8 +36,6 @@ export function GettingStarted() {
   // fine — the pill is chrome, not data.
   const [dismissed, setDismissed] = useState(() => flag(STORAGE_KEYS.gettingStartedDismissed))
   const deferred = useDeferredGate()
-  // Re-read the share flag whenever the popover opens, so a copy-link in another
-  // tab is picked up without any event plumbing.
   const [open, setOpen] = useState(false)
 
   // refetchOnWindowFocus: the journey happens in the user's TERMINAL — they connect
@@ -53,7 +51,7 @@ export function GettingStarted() {
 
   // Both server-side steps done → this browser never needs the pill again. Persisted
   // in an effect (never during render); the mounted pill keeps rendering this session
-  // so the user watching their journey sees completion — and the share row — before
+  // so the user watching their journey sees completion before
   // it retires on the next visit.
   const serverDone = !!ob && ob.agent_connected && ob.published_via_agent
   useEffect(() => {
@@ -75,7 +73,6 @@ export function GettingStarted() {
 
   if (!me || dismissed || !ob || initiallyDone !== false) return null
 
-  const shared = flag(STORAGE_KEYS.sharedLink)
   const steps = [
     {
       key: "connect",
@@ -89,13 +86,6 @@ export function GettingStarted() {
       label: "Publish through your agent",
       detail: "Ask it to publish anything — you get a permanent, versioned link.",
       done: ob.published_via_agent,
-      doneNote: null,
-    },
-    {
-      key: "share",
-      label: "Share a link",
-      detail: "Send an artifact to a teammate — comments pin to the text.",
-      done: shared,
       doneNote: null,
     },
   ]

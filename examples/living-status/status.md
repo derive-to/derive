@@ -1,45 +1,46 @@
-# Agent workflow rollout status
+# Active agent work — current status
 
 > Official Derive example with illustrative data. Replace the figures, people, links, and
 > dates before using it for real work.
 
-- **Decision owner:** Product lead
-- **Status:** Needs review
-**Current decision:** Keep the rollout limited until two teams complete the full
-publish → feedback → revision → approval loop twice.
+- **Owner:** Product lead
+- **Status:** In progress
+- **Current focus:** Make active agent work easy to find and continue without reconstructing
+  the original session.
 
-## Outcome scorecard
+## Current picture
 
-| Outcome | Baseline | Current sample | Decision threshold | Source |
-| --- | ---: | ---: | ---: | --- |
-| Teams completing one full loop | 0 | 2 | 3 | Workspace event query |
-| Median time to first review | Unknown | 18 min | Establish baseline | Review-round timestamps |
-| Feedback followed by a revision | Unknown | 71% | Establish baseline | Comment and version events |
-| Repeat loops within 30 days | Unknown | 1 team | 2 teams | Workspace cohort query |
+| Workstream | Current artifact | Last material update | Owner | Next action |
+| --- | --- | --- | --- | --- |
+| Onboarding | First-artifact guide | 14 Aug | Product | Test with a new workspace |
+| Documentation | Docs landing page | 16 Aug | Docs | Check mobile navigation |
+| Agent setup | Connection prompt | 16 Aug | Platform | Verify a fresh MCP connection |
+| Examples | Living status page | 16 Aug | Product | Check live artifacts against source |
 
 ## What changed
 
-- The second team completed a named approval after two focused revisions.
-- One public share generated views but no attributable feedback; it does not count as a
-  completed collaborative loop.
-- Setup friction moved from MCP connection to choosing the correct workspace.
+- The docs landing page now leads with durable work instead of a mandatory approval loop.
+- The agent setup prompt tells compatible agents to publish, find, comment on, and update
+  artifacts; formal review is requested only when needed.
+- The example set now shows a designed page, a source-backed brief, and a recurring report as
+  different valid uses.
 
 ## Risks and triggers
 
 | Risk | Evidence | Trigger | Owner action |
 | --- | --- | --- | --- |
-| Review links are viewed but not acted on | View-to-feedback conversion is not yet baselined | Two consecutive loops with no feedback | Interview the reviewer; inspect access and CTA clarity |
-| Agents revise without closing threads | One of seven feedback threads remained open | Any approval with an unresolved actionable thread | Block approval or require explicit disposition |
-| Setup succeeds only with maintainer help | One assisted connection | More than one assisted setup in the next cohort | Improve the client-specific guide and instrument the failure |
+| Public surfaces drift into different stories | Copy is repeated across generated and handwritten files | A required surface fails the claims check | Fix the canonical source and regenerate |
+| Agents still force formal review | A fresh connection receives old orientation | Any current prompt prescribes approval by default | Update the canonical skill or server orientation |
+| Useful work remains hard to find | Owners cannot locate the current artifact | A handoff requires reconstructing the source chat | Improve titles, collections, or workspace guidance |
 
-## Decisions requested
+## Open questions
 
-1. Approve the current rollout limit or propose a different evidence threshold.
-2. Decide whether an unresolved actionable thread should block approval by policy.
-3. Name the owner of the workspace-selection improvement.
+1. Which artifact should a new user publish first to understand the product quickly?
+2. Where does formal approval provide enough value to deserve the extra ceremony?
+3. Which examples best reflect the real work already living in the workspace?
 
 ## Next update contract
 
-Revise this artifact when a threshold changes, a risk trigger fires, or a requested decision
-closes. Keep the headings and metric names stable so review comments remain anchorable across
+Revise this artifact when a workstream changes, a risk trigger fires, or an open question gets
+an answer. Keep the headings and workstream names stable so comments remain anchorable across
 versions.

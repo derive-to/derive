@@ -3,9 +3,9 @@ import type { ReactNode } from "react"
 import { Icon } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
 
-// First-run orientation on an empty home (below the publish launcher): Derive's one
-// loop — publish, share, review, then revise and republish. Each step SHOWS a small
-// mockup of the UI it produces (show, don't tell) so a cold user sees what Derive
+// First-run orientation on an empty home (below the publish launcher): three useful
+// things people can do with an artifact. Each card SHOWS a small mockup of the UI
+// it produces (show, don't tell) so a cold user sees what Derive
 // does, not just reads it. A description list per the feature-list rule; the mock
 // "screens" carry the house image outline (not a border), one frame deep. Purely
 // presentational.
@@ -13,17 +13,17 @@ export function HowItWorks() {
   return (
     <section data-testid="how-it-works" className="mt-8">
       <h2 className="font-serif text-xl font-medium tracking-tight text-balance text-foreground">
-        How Derive works
+        What you can do with an artifact
       </h2>
       <p className="mt-1.5 text-sm text-pretty text-muted-foreground">
-        Every artifact runs the same loop.
+        Keep it for yourself, share it, or continue the work. Use what fits.
       </p>
 
       <dl className="mt-5 grid gap-3 sm:grid-cols-3">
         <Step
           n={1}
-          title="Publish"
-          blurb="Drop HTML, Markdown, a slide deck, or a whole site — you get a permanent, versioned URL."
+          title="Keep"
+          blurb="Publish HTML, Markdown, a slide deck, or a whole site to a permanent, versioned URL."
         >
           <div className="h-1.5 w-12 rounded-full bg-foreground/70" />
           <div className="mt-1.5 h-1 w-full rounded-full bg-foreground/15" />
@@ -47,8 +47,8 @@ export function HowItWorks() {
 
         <Step
           n={3}
-          title="Review"
-          blurb="Comments pin to the text, or to the slide. Revise, republish — the loop closes itself."
+          title="Improve"
+          blurb="Comments pin to the text or slide. Edit directly or ask an agent to publish the next version."
         >
           <div className="h-1 w-full rounded-full bg-foreground/15" />
           <div className="mt-1 flex items-center gap-1">

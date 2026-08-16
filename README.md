@@ -5,10 +5,10 @@
   </picture>
 </p>
 
-<h1 align="center">Turn agent output into approved work.</h1>
+<h1 align="center">Turn agent output into work you can keep, share, and improve.</h1>
 
 <p align="center">
-One durable URL for every version, comment, revision, and decision. Your team reviews the work; any compatible agent can act on the feedback. Hosted, or one self-hosted container.
+One durable workspace for plans, reports, pages, decks, and sites. Keep the latest version at the same URL, work on it with people or agents, and use formal approval only when you need it. Hosted, or one self-hosted container.
 </p>
 
 <p align="center">
@@ -39,7 +39,7 @@ curl -F file=@page.html https://derive.to/v1/drafts   # or a .zip of a whole sit
 #   draft into a permanent, versioned artifact in your workspace
 ```
 
-Give your agent the whole loop — publish, read comments back, revise:
+Give your agent a durable place to publish, find, and improve work:
 
 ```bash
 npx skills add derive-to/derive --skill derive        # any agent that reads skills
@@ -49,7 +49,7 @@ claude mcp add --transport http derive https://derive.to/mcp   # or connect over
 Or paste this into a compatible coding agent and let it set itself up:
 
 ```text
-I'd like you to set up Derive — where the work we make gets published, reviewed, and kept.
+I'd like you to set up Derive — where the work we make gets kept, shared, and improved.
 
 Install the skill if I have npm: npx skills add derive-to/derive --skill derive
 Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://derive.to/mcp).
@@ -59,11 +59,11 @@ Then pick something real we've worked on recently — a plan, a report, a design
 
 ## What is Derive
 
-Derive is review and approval for work made by AI agents. Give an HTML page, a Markdown doc, or a whole built site a durable URL with its complete version history. Publish from the CLI, HTTP API, or a compatible agent over MCP. Your team reviews the rendered work, leaves comments pinned to the exact text, requests revisions, and records a named approval at the same URL.
+Derive is a workspace for agent-made artifacts. Give an HTML page, a Markdown document, a deck, or a whole built site a durable URL with its complete version history. Publish from the CLI, HTTP API, browser, or a compatible agent over MCP. Keep work private, share it, comment on it, edit it directly, or ask an agent to publish the next version.
 
 And the context travels with the work. Every artifact carries its content, its versions, and every review comment, so the context stays alive as it moves between people and tools. That kept context is what makes Derive model-agnostic: keep collaborating by hand or with your model of choice, and hand off without losing the thread, because the source of truth lives with the document, not inside any one AI chat.
 
-Artifacts don't have to be static. A workspace can run **contexts**: agents with access to your data that answer questions and publish documents through the same review loop. Ask the analytics context a question, get a cited answer. Everything a context produces is a normal artifact — versioned, commentable, at a permanent URL.
+Artifacts don't have to be static. A workspace can run **contexts**: agents with access to your data that answer questions and publish documents to the same library. Ask the analytics context a question, get a cited answer. Everything a context produces is a normal artifact — versioned, commentable, at a permanent URL.
 
 The point is ownership. Unlike hosted-only tools for sharing AI output, Derive is fair source and self-hostable: run the whole product as one container on your own infrastructure, or use the hosted app. Your artifacts, your data, your URL.
 
@@ -88,9 +88,9 @@ HTML, Markdown, or a whole built site. Every revision is a new version at the sa
 <tr>
 <td valign="top">
 
-### A review loop your team and its agents share
+### Comments and changes stay with the work
 
-Share an artifact and @mention the people who should weigh in. Comments pin to the exact text; approve a version or request changes. Agents drive the same loop over MCP: publish a draft, read the feedback, revise, resolve.
+Share an artifact and @mention the people or agents who should weigh in. Comments pin to the exact text, direct edits create new versions, and connected agents can read feedback and publish focused revisions. When a decision truly needs sign-off, request a formal review of that version.
 
 </td>
 <td width="52%" valign="top">
@@ -121,7 +121,7 @@ Also included:
 - ✅ **Checkpoints.** Save working state as a one-page artifact. Any later session — yours or a teammate's — picks the work up from it.
 - ✅ **Sandboxed viewer.** Every artifact runs on an opaque origin, isolated from cookies and other artifacts.
 - ✅ **Self-host your way.** SQLite and local disk by default, or Postgres and S3/R2 at scale.
-- ✅ **Real-time collaboration.** Comments, approvals, and who-else-is-here presence stream live over Server-Sent Events.
+- ✅ **Real-time collaboration.** Comments, optional approvals, and who-else-is-here presence stream live over Server-Sent Events.
 - ✅ **Rich share unfurls.** Every share link unfurls as a card in Slack, Discord, X, and Notion, showing the artifact itself, not a generic placeholder.
 - ✅ **CLI-first.** Scaffold and publish from the terminal.
 - ✅ **Remote MCP server.** Connect a compatible agent with one command.
@@ -129,9 +129,9 @@ Also included:
 
 ## Roadmap
 
-The roadmap is a living Derive artifact — maintained through its own review loop and
-versioned on every revision — at **[derive.to/roadmap](https://derive.to/roadmap)**.
-The direction in one line: pages you ask for and never maintain.
+The roadmap is a living Derive artifact — updated at the same URL and versioned on every
+revision — at **[derive.to/roadmap](https://derive.to/roadmap)**. The direction in one
+line: pages you ask for and never maintain.
 
 - **Living pages.** Describe a page in one sentence. A context builds it; a schedule keeps it current. Same URL, new version each run.
 - **Provenance.** Every generated artifact names the context and brief that produced it. Feedback goes on the brief; the next run picks it up.
@@ -153,7 +153,7 @@ The fastest path. No install.
 2. Create an account
 3. Publish your first artifact
 
-You get a library, in-browser publishing, and the comment loop in about a minute.
+You get a library, in-browser publishing, version history, and comments in about a minute.
 
 </td>
 <td width="50%" valign="top">
@@ -175,8 +175,9 @@ cloud hosts.
 </table>
 
 Want a complete artifact rather than a blank starter? Open or publish one of the
-**[official workflow examples](https://derive.to/examples)**: a designed launch page, a research
-brief, or a living status report, each with a review prompt and no invented customer claims.
+**[official examples](https://derive.to/examples)**: a designed launch page, a research brief,
+or a living status report, each showing a different useful way to keep work in Derive and no
+invented customer claims.
 
 ### From the terminal
 
@@ -201,11 +202,11 @@ codex mcp add derive --url https://derive.to/mcp
 npx -y @derive-to/mcp
 ```
 
-The agent acts at the role you grant: publish access publishes directly; a lower scope reads and proposes. Full loop in [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
+The agent acts at the role you grant: publish access publishes directly; a lower scope reads and proposes. Full guidance is in [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
-## Agents: ship a page, get the review comments back
+## Agents: publish work, then pick it up again
 
-Derive is built for the loop where an agent publishes and a human (or another agent) reviews.
+Derive gives compatible agents a shared place to publish, find, read, comment on, and update work.
 
 **Give your agent the skill** — works with Claude Code, Codex, Cursor, and any agent that reads [skills](https://skills.sh):
 

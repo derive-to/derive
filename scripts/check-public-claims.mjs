@@ -19,6 +19,7 @@ const walkText = (directory) => {
 }
 
 const publicCopyFiles = new Set([
+  "package.json",
   "README.md",
   "SECURITY.md",
   ".github/SUPPORT.md",
@@ -34,7 +35,11 @@ const publicCopyFiles = new Set([
   "apps/api/src/routes/embeds.ts",
   "apps/api/src/routes/system.ts",
   "packages/cli/README.md",
+  "packages/cli/package.json",
+  "packages/cli/skills/derive/SKILL.md",
+  "packages/cli/skills/derive/agents/openai.yaml",
   "packages/mcp/README.md",
+  "packages/mcp/package.json",
 ])
 
 const failures = []
@@ -61,6 +66,26 @@ const forbidden = [
   {
     pattern: /whatever your team runs/i,
     reason: "name tested clients or say MCP-compatible",
+  },
+  {
+    pattern: /turn agent output into approved work/i,
+    reason: "formal approval is an optional control, not every artifact's promised outcome",
+  },
+  {
+    pattern: /review and approval for (?:work made by ai agents|agent-made work)/i,
+    reason: "describe the full artifact workspace rather than one optional workflow",
+  },
+  {
+    pattern: /publish\s*(?:→|->)\s*review\s*(?:→|->)\s*revise\s*(?:→|->)\s*approve/i,
+    reason: "do not present one formal review sequence as the path for every artifact",
+  },
+  {
+    pattern: /every artifact runs the same loop/i,
+    reason: "private, shared, recurring, and formal-review artifacts are all valid",
+  },
+  {
+    pattern: /the loop is what you pay for/i,
+    reason: "pricing pays for editor seats, not one required workflow",
   },
 ]
 
@@ -97,7 +122,7 @@ requireText(
 requireText("apps/web/src/pages/login.tsx", "Fair Source.", "do not claim OSI status")
 requireText(
   "apps/web/src/components/shared/connect-agent.tsx",
-  "Fair Source review-and-approval tool",
+  "Fair Source workspace for agent-made artifacts",
   "describe the current license",
 )
 requireText(
@@ -105,8 +130,19 @@ requireText(
   "server is source available",
   "describe the current license",
 )
-requireText("README.md", "any compatible agent can act", "scope agent compatibility")
+requireText("README.md", "a compatible agent over MCP", "scope agent compatibility")
 requireText("README.md", "a proposal a human approves", "preserve human approval")
+for (const path of ["README.md", "apps/web/public/site/index.html", "apps/docs/content/index.mdx"])
+  requireText(
+    path,
+    "keep, share, and improve",
+    "lead with the durable artifact promise rather than a required review outcome",
+  )
+requireText(
+  "packages/cli/skills/derive/SKILL.md",
+  "Do not request review merely because an artifact exists.",
+  "keep formal review optional in the canonical agent guidance",
+)
 
 // Keep one canonical documentation origin and one deterministic contributor gate.
 requireText("README.md", 'href="https://docs.derive.to"', "link to the documentation site")
@@ -188,5 +224,5 @@ if (failures.length) {
 }
 
 console.log(
-  `check-public-claims: ok — ${publicCopyFiles.size} surfaces preserve license, access, agent, approval, docs, and gate claims`,
+  `check-public-claims: ok — ${publicCopyFiles.size} surfaces preserve positioning, license, access, agent, approval, docs, and gate claims`,
 )

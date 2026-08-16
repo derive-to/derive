@@ -1,23 +1,24 @@
 # Growth measurement
 
-Derive measures whether public work starts a durable review loop. It does not add a
-third-party page-view tracker, fingerprint visitors, or optimize for traffic without an
-outcome.
+Derive keeps a small set of first-party facts that help us understand how the product is
+used. It does not add a third-party page-view tracker, fingerprint visitors, or pretend
+that one sequence describes every useful workspace.
 
-## The funnel
+## Different uses stay different
 
-1. **Useful arrival:** a person opens a public artifact, guide, example, or campaign URL.
-2. **Intent:** they copy an agent setup prompt, open an official example, request beta
-   access, or choose sign-in.
-3. **Activation:** someone other than the owner opens a published artifact. The artifact's
-   `first_foreign_view_at` records this once.
-4. **Collaboration:** a reviewer leaves attributable feedback and the author or agent
-   publishes a revision.
-5. **Decision:** a named review round is approved.
-6. **Retention:** the same workspace returns to publish and complete another review loop.
+These facts describe different product uses rather than steps in a required funnel:
 
-The primary product measure is **workspaces completing a second approved review loop**.
-Signup volume is diagnostic; retained completed work is the outcome.
+- a workspace publishes artifacts;
+- an artifact receives a later version;
+- someone other than the author opens an artifact;
+- a person leaves an attributable comment;
+- a formal review records a named decision; and
+- a workspace pays for editor seats.
+
+A private library can be useful without an external view. A shared page can be useful without
+a comment. A recurring report can be useful without formal approval. Report these facts
+separately and use conversations with users to understand what they mean. Do not combine them
+into a universal score or call an action meaningful from event data alone.
 
 ## Cookieless first-party attribution
 
@@ -55,21 +56,14 @@ creation. Organic signups have no row by design. Join it to the auth user and wo
 membership only in a restricted operator query; never expose user identities in a public
 dashboard.
 
-For decisions, compare cohorts on the product outcomes above:
-
-- signup → first external view;
-- first external view → first comment;
-- first comment → first revision;
-- revision → named approval;
-- first approved loop → second approved loop.
-
-Report counts and conversion rates by source and signup month. Suppress tiny cohorts when
-sharing externally. A source that produces fewer signups but more second approved loops is
-the stronger channel.
+For decisions, report the available counts separately by source and signup month. Suppress
+tiny cohorts when sharing externally. Treat differences as prompts for investigation, not as
+proof that one source or workflow is better. Read representative artifacts and talk to the
+people using them before deciding what to change.
 
 ## Experiment discipline
 
-Write the hypothesis, primary outcome, guardrail, and stopping rule before changing a
-surface. Change one important promise or interaction at a time. Keep source tokens stable
-across copy variants, and record the variant separately in the experiment note. Do not
-claim causality from a small, unrandomized cohort; label directional findings as such.
+Write the question, expected effect, guardrail, and stopping rule before changing a surface.
+Change one important promise or interaction at a time. Keep source tokens stable across copy
+variants, and record the variant separately in the experiment note. Do not claim causality
+from a small, unrandomized cohort or turn a descriptive count into a universal success metric.
