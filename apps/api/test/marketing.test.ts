@@ -107,7 +107,7 @@ describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", 
       string
     >[]) {
       const html = await (await a.request("/", { headers })).text()
-      expect(html).not.toContain("Review and approval for work made by AI agents")
+      expect(html).not.toContain("derive publish ./your-thing")
     }
   })
 
@@ -129,7 +129,7 @@ describe("marketing front door (worker-first `/`, `/pricing`, and `/privacy`)", 
     })
     const res = await a.request("/")
     expect(res.status).toBe(200)
-    expect(await res.text()).toContain("Review and approval for work made by AI agents")
+    expect(await res.text()).toContain("Keep, share, and improve agent-made work")
   })
 
   it("falls back to the shell when a marketing page is missing from the build", async () => {

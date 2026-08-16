@@ -251,7 +251,7 @@ https://:preview.:subdomain.workers.dev/*
 const indexLines = [
   "# Derive documentation",
   "",
-  "> Review and approval for work made by AI agents.",
+  "> Keep, share, and improve agent-made work at durable URLs.",
   "",
   "Canonical documentation: https://docs.derive.to/",
   "OpenAPI: https://derive.to/openapi.json",

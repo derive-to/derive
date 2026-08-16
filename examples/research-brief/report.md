@@ -1,44 +1,45 @@
-# Choosing a review surface for agent-made work
+# A durable home for agent-made work
 
 > Official Derive example. This is a product-decision template, not independent market
 > research or a customer endorsement.
 
 ## Decision
 
-Use a dedicated review surface when an agent's output will be relied on by someone who was
-not present in the generating conversation, and the team must preserve why a version was
-accepted. Keep lightweight, disposable work in chat.
+Keep agent output in a dedicated artifact when someone will need to find, understand, share,
+or update the result after the generating conversation ends. Keep disposable exploration in
+chat.
 
 ## Evaluation criteria
 
 | Criterion | Question | Evidence to collect |
 | --- | --- | --- |
-| Fidelity | Can reviewers inspect the real rendered output? | Compare the review view with the final destination. |
-| Accountability | Is every mutation tied to an identity and permission? | Inspect access rules and the audit trail. |
-| Revision continuity | Does feedback survive focused rewrites? | Comment on exact text, revise it, and inspect re-anchoring. |
-| Decision closure | Can a named person approve a specific version? | Complete a review round and inspect its history. |
+| Fidelity | Can a reader inspect the real rendered output? | Compare the artifact with its intended destination. |
+| Findability | Can someone locate the current result without knowing the original chat? | Ask a new teammate to find it from the workspace library. |
+| Continuity | Do later versions keep the same URL and readable history? | Publish a focused update and inspect both versions. |
+| Collaboration | Can comments and edits stay attached to the work? | Comment on exact text, revise it, and inspect re-anchoring. |
 | Portability | Can the team export source and run the system itself? | Perform an export, restore, and self-host smoke test. |
 
 ## Findings
 
-Chat is fastest while one person is exploring with one agent. Its weakness appears at the
-handoff: the work, reasoning, feedback, and final decision are easily split across messages
-and tools. A repository is an excellent source-of-truth for code, but often forces a client,
-operator, or subject-matter reviewer to evaluate a diff instead of the rendered deliverable.
+Chat is fastest while one person is exploring with one agent. Its weakness appears later:
+the result, reasoning, feedback, and current state are easily split across messages and
+tools. A repository is an excellent source of truth for code, but often asks a client,
+operator, or subject-matter expert to evaluate a diff instead of the rendered deliverable.
 
-A dedicated artifact review surface earns its place only if it closes the complete loop:
-publish the actual work, collect attributable feedback, revise without changing the shared
-URL, and record approval of a named version. Publishing alone is not enough.
+A dedicated artifact earns its place when it preserves a useful result and makes the next
+interaction easier: find it, share it, comment on it, edit it, or publish a later version.
+Formal review is valuable for consequential decisions, but it is not the test every artifact
+must pass.
 
 ## Recommendation boundary
 
-Do not introduce another system for private scratch work, one-person tasks, or output that
-will be discarded immediately. Use it for plans, reports, pages, decks, and recurring
-documents whose review history or approval will matter later.
+Do not introduce another system for disposable scratch work or output nobody expects to use
+again. Use it for plans, reports, pages, decks, demos, and recurring documents whose current
+state or history will matter later.
 
-## Review checklist
+## Reading checklist
 
 - Are the alternatives described fairly, including when they are the better choice?
 - Does every conclusion follow from an observable criterion?
 - Are security and self-hosting assertions tested rather than assumed?
-- Is the final approver named, and are unresolved comments visible before approval?
+- Are the recommendation, uncertainty, and unanswered questions easy to find?

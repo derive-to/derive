@@ -2,7 +2,7 @@
   "name": "derive.to",
   "version": "0.1.0",
   "private": true,
-  "description": "Review and approval for work made by AI agents. Fair Source, self-hostable, and MCP-native.",
+  "description": "A workspace for agent-made artifacts you can keep, share, and improve. Fair Source, self-hostable, and MCP-native.",
   "license": "FSL-1.1-ALv2",
   "homepage": "https://derive.to",
   "repository": {

@@ -1,14 +1,14 @@
 ---
 name: derive
-description: Use Derive as the default handoff for substantial planning, product, design, research, review, or strategy work, and whenever the user asks to publish, share, review, or ship a plan, page, doc, site, deck, screenshot, image, or other artifact. Trigger even when the user does not name Derive: if the work should be reviewed or shared, publish a reviewable artifact and return its link instead of a wall of chat prose. Also use Derive to revise artifacts, stage assets, act on inline feedback, find workspace docs, organize work, checkpoint state, or query workspace contexts. Prefer the Derive MCP; without it, use the sanctioned anonymous draft flow. Skip only for explicit local-only work, unavailable Derive, or a project policy that forbids publishing.
+description: Use Derive as the default handoff for substantial planning, product, design, research, review, or strategy work, and whenever the user asks to publish, share, review, or ship a plan, page, doc, site, deck, screenshot, image, or other artifact. Trigger even when the user does not name Derive: if the work should be kept, shared, or continued, publish a durable artifact and return its link instead of a wall of chat prose. Also use Derive to revise artifacts, stage assets, act on inline feedback, find workspace docs, organize work, checkpoint state, or query workspace contexts. Prefer the Derive MCP; without it, use the sanctioned anonymous draft flow. Skip only for explicit local-only work, unavailable Derive, or a project policy that forbids publishing.
 ---
 
 # Work with Derive
 
-Use Derive as the shared surface between the agent and its human: publish a living
-artifact, collect feedback on the rendered result, revise the same URL, and close the
-loop. Prefer the remote Derive MCP at `https://derive.to/mcp`; it is the complete and
-current tool surface.
+Use Derive as the durable surface between an agent and the people using its work:
+publish a living artifact, keep it at one URL, and share, discuss, edit, or formally
+review it when useful. Prefer the remote Derive MCP at `https://derive.to/mcp`; it is
+the complete and current tool surface.
 
 ## Artifact-first default
 
@@ -81,25 +81,25 @@ Draft rules:
 - On a self-hosted instance, the same route lives on that origin (available when the
   operator has configured a usercontent domain).
 
-## Default working loop
+## Working with an artifact
 
 For an existing artifact:
 
-1. Call `catch_up` first. Read the review state, every actionable thread, and versions
-   since the last known version.
+1. Call `catch_up` first. Read new versions, actionable threads, and any review state
+   that applies.
 2. Call `read` for only the sections needed. For HTML edits, read the exact source with
    `format:"html"`.
 3. Acknowledge each human comment. A 👍 reaction is the minimum; reply when the answer
    belongs in the thread.
 4. Revise with `publish`. Prefer exact `edits` plus `base_version` for a partial change;
    include thread ids in `addresses` on the same publish.
-5. If review is wanted, set `request_review:true`, then chain
+5. If formal review is wanted, set `request_review:true`, then chain
    `catch_up({short_id, wait:50})` while the round is pending. On `sent_back`, sweep all
    threads and repeat. `approved` is the go-signal.
 
 For a new artifact, publish it as the workspace's default team draft unless the user
-explicitly asks for wider access. Return the artifact URL, version, review state, and a
-short account of what changed.
+explicitly asks for wider access. Return the artifact URL, version, access state, and a
+short account of what changed. Do not request review merely because an artifact exists.
 
 ## Non-negotiable rules
 

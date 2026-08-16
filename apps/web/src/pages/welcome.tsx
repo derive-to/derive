@@ -112,8 +112,8 @@ export function Welcome() {
             Welcome to Derive, {firstName}.
           </h1>
           <p className="text-sm text-pretty text-muted-foreground">
-            Connect the agent you already work with. It publishes; you share the link. Two minutes,
-            start to first artifact.
+            Connect the agent you already work with and give its useful output a durable home. Two
+            minutes, start to first artifact.
           </p>
         </div>
 
@@ -180,8 +180,8 @@ export function Welcome() {
               </span>
             </Link>
             <p className="text-sm text-pretty text-muted-foreground">
-              It's live at a permanent link. Share it with a teammate — comments pin to the text,
-              and your agent picks them up from here.
+              It's live at a permanent link with its version history. Keep it here, share it when
+              useful, or continue the work with comments, direct edits, and your agent.
             </p>
           </section>
         )}

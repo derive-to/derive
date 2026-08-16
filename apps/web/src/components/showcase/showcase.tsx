@@ -147,7 +147,7 @@ function TypeDemo() {
       <div>
         <Eyebrow>Voice · Geist display</Eyebrow>
         <p className="mt-2 max-w-xl text-2xl font-medium tracking-tight text-balance">
-          Turn agent output into approved work.
+          Turn agent output into work you can keep, share, and improve.
         </p>
       </div>
       <div>
@@ -1319,7 +1319,7 @@ export function Showcase() {
           >
             <ArtifactCardsDemo />
           </Row>
-          <Row title="Comment" note="The review loop — identity, body, and low-key actions.">
+          <Row title="Comment" note="Feedback on the work — identity, body, and low-key actions.">
             <CommentDemo />
           </Row>
           <Row

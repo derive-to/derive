@@ -49,7 +49,8 @@ export function AutomationsSection() {
       description={
         <>
           An automation is a standing job: an agent, a trigger, and an instruction. It runs on
-          demand, on a schedule, or on an event — always through the review loop, never around it.
+          demand, on a schedule, or on an event. Every result keeps its authorship, permissions, and
+          version history.
         </>
       }
     >

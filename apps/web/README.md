@@ -2,7 +2,7 @@
 
 The Derive web application and public website, built with TanStack Start and Vite.
 
-The application contains the signed-in library, artifact viewer, review and approval
+The application contains the signed-in library, artifact viewer, collaboration and optional approval
 surfaces, workspace settings, and onboarding. Static public assets live in `public/`;
 the hosted marketing pages live in `public/site/` and are served by the API's marketing
 routes. In local development, Vite serves the application on port 3090 and proxies the

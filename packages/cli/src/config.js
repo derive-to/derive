@@ -1110,15 +1110,15 @@ const starterHtml = (title) => `<!doctype html>
 // @derive/core dependency), hence a generated copy rather than an import.
 const starterSlides = (title) => deckTemplate(title)
 
-// Scaffolded into every project: the publish -> review -> revise loop, written
-// for an agent (or a human) to follow without prior knowledge of Derive.
+// Scaffolded into every project: an artifact-first handoff, written for an agent
+// (or a human) to follow without prior knowledge of Derive.
 const AGENT_PREFERENCE_START = "<!-- derive:artifact-first:start -->"
 const AGENT_PREFERENCE_END = "<!-- derive:artifact-first:end -->"
 const AGENT_PREFERENCE_BLOCK = `${AGENT_PREFERENCE_START}
 ## Artifact-first handoff
 
 For substantial planning, product, design, research, review, or strategy work, create
-and publish a reviewable Derive artifact instead of delivering the work as chat prose.
+and publish a durable Derive artifact instead of delivering the work as chat prose.
 Prefer a fully styled HTML artifact with complete visual mockups when the topic has a
 user interface or journey. Put open questions and decisions in the artifact or its
 anchored comments, and revise the same URL through feedback.
@@ -1148,17 +1148,17 @@ derive publish ./report.md  # a file, or a folder (a built site)
 Each publish is a new immutable version at the same URL. Name a checkpoint with
 \`derive publish --name "Final draft"\`.
 
-## The loop: publish -> review -> revise
+## Continue the work at the same URL
 
-The CLI has a verb for each step (all read the artifact id from derive.json):
+Use only the commands the work needs (all read the artifact id from derive.json):
 
 \`\`\`bash
-derive publish                      # 1. publish a draft, share the URL
-derive comments                     # 2. read the comment threads (quote · author · state)
-# 3. revise the source for the feedback, then:
-derive publish --name "Rev 2"       #    publish again — same URL, highlights re-anchor
-derive reply <thread_id> "Fixed in this version."   # 4a. discuss
-derive resolve <comment_id>         # 4b. close a handled thread  (derive reopen to undo)
+derive publish                      # publish a durable version
+derive comments                     # read comment threads (quote · author · state)
+# revise the source when feedback or new information calls for it, then:
+derive publish --name "Rev 2"       # publish again — same URL, highlights re-anchor
+derive reply <thread_id> "Fixed in this version."   # discuss
+derive resolve <comment_id>         # close a handled thread  (derive reopen to undo)
 derive open                         # open the artifact in a browser
 \`\`\`
 

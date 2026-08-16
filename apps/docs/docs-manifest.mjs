@@ -1,9 +1,9 @@
 export const docsHome = {
   source: "apps/docs/content/index.mdx",
   slug: "index",
-  title: "Turn agent output into approved work",
+  title: "Keep, share, and improve agent-made work",
   description:
-    "Publish work, collect exact feedback, revise it with any compatible agent, and record approval at one durable URL.",
+    "Publish agent-made artifacts to durable URLs, keep their history, and continue the work with people or agents.",
   stripHeading: false,
 }
 
@@ -17,14 +17,15 @@ export const docsSections = [
         source: "apps/docs/content/first-artifact.md",
         slug: "start/first-artifact",
         title: "Publish your first artifact",
-        description: "Go from a local HTML or Markdown file to a live review URL.",
+        description: "Go from a local HTML or Markdown file to a durable artifact URL.",
         stripHeading: false,
       },
       {
         source: "apps/docs/content/review-loop.md",
         slug: "start/review-loop",
-        title: "Run the review loop",
-        description: "Collect anchored feedback, revise the same URL, and close with approval.",
+        title: "Collaborate on an artifact",
+        description:
+          "Share work, collect anchored feedback, revise it, and use formal review when needed.",
         stripHeading: false,
       },
       {
@@ -50,7 +51,8 @@ export const docsSections = [
         source: "packages/mcp/README.md",
         slug: "agents/mcp",
         title: "Derive MCP server",
-        description: "Give MCP-compatible agents Derive's publish, review, and revision tools.",
+        description:
+          "Give MCP-compatible agents Derive's find, publish, comment, and revision tools.",
       },
       {
         source: "apps/docs/content/access.md",
@@ -80,7 +82,7 @@ export const docsSections = [
       {
         source: "examples/README.md",
         slug: "artifacts/examples",
-        title: "Official workflow examples",
+        title: "Official artifact examples",
         description:
           "Publishable examples for a launch page, research brief, and living status report.",
       },

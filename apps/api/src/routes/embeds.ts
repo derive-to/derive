@@ -416,7 +416,7 @@ const embedShell = (data: { info: UnfurlInfo; src: string; plaque?: boolean } | 
   const infoIcon =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5"/><path d="M12 7.7h.01"/></svg>'
   const tip =
-    "<b>Derive</b> is review and approval for agent-made work: publish from a compatible agent, review together, and keep every version and decision at one durable URL."
+    "<b>Derive</b> is a workspace for agent-made artifacts: publish from a compatible agent, keep every version at one durable URL, and share or improve the work when useful."
   // White-label (plaque:false) keeps the framed shell, just without the mark.
   const plaqueHtml = (d: { info: UnfurlInfo }) =>
     `<div class="p"><a class="b" href="${escapeHtml(`${d.info.pageUrl}?ref=embed&src=embed_badge`)}" target="_blank" rel="noopener" title="View on Derive">${mark}Made on Derive</a><button type="button" class="i" aria-label="What is Derive?" aria-describedby="dtip">${infoIcon}</button><span class="tip" id="dtip" role="tooltip">${tip}</span></div>`

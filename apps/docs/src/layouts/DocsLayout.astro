@@ -31,7 +31,7 @@ const pagePath = isHome ? "/" : `/${slug}/`
 const markdownPath = `/${slug}.md`
 const canonical = new URL(pagePath, Astro.site)
 const pageTitle = isHome
-  ? "Derive Docs — Turn agent output into approved work"
+  ? "Derive Docs — Keep, share, and improve agent-made work"
   : `${title} — Derive Docs`
 const contentPages = navigation.pages.filter((page) => page.slug !== "index")
 const pageIndex = contentPages.findIndex((page) => page.slug === slug)
@@ -81,9 +81,9 @@ const updatedLabel = lastUpdated
     <meta property="og:title" content={pageTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content="https://derive.to/site/og-approval.png" />
+    <meta property="og:image" content="https://derive.to/site/og-artifacts.png" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:image" content="https://derive.to/site/og-approval.png" />
+    <meta name="twitter:image" content="https://derive.to/site/og-artifacts.png" />
   </head>
   <body class:list={{ "home-page": isHome }}>
     <a class="skip-link" href="#main-content">Skip to content</a>

@@ -35,7 +35,10 @@ derive publish report.md --title "Research report"
 derive publish dist/ --title "Launch page" --spa
 ```
 
-## Run the review loop
+## Continue work at the same URL
+
+Use comments and later versions when they help. Formal approval is available for work that
+needs a named decision; it is not required for every artifact.
 
 ```bash
 derive status                 # review state and open threads
