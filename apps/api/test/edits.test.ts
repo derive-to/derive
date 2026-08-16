@@ -224,6 +224,48 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     )
   })
 
+  it("applies canvas text and scene controls in one atomic video save", async () => {
+    const html = `<main data-derive-video>
+<section data-derive-scene="opening" data-duration-ms="3500">Old headline.</section>
+<section data-derive-scene="proof" data-duration-ms="4000">Proof.</section>
+</main>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-video" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        { quote: { exact: "Old headline." }, new_text: "New headline." },
+        {
+          op: "scene-update",
+          id: "opening",
+          duration_ms: 2500,
+          transition: "slide",
+          transition_ms: 400,
+        },
+        { op: "scene-duplicate", id: "proof" },
+      ],
+      1,
+    )
+    expect(out.content).toContain("New headline.")
+    expect(out.content).toContain('data-duration-ms="2500"')
+    expect(out.content).toContain('data-transition="slide"')
+    expect(out.content).toContain('data-transition-ms="400"')
+    expect(out.content.match(/data-derive-scene=/g)).toHaveLength(3)
+    expect(out.filename).toBe("index.html")
+  })
+
+  it("refuses scene controls on a regular HTML artifact", async () => {
+    const deps = mkDeps({ 1: { text: "<p>Not a video.</p>", contentType: "text/html" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [{ op: "scene-update", id: "opening", duration_ms: 2500 }],
+        1,
+      ),
+    ).rejects.toThrow("Scene edits apply to HTML video artifacts only")
+  })
+
   it("refuses a batch that mixes quote edits with old_str edits", async () => {
     // The two shapes resolve against different baselines (quotes all-at-once vs
     // old_str sequentially) — a mixed batch would silently reorder, so it's refused.

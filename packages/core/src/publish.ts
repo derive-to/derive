@@ -16,6 +16,7 @@ import {
   type VersionSource,
 } from "./ports"
 import { isSkillBundle, parseFrontmatter } from "./skill"
+import { isVideoDocument, VIDEO_CONTENT_TYPE } from "./videos"
 
 /**
  * Does this content read as an HTML page? Used to classify a payload as text/html
@@ -235,11 +236,17 @@ async function storeContent(
     // the viewer still showed the deck bar (that rides the runtime postMessage), but
     // the library badge and kind label said "Page", so the one visible confirmation
     // that the protocol had worked was missing on exactly the decks that got it right.
-    contentType = isDeckDocument(text) ? "text/x-derive-deck" : "text/html"
+    contentType = isVideoDocument(text)
+      ? VIDEO_CONTENT_TYPE
+      : isDeckDocument(text)
+        ? "text/x-derive-deck"
+        : "text/html"
   } else if (/\.(md|markdown)$/i.test(filename)) {
     // Markdown stays markdown even when it talks about decks at length — the decks
     // skill and this repo's own docs quote the protocol and slide markup verbatim.
     contentType = "text/markdown"
+  } else if (isVideoDocument(text)) {
+    contentType = VIDEO_CONTENT_TYPE
   } else if (isDeckDocument(text)) {
     // An HTML FRAGMENT deck (no doctype). Both halves of isDeckDocument matter here:
     // the protocol name alone shows up in any prose about decks.

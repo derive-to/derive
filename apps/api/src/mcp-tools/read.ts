@@ -22,6 +22,7 @@ import {
   toMarkdown,
   type VersionDataRecord,
   type VersionRecord,
+  VIDEO_TEMPLATE,
 } from "@derive/core"
 import { catalogResource, templateResource } from "@derive-to/templates"
 import { z } from "zod"
@@ -334,6 +335,13 @@ export function registerReadTool(tc: ToolContext): void {
             `No deck resource "${short_id}". The starter is derive://decks/template; the guide is derive://skills/decks.`,
           )
         return json({ uri: short_id, mimeType: "text/html", content: DECK_TEMPLATE })
+      }
+      if (short_id.startsWith("derive://videos/")) {
+        if (short_id !== "derive://videos/template")
+          return err(
+            `No video resource "${short_id}". The starter is derive://videos/template; the guide is derive://skills/videos.`,
+          )
+        return json({ uri: short_id, mimeType: "text/html", content: VIDEO_TEMPLATE })
       }
       const BUILT_IN_TEMPLATES = "derive://templates/"
       if (short_id.startsWith(BUILT_IN_TEMPLATES)) {

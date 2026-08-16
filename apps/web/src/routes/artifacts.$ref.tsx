@@ -28,12 +28,18 @@ export const Route = createFileRoute("/artifacts/$ref")({
     collection?: string
     present?: boolean
     use?: boolean
+    scene?: string
+    t?: number
   } => ({
     ...(typeof s.comment === "string" && s.comment ? { comment: s.comment } : {}),
     ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
     ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
     ...(s.present === true || s.present === "1" || s.present === "true" ? { present: true } : {}),
     ...(s.use === true || s.use === "1" || s.use === "true" ? { use: true } : {}),
+    ...(typeof s.scene === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(s.scene)
+      ? { scene: s.scene }
+      : {}),
+    ...(Number.isFinite(Number(s.t)) && Number(s.t) >= 0 ? { t: Number(s.t) } : {}),
   }),
   // Warm the artifact + its comments so an intent-preloaded link opens instantly.
   // NOT the rendered HTML: a rel=prefetch of the viewer URL is never reused by the

@@ -105,6 +105,23 @@ export type ComposerState = {
  */
 export type Deck = { i: number; total: number; sniffed: boolean }
 
+/** A first-class HTML video's live scene and clock, reported by its own runtime or
+ *  by Derive's injected client for canonical data-derive-video markup. */
+export type Video = {
+  i: number
+  total: number
+  id: string
+  durationMs: number
+  transition: string
+  transitionMs: number
+  caption: string
+  playing: boolean
+  elapsedMs: number
+  positionMs: number
+  totalDurationMs: number
+  sniffed: boolean
+}
+
 // A parsed anchor — text (a quote) or element (a non-text selector), read back from a
 // stored comment's `anchor` JSON (the counterpart to the live `Sel` above). Both may
 // carry a `slide` (decks); `label` is the display string; `element` is the full

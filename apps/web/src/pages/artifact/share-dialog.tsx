@@ -77,6 +77,7 @@ export function ShareButton({
   passwordProtected = false,
   publicHistory = false,
   collectionAccess,
+  videoMoment,
 }: {
   shortId: string
   myRole?: Role | null
@@ -92,6 +93,7 @@ export function ShareButton({
    *  disclosure rows so the dialog never claims "Invited" while a collection grants
    *  the workspace access. */
   collectionAccess?: CollectionGrant[]
+  videoMoment?: { scene: string; timeMs: number }
 }) {
   const qc = useQueryClient()
   const { me } = useAuth()
@@ -152,6 +154,9 @@ export function ShareButton({
   const shareUrl =
     art?.url ??
     `${typeof window === "undefined" ? "" : window.location.origin}/artifacts/${shortId}`
+  const momentUrl = videoMoment
+    ? `${shareUrl}${shareUrl.includes("?") ? "&" : "?"}scene=${encodeURIComponent(videoMoment.scene)}&t=${Math.round(videoMoment.timeMs)}`
+    : null
 
   // Embed snippet: an iframe of the embeddable view. Same-origin by default; the
   // split-deploy SPA points at the API origin via API_BASE. The embed only shows
@@ -292,6 +297,10 @@ export function ShareButton({
       }
     }
   }
+  const copyMoment = () =>
+    momentUrl
+      ? void copyLinkToClipboard(momentUrl, { success: "Current moment link copied" })
+      : undefined
 
   const load = () =>
     api
@@ -622,7 +631,19 @@ export function ShareButton({
         {/* Footer: the universal action on the left, distribution mechanics folded
             behind a quiet disclosure on the right. */}
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <ShareCopyLinkButton copied={copiedLink} testPrefix="share" onCopy={copyLink} />
+          <div className="flex gap-1.5">
+            <ShareCopyLinkButton copied={copiedLink} testPrefix="share" onCopy={copyLink} />
+            {momentUrl && (
+              <Button
+                data-testid="share-moment-copy"
+                variant="outline"
+                size="sm"
+                onClick={copyMoment}
+              >
+                Copy current moment
+              </Button>
+            )}
+          </div>
           <Button
             data-testid="share-more-toggle"
             variant="ghost"
