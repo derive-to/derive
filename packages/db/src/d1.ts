@@ -86,6 +86,7 @@ export function createD1Store(d1: D1Database): MetaStore {
           .prepare(
             `UPDATE artifact
              SET current_version = current_version + 1,
+                 approved_version = current_version + 1,
                  current_content_type = (SELECT content_type FROM proposal WHERE id = ? AND state = 'open'),
                  updated_at = ?,
                  author_name = (SELECT author FROM proposal WHERE id = ? AND state = 'open'),

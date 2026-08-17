@@ -7,6 +7,7 @@
 
 import {
   type ArtifactRecord,
+  approvedOrCurrent,
   type BundleManifest,
   bundleDoc,
   type ContextRecord,
@@ -285,7 +286,8 @@ export const summarizeComment = (c: {
 // multi-page artifact's actual files, not just its entry doc.
 export const manifestOf = (ctx: AppContext, v: VersionRecord) => sharedManifestOf(ctx.blobs, v)
 
-/** A skill's declared identity and reading body, from its current version: frontmatter
+/** A skill's declared identity and reading body, from its SERVED version — the last
+ *  human-approved one, or current when none exists (approvedOrCurrent): frontmatter
  *  name/description, the SKILL.md body with frontmatter stripped, and the bundle's
  *  other files (invisible unless announced). Never throws — null covers a missing
  *  version, an unreadable blob, and a corrupt manifest alike (sourceText re-parses the
@@ -299,9 +301,10 @@ export const skillReading = async (
   description: string | null
   body: string
   others: string[]
+  version: number
 } | null> => {
   try {
-    const v = await ctx.meta.getVersion(a.id, a.current_version)
+    const v = await ctx.meta.getVersion(a.id, approvedOrCurrent(a))
     const manifest = v ? await manifestOf(ctx, v) : null
     const entry = v ? await ctx.sourceText(v) : null // the SKILL.md, frontmatter intact
     if (!manifest || entry === null) return null
@@ -311,6 +314,7 @@ export const skillReading = async (
       description: info.description,
       body: parseFrontmatter(entry).body,
       others: info.files.map((f) => f.path).filter((p) => p !== info.entry),
+      version: approvedOrCurrent(a),
     }
   } catch {
     return null
@@ -374,7 +378,8 @@ export const skillsCatalog = async (
         short_id: a.short_id,
         name: reading?.name ?? a.title ?? a.short_id,
         description: reading?.description ?? null,
-        version: a.current_version,
+        // The version delivery serves — approved when a human has approved one.
+        version: approvedOrCurrent(a),
         read: `derive://skills/${a.short_id}`,
       }
     }),

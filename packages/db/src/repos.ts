@@ -3371,13 +3371,29 @@ export function makeRepos(db: SqliteDb) {
       resolved_by?: string | null
       resolved_by_name?: string | null
     },
-  ): Promise<ReviewRoundRecord | null> =>
-    (await db
-      .update(reviewRound)
-      .set({ ...fields, resolved_at: new Date().toISOString() })
-      .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
-      .returning()
-      .get()) ?? null
+  ): Promise<ReviewRoundRecord | null> => {
+    const updated =
+      (await db
+        .update(reviewRound)
+        .set({ ...fields, resolved_at: new Date().toISOString() })
+        .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
+        .returning()
+        .get()) ?? null
+    // An approval moves the artifact's approved-version pointer, never lowering it:
+    // the round's version is what the human actually looked at, and a stale round
+    // approved after a newer one must not roll delivery back. Rounds at version 0
+    // (an unversioned artifact) stamp nothing — approved_version = 0 would read as
+    // "serve version 0" through approvedOrCurrent, not as "never approved".
+    if (updated && fields.state === "approved" && updated.version > 0)
+      await db
+        .update(artifact)
+        .set({
+          approved_version: sql`MAX(COALESCE(${artifact.approved_version}, 0), ${updated.version})`,
+        })
+        .where(eq(artifact.id, updated.artifact_id))
+        .run()
+    return updated
+  }
 
   // ---- Contexts + sessions -------------------------------------------------
   const createContext = async (x: NewContext): Promise<ContextRecord> =>

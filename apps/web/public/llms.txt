@@ -74,7 +74,9 @@ The local compatibility server is `npx -y @derive-to/mcp` and shares `derive log
 Skills: `read("derive://skills")` returns the catalog (core skills plus the connected
 workspace's own team skills); read one with `derive://skills/<name-or-short-id>`.
 Reading a skill artifact by short id returns its SKILL.md body with the bundle's
-files listed.
+files listed. Skill delivery serves the last human-approved version when one exists
+(a proposal or review approval sets it); until a skill is ever approved, it serves
+current. `?v=approved` on the content API resolves the same rule.
 
 Remote tools (ten): find, read, catch_up, comment, stage, publish, organize,
 checkpoint, use, list_workspaces.

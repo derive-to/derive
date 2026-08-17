@@ -1,6 +1,7 @@
 import {
   type AnyDocEdit,
   type ArtifactRecord,
+  approvedOrCurrent,
   artifactUrl,
   assertedOnly,
   type BundleDoc,
@@ -2407,7 +2408,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return fail(c, 404, "not found")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
-    const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
+    // "approved" resolves the human-approved version (current when none exists) — one
+    // sentinel every skill-delivery lane shares instead of each reimplementing the rule.
+    const vq = c.req.query("v")
+    const v =
+      vq === "approved" ? approvedOrCurrent(artifact) : vq ? Number(vq) : artifact.current_version
     if (!Number.isInteger(v)) return fail(c, 400, "bad version")
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return fail(c, 404, `no version ${v}`)

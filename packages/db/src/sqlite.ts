@@ -277,6 +277,8 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         tx.update(artifact)
           .set({
             current_version: n,
+            // The approved-version pointer: this new version IS the approved one.
+            approved_version: n,
             current_content_type: p.content_type,
             updated_at: now,
             author_name: p.author,
