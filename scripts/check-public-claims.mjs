@@ -70,40 +70,26 @@ const forbidden = [
   {
     pattern: /turn agent output into approved work/i,
     reason: "formal approval is an optional control, not every artifact's promised outcome",
-    positioning: true,
   },
   {
     pattern: /review and approval for (?:work made by ai agents|agent-made work)/i,
     reason: "describe the full artifact workspace rather than one optional workflow",
-    positioning: true,
   },
   {
     pattern: /publish\s*(?:→|->)\s*review\s*(?:→|->)\s*revise\s*(?:→|->)\s*approve/i,
     reason: "do not present one formal review sequence as the path for every artifact",
-    positioning: true,
   },
   {
     pattern: /every artifact runs the same loop/i,
     reason: "private, shared, recurring, and formal-review artifacts are all valid",
-    positioning: true,
   },
   {
     pattern: /the loop is what you pay for/i,
     reason: "pricing pays for editor seats, not one required workflow",
-    positioning: true,
   },
 ]
 
 const licensingPath = "apps/docs/content/reference/licensing.md"
-
-// The public marketing site keeps its own editorial voice. Positioning wording and
-// em-dash punctuation are set per page there, so those two checks describe the docs,
-// README, and in-app surfaces instead. Every license, access, and agent claim below
-// still applies to the marketing pages.
-const marketingSite = new Set([
-  "apps/web/public/security.html",
-  ...walkText("apps/web/public/site"),
-])
 
 // Public prose should read like the rest of the product: short sentences and calm
 // punctuation. Comments and internal engineering docs are outside this copy check.
@@ -118,6 +104,8 @@ const publicProseFiles = new Set([
   ...walkText("examples"),
   "apps/web/public/llms.txt",
   "apps/web/public/llms-full.txt",
+  "apps/web/public/security.html",
+  ...walkText("apps/web/public/site"),
   "packages/mcp/SKILL.md",
 ])
 
@@ -174,9 +162,8 @@ for (const path of publicCopyFiles) {
     continue
   }
   for (const [index, line] of read(path).split("\n").entries()) {
-    for (const { pattern, reason, positioning } of forbidden) {
+    for (const { pattern, reason } of forbidden) {
       if (path === licensingPath && pattern.source === "\\bopen[- ]source\\b") continue
-      if (positioning && marketingSite.has(path)) continue
       if (pattern.test(line)) fail(`${path}:${index + 1}: ${reason}\n  ${line.trim()}`)
     }
   }
@@ -198,7 +185,7 @@ requireText("SECURITY.md", "Anonymous callers are always read-only", "match effe
 requireText("apps/web/public/site/index.html", "Fair Source and self-hostable", "accurate metadata")
 requireText(
   "apps/web/public/site/index.html",
-  "commenting or editing requires sign-in",
+  "Commenting and editing require sign-in.",
   "match the anonymous read-only invariant",
 )
 requireText("apps/web/src/pages/login.tsx", "Fair Source.", "do not claim OSI status")
@@ -214,7 +201,7 @@ requireText(
 )
 requireText("README.md", "a compatible agent over MCP", "scope agent compatibility")
 requireText("README.md", "a proposal a human approves", "preserve human approval")
-for (const path of ["README.md", "apps/docs/content/index.mdx"])
+for (const path of ["README.md", "apps/web/public/site/index.html", "apps/docs/content/index.mdx"])
   requireText(
     path,
     "keep, share, and improve",
