@@ -156,48 +156,76 @@ jobs:
   # seconds they actually run, and skip to nothing otherwise.
   db:
     runs-on: ubicloud-standard-8
-    # paths-filter lists a PR's changed files via the GitHub API, which needs
-    # pull-requests:read (the workflow default is contents:read only).
-    permissions:
-      contents: read
-      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
-        id: filter
         with:
-          filters: |
-            web:
-              - 'apps/web/**'
-              - 'packages/**'
-              - 'pnpm-lock.yaml'
-              - 'package.json'
-            runner:
-              - 'packages/cli/**'
-              - 'pnpm-lock.yaml'
-              - 'deploy/runner.Dockerfile'
-              - 'deploy/runner.Dockerfile.dockerignore'
-              - 'deploy/runner-entrypoint.sh'
-            app_image:
-              - '.dockerignore'
-              - '.github/workflows/ci.yml'
-              - '.github/workflows/release-images.yml'
-              - 'QUICKSTART.md'
-              - 'apps/api/**'
-              - 'apps/web/**'
-              - 'packages/broker/**'
-              - 'packages/core/**'
-              - 'packages/db/**'
-              - 'packages/storage/**'
-              - 'package.json'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
-              - 'deploy/Dockerfile*'
-              - 'deploy/compose*.yml'
-              - 'deploy/selfhost.env.example'
-              - 'scripts/selfhost-smoke-client.mjs'
-              - 'scripts/test-published-selfhost-bundle.sh'
-              - 'scripts/test-selfhost-quickstart.sh'
+          # The local path filter compares the event's exact base and head.
+          fetch-depth: 0
+      - name: Find build-affecting changes
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          web=false
+          runner=false
+          app_image=false
+          range=
+
+          case "$EVENT_NAME" in
+            pull_request)
+              if [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
+                range="${BASE_SHA}...${HEAD_SHA}"
+              fi
+              ;;
+            push)
+              if [ -n "$BEFORE_SHA" ] && [ -n "${BEFORE_SHA//0/}" ]; then
+                range="${BEFORE_SHA}..${HEAD_SHA}"
+              fi
+              ;;
+          esac
+
+          if [ -z "$range" ]; then
+            web=true
+            runner=true
+            app_image=true
+          else
+            : "${RUNNER_TEMP:?}"
+            changed_paths="$RUNNER_TEMP/derive-changed-paths"
+            git diff --name-only -z "$range" > "$changed_paths"
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                apps/web/* | packages/* | pnpm-lock.yaml | package.json) web=true ;;
+              esac
+              case "$path" in
+                packages/cli/* | pnpm-lock.yaml | \
+                  deploy/runner.Dockerfile | deploy/runner.Dockerfile.dockerignore | \
+                  deploy/runner-entrypoint.sh)
+                  runner=true
+                  ;;
+              esac
+              case "$path" in
+                .dockerignore | .github/workflows/ci.yml | \
+                  .github/workflows/release-images.yml | QUICKSTART.md | \
+                  apps/api/* | apps/web/* | packages/broker/* | packages/core/* | \
+                  packages/db/* | packages/storage/* | package.json | pnpm-lock.yaml | \
+                  pnpm-workspace.yaml | deploy/Dockerfile* | deploy/compose*.yml | \
+                  deploy/selfhost.env.example | scripts/selfhost-smoke-client.mjs | \
+                  scripts/test-published-selfhost-bundle.sh | \
+                  scripts/test-selfhost-quickstart.sh)
+                  app_image=true
+                  ;;
+              esac
+            done < "$changed_paths"
+          fi
+
+          echo "web=$web" >> "$GITHUB_OUTPUT"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "app_image=$app_image" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup
 
       # More workers than cores, deliberately. This lane is the critical path —
