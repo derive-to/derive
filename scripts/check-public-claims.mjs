@@ -109,10 +109,39 @@ const publicProseFiles = new Set([
   "packages/mcp/SKILL.md",
 ])
 
-const proseText = (path) => {
-  const text = read(path)
-  if (!path.endsWith(".html")) return text
-  return text.replaceAll(/<!--[\s\S]*?-->/g, "").replaceAll(/\/\*[\s\S]*?\*\//g, "")
+const publicProseDashOffset = (path, text) => {
+  if (!path.endsWith(".html")) return text.indexOf("—")
+
+  let inHtmlComment = false
+  let inBlockComment = false
+  for (let offset = 0; offset < text.length; offset += 1) {
+    if (inHtmlComment) {
+      if (text.startsWith("-->", offset)) {
+        inHtmlComment = false
+        offset += 2
+      }
+      continue
+    }
+    if (inBlockComment) {
+      if (text.startsWith("*/", offset)) {
+        inBlockComment = false
+        offset += 1
+      }
+      continue
+    }
+    if (text.startsWith("<!--", offset)) {
+      inHtmlComment = true
+      offset += 3
+      continue
+    }
+    if (text.startsWith("/*", offset)) {
+      inBlockComment = true
+      offset += 1
+      continue
+    }
+    if (text[offset] === "—") return offset
+  }
+  return -1
 }
 
 for (const path of publicProseFiles) {
@@ -120,8 +149,8 @@ for (const path of publicProseFiles) {
     fail(`missing public-prose surface ${path}`)
     continue
   }
-  const text = proseText(path)
-  const offset = text.indexOf("—")
+  const text = read(path)
+  const offset = publicProseDashOffset(path, text)
   if (offset === -1) continue
   const line = text.slice(0, offset).split("\n").length
   fail(`${path}:${line}: public prose uses an em dash; use a period, colon, or parentheses`)
