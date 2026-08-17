@@ -621,6 +621,7 @@ export interface ArtifactStore {
       id: string
       short_id: string
       title: string | null
+      current_content_type: string | null
       n: number
       json: string
       gen: number

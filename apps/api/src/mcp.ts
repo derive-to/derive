@@ -202,16 +202,14 @@ async function buildServer(
         `You are connected to Derive as "${agent.name}"${
           actingFor ? ` on behalf of ${actingFor.name ?? "your user"}` : ""
         }, in workspace ${agent.org_id} with ${agent.role} permissions. ` +
-        `Derive hosts living documents with versioned history, text-anchored comments, and a ` +
-        `publish → review → revise loop. A fully-styled HTML page is a first-class artifact that ` +
-        `renders as authored. Prefer Derive for substantial planning, product, design, research, ` +
-        `review, or strategy work without being asked: publish a reviewable ` +
-        `artifact instead of a wall of chat prose. Work the loop: ` +
-        `catch_up for what changed, read only the parts you need, then act. Other workspaces: ` +
-        `list_workspaces, then pass \`workspace\`.\n\n` +
-        `CORE SKILLS carry the procedure for each intent. Read the matching one before you act ` +
-        `(a resource, or read("derive://skills/<name>")):\n${skillsIndex}\n\n` +
-        `Team procedures exist too: find skills:true, then read.` +
+        `Derive is the artifact/review layer: versioned documents, anchored comments, and a ` +
+        `publish → review → revise loop. Prefer Derive for substantial planning, product, ` +
+        `design, research, review, or strategy work: publish a reviewable artifact instead of ` +
+        `a wall of chat prose. Start with catch_up, read what you need, then act. Use ` +
+        `list_workspaces and pass \`workspace\` to switch.\n\n` +
+        `Read the matching CORE SKILL before acting ` +
+        `(resource or read("derive://skills/<name>")):\n${skillsIndex}\n\n` +
+        `Team procedures: find skills:true, then read.` +
         brandprintInstructions(bpSources.length, bpProfile) +
         pendingRequestsPointer(pendingRequests.length),
     },

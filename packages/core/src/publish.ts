@@ -1,6 +1,7 @@
 import { unzipSync } from "fflate"
 import { isDeckDocument } from "./decks"
 import { newId, newShortId, refFor, slugify } from "./ids"
+import { LINKED_BUNDLE_CONTENT_TYPE, linkedBundleOf } from "./linked-bundle"
 import { mimeFor } from "./mime"
 import type { LinkRole, Listed, WorkspaceAccess } from "./permissions"
 import {
@@ -232,7 +233,11 @@ async function storeContent(
     // the viewer still showed the deck bar (that rides the runtime postMessage), but
     // the library badge and kind label said "Page", so the one visible confirmation
     // that the protocol had worked was missing on exactly the decks that got it right.
-    contentType = isDeckDocument(text) ? "text/x-derive-deck" : "text/html"
+    contentType = isDeckDocument(text)
+      ? "text/x-derive-deck"
+      : linkedBundleOf(text)?.manifest
+        ? LINKED_BUNDLE_CONTENT_TYPE
+        : "text/html"
   } else if (/\.(md|markdown)$/i.test(filename)) {
     // Markdown stays markdown even when it talks about decks at length — the decks
     // skill and this repo's own docs quote the protocol and slide markup verbatim.
@@ -244,7 +249,7 @@ async function storeContent(
   } else if (/\.html?$/i.test(filename)) {
     // An HTML fragment (no doctype, so the sniff above missed it) saved with an
     // .html name — keep it HTML so the markup renders, not shows as escaped text.
-    contentType = "text/html"
+    contentType = linkedBundleOf(text)?.manifest ? LINKED_BUNDLE_CONTENT_TYPE : "text/html"
   } else {
     // Plaintext / unknown extension (.txt, no extension, …): render as markdown.
     // It's the safer, more readable default — sanitized and HTML-escaped through the

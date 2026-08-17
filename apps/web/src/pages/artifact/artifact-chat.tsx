@@ -63,7 +63,7 @@ export function ArtifactChat(props: {
 /** The small, shared vocabulary for the artifact's one right rail. Comments must remain first:
  * it is the default reading companion. Chat is optional per workspace, and Inspect is optional
  * per artifact + role — neither gets to become a parallel primary surface. */
-export type RailTab = "comments" | "chat" | "inspect"
+export type RailTab = "comments" | "map" | "chat" | "inspect"
 
 /** The rail's tab strip. It stays a handful of buttons rather than a full Tabs primitive: it
  * must fit inline in the existing desktop header and mobile peek bar. The capability gates are
@@ -72,12 +72,21 @@ export function RailTabs(props: {
   tab: RailTab
   commentCount: number
   onTab: (t: RailTab) => void
+  mapEnabled?: boolean
   chatEnabled?: boolean
   inspectEnabled?: boolean
 }) {
-  const { tab, commentCount, onTab, chatEnabled = false, inspectEnabled = false } = props
+  const {
+    tab,
+    commentCount,
+    onTab,
+    mapEnabled = false,
+    chatEnabled = false,
+    inspectEnabled = false,
+  } = props
   const tabs: RailTab[] = [
     "comments",
+    ...(mapEnabled ? (["map"] as const) : []),
     ...(chatEnabled ? (["chat"] as const) : []),
     ...(inspectEnabled ? (["inspect"] as const) : []),
   ]

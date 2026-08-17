@@ -66,6 +66,8 @@ export interface ArtifactSummaryJson {
   listed?: string
   /** Browse tags on the artifact — present when the server returns them (newer servers). */
   tags?: string[]
+  current_content_type?: string | null
+  is_linked_bundle?: boolean
 }
 
 export interface TagCountJson {
@@ -116,6 +118,7 @@ export interface NewCommentArgs {
   base_version?: number
   path?: string
   anchor?: unknown
+  visual_target?: string
 }
 
 export interface VersionJson {
@@ -154,6 +157,19 @@ export interface ArtifactJson {
   /** Publish-response extras (agent-credentialed publishes only). */
   review_requested?: boolean
   opened_in_tab?: boolean
+  linked_bundle?: {
+    schema: "derive.linked-bundle/v1"
+    purpose: string
+    members: {
+      id: string
+      ref: string
+      label: string
+      role?: string
+      note?: string
+      available: boolean
+    }[]
+    diagrams?: { id: string; title: string; type: "loop" | "graph" }[]
+  }
 }
 
 /** One review round: the human-ack primitive of the /derive loop. */
@@ -311,7 +327,10 @@ export function createClient(opts: ClientOptions): DeriveClient {
       const r = (await ok(await f(`${base}/v1/artifacts${q}`, { headers: authHeaders }))) as {
         artifacts: ArtifactSummaryJson[]
       }
-      return r.artifacts
+      return r.artifacts.map((artifact) => ({
+        ...artifact,
+        is_linked_bundle: artifact.current_content_type === "text/x-derive-linked-bundle",
+      }))
     },
 
     async listTags() {

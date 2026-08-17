@@ -7,6 +7,8 @@ import {
   docMap,
   isDerivedFactName,
   isHtmlLike,
+  LINKED_BUNDLE_CONTENT_TYPE,
+  LINKED_BUNDLE_FACT,
   landmarkSlice,
   landmarksOf,
   mapJson,
@@ -19,6 +21,7 @@ import {
   toMarkdown,
   type VersionDataRecord,
   type VersionRecord,
+  validateLinkedBundle,
 } from "@derive/core"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
@@ -105,8 +108,8 @@ const lazyDeriveVersion = async (
   v: VersionRecord | null,
   n: number,
 ): Promise<VersionDataRecord[] | null> => {
-  const ct = v?.content_type
-  if (!v || (ct !== "text/html" && ct !== "text/markdown")) return null
+  const ct = v?.content_type ?? ""
+  if (!v || (ct !== "text/markdown" && !isHtmlLike(ct))) return null
   const source = await ctx.sourceText(v)
   if (source == null) return null
   const derived = deriveFacts(source, ct)
@@ -642,6 +645,60 @@ export function registerReadTool(tc: ToolContext): void {
         // Single-file artifact.
         const src = (await ctx.sourceText(v)) ?? ""
         const ct = v.content_type
+        // A linked bundle's logical grouping rides every ordinary read, not only a
+        // special data query. Keep this orientation compact; the full, inspectable
+        // topology stays available as the authored bundle-manifest fact.
+        let linkedBundleMeta: Record<string, string> = {}
+        if (ct === LINKED_BUNDLE_CONTENT_TYPE) {
+          const row = (await ctx.meta.getVersionData(a.id, n, LINKED_BUNDLE_FACT))[0]
+          if (row) {
+            try {
+              const checked = validateLinkedBundle(JSON.parse(row.json))
+              if (checked.manifest) {
+                const clean = (value: string) => value.replace(/\s+/g, " ").trim()
+                const members = checked.manifest.members.slice(0, 50)
+                linkedBundleMeta = {
+                  bundle_purpose: clean(checked.manifest.purpose),
+                  bundle_members: `${members
+                    .map(
+                      (member) =>
+                        `${member.id}=${clean(member.label)} (${member.ref})${member.role ? ` [${clean(member.role)}]` : ""}`,
+                    )
+                    .join(
+                      " | ",
+                    )}${checked.manifest.members.length > members.length ? ` | +${checked.manifest.members.length - members.length} more` : ""}`,
+                  ...(checked.manifest.diagrams?.length
+                    ? {
+                        bundle_diagrams: checked.manifest.diagrams
+                          .map((diagram) => `${diagram.type}:${clean(diagram.title)}`)
+                          .join(" | "),
+                        ...(checked.manifest.diagrams.some((diagram) =>
+                          diagram.nodes.some((node) => node.state),
+                        )
+                          ? {
+                              bundle_state: checked.manifest.diagrams
+                                .flatMap((diagram) =>
+                                  diagram.nodes
+                                    .filter((node) => node.state)
+                                    .map(
+                                      (node) =>
+                                        `${diagram.id}.${node.id}=${node.state}${node.basis_version ? `@v${node.basis_version}` : ""}`,
+                                    ),
+                                )
+                                .join(" | "),
+                            }
+                          : {}),
+                      }
+                    : {}),
+                  bundle_next: `Read the full topology with read(short_id:"${short_id}", data:"${LINKED_BUNDLE_FACT}"). Keep member artifacts independent; revise this bundle only when its purpose, membership, or diagrams change.`,
+                }
+              }
+            } catch {
+              // Publishing validates the row. If a legacy/corrupt row exists, reading
+              // the authored document still wins over failing its orientation garnish.
+            }
+          }
+        }
         const meta = {
           short_id,
           title: a.title,
@@ -649,6 +706,7 @@ export function registerReadTool(tc: ToolContext): void {
           kind: a.kind,
           format: formatLabel(ct, fmt),
           url,
+          ...linkedBundleMeta,
         }
         // The map rung: the document's addressable parts. Read before working on part of
         // a big doc — it is the cheap structural view the full-document read is not, and
@@ -762,7 +820,7 @@ export function registerReadTool(tc: ToolContext): void {
         // a near-noop and would just be log noise).
         const tConv = Date.now()
         const body = present(src, ct, fmt)
-        if (baseType(ct) === "text/html")
+        if (isHtmlLike(ct))
           log.info("derived_view_read", {
             short_id,
             chars: src.length,

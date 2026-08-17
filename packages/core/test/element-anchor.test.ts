@@ -6,6 +6,7 @@ import {
   type ElementSelector,
   elementLabel,
   elementResolvesIn,
+  elementSelectorForId,
   fingerprintOf,
   fnv1a,
   isElementAnchor,
@@ -58,6 +59,17 @@ const selFor = (html: string, tag: string, ordinal = 0): ElementSelector => {
 }
 
 describe("scanElements", () => {
+  it("recognises stable linked-bundle review targets", () => {
+    const [target] = scanElements(
+      '<div id="derive-improve-node-revise" data-derive-review-id="derive-improve-node-revise" data-derive-review-kind="loop-step" data-derive-review-label="Loop step — Revise">Revise the brief</div>',
+    )
+    expect(target).toBeDefined()
+    if (!target) return
+    const role = roleOf(target)
+    expect(role).toBe("loop-step")
+    expect(elementLabel({ ...target, role })).toBe("Loop step — Revise")
+  })
+
   it("indexes elements in document order with same-tag ordinals", () => {
     const ds = scanElements(PAGE)
     const ps = ds.filter((d) => d.tag === "p")
@@ -379,6 +391,54 @@ describe("parse helpers", () => {
     expect(isElementAnchor(JSON.stringify({ type: "TextQuoteSelector", exact: "hi" }))).toBe(false)
     expect(isElementAnchor(null)).toBe(false)
     expect(isElementAnchor("not json")).toBe(false)
+  })
+})
+
+describe("agent-authored visual pins", () => {
+  it("builds a durable semantic selector from a linked-bundle review id", () => {
+    const html = `<main><p>Before</p><div id="derive-improve-node-revise" data-derive-review-kind="loop-step" data-derive-review-label="Loop step — Revise">Revise</div><p>After</p></main>`
+    const selector = elementSelectorForId(html, "derive-improve-node-revise")
+    expect(selector).toMatchObject({
+      type: "ElementSelector",
+      id: "derive-improve-node-revise",
+      role: "loop-step",
+      snapshot: { label: "Loop step — Revise" },
+    })
+    expect(selector && elementResolvesIn(selector, html)?.band).toBe("high")
+    expect(elementSelectorForId(html, "derive-improve-node-missing")).toBeNull()
+  })
+
+  it("captures media details and handles targets without neighbours", () => {
+    const image = elementSelectorForId(
+      `<p>Before</p><img id="hero-chart" src="https://x.test/chart.png" alt="Confidence chart"><p>After</p>`,
+      "hero-chart",
+    )
+
+    expect(image?.snapshot).toMatchObject({
+      tag: "img",
+      label: "Image — Confidence chart",
+      src: "https://x.test/chart.png",
+      alt: "Confidence chart",
+    })
+
+    const lone = elementSelectorForId(`<div id="only">Only</div>`, "only")
+    expect(lone?.before).toBeUndefined()
+    expect(lone?.after).toBeUndefined()
+  })
+
+  it.each([
+    ["loop-step", "Loop step — Draft"],
+    ["loop-policy", "Loop policy — Confidence"],
+    ["loop-transition", "Loop transition — Retry"],
+    ["graph-node", "Graph node — Research"],
+    ["graph-edge", "Graph edge — Informs"],
+  ] as const)("preserves the %s semantic role", (kind, label) => {
+    const selector = elementSelectorForId(
+      `<div id="target" data-derive-review-kind="${kind}">${label.split(" — ")[1]}</div>`,
+      "target",
+    )
+
+    expect(selector).toMatchObject({ role: kind, snapshot: { label } })
   })
 })
 

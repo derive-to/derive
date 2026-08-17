@@ -166,6 +166,27 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     expect(got.versions[0]).toHaveProperty("name")
   })
 
+  it("recognizes linked bundles in detail and list responses", async () => {
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Keep related work together.",
+      members: [{ id: "brief", ref: "abc12345", label: "Brief" }],
+    }
+    const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><a href="/artifacts/abc12345">Brief</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script></body></html>`
+    const published = await client.publish({
+      content: html,
+      filename: "bundle.html",
+      title: "Linked work",
+    })
+    expect((await client.get(published.short_id)).linked_bundle).toMatchObject({
+      purpose: manifest.purpose,
+      members: [{ id: "brief", ref: "abc12345" }],
+    })
+    expect((await client.list()).find((row) => row.short_id === published.short_id)).toMatchObject({
+      is_linked_bundle: true,
+    })
+  })
+
   it("lists the workspace's artifacts, filtered by a title query", async () => {
     const a = await client.publish({ content: "x", filename: "l.md", title: "Listable Plan" })
     const all = await client.list()

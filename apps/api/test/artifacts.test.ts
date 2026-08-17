@@ -231,6 +231,157 @@ describe("publish html file", () => {
   })
 })
 
+describe("linked bundles", () => {
+  it("resolves readable members and leaves missing ones explicit", async () => {
+    const member = await (await upload("brief.md", "# Brief", { title: "Product brief" })).json()
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Keep the improvement loop and its outputs together.",
+      members: [
+        { id: "brief", ref: member.short_id, label: "Brief", role: "output" },
+        { id: "evidence", ref: "nope1234", label: "Evidence" },
+      ],
+      diagrams: [
+        {
+          id: "improve",
+          title: "Improve until confident",
+          type: "loop",
+          goal: "Make the brief decision-ready",
+          evaluate: "Check material claims",
+          stop: "No material objections remain",
+          nodes: [
+            {
+              id: "revise",
+              label: "Revise",
+              member: "brief",
+              state: "active",
+              basis_version: 1,
+              note: "Address the evidence objection",
+            },
+            { id: "check", label: "Check", member: "evidence" },
+          ],
+          edges: [
+            { from: "revise", to: "check" },
+            { from: "check", to: "revise", label: "improve" },
+          ],
+        },
+      ],
+    }
+    const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><a href="/artifacts/${member.short_id}">Brief</a><a href="/artifacts/nope1234">Evidence</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script></body></html>`
+    const published = await (await upload("bundle.html", html, { title: "Launch loop" })).json()
+    expect(published.current_content_type).toBe("text/x-derive-linked-bundle")
+
+    const detail = await (await app.request(`/v1/artifacts/${published.short_id}`)).json()
+    expect(detail.linked_bundle).toMatchObject({
+      purpose: manifest.purpose,
+      members: [
+        {
+          id: "brief",
+          available: true,
+          title: "Product brief",
+          content_type: "text/markdown",
+          current_version: 1,
+          updated_at: expect.any(String),
+        },
+        { id: "evidence", available: false },
+      ],
+      diagrams: [
+        {
+          id: "improve",
+          type: "loop",
+          nodes: [
+            {
+              id: "revise",
+              state: "active",
+              basis_version: 1,
+              note: "Address the evidence objection",
+            },
+            { id: "check" },
+          ],
+        },
+      ],
+    })
+    expect(detail.linked_bundle.members[1]).not.toHaveProperty("title")
+    expect(detail.linked_bundle.members[1]).not.toHaveProperty("url")
+    expect(detail.linked_bundle.members[1]).not.toHaveProperty("current_version")
+    expect(detail.linked_bundle.members[1]).not.toHaveProperty("updated_at")
+  })
+
+  it("does not leak metadata for a member the bundle reader cannot open", async () => {
+    const users = [
+      { id: "lb-owner", email: "bundle-owner@x.test", name: "Bundle Owner" },
+      { id: "lb-secret", email: "secret-owner@x.test", name: "Secret Owner" },
+    ]
+    const { app: authed } = makeAuthedApp("linked-bundle-member-gate", users, "editor")
+    const secret = await (
+      await publishAs(
+        authed,
+        "# Secret evidence",
+        {
+          title: "Secret evidence",
+          workspace_access: "none",
+          link_role: "none",
+          listed: "none",
+        },
+        as("secret-owner@x.test"),
+      )
+    ).json()
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Coordinate work without widening member access.",
+      members: [{ id: "secret", ref: secret.short_id, label: "Private evidence" }],
+    }
+    const html = `<!doctype html><html><body><a href="/artifacts/${secret.short_id}">Private evidence</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script></body></html>`
+    const bundle = await (
+      await publishAs(authed, html, { title: "Private-aware bundle" }, as("bundle-owner@x.test"))
+    ).json()
+    const detail = await (
+      await authed.request(`/v1/artifacts/${bundle.short_id}`, {
+        headers: as("bundle-owner@x.test"),
+      })
+    ).json()
+    expect(detail.linked_bundle.members).toEqual([
+      expect.objectContaining({ id: "secret", label: "Private evidence", available: false }),
+    ])
+    expect(detail.linked_bundle.members[0]).not.toHaveProperty("title")
+    expect(detail.linked_bundle.members[0]).not.toHaveProperty("url")
+  })
+
+  it("includes open feedback counts for readable members without copying comments", async () => {
+    const user = { id: "lb-reviewer", email: "reviewer@x.test", name: "Reviewer" }
+    const { app: authed, meta: authedMeta } = makeAuthedApp("linked-bundle-counts", [user])
+    const member = await (
+      await publishAs(authed, "# Brief", { title: "Brief" }, as(user.email))
+    ).json()
+    const record = await authedMeta.getByShortId(member.short_id)
+    if (!record) throw new Error("member missing")
+    await authedMeta.createComment({
+      id: "c_bundle_member",
+      artifact_id: record.id,
+      thread_id: "c_bundle_member",
+      base_version: 1,
+      path: null,
+      anchor: null,
+      body_md: "Please verify this claim",
+      author: user.name,
+      author_id: user.id,
+    })
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Review one living brief.",
+      members: [{ id: "brief", ref: member.short_id, label: "Brief" }],
+    }
+    const html = `<a href="/artifacts/${member.short_id}">Brief</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>`
+    const bundle = await (
+      await publishAs(authed, html, { title: "Review bundle" }, as(user.email))
+    ).json()
+    const detail = await (
+      await authed.request(`/v1/artifacts/${bundle.short_id}`, { headers: as(user.email) })
+    ).json()
+    expect(detail.linked_bundle.members[0].open_comment_count).toBe(1)
+  })
+})
+
 describe("publish static bundle (astro-style dist)", () => {
   let shortId: string
 

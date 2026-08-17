@@ -142,6 +142,13 @@ describe("publish: single file", () => {
     expect(version.content_type).toBe("text/markdown")
   })
 
+  it("recognizes a valid linked-bundle fact without changing the file kind", async () => {
+    const body = `<!doctype html><html><body><a href="/artifacts/abc12345">Brief</a><script type="application/derive-facts" data-fact="bundle-manifest">{"schema":"derive.linked-bundle/v1","purpose":"Keep the work together","members":[{"id":"brief","ref":"abc12345","label":"Brief"}]}</script></body></html>`
+    const { artifact, version } = await publish(makeMeta(), makeBlobs(), file(body))
+    expect(artifact.kind).toBe("file")
+    expect(version.content_type).toBe("text/x-derive-linked-bundle")
+  })
+
   it("honors explicit title, access, and author", async () => {
     const { artifact, version } = await publish(
       makeMeta(),

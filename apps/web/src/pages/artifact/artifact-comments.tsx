@@ -32,6 +32,12 @@ export function ArtifactComments(p: {
    *  editor-only Inspect tab comes last. Desktop aside and mobile peek bar share one control. */
   rail?: RailTab
   onRail?: (r: RailTab) => void
+  /** Linked bundles add one native map inside the existing collaboration rail. */
+  mapEnabled?: boolean
+  mapPanel?: ReactNode
+  visualPinAvailable?: boolean
+  visualPinActive?: boolean
+  onToggleVisualPin?: () => void
   /** Beta: chat is absent rather than visible-and-refused when the workspace has it off. */
   chatBeta?: boolean
   chatPanel?: ReactNode
@@ -94,7 +100,7 @@ export function ArtifactComments(p: {
   anchorConf?: AnchorConf
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
-  const hasRailTabs = !!p.chatBeta || !!p.inspectEnabled
+  const hasRailTabs = !!p.mapEnabled || !!p.chatBeta || !!p.inspectEnabled
   // Focus primer: tapping "Comment" focuses this synchronously, inside the tap
   // gesture, so iOS raises the keyboard; the composer's autofocus then takes over
   // and the keyboard stays up. (iOS won't open the keyboard for a focus that lands
@@ -169,13 +175,16 @@ export function ArtifactComments(p: {
                 <RailTabs
                   tab={p.rail}
                   commentCount={p.openCount}
+                  mapEnabled={p.mapEnabled}
                   chatEnabled={p.chatBeta}
                   inspectEnabled={p.inspectEnabled}
                   onTab={p.onRail}
                 />
               </div>
             )}
-            {panel !== "hidden" && p.rail === "chat" && p.chatBeta ? (
+            {panel !== "hidden" && p.rail === "map" && p.mapEnabled ? (
+              p.mapPanel
+            ) : panel !== "hidden" && p.rail === "chat" && p.chatBeta ? (
               p.chatPanel
             ) : panel !== "hidden" && p.rail === "inspect" && p.inspectEnabled ? (
               p.inspectPanel
@@ -194,6 +203,9 @@ export function ArtifactComments(p: {
                 onNewGeneral={newGeneral}
                 onSubmitNew={p.submitNew}
                 onCancelNew={cancelNew}
+                visualPinAvailable={p.visualPinAvailable}
+                visualPinActive={p.visualPinActive}
+                onToggleVisualPin={p.onToggleVisualPin}
                 reviewCard={p.reviewCard}
               />
             ) : null}
@@ -219,6 +231,8 @@ export function ArtifactComments(p: {
             rail={hasRailTabs ? p.rail : undefined}
             onRail={p.onRail}
             chatPanel={p.chatPanel}
+            mapPanel={p.mapPanel}
+            mapEnabled={p.mapEnabled}
             inspectPanel={p.inspectPanel}
             chatEnabled={p.chatBeta}
             inspectEnabled={p.inspectEnabled}

@@ -39,6 +39,7 @@ describe("kindLabel", () => {
   it("labels by content type and bundle flag", () => {
     expect(kindLabel("text/markdown", false)).toBe("Markdown")
     expect(kindLabel("text/x-derive-deck", false)).toBe("Deck")
+    expect(kindLabel("text/x-derive-linked-bundle", false)).toBe("Bundle")
     expect(kindLabel("text/html; charset=utf-8", false)).toBe("HTML")
     expect(kindLabel("text/html", true)).toBe("Site")
     expect(kindLabel("derive/skill", true)).toBe("Skill") // a skill bundle reads as "Skill"

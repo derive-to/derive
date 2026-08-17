@@ -10,6 +10,9 @@
 // testable — the same trade `pageText`/`reflow.ts` already make.
 
 import { decodeEntities, pageText } from "./anchor"
+import { isHtmlLike } from "./content-types"
+
+export { isAuthoredFactType, isHtmlLike } from "./content-types"
 
 /** One heading in a document's h1–h6 spine. `chars` is the section's raw-source size
  *  (heading included) — a cheap budget proxy for what reading that section costs. */
@@ -837,11 +840,6 @@ const mdSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
  *  Exported so callers deciding how to present a `format` (e.g. whether "text"
  *  needs pageText-style stripping) stay in sync with what actually gets converted —
  *  a local `=== "text/html"` check would silently drift on decks. */
-export const isHtmlLike = (contentType: string): boolean => {
-  const ct = contentType.split(";")[0]?.trim()
-  return ct === "text/html" || ct === "text/x-derive-deck"
-}
-
 /** The agent-readable form of stored source: HTML converts to Markdown, everything
  *  else (markdown, plain text) already IS the readable form and passes through. */
 export const toMarkdown = (source: string, contentType: string): string =>

@@ -38,6 +38,9 @@ apps/api/.localdata/
 .claude/worktrees/
 
 # Local dev scratch data (screenshot/walkthrough runs).
+# Browser profiles and visual verification captures also live here; they are local
+# evidence, can contain session state, and must never be scanned or committed.
+/tmp/
 #
 # ANYWHERE, not only under apps/api: a run started from the repo root drops the same directory
 # there, and an apps/api-only glob does not catch it. These directories hold a live derive.db

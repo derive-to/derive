@@ -59,6 +59,7 @@ export function artifactTypeLabel(a: Artifact): string {
   if (a.kind === "bundle") return "Site"
   const ct = a.current_content_type
   if (ct === "text/x-derive-deck") return "Deck"
+  if (ct === "text/x-derive-linked-bundle") return "Bundle"
   if (ct === "text/markdown") return "MD"
   if (ct?.startsWith("text/html")) return "HTML"
   return "Doc"

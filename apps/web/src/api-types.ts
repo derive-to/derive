@@ -6600,6 +6600,49 @@ export interface components {
                     type: string;
                 }[];
             };
+            /** @description Present for an HTML artifact carrying a valid bundle-manifest fact. Members are resolved through the caller's normal read permissions; unavailable members expose no additional metadata. */
+            linked_bundle?: {
+                /** @enum {string} */
+                schema: "derive.linked-bundle/v1";
+                purpose: string;
+                members: {
+                    id: string;
+                    ref: string;
+                    label: string;
+                    role?: string;
+                    note?: string;
+                    available: boolean;
+                    url?: string;
+                    title?: string | null;
+                    content_type?: string | null;
+                    current_version?: number;
+                    updated_at?: string | null;
+                    open_comment_count?: number;
+                }[];
+                diagrams?: {
+                    id: string;
+                    title: string;
+                    /** @enum {string} */
+                    type: "loop" | "graph";
+                    nodes: {
+                        id: string;
+                        label: string;
+                        member?: string;
+                        /** @enum {string} */
+                        state?: "pending" | "active" | "blocked" | "done";
+                        basis_version?: number;
+                        note?: string;
+                    }[];
+                    edges: {
+                        from: string;
+                        to: string;
+                        label?: string;
+                    }[];
+                    goal?: string;
+                    evaluate?: string;
+                    stop?: string;
+                }[];
+            };
             /** @description Source path (e.g. the repo path of a synced artifact); null when none. */
             source_path?: string | null;
             /** @description The artifact this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */

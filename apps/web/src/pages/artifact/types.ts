@@ -48,8 +48,15 @@ export type Sel = {
   suffix?: string
   slide?: number
   // element-anchor fields (present when type === "ElementSelector")
+  tag?: string
   role?: string
+  id?: string
+  css?: string
   fingerprint?: string
+  ordinal?: number
+  docFraction?: number
+  before?: string
+  after?: string
   snapshot?: ElementSnapshotLite
 }
 

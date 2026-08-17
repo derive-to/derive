@@ -1101,6 +1101,36 @@ describe("the revised document KEEPS its own format", () => {
     }
   })
 
+  it("keeps a linked bundle in the HTML lane when the model gives it a markdown name", async () => {
+    const api = stubApi({
+      run: baseRun,
+      artifactContentType: "text/x-derive-linked-bundle",
+      content: "<!doctype html><h1>Research loop</h1>",
+    })
+    const url = await api.url
+    try {
+      const settled = await runToSettle(
+        url,
+        api.rec,
+        answerTurn(
+          `<revision>${JSON.stringify({
+            content: "<!doctype html><h1>Research loop</h1>",
+            filename: "notes.md",
+            confidence: 0.95,
+            message: "m",
+          })}</revision>`,
+        ),
+      )
+      expect(settled).toBeTruthy()
+      for (const w of api.rec.writes) {
+        expect(w.name).toMatch(/\.html$/i)
+        expect(w.type).toBe("text/x-derive-linked-bundle")
+      }
+    } finally {
+      await api.close()
+    }
+  })
+
   it("still honours the filename when CREATING, where there is no document to keep", async () => {
     // No artifact target: nothing to preserve, so the model's filename is the only signal.
     const api = stubApi({ run: { ...baseRun, targets: [] } })
@@ -1149,6 +1179,25 @@ describe("what filename the model is SHOWN", () => {
       })
       expect(systemSeen).toContain("its filename is art_1.md")
       expect(systemSeen).not.toContain("its filename is art_1\n")
+    } finally {
+      await api.close()
+    }
+  })
+
+  it("tells the model a linked bundle is an HTML document", async () => {
+    const api = stubApi({
+      run: baseRun,
+      artifactContentType: "text/x-derive-linked-bundle",
+      content: "<!doctype html><h1>Research loop</h1>",
+    })
+    const url = await api.url
+    let systemSeen = ""
+    try {
+      await runToSettle(url, api.rec, async (input) => {
+        systemSeen = input.system ?? ""
+        return { text: revision(), toolUses: [], costUsd: 0.001, done: true }
+      })
+      expect(systemSeen).toContain("its filename is art_1.html")
     } finally {
       await api.close()
     }

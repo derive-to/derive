@@ -282,6 +282,13 @@ describe("applyQuoteEdits — html", () => {
     expect(out).toBe("<section>the slide</section>")
   })
 
+  it("treats a linked bundle like html", () => {
+    const out = applyQuoteEdits("<section>teh bundle</section>", "text/x-derive-linked-bundle", [
+      qe("teh bundle", "the bundle"),
+    ])
+    expect(out).toBe("<section>the bundle</section>")
+  })
+
   it("whitespace differences between quote and source still match within one node", () => {
     const doc = "<p>line one\n    line two</p>"
     // The browser-captured quote carries the DOM's own whitespace; matching is flexible.

@@ -217,6 +217,10 @@ describe("missingFactAdvisory", () => {
     expect(missingFactAdvisory(`${md}\n${md}`, "text/markdown")).toContain("no facts")
   })
 
+  it("reads linked-bundle HTML with the same fact grammar", () => {
+    expect(missingFactAdvisory(table(4), "text/x-derive-linked-bundle")).toContain("no facts")
+  })
+
   it("ignores content types with no slot grammar", () => {
     expect(missingFactAdvisory(table(8), "text/x-derive-deck")).toBeNull()
   })
@@ -280,6 +284,12 @@ describe("factShape / factDriftAdvisories", () => {
 })
 
 describe("parseFacts — content type gating", () => {
+  it("finds authored facts in a linked-bundle HTML artifact", () => {
+    expect(parseFacts(slot("bundle-manifest", "{}"), "text/x-derive-linked-bundle").facts).toEqual([
+      expect.objectContaining({ slot: "bundle-manifest", json: "{}" }),
+    ])
+  })
+
   it("finds no facts in a non-html, non-markdown type", () => {
     expect(parseFacts(slot("x", "1"), "text/x-derive-deck").facts).toEqual([])
   })

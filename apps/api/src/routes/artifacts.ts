@@ -19,6 +19,8 @@ import {
   heavyAssetsAdvisory,
   isHtmlLike,
   isMarkdownBundle,
+  LINKED_BUNDLE_CONTENT_TYPE,
+  LINKED_BUNDLE_FACT,
   maxRole,
   missingBlobAdvisory,
   newId,
@@ -39,6 +41,7 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
+  validateLinkedBundle,
   type WorkspaceAccess,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -1617,15 +1620,83 @@ export const artifactRoutes = (ctx: AppContext) => {
       // page only — the list view stays blob-free (no N+1). HTML "site" bundles navigate
       // via their own links, so they get no block.
       let bundle: BundleDoc | undefined
-      const cur =
-        artifact.kind === "bundle"
-          ? versions.find((v) => v.n === artifact.current_version)
-          : undefined
+      const current = versions.find((v) => v.n === artifact.current_version)
+      const cur = artifact.kind === "bundle" ? current : undefined
       if (cur) {
         const manifestBytes = await blobs.get(cur.blob_key)
         if (manifestBytes) {
           const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
           if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
+        }
+      }
+      // Linked bundles stay ordinary HTML artifacts. Their one authored fact is the
+      // source of truth; this detail-only block is native chrome over that fact, with
+      // every member resolved through the same read gate as opening it directly.
+      let linkedBundle:
+        | (NonNullable<ReturnType<typeof validateLinkedBundle>["manifest"]> & {
+            members: Array<
+              NonNullable<
+                ReturnType<typeof validateLinkedBundle>["manifest"]
+              >["members"][number] & {
+                available: boolean
+                url?: string
+                title?: string | null
+                content_type?: string | null
+                current_version?: number
+                updated_at?: string | null
+                open_comment_count?: number
+              }
+            >
+          })
+        | undefined
+      if (current?.content_type === LINKED_BUNDLE_CONTENT_TYPE) {
+        const row = (await meta.getVersionData(artifact.id, current.n, LINKED_BUNDLE_FACT))[0]
+        if (row) {
+          try {
+            const checked = validateLinkedBundle(JSON.parse(row.json))
+            if (checked.manifest) {
+              const resolved = await meta.getByShortIds(
+                checked.manifest.members.map((member) => member.ref),
+              )
+              const byRef = new Map(resolved.map((member) => [member.short_id, member]))
+              const [readableRows, commentSignals] = await Promise.all([
+                Promise.all(
+                  resolved.map(
+                    async (member) =>
+                      [member.short_id, await authorize(c, "read", member)] as const,
+                  ),
+                ),
+                meta.commentSignals(
+                  actor.kind === "user" ? resolved.map((member) => member.id) : [],
+                  actor.kind === "user" ? (actor.userId ?? null) : null,
+                ),
+              ])
+              const readable = new Map(readableRows)
+              linkedBundle = {
+                ...checked.manifest,
+                members: checked.manifest.members.map((member) => {
+                  const target = byRef.get(member.ref)
+                  if (!target || target.removed_at || !readable.get(member.ref))
+                    return { ...member, available: false }
+                  return {
+                    ...member,
+                    available: true,
+                    url: artifactUrl(deps.baseUrl, target),
+                    title: target.title,
+                    content_type: target.current_content_type,
+                    current_version: target.current_version,
+                    updated_at: target.updated_at,
+                    ...(actor.kind === "user"
+                      ? { open_comment_count: commentSignals[target.id]?.open_threads ?? 0 }
+                      : {}),
+                  }
+                }),
+              }
+            }
+          } catch {
+            // Stored authored facts are validated JSON. If an old/corrupt row slips
+            // through, omit the enhancement; the artifact itself remains readable.
+          }
         }
       }
       // Resolve the GitHub author(s) to Derive profiles: collect every distinct gh_id on the
@@ -1716,6 +1787,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // Present for a markdown bundle (skill or docs folder): { isSkill, name,
         // description, entry, files } — the client renders the file tree + skill chrome.
         ...(bundle ? { bundle } : {}),
+        ...(linkedBundle ? { linked_bundle: linkedBundle } : {}),
         // A taken-down artifact keeps its record but serves no content (410); the
         // UI shows a tombstone instead of the iframe.
         removed: !!artifact.removed_at,

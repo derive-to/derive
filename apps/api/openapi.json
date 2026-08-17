@@ -437,6 +437,178 @@
             ],
             "description": "Present for a markdown bundle (skill or docs folder): entry, file tree, identity."
           },
+          "linked_bundle": {
+            "type": "object",
+            "properties": {
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "derive.linked-bundle/v1"
+                ]
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "members": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "ref": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    },
+                    "available": {
+                      "type": "boolean"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "content_type": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "current_version": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true
+                    },
+                    "updated_at": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "open_comment_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "ref",
+                    "label",
+                    "available"
+                  ]
+                }
+              },
+              "diagrams": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "loop",
+                        "graph"
+                      ]
+                    },
+                    "nodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "member": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "active",
+                              "blocked",
+                              "done"
+                            ]
+                          },
+                          "basis_version": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "note": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ]
+                      }
+                    },
+                    "edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "string"
+                          },
+                          "to": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "to"
+                        ]
+                      }
+                    },
+                    "goal": {
+                      "type": "string"
+                    },
+                    "evaluate": {
+                      "type": "string"
+                    },
+                    "stop": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "type",
+                    "nodes",
+                    "edges"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "schema",
+              "purpose",
+              "members"
+            ],
+            "description": "Present for an HTML artifact carrying a valid bundle-manifest fact. Members are resolved through the caller's normal read permissions; unavailable members expose no additional metadata."
+          },
           "source_path": {
             "type": "string",
             "nullable": true,

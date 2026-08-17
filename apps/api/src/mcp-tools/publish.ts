@@ -5,6 +5,8 @@ import {
   bundleFactsAdvisory,
   EditError,
   heavyAssetsAdvisory,
+  LINKED_BUNDLE_CONTENT_TYPE,
+  LINKED_BUNDLE_FACT,
   looksLikeHtmlDocument,
   missingBlobAdvisory,
   newId,
@@ -163,7 +165,7 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Goes LIVE at your role unless for_review. See derive://skills/publishing.",
+        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. LIVE unless for_review. For related artifacts or a loop/graph, read derive://skills/bundles. See derive://skills/publishing.",
       // Additive versioning: a republish creates a new current version and the prior ones
       // stay in history (read short_id, version:N) — nothing is overwritten irreversibly,
       // so not destructive. Not idempotent: calling twice with the same content still
@@ -846,6 +848,12 @@ export function registerPublishTool(tc: ToolContext): void {
           short_id: artifact.short_id,
           ...(review_round ? { review_requested: true } : {}),
           kind: artifact.kind,
+          ...(version.content_type === LINKED_BUNDLE_CONTENT_TYPE
+            ? {
+                linked_bundle: true,
+                bundle_next: `The logical grouping is live. Read it normally for orientation, or read(short_id:"${artifact.short_id}", data:"${LINKED_BUNDLE_FACT}") for the full manifest.`,
+              }
+            : {}),
           version: version.n,
           url,
           ...(storedSlots.length
