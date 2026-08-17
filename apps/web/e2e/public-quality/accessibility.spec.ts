@@ -20,7 +20,8 @@ type Surface = {
 const surfaces: Surface[] = [
   { name: "marketing home (dark)", url: `${siteOrigin}/site/index.html`, theme: "dark" },
   { name: "marketing home (light)", url: `${siteOrigin}/site/index.html`, theme: "light" },
-  { name: "examples", url: `${siteOrigin}/site/examples.html` },
+  { name: "examples (dark)", url: `${siteOrigin}/site/examples.html`, theme: "dark" },
+  { name: "examples (light)", url: `${siteOrigin}/site/examples.html`, theme: "light" },
   { name: "pricing", url: `${siteOrigin}/site/pricing.html` },
   { name: "privacy", url: `${siteOrigin}/site/privacy.html` },
   { name: "security", url: `${siteOrigin}/security.html` },

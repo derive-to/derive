@@ -156,12 +156,23 @@ for (const path of publicProseFiles) {
   fail(`${path}:${line}: public prose uses an em dash; use a period, colon, or parentheses`)
 }
 
+// A phrase a reader sees is a claim we made, however it is spelled in the markup.
+// A single &nbsp; inside a headline once hid a forbidden claim from this check, so
+// compare against the text as rendered: entities resolved, whitespace collapsed.
+const asRendered = (line) =>
+  line
+    .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+
 for (const path of publicCopyFiles) {
   if (!existsSync(join(ROOT, path))) {
     fail(`missing public-copy surface ${path}`)
     continue
   }
-  for (const [index, line] of read(path).split("\n").entries()) {
+  for (const [index, raw] of read(path).split("\n").entries()) {
+    const line = asRendered(raw)
     for (const { pattern, reason } of forbidden) {
       if (path === licensingPath && pattern.source === "\\bopen[- ]source\\b") continue
       if (pattern.test(line)) fail(`${path}:${index + 1}: ${reason}\n  ${line.trim()}`)
