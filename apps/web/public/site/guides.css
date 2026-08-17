@@ -1,17 +1,11 @@
 @font-face{font-family:"Geist";src:url("/site/geist.woff2") format("woff2");font-weight:100 900;font-display:swap}
 @font-face{font-family:"Geist Mono";src:url("/site/geist-mono.woff2") format("woff2");font-weight:100 900;font-display:swap}
-:root{color-scheme:dark;--bg:#0a0b0d;--fg:#f3f4f6;--card:#101216;--muted:#969aa2;--faint:#7f8590;--line:#252831;--accent:#c7c1ff;--good:#8ed2a0;--max:1120px}
+:root{color-scheme:dark;--bg:#0a0b0d;--fg:#f3f4f6;--card:#101216;--muted:#969aa2;--faint:#7f8590;--line:#252831;--accent:#c7c1ff;--good:#8ed2a0}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 "Geist",system-ui,sans-serif;letter-spacing:-.01em}
 a{color:inherit;text-decoration:none;cursor:pointer}
 a:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
-.wrap{width:min(var(--max),calc(100% - 48px));margin:auto}
-nav{position:sticky;top:0;z-index:10;border-bottom:1px solid var(--line);background:rgba(10,11,13,.88);backdrop-filter:blur(18px)}
-.nav{height:64px;display:flex;align-items:center;gap:26px}
-.wordmark{margin-right:auto;display:flex;align-items:center}.wordmark img{width:96px;height:auto}
-.nav a:not(.wordmark){font-size:14px;color:var(--muted)}.nav a:hover{color:var(--fg)}
-.signin{padding:8px 13px;border:1px solid var(--line);border-radius:8px;color:var(--fg)!important}
 header{padding:96px 0 72px;border-bottom:1px solid var(--line)}
 .eyebrow{font:600 11px/1 "Geist Mono",monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
 h1,h2,h3{margin:0;font-weight:560;letter-spacing:-.04em;text-wrap:balance}
@@ -33,7 +27,10 @@ main{padding:72px 0 120px}
 .step{counter-increment:step;display:grid;grid-template-columns:44px 1fr;gap:14px;padding:20px;background:var(--card)}
 .step:before{content:counter(step,decimal-leading-zero);font:600 12px/1.6 "Geist Mono",monospace;color:var(--accent)}
 .step b{display:block;margin-bottom:3px}.step span{color:var(--muted);font-size:14px}
+/* Grid items default to min-width:auto, which lets a wide code block stretch
+   the page instead of scrolling inside itself. */
+.section>*,.grid>*{min-width:0}
 pre{overflow:auto;margin:22px 0 0;padding:18px 20px;border:1px solid var(--line);border-radius:10px;background:#07080a;color:#ddd;font:13px/1.7 "Geist Mono",monospace}
 .truth{padding:24px;border-left:2px solid var(--good);background:var(--card);color:var(--muted)}.truth strong{color:var(--fg)}
 footer{border-top:1px solid var(--line);padding:34px 0;color:var(--muted);font-size:13px}.foot{display:flex;justify-content:space-between;gap:24px}.foot div{display:flex;gap:20px}
-@media(max-width:760px){.wrap{width:min(100% - 30px,var(--max))}.nav a:not(.wordmark):not(.signin){display:none}header{padding:68px 0 54px}.section{grid-template-columns:1fr;gap:18px;padding:42px 0}.grid{grid-template-columns:1fr}.foot{flex-direction:column}}
+@media(max-width:760px){header{padding:68px 0 54px}.section{grid-template-columns:1fr;gap:18px;padding:42px 0}.grid{grid-template-columns:1fr}.foot{flex-direction:column}}

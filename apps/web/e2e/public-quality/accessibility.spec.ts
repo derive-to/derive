@@ -84,6 +84,95 @@ test("marketing skip link moves focus to the primary content", async ({ page }) 
   await expect(page.locator("#main-content")).toBeFocused()
 })
 
+// Every public page is meant to carry the same shell. Asserting it per page is
+// what stops one of them drifting back to its own navigation.
+// The sign-in source is the one value the shell varies on purpose: signup
+// attribution is a pinned, deliberately small set, not ambient click tracking.
+const marketingPages = [
+  { path: "/site/index.html", current: null, signin: "nav_signin" },
+  { path: "/site/pricing.html", current: "/pricing", signin: "nav_signin" },
+  { path: "/site/examples.html", current: "/examples", signin: "examples_signin" },
+  { path: "/site/privacy.html", current: null, signin: "nav_signin" },
+  { path: "/security.html", current: null, signin: "nav_signin" },
+]
+
+for (const { path, current, signin } of marketingPages) {
+  test(`marketing shell is consistent on ${path}`, async ({ page }, testInfo) => {
+    await page.goto(`${siteOrigin}${path}`)
+
+    const nav = page.locator("nav.site-nav")
+    await expect(nav).toBeVisible()
+
+    // The same markup ships everywhere; below 480px the shell shows only the
+    // sign-in action and leaves the rest to each page's footer. Match on href so
+    // the assertion holds whether or not the link is currently displayed.
+    const compact = testInfo.project.name === "mobile"
+    for (const href of [
+      "https://docs.derive.to/",
+      "/examples",
+      "/pricing",
+      "https://github.com/derive-to/derive",
+    ]) {
+      const link = nav.locator(`a[href="${href}"]`)
+      await expect(link).toHaveCount(1)
+      if (!compact) await expect(link).toBeVisible()
+    }
+    await expect(nav.getByRole("link", { name: /Sign in to Beta/ })).toBeVisible()
+    await expect(nav.getByRole("link", { name: /Sign in to Beta/ })).toHaveAttribute(
+      "href",
+      `/login?src=${signin}`,
+    )
+
+    // The active page marks itself, and only itself.
+    await expect(nav.locator('[aria-current="page"]')).toHaveCount(current ? 1 : 0)
+    if (current)
+      await expect(nav.locator(`a[href="${current}"]`)).toHaveAttribute("aria-current", "page")
+
+    // The shared container must never push the page sideways.
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true)
+
+    // Content clears the fixed navigation rather than hiding beneath it.
+    const overlap = await page.evaluate(() => {
+      const main = document.querySelector("#main-content")
+      const bar = document.querySelector("nav.site-nav")
+      if (!main || !bar) return null
+      return main.getBoundingClientRect().top - bar.getBoundingClientRect().bottom
+    })
+    expect(overlap).not.toBeNull()
+    if (path !== "/site/index.html") expect(overlap).toBeGreaterThanOrEqual(0)
+  })
+}
+
+test("marketing theme control cycles and is remembered", async ({ page }) => {
+  await page.goto(`${siteOrigin}/site/pricing.html`)
+  const toggle = page.locator("[data-theme-toggle]")
+
+  await expect(toggle).toHaveAttribute("data-mode", "dark")
+  await expect(page.locator("html")).toHaveClass(/dark/)
+
+  await toggle.click()
+  await expect(toggle).toHaveAttribute("data-mode", "light")
+  await expect(page.locator("html")).toHaveClass(/light/)
+
+  // The choice is shared across the marketing pages, not stored per page.
+  await page.goto(`${siteOrigin}/security.html`)
+  await expect(page.locator("html")).toHaveClass(/light/)
+  await expect(page.locator("[data-theme-toggle]")).toHaveAttribute("data-mode", "light")
+})
+
+test("marketing skip link works on a page that had no navigation before", async ({ page }) => {
+  await page.goto(`${siteOrigin}/security.html`)
+  await page.keyboard.press("Tab")
+  const skip = page.getByRole("link", { name: "Skip to content" })
+  await expect(skip).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(page.locator("#main-content")).toBeFocused()
+})
+
 test("docs search loads the local browser index", async ({ page }) => {
   await page.goto(`${docsOrigin}/`)
   await page.locator("[data-search-open]").first().click()
