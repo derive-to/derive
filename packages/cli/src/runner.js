@@ -169,20 +169,28 @@ export class DeriveClient {
   }
 
   /** The skills.js `api`: enumerate a bundle version, fetch one file (bytes, so binary
-   *  assets survive), and read a single-file doc's source — all pinned by version. */
+   *  assets survive), and read a single-file doc's source. A pinned entry carries its
+   *  version; an unpinned one (version null) omits `v` so the server serves CURRENT —
+   *  interpolating the null ("?v=null") gets a 400 and silently disables the skill. */
   skillApi() {
+    const query = (params) => {
+      const s = Object.entries(params)
+        .filter(([, value]) => value != null)
+        .map(([k, value]) => `${k}=${encodeURIComponent(value)}`)
+        .join("&")
+      return s ? `?${s}` : ""
+    }
     return {
-      outline: (id, version) => this.call(`/v1/artifacts/${id}/content?outline=1&v=${version}`),
+      outline: (id, version) =>
+        this.call(`/v1/artifacts/${id}/content${query({ outline: 1, v: version })}`),
       file: async (id, path, version) =>
         Buffer.from(
           await (
-            await this.callRaw(
-              `/v1/artifacts/${id}/content?section=${encodeURIComponent(path)}&v=${version}`,
-            )
+            await this.callRaw(`/v1/artifacts/${id}/content${query({ section: path, v: version })}`)
           ).arrayBuffer(),
         ),
       content: async (id, version) =>
-        (await this.callRaw(`/v1/artifacts/${id}/content?v=${version}`)).text(),
+        (await this.callRaw(`/v1/artifacts/${id}/content${query({ v: version })}`)).text(),
     }
   }
 

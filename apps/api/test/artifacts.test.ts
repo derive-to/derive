@@ -334,6 +334,23 @@ describe("api surface", () => {
     expect(await content.text()).toBe("<h1>Entry</h1>")
   })
 
+  it("listArtifacts filters by content type at the store", async () => {
+    // find(skills:true) used to page the whole library and filter in memory; the
+    // store-level filter is what makes a skills listing cheap. Both dialects run
+    // this file (sqlite by default, pg via DERIVE_TEST_DB=pg).
+    const zip = zipSync({
+      "SKILL.md": new TextEncoder().encode("---\nname: filter-probe\n---\n# P"),
+    })
+    const { short_id: skillShort } = await (
+      await upload("skill.zip", zip, { title: "Filter probe" })
+    ).json()
+    await upload("plain-probe.md", "# plain", { title: "Plain probe" })
+    const rows = await meta.listArtifacts({ orgId: "default", contentType: "derive/skill" })
+    expect(rows.some((a) => a.short_id === skillShort)).toBe(true)
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((a) => a.current_content_type === "derive/skill")).toBe(true)
+  })
+
   it("diffs two versions as text and json", async () => {
     const res = await upload("d.md", "# title\nalpha", { title: "D" })
     const { short_id } = await res.json()

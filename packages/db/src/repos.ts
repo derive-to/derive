@@ -223,6 +223,7 @@ export function artifactListConditions(
     created_at: Column
     updated_at: Column
     current_version: Column
+    current_content_type: Column
     id: Column
     org_id: Column
     listed: Column
@@ -241,6 +242,9 @@ export function artifactListConditions(
   // Anonymous / non-member callers only ever see the public directory — a
   // workspace-listed title must not leak to someone outside the workspace.
   if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
+  // Typed listings (a workspace's skills) filter on the denormalized content type
+  // here rather than paging the library and filtering in memory.
+  if (opts?.contentType) conds.push(eq(art.current_content_type, opts.contentType))
   // A listing surfaces feed-listed rows (`workspace`/`public`) to members, plus any
   // row the viewer is an explicit member of (their own drafts, shares, collections)
   // — an UNlisted row (listed='none') never appears in a feed by access alone. The
