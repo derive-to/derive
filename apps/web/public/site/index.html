@@ -52,7 +52,7 @@
 }
 </script>
 </head>
-<body>
+<body class="home-page">
 <a class="skip-link" href="#main-content">Skip to content</a>
 <nav class="site-nav" data-site-nav aria-label="Main navigation">
   <div class="nav-inner site-wrap">
@@ -91,124 +91,222 @@
 </nav>
 
 <main id="main-content" tabindex="-1">
-  <header class="page-hero site-wrap">
-    <div class="page-hero-copy">
-      <p class="eyebrow">Workspace for agent-made work</p>
+  <header class="home-hero">
+    <div class="home-stage site-wrap">
+      <p class="eyebrow">A workspace for agent-made work</p>
       <h1>Keep the result, not just the session.</h1>
-      <p class="lede">Give plans, reports, pages, decks, and sites a lasting place to live. Your team can see the current work, comment on it, and keep updating the same link.</p>
-      <div class="hero-actions">
-        <form data-waitlist class="waitlist-form" data-derive-source="homepage_waitlist" action="/v1/beta/signup" method="post" novalidate>
-          <label class="sr-only" for="home-email">Work email</label>
-          <input id="home-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required>
-          <button class="button button-primary" type="submit">Get beta access</button>
-        </form>
-        <div class="waitlist-complete" data-waitlist-complete role="status" hidden>Check your inbox for the access link.</div>
-        <a class="text-link" href="https://derive.to/artifacts/example-launch-page-5cmep9l9">See a live artifact <span aria-hidden="true">→</span></a>
-        <p class="hero-note">Free during beta. No card required.</p>
+      <p class="home-hero-copy">Give agent-made plans, reports, pages, decks, and sites a lasting URL with version history and feedback.</p>
+      <div class="home-hero-actions">
+        <button class="button button-primary home-primary-action" type="button" data-copy-from="agent-prompt" data-copied-label="Copied. Paste it into your agent."><span data-copy-label>Copy setup prompt</span></button>
+        <a class="button home-secondary-action" href="https://derive.to/artifacts/example-launch-page-5cmep9l9">Open a live example <span aria-hidden="true">→</span></a>
       </div>
+      <p class="home-hero-note">Works with Claude Code, Codex, Cursor, and other compatible MCP clients.</p>
     </div>
 
-    <div class="product-window" aria-label="Derive workspace showing an active engineering brief and its comments">
-      <div class="product-bar">
-        <span class="status-dot" aria-hidden="true"></span>
-        <strong>Launch readiness brief</strong>
-        <span class="product-path">derive.to/acme/launch-readiness</span>
-        <span>v7 · current</span>
+    <figure class="home-demo site-wrap" data-home-demo data-version="3">
+      <figcaption class="home-figure-label"><span>Product walkthrough</span><span>One artifact changing over time</span></figcaption>
+      <div class="home-demo-frame">
+        <div class="home-demo-bar">
+          <span class="home-demo-path">derive.to/artifacts/osc8-launch</span>
+          <span data-demo-meta>HTML · v3</span>
+          <span class="home-demo-lock">Password protected</span>
+          <span class="home-demo-spacer"></span>
+          <span class="home-demo-presence" aria-label="Three people viewing"><span>M</span><span>A</span><span>C</span></span>
+          <span class="home-demo-badge" data-demo-badge>Current</span>
+        </div>
+        <div class="home-demo-body">
+          <article class="home-artifact" aria-label="OSC-8 launch page artifact">
+            <div class="home-artifact-nav"><strong>OSC-8</strong><span>Voices</span><span>Specs</span><span>Preorder</span></div>
+            <div class="home-artifact-hero">
+              <div class="home-artifact-copy">
+                <h2 data-demo-heading>Eight voices. Zero menus.</h2>
+                <p data-demo-summary>Every parameter is already on the surface. No pages, no shift keys, no manual. Battery for an afternoon.</p>
+                <span class="home-artifact-button" data-demo-cta>Preorder for €249</span>
+                <p class="home-artifact-price">Ships Monday. Thirty-day returns.</p>
+              </div>
+              <div class="home-artifact-figure">
+                <div class="home-artifact-placeholder">Product image</div>
+                <svg class="home-synth-drawing" viewBox="0 0 560 300" fill="none" aria-label="Technical line drawing of the OSC-8 synthesizer" role="img">
+                  <rect x="42" y="46" width="452" height="204" rx="16"/>
+                  <text x="66" y="78">OSC-8</text>
+                  <g class="home-synth-knobs"><circle cx="118" cy="112" r="17"/><circle cx="166" cy="112" r="17"/><circle cx="214" cy="112" r="17"/><circle cx="262" cy="112" r="17"/><circle cx="310" cy="112" r="17"/><circle cx="358" cy="112" r="17"/><circle cx="406" cy="112" r="17"/><circle cx="454" cy="112" r="17"/></g>
+                  <g class="home-synth-marks"><path d="M118 98v8"/><path d="M177 101l-6 6"/><path d="M203 103l6 5"/><path d="M262 98v8"/><path d="M321 103l-6 5"/><path d="M358 98v8"/><path d="M395 101l6 6"/><path d="M465 105l-7 4"/></g>
+                  <g class="home-synth-keys"><rect x="66" y="168" width="30" height="58" rx="3"/><rect x="100" y="168" width="30" height="58" rx="3"/><rect x="134" y="168" width="30" height="58" rx="3"/><rect x="168" y="168" width="30" height="58" rx="3"/><rect x="202" y="168" width="30" height="58" rx="3"/><rect x="236" y="168" width="30" height="58" rx="3"/><rect x="270" y="168" width="30" height="58" rx="3"/><rect x="304" y="168" width="30" height="58" rx="3"/><rect x="338" y="168" width="30" height="58" rx="3"/><rect x="372" y="168" width="30" height="58" rx="3"/><rect x="406" y="168" width="30" height="58" rx="3"/><rect x="440" y="168" width="30" height="58" rx="3"/></g>
+                  <path class="home-synth-measure" d="M42 278H494M42 272v12M494 272v12"/>
+                  <text class="home-synth-measure-label" x="248" y="296">240 MM</text>
+                </svg>
+                <div class="home-artifact-figure-note"><span>Fig. 1</span><span>Production unit 0043</span></div>
+              </div>
+            </div>
+            <dl class="home-demo-stats">
+              <div><dt>8</dt><dd>Voices</dd></div>
+              <div><dt>22 h</dt><dd>Measured battery</dd></div>
+              <div><dt>1.8 ms</dt><dd>Key to sound</dd></div>
+              <div><dt>380 g</dt><dd>With battery</dd></div>
+            </dl>
+          </article>
+          <aside class="home-demo-comments" aria-label="Artifact comments">
+            <div class="home-comments-title"><span>Comments</span><span data-demo-comment-count>3</span></div>
+            <p class="home-comments-empty">No comments yet.</p>
+            <div class="home-demo-comment home-comment-v2">
+              <div class="home-comment-who"><span>M</span>Maeva</div>
+              <blockquote>Draw the product instead of leaving a placeholder.</blockquote>
+              <p>No glamour shot exists yet. Use the real dimensions and materials.</p>
+              <span class="home-comment-state">Addressed in v2</span>
+            </div>
+            <div class="home-demo-comment home-comment-v2">
+              <div class="home-comment-who"><span>M</span>Maeva</div>
+              <blockquote>“OSC-8 Synthesizer”</blockquote>
+              <p>This could describe any store template. Make the product the loudest thing on the page.</p>
+              <span class="home-comment-state">Addressed in v2</span>
+            </div>
+            <div class="home-demo-comment home-comment-v3">
+              <div class="home-comment-who"><span>A</span>Anya</div>
+              <blockquote>“€249”</blockquote>
+              <p>Anchor the price with facts, not adjectives.</p>
+              <span class="home-comment-state">Addressed in v3</span>
+            </div>
+          </aside>
+        </div>
       </div>
-      <div class="product-grid">
-        <aside class="product-rail" aria-label="Recent artifacts">
-          <div class="rail-title"><span>Active work</span><span>6</span></div>
-          <div class="rail-list">
-            <div class="rail-item is-active"><strong>Launch readiness brief</strong><span>updated 4m ago</span></div>
-            <div class="rail-item"><strong>API migration plan</strong><span>2 open comments</span></div>
-            <div class="rail-item"><strong>On-call handoff</strong><span>updated yesterday</span></div>
-            <div class="rail-item"><strong>Billing rollout</strong><span>v3 · shared</span></div>
-          </div>
-        </aside>
-        <article class="artifact-sheet">
-          <div class="artifact-meta"><span>Engineering</span><span>Updated by Codex</span></div>
-          <h2>Launch readiness</h2>
-          <p>The API migration is ready for a staged rollout. The remaining work is narrow and owned.</p>
-          <dl class="artifact-rows">
-            <div class="artifact-row"><dt>Status</dt><dd>Ready for the first 10% of traffic</dd></div>
-            <div class="artifact-row"><dt>Open work</dt><dd>Add the rollback alert and confirm the support handoff</dd></div>
-            <div class="artifact-row"><dt>Changed</dt><dd>Load-test results and the rollback threshold were added in v7</dd></div>
-            <div class="artifact-row"><dt>Next update</dt><dd>After the first production sample</dd></div>
-          </dl>
-        </article>
-        <aside class="product-comments" aria-label="Artifact comments">
-          <div class="comments-title"><span>Comments</span><span>2 open</span></div>
-          <div class="comment-card">
-            <div class="comment-person"><span class="comment-avatar">MK</span>Maeve</div>
-            <p>Can we put the rollback threshold next to the rollout step?</p>
-            <span class="comment-state">Addressed in v7</span>
-          </div>
-          <div class="comment-card">
-            <div class="comment-person"><span class="comment-avatar">AL</span>Alex</div>
-            <p>The support owner still needs a name before this goes out.</p>
-            <span class="comment-state">Open</span>
-          </div>
-        </aside>
+      <div class="home-version-control" aria-label="Artifact versions">
+        <div class="home-version-tabs">
+          <button type="button" data-demo-version="1" aria-pressed="false"><span>v1</span><small>First draft</small></button>
+          <button type="button" data-demo-version="2" aria-pressed="false"><span>v2</span><small>Clearer direction</small></button>
+          <button type="button" data-demo-version="3" aria-pressed="true"><span>v3</span><small>Current</small></button>
+        </div>
+        <p class="home-version-summary"><span data-demo-version-label>v3</span><span data-demo-version-message>Measured specs added after review</span></p>
       </div>
-    </div>
-
-    <dl class="proof-list">
-      <div><dt>One lasting URL</dt><dd>The link opens the current work, not a stale export.</dd></div>
-      <div><dt>Every version kept</dt><dd>See what changed and restore an earlier version.</dd></div>
-      <div><dt>Feedback in context</dt><dd>Comments stay with the version and text they refer to.</dd></div>
-    </dl>
+    </figure>
   </header>
 
-  <section class="marketing-section site-wrap">
-    <div class="section-heading">
-      <p class="eyebrow">How teams use it</p>
-      <div>
-        <h2>Make active work easy to find and follow</h2>
-        <p>Derive keeps the output of people and agents in one workspace. There is no required process. Publish, review, comment, and iterate in the way that fits the work.</p>
+  <section class="home-chapter site-wrap" aria-labelledby="publish-heading">
+    <h2 id="publish-heading">Publish</h2>
+    <div class="home-chapter-body">
+      <div class="home-chapter-copy">
+        <p class="home-chapter-lede">Give the work a home.</p>
+        <p>Publish a Markdown file, an HTML page, or a built site to a lasting URL. Styled HTML keeps its fonts, scripts, and images inside a sandboxed viewer. The link you shared last week still works.</p>
+        <p>Publish again to update the same URL. Each publish creates a version you can compare or restore.</p>
+      </div>
+      <div class="home-specimen" aria-label="Example publish command">
+        <div class="home-specimen-bar">derive publish</div>
+        <div class="home-code-lines"><span>$ derive publish launch/</span><span class="home-code-muted">→ 14 files · 1.2 MB · sandboxed</span><span class="home-code-success">✓ live at derive.to/artifacts/q3-launch-plan</span></div>
       </div>
     </div>
-    <dl class="feature-list">
-      <div><dt><span class="feature-kicker">Publish</span>Put the real work online</dt><dd>Publish Markdown, HTML, or a built site. Fonts, scripts, and images stay together in a sandboxed viewer.</dd></div>
-      <div><dt><span class="feature-kicker">Find</span>Open the current version</dt><dd>Search by name, tag, collection, or content. The workspace library shows what is active and who changed it.</dd></div>
-      <div><dt><span class="feature-kicker">Share</span>Send one link</dt><dd>Keep work private, share it by link, or protect it with a password. You can change or revoke access later.</dd></div>
-      <div><dt><span class="feature-kicker">Discuss</span>Comment on the work itself</dt><dd>Leave feedback on exact text, mention a person or agent, or edit directly. Commenting and editing require sign-in.</dd></div>
-      <div><dt><span class="feature-kicker">Update</span>Keep earlier versions intact</dt><dd>Publish again at the same URL. Compare versions, see what changed, and restore one when you need it.</dd></div>
-      <div><dt><span class="feature-kicker">Decide</span>Use formal review when it helps</dt><dd>Most work can move through comments and edits. Recorded approval is there for the work that needs a clear decision.</dd></div>
+  </section>
+
+  <section class="home-chapter site-wrap" aria-labelledby="find-heading">
+    <h2 id="find-heading">Find</h2>
+    <div class="home-chapter-body">
+      <div class="home-chapter-copy">
+        <p class="home-chapter-lede">Open the current work.</p>
+        <p>Every artifact appears in the workspace library. Search by name, tag, collection, or content instead of returning to the chat that produced it.</p>
+        <p>The same URL opens the current version and keeps earlier ones close by. You can see what changed and restore a version when you need it.</p>
+      </div>
+      <div class="home-specimen" aria-label="Recently updated artifacts">
+        <div class="home-specimen-bar">Library · Recently updated</div>
+        <dl class="home-library-list">
+          <div><dt>Q3 launch plan<small>Plans · updated today</small></dt><dd>v7</dd></div>
+          <div><dt>Customer import status<small>Reports · updated yesterday</small></dt><dd>v4</dd></div>
+          <div><dt>Database decision<small>Research · updated Monday</small></dt><dd>v2</dd></div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-chapter site-wrap" aria-labelledby="share-heading">
+    <h2 id="share-heading">Share</h2>
+    <div class="home-chapter-body">
+      <div class="home-chapter-copy">
+        <p class="home-chapter-lede">Send a link, not an export.</p>
+        <p>Keep work inside your team, share it with anyone who has the link, or add a password for a client. The link opens the real page in a browser.</p>
+        <p>People can read without an account. Commenting and editing require sign-in. You can change or revoke access at any time.</p>
+      </div>
+      <div class="home-specimen" aria-label="Artifact sharing settings">
+        <div class="home-specimen-bar">Share · redesign-proposal</div>
+        <div class="home-share-link"><span>derive.to/artifacts/redesign-proposal</span><strong>Copy</strong></div>
+        <dl class="home-share-options">
+          <div><dt>Workspace<small>Everyone on your team</small></dt><dd>Editor</dd></div>
+          <div><dt>Anyone with the link<small>No account needed</small></dt><dd>Viewer</dd></div>
+          <div><dt>Password<small>For client access</small></dt><dd>On</dd></div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-chapter site-wrap" aria-labelledby="discuss-heading">
+    <h2 id="discuss-heading">Discuss</h2>
+    <div class="home-chapter-body">
+      <div class="home-chapter-copy">
+        <p class="home-chapter-lede">Keep feedback next to the work.</p>
+        <p>Leave comments on exact text, mention a person or agent, or edit the artifact directly. Each version stays clear and recoverable, so everyone can see what changed.</p>
+        <p>Most work moves through comments and edits. Formal review is available when the work needs a recorded decision.</p>
+      </div>
+      <div class="home-specimen" aria-label="Artifact comment thread">
+        <div class="home-specimen-bar">Comments · q3-launch-plan</div>
+        <div class="home-thread">
+          <div><strong><span>A</span>Ada</strong><blockquote>“pilot cohort first”</blockquote><p>Which nine teams? Name them or nobody plans around it.</p></div>
+          <div><strong><span>C</span>agent · claude-code</strong><p>All nine are listed with owners in v3.</p><small>Resolved in v3</small></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-agent site-wrap" aria-labelledby="agent-heading">
+    <div class="home-agent-heading">
+      <p class="eyebrow">Connect your coding agent</p>
+      <h2 id="agent-heading">Give your agent a place to publish.</h2>
+      <p>Derive includes an MCP server for Claude Code, Codex, Cursor, and other compatible clients. Your agent can publish a page, read comments, and update the same artifact later.</p>
+    </div>
+    <div class="home-terminal" aria-label="Example Derive agent session">
+      <div class="home-terminal-bar"><span></span><span></span><span></span><strong>derive · agent session</strong></div>
+      <div class="home-terminal-lines"><span>$ claude mcp add derive https://derive.to/mcp</span><span class="home-code-success">✓ connected as @claude-code · role: editor</span><span></span><span>› publish “August growth report”</span><span class="home-code-muted">→ derive.to/artifacts/august-growth-report · v1 live</span><span></span><span>› catch_up</span><span class="home-code-muted">← 1 comment · Maeva on “+18% MoM”</span><span></span><span>› publish --addresses c_41x</span><span class="home-code-success">✓ v2 live · spike annotated · thread resolved</span></div>
+    </div>
+    <dl class="home-agent-tools">
+      <div><dt>publish</dt><dd>Save a revision</dd></div>
+      <div><dt>catch_up</dt><dd>Read new feedback</dd></div>
+      <div><dt>comment</dt><dd>Reply or resolve</dd></div>
+      <div><dt>read</dt><dd>Open any version</dd></div>
     </dl>
+    <div class="home-connect-actions">
+      <button class="button" type="button" data-copy-from="agent-prompt" data-copied-label="Copied. Paste it into your agent."><span data-copy-label>Copy setup prompt</span></button>
+      <a class="text-link" href="https://docs.derive.to/agents/connect/">Read the connection guide <span aria-hidden="true">→</span></a>
+    </div>
+    <div class="home-connect-list" aria-label="Ways to connect and publish">
+      <button type="button" data-copy="npx skills add derive-to/derive --skill derive" data-copied-label="Copied"><span>Install the Derive skill</span><code>npx skills add derive-to/derive --skill derive</code><strong data-copy-label>Copy</strong></button>
+      <button type="button" data-copy="claude mcp add --transport http derive https://derive.to/mcp" data-copied-label="Copied"><span>Connect over MCP</span><code>claude mcp add --transport http derive https://derive.to/mcp</code><strong data-copy-label>Copy</strong></button>
+      <button type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" data-copied-label="Copied"><span>Publish without an account</span><code>curl -F file=@page.html https://derive.to/v1/drafts</code><strong data-copy-label>Copy</strong></button>
+    </div>
+    <div id="agent-prompt" hidden>Set up Derive as the place where we keep, share, and improve our work. Install the skill with: npx skills add derive-to/derive --skill derive. Otherwise read https://derive.to/skill.md and connect to https://derive.to/mcp. Then publish one real plan, report, or designed page we have worked on recently. If I am not connected, use the anonymous draft flow and send me both the live URL and claim link.</div>
   </section>
 
-  <section class="marketing-section site-wrap">
-    <div class="agent-layout">
-      <div class="agent-copy">
-        <p class="eyebrow">Built for agents and people</p>
-        <h2>Your agent can come back to the work</h2>
-        <p>Connect Claude Code, Codex, Cursor, or another compatible MCP client. An agent can publish an artifact, read its comments, and update the same URL in a later session.</p>
-        <a class="text-link" href="https://docs.derive.to/start/connect-an-agent/">Connect an agent <span aria-hidden="true">→</span></a>
-      </div>
-      <div class="setup-panel" aria-label="Ways to connect and publish">
-        <div class="setup-title">Start from your tool</div>
-        <button class="setup-row" type="button" data-copy="npx skills add derive-to/derive --skill derive" data-copied-label="Copied"><strong>Skill</strong><code>npx skills add derive-to/derive --skill derive</code><span data-copy-label>Copy</span></button>
-        <button class="setup-row" type="button" data-copy="claude mcp add --transport http derive https://derive.to/mcp" data-copied-label="Copied"><strong>MCP</strong><code>claude mcp add --transport http derive https://derive.to/mcp</code><span data-copy-label>Copy</span></button>
-        <button class="setup-row" type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" data-copied-label="Copied"><strong>HTTP</strong><code>curl -F file=@page.html https://derive.to/v1/drafts</code><span data-copy-label>Copy</span></button>
-      </div>
+  <section class="home-price site-wrap" aria-labelledby="beta-heading">
+    <p class="eyebrow">Hosted or self-hosted</p>
+    <h2 id="beta-heading">Free during beta.</h2>
+    <p>All hosted features are included, and no card is required. Derive is Fair Source and self-hostable. Run it with SQLite and local disk, or use Postgres and S3 when you need them.</p>
+    <div class="home-price-links">
+      <a class="text-link" href="/pricing">Read the pricing plan <span aria-hidden="true">→</span></a>
+      <a class="text-link" href="https://docs.derive.to/self-hosting/quickstart/">Self-host Derive <span aria-hidden="true">→</span></a>
     </div>
   </section>
 
-  <section class="marketing-section access-section site-wrap">
-    <div class="access-panel">
-      <div>
-        <h2>Use the hosted beta or run it yourself</h2>
-        <p>The hosted product is free during beta. Derive is also Fair Source and self-hostable, with SQLite and local disk by default or Postgres and S3 at scale.</p>
-      </div>
-      <div>
-        <a class="button" href="https://docs.derive.to/self-hosting/quickstart/">Read the self-hosting guide</a>
-        <p class="access-alternative">Already have access? <a href="/login?src=nav_signin">Sign in to your workspace</a>.</p>
-      </div>
+  <section class="home-finale site-wrap" aria-labelledby="finale-heading">
+    <h2 id="finale-heading">Good work is derived.</h2>
+    <p>Publish one real piece of work, then keep improving it at the same link.</p>
+    <div class="home-finale-actions">
+      <form data-waitlist class="waitlist-form" data-derive-source="homepage_waitlist" action="/v1/beta/signup" method="post" novalidate>
+        <label class="sr-only" for="home-email">Work email</label>
+        <input id="home-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required>
+        <button class="button" type="submit">Get beta access</button>
+      </form>
+      <div class="waitlist-complete" data-waitlist-complete role="status" hidden>Check your inbox for the access link.</div>
     </div>
+    <p class="home-finale-note">Already have access? <a href="/login?src=nav_signin">Sign in to your workspace</a>.</p>
   </section>
 </main>
 
 <footer class="site-footer">
+  <div class="home-footer-watermark" aria-hidden="true">Derive</div>
   <div class="footer-inner site-wrap">
     <div class="footer-intro">
       <div class="footer-brand"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/><path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Derive</div>
