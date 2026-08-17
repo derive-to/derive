@@ -142,6 +142,9 @@ export interface ArtifactRecord {
   updated_at: string | null
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
   removed_at: string | null
+  /** Reversible library archive. Archived artifacts stay readable by direct URL, but
+   *  are excluded from ordinary discovery until restored. */
+  archived_at: string | null
   /** Expiring anonymous draft (the claim flow): ISO instant after which the draft is
    *  served 410 and swept. Null for every ordinary artifact; cleared on claim. */
   expires_at: string | null
@@ -190,8 +193,12 @@ export interface ListArtifactsOpts {
    *  `listArtifacts` honors this; `listUserWorks`/`countUserWorks` ignore it and always order
    *  created-desc. */
   sort?: SortMode
-  /** Case-insensitive title search. */
+  /** Case-insensitive metadata search across artifact titles, tags, and collection titles. */
   q?: string
+  /** Which user's accessible collections may contribute collection-title matches.
+   * `undefined` trusts the caller and searches every collection (operator/internal jobs);
+   * `null` searches no collection titles. Artifact-title and tag matching are unaffected. */
+  collectionSearchViewerId?: string | null
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */
   ids?: string[]
   /** Scope to a collection by JOINing its membership rather than materializing every
@@ -219,11 +226,16 @@ export interface ListArtifactsOpts {
    *  the read path's 410 tombstone. `listArtifacts` alone is therefore NOT a complete
    *  visibility gate for content — this flag closes the tombstone hole. */
   excludeRemoved?: boolean
+  /** Archive shelf. Omitted/`exclude` is the ordinary live library; `only` powers
+   *  the Archived view; `include` is for trusted maintenance reads. */
+  archived?: "exclude" | "only" | "include"
 }
 
 /** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */
 export interface WorkspaceSummary {
   total: number
+  /** Artifacts on the reversible archive shelf. */
+  archived: number
   tags: { tag: string; count: number }[]
   /** The workspace's display name, or null when there is no workspace row. */
   workspace: string | null
@@ -743,7 +755,8 @@ export interface CommentStore {
 export interface ArtifactQueryStore {
   /**
    * Newest-first artifact page. `cursor` is keyset pagination on created_at
-   * (rows strictly older than it); `q` is a case-insensitive title search;
+   * (rows strictly older than it); `q` is a case-insensitive metadata search across
+   * artifact titles, tags, and collection titles visible to `collectionSearchViewerId`;
    * `ids` restricts to a set (tag / favorite filters resolve to ids) — an empty
    * `ids` array matches nothing.
    */
@@ -802,6 +815,8 @@ export interface ArtifactQueryStore {
   artifactIdsOwnedBy(orgId: string, userId: string): Promise<string[]>
   /** Total artifact count, scoped to a workspace when orgId is given. */
   countArtifacts(orgId?: string): Promise<number>
+  /** Count on the reversible archive shelf in one workspace. */
+  countArchivedArtifacts(orgId: string): Promise<number>
   /** Count of the artifacts `artifactIdsOwnedBy` would return — the "Created by
    *  me" badge. `listed` narrows to one discovery state (e.g. `none` = the
    *  not-in-any-feed pending count). */
@@ -1428,12 +1443,17 @@ export interface ReviewStore {
   listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]>
   /** How many proposals are still awaiting a decision (for badges, no N+1). */
   openProposalCounts(artifactIds: string[]): Promise<Record<string, number>>
-  /** Record a reviewer's decision (approve / request changes / withdraw). */
+  /** Promote one still-open proposal and record its approval in the same database
+   * transaction. Null means another decision already won. */
+  approveOpenProposal(id: string, approval: ProposalApproval): Promise<VersionRecord | null>
+  /** Record a non-publishing decision on a still-open proposal. Null means another
+   * decision already won. */
   decideProposal(
     id: string,
     fields: {
       state: ProposalState
       decided_by: string | null
+      decided_by_id?: string | null
       decided_version: number | null
       decision_note?: string | null
     },
@@ -1451,7 +1471,12 @@ export interface ReviewStore {
   /** Settle a round (`sent_back` or `approved`), stamping resolved_at + note. */
   resolveReviewRound(
     id: string,
-    fields: { state: Extract<ReviewRoundState, "sent_back" | "approved">; note?: string | null },
+    fields: {
+      state: Extract<ReviewRoundState, "sent_back" | "approved">
+      note?: string | null
+      resolved_by?: string | null
+      resolved_by_name?: string | null
+    },
   ): Promise<ReviewRoundRecord | null>
 }
 
@@ -1613,6 +1638,126 @@ export interface ContextStore {
   listRecentAgentMessages(
     limit: number,
   ): Promise<Pick<SessionMessageRecord, "session_id" | "author_kind" | "created_at" | "meta">[]>
+}
+
+/**
+ * A template library is a named collection of reusable, version-pinned starters.
+ *
+ * `private` is visible only to its creator; `workspace` is visible to members of
+ * its workspace; `public` is intentionally world-readable. Entries hold a
+ * snapshot of an artifact version rather than a live pointer, so adopting a
+ * template is deterministic and later edits to the source cannot silently alter
+ * another person's starting point.
+ */
+export const TEMPLATE_LIBRARY_SCOPES = ["private", "workspace", "public"] as const
+export const TEMPLATE_ENTRY_KINDS = ["artifact", "context"] as const
+export const TEMPLATE_ENTRY_FORMATS = ["md", "html"] as const
+
+export type TemplateLibraryScope = (typeof TEMPLATE_LIBRARY_SCOPES)[number]
+export type TemplateEntryKind = (typeof TEMPLATE_ENTRY_KINDS)[number]
+export type TemplateEntryFormat = (typeof TEMPLATE_ENTRY_FORMATS)[number]
+
+export interface TemplateLibraryRecord {
+  id: string
+  org_id: string
+  title: string
+  description: string
+  scope: TemplateLibraryScope
+  created_by: string
+  created_at: string
+  updated_at: string | null
+  /** Short-lived server-side mutex for scope/entry mutations. Never serialized. */
+  mutation_token: string | null
+  mutation_started_at: string | null
+}
+
+/** The durable, independently-readable starter stored in one library. */
+export interface TemplateLibraryEntryRecord {
+  id: string
+  library_id: string
+  /** The artifact this entry was made from; provenance only, never dereferenced for use. */
+  source_artifact_id: string
+  /** The source artifact version captured when the entry was published. */
+  source_version: number
+  /** Exact version bytes, retained as the entry's stable starter snapshot. */
+  source_blob_key: string
+  source_content_type: string
+  kind: TemplateEntryKind
+  category: string
+  format: TemplateEntryFormat
+  title: string
+  description: string
+  outcome: string
+  sections_json: string
+  inputs_json: string
+  tags_json: string
+  created_by: string
+  created_at: string
+}
+
+export interface NewTemplateLibrary {
+  id: string
+  org_id: string
+  title: string
+  description?: string
+  scope?: TemplateLibraryScope
+  created_by: string
+}
+
+export interface NewTemplateLibraryEntry {
+  id: string
+  library_id: string
+  source_artifact_id: string
+  source_version: number
+  source_blob_key: string
+  source_content_type: string
+  kind: TemplateEntryKind
+  category: string
+  format: TemplateEntryFormat
+  title: string
+  description: string
+  outcome: string
+  sections_json: string
+  inputs_json: string
+  tags_json: string
+  created_by: string
+}
+
+export interface TemplateLibraryStore {
+  createTemplateLibrary(x: NewTemplateLibrary): Promise<TemplateLibraryRecord>
+  getTemplateLibrary(id: string): Promise<TemplateLibraryRecord | null>
+  /** Narrow filters compose with AND; callers combine queries for access unions. */
+  listTemplateLibraries(opts?: {
+    orgId?: string
+    scope?: TemplateLibraryScope
+    createdBy?: string
+    query?: string
+    before?: { createdAt: string; id: string }
+    limit?: number
+  }): Promise<TemplateLibraryRecord[]>
+  updateTemplateLibrary(
+    id: string,
+    fields: { title?: string; description?: string; scope?: TemplateLibraryScope },
+  ): Promise<TemplateLibraryRecord | null>
+  /** Serialize mutations whose validation depends on the library's current
+   * scope and entries. A stale holder may be replaced after `staleBefore`. */
+  acquireTemplateLibraryMutation(id: string, token: string, staleBefore: string): Promise<boolean>
+  /** Refresh only the current holder's lease immediately before its protected write. */
+  renewTemplateLibraryMutation(id: string, token: string): Promise<boolean>
+  releaseTemplateLibraryMutation(id: string, token: string): Promise<void>
+  deleteTemplateLibrary(id: string): Promise<void>
+  createTemplateLibraryEntry(x: NewTemplateLibraryEntry): Promise<TemplateLibraryEntryRecord>
+  getTemplateLibraryEntry(id: string): Promise<TemplateLibraryEntryRecord | null>
+  listTemplateLibraryEntries(libraryId: string): Promise<TemplateLibraryEntryRecord[]>
+  /** Search entry + library metadata under the caller's discoverable access union. */
+  searchTemplateLibraryEntries(opts: {
+    orgId: string
+    ownerId: string | null
+    query?: string
+    limit: number
+  }): Promise<Array<{ library: TemplateLibraryRecord; entry: TemplateLibraryEntryRecord }>>
+  countTemplateLibraryEntries(libraryIds: string[]): Promise<Record<string, number>>
+  deleteTemplateLibraryEntry(id: string): Promise<void>
 }
 
 export interface DirectoryStore {
@@ -2083,6 +2228,11 @@ export interface ModerationStore {
   /** Tombstone many artifacts at once (id ∈ ids) in ONE update — the PR-preview
    *  teardown. Empty ids ⇒ no-op. Use over a per-id setArtifactRemoved loop. */
   setArtifactsRemoved(ids: string[], removedAt: string | null): Promise<void>
+  /** Set or clear the reversible archive timestamp. Unlike `removed_at`, this never
+   *  changes direct-read behavior or serves a tombstone. */
+  setArtifactArchived(id: string, archivedAt: string | null): Promise<void>
+  /** Batch twin used by MCP cleanup. Empty ids ⇒ no-op. */
+  setArtifactsArchived(ids: string[], archivedAt: string | null): Promise<void>
   /** Take an artifact down atomically: tombstone the artifact, resolve every open
    *  report against it (→ actioned), and write the audit entry — all in one
    *  transaction so a crash mid-way can't leave a half-applied takedown (removed
@@ -2177,6 +2327,7 @@ export interface MetaStore
     IntegrationStore,
     ReviewStore,
     ContextStore,
+    TemplateLibraryStore,
     DirectoryStore,
     AgentStore,
     ModerationStore,
@@ -2655,19 +2806,18 @@ export interface BetaSignupRecord {
 
 /**
  * Where a signup came from. One row per user, recorded by the
- * auth layer's user-create hook from the `d_src` cookie the capture middleware
- * stamped on the way in; first write wins. Organic signups have no row.
+ * short, explicit signup URL handoff; first write wins. Organic signups have no row.
  */
 export interface SignupAttributionRecord {
   id: string
   /** The Better Auth user this attribution belongs to (no FK; auth owns its tables). */
   user_id: string
-  /** The sourcing surface: an artifact surface (badge, comment_wall, duplicate,
-   *  share_chrome, artifact_visit) or a campaign token (hn-launch, …). */
+  /** The explicit account handoff: a public CTA (badge, comment_wall,
+   *  make_your_own), beta form, sign-in link, or campaign token (hn-launch, …). */
   source_kind: string
   /** The artifact (short id) the sourcing surface lived on, when known. */
   source_artifact: string | null
-  /** Path of the page that stamped the cookie. */
+  /** Coarse path of the public surface that linked to signup. */
   landing_path: string | null
   /** Referrer host at stamp time. */
   referrer: string | null
@@ -2780,6 +2930,9 @@ export interface ProposalRecord {
   state: ProposalState
   /** Set once decided. */
   decided_by: string | null
+  /** Stable identity of the decider. Null only for historical rows that
+   *  predate identity-backed decisions. */
+  decided_by_id: string | null
   /** The version number it became on approval; null otherwise. */
   decided_version: number | null
   /** The reviewer's note when approving or requesting changes; the feedback. */
@@ -2802,6 +2955,16 @@ export interface NewProposal {
   base_version: number
 }
 
+/** The non-content inputs needed to promote one still-open proposal. The store
+ * owns the proposal bytes/byline and commits the version + decision together. */
+export interface ProposalApproval {
+  version_id: string
+  size_bytes: number
+  decided_by: string
+  decided_by_id: string
+  decision_note?: string | null
+}
+
 /** A review round's lifecycle. `pending` = the agent asked and is waiting;
  *  `sent_back` = the human returned their answers (the poll target); `approved` =
  *  the human signed off (the build go-signal). One pending round per person. */
@@ -2819,6 +2982,10 @@ export interface ReviewRoundRecord {
   state: ReviewRoundState
   /** Optional message from the requester, or the human's send-back note. */
   note: string | null
+  /** Stable identity of the human who settled the round. */
+  resolved_by: string | null
+  /** Snapshot name of the resolver, retained so history stays legible. */
+  resolved_by_name: string | null
   created_at: string
   resolved_at: string | null
 }

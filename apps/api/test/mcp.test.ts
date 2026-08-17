@@ -107,6 +107,9 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(result.instructions).toContain("editor")
     // The instructions teach the switcher: one login reaches every workspace.
     expect(result.instructions).toContain("list_workspaces")
+    expect(result.instructions).toContain("don't copy")
+    expect(result.instructions).toContain("untrusted")
+    expect(result.instructions).toContain("inspect render")
 
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const names = toolNames(list)
@@ -1110,6 +1113,148 @@ describe("remote MCP endpoint (/mcp)", () => {
     // No ASSERTED facts stored — the derived $rows the host computed are marked and
     // are not the author's.
     expect(listed.facts.filter((s: { derived?: boolean }) => !s.derived)).toEqual([])
+  })
+
+  it("exposes accessible authored template libraries as resources without adding tools", async () => {
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "template-library",
+      "openid derive:read derive:publish",
+    )
+    const source = await (await publish(app, token, "Reusable planning note")).json()
+    const artifact = await meta.getByShortId(source.short_id)
+    if (!artifact) throw new Error("missing source")
+    const version = await meta.getVersion(artifact.id, artifact.current_version)
+    if (!version) throw new Error("missing source version")
+    const library = await meta.createTemplateLibrary({
+      id: "tlb_mcp",
+      org_id: artifact.org_id,
+      title: "Planning starters",
+      description: "Reusable planning documents.",
+      scope: "workspace",
+      created_by: "u_o",
+    })
+    await meta.createTemplateLibraryEntry({
+      id: "tpl_mcp",
+      library_id: library.id,
+      source_artifact_id: artifact.id,
+      source_version: version.n,
+      source_blob_key: version.blob_key,
+      source_content_type: version.content_type,
+      kind: "artifact",
+      category: "Doc",
+      format: "html",
+      title: "Planning note",
+      description: "A source-pinned planning starter.",
+      outcome: "A clear planning conversation.",
+      sections_json: '["Context", "Plan"]',
+      inputs_json: "[]",
+      tags_json: '["planning"]',
+      created_by: "u_o",
+    })
+
+    await rpc(app, token, initBody)
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((resource) => resource.uri)
+    expect(uris).toContain("derive://template-libraries")
+    const body = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: "derive://template-libraries/tlb_mcp/tpl_mcp",
+        }),
+      ),
+    ) as { starter?: { source?: string }; source_version?: number }
+    expect(body.source_version).toBe(1)
+    expect(body.starter?.source).toContain("Reusable planning note")
+
+    // The ordinary publish tool carries the pinned starter's lineage. Template
+    // adoption does not need (or get) a second write tool.
+    const adopted = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Adapted planning note",
+          content: "# Adapted planning note\n\nSpecific to this team.",
+          derived_from: "derive://template-libraries/tlb_mcp/tpl_mcp",
+        }),
+      ),
+    ) as { short_id: string; derived_from?: string }
+    expect(adopted.derived_from).toBe("derive://template-libraries/tlb_mcp/tpl_mcp")
+    const adoptedArtifact = await meta.getByShortId(adopted.short_id)
+    expect(adoptedArtifact?.derived_from).toBe(artifact.id)
+
+    // Built-ins use the same resource/read concepts, and template discovery is
+    // one mode of find rather than another MCP tool.
+    const builtinResources = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "resources/list",
+    })
+    const builtinUris = (
+      (builtinResources.parsed?.result as { resources?: { uri: string }[] } | undefined)
+        ?.resources ?? []
+    ).map((resource) => resource.uri)
+    expect(builtinUris).toContain("derive://templates/catalog")
+    const builtInRead = toolText(
+      await call(app, token, "read", { short_id: "derive://templates/decision-memo" }),
+    )
+    expect(builtInRead).toMatch(/Decision/i)
+    const builtInAdoption = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Adapted decision memo",
+          content: "# Adapted decision memo\n\nA specific call for this team.",
+          derived_from: "derive://templates/decision-memo",
+        }),
+      ),
+    ) as { short_id: string; derived_from?: string }
+    expect(builtInAdoption.derived_from).toBe("derive://templates/decision-memo")
+    expect((await meta.getByShortId(builtInAdoption.short_id))?.derived_from).toBe(
+      "derive://templates/decision-memo",
+    )
+    const builtInDetail = (await (
+      await app.request(`/v1/artifacts/${builtInAdoption.short_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    ).json()) as { derived_from?: { short_id: string; title: string; kind?: string } }
+    expect(builtInDetail.derived_from).toEqual({
+      short_id: "derive://templates/decision-memo",
+      title: "Decision memo",
+      kind: "template",
+    })
+    const found = JSON.parse(toolText(await call(app, token, "find", { templates: true }))) as {
+      results: { uri: string }[]
+    }
+    expect(found.results.map((result) => result.uri)).toContain(
+      "derive://template-libraries/tlb_mcp/tpl_mcp",
+    )
+    expect(found.results.some((result) => result.uri.startsWith("derive://templates/"))).toBe(true)
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Missing built-in",
+          content: "# No",
+          derived_from: "derive://templates/not-in-this-release",
+        }),
+      ),
+    ).toContain("No built-in template")
+
+    // Canonical URIs fail closed. Extra path segments must never be silently
+    // interpreted as the valid starter that happens to prefix them.
+    const malformed = "derive://template-libraries/tlb_mcp/tpl_mcp/extra"
+    expect(toolText(await call(app, token, "read", { short_id: malformed }))).toMatch(
+      /No artifact|cannot reach/i,
+    )
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Must not adopt malformed lineage",
+          content: "# No",
+          derived_from: malformed,
+        }),
+      ),
+    ).toMatch(/Input validation|No template starter/i)
   })
 
   it("exposes the workspace's Brandprint as resources + an instructions pointer", async () => {
@@ -3121,7 +3266,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     const approved = await app.request(
       `/v1/artifacts/${created.short_id}/proposals/${p.proposal_id}/approve`,
-      { method: "POST", headers: { authorization: `Bearer ${token}` } },
+      { method: "POST", headers: { "x-test-user": "owner@x.test" } },
     )
     expect(approved.status).toBe(200)
     const read = toolText(await call(app, token, "read", { short_id: created.short_id }))

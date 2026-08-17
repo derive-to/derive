@@ -200,6 +200,43 @@ export interface ViewStatsJson {
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
 }
 
+/** A library is an access-scoped catalog of immutable template starters. */
+export interface TemplateLibraryEntryJson {
+  id: string
+  library_id: string
+  source_version: number
+  kind: "artifact" | "context"
+  category: string
+  format: "md" | "html"
+  title: string
+  description: string
+  outcome: string
+  sections: string[]
+  inputs: { name: string; description: string; required?: boolean }[]
+  tags: string[]
+  created_at: string
+}
+export interface TemplateLibraryJson {
+  id: string
+  title: string
+  description: string
+  scope: "private" | "workspace" | "public"
+  created_at: string
+  updated_at: string | null
+  entry_count: number
+  entries?: TemplateLibraryEntryJson[]
+}
+export interface TemplateLibraryPageJson {
+  libraries: TemplateLibraryJson[]
+  truncated: boolean
+  next_cursor: string | null
+}
+export interface TemplateStarterJson {
+  entry: TemplateLibraryEntryJson
+  source: string
+  mime_type: string
+}
+
 export interface ContentOpts {
   version?: number
   /** A heading slug (single-file) or page path (bundle, optionally page#slug). */
@@ -240,7 +277,9 @@ export interface SearchOpts {
 
 export interface DeriveClient {
   /** List the workspace's artifacts (optionally filtered by a title query and/or a browse tag). */
-  list(query?: string, tag?: string): Promise<ArtifactSummaryJson[]>
+  list(query?: string, tag?: string, archived?: boolean): Promise<ArtifactSummaryJson[]>
+  /** Move an artifact onto or off the reversible archive shelf. */
+  archive(shortId: string, archived: boolean): Promise<{ archived: boolean }>
   /** The workspace tag vocabulary (tag → count, most-used first). */
   listTags(): Promise<TagCountJson[]>
   /** Suggest tags for an artifact: its current tags, neighbors' tags, and the vocabulary. */
@@ -290,6 +329,10 @@ export interface DeriveClient {
   restore(shortId: string, version: number): Promise<ArtifactJson>
   /** Aggregated view analytics. */
   viewStats(shortId: string): Promise<ViewStatsJson>
+  /** Accessible public + workspace + personal libraries, for MCP resources only. */
+  listTemplateLibraries(cursor?: string): Promise<TemplateLibraryPageJson>
+  getTemplateLibrary(id: string): Promise<TemplateLibraryJson>
+  getTemplateStarter(libraryId: string, entryId: string): Promise<TemplateStarterJson>
 }
 
 export interface ClientOptions {
@@ -319,10 +362,11 @@ export function createClient(opts: ClientOptions): DeriveClient {
   }
 
   return {
-    async list(query, tag) {
+    async list(query, tag, archived) {
       const qs = new URLSearchParams()
       if (query) qs.set("query", query)
       if (tag) qs.set("tag", tag.trim().toLowerCase())
+      if (archived) qs.set("scope", "archived")
       const q = qs.toString() ? `?${qs}` : ""
       const r = (await ok(await f(`${base}/v1/artifacts${q}`, { headers: authHeaders }))) as {
         artifacts: ArtifactSummaryJson[]
@@ -331,6 +375,15 @@ export function createClient(opts: ClientOptions): DeriveClient {
         ...artifact,
         is_linked_bundle: artifact.current_content_type === "text/x-derive-linked-bundle",
       }))
+    },
+
+    async archive(shortId, archived) {
+      return ok(
+        await f(`${base}/v1/artifacts/${shortId}/archive`, {
+          method: archived ? "PUT" : "DELETE",
+          headers: authHeaders,
+        }),
+      ) as Promise<{ archived: boolean }>
     },
 
     async listTags() {
@@ -642,6 +695,31 @@ export function createClient(opts: ClientOptions): DeriveClient {
       return ok(
         await f(`${base}/v1/artifacts/${shortId}/analytics`, { headers: authHeaders }),
       ) as Promise<ViewStatsJson>
+    },
+
+    async listTemplateLibraries(cursor) {
+      const query = new URLSearchParams({ limit: "100" })
+      if (cursor) query.set("cursor", cursor)
+      return ok(
+        await f(`${base}/v1/template-libraries?${query}`, { headers: authHeaders }),
+      ) as Promise<TemplateLibraryPageJson>
+    },
+
+    async getTemplateLibrary(id) {
+      return ok(
+        await f(`${base}/v1/template-libraries/${encodeURIComponent(id)}`, {
+          headers: authHeaders,
+        }),
+      ) as Promise<TemplateLibraryJson>
+    },
+
+    async getTemplateStarter(libraryId, entryId) {
+      return ok(
+        await f(
+          `${base}/v1/template-libraries/${encodeURIComponent(libraryId)}/entries/${encodeURIComponent(entryId)}/starter`,
+          { headers: authHeaders },
+        ),
+      ) as Promise<TemplateStarterJson>
     },
   }
 }

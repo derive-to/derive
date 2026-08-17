@@ -27,6 +27,13 @@ afterAll(() => {
 
 const TOKEN = "tok"
 const TOKEN_HEADER = { authorization: `Bearer ${TOKEN}` }
+const HUMAN = {
+  id: "u_preview_owner",
+  createdAt: "2020-01-01T00:00:00.000Z",
+  email: "owner@derive.test",
+  name: "Owner",
+}
+const HUMAN_HEADER = { "x-test-user": HUMAN.email }
 
 /** Build an app + a spy counter, optionally with renderPreviews on/off. */
 const makeApp = (name: string, renderPreviews: boolean) => {
@@ -63,6 +70,14 @@ const makeApp = (name: string, renderPreviews: boolean) => {
     blobs: new FsBlobStore(join(dir, `blobs-${name}`)),
     baseUrl: "http://derive.test",
     token: TOKEN,
+    defaultOrgId: "default",
+    auth: {
+      handler: async () => new Response(null, { status: 404 }),
+      api: {
+        getSession: async ({ headers }: { headers: Headers }) =>
+          headers.get("x-test-user") === HUMAN.email ? { user: HUMAN } : null,
+      },
+    } as unknown as AppDeps["auth"],
     ...extraDeps,
   })
 
@@ -186,7 +201,7 @@ describe("preview-trigger: artifact id passed correctly", () => {
 
 describe("preview-trigger: approval path enqueues for the new version", () => {
   it("approving a proposal enqueues exactly ONE render job for the approved version", async () => {
-    const { app, enqueuedJobs } = makeApp("trigger-approve", true)
+    const { app, enqueuedJobs, meta } = makeApp("trigger-approve", true)
 
     // Publish the base artifact (version 1) — enqueues job #1
     const r1 = await publishArtifact(app)
@@ -210,6 +225,16 @@ describe("preview-trigger: approval path enqueues for the new version", () => {
     expect(pr.status).toBe(201)
     const proposal = (await pr.json()) as { id: string }
 
+    // The static token creates the proposal; a directly signed-in workspace
+    // owner is the independent human decision-maker.
+    await meta.setWorkspace("default", "Default")
+    await meta.setMembership({
+      id: "m_preview_owner",
+      org_id: "default",
+      user_id: HUMAN.id,
+      role: "owner",
+    })
+
     await new Promise((r) => setTimeout(r, 20))
     // Proposing must NOT trigger a render job
     expect(enqueuedJobs).toHaveLength(jobsAfterPublish)
@@ -217,7 +242,7 @@ describe("preview-trigger: approval path enqueues for the new version", () => {
     // Approve the proposal — this publishes a new version and must trigger a render
     const ap = await app.request(`/v1/artifacts/${b1.short_id}/proposals/${proposal.id}/approve`, {
       method: "POST",
-      headers: TOKEN_HEADER,
+      headers: HUMAN_HEADER,
     })
     expect(ap.status).toBe(200)
     const approved = (await ap.json()) as { published: number }

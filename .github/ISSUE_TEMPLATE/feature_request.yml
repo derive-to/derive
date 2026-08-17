@@ -19,3 +19,13 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and success signal
+      description: How does this problem show up today, and what observable outcome would show that it is solved?
+  - type: textarea
+    id: maintenance
+    attributes:
+      label: Maintenance and compatibility
+      description: Note any new dependency, protocol, migration, security boundary, or ongoing operating cost.

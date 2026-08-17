@@ -102,13 +102,13 @@ export function BulkFolderDialog({
         <DialogHeader>
           <DialogTitle>Move to folder</DialogTitle>
           <DialogDescription>
-            File the selected artifacts under a folder in this collection. Folders organize a
-            collection’s contents — they don’t change who can see them.
+            File the selected artifacts under a folder in this collection. Folders organize the
+            contents but do not change who can see them.
           </DialogDescription>
         </DialogHeader>
         {folders.length === 0 && (
           <div className="text-sm text-muted-foreground">
-            No folders yet — create one from “New folder” in the collection.
+            No folders yet. Create one from “New folder” in the collection.
           </div>
         )}
         <div className="flex max-h-64 flex-col gap-px overflow-auto">
@@ -214,9 +214,7 @@ export function BulkCollectionsDialog({
           />
         )}
         {!isError && pickable.length === 0 && (
-          <div className="text-sm text-muted-foreground">
-            No collections yet — create one below.
-          </div>
+          <div className="text-sm text-muted-foreground">No collections yet. Create one below.</div>
         )}
         {pickable.length > 0 && (
           <div className="flex max-h-64 flex-col gap-px overflow-auto">

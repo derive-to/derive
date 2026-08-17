@@ -40,8 +40,8 @@ export function Roadmap() {
             Where Derive is going
           </h1>
           <p className="mt-3 max-w-prose text-muted-foreground">
-            This roadmap is a Derive artifact, maintained by an agent through review rounds. It
-            updates here the moment a new version is published, so the page never goes stale.
+            This roadmap is a Derive artifact maintained at one durable URL. It updates here the
+            moment a new version is published, so the page never goes stale.
           </p>
         </div>
 
@@ -52,7 +52,7 @@ export function Roadmap() {
         </div>
 
         <Eyebrow as="footer" className="flex flex-wrap items-center justify-between gap-2 pt-5">
-          <span>Derive · publish, review, and own your AI artifacts</span>
+          <span>Derive · keep, share, and improve agent-made work</span>
           <a href="https://derive.to" className="transition-colors hover:text-foreground">
             derive.to
           </a>

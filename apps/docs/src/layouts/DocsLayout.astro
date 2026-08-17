@@ -1,0 +1,261 @@
+---
+import type { MarkdownHeading } from "astro"
+import Header from "../components/Header.astro"
+import Search from "../components/Search.astro"
+import Sidebar from "../components/Sidebar.astro"
+import TableOfContents from "../components/TableOfContents.astro"
+import navigation from "../generated/navigation.json"
+import "../styles/docs.css"
+
+interface Props {
+  slug: string
+  title: string
+  description: string
+  headings?: MarkdownHeading[]
+  editUrl?: string
+  lastUpdated?: Date | false
+  noindex?: boolean
+}
+
+const {
+  slug,
+  title,
+  description,
+  headings = [],
+  editUrl,
+  lastUpdated = false,
+  noindex = false,
+} = Astro.props
+const isHome = slug === "index"
+const pagePath = isHome ? "/" : `/${slug}/`
+const markdownPath = `/${slug}.md`
+const canonical = new URL(pagePath, Astro.site)
+const pageTitle = isHome
+  ? "Derive Docs | Keep, share, and improve agent-made work"
+  : `${title} | Derive Docs`
+const contentPages = navigation.pages.filter((page) => page.slug !== "index")
+const pageIndex = contentPages.findIndex((page) => page.slug === slug)
+const previousPage = pageIndex > 0 ? contentPages[pageIndex - 1] : undefined
+const nextPage = pageIndex >= 0 ? contentPages[pageIndex + 1] : undefined
+const activeSection = navigation.sections.find((section) =>
+  section.pages.some((page) => page.slug === slug),
+)
+const hrefFor = (page: { slug: string }) => `/${page.slug}/`
+const updatedLabel = lastUpdated
+  ? new Intl.DateTimeFormat("en", { year: "numeric", month: "short", day: "numeric" }).format(
+      lastUpdated,
+    )
+  : undefined
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <script is:inline>
+      (() => {
+        let saved
+        try { saved = localStorage.getItem("derive-docs-theme") } catch {}
+        const dark = saved
+          ? saved === "dark"
+          : window.matchMedia("(prefers-color-scheme: dark)").matches
+        document.documentElement.classList.toggle("dark", dark)
+        document.documentElement.classList.toggle("light", !dark)
+      })()
+    </script>
+    <title>{pageTitle}</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#0a0b0d" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)" />
+    <meta name="derive-docs-build" content={__DERIVE_DOCS_BUILD__} />
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    {!noindex && (
+      <link rel="alternate" type="text/markdown" href={markdownPath} title={`${title} as Markdown`} />
+    )}
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="LLM index" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={pageTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content="https://derive.to/site/og-artifacts.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://derive.to/site/og-artifacts.png" />
+  </head>
+  <body class:list={{ "home-page": isHome }}>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <Header />
+    <Search />
+
+    <dialog class="navigation-dialog" id="mobile-navigation" data-pagefind-ignore>
+      <div class="navigation-dialog-header">
+        <span>Documentation</span>
+        <button type="button" data-navigation-close aria-label="Close documentation navigation">Close</button>
+      </div>
+      <Sidebar activeSlug={slug} mobile />
+    </dialog>
+
+    <div class:list={["docs-shell", { "docs-shell-home": isHome }]}>
+      <aside class="sidebar-column" data-pagefind-ignore>
+        <Sidebar activeSlug={slug} />
+      </aside>
+
+      <main id="main-content" class:list={["main-column", { "main-column-home": isHome }]}>
+        {isHome ? (
+          <slot />
+        ) : (
+          <article class="docs-article" data-pagefind-body>
+            <header class="article-header">
+              <nav class="article-breadcrumbs" aria-label="Breadcrumb">
+                <a href="/">Docs</a>
+                <span aria-hidden="true">/</span>
+                <span data-pagefind-meta="section">{activeSection?.label ?? "Documentation"}</span>
+              </nav>
+              <h1 data-pagefind-meta="title">{title}</h1>
+              <p>{description}</p>
+            </header>
+            {!noindex && <TableOfContents headings={headings} markdownUrl={markdownPath} mobile />}
+            <div class="docs-content">
+              <slot />
+            </div>
+            {(editUrl || updatedLabel) && (
+              <footer class="article-meta" data-pagefind-ignore>
+                {updatedLabel && <span>Updated {updatedLabel}</span>}
+                {editUrl && <a href={editUrl}>Edit this page on GitHub <span aria-hidden="true">↗</span></a>}
+              </footer>
+            )}
+            {(previousPage || nextPage) && (
+              <nav class="page-navigation" aria-label="Documentation pages" data-pagefind-ignore>
+                {previousPage ? (
+                  <a class="page-previous" href={hrefFor(previousPage)}>
+                    <span>Previous</span>
+                    <strong>← {previousPage.title}</strong>
+                  </a>
+                ) : <span></span>}
+                {nextPage && (
+                  <a class="page-next" href={hrefFor(nextPage)}>
+                    <span>Next</span>
+                    <strong>{nextPage.title} →</strong>
+                  </a>
+                )}
+              </nav>
+            )}
+          </article>
+        )}
+      </main>
+
+      {!isHome && !noindex && (
+        <aside class="toc-column">
+          <TableOfContents headings={headings} markdownUrl={markdownPath} />
+        </aside>
+      )}
+    </div>
+
+    <footer class="site-footer" data-pagefind-ignore>
+      <span>Derive Docs</span>
+      <div>
+        <a href="https://derive.to/">Product</a>
+        <a href="https://github.com/derive-to/derive">GitHub</a>
+        <a href="/reference/licensing/">Licensing</a>
+        <a href="https://derive.to/security">Security</a>
+      </div>
+    </footer>
+
+    <script>
+      const root = document.documentElement
+      const themeToggle = document.querySelector<HTMLButtonElement>(".theme-toggle")
+      const updateThemeLabel = () => {
+        themeToggle?.setAttribute(
+          "aria-label",
+          root.classList.contains("dark") ? "Switch to light theme" : "Switch to dark theme",
+        )
+      }
+      updateThemeLabel()
+      themeToggle?.addEventListener("click", () => {
+        const dark = !root.classList.contains("dark")
+        root.classList.toggle("dark", dark)
+        root.classList.toggle("light", !dark)
+        try { localStorage.setItem("derive-docs-theme", dark ? "dark" : "light") } catch {}
+        updateThemeLabel()
+      })
+
+      const navigationDialog = document.querySelector<HTMLDialogElement>("#mobile-navigation")
+      document.querySelector("[data-navigation-open]")?.addEventListener("click", () => navigationDialog?.showModal())
+      document.querySelector("[data-navigation-close]")?.addEventListener("click", () => navigationDialog?.close())
+      navigationDialog?.addEventListener("click", (event) => {
+        if (event.target === navigationDialog) navigationDialog.close()
+      })
+
+      for (const block of document.querySelectorAll<HTMLPreElement>(".docs-content pre, .home-page pre")) {
+        const wrapper = document.createElement("div")
+        wrapper.className = "code-block"
+        block.before(wrapper)
+        wrapper.append(block)
+        const button = document.createElement("button")
+        button.type = "button"
+        button.className = "copy-code"
+        button.textContent = "Copy"
+        button.setAttribute("aria-label", "Copy code")
+        button.addEventListener("click", async () => {
+          await navigator.clipboard.writeText(block.textContent ?? "")
+          button.textContent = "Copied"
+          window.setTimeout(() => { button.textContent = "Copy" }, 1600)
+        })
+        wrapper.append(button)
+      }
+
+      for (const button of document.querySelectorAll<HTMLButtonElement>("[data-copy-page]")) {
+        const initialLabel = button.textContent ?? "Copy page"
+        button.addEventListener("click", async () => {
+          const url = button.dataset.copyUrl
+          if (!url) return
+          try {
+            const response = await fetch(url)
+            if (!response.ok) throw new Error("Markdown unavailable")
+            await navigator.clipboard.writeText(await response.text())
+            button.textContent = "Copied"
+          } catch {
+            button.textContent = "Copy failed"
+          }
+          window.setTimeout(() => { button.textContent = initialLabel }, 1600)
+        })
+      }
+
+      for (const heading of document.querySelectorAll<HTMLElement>(".docs-content :is(h2, h3)")) {
+        if (!heading.id) continue
+        const anchor = document.createElement("a")
+        anchor.className = "heading-anchor"
+        anchor.href = `#${heading.id}`
+        anchor.textContent = "#"
+        anchor.setAttribute("aria-label", `Link to ${heading.textContent ?? "section"}`)
+        heading.append(anchor)
+      }
+
+      const tocLinks = Array.from(
+        document.querySelectorAll<HTMLAnchorElement>("[data-toc-link]"),
+      )
+      const observedHeadings = Array.from(document.querySelectorAll<HTMLElement>(".docs-content :is(h2, h3)"))
+      if (tocLinks.length && observedHeadings.length) {
+        const visible = new Set<string>()
+        const observer = new IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) visible.add(entry.target.id)
+            else visible.delete(entry.target.id)
+          }
+          const active = observedHeadings.find((heading) => visible.has(heading.id))?.id
+            ?? [...observedHeadings].reverse()
+              .find((heading) => heading.getBoundingClientRect().top <= 112)?.id
+            ?? observedHeadings[0]?.id
+          for (const link of tocLinks) {
+            if (link.dataset.tocLink === active) link.setAttribute("aria-current", "location")
+            else link.removeAttribute("aria-current")
+          }
+        }, { rootMargin: "-96px 0px -70%" })
+        observedHeadings.forEach((heading) => observer.observe(heading))
+      }
+    </script>
+  </body>
+</html>

@@ -46,12 +46,7 @@ export function registerCommentTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("Exact text in the rendered document to anchor a NEW comment to."),
-        visual_target: z
-          .string()
-          .optional()
-          .describe(
-            "Stable visual target id from a linked bundle (for example derive-improve-node-revise). Use instead of quote.",
-          ),
+        visual_target: z.string().optional().describe("Bundle target id; omit quote."),
         react: z
           .enum(REACTIONS as [string, ...string[]])
           .optional()

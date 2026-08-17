@@ -8,6 +8,7 @@ export const kindLabel = (contentType: string | null | undefined, isBundle: bool
   if (contentType === "text/markdown") return "Markdown"
   if (contentType === "text/x-derive-deck") return "Deck"
   if (contentType === "text/x-derive-linked-bundle") return "Bundle"
+  if (contentType === "text/x-derive-video") return "Video"
   if (contentType?.startsWith("text/html")) return "HTML"
   return "Document"
 }
@@ -26,6 +27,9 @@ export interface UnfurlInfo {
   oembedUrl: string
   /** Absolute embeddable-view URL (`/v1/embed/:ref`). */
   embedUrl: string
+  /** Absolute markdown-projection URL (`/artifacts/:ref.md`) — the agent-readable
+   *  form of the share URL, advertised as a `rel=alternate` link. */
+  markdownUrl: string
   /** A card-sized summary of this version's facts (`pass 48 · fail 0`), when it
    *  carries any. Leads the description: the numbers are what a reader scanning a shared
    *  link actually wants, and showing them is what rewards publishing a fact at all. */
@@ -88,12 +92,23 @@ export const unfurlMetaTags = (i: UnfurlInfo): string => {
     `<meta property="og:image" content="${img}">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
+    `<link rel="canonical" href="${url}">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${t}">`,
     `<meta name="twitter:description" content="${d}">`,
     `<meta name="twitter:image" content="${img}">`,
     `<link rel="alternate" type="application/json+oembed" href="${oembed}" title="${t}">`,
+    `<link rel="alternate" type="text/markdown" href="${escapeHtml(i.markdownUrl)}">`,
   ].join("\n")
+}
+
+/** Replace the shell's generic `<title>` with the page's own (escaped); inject if absent. */
+export const setTitle = (shellHtml: string, title: string): string => {
+  const tag = `<title>${escapeHtml(title)}</title>`
+  // Non-greedy to the first close tag keeps the scan linear (see setRobotsMeta).
+  const m = shellHtml.match(/<title\b[^>]*>[\s\S]*?<\/title>/i)
+  if (!m || m.index === undefined) return injectHead(shellHtml, tag)
+  return shellHtml.slice(0, m.index) + tag + shellHtml.slice(m.index + m[0].length)
 }
 
 /** Insert head HTML just before `</head>` (case-insensitive); prepend if none. */
@@ -101,6 +116,21 @@ export const injectHead = (shellHtml: string, headHtml: string): string => {
   const m = shellHtml.match(/<\/head>/i)
   if (!m || m.index === undefined) return `${headHtml}\n${shellHtml}`
   return `${shellHtml.slice(0, m.index)}${headHtml}\n${shellHtml.slice(m.index)}`
+}
+
+/** Replace any shell-level crawler policy with one authoritative robots tag. */
+export const setRobotsMeta = (
+  shellHtml: string,
+  content: "index,follow" | "noindex,nofollow",
+): string => {
+  // Keep the scan linear on untrusted artifact HTML. A single expression with
+  // overlapping `\s*` and `[^>]*` branches can backtrack polynomially on a
+  // deliberately long tag. First bound each meta tag, then inspect only that
+  // tag for the robots attribute.
+  const withoutExisting = shellHtml.replace(/<meta\b[^>]*>/gi, (tag) =>
+    /\bname\s*=\s*(?:"robots"|'robots')/i.test(tag) ? "" : tag,
+  )
+  return injectHead(withoutExisting, `<meta name="robots" content="${content}">`)
 }
 
 /**
@@ -258,6 +288,7 @@ export const profileMetaTags = (i: {
     `<meta property="og:image" content="${img}">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
+    `<link rel="canonical" href="${url}">`,
     `<meta name="twitter:card" content="summary_large_image">`,
     `<meta name="twitter:title" content="${title}">`,
     `<meta name="twitter:description" content="${d}">`,

@@ -19,6 +19,7 @@ import {
 const payload = (): BootstrapPayload => ({
   summary: {
     total: 7,
+    archived: 1,
     favorites: 2,
     mine: 3,
     mine_private: 1,

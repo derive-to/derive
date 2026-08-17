@@ -57,7 +57,7 @@ export function CustomDomainsSection() {
 
       {state.domains.length === 0 ? (
         <SettingsEmpty>
-          No custom domains yet — shared pages use the default derive.to address.
+          No custom domains yet. Shared pages use the default derive.to address.
         </SettingsEmpty>
       ) : (
         <SettingsGroup>
@@ -80,7 +80,7 @@ function NewDomain({
   const [host, setHost] = useState("")
   const addDomain = useApiMutation({
     mutationFn: (h: string) => api.addWorkspaceDomain(h),
-    success: "Domain added — add the DNS records to finish",
+    success: "Domain added. Add the DNS records to finish setup.",
     onSuccess: () => {
       setHost("")
       onCreated()

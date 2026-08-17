@@ -6,6 +6,8 @@
 // muted, unfavourited star); pass weight="fill" for a filled state (favorited
 // star, pinned pin) — it fills the glyph with the current ink.
 import {
+  Archive,
+  ArrowRight,
   ArrowRightLeft,
   AtSign,
   Ban,
@@ -28,11 +30,13 @@ import {
   Folder,
   FolderGit2,
   Folders,
+  GitFork,
   GitPullRequest,
   Globe,
   History,
   Italic,
   Layers,
+  LayoutTemplate,
   Link,
   Lock,
   LockOpen,
@@ -67,6 +71,7 @@ import { cn } from "@/lib/utils"
 const REG = {
   // nav
   all: Layers,
+  archive: Archive,
   favorites: Star,
   // The activity feed of followed authors + repo paths.
   following: Users,
@@ -76,6 +81,8 @@ const REG = {
   // plain `collection` folder so a repo reads as code-backed at a glance.
   repo: FolderGit2,
   context: Bot,
+  templates: LayoutTemplate,
+  derive: GitFork,
   // Brandprint — the brand's fingerprint.
   brandprint: Fingerprint,
   search: Search,
@@ -118,6 +125,7 @@ const REG = {
   mail: Mail,
   unlock: LockOpen,
   move: ArrowRightLeft,
+  arrow: ArrowRight,
   globe: Globe,
   // the inline editor's own verbs — history, then the two emphases. `link` below is
   // shared with the comment toolbar; one glyph for one meaning across the app.

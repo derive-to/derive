@@ -18,12 +18,12 @@ export const PLANS = [
   {
     tier: "free",
     name: "Free",
-    tagline: "For individuals, open-source projects, and small teams.",
+    tagline: "For individuals, independent projects, and small teams.",
     price: { month: "$0 forever", year: "$0 forever" },
     features: [
       "Up to 3 editors per workspace",
       "Unlimited viewers and commenters",
-      "The full review loop: comments, proposals, approvals",
+      "Comments, sharing controls, and direct editing",
       "CLI, API, and MCP for your agents",
       "Permanent URLs with full version history",
       "1 GB storage, deduplicated",
@@ -32,8 +32,7 @@ export const PLANS = [
   {
     tier: "team",
     name: "Team",
-    badge: "Most teams",
-    tagline: "For teams whose agents ship work that needs review.",
+    tagline: "For teams that keep agent-made work in one shared workspace.",
     price: { month: "$15 per editor / month", year: "$12 per editor / month, billed annually" },
     // Numeric mirrors of the display `price` strings above: the same per-editor
     // monthly figures, as plain numbers, matching the Stripe lookup-key prices

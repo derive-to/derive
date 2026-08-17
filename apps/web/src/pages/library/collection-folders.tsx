@@ -24,6 +24,7 @@ interface CardHandlers {
   onOpen: (a: Artifact) => void
   onToggleFavorite: (a: Artifact) => void
   onAddToCollection: (a: Artifact) => void
+  onArchive: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
   selection?: LibrarySelection
@@ -250,7 +251,7 @@ export function CollectionFolders({
         open={!!deleting}
         onOpenChange={(o) => !o && setDeleting(null)}
         title={`Delete folder “${deleting?.name ?? ""}”?`}
-        description="The folder is removed and its artifacts become unfiled — they stay in the collection."
+        description="The folder will be removed. Its artifacts will stay in the collection as unfiled work."
         confirmLabel="Delete folder"
         confirmTestId="collection-folder-delete-confirm"
         onConfirm={async () => {
@@ -312,7 +313,7 @@ function Section({
       />
       {open && items.length === 0 && (
         <p className="mt-3 text-sm text-muted-foreground">
-          No artifacts yet{canManage ? " — use “Move to folder” to file some here." : "."}
+          No artifacts yet{canManage ? ". Use “Move to folder” to file some here." : "."}
         </p>
       )}
       {open && items.length > 0 && (
@@ -325,6 +326,7 @@ function Section({
                 onOpen={() => handlers.onOpen(a)}
                 onToggleFavorite={() => handlers.onToggleFavorite(a)}
                 onAddToCollection={() => handlers.onAddToCollection(a)}
+                onArchive={() => handlers.onArchive(a)}
                 onDelete={() => handlers.onDelete(a)}
                 onPrefetch={() => handlers.onPrefetch(a)}
                 selected={handlers.selection?.selected.has(a.short_id)}

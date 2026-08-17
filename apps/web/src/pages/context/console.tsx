@@ -138,7 +138,7 @@ function Console({ id }: { id: string }) {
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
   const rotateToken = useApiMutation({
     mutationFn: () => api.rotateAgent(context?.agent_id ?? ""),
-    success: "New key issued — the old one has stopped working",
+    success: "New key issued. The old key no longer works.",
     onSuccess: (a) => setRotatedToken(a.token),
   })
 
@@ -157,7 +157,7 @@ function Console({ id }: { id: string }) {
           title={status === 404 || status === 403 ? "You don't have access" : "Couldn't load"}
           description={
             status === 404 || status === 403
-              ? "Ask this context's owner to give you access — only workspace members they invite can ask it."
+              ? "Ask the owner for access. Only invited workspace members can use this context."
               : "Something went wrong loading this context. Try again in a moment."
           }
         />
@@ -470,7 +470,7 @@ function ContextAccess({
                 ))}
                 {roster?.length === 0 && (
                   <p className="py-2 text-sm text-muted-foreground">
-                    No one invited yet — only you can ask.
+                    No one invited yet. Only you can ask.
                   </p>
                 )}
               </div>
@@ -479,7 +479,7 @@ function ContextAccess({
 
           <div className="flex items-center gap-2 border-t border-border-soft pt-3 text-xs text-muted-foreground">
             <Icon name="lock" className="size-3.5" />
-            Workspace members only — a context is never reachable outside the workspace.
+            Workspace members only. People outside this workspace cannot use the context.
           </div>
         </div>
       </DialogContent>
@@ -507,7 +507,7 @@ function RunnerLiveness({ seenAt }: { seenAt: string | null }) {
     ? ["bg-success", "taking on work"]
     : status.away
       ? ["bg-warning", `last here ${ago(seenAt as string)}`]
-      : ["bg-muted-foreground", `not taking on work${seenAt ? ` — last here ${ago(seenAt)}` : ""}`]
+      : ["bg-muted-foreground", `not taking on work${seenAt ? `; last here ${ago(seenAt)}` : ""}`]
   return (
     <span
       data-testid="console-runner-liveness"
@@ -550,12 +550,12 @@ function RunnerCard({
   const seenAt = context.runner_seen_at
   const state = runnerStatus(seenAt)
   const [dot, status] = state.online
-    ? ["bg-success", `taking on work now — checked ${ago(seenAt as string)}`]
+    ? ["bg-success", `taking on work now; checked ${ago(seenAt as string)}`]
     : state.away
-      ? ["bg-warning", `quiet just now — last here ${ago(seenAt as string)}`]
+      ? ["bg-warning", `quiet just now; last here ${ago(seenAt as string)}`]
       : [
           "bg-muted-foreground",
-          seenAt ? `not taking on work — last here ${ago(seenAt)}` : "not set up to take on work",
+          seenAt ? `not taking on work; last here ${ago(seenAt)}` : "not set up to take on work",
         ]
 
   return (
@@ -579,7 +579,7 @@ function RunnerCard({
         <div className="flex flex-col gap-2 border-t border-border-soft pt-2.5">
           <div>
             <p className="text-2xs text-muted-foreground">
-              Ask it to do something — from Chat above, or from your own coding session:
+              Ask it to do something in Chat above or from your own coding session:
             </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               use({"{"} context: "{context.name}", instruction: "…" {"}"})
@@ -587,8 +587,8 @@ function RunnerCard({
           </div>
           <div>
             <p className="text-2xs text-muted-foreground">
-              Then do the waiting work yourself, from that same session — nothing to install and no
-              key needed. It picks up whatever has been asked and stops when there is nothing left:
+              From that same session, run the command below to pick up waiting work. There is
+              nothing to install and no key to copy. It stops when the queue is empty:
             </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               use({"{"} context: "{context.name}" {"}"})
@@ -632,7 +632,7 @@ function RunnerCard({
               <StatusPanel
                 tone="warning"
                 layout="inline"
-                title="Here is the new key — copy it now, it is not shown again. The old one has already stopped working."
+                title="Copy this new key now. It will not be shown again, and the old key no longer works."
                 description={
                   <div className="flex flex-col gap-1.5">
                     <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">
@@ -817,10 +817,10 @@ function ManifestTab({ context }: { context: ContextDetail }) {
                       <span className="font-mono text-2xs text-muted-foreground">{s.short_id}</span>
                     </td>
                     <td className="px-3.5 py-2 font-mono text-xs tabular-nums text-muted-foreground">
-                      {s.pinned ?? "—"}
+                      {s.pinned ?? "Not set"}
                     </td>
                     <td className="px-3.5 py-2 font-mono text-xs tabular-nums text-muted-foreground">
-                      {s.current ?? "—"}
+                      {s.current ?? "Not set"}
                     </td>
                     <td
                       className={cn(
@@ -840,7 +840,7 @@ function ManifestTab({ context }: { context: ContextDetail }) {
             </table>
           </div>
           <p className="text-xs text-muted-foreground">
-            A pin is exact — the runner materializes the pinned version, not the latest.{" "}
+            A pin is exact. The runner uses the pinned version, not the latest one.{" "}
             <code className="font-mono">derive context push</code> re-pins to current and publishes
             a new manifest version; the runner picks it up on its next pull. No deploy.
           </p>
@@ -904,7 +904,7 @@ function ChatComposer({
       <Textarea
         data-testid="console-ask-input"
         aria-label="Message"
-        placeholder={`Message ${contextName} — a scope to run, or a question about a past run.`}
+        placeholder={`Message ${contextName} about new work or a past run.`}
         value={text}
         rows={3}
         onChange={(e) => setText(e.target.value)}
@@ -1109,7 +1109,7 @@ function SessionThread({
         {session.state === "open" && !streaming && (
           <div className="flex items-center gap-2 px-1 text-sm text-muted-foreground">
             <Spinner size="sm" tone="current" data-testid="console-waiting" />
-            Waiting — the runner picks this up on its next poll.
+            Waiting for the runner to pick this up.
           </div>
         )}
         {session.state === "failed" && (
@@ -1190,7 +1190,7 @@ function ResultChip({ shortId }: { shortId: string }) {
         )}
       </Link>
       <span className="text-2xs text-muted-foreground">
-        republished each run — its history is the trend.
+        Republished after each run. Its history shows the trend.
       </span>
     </div>
   )
@@ -1245,7 +1245,7 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
         )}
         {meta.escalation && (
           <Badge variant="outline" data-testid="console-escalated">
-            Escalated — {meta.escalation}
+            Escalated: {meta.escalation}
           </Badge>
         )}
         {meta.confidence !== null && (
@@ -1412,7 +1412,7 @@ function OutputList({ contextId }: { contextId: string }) {
       <EmptyState
         icon={<Icon name="all" strokeWidth={1.75} />}
         title="Nothing published yet"
-        description="When a run binds a result artifact, it shows up here — one row per document, however many runs it took."
+        description="Published results appear here. Each document has one row, even when it took several runs."
       />
     )
   return (

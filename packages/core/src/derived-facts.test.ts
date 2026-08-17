@@ -5,6 +5,14 @@ const byName = (source: string, ct: string) =>
   Object.fromEntries(deriveFacts(source, ct).map((f) => [f.slot, JSON.parse(f.json)]))
 
 describe("deriveFacts", () => {
+  it("derives video timing and scene metadata", () => {
+    const src = `<main data-derive-video><section data-derive-scene="open" data-duration-ms="2000"><h2>Open</h2></section><section data-derive-scene="close" data-duration-ms="3000" data-transition="fade"></section></main>`
+    const d = Object.fromEntries(
+      deriveFacts(src, "text/x-derive-video").map((f) => [f.slot, JSON.parse(f.json)]),
+    )
+    expect(d.$video.total_ms).toBe(5000)
+    expect(d.$video.scenes.map((s: { id: string }) => s.id)).toEqual(["open", "close"])
+  })
   it("derives outline, links and stats from a real HTML page", () => {
     const page = `<!doctype html><html><body>
       <h1>Nightly</h1><p>see <a href="/artifacts/facts-mcqx8w9l">the how-to</a> and

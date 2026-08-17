@@ -2,15 +2,19 @@
   "name": "@derive-to/cli",
   "version": "0.4.0",
   "type": "module",
-  "description": "CLI for Derive — init a project, publish versioned artifacts, and run the publish → review → revise loop from the terminal.",
+  "description": "CLI for Derive — create projects and publish durable, versioned artifacts from the terminal.",
   "keywords": [
     "derive",
+    "ai-agents",
+    "artifact-management",
+    "document-collaboration",
+    "versioned-artifacts",
     "artifacts",
     "publish",
     "cli"
   ],
   "license": "FSL-1.1-ALv2",
-  "homepage": "https://derive.to",
+  "homepage": "https://docs.derive.to/agents/cli/",
   "bugs": {
     "url": "https://github.com/derive-to/derive/issues"
   },

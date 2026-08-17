@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button"
 import { CursorLayer } from "./cursors/cursor-layer"
 import type { CursorLayerHandle } from "./cursors/use-live-cursors"
 import { DiffView } from "./diff-view"
-import { DeckBar } from "./rail-deck"
+import { DeckBar, VideoBar } from "./rail-deck"
 import { RenderStage } from "./render-stage"
-import type { Deck } from "./types"
+import type { Deck, Video } from "./types"
 
 /**
  * The document surface: a past-version banner when off the live version, then the
@@ -27,6 +27,7 @@ export function ArtifactDocument({
   onDiffRetry,
   restoring,
   deck,
+  video,
   frameRef,
   presentWrapRef,
   cursor,
@@ -37,6 +38,11 @@ export function ArtifactDocument({
   onBackToCurrent,
   onDeckPrev,
   onDeckNext,
+  onVideoPrev,
+  onVideoNext,
+  onVideoToggle,
+  onVideoRestart,
+  onVideoSeek,
   presenting = false,
   presentOverlay = false,
   controlsIdle = false,
@@ -57,6 +63,7 @@ export function ArtifactDocument({
   onDiffRetry?: () => void
   restoring: boolean
   deck: Deck | null
+  video: Video | null
   frameRef: RefObject<HTMLIFrameElement | null>
   presentWrapRef: RefObject<HTMLDivElement | null>
   cursor: CursorLayerHandle
@@ -67,6 +74,11 @@ export function ArtifactDocument({
   onBackToCurrent: () => void
   onDeckPrev: () => void
   onDeckNext: () => void
+  onVideoPrev: () => void
+  onVideoNext: () => void
+  onVideoToggle: () => void
+  onVideoRestart: () => void
+  onVideoSeek: (ms: number) => void
   /** Present mode is up: the stage is the whole screen and the comment/cursor
    *  layers step aside. */
   presenting?: boolean
@@ -154,6 +166,17 @@ export function ArtifactDocument({
                   onPrev={onDeckPrev}
                   onNext={onDeckNext}
                   onPresent={onPresent}
+                />
+              )}
+              {video && (
+                <VideoBar
+                  video={video}
+                  onPrev={onVideoPrev}
+                  onNext={onVideoNext}
+                  onToggle={onVideoToggle}
+                  onRestart={onVideoRestart}
+                  onSeek={onVideoSeek}
+                  onPresent={onPresent ?? (() => {})}
                 />
               )}
               {/* Live peer cursors ease in here, over the framed render (the iframe is

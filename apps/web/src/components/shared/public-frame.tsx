@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 import { Logo } from "@/components/shared/logo"
 import { Button } from "@/components/ui/button"
+import { signupSourceSearch } from "@/lib/signup-source"
 
 // The chrome-light frame for a public surface an anonymous visitor lands on — a
 // shared profile today (the artifact viewer has its own richer PublicViewer). A slim
@@ -24,10 +25,17 @@ export function PublicFrame({ returnTo, children }: { returnTo: string; children
           <span className="font-serif text-base font-medium tracking-tight">Derive</span>
         </Link>
 
-        {/* The growth verb (the page's one filled primary) + a quiet sign-in. */}
+        {/* One clear account action and a quiet sign-in. */}
         <Button asChild variant="default" size="sm" data-testid="public-make-your-own">
-          <Link to="/login" search={{ signup: true, return_to: "/new" }}>
-            Make your own
+          <Link
+            to="/login"
+            search={{
+              signup: true,
+              return_to: returnTo,
+              ...signupSourceSearch("public_frame", null, returnTo),
+            }}
+          >
+            Create with Derive
           </Link>
         </Button>
         <Button

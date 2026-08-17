@@ -88,10 +88,50 @@ const makeMeta = (): MetaStore => {
       return rec
     },
     getProposal: async (id: string) => proposals.get(id) ?? null,
+    approveOpenProposal: async (
+      id: string,
+      approval: {
+        version_id: string
+        size_bytes: number
+        decided_by: string
+        decided_by_id: string
+        decision_note?: string | null
+      },
+    ) => {
+      const p = proposals.get(id)
+      if (p?.state !== "open") return null
+      const list = versions.get(p.artifact_id) ?? []
+      const rec: FakeVersion = {
+        id: approval.version_id,
+        artifact_id: p.artifact_id,
+        n: list.length + 1,
+        blob_key: p.blob_key,
+        content_type: p.content_type,
+        size_bytes: approval.size_bytes,
+        author: p.author,
+        author_id: p.author_id ?? null,
+        message: p.message ?? "Approved proposal",
+        name: null,
+        created_at: "t",
+      }
+      list.push(rec)
+      versions.set(p.artifact_id, list)
+      const art = byId.get(p.artifact_id)
+      if (art) art.current_version = rec.n
+      Object.assign(p, {
+        state: "approved",
+        decided_by: approval.decided_by,
+        decided_by_id: approval.decided_by_id,
+        decided_version: rec.n,
+        decision_note: approval.decision_note ?? null,
+      })
+      return rec
+    },
     decideProposal: async (id: string, f: Record<string, unknown>) => {
       const p = proposals.get(id)
-      if (p) Object.assign(p, f)
-      return p ?? null
+      if (p?.state !== "open") return null
+      Object.assign(p, f)
+      return p
     },
     setVersionPreview: async () => {},
   }
@@ -324,6 +364,14 @@ describe("publish: bundles (zip)", () => {
 })
 
 describe("publish: republish an existing artifact", () => {
+  it("records validated derivation lineage on creation", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const source = await publish(meta, blobs, file("source"))
+    const copy = await publish(meta, blobs, { ...file("copy"), derivedFrom: source.artifact.id })
+    expect(copy.artifact.derived_from).toBe(source.artifact.id)
+  })
+
   it("appends a version under the same short id", async () => {
     const meta = makeMeta()
     const blobs = makeBlobs()
@@ -374,7 +422,7 @@ describe("propose: a candidate version awaiting review", () => {
     const blobs = makeBlobs()
     const { artifact } = await publish(meta, blobs, file("v1"))
     const { proposal } = await propose(meta, blobs, artifact.short_id, proposeInput("candidate"))
-    const version = await approveProposal(meta, blobs, proposal, "amy", "lgtm")
+    const version = await approveProposal(meta, blobs, proposal, "amy", "u_amy", "lgtm")
     expect(version.n).toBe(2)
     expect(version.blob_key).toBe(proposal.blob_key) // reuses the proposal's stored bytes
   })
@@ -385,7 +433,7 @@ describe("propose: a candidate version awaiting review", () => {
     const { artifact } = await publish(meta, blobs, file("v1"))
     const { proposal } = await propose(meta, blobs, artifact.short_id, proposeInput("candidate"))
     await expect(
-      approveProposal(meta, blobs, { ...proposal, state: "approved" }, "amy"),
+      approveProposal(meta, blobs, { ...proposal, state: "approved" }, "amy", "u_amy"),
     ).rejects.toMatchObject({ statusCode: 409 })
   })
 })

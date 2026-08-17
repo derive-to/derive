@@ -502,7 +502,7 @@ export const systemRoutes = (ctx: AppContext) => {
         `<!doctype html><meta charset="utf-8"><title>Derive</title>
 <body style="font:16px/1.6 system-ui;background:#f6f0e3;color:#2a2540;display:grid;place-items:center;height:100vh;margin:0">
 <div style="text-align:center"><h1 style="letter-spacing:-.02em">Derive</h1>
-<p>An open home for AI-generated artifacts.<br>
+<p>Keep, share, and improve agent-made work.<br>
 <code style="background:#eee7d6;padding:2px 8px;border-radius:6px">derive publish ./your-thing</code></p></div>`,
       ),
     )

@@ -1,6 +1,6 @@
 ---
 name: publishing
-summary: create and revise artifacts (incl. fully-styled HTML pages), stage large documents, and file proposals for review (publish, stage)
+summary: create and revise artifacts, including styled HTML pages; stage large documents; and handle permission-gated proposals (publish, stage)
 order: 3
 ---
 # Publishing to Derive
@@ -28,14 +28,14 @@ sandboxed viewer, so publish real designed pages, not just prose.
 
 - **Create vs revise.** OMIT `short_id` to create a NEW artifact (`title` required); PASS
   `short_id` to add a version to one you own, matching its kind. Kind can't change on
-  republish — a bundle stays a bundle, a single file stays a single file.
+  republish. A bundle stays a bundle, and a single file stays a single file.
 - **Surgical edits (preferred for partial changes).** To change PART of a single-file
-  artifact, prefer `edits` — exact-match search/replace against the stored source — over
+  artifact, prefer `edits`, which applies exact-match replacements to the stored source, over
   resending everything. Read `format:'html'` FIRST on an HTML artifact: edits match the
   raw stored source, and the markdown reading view will not match. Each edit is
   `{ old_str, new_str, occurrence? }`, applied in order (each edit sees the previous
   one's result). `old_str` must occur exactly once, unless `occurrence` (a 1-based index)
-  picks one of several. `new_str` empty deletes. The batch errors — applying NOTHING — if
+  picks one of several. An empty `new_str` deletes the match. The batch applies nothing if
   any `old_str` matches zero times, or matches more than once without `occurrence`; the
   error explains why (a whitespace difference, or the doc changed) so you can fix it in
   one round. Requires `short_id`; use INSTEAD of `content`. Composes with `for_review`,
@@ -44,7 +44,7 @@ sandboxed viewer, so publish real designed pages, not just prose.
   publish errors instead of applying when the artifact has moved past it.
 - **Full single file.** Provide the complete `content` (HTML or Markdown) for a
   single-file artifact.
-- **Bundle.** Provide `files` (a map of page path → content) for a MULTI-PAGE bundle — a
+- **Bundle.** Provide `files` (a map of page path → content) for a multi-page bundle such as a
   whole site, images and any binary asset. The root `index.html` (else the shallowest
   `.html`) becomes the entry page; pages reference assets by relative path. Served
   content-type comes from the file extension, so give binary entries a real extension
@@ -53,11 +53,11 @@ sandboxed viewer, so publish real designed pages, not just prose.
 
 ## Bundles: merge and spa
 
-- A plain bundle republish REPLACES the whole bundle, so include EVERY page and asset — or
+- A plain bundle republish replaces the whole bundle. Include every page and asset, or
   use `merge`.
 - **merge**: add/overwrite the given `files` INTO the existing bundle instead of replacing
   it (default false). Build a large site across several calls without re-sending it:
-  publish the pages first, then merge in batches of assets — each call carries only the new
+  publish the pages first, then merge assets in batches. Each call carries only the new
   files. Requires the `short_id` of a bundle; same-path files overwrite, the rest are kept.
 - **spa** (a NEW bundle only): serve unknown paths from the entry page (single-page-app
   routing). Default false.
@@ -74,7 +74,7 @@ an artifact.
 ## Fully-styled HTML
 
 A single-file artifact with its own `<style>`, scripts, fonts and images renders
-as-authored in the sandboxed viewer (note: the `read` tool FLATTENS HTML to text — that
+as authored in the sandboxed viewer. The `read` tool flattens HTML to text; that
 reading view is not what a viewer sees). Two rules:
 
 - Declare your own `<meta name="viewport">`. Pages without one get a mobile-reflow
@@ -84,24 +84,32 @@ reading view is not what a viewer sees). Two rules:
   of base64.
 
 After publishing a styled page, call `read` with `render:"top"` (or `"full"`/`"marked"`)
-to SEE what shipped — a screenshot of the served page catches visual breakage (a failed
+to inspect what shipped. A screenshot of the served page catches visual breakage, such as a failed
 font, a broken layout) that no text read can. The screenshots are computed a few seconds
 after each publish.
 
 **Building slides? Read `derive://skills/decks` first.** A deck is single-file HTML like any
 other page, but it has to announce itself over the `derive-deck` protocol to get the
-presentation bar, Present mode, and comments that pin to a slide — and a deck that skips
-that still looks right, so the loss is invisible. `derive://decks/template` is a complete
+presentation bar, Present mode, and comments that pin to a slide. A deck without the protocol can
+still look right, which makes the missing behavior easy to miss. `derive://decks/template` is a complete
 working starter.
+
+**Building a lightweight HTML video? Start from `derive://videos/template`.** Keep one
+`data-derive-video` root with flat, stable `data-derive-scene` children. Derive then reuses
+its playback/fullscreen bar, direct canvas editor, Inspect, shared undo/Save/Suggest,
+comments, versions and sharing. Scene duration is 1000–30000 ms; transitions are `cut`,
+`fade`, `dissolve` or `slide`. `read(map:true)` exposes `scene:<id>` nodes and `$video`
+exposes timing metadata. Quote/element edits and `scene-update`/`scene-move`/
+`scene-duplicate`/`scene-delete` publish atomically with `base_version`.
 
 ## stage target:'doc' for large docs and bundles
 
-Inline `content`/`files` is model output — capped by the per-response token ceiling and
+Inline `content` and `files` count as model output. They are capped by the response token limit and
 forced into slow, costly multi-turn chunking once a file is bigger than a page or two (and
 publish REJECTS an inline payload past ~64KB). For a document too large to inline (a big
 designed HTML page or a multi-file bundle), call `stage` with target:'doc' and curl the
-file/zip to the returned URL instead of chunking it through content/files — zero bytes
-through the model's context.
+file or zip to the returned URL instead of chunking it through tool arguments. This keeps the file
+bytes out of the model context.
 
 Omit `short_id` to CREATE a new artifact; pass a `short_id` to REVISE that one (the token is
 scoped to exactly that target). Then from your shell: a single file → `curl -sS -F
@@ -118,8 +126,8 @@ this trend over thirty days" means re-reading and re-parsing thirty of your own 
 A **facts** fixes that. Put the numbers in the document as an inert block, and Derive
 extracts them per version so you can read them back as JSON.
 
-The block lives IN the page (so it can never drift from what the page shows, and it
-travels through every publish path for free — inline, staged, REST, CLI, the editor):
+The block lives in the page, so it cannot drift from what the page shows. It travels through
+every publish path: inline, staged, REST, CLI, and the editor.
 
 ```html
 <script type="application/derive-facts" data-fact="checks">
@@ -138,7 +146,7 @@ In markdown, a fence whose info string names the fact:
 Read it back with `read`: `data:"checks"` returns that slot's JSON for the version,
 `data:"*"` lists the facts a version carries. Pass `version` to read a past one.
 
-**The trend read.** Versions are the time axis, so one call spans them —
+**Read a trend.** Versions are the time axis, so one call can span them:
 `data:"checks", versions:"all"` (or `"1-30"`, `"12"`, `"20-"`) returns the series
 oldest-first, one point per version that carries the fact:
 
@@ -152,11 +160,11 @@ points; past that it tells you and hands back the range to ask for.
 
 **Across artifacts.** `find(data:"checks")` reads that slot from EVERY artifact that
 carries it (each one's current version), and `find(data:"checks", tag:"nightly")` scopes
-it to a tagged set. `find(data:"*")` lists which facts exist in the workspace at all — the
-way to discover a vocabulary you did not author.
+it to a tagged set. `find(data:"*")` lists which facts exist in the workspace. Use it to
+discover fact names you did not author.
 
 **What links here.** `find(links_to:"<short_id or URL>")` returns every artifact whose
-current version references that one — the inversion of the host-derived `$links` fact.
+current version references that one. It is the inverse of the host-derived `$links` fact.
 Reach for it instead of `find(query:"<short_id>")`, which ranks and caps a guess at
 relevance: the index is exhaustive, and it counts only real link targets, never a short id
 sitting in prose. Two gaps worth knowing: bundles and skills carry no facts, so references
@@ -166,7 +174,7 @@ carries no row until it is read once.
 Outside MCP, the same data is a URL: `GET /raw/<short_id>/data/<slot>.json` for the
 current version, `/raw/<short_id>/v/<n>/data/<slot>.json` to pin one, and
 `/raw/<short_id>/data/<slot>.jsonl` for the WHOLE series (one JSON object per version,
-oldest first) — so a page can chart its own history, a shell can pipe it to jq, and
+oldest first). A page can chart its own history, a shell can pipe it to jq, and
 anything wanting SQL can point DuckDB at it. Same access as the artifact itself.
 
 Rules worth knowing before you author one:
@@ -174,10 +182,10 @@ Rules worth knowing before you author one:
 - Fact names are lowercase letters, digits and hyphens (up to 64 chars). First occurrence
   of a name wins.
 - The body must be valid JSON. 32KB per slot, 20 facts per version, sizes counted in BYTES.
-- A fact that can't be stored (bad name, invalid JSON, too big) NEVER fails the publish —
-  it comes back as an advisory in the response, so read those.
+- A fact that cannot be stored because of a bad name, invalid JSON, or size does not fail the
+  publish. It returns an advisory in the response.
 - A literal `</script>` inside your JSON ends the block early (HTML rules, same as a
-  browser) — write it `<\/script>`.
+  browser). Write it `<\/script>`.
 - Facts are per VERSION and immutable, like the version itself. Republishing without the
   block simply means that new version carries no slot; the old version keeps its own.
 - Single-file HTML and markdown artifacts only (not bundles).
@@ -185,34 +193,38 @@ Rules worth knowing before you author one:
 ## content_sha256 verification
 
 A single-file publish's response echoes `content_sha256` of the stored bytes (the
-content-addressed blob key) — verify it when the content passed through your context, so
+content-addressed blob key). Verify it when the content passed through your context, so
 you know what landed matches what you sent.
 
-## Proposals and review (the /derive loop)
+## Proposals and formal review
 
-`publish` goes LIVE immediately if your role can publish (Creator/Admin); otherwise — or
-whenever you pass `for_review:true` — it is filed as a PROPOSAL a human approves before it
-goes live. (Proposals are single-file only; bundles must be published directly.)
+The normal path is a direct publish. `publish` goes live immediately for a Creator or Admin.
+When your permissions do not allow that, Derive files a proposal for someone with publish access
+to decide. Passing `for_review:true` also creates a proposal. Proposals support single files only;
+bundles must be published directly.
+
+Do not create a proposal or request formal review unless permissions require it or the user asks
+for it.
 
 - **addresses**: pass the thread ids (from catch_up) this revision resolves. On a live
   publish they resolve; on a proposal they flip to `addressed` and resolve on approval.
 - **request_review**: after a LIVE publish, open a review round asking your human to review
-  this version — the /derive loop. They answer inline and hit Send back (or Approve); poll
-  catch_up's `review` field for the state. No effect on a proposal (that already IS a
-  review).
+  this version. They can answer inline, send it back, or approve it. Poll `catch_up`'s `review`
+  field for the state. This has no effect on a proposal because a proposal already needs a
+  decision.
 
 ## Access on a NEW artifact
 
 Access is set on create; a republish never re-stamps it. The factory default is the "team
-draft" — `workspace_access=member`, `link_role=none`, `listed=none`: a teammate can open
+draft": `workspace_access=member`, `link_role=none`, `listed=none`. A teammate can open
 the pasted link, the world can't, and it stays out of feeds until a human promotes it.
-Sharing wider (`workspace_access`, `link_role`, `listed`) stays a deliberate act — see
+Sharing wider through `workspace_access`, `link_role`, or `listed` stays a deliberate act. See
 those params' own descriptions for the exact meanings.
 
 ## Reaching REST from your shell (stage target:'api')
 
 Your credential lives INSIDE this MCP transport: the connector holds it, your shell does
-not. So a REST route that has no tool — and anything you want to script with curl — is
+not. A REST route with no tool, or anything you want to script with curl, is therefore
 unreachable at the access you already hold, and hunting for a second credential (a CLI
 login, its own scopes, its own expiry) is the detour that wastes a session.
 
@@ -223,12 +235,12 @@ connection ALREADY has, so you can curl any route that access can reach.
   to that ONE workspace, ~15 minutes, not refreshable. Narrow it further with
   `access:"read"|"comment"|"publish"|"manage"` when the job needs less than you hold.
 - **It cannot widen your reach.** Asking for more than the grant holds is refused, naming
-  whether the SCOPE or your workspace ROLE is short — they need opposite fixes (re-consent
+  whether the scope or workspace role is short. They need different fixes: re-consent
   vs an admin changing your seat).
 - **It expires rather than refreshes.** When it lapses, mint another; that is one tool call,
   so there is no refresh token to rotate and no session to keep alive.
 - **Treat it as the real credential it is.** It is not redacted from this transcript. Its
-  blast radius is one workspace, one role, minutes — and removing the human from that
+  reach is one workspace, one role, and a few minutes. Removing the human from that
   workspace kills it immediately, mid-TTL.
 
 Use `list_workspaces` first when unsure what you hold: it reports the principal kind, the

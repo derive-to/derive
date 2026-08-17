@@ -44,6 +44,7 @@ import {
   validateLinkedBundle,
   type WorkspaceAccess,
 } from "@derive/core"
+import { getTemplate as getBuiltInTemplate } from "@derive-to/templates"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import { setCookie } from "hono/cookie"
@@ -86,6 +87,7 @@ import {
   linkRoleOf,
   listedOf,
   MAX_UPLOAD_BYTES,
+  RAW_TOKEN_MAX_AGE_MS,
   RAW_TOKEN_WINDOW_MS,
   readJson,
   str,
@@ -176,9 +178,9 @@ export const artifactRoutes = (ctx: AppContext) => {
   const app = new OpenAPIHono<BlankEnv>()
 
   // Keyset-paginated (?sort=&cursor=&limit=N; the cursor is keyed on the active sort —
-  // see sortKeyOf), with optional server-side ?query= (title search), ?tag=, and
-  // ?favorite=true. Returns { artifacts, next_cursor }. tag/favorite resolve to an id
-  // set first.
+  // see sortKeyOf), with optional server-side ?query= (artifact title, tag, or
+  // collection-title search), ?tag=, and ?favorite=true. Returns { artifacts,
+  // next_cursor }. tag/favorite resolve to an id set first.
   app.openapi(
     createRoute({
       method: "get",
@@ -231,13 +233,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       // keep the historical created-desc ordering when no ?sort= is given.
       const sort = parseSortMode(c.req.query("sort") ?? "created")
       // Cap the search term: it goes into a SQL LIKE, and an oversized value tripped
-      // an unhandled DB error (a long-q 500). No real title search needs > 200 chars.
+      // an unhandled DB error (a long-q 500). No real metadata search needs > 200 chars.
       const q = c.req.query("query")?.trim().slice(0, 200) || undefined
       const tag = c.req.query("tag")?.trim() || undefined
       const collectionId = requestedCollection
       const favOnly = c.req.query("favorite") === "true"
       // ?author=<github login> narrows to artifacts whose current author is that login.
       const author = c.req.query("author")?.trim().slice(0, 100) || undefined
+      const archivedOnly = c.req.query("scope") === "archived"
 
       // The FAVORITES FEED needs the star list before the list query, because it narrows
       // by it. Every other listing only needs to know which rows on the page it got back
@@ -352,6 +355,9 @@ export const artifactRoutes = (ctx: AppContext) => {
         cursor,
         sort,
         q,
+        // Collection titles are searchable only when this caller can see that
+        // collection. Artifact titles/tags already ride the artifact visibility gate.
+        collectionSearchViewerId: isOperator ? undefined : memberKey,
         ids,
         collectionId,
         // `shared` and `following` both resolve to an id set that ALREADY encodes the
@@ -371,6 +377,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // (all items) would outrun the list (only your explicitly-shared items).
         viewerId:
           isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
+        archived: archivedOnly ? ("only" as const) : ("exclude" as const),
       }
       // THE COLD BOOT'S CRITICAL PATH. After the rest of this PR, nothing is queued in
       // front of this request any more — the first card paints 43ms after it lands — so
@@ -490,6 +497,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             "application/json": {
               schema: z.object({
                 total: z.number().describe("Total artifacts in the workspace."),
+                archived: z.number().describe("Artifacts on the reversible archive shelf."),
                 favorites: z.number().describe("The caller's favorite count in this workspace."),
                 mine: z.number().describe("Count of artifacts the caller owns ('Created by me')."),
                 mine_private: z
@@ -519,6 +527,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!(await isMember(c, org)))
         return c.json({
           total: 0,
+          archived: 0,
           favorites: 0,
           mine: 0,
           mine_private: 0,
@@ -536,6 +545,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const tags = [...summary.tags].sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
       return c.json({
         total: summary.total,
+        archived: summary.archived,
         favorites: summary.favorites,
         mine: summary.mine,
         mine_private: summary.minePrivate,
@@ -1717,10 +1727,16 @@ export const artifactRoutes = (ctx: AppContext) => {
       const bylineByUserId = bylinesFrom(detail.bylines)
       // Remix provenance for the derived-from banner: resolve the source to its public
       // identity. Detail-only (the list would N+1), and only for derived rows.
-      const derivedFrom = artifact.derived_from
-        ? await meta.getArtifactById(artifact.derived_from)
+      const builtInTemplateId = artifact.derived_from?.startsWith("derive://templates/")
+        ? artifact.derived_from.slice("derive://templates/".length)
         : null
+      const builtInTemplate = builtInTemplateId ? getBuiltInTemplate(builtInTemplateId) : null
+      const derivedFrom =
+        artifact.derived_from && !builtInTemplateId
+          ? await meta.getArtifactById(artifact.derived_from)
+          : null
       const base = toJson(deps.baseUrl, artifact, versions)
+      const rawTokenIssuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
       // which actions to surface; `open_proposals` badges the review queue while
@@ -1772,9 +1788,18 @@ export const artifactRoutes = (ctx: AppContext) => {
         org_id: artifact.org_id,
         ...(artifact.derived_from
           ? {
-              derived_from:
-                derivedFrom && !derivedFrom.removed_at
-                  ? { short_id: derivedFrom.short_id, title: derivedFrom.title }
+              derived_from: builtInTemplate
+                ? {
+                    short_id: artifact.derived_from,
+                    title: builtInTemplate.title,
+                    kind: "template" as const,
+                  }
+                : derivedFrom && !derivedFrom.removed_at
+                  ? {
+                      short_id: derivedFrom.short_id,
+                      title: derivedFrom.title,
+                      kind: "artifact" as const,
+                    }
                   : null,
             }
           : {}),
@@ -1808,11 +1833,11 @@ export const artifactRoutes = (ctx: AppContext) => {
         // a different URL every fetch, which silently defeated the cache — measured, an
         // open whose URL matched served in 13ms from cache; the next one re-downloaded
         // 15KB. Validity is unchanged (verifyState still enforces the same max age).
-        raw_token: signState(
-          { rid: artifact.id },
-          deps.encryptionKey ?? "",
-          bucketedNow(RAW_TOKEN_WINDOW_MS),
-        ),
+        raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? "", rawTokenIssuedAt),
+        // The detail record can outlive the capability in the browser query cache.
+        // Make the lifetime explicit so the viewer never pins an expired token while
+        // React Query refreshes the record in the background.
+        raw_token_expires_at: new Date(rawTokenIssuedAt + RAW_TOKEN_MAX_AGE_MS).toISOString(),
       })
     },
   )
@@ -1940,6 +1965,70 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (b instanceof Response) return bail(b)
       await meta.setLocked(artifact.id, b.locked ? 1 : 0)
       return c.json({ locked: b.locked })
+    },
+  )
+
+  // Archive changes discovery only; direct reads and related records remain intact.
+  for (const archived of [true, false] as const) {
+    app.openapi(
+      createRoute({
+        method: archived ? "put" : "delete",
+        path: "/v1/artifacts/{shortId}/archive",
+        tags: ["Artifacts"],
+        summary: archived ? "Archive an artifact (editors)." : "Restore an archived artifact.",
+        request: { params: z.object({ shortId: z.string() }) },
+        responses: {
+          200: {
+            description: archived ? "Archived." : "Restored to the library.",
+            content: { "application/json": { schema: z.object({ archived: z.boolean() }) } },
+          },
+        },
+      }),
+      async (c) => {
+        const artifact = await requireArtifact(c, "publish")
+        if (artifact instanceof Response) return bail(artifact)
+        if (archived && artifact.removed_at)
+          return bail(fail(c, 409, "removed artifacts cannot be archived"))
+        await meta.setArtifactArchived(artifact.id, archived ? new Date().toISOString() : null)
+        return c.json({ archived })
+      },
+    )
+  }
+
+  // Bulk archive and restore preserve the per-artifact authorization contract.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/bulk/archive",
+      tags: ["Artifacts"],
+      summary: "Archive or restore many artifacts (editor-gated per artifact).",
+      responses: {
+        200: {
+          description: "How many were archived or restored / skipped / failed.",
+          content: { "application/json": { schema: BulkSummarySchema } },
+        },
+      },
+    }),
+    async (c) => {
+      const body = await readJson(
+        c,
+        z.object({
+          shortIds: z.array(z.string()).min(1).max(BULK_MAX),
+          archived: z.boolean(),
+        }),
+      )
+      if (body instanceof Response) return bail(body)
+      const timestamp = body.archived ? new Date().toISOString() : null
+      const summary = await bulkArtifactOp(
+        body.shortIds,
+        (ids) => meta.getByShortIds(ids),
+        async (a) => {
+          if (body.archived && a.removed_at) return false
+          return authorize(c, "publish", a)
+        },
+        (a) => meta.setArtifactArchived(a.id, timestamp),
+      )
+      return c.json(summary)
     },
   )
 

@@ -10,7 +10,7 @@ Prefer the remote Streamable HTTP MCP. It is the authoritative Derive agent surf
 | Comment, reply, react, resolve | `comment` | `comment` |
 | Publish a file or exact edits | `publish` | `publish` |
 | Upload large docs or assets | `stage` | Not available |
-| Tags and collections | `organize` | `organize` |
+| Tags, collections and archiving | `organize` | `organize` |
 | Cross-workspace selection | `list_workspaces` + `workspace` | `list_workspaces` + per-tool `workspace` |
 | Live workspace contexts | `find` + `use` | Not available |
 | Resumable agent state | `checkpoint` | Not available |

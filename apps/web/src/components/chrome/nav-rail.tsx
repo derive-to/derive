@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery } from "@tanstack/react-query"
 import { Link, useLocation } from "@tanstack/react-router"
 import { useState } from "react"
 import type { Collection } from "@/api"
@@ -135,7 +135,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/contexts" | "/chat"
+  to: "/following" | "/contexts" | "/templates" | "/chat" | "/archived"
   active: boolean
   testId?: string
 }) {
@@ -213,7 +213,7 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
           // so suppress it — the route-agnostic boot frame hydrates without a warning.
           suppressHydrationWarning
           onClick={() => setOpenMobile(false)}
-          aria-label="Derive — home"
+          aria-label="Derive home"
           className="flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
         >
           <Logo size={20} />
@@ -344,8 +344,7 @@ export function RailSkeleton() {
 // (collections) → tools → account — separated by whitespace, not dividers.
 export function NavRail() {
   const { switchWorkspace } = useShell()
-  const { me, loading } = useAuth()
-  const qc = useQueryClient()
+  const { me } = useAuth()
   // Nav data read straight from react-query (deduped with the loaders that warm
   // it). enabled on a session so an anon never hits the authed endpoints.
   // Gated on the boot batch: /v1/bootstrap seeds these caches in ONE request with the
@@ -369,7 +368,7 @@ export function NavRail() {
   // name is provisioning plumbing), else the summary's workspace name.
   const activeWs = workspaces?.workspaces.find((w) => w.id === workspaces.active)
   const workspaceLabel = activeWs?.personal ? "Personal" : (summary?.workspace ?? "")
-  const { state, setOpenMobile } = useSidebar()
+  const { setOpenMobile } = useSidebar()
   const loc = useLocation()
   const search = loc.search as LibrarySearch
   const onLibrary = loc.pathname === "/"
@@ -377,8 +376,10 @@ export function NavRail() {
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
   const onContexts = loc.pathname.startsWith("/contexts")
+  const onTemplates = loc.pathname.startsWith("/templates")
   const onSettings = loc.pathname.startsWith("/settings")
   const onChat = loc.pathname.startsWith("/chat")
+  const onArchived = loc.pathname === "/archived"
   // Chat is on by default, so the row hides only once settings have RESOLVED and said otherwise
   // — `undefined` (still loading, or the read failed) keeps the row rather than blinking it out
   // and back on every cold boot. It rides the boot batch the rail already waits for, so this
@@ -388,8 +389,6 @@ export function NavRail() {
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
 
-  const [_creating, _setCreating] = useState(false)
-  const [_newName, _setNewName] = useState("")
   // Repo collections whose nested PR previews are collapsed. Default-expanded, so the
   // set holds only the ones the user has folded shut.
   const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())
@@ -552,6 +551,13 @@ export function NavRail() {
                 testId="sidebar-all"
               />
               <NavItem
+                icon="templates"
+                label="Templates"
+                to="/templates"
+                active={onTemplates}
+                testId="nav-templates"
+              />
+              <NavItem
                 icon="context"
                 label="Contexts"
                 to="/contexts"
@@ -599,6 +605,14 @@ export function NavRail() {
             <SidebarMenu>
               <SyncChip />
               <NotificationBell />
+              <NavItem
+                icon="archive"
+                label="Archived"
+                count={summary?.archived}
+                to="/archived"
+                active={onArchived}
+                testId="nav-archived"
+              />
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={onSettings} tooltip="Settings">
                   <Link

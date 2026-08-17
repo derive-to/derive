@@ -6,7 +6,9 @@ import {
   LINKED_BUNDLE_CONTENT_TYPE,
   LINKS_FACT,
   SKILL_CONTENT_TYPE,
+  templateLibraryUri,
 } from "@derive/core"
+import { listTemplates } from "@derive-to/templates"
 import { z } from "zod"
 import {
   searchArtifactVersion,
@@ -92,7 +94,18 @@ export const backlinkNotes = (o: {
 }
 
 export function registerFindTool(tc: ToolContext): void {
-  const { server, ctx, agent, actingFor, reach, notFound, resolveWs, wsArg, askableContexts } = tc
+  const {
+    server,
+    ctx,
+    agent,
+    actingFor,
+    ownerId,
+    reach,
+    notFound,
+    resolveWs,
+    wsArg,
+    askableContexts,
+  } = tc
 
   // Askable contexts as typed `find` rows — INVARIANT (A): sourced ONLY from
   // askableContexts (the per-human canUserAskContext gate), so a roster-gated context this
@@ -126,7 +139,7 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things; what you pass picks the MODE. `short_id`+`query` GREPs one artifact (in:'source' by default, the exact bytes; in:'text' the visible words), `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a phrase or question; empty means try another word, never that nothing exists. See derive://skills/finding.",
+        "Find things; what you pass picks the MODE. `templates:true` finds reusable starts, `short_id`+`query` GREPs one artifact, `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a phrase or question. See derive://skills/finding.",
       annotations: {
         title: "Find artifacts",
         readOnlyHint: true,
@@ -162,6 +175,16 @@ export function registerFindTool(tc: ToolContext): void {
           .describe(
             "Browse only: list only skills (bundles with a SKILL.md — reusable agent procedure).",
           ),
+        archived: z
+          .boolean()
+          .optional()
+          .describe("Browse only: true lists the archive shelf instead of the live library."),
+        templates: z
+          .boolean()
+          .optional()
+          .describe(
+            "Find built-in and accessible authored templates. Combine with `query` to filter; omit query to browse the template catalog.",
+          ),
         case_sensitive: z.boolean().optional(),
         in: z
           .enum(["source", "text"])
@@ -178,7 +201,9 @@ export function registerFindTool(tc: ToolContext): void {
         max_matches: z.coerce
           .number()
           .optional()
-          .describe("Grep/search: cap on matches per artifact (default 40, max 200)."),
+          .describe(
+            "Grep/search: cap on matches per artifact (default 40). Templates: cap total results (default 100). Maximum 200.",
+          ),
         links_to: z
           .string()
           .optional()
@@ -196,6 +221,8 @@ export function registerFindTool(tc: ToolContext): void {
       data,
       links_to,
       skills,
+      archived,
+      templates,
       case_sensitive,
       in: scope,
       context,
@@ -203,6 +230,68 @@ export function registerFindTool(tc: ToolContext): void {
       version,
       workspace,
     }) => {
+      if (
+        archived &&
+        (query || short_id || data !== undefined || links_to !== undefined || templates)
+      )
+        return err(
+          "`archived:true` applies only to browse mode (omit query/short_id/data/links_to/templates).",
+        )
+      if (templates && (short_id || data !== undefined || links_to || skills || archived))
+        return err(
+          "`templates:true` finds reusable starts. Combine it only with `query` and `workspace`.",
+        )
+      if (templates) {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const cap = Math.min(Math.max(max_matches ?? 100, 1), 200)
+        const needle = query?.trim().toLowerCase() ?? ""
+        const builtIns = listTemplates({ query }).map((template) => ({
+          type: "template" as const,
+          source: "built-in" as const,
+          id: template.id,
+          title: template.title,
+          description: template.description,
+          kind: template.kind,
+          category: template.category,
+          format: template.format,
+          uri: `derive://templates/${template.id}`,
+        }))
+        const authoredCapacity = Math.max(cap - builtIns.length, 0)
+        const authoredAll = authoredCapacity
+          ? await ctx.meta.searchTemplateLibraryEntries({
+              orgId: t.org,
+              ownerId,
+              ...(needle ? { query: needle } : {}),
+              limit: authoredCapacity + 1,
+            })
+          : []
+        const authoredRows = authoredAll.slice(0, authoredCapacity).map(({ library, entry }) => ({
+          type: "template" as const,
+          source: "library" as const,
+          id: entry.id,
+          title: entry.title,
+          description: entry.description,
+          kind: entry.kind,
+          category: entry.category,
+          format: entry.format,
+          library: { id: library.id, title: library.title, scope: library.scope },
+          uri: templateLibraryUri(library.id, entry.id),
+        }))
+        const allResults = [...builtIns, ...authoredRows]
+        const results = allResults.slice(0, cap)
+        const truncated = builtIns.length > cap || authoredAll.length > authoredCapacity
+        return json({
+          workspace: t.org,
+          ...(query ? { query } : {}),
+          count: results.length,
+          results,
+          truncated,
+          next: truncated
+            ? "Refine query to narrow the catalog, then read a result's uri. Adapt its starter, publish with lineage, and inspect the render."
+            : "Read a result's uri, adapt its starter to the person's request, publish with lineage, then inspect the render.",
+        })
+      }
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with
       // "`query` is required to grep" — the wrong error for a caller who asked a different
       // question. Backlinks reach artifacts by content across the workspace; the other three
@@ -456,7 +545,12 @@ export function registerFindTool(tc: ToolContext): void {
       const arts =
         ids && ids.length === 0
           ? []
-          : await ctx.meta.listArtifacts({ orgId: t.org, ids, viewerId: actingFor?.id ?? agent.id })
+          : await ctx.meta.listArtifacts({
+              orgId: t.org,
+              ids,
+              viewerId: actingFor?.id ?? agent.id,
+              archived: archived ? "only" : "exclude",
+            })
       // Skill-ness isn't a store-level filter (it's the denormalized content type).
       const rows = skills ? arts.filter((a) => a.current_content_type === SKILL_CONTENT_TYPE) : arts
       const tagMap = await ctx.meta.tagsForArtifacts(rows.map((a) => a.id))
@@ -465,7 +559,7 @@ export function registerFindTool(tc: ToolContext): void {
         ...summarizeArtifact(a),
         tags: tagMap[a.id] ?? [],
       }))
-      const contextRows = await contextFindRows(t.org)
+      const contextRows = archived ? [] : await contextFindRows(t.org)
       return json({
         workspace: t.org,
         count: artifactRows.length + contextRows.length,

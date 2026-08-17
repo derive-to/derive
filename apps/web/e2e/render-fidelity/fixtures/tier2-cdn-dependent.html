@@ -17,7 +17,7 @@
      restriction, this script silently fails to load and the render-fidelity test
      catches it (no console error alone would — a blocked <script src> just never
      runs, it doesn't throw in the page). -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.0/chart.umd.min.js" integrity="sha384-XcdcwHqIPULERb2yDEM4R0XaQKU3YnDsrTmjACBZyfdVVqjh6xQ4/DCMd7XLcA6Y" crossorigin="anonymous"></script>
 </head>
 <body>
 <h1>CDN-dependent artifact (Chart.js via cdnjs)</h1>

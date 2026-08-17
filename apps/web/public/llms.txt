@@ -1,12 +1,14 @@
 # Derive
 
-> Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
+> Keep, share, and improve agent-made pages and documents. Each artifact has a lasting URL, version history, and comments on exact text.
 
 ## What it is
 
-Derive gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+Derive is a workspace for work made with agents. Publish to a lasting URL, keep each revision,
+comment on exact text with W3C TextQuoteSelector, edit directly, and control who can read or
+change the work. Proposals and formal review are available when permissions or a decision require them.
 
-Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to.
+Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to. The FSL license converts each release to Apache-2.0 after two years.
 
 ## Artifact types
 
@@ -14,9 +16,9 @@ Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier
 - HTML (.html): the page itself, sandboxed in an opaque origin with CSP
 - HTML deck: HTML with <section class="slide"> elements, gets nav + present mode automatically via the derive-deck postMessage protocol
 
-## Anonymous drafts — publish with no account
+## Anonymous drafts
 
-The zero-setup path. One HTTP call, no credentials, live in about a second:
+The zero-setup path. One HTTP call, no credentials:
 
 ```
 POST /v1/drafts    multipart: file (one .html/.md, or a .zip site), optional title
@@ -24,10 +26,20 @@ POST /v1/drafts    multipart: file (one .html/.md, or a .zip site), optional tit
 
 Returns `draft_url` (live immediately at `<id>.derive.page`), `claim_url`, and
 `expires_at` (72h). Report all three to the user: the draft expires unless they open
-the claim link (sign in, one click) to keep it as a permanent versioned artifact —
-the draft URL then redirects to the permanent home. The secret URL is the only
+the claim link (sign in, one click) to keep it as a permanent versioned artifact.
+The draft URL then redirects to the permanent home. The secret URL is the only
 access (view-by-link, unlisted, noindex): don't put secrets in a draft. Drafts can't
-be revised — mint a new one, or claim first and revise through the MCP.
+be revised. Create a new one, or claim it before revising through MCP.
+
+## Reading a shared artifact URL (no token needed)
+
+Every `/artifacts/<ref>` share URL serves an agent-readable markdown projection of the
+document: request the URL with `Accept: text/markdown`, or append `.md` to it
+(`/artifacts/<ref>.md`, also `<ref>@vN.md` for a pinned version). Anonymous access works
+whenever the link itself is viewable (a password-locked link must be unlocked on the web
+page first); pinned versions other than the current one need a signed-in reader unless
+the artifact enables public history. Without the header or suffix the URL serves the web
+app's HTML shell, whose content loads client-side.
 
 ## Key API endpoints
 
@@ -44,12 +56,12 @@ GET    /v1/artifacts/:id/diff?from=1&to=2      line diff between versions
 GET    /raw/:id/v/:n/index.html                permanent artifact URL (immutable, cacheable)
 ```
 
-Access on create (three independent fields; omitted fields use the workspace default —
-the factory default is the "team draft"):
+Access on create uses three independent fields. Omitted fields use the workspace default;
+the factory default is the "team draft":
 
-- workspace_access: none | member — do workspace members reach it (each at their seat role)
-- link_role: none | viewer | commenter | editor — what merely holding the URL confers on anyone
-- listed: none | workspace | public — where it surfaces for discovery (no access of its own)
+- workspace_access: none | member. Sets whether workspace members can access it at their seat role.
+- link_role: none | viewer | commenter | editor. Sets the access granted to anyone holding the URL.
+- listed: none | workspace | public. Sets where the artifact appears for discovery; it grants no access.
 
 Plus password (locks the world link; only meaningful with link_role != none). The legacy
 `visibility` param (public | link | org | password) is still accepted and mapped.
@@ -79,12 +91,12 @@ search, read, catch_up, comment, organize, publish.
 Resources: derive://skills/publishing, /assets, /loop, /contexts, /checkpoint, /organize.
 The stdio server also exposes derive://guide.
 
-## The agent loop
+## Updating existing work
 
-1. catch_up -> what changed since since_version, plus the open feedback to address
-2. read -> the content (a bundle page, or a past version), then revise
-3. comment (reply/resolve) and/or publish with addresses: [threadIds] -> same URL, a new version, threads closed atomically
-4. repeat
+1. catch_up -> what changed since `since_version`, plus open feedback
+2. read -> the current content, a bundle page, or a past version
+3. comment -> reply, resolve, or reopen a thread when needed
+4. publish with addresses: [threadIds] -> same URL, new version, addressed threads closed atomically
 
 ## Deployment tiers
 
@@ -98,14 +110,15 @@ Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 
 ## Agent discovery
 
-- /skill.md — the Derive agent skill, self-contained (when to use it, the tool surface, the loop)
-- /.well-known/agent.json — machine-readable capability manifest for this instance
-- /openapi.json — the OpenAPI spec; /docs — its reference UI
-- /llms-full.txt — the long-form version of this file
+- /skill.md: the Derive agent skill, including when to use it, the tools, and the workflow
+- /.well-known/agent.json: machine-readable capability manifest for this instance
+- /openapi.json: the OpenAPI spec; /docs is its reference UI
+- https://docs.derive.to/: human documentation; /examples has live artifact examples and source
+- /llms-full.txt: the long-form version of this file
 
 ## Scope and drift
 
-- Derive hosts documents, pages, and versioned artifacts — not compute. Do not use it for
+- Derive hosts documents, pages, and versioned artifacts. It does not run compute. Do not use it for
   server-side code execution, general-purpose data storage, secrets, or app backends.
 - If this file and the live API disagree, trust the live API: fetched copies go stale.
   Re-read /skill.md or /docs before answering capability questions.
@@ -113,5 +126,5 @@ Key env vars: BASE_URL, DERIVE_AUTH_SECRET (openssl rand -hex 32), DERIVE_TOKEN
 ## Links
 
 - GitHub: https://github.com/derive-to/derive
-- Deploy guide: DEPLOY.md in the repo
+- Deployment guide: https://docs.derive.to/self-hosting/configuration/
 - MCP skill: packages/mcp/SKILL.md (also served at /skill.md and as derive://guide)

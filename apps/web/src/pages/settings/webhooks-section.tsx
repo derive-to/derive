@@ -37,8 +37,8 @@ export function WebhooksSection() {
       title="Webhooks"
       description={
         <>
-          Get a POST — or a Slack message — when comments change or a new version is published.
-          Payloads are signed (
+          Get a POST or Slack message when comments change or a new version is published. Payloads
+          are signed (
           <a
             href="https://www.standardwebhooks.com"
             target="_blank"
@@ -62,7 +62,7 @@ export function WebhooksSection() {
           onRetry={() => refetch()}
         />
       ) : !hooks || hooks.length === 0 ? (
-        <SettingsEmpty>No webhooks yet — nothing is being sent anywhere.</SettingsEmpty>
+        <SettingsEmpty>No webhooks yet. Derive is not sending events anywhere.</SettingsEmpty>
       ) : (
         <SettingsGroup>
           {hooks.map((w) => (
@@ -137,7 +137,7 @@ function NewWebhook({
               className="self-start px-0 text-muted-foreground"
               onClick={() => setFiltering(true)}
             >
-              Sends every event — filter…
+              Send every event or add a filter
             </Button>
           ) : (
             <div className="flex flex-wrap gap-3.5">

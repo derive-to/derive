@@ -443,7 +443,7 @@ export function CollectionsDialog({
           <div className="text-sm text-muted-foreground">
             {query.trim()
               ? "No collection matches."
-              : "No collections yet — type a name above to create one."}
+              : "No collections yet. Type a name above to create one."}
           </div>
         )}
         {body.length > 0 && (

@@ -15,7 +15,7 @@ export const Route = createFileRoute("/artifacts/$ref")({
   // context and falls back to the artifact's sole collection, if any).
   // `present=1` opens a deck straight into present mode, which is what you want from
   // the link you paste into the calendar invite for the meeting you're presenting in.
-  // `use=1` is deferred use-as-template: the public viewer's "Make your own" sends a
+  // `use=1` is deferred use-as-template: the public viewer's "Make a copy" sends a
   // signed-out clicker through login with it, and the page fires the copy once the
   // visitor is authenticated. Gated by a same-tab click marker (a pasted ?use=1
   // link must not write — see pages/artifact/lib/use-intent.ts) and stripped after
@@ -28,12 +28,18 @@ export const Route = createFileRoute("/artifacts/$ref")({
     collection?: string
     present?: boolean
     use?: boolean
+    scene?: string
+    t?: number
   } => ({
     ...(typeof s.comment === "string" && s.comment ? { comment: s.comment } : {}),
     ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
     ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
     ...(s.present === true || s.present === "1" || s.present === "true" ? { present: true } : {}),
     ...(s.use === true || s.use === "1" || s.use === "true" ? { use: true } : {}),
+    ...(typeof s.scene === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(s.scene)
+      ? { scene: s.scene }
+      : {}),
+    ...(Number.isFinite(Number(s.t)) && Number(s.t) >= 0 ? { t: Number(s.t) } : {}),
   }),
   // Warm the artifact + its comments so an intent-preloaded link opens instantly.
   // NOT the rendered HTML: a rel=prefetch of the viewer URL is never reused by the

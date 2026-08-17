@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UnlistedRouteImport } from './routes/unlisted'
+import { Route as TemplatesRouteImport } from './routes/templates'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as SharedRouteImport } from './routes/shared'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -25,10 +26,13 @@ import { Route as FeedbackRouteImport } from './routes/feedback'
 import { Route as FavoritesRouteImport } from './routes/favorites'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as BrandprintRouteImport } from './routes/brandprint'
+import { Route as ArchivedRouteImport } from './routes/archived'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
+import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as ContextsNewRouteImport } from './routes/contexts.new'
@@ -47,6 +51,11 @@ const WelcomeRoute = WelcomeRouteImport.update({
 const UnlistedRoute = UnlistedRouteImport.update({
   id: '/unlisted',
   path: '/unlisted',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplatesRoute = TemplatesRouteImport.update({
+  id: '/templates',
+  path: '/templates',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShowcaseRoute = ShowcaseRouteImport.update({
@@ -119,9 +128,19 @@ const BrandprintRoute = BrandprintRouteImport.update({
   path: '/brandprint',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ArchivedRoute = ArchivedRouteImport.update({
+  id: '/archived',
+  path: '/archived',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplateLibrariesIndexRoute = TemplateLibrariesIndexRouteImport.update({
+  id: '/template-libraries/',
+  path: '/template-libraries/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
@@ -137,6 +156,11 @@ const ContextsIndexRoute = ContextsIndexRouteImport.update({
 const UsersHandleRoute = UsersHandleRouteImport.update({
   id: '/users/$handle',
   path: '/users/$handle',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TemplateLibrariesIdRoute = TemplateLibrariesIdRouteImport.update({
+  id: '/template-libraries/$id',
+  path: '/template-libraries/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsSectionRoute = SettingsSectionRouteImport.update({
@@ -187,6 +211,7 @@ const InviteATokenRoute = InviteATokenRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
@@ -201,6 +226,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/templates': typeof TemplatesRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -210,14 +236,17 @@ export interface FileRoutesByFullPath {
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/users/$handle': typeof UsersHandleRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
@@ -231,6 +260,7 @@ export interface FileRoutesByTo {
   '/search': typeof SearchRoute
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/templates': typeof TemplatesRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -240,15 +270,18 @@ export interface FileRoutesByTo {
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/users/$handle': typeof UsersHandleRoute
   '/contexts': typeof ContextsIndexRoute
   '/settings': typeof SettingsIndexRoute
+  '/template-libraries': typeof TemplateLibrariesIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
   '/favorites': typeof FavoritesRoute
@@ -263,6 +296,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/templates': typeof TemplatesRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -272,9 +306,11 @@ export interface FileRoutesById {
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
+  '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/users/$handle': typeof UsersHandleRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
@@ -282,6 +318,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/archived'
     | '/brandprint'
     | '/chat'
     | '/favorites'
@@ -296,6 +333,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/templates'
     | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
@@ -305,14 +343,17 @@ export interface FileRouteTypes {
     | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
+    | '/template-libraries/$id'
     | '/users/$handle'
     | '/contexts/'
     | '/settings/'
+    | '/template-libraries/'
     | '/invite/a/$token'
     | '/invite/c/$token'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/archived'
     | '/brandprint'
     | '/chat'
     | '/favorites'
@@ -326,6 +367,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/shared'
     | '/showcase'
+    | '/templates'
     | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
@@ -335,14 +377,17 @@ export interface FileRouteTypes {
     | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
+    | '/template-libraries/$id'
     | '/users/$handle'
     | '/contexts'
     | '/settings'
+    | '/template-libraries'
     | '/invite/a/$token'
     | '/invite/c/$token'
   id:
     | '__root__'
     | '/'
+    | '/archived'
     | '/brandprint'
     | '/chat'
     | '/favorites'
@@ -357,6 +402,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/templates'
     | '/unlisted'
     | '/welcome'
     | '/artifacts/$ref'
@@ -366,15 +412,18 @@ export interface FileRouteTypes {
     | '/contexts/new'
     | '/invite/$token'
     | '/settings/$section'
+    | '/template-libraries/$id'
     | '/users/$handle'
     | '/contexts/'
     | '/settings/'
+    | '/template-libraries/'
     | '/invite/a/$token'
     | '/invite/c/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ArchivedRoute: typeof ArchivedRoute
   BrandprintRoute: typeof BrandprintRoute
   ChatRoute: typeof ChatRoute
   FavoritesRoute: typeof FavoritesRoute
@@ -389,6 +438,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   SharedRoute: typeof SharedRoute
   ShowcaseRoute: typeof ShowcaseRoute
+  TemplatesRoute: typeof TemplatesRoute
   UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
@@ -397,8 +447,10 @@ export interface RootRouteChildren {
   ContextsIdRoute: typeof ContextsIdRoute
   ContextsNewRoute: typeof ContextsNewRoute
   InviteTokenRoute: typeof InviteTokenRoute
+  TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   UsersHandleRoute: typeof UsersHandleRoute
   ContextsIndexRoute: typeof ContextsIndexRoute
+  TemplateLibrariesIndexRoute: typeof TemplateLibrariesIndexRoute
   InviteATokenRoute: typeof InviteATokenRoute
   InviteCTokenRoute: typeof InviteCTokenRoute
 }
@@ -417,6 +469,13 @@ declare module '@tanstack/react-router' {
       path: '/unlisted'
       fullPath: '/unlisted'
       preLoaderRoute: typeof UnlistedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/templates': {
+      id: '/templates'
+      path: '/templates'
+      fullPath: '/templates'
+      preLoaderRoute: typeof TemplatesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/showcase': {
@@ -517,11 +576,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BrandprintRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/archived': {
+      id: '/archived'
+      path: '/archived'
+      fullPath: '/archived'
+      preLoaderRoute: typeof ArchivedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/template-libraries/': {
+      id: '/template-libraries/'
+      path: '/template-libraries'
+      fullPath: '/template-libraries/'
+      preLoaderRoute: typeof TemplateLibrariesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/': {
@@ -543,6 +616,13 @@ declare module '@tanstack/react-router' {
       path: '/users/$handle'
       fullPath: '/users/$handle'
       preLoaderRoute: typeof UsersHandleRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/template-libraries/$id': {
+      id: '/template-libraries/$id'
+      path: '/template-libraries/$id'
+      fullPath: '/template-libraries/$id'
+      preLoaderRoute: typeof TemplateLibrariesIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/$section': {
@@ -627,6 +707,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ArchivedRoute: ArchivedRoute,
   BrandprintRoute: BrandprintRoute,
   ChatRoute: ChatRoute,
   FavoritesRoute: FavoritesRoute,
@@ -641,6 +722,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   SharedRoute: SharedRoute,
   ShowcaseRoute: ShowcaseRoute,
+  TemplatesRoute: TemplatesRoute,
   UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,
@@ -649,8 +731,10 @@ const rootRouteChildren: RootRouteChildren = {
   ContextsIdRoute: ContextsIdRoute,
   ContextsNewRoute: ContextsNewRoute,
   InviteTokenRoute: InviteTokenRoute,
+  TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   UsersHandleRoute: UsersHandleRoute,
   ContextsIndexRoute: ContextsIndexRoute,
+  TemplateLibrariesIndexRoute: TemplateLibrariesIndexRoute,
   InviteATokenRoute: InviteATokenRoute,
   InviteCTokenRoute: InviteCTokenRoute,
 }

@@ -22,6 +22,7 @@ import { isHtmlLike } from "./content-types"
 import { docMap, mapJson } from "./doc-map"
 import { type SectionMarker, sectionMarkers } from "./doc-text"
 import { parseRef } from "./ids"
+import { isVideoDocument, sliceScenes } from "./videos"
 
 /** Sentinel for a `$name` no deriver owns — a typo, or a deriver since removed. It matches
  *  no stored gen, so the read path re-derives once; that write is prefix-scoped and
@@ -181,6 +182,24 @@ const deriveMap = (source: string, contentType: string): unknown => {
   return rest
 }
 
+/** Mechanical HTML-video metadata for library queries and integrations. */
+const deriveVideo = (source: string, contentType: string): unknown => {
+  if (!contentType.includes("html") && contentType !== "text/x-derive-video") return null
+  if (!isVideoDocument(source)) return null
+  const scenes = sliceScenes(source)
+  return {
+    scenes: scenes.map((s) => ({
+      id: s.id,
+      duration_ms: s.durationMs,
+      transition: s.transition,
+      transition_ms: s.transitionMs,
+      ...(s.title ? { title: s.title } : {}),
+      ...(s.caption ? { caption: s.caption } : {}),
+    })),
+    total_ms: scenes.reduce((n, s) => n + s.durationMs, 0),
+  }
+}
+
 const DERIVERS: {
   slot: string
   gen: number
@@ -190,6 +209,7 @@ const DERIVERS: {
   { slot: LINKS_FACT, gen: 2, derive: (source) => deriveLinks(source) },
   { slot: "$stats", gen: 1, derive: deriveStats },
   { slot: "$map", gen: 1, derive: (source, contentType) => deriveMap(source, contentType) },
+  { slot: "$video", gen: 1, derive: (source, contentType) => deriveVideo(source, contentType) },
 ]
 
 /**

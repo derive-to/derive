@@ -1,3 +1,5 @@
+import { customAlphabet } from "nanoid"
+
 /**
  * Account handles — the public, GitHub-style username that is becoming the
  * primary way to identify, @mention, share with, and link to a person (the
@@ -99,6 +101,26 @@ export const RESERVED_USERNAMES: ReadonlySet<string> = new Set([
 /** Lowercase + trim — the canonical stored form. */
 export const normalizeUsername = (raw: string): string => raw.trim().toLowerCase()
 
+const cleanUsernameStem = (raw: string): string => {
+  let out = ""
+  let separator = false
+  for (const char of raw.toLowerCase()) {
+    const code = char.charCodeAt(0)
+    const alphanumeric = (code >= 48 && code <= 57) || (code >= 97 && code <= 122)
+    if (!alphanumeric) {
+      separator = out.length > 0
+      continue
+    }
+    if (separator && out.length < USERNAME_MAX) out += "-"
+    separator = false
+    if (out.length < USERNAME_MAX) out += char
+    if (out.length === USERNAME_MAX) break
+  }
+  return out.endsWith("-") ? out.slice(0, -1) : out
+}
+
+const randomUsernameSuffix = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 6)
+
 /**
  * Validate a handle. Returns null when it's a legal, available-shaped handle, or
  * a short human message naming the problem (shown on the claim form). Normalizes
@@ -120,12 +142,7 @@ export const usernameError = (raw: string): string | null => {
  */
 export const suggestUsername = (nameOrEmail: string): string => {
   const base = nameOrEmail.split("@")[0] ?? ""
-  let s = base
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^[-_]+|[-_]+$/g, "")
-    .slice(0, USERNAME_MAX)
-    .replace(/[-_]+$/g, "")
+  let s = cleanUsernameStem(base)
   // Pad a too-short stem past the minimum, and never collapse an all-punctuation
   // input to a bare reserved word ("" → "newuser", not "user").
   if (s.length < USERNAME_MIN) s = `${s || "new"}user`.slice(0, USERNAME_MAX)
@@ -163,9 +180,9 @@ export async function generateUsername(
   }
   // 2) base + short random suffix (collision-resistant)
   for (let i = 0; i < 25; i++) {
-    const cand = `${base.slice(0, USERNAME_MAX - 5)}-${Math.random().toString(36).slice(2, 6)}`
+    const cand = `${base.slice(0, USERNAME_MAX - 5)}-${randomUsernameSuffix().slice(0, 4)}`
     if (await check(cand)) return cand
   }
   // 3) last resort: a fully random handle (legal by construction)
-  return `user-${Math.random().toString(36).slice(2, 8)}`
+  return `user-${randomUsernameSuffix()}`
 }

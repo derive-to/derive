@@ -76,6 +76,8 @@ export const billingRoutes = (ctx: AppContext) => {
     )
     if (b instanceof Response) return b
     const state = await billingState(org)
+    if (state.betaGrace)
+      return fail(c, 409, "Billing has not started. Paid plans are available after beta.")
     if (state.subscriptionActive)
       return fail(
         c,

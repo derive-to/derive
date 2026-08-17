@@ -48,8 +48,8 @@ export function AutomationsSection() {
       title="Automations"
       description={
         <>
-          An automation is a standing job: an agent, a trigger, and an instruction. It runs on
-          demand, on a schedule, or on an event — always through the review loop, never around it.
+          Ask an agent to run an instruction on demand, on a schedule, or after an event. Results
+          keep their authorship, access, and version history.
         </>
       }
     >
@@ -72,7 +72,7 @@ export function AutomationsSection() {
       ) : !automations || automations.length === 0 ? (
         <SettingsEmpty>
           {isAdmin
-            ? "No automations yet — nothing runs on a schedule or trigger."
+            ? "No automations yet. Nothing is running on a schedule or trigger."
             : "No automations yet."}
         </SettingsEmpty>
       ) : (

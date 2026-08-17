@@ -1,6 +1,6 @@
 import { type QueryClient, useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate, useSearch } from "@tanstack/react-router"
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
@@ -42,35 +42,11 @@ export const seedPublishedArtifact = (qc: QueryClient, artifact: Artifact): Prom
 export function NewArtifact() {
   useDocumentTitle("New artifact")
   const nav = useNavigate()
-  const { start } = useSearch({ from: "/new" })
+  const search = useSearch({ from: "/new" })
   const [src, setSrc] = useState("")
   const [title, setTitle] = useState("")
   const [message, setMessage] = useState("")
   const format = detectFormat(src)
-
-  // `?start=deck` (the library's "Start a deck") opens the editor on the canonical deck
-  // starter instead of a blank page — the same file the CLI scaffolds and the MCP serves.
-  // Imported lazily: it's ~12KB of HTML that only this one entry path ever needs, so it
-  // stays out of the main bundle. It deliberately does NOT set the title — naming the deck
-  // is the author's first act.
-  //
-  // The `cur || …` IS the idempotence guard, and it has to be the only one. An earlier
-  // version also carried a `started` ref, which deadlocked with the cancel flag whenever
-  // the effect was invoked twice (mount → cleanup → mount): the ref refused the second
-  // import while the cleanup had already cancelled the first, so the editor stayed empty
-  // forever. A production build never double-invokes, so it worked in the deploy preview
-  // and only failed locally — the e2e caught it.
-  useEffect(() => {
-    if (start !== "deck") return
-    let cancelled = false
-    import("@/lib/deck-template.gen").then(({ DECK_TEMPLATE }) => {
-      // Functional update: never clobber anything already typed or pasted.
-      if (!cancelled) setSrc((cur) => cur || DECK_TEMPLATE)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [start])
 
   // A draft is dirty once anything's been typed. Publishing must bypass the guard for its
   // own nav to the artifact — via a REF, not state: publish() sets it and calls nav() in the
@@ -117,7 +93,18 @@ export function NewArtifact() {
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.
       publishing.current = true
-      nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
+      if (search.next === "context") {
+        nav({
+          to: "/contexts",
+          search: {
+            manifest: a.short_id,
+            name: search.contextName,
+            origin: search.contextName,
+          },
+        })
+      } else {
+        nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })
+      }
     },
   })
   const publish = () => {
@@ -145,7 +132,7 @@ export function NewArtifact() {
         onPublish={publish}
         onPropose={() => {}}
         publishing={publishMut.isPending}
-        placeholder="Write or paste Markdown or HTML — the preview updates as you type."
+        placeholder="Write or paste Markdown or HTML. The preview updates as you type."
       />
       {/* The unsaved-draft confirm: fires for any blocked departure (Cancel, a rail click,
           back). Discarding proceeds; keeping resets you to the editor with the draft intact. */}
@@ -155,7 +142,7 @@ export function NewArtifact() {
           if (!o && blocker.status === "blocked") blocker.reset()
         }}
         title="Discard this draft?"
-        description="You have unpublished changes. Leaving now discards them — this can't be undone."
+        description="You have unpublished changes. Leaving now will discard them, and you cannot undo this."
         confirmLabel="Discard"
         confirmTestId="new-discard-confirm"
         onConfirm={() => {

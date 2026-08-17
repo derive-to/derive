@@ -39,7 +39,7 @@ function ApplyNudge() {
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-3">
       <p className="text-sm text-pretty text-muted-foreground">
         <span className="font-medium text-foreground">Your Brandprint is saved</span>, but nothing
-        is reading it yet. Connect an agent and it applies from the very next thing it builds.
+        is reading it yet. Connect your coding agent and it applies to the next thing it builds.
       </p>
       <ConnectAgentButton variant="secondary" size="sm" testId="brandprint-connect-agent" />
     </div>

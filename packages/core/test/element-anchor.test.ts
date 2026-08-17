@@ -198,7 +198,7 @@ describe("resolveElement — the cascade", () => {
 
   it("does not resolve a genuinely removed element", () => {
     const sel = selFor(PAGE, "iframe")
-    const v2 = PAGE.replace(/<iframe[^>]*><\/iframe>/, "")
+    const v2 = PAGE.replace('<iframe src="https://youtube.com/embed/abc"></iframe>', "")
     expect(elementResolvesIn(sel, v2)).toBeNull()
   })
 

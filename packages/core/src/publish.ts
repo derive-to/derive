@@ -17,6 +17,7 @@ import {
   type VersionSource,
 } from "./ports"
 import { isSkillBundle, parseFrontmatter } from "./skill"
+import { isVideoDocument, VIDEO_CONTENT_TYPE } from "./videos"
 
 /**
  * Does this content read as an HTML page? Used to classify a payload as text/html
@@ -86,6 +87,9 @@ export interface PublishInput {
   /** Expiring anonymous draft (create only): ISO instant after which the draft is
    *  served 410 and swept. Omit for every ordinary publish. */
   expiresAt?: string
+  /** Provenance for a NEW artifact created from another artifact or a pinned
+   * template entry. The API validates read access before passing the internal id. */
+  derivedFrom?: string | null
 }
 
 export interface PublishResult {
@@ -233,15 +237,19 @@ async function storeContent(
     // the viewer still showed the deck bar (that rides the runtime postMessage), but
     // the library badge and kind label said "Page", so the one visible confirmation
     // that the protocol had worked was missing on exactly the decks that got it right.
-    contentType = isDeckDocument(text)
-      ? "text/x-derive-deck"
-      : linkedBundleOf(text)?.manifest
-        ? LINKED_BUNDLE_CONTENT_TYPE
-        : "text/html"
+    contentType = isVideoDocument(text)
+      ? VIDEO_CONTENT_TYPE
+      : isDeckDocument(text)
+        ? "text/x-derive-deck"
+        : linkedBundleOf(text)?.manifest
+          ? LINKED_BUNDLE_CONTENT_TYPE
+          : "text/html"
   } else if (/\.(md|markdown)$/i.test(filename)) {
     // Markdown stays markdown even when it talks about decks at length — the decks
     // skill and this repo's own docs quote the protocol and slide markup verbatim.
     contentType = "text/markdown"
+  } else if (isVideoDocument(text)) {
+    contentType = VIDEO_CONTENT_TYPE
   } else if (isDeckDocument(text)) {
     // An HTML FRAGMENT deck (no doctype). Both halves of isDeckDocument matter here:
     // the protocol name alone shows up in any prose about decks.
@@ -340,6 +348,7 @@ export async function publish(
     kind,
     spa: input.spa ? 1 : 0,
     expires_at: input.expiresAt ?? null,
+    derived_from: input.derivedFrom ?? null,
   })
   const version = await meta.addVersion(artifact.id, {
     id: newId("v"),
@@ -379,7 +388,7 @@ export interface ProposeResult {
 
 /**
  * Stores a candidate version for review WITHOUT making it current. A commenter
- * (or an agent) proposes; an editor approves. The content is processed exactly
+ * (or an agent) proposes; a human editor approves. The content is processed exactly
  * like a publish, so the proposal renders identically to how it will once live.
  */
 export async function propose(
@@ -420,13 +429,15 @@ export async function propose(
 /**
  * Approving a proposal appends its stored content as the new current version
  * (the experience goes live) and stamps the proposal decided. History is never
- * rewritten: the proposal row stays as the audit trail of who approved what.
+ * rewritten: the proposal row keeps both the human's stable id and display-name
+ * snapshot as the audit trail of who approved what.
  */
 export async function approveProposal(
   meta: MetaStore,
   blobs: BlobStore,
   proposal: ProposalRecord,
-  approver: string | null,
+  approver: string,
+  approverId: string,
   note?: string | null,
 ): Promise<VersionRecord> {
   if (proposal.state !== "open")
@@ -434,24 +445,14 @@ export async function approveProposal(
   // The proposal already stored its blob; the approved version reuses it, so
   // its byte cost is first counted here (proposals don't create versions).
   const stored = await blobs.get(proposal.blob_key)
-  const version = await meta.addVersion(proposal.artifact_id, {
-    id: newId("v"),
-    blob_key: proposal.blob_key,
-    content_type: proposal.content_type,
+  const version = await meta.approveOpenProposal(proposal.id, {
+    version_id: newId("v"),
     size_bytes: stored?.length ?? 0,
-    author: proposal.author,
-    // Attribute the live version to the proposer (who did the work), not the approver,
-    // so it shows up on the proposer's profile. Null for legacy/anonymous proposals.
-    author_id: proposal.author_id ?? null,
-    message: proposal.message ?? "Approved proposal",
-    name: null,
-  })
-  await meta.decideProposal(proposal.id, {
-    state: "approved",
     decided_by: approver,
-    decided_version: version.n,
+    decided_by_id: approverId,
     decision_note: note ?? null,
   })
+  if (!version) throw new PublishError(409, "proposal is not open")
   return version
 }
 
@@ -478,6 +479,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   created_at: a.created_at,
   /** Bumped on each new version; drives "most recently updated" sort + the label. */
   updated_at: a.updated_at,
+  archived: !!a.archived_at,
   /** Repo path for a GitHub-synced artifact (drives the folder view); null otherwise. */
   source_path: a.source_path,
   /** The CURRENT (last) author, denormalized — drives "who last changed this" + the

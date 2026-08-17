@@ -97,6 +97,16 @@ describe("docMap: what it maps", () => {
     expect(slides.map((s) => s.title)).toEqual(["The problem", "Who it hits"])
   })
 
+  it("maps a video to stable scene refs", () => {
+    const src = `<main data-derive-video><section data-derive-scene="opening"><h2>Open</h2></section><section data-derive-scene="proof">Proof</section></main>`
+    const map = tiles(src, "text/x-derive-video")
+    expect(map.kind).toBe("video")
+    expect(map.nodes.filter((n) => n.type === "scene").map((n) => n.ref)).toEqual([
+      "scene:opening",
+      "scene:proof",
+    ])
+  })
+
   it("does not turn a deck's inner headings into sections", () => {
     // A slide's heading is its title. Depth 1: a slide has no children in v1.
     const map = docMap(deck([sl(0, "a"), sl(1, "b")]), HTML)

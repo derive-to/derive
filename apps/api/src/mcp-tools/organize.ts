@@ -7,16 +7,11 @@ import { normalizeTags } from "../lib/tags"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
 
-/** Whether an artifact is in the library, retired from it, or gone for good. A growth
- *  point (an `archived` tier is the obvious next one), so a string checked server-side
- *  rather than an enum a cached client would refuse — see lib/open-choice.ts.
- *
- *  `deleted` is NOT a third shelf: it is the permanent one, and it is here because the
- *  capability already existed at REST (DELETE /v1/artifacts/:id, same manage gate) and was
- *  simply unreachable from the tool an agent tidies its library with. Parity, not new
- *  power — the alternative was minting a REST credential to finish a cleanup you started
- *  in `organize`. */
-const LIBRARY_STATES = ["removed", "live", "deleted"] as const
+/**
+ * An open string choice so cached clients accept future states. `removed` retains the
+ * legacy tombstone workflow; `deleted` is the existing permanent deletion capability.
+ */
+const LIBRARY_STATES = ["archived", "removed", "live", "deleted"] as const
 
 export function registerOrganizeTool(tc: ToolContext): void {
   const { server, ctx, agent, actingFor, reach, resolveWs, wsArg } = tc
@@ -30,12 +25,9 @@ export function registerOrganizeTool(tc: ToolContext): void {
     "organize",
     {
       description:
-        "Tags, collections and shelving. No `short_ids` reads the workspace vocabulary; with them, writes tags/`collection`/`state`. Each artifact authorizes on its own, so untouchable ones come back skipped. state:'deleted' is permanent. See derive://skills/organize.",
-      // Tag/collection edits are reversible (add/remove/set, fold into a collection), and
-      // `state:'removed'` is an explicitly reversible retire — but `state:'deleted'` is a
-      // real permanent delete (every version, comment and proposal, cascading to any
-      // context whose manifest it was — "This cannot be undone"), so destructive has to
-      // be true for the tool as a whole. Derive's own backend only.
+        "Tags, collections, and lifecycle state. No `short_ids` reads the workspace vocabulary; with them, writes tags/`collection`/`state`. Each artifact authorizes on its own, so untouchable ones come back skipped. state:'deleted' is permanent. See derive://skills/organize.",
+      // The tool also exposes permanent deletion, so the tool-level hint must be destructive
+      // even though tags, collections, archive, and restore are reversible.
       annotations: {
         title: "Organize the library",
         readOnlyHint: false,
@@ -54,17 +46,14 @@ export function registerOrganizeTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("Fold `short_ids` into this collection — an id, or a name (created if new)."),
-        // Both directions on ONE parameter, deliberately. Remove and undo are the same
-        // decision read in two directions, and splitting them across two actions (or two
-        // tools) is how you end up with a surface that can retire something and no obvious
-        // way back.
+        // One state parameter keeps archive and restore discoverable together.
         state: z
           .string()
           .optional()
           .describe(
             choiceDescription(
               LIBRARY_STATES,
-              "Retire these from the library, or restore ones already retired. Reversible either way.",
+              "Archive these from the library, restore them, or permanently delete them.",
             ),
           ),
         workspace: wsArg,
@@ -77,7 +66,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
       const sortVocab = (v: { tag: string; count: number }[]) =>
         v.sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
 
-      // ---- WRITE: add/remove/set tags, fold into a collection, and/or shelve ----
+      // ---- WRITE: tags, collections, and lifecycle state -----------------
       if (add || remove || set || collection || state) {
         if (!short_ids?.length)
           return err("Pass `short_ids` to organize (with add/remove/set, collection and/or state).")
@@ -176,22 +165,44 @@ export function registerOrganizeTool(tc: ToolContext): void {
           }
           out.collected = { collection: { id: col.id, title: col.title }, added, skipped }
         }
-        // SHELVE / UNSHELVE. Both directions on one parameter: an artifact retired with
-        // `state:"removed"` comes back with `state:"live"`, and the response says so, so
-        // the way back is never something you have to already know.
-        //
-        // The tombstone itself is old — sync retires an artifact whose file was deleted,
-        // moderation takes one down, PR-preview teardown sweeps a batch. What never existed
-        // was an AUTHORING path: the subsystems could retire an artifact and the person who
-        // made it could not. This is that path, and nothing more.
+        // Lifecycle transitions. `removed` remains for legacy tombstone clients.
         if (state) {
           const wrong = badChoice("state", state, LIBRARY_STATES)
           if (wrong) return err(wrong)
-          // PERMANENT DELETE. Split from the shelving path below rather than folded into
-          // it, because almost everything about it differs: a MANAGE bar instead of
-          // publish (matching the REST route this reaches, and right for something with
-          // no way back), a cascade that takes contexts and comments with it, and no
-          // `undo` — the one thing this response must never imply it has.
+          if (state === "archived") {
+            const ids: string[] = []
+            const done: string[] = []
+            let skipped = 0
+            for (const shortId of [...new Set(short_ids)]) {
+              const reached = await reach(shortId, workspace)
+              if (!reached || "error" in reached || !roleAllows(reached.role, "publish")) {
+                skipped++
+                continue
+              }
+              ids.push(reached.a.id)
+              done.push(shortId)
+            }
+            if (ids.length) await ctx.meta.setArtifactsArchived(ids, new Date().toISOString())
+            out.state = {
+              state,
+              changed: ids.length,
+              skipped,
+              undo: done.length
+                ? {
+                    tool: "organize",
+                    arguments: {
+                      short_ids: done,
+                      state: "live",
+                      ...(workspace ? { workspace } : {}),
+                    },
+                  }
+                : undefined,
+              note: "Archived: hidden from the library and search, but still readable at its URL. `state:'live'` restores it.",
+            }
+            return json(out)
+          }
+          // Permanent deletion has a manage-level gate and no undo, so it remains separate
+          // from reversible state transitions.
           if (state === "deleted") {
             const gone: string[] = []
             const notAllowed: string[] = []
@@ -224,11 +235,8 @@ export function registerOrganizeTool(tc: ToolContext): void {
               state,
               deleted: gone.length,
               skipped,
-              // Said plainly and first: there is no undo, and the response does not carry
-              // one. Every other state change here hands back its reversal; pretending
-              // this one has a way back would be the most expensive lie on the surface.
               note: gone.length
-                ? "Permanently deleted, with every version, comment and proposal. This cannot be undone — `state:'removed'` is the reversible option if that is what you wanted."
+                ? "Permanently deleted, with every version, comment and proposal. This cannot be undone — `state:'archived'` is the reversible option if that is what you wanted."
                 : "Nothing was deleted.",
               ...(cascaded.length
                 ? {
@@ -241,7 +249,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
                 ? {
                     needs_manage: notAllowed,
                     needs_manage_note:
-                      "Deleting permanently needs a manage-level grant on the artifact, a higher bar than publishing to it. `state:'removed'` retires these reversibly at your current role.",
+                      "Deleting permanently needs a manage-level grant on the artifact, a higher bar than publishing to it. `state:'archived'` hides these reversibly at your current role.",
                   }
                 : {}),
             }
@@ -249,42 +257,35 @@ export function registerOrganizeTool(tc: ToolContext): void {
           }
           const removedAt = state === "removed" ? new Date().toISOString() : null
           const ok: string[] = []
+          const archivedOk: string[] = []
           const done: string[] = []
           const synced: string[] = []
           const moderated: string[] = []
           const wiredTo: { short_id: string; context: string }[] = []
           let skipped = 0
-          // Fetched ONCE for the batch, not per artifact. A context cannot outlive its
-          // manifest — hard delete cascades it away deliberately — but shelving is not a
-          // delete, so the context stays askable and its runner walks into a takedown
-          // error minutes later, in a different process, with nothing linking back to
-          // this call. Retiring one is still allowed (decommissioning a context is a real
-          // thing to want); it just never happens quietly.
+          // Removing a context manifest leaves the context configured but unreadable. Load
+          // contexts once so the response can identify every affected context.
           const contexts =
             state === "removed" ? await ctx.meta.listContexts(t.org).catch(() => []) : []
           for (const shortId of [...new Set(short_ids)]) {
-            // Sees past the takedown gate on purpose: this operates on that flag, so the
-            // ordinary content gate would hide the artifact being restored. Workspace,
-            // membership and role are all still enforced.
+            // Restoration must resolve tombstones while retaining workspace and role checks.
             const reached = await reach(shortId, workspace, { allowRemoved: true })
-            // Same bar as editing an artifact's content, deliberately: this is reversible,
-            // so it does not warrant a higher one than the publish that created it.
             if (!reached || "error" in reached || !roleAllows(reached.role, "publish")) {
               skipped++
               continue
             }
-            // A MODERATION takedown is not yours to reverse. `removed_at` carries two very
-            // different meanings — "I retired my own draft" and "an admin took this down" —
-            // and the moderation path sets it at MANAGE grade, writes an audit row, and
-            // resolves every open report in one transaction. Clearing it at the editor bar
-            // would undo all three silently, put abusive or DMCA'd content back, and leave
-            // the reports closed so it never resurfaces in the queue. The audit log is the
-            // only record of which meaning applies, so a restore consults it and defers.
+            if (state === "live" && reached.a.archived_at && !reached.a.removed_at) {
+              archivedOk.push(reached.a.id)
+              done.push(shortId)
+              continue
+            }
+            // Editors cannot reverse moderation takedowns. The audit log distinguishes a
+            // takedown from an author-initiated retirement.
             if (state === "live" && !roleAllows(reached.role, "manage")) {
               const log = await ctx.meta
                 .listAuditLog(t.org, { artifactId: reached.a.id, limit: 20 })
                 .catch(() => [])
-              // Newest first, so the first takedown/reinstate is the standing decision.
+              // Logs are newest first; the first matching entry is the standing decision.
               const standing = log.find((e) => e.action === "takedown" || e.action === "reinstate")
               if (standing?.action === "takedown") {
                 moderated.push(shortId)
@@ -294,40 +295,32 @@ export function registerOrganizeTool(tc: ToolContext): void {
             }
             ok.push(reached.a.id)
             done.push(shortId)
-            // A repo-synced artifact is not really yours to retire: sync clears this exact
-            // flag whenever the file changes (lib/sync.ts), so it comes back with nothing
-            // to explain why. Allowed, because the tombstone is still what you asked for
-            // today, but SAID, because a silent resurrection is the surprise this whole
-            // change exists to remove.
+            // Repository sync may clear this tombstone when the source file changes.
             if (reached.a.source_path) synced.push(shortId)
             for (const cx of contexts)
               if (cx.manifest_artifact_id === reached.a.id)
                 wiredTo.push({ short_id: shortId, context: cx.name })
           }
-          // One update for the batch, per the store's own guidance, rather than a call per id.
+          // Apply each state transition with one batch update.
           if (ok.length) await ctx.meta.setArtifactsRemoved(ok, removedAt)
+          if (archivedOk.length) await ctx.meta.setArtifactsArchived(archivedOk, null)
           out.state = {
             state,
-            changed: ok.length,
+            changed: ok.length + archivedOk.length,
             skipped,
-            // The reversal, handed back at the moment it might be wanted — naming only what
-            // actually changed. Echoing the whole input would tell you to restore artifacts
-            // that were skipped and never retired, which is an undo that does not describe
-            // the thing it claims to reverse.
-            undo: done.length
-              ? {
-                  tool: "organize",
-                  arguments: {
-                    short_ids: done,
-                    state: state === "removed" ? "live" : "removed",
-                    ...(workspace ? { workspace } : {}),
-                  },
-                }
-              : undefined,
-            // Named separately from `note` so it cannot be mistaken for the ordinary
-            // outcome: this is the one case where the retirement does not stay put.
-            // Called out by name: "skipped" alone would read as a permission problem the
-            // caller could fix, and this one they should not.
+            // Undo includes only artifacts that changed.
+            undo:
+              done.length && !(state === "live" && ok.length > 0 && archivedOk.length > 0)
+                ? {
+                    tool: "organize",
+                    arguments: {
+                      short_ids: done,
+                      state:
+                        state === "removed" ? "live" : archivedOk.length ? "archived" : "removed",
+                      ...(workspace ? { workspace } : {}),
+                    },
+                  }
+                : undefined,
             ...(wiredTo.length
               ? {
                   in_use_by_contexts: wiredTo,
@@ -352,7 +345,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
             note:
               state === "removed"
                 ? "Retired from the library: the url now reads as removed. Nothing is deleted, and `state:'live'` puts it back."
-                : "Back in the library and readable again.",
+                : "Back in the library.",
           }
         }
 

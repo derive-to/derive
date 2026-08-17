@@ -1,6 +1,6 @@
 ---
 name: finding
-summary: search a workspace and answer from what you actually read — how the literal search behaves, which find mode to use, and how to cite (find, read)
+summary: search a workspace and answer from what you read; explains literal search, find modes, and citations (find, read)
 order: 2
 ---
 # Finding things, and answering from them
@@ -14,8 +14,8 @@ and every claim you make names the document it came from.
 it does not stem, and it does not understand a question. This is the single most common way a
 search comes back empty when the answer was sitting right there:
 
-- ✅ `find(query:"onboarding")` — one distinctive word.
-- ❌ `find(query:"what do we have about onboarding")` — no document contains that sentence, so
+- **Good:** `find(query:"onboarding")` uses one distinctive word.
+- **Bad:** `find(query:"what do we have about onboarding")`. No document may contain that sentence, so
   this returns nothing and tells you nothing about what the workspace holds.
 
 So: **take the person's question, pick the one word most likely to appear in the document, and
@@ -25,7 +25,7 @@ conclude the workspace is empty:
 - Try the stem or the other form: `pricing` → `price`, `invoices` → `invoice`.
 - Try the noun someone would actually have typed in a title: `how do we bill people` →
   `billing`, then `seats`, then `invoice`.
-- Try browsing instead (below). A workspace of forty documents is faster to scan than to guess.
+- Try browsing instead (below). A small workspace is often faster to scan than to search by guesswork.
 
 Two or three honest attempts, THEN say you found nothing. Saying "there is nothing about X" after
 one bad query is a false statement about someone's own workspace.
@@ -36,7 +36,7 @@ one bad query is a false statement about someone's own workspace.
 
 | You pass | You get |
 | --- | --- |
-| `query` alone | Workspace content search — which artifacts contain this text |
+| `query` alone | Workspace content search: which artifacts contain this text |
 | `short_id` + `query` | Grep INSIDE that one artifact: matching lines with line numbers |
 | neither | Browse the library: every artifact you can see, with titles and tags |
 
@@ -46,12 +46,12 @@ text rather than the source, which is what you want when the source is HTML and 
 asking about what a reader sees.
 
 **Browse is underrated.** For "what do we have on X" in a small workspace, browsing and reading
-titles is often better than guessing at search words — and it can never come back falsely empty.
+titles is often better than guessing search words. It cannot return a false empty result.
 
 ## Then read
 
 A search hit tells you a document MENTIONS a word. It does not tell you what the document says.
-If the question is about content — what it decided, what changed, what the policy is — open it:
+If the question is about what a document decided, changed, or requires, open it:
 
 - `read(short_id)` for a small document; a large one returns its heading OUTLINE instead, and
   you then call again with a `section` slug for just that part.
@@ -74,7 +74,7 @@ The same JSON is at `/raw/<short_id>/data/$map.json` for anything outside this t
 
 ## Cite what you used
 
-Every document you name is a link to its path: `[Q3 Roadmap](/artifacts/ab12cd34)` — the title as
+Every document you name is a link to its path: `[Q3 Roadmap](/artifacts/ab12cd34)`. Use the title as
 the text, `/artifacts/<short_id>` as the target, using the short_id the tool returned. Never
 paste a bare short_id, never invent one, and never describe a document you did not open as
 though you had read it.

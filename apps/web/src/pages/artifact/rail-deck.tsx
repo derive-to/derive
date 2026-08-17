@@ -1,4 +1,5 @@
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import { Captions, ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
+import { useState } from "react"
 import type { Viewer } from "@/api"
 import { Icon } from "@/components/icons"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
@@ -88,6 +89,136 @@ export function DeckBar({
   )
 }
 
+export function VideoBar({
+  video,
+  onPrev,
+  onNext,
+  onToggle,
+  onRestart,
+  onSeek,
+  onPresent,
+}: {
+  video: {
+    i: number
+    total: number
+    playing: boolean
+    elapsedMs: number
+    durationMs: number
+    positionMs: number
+    totalDurationMs: number
+    caption: string
+  }
+  onPrev: () => void
+  onNext: () => void
+  onToggle: () => void
+  onRestart: () => void
+  onSeek: (ms: number) => void
+  onPresent: () => void
+}) {
+  const [captions, setCaptions] = useState(true)
+  const clock = (ms: number) => {
+    const sec = Math.max(0, Math.floor(ms / 1000))
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
+  }
+  return (
+    <div
+      data-testid="video-bar"
+      className="absolute bottom-3.5 left-1/2 z-5 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-col items-center gap-2"
+    >
+      {captions && video.caption && (
+        <p
+          data-testid="video-caption"
+          aria-live="polite"
+          className="m-0 max-w-xl rounded-lg bg-background/90 px-3 py-1.5 text-center text-sm leading-5 text-foreground shadow-[var(--shadow)] backdrop-blur-sm"
+        >
+          {video.caption}
+        </p>
+      )}
+      <div className="flex w-full items-center gap-1.5 rounded-full border border-border bg-card p-1.5 shadow-[var(--shadow)] sm:min-w-72">
+        <Button
+          data-testid="video-restart"
+          variant="outline"
+          size="icon-xs"
+          className="hidden sm:inline-flex"
+          onClick={onRestart}
+          aria-label="Restart video"
+        >
+          <RotateCcw />
+        </Button>
+        <Button
+          data-testid="video-prev"
+          variant="outline"
+          size="icon-xs"
+          onClick={onPrev}
+          disabled={video.i <= 0}
+          aria-label="Previous scene"
+        >
+          <ChevronLeft />
+        </Button>
+        <Button
+          data-testid="video-play-pause"
+          variant="default"
+          size="icon-xs"
+          onClick={onToggle}
+          aria-label={video.playing ? "Pause video" : "Play video"}
+        >
+          {video.playing ? <Pause /> : <Play />}
+        </Button>
+        <Button
+          data-testid="video-next"
+          variant="outline"
+          size="icon-xs"
+          onClick={onNext}
+          disabled={video.i >= video.total - 1}
+          aria-label="Next scene"
+        >
+          <ChevronRight />
+        </Button>
+        <span className="hidden min-w-13 text-center font-mono text-2xs tabular-nums text-muted-foreground sm:inline">
+          {video.i + 1} / {video.total}
+        </span>
+        <input
+          data-testid="video-seek"
+          type="range"
+          min={0}
+          max={Math.max(1, video.totalDurationMs)}
+          value={Math.min(video.positionMs, video.totalDurationMs)}
+          onChange={(e) => onSeek(Number(e.target.value))}
+          className="h-4 min-w-12 flex-1 accent-primary sm:min-w-24"
+          aria-label="Video position"
+        />
+        <span className="font-mono text-2xs tabular-nums text-muted-foreground sm:hidden">
+          {clock(video.positionMs)}
+        </span>
+        <span className="hidden font-mono text-2xs tabular-nums text-muted-foreground sm:inline">
+          {clock(video.positionMs)} / {clock(video.totalDurationMs)}
+        </span>
+        {video.caption && (
+          <Button
+            variant={captions ? "secondary" : "outline"}
+            size="icon-xs"
+            data-testid="video-captions"
+            onClick={() => setCaptions((shown) => !shown)}
+            aria-label={captions ? "Hide captions" : "Show captions"}
+            aria-pressed={captions}
+          >
+            <Captions />
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="icon-xs"
+          data-testid="video-fullscreen"
+          onClick={onPresent}
+          aria-label="View video fullscreen"
+        >
+          <Icon name="present" />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 const initials = (v: Viewer) => getInitials(v.name)
 
 // The identity tint for a presence fallback: self is the soft brand tint, other
@@ -124,7 +255,7 @@ export function Presence({
           variant="ghost"
           size="xs"
           data-testid="presence-trigger"
-          aria-label={`${ordered.length} viewing — see who`}
+          aria-label={`${ordered.length} viewing. See who.`}
           className="rounded-full py-0.5 pr-2 pl-1"
         >
           <AvatarGroup>

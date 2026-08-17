@@ -11,13 +11,16 @@ import {
   missingBlobAdvisory,
   newId,
   PublishError,
+  parseTemplateLibraryUri,
   propose as proposeChange,
   publishAdvisories,
   publish as publishVersion,
   type Role,
   roleAllows,
   slotShapeDriftAdvisories,
+  TEMPLATE_LIBRARY_CATALOG_URI,
 } from "@derive/core"
+import { getTemplate as getBuiltInTemplate } from "@derive-to/templates"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
 import { markAddressed } from "../lib/addressed"
@@ -40,6 +43,7 @@ import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
 import { normalizeTags } from "../lib/tags"
+import { canReadTemplateLibrary } from "../lib/template-library-access"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   err,
@@ -72,6 +76,7 @@ export function registerPublishTool(tc: ToolContext): void {
     defaultOrg,
     defaultRole,
     reach,
+    inGrant,
     resolveWs,
     wsArg,
   } = tc
@@ -222,6 +227,15 @@ export function registerPublishTool(tc: ToolContext): void {
             "Add/overwrite `files` INTO the existing bundle instead of replacing it. Requires `short_id`.",
           ),
         message: z.string().optional(),
+        derived_from: z
+          .string()
+          .regex(
+            /^(?:[0-9a-z]{6,12}|derive:\/\/templates\/[a-zA-Z0-9_-]+|derive:\/\/template-libraries\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+)$/,
+          )
+          .optional()
+          .describe(
+            "NEW artifact only: preserve lineage to an artifact short id, exact derive://templates/<id> built-in URI, or exact derive://template-libraries/<library>/<entry> URI you read. Omit on revisions.",
+          ),
         tags: z
           .array(z.string())
           .optional()
@@ -300,11 +314,32 @@ export function registerPublishTool(tc: ToolContext): void {
                   .string()
                   .describe("Replacement for the quoted span, as plain text. Empty deletes."),
               }),
+              z.object({
+                op: z.literal("scene-update"),
+                id: z.string().describe("Stable data-derive-scene value."),
+                duration_ms: z.coerce.number().optional(),
+                transition: z.enum(["cut", "fade", "dissolve", "slide"]).optional(),
+                transition_ms: z.coerce.number().optional(),
+                caption: z.string().max(500).optional(),
+              }),
+              z.object({
+                op: z.literal("scene-move"),
+                id: z.string().describe("Stable data-derive-scene value."),
+                direction: z.enum(["previous", "next"]),
+              }),
+              z.object({
+                op: z.literal("scene-duplicate"),
+                id: z.string().describe("Stable data-derive-scene value."),
+              }),
+              z.object({
+                op: z.literal("scene-delete"),
+                id: z.string().describe("Stable data-derive-scene value."),
+              }),
             ]),
           )
           .optional()
           .describe(
-            "Revise a single-file artifact without resending it. Two shapes, not mixable: {old_str, new_str} against the stored source, or {quote:{exact,prefix,suffix}, new_text} against visible text. A miss applies nothing and says why.",
+            "Revise a single-file artifact without resending it. Exact-source edits cannot mix with the other shapes. Quote edits change visible text; scene-* edits change timing and structure in an HTML Video. A miss applies nothing and says why.",
           ),
         slide_ops: z
           .array(
@@ -347,6 +382,7 @@ export function registerPublishTool(tc: ToolContext): void {
       spa,
       merge,
       message,
+      derived_from,
       tags,
       filename,
       for_review,
@@ -445,6 +481,8 @@ export function registerPublishTool(tc: ToolContext): void {
       if (reached && "error" in reached) return text(reached.error)
       const existing = reached && !("error" in reached) ? reached.a : null
       if (short_id && !existing) return text(`No artifact "${short_id}" you can reach.`)
+      if (short_id && derived_from)
+        return err("`derived_from` records creation lineage and cannot be added to a revision.")
       let targetOrg = defaultOrg
       let actRole = defaultRole
       if (existing && reached && !("error" in reached)) {
@@ -455,6 +493,54 @@ export function registerPublishTool(tc: ToolContext): void {
         if ("error" in t) return text(t.error)
         targetOrg = t.org
         actRole = t.role
+      }
+
+      // Creation lineage uses the same access rules as reading the starting
+      // point. Library entries are immutable snapshots, so the copy can outlive
+      // its source; the stored edge points to that source artifact when present.
+      // Built-ins have no backing artifact row, so their immutable URI is stored
+      // directly in the same non-FK lineage field and resolved from the catalog.
+      let derivedFromId: string | null = null
+      const builtInTemplateId = derived_from?.startsWith("derive://templates/")
+        ? derived_from.slice("derive://templates/".length)
+        : null
+      const builtInTemplate = builtInTemplateId ? getBuiltInTemplate(builtInTemplateId) : null
+      const authoredTemplate = derived_from ? parseTemplateLibraryUri(derived_from) : null
+      if (builtInTemplateId && !builtInTemplate)
+        return err(`No built-in template "${derived_from}" exists in this release.`)
+      if (
+        derived_from?.startsWith(`${TEMPLATE_LIBRARY_CATALOG_URI}/`) &&
+        !authoredTemplate?.entryId
+      )
+        return err(`No template starter "${derived_from}" you can reach.`)
+      if (builtInTemplate) {
+        derivedFromId = derived_from ?? null
+      } else if (authoredTemplate?.entryId) {
+        const { libraryId, entryId } = authoredTemplate
+        const [library, entry] = await Promise.all([
+          ctx.meta.getTemplateLibrary(libraryId),
+          ctx.meta.getTemplateLibraryEntry(entryId),
+        ])
+        if (!library || !entry || entry.library_id !== library.id)
+          return err(`No template starter "${derived_from}" you can reach.`)
+        const uid = actingFor?.id ?? ownerId
+        const member = uid ? await ctx.meta.getMembership(library.org_id, uid) : null
+        const readable = canReadTemplateLibrary(library, {
+          ownerId: uid,
+          workspaceReachable: !!uid && inGrant(library.org_id),
+          isMember: !!member,
+        })
+        if (!readable) return err(`No template starter "${derived_from}" you can reach.`)
+        derivedFromId = entry.source_artifact_id
+      } else if (derived_from) {
+        const source = await reach(derived_from, workspace)
+        if (!source || "error" in source)
+          return err(
+            source && "error" in source
+              ? source.error
+              : `No source artifact "${derived_from}" you can reach.`,
+          )
+        derivedFromId = source.a.id
       }
 
       // `edits` / `slide_ops` — materialize the full new content up front, then fall
@@ -652,6 +738,7 @@ export function registerPublishTool(tc: ToolContext): void {
             workspaceAccess: resolvedWorkspaceAccess,
             linkRole: resolvedLinkRole,
             listed: resolvedListed,
+            derivedFrom: derivedFromId,
           },
           short_id,
         )
@@ -874,6 +961,7 @@ export function registerPublishTool(tc: ToolContext): void {
           workspace_access: artifact.workspace_access,
           link_role: artifact.link_role,
           listed: artifact.listed,
+          ...(artifact.derived_from ? { derived_from } : {}),
           ...(editsApplied ? { edits_applied: editsApplied } : {}),
           ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
           ...(resolved.length ? { resolved } : {}),

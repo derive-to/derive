@@ -14,7 +14,7 @@ describe("roleAllows", () => {
     expect(roleAllows("commenter", "publish")).toBe(false)
     expect(roleAllows("commenter", "approve")).toBe(false)
   })
-  it("a commenter proposes a candidate, but only an editor approves it", () => {
+  it("sets the role floor for approval; the API separately requires a human principal", () => {
     expect(roleAllows("commenter", "propose")).toBe(true)
     expect(roleAllows("commenter", "approve")).toBe(false)
     expect(roleAllows("viewer", "propose")).toBe(false)

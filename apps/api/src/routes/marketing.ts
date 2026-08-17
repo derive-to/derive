@@ -4,24 +4,28 @@ import type { AppContext } from "../context"
 import { SESSION_COOKIE_NAMES } from "../lib/http"
 
 /**
- * The marketing site (the hosted front door). Self-contained HTML pages that
- * ship inside the web build at `site/` (authored in apps/web/public/site) and are
- * served worker-first (see lib/serve-web MARKETING_EXACT):
+ * The marketing site (the hosted front door). Self-contained HTML pages that ship
+ * inside the web build at `site/` (authored in apps/web/public/site) and are served
+ * worker-first by the edge asset router:
  *
  *   GET /          the landing page — signed-OUT visitors only. A visitor with a
  *                  session cookie (or on the app.* alias host) gets the SPA shell,
  *                  so the app keeps owning `/` for its users.
  *   GET /pricing   the pricing page, for everyone.
  *   GET /privacy   the privacy page, for everyone.
+ *   GET /guides    permanent redirect to the separate docs.derive.to site.
+ *   GET /examples  artifact examples with inspectable source, for everyone.
  *
  * Always on when the web build ships the pages (deps.marketing); a build without
- * them keeps today's behavior, where the SPA fallback owns all three paths. The session
+ * them keeps today's behavior, where the SPA fallback owns these paths. The session
  * check is presence-only — no DB hit on a landing view; a stale cookie serves the
  * shell and the SPA's own guard bounces to /login, exactly as it does today.
  */
 export const marketingRoutes = (ctx: AppContext) => {
   const app = new Hono()
   const m = ctx.deps.marketing
+
+  app.get("/guides", (c) => c.redirect("https://docs.derive.to/", 308))
 
   const getShell = async (): Promise<string | null> =>
     ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
@@ -39,6 +43,7 @@ export const marketingRoutes = (ctx: AppContext) => {
       app.get("/", shellOr404)
       app.get("/pricing", shellOr404)
       app.get("/privacy", shellOr404)
+      app.get("/examples", shellOr404)
     }
     return app
   }
@@ -65,6 +70,12 @@ export const marketingRoutes = (ctx: AppContext) => {
 
   app.get("/privacy", async (c) => {
     const html = await m.privacy()
+    if (!html) return shellOr404(c)
+    return c.html(html, 200, { "Cache-Control": "public, max-age=300" })
+  })
+
+  app.get("/examples", async (c) => {
+    const html = await m.examples()
     if (!html) return shellOr404(c)
     return c.html(html, 200, { "Cache-Control": "public, max-age=300" })
   })

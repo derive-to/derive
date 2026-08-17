@@ -27,7 +27,7 @@ import { SettingsSection } from "./settings-section"
 // connection, so those affordances follow `slack.connected`.
 const LINK_ERRORS: Record<string, string> = {
   not_connected: "Slack isn't connected for this workspace yet, so there's nothing to link.",
-  link: "Couldn’t link your Slack account. This is usually temporary — try again.",
+  link: "Couldn’t link your Slack account. Try again in a moment.",
   link_team:
     "That Slack account belongs to a different workspace's Slack. Sign into the right Slack workspace and try again.",
 }
@@ -74,7 +74,7 @@ export function NotificationsSection() {
   return (
     <SettingsSection
       title="Notifications"
-      description="How Derive gets your attention. Everything here is yours — nothing changes what teammates see or what the workspace sends."
+      description="Choose how Derive notifies you. These settings do not affect your teammates or workspace notifications."
     >
       {linkError && LINK_ERRORS[linkError] && (
         <StatusPanel
@@ -106,8 +106,8 @@ export function NotificationsSection() {
           )
         ) : !slack.available ? (
           <SettingRow
-            label="DM me for interrupts"
-            description="Slack isn't set up on this server, so there's nowhere to DM you yet."
+            label="Send important updates in Slack"
+            description="Slack is not set up on this server yet."
           >
             <Switch id="toggle-slack-dm" data-testid="toggle-slack-dm" checked={false} disabled />
           </SettingRow>
@@ -115,10 +115,10 @@ export function NotificationsSection() {
           <>
             <SettingRow
               htmlFor="toggle-slack-dm"
-              label="DM me for interrupts"
+              label="Send important updates in Slack"
               description={
                 connected
-                  ? "A Slack direct message when someone @mentions you, requests your review, or shares a doc with you — the same events that email you. Link your Slack account below for reliable delivery; otherwise Derive matches you by account email."
+                  ? "Get a Slack direct message when someone mentions you, requests your review, or shares a document with you. Link your Slack account below so Derive knows where to send it."
                   : "A Slack direct message when someone @mentions you, requests your review, or shares a doc with you. Takes effect once an admin connects Slack under Integrations."
               }
             >
@@ -196,8 +196,8 @@ export function NotificationsSection() {
       <SettingsGroup title="Activity">
         <SettingRow
           htmlFor="toggle-auto-open"
-          label="Agent publishes open automatically"
-          description="When your connected agent publishes a new draft, this tab opens it. Off keeps it to a notification. Saved to this browser."
+          label="Open new agent publications automatically"
+          description="When your connected coding agent publishes a new artifact, open it in this tab. This setting is saved in this browser."
         >
           <Switch
             id="toggle-auto-open"

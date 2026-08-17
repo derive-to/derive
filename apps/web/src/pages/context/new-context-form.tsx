@@ -113,7 +113,7 @@ export function NewContextForm({
           <StatusPanel
             tone="warning"
             layout="inline"
-            title={`Runner token for ${minted.name} — copy it now, it won't be shown again.`}
+            title={`Copy the runner token for ${minted.name} now. It will not be shown again.`}
             description={
               <div className="flex flex-col gap-1.5">
                 <code className="block break-all rounded-md bg-secondary px-2.5 py-1.5 font-mono text-2xs text-foreground">

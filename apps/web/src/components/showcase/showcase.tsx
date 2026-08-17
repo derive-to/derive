@@ -147,7 +147,7 @@ function TypeDemo() {
       <div>
         <Eyebrow>Voice · Geist display</Eyebrow>
         <p className="mt-2 max-w-xl text-2xl font-medium tracking-tight text-balance">
-          The permanent home for your AI artifacts.
+          Turn agent output into work you can keep, share, and improve.
         </p>
       </div>
       <div>
@@ -702,7 +702,7 @@ function CommentDemo() {
             <span className="font-mono text-2xs text-muted-foreground">@ana · 2h</span>
           </div>
           <p className="mt-1 text-sm/6 text-foreground/90">
-            The intro reads great — can we tighten the second paragraph before this ships?
+            The intro reads well. Can we tighten the second paragraph before this ships?
           </p>
           <div className="mt-2.5 flex items-center gap-4 text-xs text-muted-foreground">
             <button
@@ -827,7 +827,7 @@ function RowStatesDemo() {
             </SidebarMenuItem>
           </SidebarMenu>
           <p className="max-w-48 text-xs text-muted-foreground">
-            Raised chip — card surface, hairline ring. Survives hover.
+            Raised chip with a card surface and hairline ring. It stays visible on hover.
           </p>
         </div>
         <div className="flex flex-col gap-1.5">
@@ -1230,11 +1230,11 @@ export function Showcase() {
               <Eyebrow>Design system · Derive identity</Eyebrow>
             </span>
             <h1 className="mt-5 text-3xl font-medium tracking-tight text-balance sm:text-4xl">
-              Two colors, one canvas.
+              Derive design system
             </h1>
             <p className="mt-4 text-base text-pretty text-muted-foreground">
-              The Derive identity on shadcn — a monochrome ink accent on neutral surfaces, one
-              typeface, and a calm categorical tint family. Toggle the theme to review both.
+              A practical reference for Derive components, states, and content patterns. Switch
+              themes to check each example in light and dark mode.
             </p>
           </div>
           <ThemeSwitch className="w-40 shrink-0" />
@@ -1243,7 +1243,7 @@ export function Showcase() {
         <Group title="Foundations">
           <Row
             title="Type"
-            note="One family — Geist Sans carries chrome and voice; Geist Mono carries the machine layer (counts, keys, code)."
+            note="Use Geist Sans for interface text and Geist Mono for counts, keys, and code."
           >
             <TypeDemo />
           </Row>
@@ -1255,7 +1255,7 @@ export function Showcase() {
           </Row>
           <Row
             title="Iconography"
-            note="One vocabulary — lucide, monochrome, size-4 in the UI. Every glyph inherits the ink beside it."
+            note="Use monochrome Lucide icons at size 4. Icons inherit the color of nearby text."
           >
             <IconGridDemo />
           </Row>
@@ -1267,13 +1267,13 @@ export function Showcase() {
         <Group title="Controls">
           <Row
             title="Buttons"
-            note="One filled primary per view; everything else stays quiet. Destructive is a soft red fill — the loud moment is the confirm dialog."
+            note="Use one filled primary action per view. Keep other actions quiet, including destructive actions until confirmation."
           >
             <ButtonsDemo />
           </Row>
           <Row
             title="Icon buttons"
-            note="Stock Button at size='icon' — ghost for toolbars, outline for a card-corner chip."
+            note="Use ghost icon buttons in toolbars and outlined icon buttons on card corners."
           >
             <IconButtonsDemo />
           </Row>
@@ -1285,13 +1285,13 @@ export function Showcase() {
           </Row>
           <Row
             title="View toggle"
-            note="Stock ToggleGroup — one tab stop, arrow keys move selection; pressed is a neutral wash."
+            note="Toggle groups use one tab stop. Arrow keys move the selection, and the selected item has a neutral wash."
           >
             <ViewToggleDemo />
           </Row>
           <Row
-            title="Badges & status"
-            note="Neutral by default — tonal variants only for genuine state, and the mono pill is the one sanctioned rounded-full chip."
+            title="Badges and status"
+            note="Badges are neutral by default. Use color only when it communicates a real state."
           >
             <BadgesDemo />
           </Row>
@@ -1300,26 +1300,26 @@ export function Showcase() {
           </Row>
           <Row
             title="Form controls"
-            note="Stock Radix — select, checkbox, switch, and radio group, each checked in ink."
+            note="Selects, checkboxes, switches, and radio groups use the shared Radix controls."
           >
             <FormControlsDemo />
           </Row>
           <Row
             title="Search"
-            note="One anatomy for every field — scent icon, scoped placeholder, “/” hint while empty, one clear affordance, an in-field spinner."
+            note="Search fields share the same icon, focused placeholder, keyboard hint, clear action, and loading state."
           >
             <SearchFieldDemo />
           </Row>
         </Group>
 
-        <Group title="Surfaces & content">
+        <Group title="Surfaces and content">
           <Row
             title="Artifact card"
-            note="The most-seen surface. Titles are the work; icons sit muted — only a starred favorite earns the ink fill."
+            note="Artifact titles lead each card. Icons stay muted unless a star marks the artifact as a favorite."
           >
             <ArtifactCardsDemo />
           </Row>
-          <Row title="Comment" note="The review loop — identity, body, and low-key actions.">
+          <Row title="Comment" note="Comments show the author, message, and quiet actions.">
             <CommentDemo />
           </Row>
           <Row
@@ -1336,13 +1336,13 @@ export function Showcase() {
           </Row>
           <Row
             title="Navigation"
-            note="The rail's real rows. Active is a raised chip — card surface and a hairline ring — with the label re-inked; no fill, no tick, and never a weight change."
+            note="The active rail item uses a card surface, a hairline ring, and stronger text color. Font weight does not change."
           >
             <NavDemo />
           </Row>
           <Row
             title="Row states"
-            note="Rest, current, and reveal-on-hover — the three states every row in the app shares. Hover them; the current row must keep its chip."
+            note="Rows have resting, current, and hover states. The current state remains visible on hover."
           >
             <RowStatesDemo />
           </Row>
@@ -1354,16 +1354,16 @@ export function Showcase() {
           </Row>
           <Row
             title="Empty state"
-            note="Boxless — a muted icon, a Geist headline, one plain line, and one quiet action, straight on the canvas."
+            note="Empty states sit directly on the canvas with a muted icon, a short heading, one sentence, and one quiet action."
           >
             <EmptyStateDemo />
           </Row>
         </Group>
 
-        <Group title="Overlays & feedback">
+        <Group title="Overlays and feedback">
           <Row
             title="Overlays"
-            note="The floating-surface family — tooltip, popover, menu, dialog, and sheet — each a surface step with a ring edge. Click to open."
+            note="Tooltips, popovers, menus, dialogs, and sheets use the same floating surface and ring edge."
           >
             <OverlaysDemo />
           </Row>
@@ -1375,7 +1375,7 @@ export function Showcase() {
           </Row>
           <Row
             title="Confirm dialog"
-            note="The one destructive-confirm surface — the dialog carries the gravity, not a loud red fill."
+            note="Confirm destructive actions in a dialog. The dialog carries the warning instead of a loud trigger button."
           >
             <ConfirmDemo />
           </Row>
@@ -1399,7 +1399,7 @@ export function Showcase() {
           </Row>
           <Row
             title="Loading states"
-            note="Spinner (sm · default · lg, plus the current-ink tone on a busy button) for actions and unknowable waits; the Skeleton breath — shape-matched to the content — for known layouts. Fast loads flash nothing; shaped skeletons only for slower ones."
+            note="Use spinners for actions and waits with no known shape. Use matching skeletons for slower loads when the layout is known. Fast loads show neither."
           >
             <LoadingDemo />
           </Row>

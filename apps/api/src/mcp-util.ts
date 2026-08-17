@@ -251,6 +251,7 @@ export const summarizeArtifact = (a: ArtifactRecord) => ({
   link_role: a.link_role,
   listed: a.listed,
   removed: !!a.removed_at,
+  archived: !!a.archived_at,
 })
 
 export const summarizeVersion = (v: VersionRecord) => ({

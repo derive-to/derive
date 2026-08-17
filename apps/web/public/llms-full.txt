@@ -1,10 +1,12 @@
-# Derive — full reference for LLMs
+# Derive: full reference for LLMs
 
-> Publish AI-built artifacts — HTML pages, Markdown docs, slide decks — with a permanent URL, version history, and threaded comments anchored to the text.
+> Keep, share, and improve agent-made pages and documents. Each artifact has a lasting URL, version history, and comments on exact text.
 
-Derive gives agent-built content a durable home: a real URL on your domain, every revision versioned and addressable, comments anchored to exact text (W3C TextQuoteSelector) that survive rewrites, and a propose -> review -> approve loop so humans stay in control.
+Derive is a workspace for work made with agents. Publish to a lasting URL, keep each revision,
+comment on exact text with W3C TextQuoteSelector, edit directly, and control who can read or
+change the work. Proposals and formal review are available when permissions or a decision require them.
 
-Self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to.
+Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to. The FSL license converts each release to Apache-2.0 after two years.
 
 ---
 
@@ -53,9 +55,11 @@ Base URL: `https://derive.to` (or your self-hosted instance).
 Auth: `Authorization: Bearer $DERIVE_TOKEN` for write operations. Artifacts whose link
 role grants viewer or better are readable without auth.
 
-If this file and the live API disagree, trust the live API — fetched copies go stale.
+If this file and the live API disagree, trust the live API. Fetched copies go stale.
 The current capability surface is at `/.well-known/agent.json`, the agent skill at
 `/skill.md`, and the full spec at `/openapi.json` (reference UI at `/docs`).
+Human documentation is at `https://docs.derive.to/`; official live artifact examples and their source are
+at `/examples`.
 
 ### Publish an anonymous draft (no account)
 
@@ -80,7 +84,7 @@ No Authorization header. Response:
 
 The draft is live immediately on its own origin, view-by-link only (unlisted,
 noindex, never cached), and expires in 72 hours unless claimed. Report the draft
-URL, the expiry, and the claim URL to the user — the claim link is the only handle
+URL, the expiry, and the claim URL to the user. The claim link is the only handle
 on an unclaimed draft. Client-supplied access fields are ignored on this route, and
 drafts cannot be revised: mint a new draft to iterate, or claim first.
 
@@ -105,11 +109,11 @@ file         required  File blob (name determines type: .md or .html)
 title        optional  Display title (defaults to filename)
 slug         optional  URL slug
 message      optional  Version message
-workspace_access  optional  none | member — do workspace members reach it (at their seat role)
-link_role         optional  none | viewer | commenter | editor — what holding the URL confers on anyone
-listed            optional  none | workspace | public — where it surfaces for discovery
+workspace_access  optional  none | member. Sets workspace-member access at their seat role
+link_role         optional  none | viewer | commenter | editor. Sets access for anyone holding the URL
+listed            optional  none | workspace | public. Sets where the artifact appears for discovery
 password          optional  Locks the world link (only meaningful with link_role != none)
-visibility        optional  LEGACY public | link | org | password — still accepted, mapped to the fields above
+visibility        optional  LEGACY public | link | org | password. Still accepted and mapped to the fields above
 spa               optional  true/1 for single-page apps (disables sandbox)
 
 Omitted access fields use the workspace default; the factory default is the "team
@@ -171,6 +175,21 @@ GET /v1/artifacts/:short_id/content?v=2
 ```
 
 Returns raw source. Headers include `X-Derive-Version` and `X-Derive-Kind`.
+
+### Read a share URL as markdown (no token needed)
+
+```
+GET /artifacts/<ref>.md
+GET /artifacts/<ref>@v2.md
+GET /artifacts/<ref>            with header  Accept: text/markdown
+```
+
+The share URL's markdown projection (HTML artifacts are converted; a bundle serves its
+entry page). Anonymous access works whenever the link itself is viewable (a
+password-locked link must be unlocked on the web page first); a pinned version other
+than the current one needs a signed-in reader unless the artifact enables public
+history. Without the suffix or header the URL serves the web app's HTML shell, whose
+content loads client-side.
 
 ### Version diff
 
@@ -299,7 +318,10 @@ S3: `s3://<key>:<secret>@s3.<region>.amazonaws.com/<bucket>?region=<region>`
 
 ### Node Scale
 
-Run multiple stateless containers behind a load balancer for throughput. Realtime (SSE/presence) is per-instance and does not fan out across containers yet — for cross-instance realtime, use a Cloudflare tier (Durable Objects). A shared Node backplane (e.g. Redis) is planned but not yet built.
+Run multiple stateless containers behind a load balancer for throughput. Realtime (SSE/presence)
+stays on one instance and does not fan out across containers yet. Use a Cloudflare tier with
+Durable Objects when you need cross-instance realtime. A shared Node backplane such as Redis is
+planned but not built.
 
 ### Cloudflare Basic
 
@@ -325,7 +347,7 @@ Same as Cloudflare Basic but with `wrangler secret put DATABASE_URL` (Postgres).
 | Var | Default | Purpose |
 |---|---|---|
 | `BASE_URL` | request origin | Public URL for cookies and share links |
-| `DERIVE_AUTH_SECRET` | generated | Session signing key — always set in prod |
+| `DERIVE_AUTH_SECRET` | generated | Session signing key; always set it in production |
 | `PORT` | 8080 | Listen port (Node) |
 | `DATA_DIR` | /data | SQLite + blob dir (Lite) |
 | `DATABASE_URL` | (SQLite) | Postgres connection |

@@ -23,6 +23,8 @@ export function ArtifactInspect({
   textActive,
   textKind,
   selectedText,
+  video,
+  onSceneEdit,
   onUndo,
   onRedo,
   onFormat,
@@ -37,6 +39,16 @@ export function ArtifactInspect({
   textActive: boolean
   textKind: string
   selectedText: string
+  video?: {
+    i: number
+    total: number
+    id: string
+    durationMs: number
+    transition: string
+    transitionMs: number
+    caption: string
+  } | null
+  onSceneEdit?: (edit: Record<string, unknown>) => void
   onUndo: () => void
   onRedo: () => void
   onFormat: (kind: FormatKind, href?: string) => void
@@ -67,6 +79,8 @@ export function ArtifactInspect({
           saving={saving}
           onFormat={onFormat}
         />
+      ) : video && onSceneEdit ? (
+        <SceneInspect video={video} onEdit={onSceneEdit} saving={saving} />
       ) : (
         <ChooseInspect />
       )}
@@ -82,6 +96,142 @@ export function ArtifactInspect({
         onDone={onDone}
       />
     </section>
+  )
+}
+
+function SceneInspect({
+  video,
+  onEdit,
+  saving,
+}: {
+  video: {
+    i: number
+    total: number
+    id: string
+    durationMs: number
+    transition: string
+    transitionMs: number
+    caption: string
+  }
+  onEdit: (edit: Record<string, unknown>) => void
+  saving: boolean
+}) {
+  const update = (values: Record<string, unknown>) =>
+    onEdit({ op: "update", id: video.id, ...values })
+  return (
+    <div data-testid="artifact-inspect-scene" className="mt-6 space-y-5">
+      <div>
+        <p className="text-2xs text-muted-foreground uppercase tracking-wide">
+          Scene {video.i + 1} of {video.total}
+        </p>
+        <h3 className="mt-1 font-medium text-foreground text-sm">Scene timing and flow</h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Edit words directly on the canvas. Scene controls stay here in the same editing session.
+        </p>
+      </div>
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        Duration
+        <div className="flex items-center gap-2">
+          <input
+            data-testid="artifact-inspect-scene-duration"
+            key={`${video.id}-duration-${video.durationMs}`}
+            type="number"
+            min={1}
+            max={30}
+            step={0.5}
+            defaultValue={video.durationMs / 1000}
+            disabled={saving}
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground"
+            onBlur={(e) => update({ durationMs: Math.round(Number(e.target.value) * 1000) })}
+          />
+          <span>sec</span>
+        </div>
+      </label>
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        Transition
+        <select
+          data-testid="artifact-inspect-scene-transition"
+          key={`${video.id}-transition-${video.transition}`}
+          defaultValue={video.transition}
+          disabled={saving}
+          className="h-9 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground"
+          onChange={(e) => update({ transition: e.target.value })}
+        >
+          <option value="cut">Cut</option>
+          <option value="fade">Fade</option>
+          <option value="dissolve">Dissolve</option>
+          <option value="slide">Slide</option>
+        </select>
+      </label>
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        Caption
+        <textarea
+          data-testid="artifact-inspect-scene-caption"
+          key={`${video.id}-caption-${video.caption}`}
+          defaultValue={video.caption}
+          maxLength={500}
+          disabled={saving}
+          className="min-h-16 resize-y rounded-md border border-input bg-transparent px-2.5 py-2 text-sm text-foreground"
+          onBlur={(e) => update({ caption: e.target.value })}
+        />
+      </label>
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        Transition duration
+        <div className="flex items-center gap-2">
+          <input
+            data-testid="artifact-inspect-scene-transition-duration"
+            key={`${video.id}-transition-duration-${video.transitionMs}`}
+            type="number"
+            min={0.1}
+            max={2}
+            step={0.1}
+            defaultValue={video.transitionMs / 1000}
+            disabled={saving || video.transition === "cut"}
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-2.5 text-sm text-foreground"
+            onBlur={(e) => update({ transitionMs: Math.round(Number(e.target.value) * 1000) })}
+          />
+          <span>sec</span>
+        </div>
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          data-testid="artifact-inspect-scene-earlier"
+          variant="outline"
+          size="sm"
+          disabled={saving || video.i === 0}
+          onClick={() => onEdit({ op: "move", id: video.id, direction: "previous" })}
+        >
+          Move earlier
+        </Button>
+        <Button
+          data-testid="artifact-inspect-scene-later"
+          variant="outline"
+          size="sm"
+          disabled={saving || video.i === video.total - 1}
+          onClick={() => onEdit({ op: "move", id: video.id, direction: "next" })}
+        >
+          Move later
+        </Button>
+        <Button
+          data-testid="artifact-inspect-scene-duplicate"
+          variant="outline"
+          size="sm"
+          disabled={saving}
+          onClick={() => onEdit({ op: "duplicate", id: video.id })}
+        >
+          Duplicate
+        </Button>
+        <Button
+          data-testid="artifact-inspect-scene-delete"
+          variant="outline"
+          size="sm"
+          disabled={saving || video.total <= 1}
+          onClick={() => onEdit({ op: "delete", id: video.id })}
+        >
+          Delete
+        </Button>
+      </div>
+    </div>
   )
 }
 

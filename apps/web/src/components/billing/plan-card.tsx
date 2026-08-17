@@ -22,8 +22,8 @@ function PlanFeatures({ plan }: { plan: Plan }) {
 }
 
 /**
- * The plan-card shell: tier name, "Most teams" badge, the Team tier's accent ring,
- * the interval price line, and the feature list — the chrome the billing page's
+ * The plan-card shell: tier name, the Team tier's accent ring, the interval price
+ * line, and the feature list — the chrome the billing page's
  * PlanGrid and the paywall dialog's cards agree on exactly, so it's built once
  * here instead of hand-copied. `children` is the footer slot (the page's
  * conditional upgrade Button, the dialog's checkout Button, or nothing).
@@ -59,11 +59,6 @@ export function PlanCard({
     >
       <div className="flex items-center gap-2">
         <span className="text-base font-medium text-foreground">{plan.name}</span>
-        {"badge" in plan && plan.badge && (
-          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-            {plan.badge}
-          </span>
-        )}
         {current && (
           <span className="ml-auto rounded-full bg-secondary px-2 py-0.5 text-xs font-medium text-muted-foreground">
             Current plan

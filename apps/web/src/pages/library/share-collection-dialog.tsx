@@ -232,7 +232,7 @@ export function ShareCollectionDialog({
             segment={segment}
             testPrefix="collection-share"
             inviteCopy="Only the people you add below can open this."
-            workspaceCopy="Everyone in the workspace opens this at their role — admins manage, editors edit, commenters comment."
+            workspaceCopy="Everyone in the workspace uses their existing role. Admins manage, editors edit, and commenters comment."
             readOnlyIcon={accessIcon(linkRole, wsAccess)}
             readOnlyCopy={accessSummary(linkRole, wsAccess)}
             onSegmentChange={pickSegment}

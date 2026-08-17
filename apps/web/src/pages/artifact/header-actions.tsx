@@ -81,7 +81,7 @@ export function ReportDialog({
   const [sent, setSent] = useState(false)
   const report = useApiMutation({
     mutationFn: () => api.report(shortId, reason.trim()),
-    success: "Reported — thanks for flagging this",
+    success: "Report sent. Thanks for flagging this.",
     onSuccess: () => setSent(true),
   })
   const submit = () => {
@@ -98,7 +98,7 @@ export function ReportDialog({
         </DialogHeader>
         {sent ? (
           <div className="text-sm leading-relaxed text-muted-foreground">
-            Thanks — this has been flagged for review.
+            Thanks. This has been flagged for review.
           </div>
         ) : (
           <>

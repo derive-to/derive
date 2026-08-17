@@ -85,7 +85,7 @@ export function SearchResults() {
         <EmptyState
           icon={<Icon name="search" strokeWidth={1.75} />}
           title="Search your workspace"
-          description={`Find artifacts by keyword or by meaning — type at least ${MIN_CHARS} characters.`}
+          description={`Find artifacts by keyword or meaning. Type at least ${MIN_CHARS} characters.`}
         />
       ) : loading ? (
         showSkeleton ? (
@@ -114,7 +114,7 @@ export function SearchResults() {
           </ul>
           {data?.truncated && (
             <p className="px-1 text-xs text-muted-foreground">
-              Showing the top matches — refine your search to narrow it.
+              Showing the top matches. Add more detail to narrow your search.
             </p>
           )}
         </div>

@@ -11,12 +11,18 @@ export const CONFIG_FILE = "derive.json"
 export const CLOUD_SERVER = "https://derive.to"
 export const LOCAL_SERVER = "http://localhost:8080"
 
+const withoutTrailingSlashes = (value) => {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(0, end)
+}
+
 /** Resolve the target server: `--server` wins, then `--local`, then a project's
  *  derive.json server, then DERIVE_SERVER, else the hosted cloud. */
 export function resolveServer(opts = {}, config = null) {
-  if (opts.server) return String(opts.server).replace(/\/+$/, "")
+  if (opts.server) return withoutTrailingSlashes(String(opts.server))
   if (opts.local) return LOCAL_SERVER
-  return (config?.server ?? process.env.DERIVE_SERVER ?? CLOUD_SERVER).replace(/\/+$/, "")
+  return withoutTrailingSlashes(config?.server ?? process.env.DERIVE_SERVER ?? CLOUD_SERVER)
 }
 
 // ---- User-level credentials (`derive login`) --------------------------------
@@ -349,8 +355,13 @@ export function describeWorkspace(server, accountId, ref, description) {
   if (!account) throw new Error(`no such account: ${accountId}`)
   const found = findWorkspace(account.workspaces ?? {}, ref)
   if (!found) throw new Error(`no workspace "${ref}" for this account`)
-  if (description) account.workspaces[found.id].description = description
-  else delete account.workspaces[found.id].description
+  const workspace = Object.hasOwn(account.workspaces, found.id)
+    ? Object.getOwnPropertyDescriptor(account.workspaces, found.id)?.value
+    : null
+  if (!workspace || typeof workspace !== "object")
+    throw new Error(`workspace "${ref}" has an invalid local record`)
+  if (description) workspace.description = description
+  else delete workspace.description
   persistEntry(server, entry)
   return found
 }
@@ -1037,7 +1048,7 @@ same URL, and reviewers can comment on the rendered page.
 
 Comments anchor to the words they're attached to. They survive edits best when
 surrounding text stays recognizable — keep headings stable and avoid rewording
-a sentence end to end when you only meant to tweak it. See STANDARD.md.
+a sentence end to end when you only meant to tweak it. See the artifact authoring standard.
 `
 
 const starterSiteIndex = (title) => `<!doctype html>
@@ -1099,15 +1110,15 @@ const starterHtml = (title) => `<!doctype html>
 // @derive/core dependency), hence a generated copy rather than an import.
 const starterSlides = (title) => deckTemplate(title)
 
-// Scaffolded into every project: the publish -> review -> revise loop, written
-// for an agent (or a human) to follow without prior knowledge of Derive.
+// Scaffolded into every project: an artifact-first handoff, written for an agent
+// (or a human) to follow without prior knowledge of Derive.
 const AGENT_PREFERENCE_START = "<!-- derive:artifact-first:start -->"
 const AGENT_PREFERENCE_END = "<!-- derive:artifact-first:end -->"
 const AGENT_PREFERENCE_BLOCK = `${AGENT_PREFERENCE_START}
 ## Artifact-first handoff
 
 For substantial planning, product, design, research, review, or strategy work, create
-and publish a reviewable Derive artifact instead of delivering the work as chat prose.
+and publish a durable Derive artifact instead of delivering the work as chat prose.
 Prefer a fully styled HTML artifact with complete visual mockups when the topic has a
 user interface or journey. Put open questions and decisions in the artifact or its
 anchored comments, and revise the same URL through feedback.
@@ -1137,17 +1148,17 @@ derive publish ./report.md  # a file, or a folder (a built site)
 Each publish is a new immutable version at the same URL. Name a checkpoint with
 \`derive publish --name "Final draft"\`.
 
-## The loop: publish -> review -> revise
+## Continue the work at the same URL
 
-The CLI has a verb for each step (all read the artifact id from derive.json):
+Use only the commands the work needs (all read the artifact id from derive.json):
 
 \`\`\`bash
-derive publish                      # 1. publish a draft, share the URL
-derive comments                     # 2. read the comment threads (quote · author · state)
-# 3. revise the source for the feedback, then:
-derive publish --name "Rev 2"       #    publish again — same URL, highlights re-anchor
-derive reply <thread_id> "Fixed in this version."   # 4a. discuss
-derive resolve <comment_id>         # 4b. close a handled thread  (derive reopen to undo)
+derive publish                      # publish a durable version
+derive comments                     # read comment threads (quote · author · state)
+# revise the source when feedback or new information calls for it, then:
+derive publish --name "Rev 2"       # publish again — same URL, highlights re-anchor
+derive reply <thread_id> "Fixed in this version."   # discuss
+derive resolve <comment_id>         # close a handled thread  (derive reopen to undo)
 derive open                         # open the artifact in a browser
 \`\`\`
 
@@ -1159,7 +1170,7 @@ include \`resolves=<commentId,...>\` in the publish request.
 
 Anchors are text quotes with surrounding context. They survive edits when prose
 stays recognizable. Prefer small, local edits over wholesale rewrites; keep
-headings and distinctive phrases stable. Full guidance: STANDARD.md.
+headings and distinctive phrases stable. Full guidance: the artifact authoring standard.
 
 ## Using an agent harness
 

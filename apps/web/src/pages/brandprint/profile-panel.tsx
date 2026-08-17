@@ -44,7 +44,7 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
 
   const approve = useApiMutation({
     mutationFn: (proposalId: string) => api.approveProposal(profileId, proposalId),
-    success: "Brand profile approved — agents read it from now on",
+    success: "Brand profile approved. Connected coding agents can now use it.",
     onSuccess: () => setShowBrief(false),
     invalidate: [artifactQuery(profileId).queryKey, profileProposalsQuery(profileId).queryKey],
   })
@@ -67,14 +67,14 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
           <div>
             <h2 className="text-base font-medium text-foreground">Your brand profile is ready</h2>
             <p className="text-sm text-muted-foreground">
-              Your agent distilled it from your sources. Approve it and every agent reads it before
-              building anything here — or open it to comment and ask for changes.
+              Your agent built it from your sources. Review it, leave comments, or approve it to
+              make it active for connected agents.
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" asChild data-testid="brandprint-profile-review">
               <Link to="/artifacts/$ref" params={{ ref: refFor(art) }} search={{ review: open.id }}>
-                Review &amp; comment
+                Review and comment
               </Link>
             </Button>
             {ws?.role === "owner" ? (
@@ -106,7 +106,7 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
           <div>
             <h2 className="text-base font-medium text-foreground">Brand profile</h2>
             <p className="text-sm text-muted-foreground">
-              Live — every agent connected to this workspace reads it before authoring.
+              Live. Every agent connected to this workspace reads it before authoring.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -172,7 +172,7 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
       if (code === "alreadyQueued") {
         setQueued(true)
         toast(ALREADY_QUEUED)
-      } else toast.error("Couldn't queue the build — copy the brief below instead.")
+      } else toast.error("Couldn't queue the build. Copy the brief below instead.")
     },
     onSuccess: () => setQueued(true),
   })
@@ -187,8 +187,8 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
           Your agent is building your Brandprint
         </h2>
         <p className="text-sm text-pretty text-muted-foreground">
-          The build brief is queued to spec. The proposal lands here for your review — check back
-          after your agent's next session, or leave this page open and it appears on its own.
+          The build brief is queued. The proposed profile will appear here after your agent's next
+          session. You can leave this page open or come back later.
         </p>
       </section>
     )
@@ -205,8 +205,8 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
           </h2>
           <p className="text-sm text-pretty text-muted-foreground">
             {regenerating
-              ? "Hand your agent the brief again and it rebuilds the profile from your current sources — the new version arrives here for approval."
-              : "Your sources are saved and already guide connected agents. Now hand your agent this brief: it reads them, builds your brand profile, and sends it back here for your approval."}
+              ? "Give your agent the brief again to rebuild the profile from the current sources. The new version will appear here for review."
+              : "Your sources are saved and already guide connected agents. Give this brief to your agent to build the brand profile and publish it here for review."}
           </p>
         </div>
         <div className="flex items-center gap-2">

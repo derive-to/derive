@@ -4,15 +4,15 @@ import { type Artifact, api, type Folder } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/components/ui/sonner"
 import { collectionsQuery, summaryQuery } from "@/lib/queries"
-import { useApiMutation } from "@/lib/use-api-mutation"
+import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
+import { type ArtifactFeedData, removeArtifactsFromFeed } from "./artifact-feed-cache"
 import { summarize } from "./bulk-apply"
 import { BulkCollectionsDialog, BulkFolderDialog } from "./bulk-organize"
 
-// One action in the bar. The label is the button's text on a roomy viewport and its
-// accessible name everywhere — below `sm` the text collapses and the icon carries it, so
-// the row still fits a phone without a scroll or an overflow menu.
+// Labels collapse below `sm`; aria-label keeps the icon-only controls accessible.
 function BarAction({
   testId,
   icon,
@@ -47,16 +47,8 @@ function BarAction({
   )
 }
 
-// The bulk-action bar: it rises from the bottom of the library the moment a card is
-// checked, and it is the ONLY new surface multi-select introduces. Everything it can do,
-// a card's ⋯ menu can already do to one artifact — this just does it to the set, through
-// the very same endpoints.
-//
-// A library selection mixes what you own with what you can merely read, so no action
-// assumes the whole set is fair game. Each one sends the full selection and lets the
-// server authorize artifact by artifact, reporting what it passed over as "skipped"
-// rather than failing the batch or, worse, half-silently dropping them. Delete is the
-// only action also gated client-side — it says how many it will skip before you confirm.
+// Selections may mix writable and read-only artifacts. The server authorizes each item;
+// the client uses roles only to avoid optimistic changes it already knows will be skipped.
 export function SelectionBar({
   items,
   listKey,
@@ -82,8 +74,13 @@ export function SelectionBar({
   // Drives the delete button's enabled state and the count in its confirm copy, nothing
   // more — the server re-authorizes every artifact and reports back what it skipped.
   const deletable = items.filter((a) => a.my_role === "owner")
+  const archivable = items.filter(
+    (a) => !a.removed && (a.my_role === "owner" || a.my_role === "editor"),
+  )
+  const archivableIds = new Set(archivable.map((a) => a.short_id))
   // All-starred → the star becomes the un-star (the card's own toggle, at scale).
   const allFavorite = n > 0 && items.every((a) => a.favorite)
+  const allArchived = n > 0 && items.every((a) => a.archived)
 
   const favorite = useApiMutation({
     mutationFn: (on: boolean) => api.bulkFavorite(shortIds, on),
@@ -100,22 +97,45 @@ export function SelectionBar({
     onSuccess: onClear,
   })
 
-  const busy = favorite.isPending || remove.isPending
+  const undoArchive = useApiMutation({
+    mutationFn: ({ ids, on }: { ids: string[]; on: boolean }) => api.bulkArchive(ids, on),
+    invalidate: [["artifacts"], summaryQuery().queryKey],
+  })
+
+  const archive = useApiMutation({
+    mutationFn: (on: boolean) => api.bulkArchive(shortIds, on),
+    optimistic: (_on, qc) => {
+      const rollback = snapshot(qc, listKey)
+      qc.setQueryData<ArtifactFeedData>(listKey, (old) =>
+        removeArtifactsFromFeed(old, archivableIds),
+      )
+      return rollback
+    },
+    invalidate: [["artifacts"], summaryQuery().queryKey],
+    onSuccess: (result, on) => {
+      onClear()
+      if (!on) {
+        toast.success(summarize("Restored", result))
+        return
+      }
+      toast(summarize("Archived", result), {
+        action: {
+          label: "Undo",
+          onClick: () => undoArchive.mutate({ ids: shortIds, on: false }),
+        },
+      })
+    },
+  })
+
+  const busy = favorite.isPending || archive.isPending || remove.isPending
 
   return (
     <>
-      {/* Sticky, not fixed: the bar centers on the CONTENT column with no rail-width
-          arithmetic, so it lands right on a phone (no rail) and on a desktop with the nav
-          open. The bottom offset clears the iOS home indicator — the same
-          safe-area floor the mobile comment composer uses. */}
+      {/* Sticky positioning keeps the bar centered in the content column. */}
       <div className="pointer-events-none sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 mt-4 flex justify-center sm:bottom-6">
         <div
           data-testid="library-selection-bar"
-          // The floating-surface recipe (popover step + hairline ring), same as every
-          // other surface that lifts off the page. Labels collapse to icons below `sm`
-          // so the actions and the count fit a 320px phone without wrapping or
-          // horizontal scroll; each keeps its aria-label, so the icon-only form stays
-          // announced.
+          // Labels collapse below `sm` so the bar fits a 320px viewport.
           className="pointer-events-auto flex max-w-[calc(100vw-1.5rem)] items-center gap-0.5 rounded-2xl bg-popover px-2 py-2 text-popover-foreground shadow-[var(--shadow-pop)] ring-1 ring-foreground/10 duration-state ease-out animate-in fade-in-0 slide-in-from-bottom-2 sm:gap-1 sm:px-3"
         >
           <div className="flex items-center gap-2 border-r border-border-soft pr-2 pl-1 sm:pr-3">
@@ -164,6 +184,21 @@ export function SelectionBar({
             disabled={busy}
             title={allFavorite ? "Remove the star from all" : "Star the selected artifacts"}
             onClick={() => favorite.mutate(!allFavorite)}
+          />
+
+          <BarAction
+            testId="library-selection-archive"
+            icon={<Icon name="archive" size={16} />}
+            label={allArchived ? "Restore" : "Archive"}
+            disabled={busy || archivable.length === 0}
+            title={
+              archivable.length === 0
+                ? "You can only archive live artifacts you can edit"
+                : allArchived
+                  ? "Restore the selected artifacts to the library"
+                  : "Archive the selected artifacts"
+            }
+            onClick={() => archive.mutate(!allArchived)}
           />
 
           <BarAction

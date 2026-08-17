@@ -30,6 +30,12 @@ export interface OpenAiCompatOptions {
 
 export { TruncatedReplyError } from "./model-turn"
 
+const withoutTrailingSlashes = (value: string): string => {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(0, end)
+}
+
 /**
  * What the turn cost, when the endpoint says so.
  *
@@ -106,7 +112,7 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
   const provider = createOpenAICompatible({
     name: PROVIDER_KEY,
     // Trailing slashes are a configuration mistake nobody should have to debug from a 404.
-    baseURL: opts.baseUrl.replace(/\/+$/, ""),
+    baseURL: withoutTrailingSlashes(opts.baseUrl),
     apiKey: opts.apiKey,
     ...(doFetch ? { fetch: doFetch } : {}),
     // Ask for the final usage frame a stream otherwise omits; without it every streamed turn

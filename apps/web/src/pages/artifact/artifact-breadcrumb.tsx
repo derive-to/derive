@@ -76,7 +76,7 @@ function EditableTitle({ art, className }: { art: Artifact; className?: string }
       <span
         className={cn("truncate", className)}
         data-testid="artifact-title"
-        title={`${shown} — double-click to rename`}
+        title={`${shown}. Double-click to rename.`}
         onDoubleClick={() => setDraft(shown)}
       >
         {shown}

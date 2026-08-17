@@ -434,6 +434,19 @@ describe("organize backend: tags + collections client methods over real HTTP", (
     expect(vocab[0]?.count).toBeGreaterThanOrEqual(vocab[vocab.length - 1]?.count ?? 0)
   })
 
+  it("archives without breaking direct reads, lists the archive shelf, and restores", async () => {
+    const a = await client.publish({ content: "# Temporary", title: "Temporary" })
+    expect((await client.archive(a.short_id, true)).archived).toBe(true)
+    expect((await client.get(a.short_id)).short_id).toBe(a.short_id)
+    expect((await client.list()).map((x) => x.short_id)).not.toContain(a.short_id)
+    expect((await client.list(undefined, undefined, true)).map((x) => x.short_id)).toContain(
+      a.short_id,
+    )
+
+    expect((await client.archive(a.short_id, false)).archived).toBe(false)
+    expect((await client.list()).map((x) => x.short_id)).toContain(a.short_id)
+  })
+
   it("tag add unions, remove drops, set replaces", async () => {
     const { short_id } = await client.publish({ content: "# T", title: "Tagme", tags: ["keep"] })
     const added = await client.tag([short_id], { add: ["extra"] })

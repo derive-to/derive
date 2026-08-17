@@ -73,7 +73,7 @@ export function GithubSection() {
   return (
     <SettingsSection
       title="GitHub"
-      description="Mirror a GitHub repo's Markdown and HTML into a collection. Sync is one-way: GitHub stays the source of truth, so synced docs are read-only here but stay fully commentable."
+      description="Sync a GitHub repository's Markdown and HTML into a collection. GitHub remains the source, so the documents are read-only in Derive but still support comments."
     >
       {status === null ? (
         loadError ? (
@@ -99,7 +99,7 @@ export function GithubSection() {
         (status.sources.length === 0 ? (
           appConfigured && (
             <SettingsEmpty>
-              No repos mirrored yet — install the app on a repo above, then pick it here.
+              No repositories mirrored yet. Install the app above, then choose a repository.
             </SettingsEmpty>
           )
         ) : (

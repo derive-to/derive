@@ -28,6 +28,9 @@ import type {
   SlackAuthorFilter,
   SlackScopeKind,
   SlackThreadSurface,
+  TemplateEntryFormat,
+  TemplateEntryKind,
+  TemplateLibraryScope,
   VersionSource,
   WebhookKind,
   WorkspaceAccess,
@@ -62,6 +65,8 @@ export const artifact = pgTable("artifact", {
   // Set on every new version; null until first versioned (coalesces to created_at).
   updated_at: text("updated_at"),
   removed_at: text("removed_at"),
+  // Reversible discovery-only archive.
+  archived_at: text("archived_at"),
   // Expiring anonymous draft (the claim flow): ISO instant after which the draft is
   // gone — served 410 and swept. Null for every ordinary artifact; cleared on claim.
   expires_at: text("expires_at"),
@@ -786,6 +791,7 @@ export const proposal = pgTable("proposal", {
   base_version: integer("base_version").notNull(),
   state: text("state").$type<ProposalState>().notNull().default("open"),
   decided_by: text("decided_by"),
+  decided_by_id: text("decided_by_id"),
   decided_version: integer("decided_version"),
   decision_note: text("decision_note"),
   decided_at: text("decided_at"),
@@ -807,10 +813,55 @@ export const reviewRound = pgTable(
     requested_for: text("requested_for").notNull(),
     state: text("state").$type<ReviewRoundState>().notNull().default("pending"),
     note: text("note"),
+    resolved_by: text("resolved_by"),
+    resolved_by_name: text("resolved_by_name"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     resolved_at: text("resolved_at"),
   },
   (t) => [index("review_round_artifact").on(t.artifact_id, t.requested_for)],
+)
+
+// Mirror of schema.ts: libraries publish immutable starter snapshots, rather
+// than extending the source artifact's live access policy.
+export const templateLibrary = pgTable("template_library", {
+  id: text("id").primaryKey(),
+  org_id: text("org_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  scope: text("scope").$type<TemplateLibraryScope>().notNull().default("private"),
+  created_by: text("created_by").notNull(),
+  created_at: text("created_at").notNull().$defaultFn(isoNow),
+  updated_at: text("updated_at"),
+  mutation_token: text("mutation_token"),
+  mutation_started_at: text("mutation_started_at"),
+})
+
+export const templateLibraryEntry = pgTable(
+  "template_library_entry",
+  {
+    id: text("id").primaryKey(),
+    library_id: text("library_id")
+      .notNull()
+      .references(() => templateLibrary.id),
+    // Provenance only; no FK so source cleanup never destroys an adopted
+    // template snapshot. Mirrors schema.ts.
+    source_artifact_id: text("source_artifact_id").notNull(),
+    source_version: integer("source_version").notNull(),
+    source_blob_key: text("source_blob_key").notNull(),
+    source_content_type: text("source_content_type").notNull(),
+    kind: text("kind").$type<TemplateEntryKind>().notNull(),
+    category: text("category").notNull(),
+    format: text("format").$type<TemplateEntryFormat>().notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    outcome: text("outcome").notNull(),
+    sections_json: text("sections_json").notNull().default("[]"),
+    inputs_json: text("inputs_json").notNull().default("[]"),
+    tags_json: text("tags_json").notNull().default("[]"),
+    created_by: text("created_by").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [index("template_library_entry_library").on(t.library_id, t.created_at)],
 )
 
 // A context: an askable agent setup — agent + manifest artifact. Mirror of the
@@ -1008,6 +1059,8 @@ const TABLES = [
   collectionMember,
   collectionFavorite,
   folder,
+  templateLibrary,
+  templateLibraryEntry,
   repoSource,
   orgSettings,
   subscription,
@@ -1031,8 +1084,9 @@ const TABLES = [
   modelCredential,
 ]
 
-/** Build the Postgres boot DDL: generated table/index CREATEs + placeholder tables
- *  + perf indexes, then the idempotent ADD COLUMN IF NOT EXISTS migrations. Pure;
+/** Build the Postgres boot DDL: table CREATEs + placeholder tables, then the idempotent
+ *  ADD COLUMN IF NOT EXISTS reconciliation, and only then every index — an index may
+ *  reference a column the reconciliation just added on an existing database. Pure;
  *  exported for the conformance test. */
 // Full-text search index (workspace search substrate) — the Postgres twin of the SQLite
 // fts5 virtual table. A real table holding a precomputed `tsvector` per artifact, with a
@@ -1093,18 +1147,21 @@ BEGIN
 END $$`
 
 export const buildPgSchemaStatements = (): string[] => {
-  const { creates, alters } = generateDdl(TABLES, getTableConfig, {
+  const ddl = generateDdl(TABLES, getTableConfig, {
     ifNotExists: true,
     timestampDefault: PG_TIMESTAMP_DEFAULT,
   })
   return [
-    ...creates,
+    ...ddl.createTables,
     ...placeholderTables(PG_TIMESTAMP_DEFAULT),
+    // CREATE TABLE IF NOT EXISTS does not reconcile an existing table. Add every safe
+    // column before creating derived objects that may reference the current schema.
+    ...ddl.addColumns,
+    ...ddl.createIndexes,
     ...PERF_INDEXES,
     ...ARTIFACT_SEARCH_PG,
-    ...alters,
-    // After the alters: partial indexes reference columns the alters add on a populated DB
-    // (dedupe_key), and the PG boot has no per-statement try/catch, so ordering is load-bearing.
+    // Partial indexes follow the same dependency rule: their predicates reference columns
+    // that the additive phase may just have introduced on a populated database.
     CONTEXT_SESSION_DEDUPE_UNIQUE_PG,
     RUN_SCHEDULE_OCCURRENCE_UNIQUE_PG,
     // A session no longer requires a context (chat with a document). Postgres can say this

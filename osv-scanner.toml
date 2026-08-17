@@ -1,0 +1,6 @@
+# OSV-Scanner reads this file beside pnpm-lock.yaml. Exceptions must be scoped,
+# justified, and expire; the CI scan fails again when this one reaches its date.
+[[IgnoredVulns]]
+id = "GHSA-p2fr-6hmx-4528"
+ignoreUntil = 2026-11-01
+reason = "Derive's accepted audience strings are URL variants of one Derive MCP resource server, and every variant is checked against the same authorization boundary. There is no second allow-listed resource server to escalate into. Re-audit when Better Auth ships the fixed 1.7 stable line; its current fix is a schema-breaking prerelease."

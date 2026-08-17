@@ -81,6 +81,48 @@ describe("bulk favorite", () => {
   })
 })
 
+describe("bulk archive", () => {
+  it("archives a set, leaves direct reads intact, and restores it", async () => {
+    const [a, b, c] = [await publish("arc-a"), await publish("arc-b"), await publish("arc-c")]
+    const archived = await bulk("/v1/bulk/archive", { shortIds: [a, b], archived: true }, ben)
+    expect(await archived.json()).toEqual({ ok: 2, skipped: 0, failed: 0 })
+
+    const normal = await (await app.request("/v1/artifacts", { headers: as(amy.email) })).json()
+    expect(normal.artifacts.map((x: { short_id: string }) => x.short_id)).not.toContain(a)
+    expect(normal.artifacts.map((x: { short_id: string }) => x.short_id)).toContain(c)
+    expect((await app.request(`/v1/artifacts/${a}`, { headers: as(amy.email) })).status).toBe(200)
+
+    const shelf = await (
+      await app.request("/v1/artifacts?scope=archived", { headers: as(amy.email) })
+    ).json()
+    expect(shelf.artifacts.map((x: { short_id: string }) => x.short_id).sort()).toEqual(
+      [a, b].sort(),
+    )
+
+    const restored = await bulk("/v1/bulk/archive", { shortIds: [a, b], archived: false }, ben)
+    expect(await restored.json()).toEqual({ ok: 2, skipped: 0, failed: 0 })
+    expect((await meta.getByShortId(a))?.archived_at).toBeNull()
+    expect((await meta.getByShortId(b))?.archived_at).toBeNull()
+  })
+
+  it("does not turn a tombstone into an archive", async () => {
+    const a = await publish("arc-removed")
+    const record = await meta.getByShortId(a)
+    if (!record) throw new Error("artifact missing")
+    await meta.setArtifactRemoved(record.id, "2026-01-02T00:00:00.000Z")
+
+    const one = await app.request(`/v1/artifacts/${a}/archive`, {
+      method: "PUT",
+      headers: as(amy.email),
+    })
+    expect(one.status).toBe(409)
+
+    const many = await bulk("/v1/bulk/archive", { shortIds: [a], archived: true })
+    expect(await many.json()).toEqual({ ok: 0, skipped: 1, failed: 0 })
+    expect((await meta.getByShortId(a))?.archived_at).toBeNull()
+  })
+})
+
 describe("bulk collections", () => {
   it("adds a set to a collection in one call", async () => {
     const [a, b, c] = [await publish("col-a"), await publish("col-b"), await publish("col-c")]

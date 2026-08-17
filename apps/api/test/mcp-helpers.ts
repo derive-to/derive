@@ -3,6 +3,7 @@ import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { createApp } from "../src/app"
+import type { AppDeps } from "../src/context"
 import { sha256 } from "../src/lib/crypto"
 
 // The shared remote-MCP JSON-RPC test harness: seed an OAuth grant straight into the
@@ -80,11 +81,31 @@ export function appWithGrant(
     return tokenName
   }
   const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
+  // A grant-backed agent may propose, but only a directly signed-in human may
+  // settle that proposal. Tests opt into the owner's real session explicitly
+  // with `x-test-user: owner@x.test`; requests without it remain sessionless.
+  const auth = {
+    handler: async () => new Response(null, { status: 404 }),
+    api: {
+      getSession: async ({ headers }: { headers: Headers }) =>
+        headers.get("x-test-user") === "owner@x.test"
+          ? {
+              user: {
+                id: "u_o",
+                createdAt: "2020-01-01T00:00:00.000Z",
+                email: "owner@x.test",
+                name: "Owner",
+              },
+            }
+          : null,
+    },
+  } as unknown as AppDeps["auth"]
   const app = createApp({
     meta,
     blobs,
     baseUrl: "http://derive.test",
     token: "tok",
+    auth,
     ...extra,
   })
   return { app, token: `tok_${name}`, meta, blobs, teammate }

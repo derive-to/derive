@@ -20,6 +20,7 @@ import {
   rawArtifactUrl,
   workspaceSettingsQuery,
 } from "@/lib/queries"
+import { rawTokenNeedsRefresh } from "@/lib/raw-token"
 import { ago } from "@/lib/time"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -133,6 +134,7 @@ export function Artifact() {
   // Thumb-sized targets and "tap" copy follow the POINTER, not the breakpoint: a
   // landscape phone is 844px wide and a tablet wider still, and both are fingers.
   const coarsePointer = useCoarsePointer()
+  const openedVideoMoment = useRef<string | null>(null)
 
   // Artifact metadata + comments come from React Query, so the route loader's
   // intent preload (ensureQueryData) warms exactly what we render here — the
@@ -147,11 +149,11 @@ export function Artifact() {
   const {
     data: art,
     isPlaceholderData: seeded,
+    isFetching: refreshingArtifact,
     isError: failed,
     error,
+    dataUpdatedAt: artifactFetchedAt,
     refetch,
-    dataUpdatedAt,
-    isFetching,
   } = useQuery({
     ...artifactQuery(shortId, qc),
     // A linked bundle resolves current member versions in its ordinary detail
@@ -161,7 +163,17 @@ export function Artifact() {
     refetchIntervalInBackground: false,
   })
 
-  // Deferred use-as-template: the public viewer's "Make your own" sends a signed-out
+  // A restored/in-memory detail can carry a raw capability that expired long before
+  // this click. Refresh it before the iframe gets a src; otherwise the first token is
+  // pinned for the render and the later background response cannot repair its 404.
+  const rawTokenStale =
+    !!art?.raw_token && rawTokenNeedsRefresh(art.raw_token_expires_at, artifactFetchedAt)
+  useEffect(() => {
+    if (!rawTokenStale || refreshingArtifact || failed) return
+    void refetch()
+  }, [rawTokenStale, refreshingArtifact, failed, refetch])
+
+  // Deferred use-as-template: the public viewer's "Make a copy" sends a signed-out
   // clicker through login with `?use=1`, and the copy fires here, right after auth.
   // The same-tab marker gates it — `?use=1` alone is a shareable URL, and a pasted
   // link must not write into the clicker's workspace (see lib/use-intent.ts). Fired
@@ -379,7 +391,7 @@ export function Artifact() {
           duration: 8000,
         })
       } else if (editingRef.current) {
-        toast.warning(`${v} was just published — publishing this edit will replace it.`, {
+        toast.warning(`${v} was just published. Publishing this edit will replace it.`, {
           id: `stale-edit-${shortId}`,
           duration: 8000,
         })
@@ -418,6 +430,8 @@ export function Artifact() {
     scrollBy,
     deck,
     deckCmd,
+    video,
+    videoCmd,
     present,
     sel,
     setSel,
@@ -499,6 +513,18 @@ export function Artifact() {
   useEffect(() => {
     post({ type: "review-mode", on: visualPin })
   }, [post, visualPin])
+
+  // A shared moment is an absolute timeline offset, so it still lands on the same
+  // content after an earlier scene's duration changes. Apply once when the video runtime
+  // announces itself; later clock updates must not drag the viewer back.
+  useEffect(() => {
+    if (!video || search.t === undefined) return
+    const key = `${shortId}:${version ?? "current"}:${search.t}`
+    if (openedVideoMoment.current === key) return
+    openedVideoMoment.current = key
+    if (search.scene) videoCmd("seek-scene", search.t, search.scene)
+    else videoCmd("seek", search.t)
+  }, [search.scene, search.t, shortId, version, video, videoCmd])
 
   // Preview vs. line-diff for the shown version, plus the fetched diff. See
   // use-version-diff.
@@ -648,6 +674,7 @@ export function Artifact() {
     allowElementEdits:
       art?.current_content_type?.startsWith("text/html") === true ||
       art?.current_content_type === "text/x-derive-deck" ||
+      art?.current_content_type === "text/x-derive-video" ||
       art?.current_content_type === "text/x-derive-linked-bundle",
     onOpenSourceEditor: startEdit,
     onEnter: () => {
@@ -723,6 +750,31 @@ export function Artifact() {
     // concurrent edit to the same key (a favorite/tag toggle) that landed mid-flight.
     invalidate: [artifactQuery(shortId).queryKey],
   })
+  const undoArchive = useApiMutation({
+    mutationFn: () => api.archive(shortId, false),
+    invalidate: [["artifacts"], artifactQuery(shortId).queryKey, ["summary"]],
+  })
+  const archiveMut = useApiMutation({
+    mutationFn: (next: boolean) => api.archive(shortId, next),
+    optimistic: (next, client) => {
+      const rollback = snapshot(client, artifactQuery(shortId).queryKey)
+      client.setQueryData(artifactQuery(shortId).queryKey, (a) =>
+        a ? { ...a, archived: next } : a,
+      )
+      return rollback
+    },
+    invalidate: [["artifacts"], artifactQuery(shortId).queryKey, ["summary"]],
+    onSuccess: (_data, next) => {
+      if (!next) {
+        toast.success("Restored to library")
+        return
+      }
+      void nav({ to: "/" })
+      toast("Artifact archived", {
+        action: { label: "Undo", onClick: () => undoArchive.mutate() },
+      })
+    },
+  })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   // `failed && !art`: only show the full error page when there's NO artifact to show. A
@@ -766,6 +818,12 @@ export function Artifact() {
   // While inline editing, the shown version stays frozen at the mode-entry head so
   // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
+  const pinnedForShown =
+    pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
+  // A background failure may leave old metadata available, but an expired capability
+  // cannot render it. Surface the retry state instead of leaving Loading preview… forever.
+  if (failed && rawTokenStale && !pinnedForShown)
+    return <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
   // The public-history gate, client half: an anonymous @vN link on an artifact whose
   // owner kept history private is a 404, not a downgrade — the server already
   // refuses the old version's bytes (raw.ts), so render the same not-found the
@@ -790,6 +848,7 @@ export function Artifact() {
   // only ever reloads for a reason (a real version change), not a coincidental refetch.
   if (
     art.raw_token &&
+    !rawTokenStale &&
     (!pinnedRawToken.current ||
       pinnedRawToken.current.shortId !== shortId ||
       pinnedRawToken.current.version !== shown)
@@ -806,7 +865,8 @@ export function Artifact() {
   // rawArtifactUrl is SHARED with the prefetch (lib/queries) so the two can never build
   // different URLs again — when they did, hover prefetching warmed a response the frame
   // never requested.
-  const rawSrc = seeded ? null : rawArtifactUrl(shortId, shown, rawToken)
+  const rawSrc =
+    seeded || (rawTokenStale && !pinnedForShown) ? null : rawArtifactUrl(shortId, shown, rawToken)
   // Editors publish directly; commenters propose a candidate for review.
   const canPublish = art.my_role === "editor" || art.my_role === "owner"
   // md vs html drives syntax highlighting + how the live preview renders.
@@ -890,6 +950,7 @@ export function Artifact() {
       onDiffRetry={retryDiff}
       restoring={restoring}
       deck={deck}
+      video={video}
       frameRef={frame}
       presentWrapRef={presentWrap}
       cursor={live.cursor}
@@ -911,6 +972,11 @@ export function Artifact() {
       }
       onDeckPrev={() => deckCmd("prev")}
       onDeckNext={() => deckCmd("next")}
+      onVideoPrev={() => videoCmd("prev")}
+      onVideoNext={() => videoCmd("next")}
+      onVideoToggle={() => videoCmd(video?.playing ? "pause" : "play")}
+      onVideoRestart={() => videoCmd("restart")}
+      onVideoSeek={(ms) => videoCmd("seek", ms)}
       presenting={present.presenting}
       presentOverlay={present.overlay}
       controlsIdle={present.idle}
@@ -954,8 +1020,8 @@ export function Artifact() {
       canComment={canComment}
       canEdit={effectiveCanPublish}
       pinning={visualPin}
-      refreshing={isFetching}
-      refreshedAt={dataUpdatedAt}
+      refreshing={refreshingArtifact}
+      refreshedAt={artifactFetchedAt}
       onTogglePinning={() => {
         setComposer(null)
         setSel(null)
@@ -1131,7 +1197,7 @@ export function Artifact() {
             {!live.connected && (
               <span
                 data-testid="live-reconnecting"
-                title="Reconnecting to live updates — comments and presence may be briefly out of date"
+                title="Reconnecting to live updates. Comments and presence may be briefly out of date."
                 className="mr-1.5 flex items-center gap-1.5 text-2xs text-muted-foreground"
               >
                 <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70" />
@@ -1177,12 +1243,17 @@ export function Artifact() {
               inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
               onInlineEdit={() => inlineEdit.start()}
               isDeck={isDeckLike}
+              videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
               canLock={canLock}
               canMove={canMove}
               automateBeta={automateBeta}
               locked={isLocked}
+              archived={!!art.archived}
+              canArchive={canPublish}
               onPresent={present.toggle}
+              onCreateFrom={() => nav({ to: "/templates", search: { source: shortId } })}
               onLockToggle={() => lockMut.mutate(!isLocked)}
+              onArchive={() => archiveMut.mutate(!art.archived)}
               onFavorite={(fav) =>
                 qc.setQueryData(artifactQuery(shortId).queryKey, (a) =>
                   a ? { ...a, favorite: fav } : a,
@@ -1377,6 +1448,8 @@ export function Artifact() {
                     textActive={inlineEdit.tools.textActive}
                     textKind={inlineEdit.tools.textKind}
                     selectedText={inlineEdit.tools.selectedText}
+                    video={video}
+                    onSceneEdit={(edit) => post({ type: "video-edit", ...edit })}
                     onUndo={inlineEdit.undo}
                     onRedo={inlineEdit.redo}
                     onFormat={inlineEdit.format}

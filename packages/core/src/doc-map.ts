@@ -28,12 +28,14 @@
 import { countSlideElements, isDeckDocument, sliceSlides } from "./decks"
 import { flatSectionSpans, isHtmlLike, landmarkSpans } from "./doc-text"
 import { attrValue, elementEnd, type HtmlTag, tags } from "./html-tags"
+import { isVideoDocument, sliceScenes } from "./videos"
 
 /** What a node IS. Reorderable types (slide, section) are the ones a structural op may
  *  move; the rest are addressable for reading and replacing only. */
 export type DocNodeType =
   | "head"
   | "slide"
+  | "scene"
   | "section"
   | "region"
   | "style"
@@ -61,7 +63,7 @@ export interface DocNode {
 }
 
 export interface DocMap {
-  kind: "deck" | "page" | "markdown"
+  kind: "deck" | "video" | "page" | "markdown"
   nodes: DocNode[]
 }
 
@@ -128,12 +130,30 @@ export const docMap = (source: string, contentType: string): DocMap => {
   // needs 2 slides (isDeckDocument), an unannounced one needs 3 (the same bar the publish
   // advisory uses before it calls a page a deck attempt), so an ordinary page that happens
   // to use a `slide` class twice stays a page.
-  const slideStructured = html && (isDeckDocument(source) || countSlideElements(source) >= 3)
-  const kind: DocMap["kind"] = html ? (slideStructured ? "deck" : "page") : "markdown"
+  const videoStructured = html && isVideoDocument(source)
+  const slideStructured =
+    !videoStructured && html && (isDeckDocument(source) || countSlideElements(source) >= 3)
+  const kind: DocMap["kind"] = html
+    ? videoStructured
+      ? "video"
+      : slideStructured
+        ? "deck"
+        : "page"
+    : "markdown"
 
   // 1. Content anchors: what the document is made of.
   const anchors: DocNode[] = []
-  if (kind === "deck") {
+  if (kind === "video") {
+    for (const s of sliceScenes(source))
+      anchors.push({
+        ref: `scene:${s.id}`,
+        type: "scene",
+        start: s.start,
+        end: s.end,
+        id: s.id,
+        ...(s.title ? { title: clip(s.title) } : {}),
+      })
+  } else if (kind === "deck") {
     // A deck's slides ARE its content; headings inside them are slide titles, not sections.
     for (const s of sliceSlides(source)) {
       const src = source.slice(s.start, s.end)

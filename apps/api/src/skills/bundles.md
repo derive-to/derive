@@ -1,6 +1,6 @@
 ---
 name: bundles
-summary: group independent artifacts with inspectable loop or graph diagrams; Derive does not execute them (publish, read)
+summary: group artifacts around authored loops or graphs (publish, read)
 order: 5
 ---
 # Linked bundles

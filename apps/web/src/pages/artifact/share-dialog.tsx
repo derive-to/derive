@@ -77,6 +77,7 @@ export function ShareButton({
   passwordProtected = false,
   publicHistory = false,
   collectionAccess,
+  videoMoment,
 }: {
   shortId: string
   myRole?: Role | null
@@ -92,6 +93,7 @@ export function ShareButton({
    *  disclosure rows so the dialog never claims "Invited" while a collection grants
    *  the workspace access. */
   collectionAccess?: CollectionGrant[]
+  videoMoment?: { scene: string; timeMs: number }
 }) {
   const qc = useQueryClient()
   const { me } = useAuth()
@@ -152,6 +154,9 @@ export function ShareButton({
   const shareUrl =
     art?.url ??
     `${typeof window === "undefined" ? "" : window.location.origin}/artifacts/${shortId}`
+  const momentUrl = videoMoment
+    ? `${shareUrl}${shareUrl.includes("?") ? "&" : "?"}scene=${encodeURIComponent(videoMoment.scene)}&t=${Math.round(videoMoment.timeMs)}`
+    : null
 
   // Embed snippet: an iframe of the embeddable view. Same-origin by default; the
   // split-deploy SPA points at the API origin via API_BASE. The embed only shows
@@ -292,6 +297,10 @@ export function ShareButton({
       }
     }
   }
+  const copyMoment = () =>
+    momentUrl
+      ? void copyLinkToClipboard(momentUrl, { success: "Current moment link copied" })
+      : undefined
 
   const load = () =>
     api
@@ -437,10 +446,10 @@ export function ShareButton({
             testPrefix="share"
             inviteCopy={
               grants.length > 0
-                ? "Only the people you add below — plus everyone reached through its collections."
+                ? "Only the people you add below and anyone with access through a collection."
                 : "Only the people you add below can open this."
             }
-            workspaceCopy="Everyone in the workspace opens this at their role — admins manage, editors edit, commenters comment."
+            workspaceCopy="Everyone in the workspace uses their existing role. Admins manage, editors edit, and commenters comment."
             readOnlyIcon={accessIcon(
               linkRole ?? "none",
               workspaceAccess ?? "member",
@@ -469,7 +478,7 @@ export function ShareButton({
                 <div className="min-w-0">
                   <div className="text-sm text-foreground">Show in the workspace library</div>
                   <div className="text-xs text-muted-foreground">
-                    Otherwise it's link-only — out of the team's feed.
+                    Otherwise, only people with the link can find it.
                   </div>
                 </div>
                 <Switch
@@ -622,7 +631,19 @@ export function ShareButton({
         {/* Footer: the universal action on the left, distribution mechanics folded
             behind a quiet disclosure on the right. */}
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <ShareCopyLinkButton copied={copiedLink} testPrefix="share" onCopy={copyLink} />
+          <div className="flex gap-1.5">
+            <ShareCopyLinkButton copied={copiedLink} testPrefix="share" onCopy={copyLink} />
+            {momentUrl && (
+              <Button
+                data-testid="share-moment-copy"
+                variant="outline"
+                size="sm"
+                onClick={copyMoment}
+              >
+                Copy current moment
+              </Button>
+            )}
+          </div>
           <Button
             data-testid="share-more-toggle"
             variant="ghost"
@@ -662,7 +683,7 @@ export function ShareButton({
               </div>
               <p className="mt-1.5 text-sm text-muted-foreground">
                 {linkAccessible
-                  ? "Paste into any page — live, with a link back to Derive."
+                  ? "Paste this into any page. It stays live and links back to Derive."
                   : "Give it a link (set access to “Anyone”) for the embed to load for others."}
               </p>
             </div>

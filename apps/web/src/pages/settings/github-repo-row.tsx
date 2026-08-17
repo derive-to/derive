@@ -35,7 +35,7 @@ const phaseHeadline = (p: SyncProgress, repo: string): string => {
 const phaseDetail = (p: SyncProgress): string => {
   switch (p.phase) {
     case "queued":
-      return "Queued — the server is picking this up"
+      return "Queued. The server will start soon."
     case "listing":
       return "Scanning the repository tree"
     case "mirroring":
@@ -191,7 +191,7 @@ export function RepoSourceRow({ source, onDone }: { source: RepoSource; onDone: 
                     data-testid={`github-disconnect-keep-${source.id}`}
                     onClick={() => remove.mutate(false)}
                   >
-                    Keep docs — stop syncing, docs stay readable
+                    Keep docs. Stop syncing but leave the documents available.
                   </Button>
                   <Button
                     variant="destructive"
@@ -199,7 +199,7 @@ export function RepoSourceRow({ source, onDone }: { source: RepoSource; onDone: 
                     data-testid={`github-disconnect-wipe-${source.id}`}
                     onClick={() => remove.mutate(true)}
                   >
-                    {remove.isPending ? "Deleting…" : "Delete docs — remove all synced content"}
+                    {remove.isPending ? "Deleting…" : "Delete docs and all synced content"}
                   </Button>
                 </div>
               </DialogContent>
@@ -242,7 +242,7 @@ export function RepoSourceRow({ source, onDone }: { source: RepoSource; onDone: 
 
               <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
                 <CheckCircle2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-                Running on our servers — you can close this tab, it’ll keep going.
+                Running on our servers. You can close this tab.
               </div>
             </div>
           )}

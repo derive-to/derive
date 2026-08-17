@@ -84,7 +84,7 @@ export function RepoPicker({
     // Connect only — the row auto-syncs in batches with a progress bar.
     mutationFn: (repoName: string) =>
       api.connectRepoSource({ repo: repoName, installation_id: installationId, includes }),
-    success: "Repo connected — syncing",
+    success: "Repository connected. Syncing now.",
     onSuccess: () => onConnected(),
   })
   const doConnect = () => {
@@ -167,7 +167,7 @@ export function RepoPicker({
               data-testid="github-folder"
               value={folder}
               onChange={(e) => setFolder(e.target.value)}
-              placeholder="folder (optional, e.g. docs) — blank = whole repo"
+              placeholder="Folder (optional, for example docs). Leave blank for the whole repo."
               className="font-mono"
             />
             <div className="text-sm text-muted-foreground" data-testid="github-preview">

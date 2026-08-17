@@ -810,7 +810,8 @@ const interceptAnthropic = (reply?: unknown) => {
   const real = globalThis.fetch
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
-    if (!href.startsWith("https://api.anthropic.com")) return real(input as RequestInfo, init)
+    const target = new URL(href)
+    if (target.origin !== "https://api.anthropic.com") return real(input as RequestInfo, init)
     const headers: Record<string, string> = {}
     new Headers(init?.headers).forEach((v, k) => {
       headers[k.toLowerCase()] = v

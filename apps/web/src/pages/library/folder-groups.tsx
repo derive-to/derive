@@ -16,6 +16,7 @@ interface Handlers {
   onToggleFavorite: (a: Artifact) => void
   onPickAuthor: (login: string) => void
   onAddToCollection: (a: Artifact) => void
+  onArchive: (a: Artifact) => void
   onDelete: (a: Artifact) => void
   onPrefetch: (a: Artifact) => void
   // Multi-select, threaded to every row — a folder view is exactly where selecting a
@@ -136,7 +137,9 @@ function FolderSection({
               artifact={a}
               onOpen={() => handlers.onOpen(a)}
               onToggleFavorite={() => handlers.onToggleFavorite(a)}
+              onPickAuthor={handlers.onPickAuthor}
               onAddToCollection={() => handlers.onAddToCollection(a)}
+              onArchive={() => handlers.onArchive(a)}
               onDelete={() => handlers.onDelete(a)}
               onPrefetch={() => handlers.onPrefetch(a)}
               indent

@@ -46,7 +46,7 @@ export function SlackSubscriptionsSection() {
         // Padding-neutral wrapper: as the group's last child its own pb would be
         // stripped, hugging the sentence against the group's bottom edge.
         <div>
-          <SettingsEmpty>No channels subscribed yet — nothing is posted to Slack.</SettingsEmpty>
+          <SettingsEmpty>No channels are subscribed. Derive is not posting to Slack.</SettingsEmpty>
         </div>
       ) : (
         data.subscriptions.map((s) => (
@@ -97,7 +97,7 @@ function NewSubscription({ onCreated }: { onCreated: () => void }) {
       disabled={!channel || channel.startsWith("__")}
       after={
         <p className="w-full text-sm text-muted-foreground">
-          Invite the Derive app to a private channel before subscribing it — it can join public
+          Invite the Derive app to a private channel before subscribing it. The app can join public
           channels itself.
         </p>
       }

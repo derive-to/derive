@@ -5,12 +5,23 @@ const base36 = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 8)
 export const newShortId = (): string => base36()
 export const newId = (prefix: string): string => `${prefix}_${base36()}${base36()}`
 
-export const slugify = (s: string): string =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48)
+export const slugify = (s: string): string => {
+  let out = ""
+  let separator = false
+  for (const char of s.toLowerCase()) {
+    const code = char.charCodeAt(0)
+    const alphanumeric = (code >= 48 && code <= 57) || (code >= 97 && code <= 122)
+    if (!alphanumeric) {
+      separator = out.length > 0
+      continue
+    }
+    if (separator && out.length < 48) out += "-"
+    separator = false
+    if (out.length < 48) out += char
+    if (out.length === 48) break
+  }
+  return out.endsWith("-") ? out.slice(0, -1) : out
+}
 
 /**
  * An artifact ref is a name (slug) followed by the short id, with an optional `@vN`

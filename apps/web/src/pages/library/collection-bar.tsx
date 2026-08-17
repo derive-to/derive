@@ -138,7 +138,7 @@ export function CollectionBar({
           data-testid="collection-star"
           aria-pressed={!!starred}
           aria-label={starred ? "Unstar" : "Star"}
-          title={starred ? "Unstar — remove from your sidebar" : "Star — pin to your sidebar"}
+          title={starred ? "Remove from sidebar" : "Pin to sidebar"}
           onClick={() => onStar(!starred)}
           className="grid size-7 shrink-0 place-items-center rounded-md outline-none transition-colors duration-state hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
         >

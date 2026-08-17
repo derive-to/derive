@@ -2,7 +2,7 @@
   "name": "derive.to",
   "version": "0.1.0",
   "private": true,
-  "description": "Manage and share AI artifacts. Self-hostable, CLI-first, with permanent versioned URLs.",
+  "description": "A workspace for agent-made artifacts you can keep, share, and improve. Fair Source, self-hostable, and MCP-native.",
   "license": "FSL-1.1-ALv2",
   "homepage": "https://derive.to",
   "repository": {
@@ -32,8 +32,12 @@
       "ip-address": ">=10.3.1",
       "ws": "^8.21.0",
       "postcss": ">=8.5.23",
+      "body-parser": "2.3.0",
       "nanoid@<4": ">=3.3.17",
-      "brace-expansion@>=3.0.0 <5.0.8": ">=5.0.8",
+      "brace-expansion@<2.0.0": "1.1.18",
+      "brace-expansion@>=2.0.0 <3.0.0": "2.1.4",
+      "brace-expansion@>=3.0.0 <4.0.0": "3.0.6",
+      "brace-expansion@>=4.0.0 <5.0.9": "5.0.9",
       "@puppeteer/browsers": "^3.2.0"
     },
     "patchedDependencies": {
@@ -70,7 +74,7 @@
     "format": "biome format --write",
     "check": "biome check",
     "check:fix": "biome check --write",
-    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:interaction && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files && pnpm lint:skills && pnpm lint:deck-template && pnpm lint:app-map && pnpm lint:mcp-coercion && pnpm lint:local-data && pnpm lint:delete-cascade && pnpm lint:facts-visibility && pnpm lint:facts-portable && pnpm lint:derived-exclusion && pnpm lint:selfhost-quickstart && pnpm lint:deploy-verified",
+    "ci": "biome ci && pnpm lint:tokens && pnpm lint:frontend && pnpm lint:interaction && pnpm lint:mutations && pnpm lint:reload && pnpm lint:surfaces && pnpm lint:testids && pnpm lint:api && pnpm lint:schema && pnpm lint:hyperdrive && pnpm lint:filesize && pnpm lint:anchor-client && pnpm lint:deadcode && pnpm lint:boundaries && pnpm lint:env && pnpm lint:api-types && pnpm lint:agent-skill && pnpm lint:agent-package-files && pnpm lint:skills && pnpm lint:deck-template && pnpm lint:app-map && pnpm lint:mcp-coercion && pnpm lint:local-data && pnpm lint:delete-cascade && pnpm lint:facts-visibility && pnpm lint:facts-portable && pnpm lint:derived-exclusion && pnpm lint:selfhost-quickstart && pnpm lint:deploy-verified && pnpm lint:public-claims && pnpm lint:public-site-shell && pnpm lint:workflow-pins && pnpm lint:docs-site",
     "verify": "pnpm run ci && pnpm typecheck && pnpm test:coverage",
     "precommit": "pnpm run ci",
     "prepare": "git config core.hooksPath .githooks || true",
@@ -93,7 +97,12 @@
     "lint:facts-portable": "node scripts/check-facts-portable.mjs",
     "lint:derived-exclusion": "node scripts/check-derived-exclusion.mjs",
     "lint:selfhost-quickstart": "node scripts/check-selfhost-quickstart.mjs",
-    "lint:deploy-verified": "node scripts/check-deploy-verified.mjs"
+    "lint:deploy-verified": "node scripts/check-deploy-verified.mjs",
+    "lint:public-claims": "node scripts/check-public-claims.mjs",
+    "lint:public-site-shell": "node scripts/check-public-site-shell.mjs",
+    "lint:workflow-pins": "node scripts/check-workflow-pins.mjs",
+    "lint:docs-site": "pnpm --filter @derive/docs build",
+    "audit:repository": "node scripts/check-repository-health.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",

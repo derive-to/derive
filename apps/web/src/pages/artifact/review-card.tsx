@@ -63,7 +63,7 @@ export function ReviewCard({
         <Icon name="check" size={14} />
         {s === "approved"
           ? "You approved this version."
-          : "Sent back to the agent — it's revising."}
+          : "Sent back to the agent. A revision is in progress."}
       </div>
     )
   }
@@ -83,8 +83,8 @@ export function ReviewCard({
         <span className="ml-auto font-mono text-2xs text-muted-foreground">v{pending.version}</span>
       </div>
       <p className="text-xs text-muted-foreground">
-        Answer inline, then send it back — say "good to go" in a reply when you're done. You never
-        have to resolve threads.
+        Reply to the comments, then send the work back. Say "good to go" when you are finished. You
+        do not need to resolve each thread.
       </p>
       <div className="flex items-center">
         <Button

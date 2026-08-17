@@ -69,16 +69,15 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
         schema_version: "1.0",
         name: "Derive",
         description:
-          "The permanent, versioned home for agent-built artifacts — documents, plans, and " +
-          "fully-styled HTML pages with durable URLs, text-anchored review comments, and a " +
-          "publish → review → revise loop.",
+          "A workspace for agent-made artifacts — documents, plans, decks, and fully-styled " +
+          "pages with durable URLs, version history, comments, editing, and optional review.",
         url: base,
         capabilities: [
           "Publish Markdown, HTML pages, and multi-page bundles as versioned artifacts with permanent URLs",
           "Revise in place with surgical edits; every version stays addressable",
           "Stage large documents and binary assets (images, fonts) out of band via short-lived upload URLs",
           "Text-anchored comment threads that survive rewrites; reply, react, resolve",
-          "Propose → human review → approve loop (proposals, review rounds, addressed threads)",
+          "Optional proposals and formal review rounds for work that needs a named decision",
           "Search and browse workspace libraries; tags and collections",
           "Ask live workspace contexts (agents) for answers or delegated work",
           "Save resumable checkpoints of working state",
@@ -92,6 +91,8 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
           mcp: `${base}/mcp`,
           openapi: `${base}/openapi.json`,
           docs: `${base}/docs`,
+          guides: "https://docs.derive.to/",
+          examples: `${base}/examples`,
           skill: `${base}/skill.md`,
           llms_txt: `${base}/llms.txt`,
           llms_full_txt: `${base}/llms-full.txt`,

@@ -30,8 +30,7 @@ export function Contexts() {
             Contexts
           </h1>
           <p className="max-w-2xl text-pretty text-sm text-muted-foreground">
-            A context is a helper you set up once — what it knows, how it answers — that your team
-            and their agents can ask questions or hand work.
+            A context is a reusable agent setup: what it knows, how it answers, and who can use it.
           </p>
         </div>
         <Button

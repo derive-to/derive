@@ -14,9 +14,25 @@ type AnyCol = any
 // fails plain `pnpm test`, not only the Docker-gated pg lane. The real-DB equivalence
 // is proven separately (pg-schema-conformance.test.ts + the sqlite conformance test).
 const dialects = {
-  sqlite: { schema: sqliteSchema, statements: [...SCHEMA_STATEMENTS, ...MIGRATION_STATEMENTS] },
+  sqlite: { schema: sqliteSchema, statements: [...MIGRATION_STATEMENTS, ...SCHEMA_STATEMENTS] },
   postgres: { schema: pgSchema, statements: buildPgSchemaStatements() },
 }
+
+describe("Postgres DDL dependency order", () => {
+  it("reconciles additive columns before creating indexes", () => {
+    const statements = buildPgSchemaStatements()
+    const columnPositions = statements
+      .map((statement, index) => (/^ALTER TABLE .* ADD COLUMN /.test(statement) ? index : -1))
+      .filter((index) => index >= 0)
+    const indexPositions = statements
+      .map((statement, index) => (/^CREATE (?:UNIQUE )?INDEX /.test(statement) ? index : -1))
+      .filter((index) => index >= 0)
+
+    expect(columnPositions.length).toBeGreaterThan(0)
+    expect(indexPositions.length).toBeGreaterThan(0)
+    expect(Math.max(...columnPositions)).toBeLessThan(Math.min(...indexPositions))
+  })
+})
 
 for (const [dialect, { schema, statements }] of Object.entries(dialects)) {
   describe(`${dialect}: DDL generated from the drizzle schema`, () => {
