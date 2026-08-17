@@ -34,38 +34,34 @@ export const publicUrl = () =>
 // on-ramp — Derive is itself a remote MCP server, so one line connects an agent and it
 // gets every Derive tool. No CLI needed to publish and continue work.
 const hostedPrompt = (url: string) =>
-  `Connect me to Derive, a workspace for agent-made artifacts at permanent, versioned URLs with comments, direct edits, and sharing controls. Derive is a remote MCP server.
+  `Connect this agent to Derive at ${url}. Derive keeps agent-made artifacts at permanent, versioned URLs with comments, direct editing, and sharing controls. It is also a remote MCP server.
 
-Derive is running at: ${url}
-
-Please:
-1. Add it over MCP. In Claude Code run:
+1. Add Derive over MCP. In Claude Code, run:
      claude mcp add --transport http derive ${url}/mcp
-   In another harness, add an HTTP/streamable MCP server named "derive" at ${url}/mcp.
-   The first call opens a browser consent (OAuth); the scope I grant maps to my Derive role.
-2. Confirm it's connected by calling the "find" MCP tool to list what's there (your identity, workspace, and role are already in the server instructions).
+   For another client, add an HTTP or streamable HTTP MCP server named "derive" at ${url}/mcp.
+   The first call opens a browser so I can approve access. The access I grant follows my Derive role.
+2. Call the "find" tool to confirm the connection and list what is available.
 
-Once connected, use Derive to publish useful work, find it later, read comments, and update the same artifact. Use a proposal or formal review only when I ask for one or the permissions require it.`
+After that, use Derive to publish useful work, find it later, read comments, and update the same artifact. Only use formal review when I ask for it or the permissions require a proposal.`
 
 // Self-host: run Derive yourself first, then connect. Mirrors the deployment guide's single-
 // container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
 const selfHostPrompt = () =>
-  `Set up a self-hosted Derive for me, then connect this agent to it. Derive is a Fair Source workspace for agent-made artifacts (durable versioned URLs, comments, editing, and sharing controls) that is itself a remote MCP server.
+  `Set up a self-hosted Derive, then connect this agent to it. Derive is a Fair Source workspace for agent-made artifacts with permanent versioned URLs, comments, editing, and sharing controls. It is also a remote MCP server.
 
-Please:
 1. From a Derive checkout (the directory with deploy/Dockerfile), run the single-container image (state lives in the derive_data volume):
      docker build -f deploy/Dockerfile -t derive .
      docker run -d -p 8080:8080 -v derive_data:/data \\
        -e DERIVE_AUTH_SECRET="$(openssl rand -hex 32)" \\
        -e BASE_URL="https://derive.example.com" \\
        derive
-   Set BASE_URL to the public https URL I'll actually reach it at (behind a TLS proxy — not localhost). For a quick local-only trial, BASE_URL=http://localhost:8080 works.
+   Set BASE_URL to the public HTTPS URL this agent can reach through a TLS proxy. Do not use localhost unless this is a local-only trial. For a local trial, BASE_URL=http://localhost:8080 works.
 2. Connect over MCP, using that same BASE_URL:
      claude mcp add --transport http derive <BASE_URL>/mcp
-   The first call opens a browser consent (OAuth).
-3. Confirm by calling the "find" MCP tool to list what's there.
+   The first call opens a browser so I can approve access.
+3. Call the "find" tool to confirm the connection and list what is available.
 
-Then use Derive to publish useful work, find it later, read comments, and update the same artifact over MCP. Use formal review only when I ask for it or the permissions require a proposal.`
+After that, use Derive to publish useful work, find it later, read comments, and update the same artifact. Only use formal review when I ask for it or the permissions require a proposal.`
 
 /**
  * The connect surface: one tab per agent, each showing the lightest possible setup
@@ -84,8 +80,8 @@ export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?
   const cursorJson = `{ "mcpServers": { "derive": { "url": "${mcp}" } } }`
   const consentHint = (
     <p className="text-sm text-pretty text-muted-foreground">
-      The first call opens your browser once to approve access — then it can publish, find, and
-      update work for you.
+      The first call opens your browser so you can approve access. After that, the agent can
+      publish, find, and update work.
     </p>
   )
   // Radix unmounts inactive TabsContent, so this is layout-only.
@@ -106,13 +102,12 @@ export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?
           Cursor
         </TabsTrigger>
         <TabsTrigger value="any" data-testid={`${testidPrefix}-tab-any`}>
-          Any agent
+          Other client
         </TabsTrigger>
       </TabsList>
       <TabsContent value="claude-code" className={tabContent}>
         <p className="text-sm text-pretty text-muted-foreground">
-          One command, run anywhere — then tell it{" "}
-          <span className="font-medium text-foreground">“connect to Derive.”</span>
+          Run this command, then ask Claude Code to connect to Derive.
         </p>
         <PromptBlock
           text={`claude mcp add --transport http derive ${mcp}`}
@@ -170,16 +165,16 @@ function AnyAgentPrompt({ testidPrefix, url }: { testidPrefix: string; url: stri
     <>
       <p className="text-sm text-pretty text-muted-foreground">
         {devMode
-          ? "Spin up your own Derive, then connect your agent to it. Paste this into an MCP-capable agent."
-          : "Paste this into any MCP-capable agent — it connects Derive so the agent can publish, find, and update work for you."}
+          ? "Paste this prompt into an MCP client to set up a self-hosted Derive and connect to it."
+          : "Paste this prompt into an MCP client to connect Derive and start publishing work."}
       </p>
       {/* The self-host switch rides just above the snippet it swaps — a rarely-
           touched option, so it sits quiet and right-aligned, not in the header. */}
       <label className="flex items-center gap-1.5 self-end text-sm font-medium text-muted-foreground">
-        <span>Self-host mode</span>
+        <span>Self-hosted</span>
         <Switch
           checked={devMode}
-          aria-label="Self-host mode"
+          aria-label="Use self-hosted Derive"
           data-testid={`${testidPrefix}-dev-toggle`}
           onCheckedChange={setDevMode}
         />
@@ -208,7 +203,7 @@ export function ConnectAgentButton({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button data-testid={testId} {...props}>
-          {children ?? "Connect an agent"}
+          {children ?? "Connect your coding agent"}
         </Button>
       </DialogTrigger>
       <ConnectAgentDialogContent testidPrefix={`${testId}-dialog`} />
@@ -225,10 +220,10 @@ export function ConnectAgentDialogContent({ testidPrefix }: { testidPrefix: stri
   return (
     <DialogContent className="sm:max-w-lg">
       <DialogHeader>
-        <DialogTitle>Connect an agent</DialogTitle>
+        <DialogTitle>Connect your coding agent</DialogTitle>
         <DialogDescription>
-          Pick your agent — one command connects it to Derive, and it can then publish, review, and
-          revise for you.
+          Choose your agent and follow the setup steps. Once connected, it can publish, find, and
+          update work in Derive.
         </DialogDescription>
       </DialogHeader>
       <ConnectAgent testidPrefix={testidPrefix} />
@@ -264,7 +259,7 @@ export function PromptBlock({
         data-testid={`${testid}-copy`}
         aria-label={copyLabel}
         className="absolute right-2 top-2"
-        onClick={() => copy(text, { success: "Copied — paste it into your agent" })}
+        onClick={() => copy(text, { success: "Copied. Paste it into your agent." })}
       >
         {copied ? <Icon name="check" className="text-success" /> : <Copy className="size-4" />}
       </Button>

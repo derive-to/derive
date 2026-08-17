@@ -80,7 +80,7 @@ export function SourcesSection() {
         />
       ) : sources.length === 0 ? (
         <SettingsEmpty>
-          No sources connected — your agents have nothing extra to read.
+          No sources connected. Agents can only use information already in Derive.
         </SettingsEmpty>
       ) : (
         <SettingsGroup>
@@ -186,7 +186,7 @@ function AddSource({ onAdded }: { onAdded: () => void }) {
         <label htmlFor="source-secret" className="text-sm font-medium">
           Token{" "}
           <span className="text-muted-foreground font-normal">
-            (optional — most servers sign you in instead)
+            (optional; most servers ask you to sign in instead)
           </span>
         </label>
         <Input
@@ -274,7 +274,7 @@ function SourceRow({ conn, onRevoked }: { conn: Connection; onRevoked: () => voi
           <span className="block truncate">
             {needsSignIn
               ? "Sign in with this server to finish connecting. Nothing can read from it until you do."
-              : (conn.base_url ?? "—")}
+              : (conn.base_url ?? "Not available")}
             {/* A signed-in connection has no token to caption, and "token signed in" is what the
                 generic form produced. The label says which of the two ways this one authenticates. */}
             {!needsSignIn && conn.scopes_label

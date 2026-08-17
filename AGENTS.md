@@ -21,18 +21,18 @@ skips the coverage ratchet, so it can pass on a change that CI then fails.
 
 `check` is the big gate but not the only one: CI also runs a gitleaks secret scan,
 the Postgres and D1 store contracts against real engines, and the bundle and runner
-image builds. Those need services or a network, so they stay in CI — a green
+image builds. Those need services or a network, so they stay in CI. A green
 `pnpm verify` means the check job will pass, not that every job will. A test fixture
 that reads like a credential is the usual way the secret scan bites; mark it with an
 inline `gitleaks:allow` and say why.
 
-A green gate is the bar. Don't work around a guardrail — fix the code it points at,
+A green gate is the bar. Don't work around a guardrail. Fix the code it points at,
 or use the rule's documented escape hatch (an inline comment such as `authz-exempt:`,
 `tokens-ignore`, `frontend-ignore`, or `testid-ignore`) only when the exception is
 genuinely correct, with a reason.
 
 The full list of what's enforced and why is in
-[CONTRIBUTING.md → Guardrails](CONTRIBUTING.md#guardrails-you-dont-have-to-remember-these--the-tooling-does).
+[CONTRIBUTING.md → Guardrails](CONTRIBUTING.md#guardrails-enforced-by-the-tooling).
 Highlights:
 
 - Every mutating route gates on auth; colors and text sizes come from the token system,

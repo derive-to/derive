@@ -46,7 +46,7 @@ export function DerivedFromBanner({ art }: { art: Artifact }) {
     errorToast: false,
     onError: (err) => {
       if (err instanceof ApiError && err.code === "alreadyQueued") toast(ALREADY_QUEUED)
-      else toast.error("Rework request failed — try again.")
+      else toast.error("Couldn’t request a rework. Try again.")
     },
   })
   // `derived_from` is null when the source stopped resolving (deleted/removed) —

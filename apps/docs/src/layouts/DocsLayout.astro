@@ -31,8 +31,8 @@ const pagePath = isHome ? "/" : `/${slug}/`
 const markdownPath = `/${slug}.md`
 const canonical = new URL(pagePath, Astro.site)
 const pageTitle = isHome
-  ? "Derive Docs — Keep, share, and improve agent-made work"
-  : `${title} — Derive Docs`
+  ? "Derive Docs | Keep, share, and improve agent-made work"
+  : `${title} | Derive Docs`
 const contentPages = navigation.pages.filter((page) => page.slug !== "index")
 const pageIndex = contentPages.findIndex((page) => page.slug === slug)
 const previousPage = pageIndex > 0 ? contentPages[pageIndex - 1] : undefined
@@ -156,10 +156,10 @@ const updatedLabel = lastUpdated
 
     <footer class="site-footer" data-pagefind-ignore>
       <span>Derive Docs</span>
-      <span>Make things worth keeping.</span>
       <div>
         <a href="https://derive.to/">Product</a>
         <a href="https://github.com/derive-to/derive">GitHub</a>
+        <a href="/reference/licensing/">Licensing</a>
         <a href="https://derive.to/security">Security</a>
       </div>
     </footer>

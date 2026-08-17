@@ -277,7 +277,7 @@ function ElementRef({
           e.stopPropagation()
           onJump(threadId)
         }}
-        title={relocated ? "Jump to the element (moved — approximate)" : "Jump to the element"}
+        title={relocated ? "Jump to the element (approximate location)" : "Jump to the element"}
         className="flex w-full items-center gap-1.5 border-l-2 border-foreground/25 py-0.5 pl-2.5 pr-2 text-left text-sm font-medium text-muted-foreground outline-none hover:border-foreground/60 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
         <Glyph aria-hidden className="size-4 shrink-0" />
@@ -463,9 +463,9 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           )}
           title={
             requestStage === "requested"
-              ? "Sent to an agent — waiting for it to revise and propose a change"
+              ? "Sent to an agent. Waiting for a proposed revision."
               : requestStage === "ready"
-                ? "The agent proposed a revision — open Review to see it and approve"
+                ? "The agent proposed a revision. Open Review to inspect it."
                 : "The agent's revision was approved and applied"
           }
         >
@@ -607,7 +607,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                   variant={resolved ? "success" : outdated ? "warning" : "default"}
                   title={
                     outdated
-                      ? "The text this thread was attached to changed in a later version — this feedback may no longer apply"
+                      ? "The text for this thread changed in a later version. This feedback may no longer apply."
                       : addressed
                         ? "A proposed revision addressing this thread is pending review"
                         : undefined

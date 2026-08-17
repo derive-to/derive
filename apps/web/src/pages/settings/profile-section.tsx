@@ -52,7 +52,7 @@ export function ProfileSection() {
   return (
     <SettingsSection
       title="Profile"
-      description="How you show up across Derive — your public profile, the @mention picker, and the member directory. Your email always stays private."
+      description="Choose how you appear on your public profile, in mentions, and in the member directory. Your email stays private."
     >
       {/* Identity: photo + handle. */}
       <div className="flex flex-wrap items-start gap-4">

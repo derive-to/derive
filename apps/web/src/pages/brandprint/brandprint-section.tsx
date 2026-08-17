@@ -56,7 +56,7 @@ const UPLOAD_CATEGORIES: { cat: DocCategory; blurb: string }[] = [
   },
   {
     cat: "read",
-    blurb: "Voice and tone: grammar, warmth, structure, wording do’s and don’ts.",
+    blurb: "Writing: voice, tone, grammar, structure, and words to use or avoid.",
   },
 ]
 
@@ -260,8 +260,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
   const title = scope === "workspace" ? "Workspace Brandprint" : "Your Brandprint"
   const description =
     scope === "workspace"
-      ? "Your team's design and voice conventions: the visual style, tone, and structure your work should follow. Agents read these docs before building anything in this workspace, so everything they produce stays on brand."
-      : "Your personal conventions, layered over the workspace's when an agent acts as you (yours wins)."
+      ? "Design and writing guidance for this workspace. Connected coding agents read these documents before they build."
+      : "Your own design and writing guidance. It takes priority over the workspace guidance when an agent works for you."
 
   if (scope === "account" && !me) return null
 
@@ -324,7 +324,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
           </SettingRow>
           <SettingRow
             label="Upload documents"
-            description="More look or read docs publish straight into this Brandprint's collection."
+            description="Add design or writing guidance to this Brandprint."
           >
             <DocFileInput inputRef={fileRef} scope={scope} onPick={pickFiles} />
             <Button
@@ -341,7 +341,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
           {collectionId && (
             <SettingRow
               label="Add a skill"
-              description="Put a published skill (how agents build things) into this Brandprint."
+              description="Add instructions that agents should follow when they build."
             >
               <AddSkill collectionId={collectionId} scope={scope} disabled={disabled} />
             </SettingRow>
@@ -396,8 +396,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
                 </TabsList>
                 <TabsContent value="upload" className="flex flex-col gap-3 pt-3">
                   <p className="text-sm text-pretty text-muted-foreground">
-                    Give it both sides of the brand, or start with one. Derive publishes the files,
-                    gathers them into a new collection, and points your Brandprint at it.
+                    Upload design guidance, writing guidance, or both. Derive puts the files in a
+                    new collection and uses it for this Brandprint.
                   </p>
                   <DocFileInput inputRef={fileRef} scope={scope} onPick={stageFiles} />
                   {UPLOAD_CATEGORIES.map((c) => (
@@ -461,9 +461,8 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
                 </TabsContent>
                 <TabsContent value="write" className="flex flex-col gap-3 pt-3">
                   <p className="text-sm text-pretty text-muted-foreground">
-                    Write or paste your conventions, both how things should look (palette, fonts,
-                    layout) and how they should read (voice, grammar, warmth). Derive publishes them
-                    as a doc your Brandprint points at, editable any time.
+                    Write or paste guidance for design, writing, or both. Derive saves it as an
+                    editable document in this Brandprint.
                   </p>
                   <Input
                     value={noteTitle}
@@ -599,7 +598,7 @@ function AddSkill({
       <SelectMenuContent>
         {available.length === 0 ? (
           <SelectMenuItem value="" disabled>
-            No skills yet — publish one with `derive init --template skill`
+            No skills yet. Publish one with `derive init --template skill`.
           </SelectMenuItem>
         ) : (
           available.map((s) => (

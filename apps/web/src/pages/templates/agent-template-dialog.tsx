@@ -1,6 +1,5 @@
 import { Icon } from "@/components/icons"
 import { FormField } from "@/components/shared/form-field"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -51,8 +50,6 @@ function AgentTemplateDialogInner({
   const { brief, setBrief, error, showHandoff, copied, descriptionId, handoff, copyForLocalAgent } =
     useAgentTemplateHandoff(target)
 
-  const isContext = target.kind === "context"
-
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent
@@ -60,60 +57,40 @@ function AgentTemplateDialogInner({
         aria-describedby={descriptionId}
       >
         <DialogHeader className="pr-7">
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <Badge variant="outline" shape="pill">
-              <Icon name="sparkles" size={12} /> Use your own agent
-            </Badge>
-            <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-              {isContext ? "Context" : target.category}
-            </span>
-          </div>
+          <p className="mb-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+            {target.kind === "context" ? "Context" : target.category}
+          </p>
           <DialogTitle className="font-serif text-2xl tracking-tight [overflow-wrap:anywhere]">
-            Make {target.title} yours
+            Use {target.title}
           </DialogTitle>
           <DialogDescription id={descriptionId} className="max-w-lg">
-            {isContext
-              ? "Describe the setup, then continue in the local agent you already use. It reads the exact reference and adapts the Context—not a manifest form."
-              : "Describe the outcome, then continue in the local agent you already use. It returns a published, inspected draft—not source or a blank form."}
+            Describe what you need. Derive will prepare a prompt for your agent.
           </DialogDescription>
         </DialogHeader>
 
         <div className="rounded-xl border bg-secondary/45 p-3">
-          <div className="flex items-start gap-3">
-            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-foreground text-background">
-              <Icon name="templates" size={15} />
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground">{target.title}</p>
-              <p className="mt-0.5 line-clamp-2 text-xs text-pretty text-muted-foreground">
-                {target.description}
-              </p>
-              {target.outcome ? (
-                <p className="mt-1.5 text-xs text-pretty text-foreground">{target.outcome}</p>
-              ) : null}
-            </div>
-          </div>
+          <p className="text-base/7 text-pretty text-muted-foreground sm:text-sm/6">
+            {target.description}
+          </p>
           {target.sections?.length ? (
             <div
               className="mt-2.5 border-t pt-2.5"
               data-testid="template-agent-inheritance-preview"
             >
-              <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-                Your agent inherits the shape—not the answers
-              </p>
+              <p className="text-xs font-medium text-muted-foreground">Included sections</p>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {target.sections.slice(0, 6).map((section) => (
-                  <span
+                  <p
                     key={section}
                     className="rounded-md border bg-background/70 px-2 py-0.5 text-xs text-foreground"
                   >
                     {section}
-                  </span>
+                  </p>
                 ))}
                 {target.sections.length > 6 ? (
-                  <span className="px-1 py-1 text-xs text-muted-foreground">
+                  <p className="px-1 py-1 text-xs text-muted-foreground">
                     +{target.sections.length - 6} more
-                  </span>
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -137,28 +114,17 @@ function AgentTemplateDialogInner({
             />
           </FormField>
 
-          <section className="grid gap-2" aria-label="Copy for a local agent">
-            <div className="px-0.5">
-              <p className="text-sm font-medium text-foreground">Continue in your agent</p>
-              <p className="text-xs text-muted-foreground">
-                Copy the complete prompt, then paste it into Codex, Claude Code, or any other agent.
-              </p>
-            </div>
-            <Button
-              type="button"
-              size="lg"
-              className="w-full justify-between"
-              disabled={!brief.trim()}
-              onClick={() => void copyForLocalAgent()}
-              data-testid="template-agent-copy"
-            >
-              <span className="flex items-center gap-2 font-medium">
-                <Icon name={copied ? "check" : "copy"} />
-                {copied ? "Copied — paste into your agent" : "Copy as prompt"}
-              </span>
-              <Icon name={copied ? "check" : "arrow"} />
-            </Button>
-          </section>
+          <Button
+            type="button"
+            size="lg"
+            className="w-full"
+            disabled={!brief.trim()}
+            onClick={() => void copyForLocalAgent()}
+            data-testid="template-agent-copy"
+          >
+            <Icon name={copied ? "check" : "copy"} />
+            {copied ? "Copied. Paste into your agent." : "Copy as prompt"}
+          </Button>
 
           {showHandoff ? (
             <div className="grid gap-2" data-testid="template-agent-handoff-preview">

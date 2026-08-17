@@ -77,7 +77,7 @@ export function MembersSection({ meId }: { meId: string }) {
         const copiedLink = await copyText(r.accept_url, { error: null })
         toast.success(
           copiedLink
-            ? `Invite sent to ${r.invite.email} — link copied`
+            ? `Invite sent to ${r.invite.email}. Link copied.`
             : `Invite sent to ${r.invite.email}`,
         )
         qc.invalidateQueries({ queryKey: workspaceInvitesQuery().queryKey })
@@ -211,7 +211,7 @@ export function MembersSection({ meId }: { meId: string }) {
         (addRole === "editor" || addRole === "owner") && (
           <p data-testid="members-seat-warning" className="text-sm text-muted-foreground">
             {billing.beta
-              ? "Adding a 4th editor will require the Team plan once billing starts, $15 per editor for everyone. "
+              ? "Adding another editor will require a paid plan after beta. "
               : "Free covers 3 editor seats. Upgrading to Team adds unlimited editors, $15 per editor for everyone. "}
             <Link
               to="/settings/$section"

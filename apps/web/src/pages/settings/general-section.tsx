@@ -137,7 +137,7 @@ export function GeneralSection() {
                 Members as a separate second step. */}
             <Input
               value={newInvites}
-              placeholder="Invite teammates — emails, comma-separated (optional)"
+              placeholder="Invite teammates by email (optional, comma-separated)"
               aria-label="Invite teammates by email"
               data-testid="workspace-new-invites"
               onChange={(e) => setNewInvites(e.target.value)}
@@ -274,8 +274,8 @@ function SharingDefaults() {
   return (
     <SettingsGroup>
       <SettingRow
-        label="Workspace access"
-        description="Whether a freshly published artifact is open to the whole workspace (at each member's role) or invite-only. Changing this never touches existing artifacts."
+        label="Who can open new artifacts?"
+        description="Choose whether new artifacts start open to workspace members or only invited people. Existing artifacts do not change."
       >
         <SelectMenu
           value={settings.defaultWorkspaceAccess}
@@ -292,13 +292,13 @@ function SharingDefaults() {
           </SelectMenuTrigger>
           <SelectMenuContent>
             <SelectMenuItem value="member">Everyone in the workspace</SelectMenuItem>
-            <SelectMenuItem value="none">Invite-only</SelectMenuItem>
+            <SelectMenuItem value="none">Only invited people</SelectMenuItem>
           </SelectMenuContent>
         </SelectMenu>
       </SettingRow>
       <SettingRow
-        label="New artifact links"
-        description="What merely holding a freshly published artifact's URL grants anyone (none = no world link). Changing this never touches existing artifacts."
+        label="What can anyone with the link do?"
+        description="Set the default for new artifact links. Existing artifacts do not change."
       >
         <SelectMenu
           value={settings.defaultLinkRole}
@@ -308,7 +308,7 @@ function SharingDefaults() {
             {LINK_ROLE_LABELS[settings.defaultLinkRole] ?? settings.defaultLinkRole}
           </SelectMenuTrigger>
           <SelectMenuContent>
-            <SelectMenuItem value="none">No link</SelectMenuItem>
+            <SelectMenuItem value="none">Nothing</SelectMenuItem>
             <SelectMenuItem value="viewer">Can view</SelectMenuItem>
             <SelectMenuItem value="commenter">Can comment</SelectMenuItem>
             <SelectMenuItem value="editor">Can edit</SelectMenuItem>
@@ -316,8 +316,8 @@ function SharingDefaults() {
         </SelectMenu>
       </SettingRow>
       <SettingRow
-        label="Listed by default"
-        description="Where a freshly published artifact surfaces for discovery. None keeps it out of every feed until someone promotes it."
+        label="Where should new artifacts appear?"
+        description="Choose whether new artifacts appear in a library. Existing artifacts do not change."
       >
         <SelectMenu
           value={settings.defaultListed}

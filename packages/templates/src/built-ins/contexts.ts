@@ -9,9 +9,8 @@ export const CONTEXT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "md",
     title: "Weekly research brief",
     defaultTitle: "Weekly research brief manifest",
-    description:
-      "Tracks a topic, reads approved sources, and proposes a cited weekly digest for review.",
-    outcome: "Stay current on a changing question without rebuilding the research loop each week.",
+    description: "Track a topic in approved sources and prepare a cited weekly digest.",
+    outcome: "Keep the team current on a changing question each week.",
     sections: [
       "Purpose",
       "Approved sources",
@@ -42,8 +41,8 @@ export const CONTEXT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Product decision partner",
     defaultTitle: "Product decision partner manifest",
     description:
-      "Loads strategy and user evidence, pressure-tests options, and proposes durable decision memos.",
-    outcome: "Keep product judgment connected to evidence and prior choices.",
+      "Read strategy and user evidence, compare options, and draft product decision memos.",
+    outcome: "Connect product decisions to current evidence and earlier choices.",
     sections: [
       "Purpose",
       "Strategy sources",
@@ -73,8 +72,8 @@ export const CONTEXT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Customer account room",
     defaultTitle: "Customer account room manifest",
     description:
-      "Combines notes, usage, stakeholders, and commitments into a conservative living account view.",
-    outcome: "Give the account team shared memory without flattening sensitive context.",
+      "Combine notes, usage, stakeholders, and commitments into a current account summary.",
+    outcome: "Give the account team a shared view of the relationship and its risks.",
     sections: [
       "Purpose",
       "Account sources",
@@ -104,8 +103,8 @@ export const CONTEXT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Launch steward",
     defaultTitle: "Launch steward manifest",
     description:
-      "Tracks launch artifacts and milestones, catches drift, and proposes a weekly status revision.",
-    outcome: "Keep a cross-functional launch coherent as the facts move.",
+      "Track launch artifacts and milestones, flag drift, and prepare a weekly status update.",
+    outcome: "Keep launch owners working from the same current plan.",
     sections: [
       "Purpose",
       "Launch sources",
@@ -135,8 +134,8 @@ export const CONTEXT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Repository guide",
     defaultTitle: "Repository guide manifest",
     description:
-      "Packages architecture, contribution rules, and review expectations for coding agents.",
-    outcome: "Let coding agents begin with the repository's actual operating rules.",
+      "Give coding agents the repository architecture, contribution rules, and required checks.",
+    outcome: "Help coding agents work within the repository's actual rules.",
     sections: [
       "Purpose",
       "Repository map",
@@ -165,9 +164,8 @@ export const CONTEXT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "md",
     title: "Brand guardian",
     defaultTitle: "Brand guardian manifest",
-    description:
-      "Loads Brandprint and approved assets, reviews outputs, and proposes a compatible visual direction.",
-    outcome: "Make brand guidance useful at creation time without turning it into a gatekeeper.",
+    description: "Use the workspace Brandprint and approved assets to review and guide new work.",
+    outcome: "Apply the team's brand guidance while work is being created.",
     sections: [
       "Purpose",
       "Brandprint",

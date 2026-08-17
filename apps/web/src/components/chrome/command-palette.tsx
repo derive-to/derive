@@ -268,8 +268,7 @@ export function CommandPalette() {
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
   const showTemplates = "templates".includes(q) || "start from a template".includes(q)
-  // The way back to the connect instructions after onboarding — /welcome stays the
-  // app's connect-an-agent surface (see pages/welcome).
+  // The way back to the connection instructions after onboarding.
   const showConnect =
     "connect an agent".includes(q) || "getting started".includes(q) || "mcp setup".includes(q)
 
@@ -417,7 +416,7 @@ export function CommandPalette() {
                     data-testid="palette-connect-agent"
                     onSelect={() => go(() => nav({ to: "/welcome" }))}
                   >
-                    <Icon name="context" size={16} /> Connect an agent
+                    <Icon name="context" size={16} /> Connect your coding agent
                   </CommandItem>
                 )}
               </CommandGroup>

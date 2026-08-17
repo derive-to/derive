@@ -1,46 +1,47 @@
-# Active agent work — current status
+# Customer import rollout: current status
 
-> Official Derive example with illustrative data. Replace the figures, people, links, and
-> dates before using it for real work.
+> Official Derive example with illustrative data. The company, people, results, and dates are
+> fictional.
 
-- **Owner:** Product lead
-- **Status:** In progress
-- **Current focus:** Make active agent work easy to find and continue without reconstructing
-  the original session.
+- **Owner:** Customer operations
+- **Status:** Pilot
+- **Updated:** 17 August 2026
+- **Current focus:** Fix inconsistent date headers before opening the importer to every account.
 
 ## Current picture
 
-| Workstream | Current artifact | Last material update | Owner | Next action |
-| --- | --- | --- | --- | --- |
-| Onboarding | First-artifact guide | 14 Aug | Product | Test with a new workspace |
-| Documentation | Docs landing page | 16 Aug | Docs | Check mobile navigation |
-| Agent setup | Connection prompt | 16 Aug | Platform | Verify a fresh MCP connection |
-| Examples | Living status page | 16 Aug | Product | Check live artifacts against source |
+Eight pilot files have been processed. Seven completed without help. One stopped because its
+date column used a header the importer did not recognize. No imported records were lost or
+duplicated in the pilot checks.
 
-## What changed
-
-- The docs landing page now leads with durable work instead of a mandatory approval loop.
-- The agent setup prompt tells compatible agents to publish, find, comment on, and update
-  artifacts; formal review is requested only when needed.
-- The example set now shows a designed page, a source-backed brief, and a recurring report as
-  different valid uses.
-
-## Risks and triggers
-
-| Risk | Evidence | Trigger | Owner action |
+| Workstream | Current state | Owner | Next action |
 | --- | --- | --- | --- |
-| Public surfaces drift into different stories | Copy is repeated across generated and handwritten files | A required surface fails the claims check | Fix the canonical source and regenerate |
-| Agents still force formal review | A fresh connection receives old orientation | Any current prompt prescribes approval by default | Update the canonical skill or server orientation |
-| Useful work remains hard to find | Owners cannot locate the current artifact | A handoff requires reconstructing the source chat | Improve titles, collections, or workspace guidance |
+| File validation | Common CSV errors are caught before import | Engineering | Add aliases for the three date headers found in pilot files |
+| Error messages | Row-level errors include the column and expected format | Product | Test the wording with two support specialists |
+| Recovery | Failed imports can restart without duplicating completed rows | Engineering | Run the 100,000-row recovery test |
+| Support guide | Draft covers file format, retry, and escalation | Support | Add screenshots from the release candidate |
 
-## Open questions
+## Since the last update
 
-1. Which artifact should a new user publish first to understand the product quickly?
-2. Where does formal approval provide enough value to deserve the extra ceremony?
-3. Which examples best reflect the real work already living in the workspace?
+- Added a preview that shows how five sample rows will map before an import starts.
+- Fixed duplicate records caused by retrying after a browser timeout.
+- Paused the wider rollout after the unrecognized date header in pilot file eight.
 
-## Next update contract
+## Risks
 
-Revise this artifact when a workstream changes, a risk trigger fires, or an open question gets
-an answer. Keep the headings and workstream names stable so comments remain anchorable across
-versions.
+| Risk | Signal | Owner | Next action |
+| --- | --- | --- | --- |
+| Large files time out | The 100,000-row test takes longer than ten minutes | Engineering | Profile parsing and database writes before raising the file limit |
+| Header variations create avoidable failures | A pilot file uses a header outside the supported alias list | Product | Review anonymized header samples from the next five pilots |
+| Support cannot diagnose a failed import | An error reaches support without an import ID | Support | Verify the ID appears in the UI and downloaded error file |
+
+## Decisions needed
+
+- Keep the public file limit at 25,000 rows until the recovery test passes.
+- Decide whether unsupported headers should stop the import or open a mapping step.
+
+## Next update
+
+Update this report after the recovery test and the next five pilot imports. Replace the
+summary instead of appending a diary, and keep completed decisions only when they explain the
+current state.

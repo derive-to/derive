@@ -171,8 +171,8 @@ function CurrentPlanCard({ billing }: { billing: BillingInfo }) {
       </div>
       {billing.beta && (
         <p className="text-sm text-muted-foreground">
-          Free while we're in beta. Billing starts only with notice, and existing workspaces get a
-          grace period.
+          Free during beta. We’ll give you notice before billing starts. The plans and prices below
+          are a preview, and existing workspaces will have a grace period.
         </p>
       )}
     </div>
@@ -210,8 +210,9 @@ function StorageMeter({
 }
 
 // The comparison surface: the pricing page's tier cards, in-app, with live
-// current-plan context. Checkout buttons render only for admins of unsubscribed
-// workspaces; a subscribed workspace changes plans in the Stripe portal below.
+// current-plan context. Checkout buttons render only after beta for admins of
+// unsubscribed workspaces; a subscribed workspace changes plans in the Stripe
+// portal below.
 function PlanGrid({
   billing,
   cycle,
@@ -240,7 +241,7 @@ function PlanGrid({
           showTagline
           testId={`billing-plan-card-${p.tier}`}
         >
-          {isAdmin && !billing.subscribed && p.tier !== "free" && (
+          {isAdmin && !billing.beta && !billing.subscribed && p.tier !== "free" && (
             <Button
               data-testid={`billing-upgrade-${p.tier}`}
               size="sm"

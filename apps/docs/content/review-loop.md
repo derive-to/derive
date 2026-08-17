@@ -35,4 +35,4 @@ request formal review. A named reviewer can approve the current version or send 
 more feedback. Approval belongs to that version; a later revision is new work and can be
 reviewed independently. Otherwise, publish the useful revision and continue when needed.
 
-For the agent-side commands and tools, continue with [Connect an agent](/agents/connect/).
+For agent-side commands and tools, continue with [Connect your coding agent](/agents/connect/).

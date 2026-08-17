@@ -61,9 +61,9 @@ export function DeriveSource({
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex items-center gap-2">
           <Icon name="derive" className="text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">Make any artifact yours</p>
+          <h2 className="text-base font-medium text-foreground">Start from an artifact</h2>
         </div>
-        <p className="max-w-2xl text-sm text-pretty text-muted-foreground">
+        <p className="max-w-2xl text-base/7 text-pretty text-muted-foreground sm:text-sm/6">
           Paste a Derive link, then tell the agent what you need. It will reuse the artifact’s
           strongest ideas and shape while leaving the original untouched.
         </p>
@@ -87,7 +87,7 @@ export function DeriveSource({
         disabled={loading}
         data-testid="template-source-submit"
       >
-        {loading ? "Opening…" : "Make it mine"} <Icon name="sparkles" />
+        {loading ? "Opening…" : "Continue"} <Icon name="arrow" />
       </Button>
     </form>
   )

@@ -7,7 +7,7 @@
 // so a new key that slips a "manifest" past a lone reviewer still fails the suite.
 export const BUILDER_COPY = {
   pageTitle: "New context",
-  intro: "Tell Derive what this context should know or do — like briefing a new teammate.",
+  intro: "Describe what this context should know or do, as if you were briefing a teammate.",
   composerPlaceholder: "What should this context know or do?",
   agentDoorTitle: "Prefer your own agent to build it?",
   agentDoorBody:
@@ -33,12 +33,12 @@ export const BUILDER_COPY = {
   cardWont: "What it won’t do",
   kindKnowledge: "Your team's agents can consult this as soon as it's created.",
   kindWorker:
-    "This one will also take on work itself. Answers come from whoever runs it — you can do that from your own agent session, or set up a dedicated helper later on the context's page.",
-  createdPrefix: "Ready — open",
+    "This context can also take on work. Run it from your own agent session, or set up a dedicated runner later.",
+  createdPrefix: "Ready. Open",
   degradedNotice:
     "This workspace doesn't have built-in chat turned on, so Derive can't interview you here. Your agent can still build it:",
-  statusOnline: "Online — it can take on work right now.",
+  statusOnline: "Online. It can take on work now.",
   statusOffline:
-    "Offline — asking it to do work will wait until it's back. Reading what it knows always works.",
-  statusNever: "Not serving yet — teammates' agents can still read what it knows.",
+    "Offline. New work will wait until the runner is back. You can still read what it knows.",
+  statusNever: "No runner yet. Teammates' agents can still read what it knows.",
 } as const

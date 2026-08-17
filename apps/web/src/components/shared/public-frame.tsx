@@ -25,7 +25,7 @@ export function PublicFrame({ returnTo, children }: { returnTo: string; children
           <span className="font-serif text-base font-medium tracking-tight">Derive</span>
         </Link>
 
-        {/* The growth verb (the page's one filled primary) + a quiet sign-in. */}
+        {/* One clear account action and a quiet sign-in. */}
         <Button asChild variant="default" size="sm" data-testid="public-make-your-own">
           <Link
             to="/login"
@@ -35,7 +35,7 @@ export function PublicFrame({ returnTo, children }: { returnTo: string; children
               ...signupSourceSearch("public_frame", null, returnTo),
             }}
           >
-            Make your own
+            Create with Derive
           </Link>
         </Button>
         <Button

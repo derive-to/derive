@@ -87,7 +87,7 @@ export function AddEntryDialog({
           <DialogDescription>
             {step === "source"
               ? "Pick any readable artifact. Derive will pin its current version without changing the original."
-              : "Add just enough context for someone—or an agent—to know when and how to use it."}
+              : "Add enough context for a person or agent to know when and how to use it."}
           </DialogDescription>
         </DialogHeader>
         <form

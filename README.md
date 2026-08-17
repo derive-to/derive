@@ -8,7 +8,7 @@
 <h1 align="center">Turn agent output into work you can keep, share, and improve.</h1>
 
 <p align="center">
-One durable workspace for plans, reports, pages, decks, and sites. Keep the latest version at the same URL, work on it with people or agents, and use formal approval only when you need it. Hosted, or one self-hosted container.
+One durable workspace for plans, reports, pages, decks, and sites. Keep the latest version at the same URL and continue the work with people or agents. Use the hosted service or run one self-hosted container.
 </p>
 
 <p align="center">
@@ -29,14 +29,14 @@ One durable workspace for plans, reports, pages, decks, and sites. Keep the late
   <img src="docs/assets/readme/hero.png" alt="The Derive library: published artifacts with live previews" width="900">
 </p>
 
-## Try it in ten seconds
+## Try it now
 
-No account, no install — one request publishes a live page:
+No account or install is needed. One request publishes a live page:
 
 ```bash
 curl -F file=@page.html https://derive.to/v1/drafts   # or a .zip of a whole site
-# → a live URL in about a second, plus a claim link that turns the
-#   draft into a permanent, versioned artifact in your workspace
+# → a live URL, plus a claim link that turns the draft into a
+#   permanent, versioned artifact in your workspace
 ```
 
 Give your agent a durable place to publish, find, and improve work:
@@ -49,23 +49,30 @@ claude mcp add --transport http derive https://derive.to/mcp   # or connect over
 Or paste this into a compatible coding agent and let it set itself up:
 
 ```text
-I'd like you to set up Derive — where the work we make gets kept, shared, and improved.
+I'd like you to set up Derive so we can keep, share, and improve our work.
 
 Install the skill if I have npm: npx skills add derive-to/derive --skill derive
 Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://derive.to/mcp).
 
-Then pick something real we've worked on recently — a plan, a report, a designed page — and publish it. If I'm not connected to Derive, use the anonymous draft flow: no account needed, and it returns a live URL plus a claim link. Send me both so I can see it and claim it.
+Then pick a plan, report, or designed page we've worked on recently and publish it. If I'm not connected to Derive, use the anonymous draft flow. It needs no account and returns a live URL with a claim link. Send me both links.
 ```
 
 ## What is Derive
 
-Derive is a workspace for agent-made artifacts. Give an HTML page, a Markdown document, a deck, or a whole built site a durable URL with its complete version history. Publish from the CLI, HTTP API, browser, or a compatible agent over MCP. Keep work private, share it, comment on it, edit it directly, or ask an agent to publish the next version.
+Derive is a workspace for work made with agents. Give an HTML page, Markdown document, deck,
+or built site a lasting URL and version history. Publish from the browser, CLI, HTTP API, or
+a compatible agent over MCP. Keep the work private or share it, leave comments, edit it directly,
+and publish the next version at the same URL.
 
-And the context travels with the work. Every artifact carries its content, its versions, and every review comment, so the context stays alive as it moves between people and tools. That kept context is what makes Derive model-agnostic: keep collaborating by hand or with your model of choice, and hand off without losing the thread, because the source of truth lives with the document, not inside any one AI chat.
+The content, version history, and comments stay with each artifact. A teammate or another agent
+can open the same URL and see what changed without reconstructing the work from a chat.
 
-Artifacts don't have to be static. A workspace can run **contexts**: agents with access to your data that answer questions and publish documents to the same library. Ask the analytics context a question, get a cited answer. Everything a context produces is a normal artifact — versioned, commentable, at a permanent URL.
+A workspace can also run **contexts**: agents that answer questions from connected data and
+publish cited results to the same library. Their results use the same URLs, versions, comments,
+and access controls as other artifacts.
 
-The point is ownership. Unlike hosted-only tools for sharing AI output, Derive is fair source and self-hostable: run the whole product as one container on your own infrastructure, or use the hosted app. Your artifacts, your data, your URL.
+Derive is Fair Source and self-hostable. Run it as one container on your own infrastructure or
+use the hosted app.
 
 ## Features
 
@@ -106,9 +113,10 @@ Share an artifact and @mention the people or agents who should weigh in. Comment
 </td>
 <td valign="top">
 
-### One library for everything you've shipped
+### A library for published work
 
-Every artifact you publish lands in one library with a live preview, sorted the way you work: favorites, shared with you, and collections. It lives on your own infrastructure or the hosted app, so the work you own stays in one place, not scattered across chat threads.
+Every artifact lands in a library with a live preview. Pin the work you use often, find work
+shared with you, and organize related artifacts in collections.
 
 </td>
 </tr>
@@ -116,26 +124,23 @@ Every artifact you publish lands in one library with a live preview, sorted the 
 
 Also included:
 
-- ✅ **Kept context, model-agnostic.** Content, versions, and feedback travel with the artifact (not locked in one AI chat), so any teammate or model can pick the work up.
-- ✅ **Contexts.** Run an agent against your data. Teammates ask it questions; answers come back cited, under the same permissions as everything else.
-- ✅ **Checkpoints.** Save working state as a one-page artifact. Any later session — yours or a teammate's — picks the work up from it.
-- ✅ **Sandboxed viewer.** Every artifact runs on an opaque origin, isolated from cookies and other artifacts.
-- ✅ **Self-host your way.** SQLite and local disk by default, or Postgres and S3/R2 at scale.
-- ✅ **Real-time collaboration.** Comments, optional approvals, and who-else-is-here presence stream live over Server-Sent Events.
-- ✅ **Rich share unfurls.** Every share link unfurls as a card in Slack, Discord, X, and Notion, showing the artifact itself, not a generic placeholder.
-- ✅ **CLI-first.** Scaffold and publish from the terminal.
-- ✅ **Remote MCP server.** Connect a compatible agent with one command.
-- ✅ **Visibility controls.** Private, org, or public, with an optional password to lock public links.
+- **Portable context.** Content, versions, and comments stay with the artifact so another person
+  or agent can continue the work.
+- **Contexts.** Ask an agent questions about connected data and publish cited answers with the
+  workspace's access controls.
+- **Checkpoints.** Save the state of ongoing work in a page that a later session can open.
+- **Sandboxed viewer.** Artifacts run on an opaque origin, isolated from cookies and other artifacts.
+- **Flexible storage.** Use SQLite and local disk, or Postgres and S3/R2 at scale.
+- **Live collaboration.** Comments, optional approvals, and presence update over Server-Sent Events.
+- **Share previews.** Links show an artifact preview in Slack, Discord, X, and Notion.
+- **CLI and MCP.** Publish from the terminal or connect a compatible agent.
+- **Access controls.** Make work private, visible to the workspace, or public. Public links can
+  also use a password.
 
 ## Roadmap
 
-The roadmap is a living Derive artifact — updated at the same URL and versioned on every
-revision — at **[derive.to/roadmap](https://derive.to/roadmap)**. The direction in one
-line: pages you ask for and never maintain.
-
-- **Living pages.** Describe a page in one sentence. A context builds it; a schedule keeps it current. Same URL, new version each run.
-- **Provenance.** Every generated artifact names the context and brief that produced it. Feedback goes on the brief; the next run picks it up.
-- **Connections.** Store a credential once, at the workspace level. Contexts reference it. It never appears in a brief, an artifact, or a repo.
+The current roadmap lives at **[derive.to/roadmap](https://derive.to/roadmap)** and keeps its
+history at the same URL.
 
 ## Get started
 
@@ -145,7 +150,7 @@ line: pages you ask for and never maintain.
 <tr>
 <td width="50%" valign="top">
 
-### ☁️ Hosted (free)
+### Hosted
 
 The fastest path. No install.
 
@@ -153,12 +158,12 @@ The fastest path. No install.
 2. Create an account
 3. Publish your first artifact
 
-You get a library, in-browser publishing, version history, and comments in about a minute.
+You get a library, in-browser publishing, version history, and comments.
 
 </td>
 <td width="50%" valign="top">
 
-### 🖥️ Self-host
+### Self-host
 
 One container is the whole product: API, web, sign-in, publishing, comments, and the
 sandboxed viewer, with SQLite and blobs in one volume.
@@ -176,8 +181,7 @@ cloud hosts.
 
 Want a complete artifact rather than a blank starter? Open or publish one of the
 **[official examples](https://derive.to/examples)**: a designed launch page, a research brief,
-or a living status report, each showing a different useful way to keep work in Derive and no
-invented customer claims.
+or a living status report. Each shows a different starting point.
 
 ### From the terminal
 
@@ -188,7 +192,7 @@ cd my-doc
 derive publish                         # versioned URL; the id is saved to derive.json
 ```
 
-### Connect an agent (MCP)
+### Connect your coding agent (MCP)
 
 [![Add to Cursor](https://cursor.com/deeplink/mcp-install-dark.png)](https://cursor.com/install-mcp?name=derive&config=eyJ1cmwiOiJodHRwczovL2Rlcml2ZS50by9tY3AifQ%3D%3D)
 &nbsp;or one line for Claude Code: `claude mcp add --transport http derive https://derive.to/mcp`
@@ -202,29 +206,8 @@ codex mcp add derive --url https://derive.to/mcp
 npx -y @derive-to/mcp
 ```
 
-The agent acts at the role you grant: publish access publishes directly; a lower scope reads and proposes. Full guidance is in [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
-
-## Agents: publish work, then pick it up again
-
-Derive gives compatible agents a shared place to publish, find, read, comment on, and update work.
-
-**Give your agent the skill** — works with Claude Code, Codex, Cursor, and any agent that reads [skills](https://skills.sh):
-
-```bash
-npx skills add derive-to/derive --skill derive
-```
-
-Or skip installation entirely: the skill is served at [derive.to/skill.md](https://derive.to/skill.md) (paste the URL into a prompt), agents discover the surface via [llms.txt](https://derive.to/llms.txt) and [`/.well-known/agent.json`](https://derive.to/.well-known/agent.json), and publishing needs no account at all:
-
-```bash
-curl -F file=@page.html https://derive.to/v1/drafts   # or a .zip of a whole site
-# → a live URL in about a second, plus a claim link that turns the
-#   draft into a permanent, versioned artifact in your workspace
-```
-
-`derive init` scaffolds one canonical `derive` skill into the native Codex and Claude locations (`.agents/skills/derive` and `.claude/skills/derive`) plus each client's project MCP config. For an existing repo, run `derive agent setup`; rerun with `--update` to refresh only the packaged Derive skill files while preserving MCP configs. The skill declares its MCP dependency for Codex and routes either client into the matching `derive://skills/*` workflow before it acts.
-
-The core MCP tools: `find` (search + browse artifacts and contexts), `read` (content), `catch_up` (what changed, open feedback, version history, and — with no id — your work queue), `comment` (leave, reply, resolve), `publish` (save a revision), `stage` (upload out of band), `use` (ask a workspace context), and `checkpoint` (save resumable working state). For an image/font, `stage` mints a short-lived upload URL; the agent POSTs the local file's raw bytes, then uses the returned permanent URL or bundle ref in `publish`. Staging alone does not publish an artifact. `publish` goes live if your role can publish; otherwise, or with `for_review: true`, it files a proposal a human approves.
+The agent acts at the role you grant. Publish access publishes directly; a lower scope files a proposal a human approves. Full setup and tool guidance is in
+[packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
 ## How it works
 
@@ -244,26 +227,6 @@ Every artifact ships OG and Twitter meta plus an oEmbed document, serves a live 
 Events stream, and renders under a strict sandbox CSP on an opaque origin. See the
 [artifact authoring standard](https://docs.derive.to/artifacts/authoring/) for authoring and
 embed details.
-
-## Deploy
-
-The single-container image runs on any host with a persistent volume.
-
-For a fresh installation, start with the
-**[self-hosting quickstart](https://docs.derive.to/self-hosting/quickstart/)**. The full
-deployment reference below covers managed hosts, external storage, scaling, and optional
-services.
-
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new)
-&nbsp;&nbsp;
-[![Deploy to Fly.io](https://img.shields.io/badge/Deploy%20to-Fly.io-8B5CF6)](https://docs.derive.to/self-hosting/configuration/)
-
-- **Railway:** New Project → Deploy from GitHub repo → this repo. Add a Volume mounted at `/data` so SQLite and blobs persist, or attach Railway Postgres and set `DATABASE_URL`.
-- **Fly.io:** `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`, then `fly deploy`.
-
-Both auto-detect their assigned URL for auth cookies and share links; set `BASE_URL` only for a
-custom domain. See the
-[full deployment guide](https://docs.derive.to/self-hosting/configuration/).
 
 ## License
 

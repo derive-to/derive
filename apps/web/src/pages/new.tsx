@@ -121,7 +121,7 @@ export function NewArtifact() {
         onPublish={publish}
         onPropose={() => {}}
         publishing={publishMut.isPending}
-        placeholder="Write or paste Markdown or HTML — the preview updates as you type."
+        placeholder="Write or paste Markdown or HTML. The preview updates as you type."
       />
       {/* The unsaved-draft confirm: fires for any blocked departure (Cancel, a rail click,
           back). Discarding proceeds; keeping resets you to the editor with the draft intact. */}
@@ -131,7 +131,7 @@ export function NewArtifact() {
           if (!o && blocker.status === "blocked") blocker.reset()
         }}
         title="Discard this draft?"
-        description="You have unpublished changes. Leaving now discards them — this can't be undone."
+        description="You have unpublished changes. Leaving now will discard them, and you cannot undo this."
         confirmLabel="Discard"
         confirmTestId="new-discard-confirm"
         onConfirm={() => {

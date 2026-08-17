@@ -26,7 +26,7 @@ const summaryOf = (template: (typeof BUILT_IN_TEMPLATES)[number]) => ({
 
 const artifactCount = BUILT_IN_TEMPLATES.filter((template) => template.kind === "artifact").length
 const contextCount = BUILT_IN_TEMPLATES.length - artifactCount
-const catalogDescription = `${BUILT_IN_TEMPLATES.length} curated starts: ${artifactCount} artifact Templates and ${contextCount} safe Context manifests. Read an entry resource for its exact starter source, then use publish to create an independent artifact.`
+const catalogDescription = `${BUILT_IN_TEMPLATES.length} reusable starting points: ${artifactCount} artifact templates and ${contextCount} context templates. Read a template to get its starter source and instructions.`
 // The built-in catalog changes only with a deployment. Serialize its 30 entries
 // once instead of rebuilding ~37 KB of identical JSON for every remote MCP request.
 const catalogText = stableJson({
@@ -48,7 +48,7 @@ const catalogText = stableJson({
 export function catalogResource(): TemplateResource {
   return {
     uri: TEMPLATE_CATALOG_URI,
-    title: "Derive built-in Templates",
+    title: "Derive built-in templates",
     description: catalogDescription,
     mimeType: "application/json",
     text: catalogText,
@@ -78,11 +78,11 @@ export function templateResource(id: string | undefined): TemplateResource | und
         library_id: template.libraryId,
         template_id: template.id,
         catalog_version: template.catalogVersion,
-        note: "The published result is an independent artifact; this Template never remains a live dependency.",
+        note: "The published artifact is independent. Changes to this template do not update it.",
       },
       context_safety:
         template.kind === "context"
-          ? "This is a portable manifest only. Bind runners, sources, approvals, and credentials after publishing; never place them in template source."
+          ? "This template contains setup instructions only. Bind runners, sources, permissions, and credentials after publishing. Never put credentials in template source."
           : undefined,
     }),
   }

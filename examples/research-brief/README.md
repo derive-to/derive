@@ -1,9 +1,9 @@
 # Research brief example
 
-This example shows how a decision-oriented report can keep its sources, uncertainty,
-recommendation, comments, and later revisions together.
+This sample compares SQLite and PostgreSQL for a small internal service. It shows how to make
+a recommendation without hiding the assumptions or overstating the sources.
 
-[Open the official live example](https://derive.to/artifacts/a-durable-home-for-agent-made-work-official-deri-ms66yju2).
+[Open the official live example](https://derive.to/artifacts/sqlite-or-postgresql-for-a-small-internal-servic-ms66yju2).
 
 ```bash
 derive publish
@@ -11,6 +11,5 @@ derive publish
 
 Suggested reading prompt:
 
-> Challenge the evidence behind each criterion, identify conclusions that are stronger
-> than their sources, and comment on the exact text that should change. Make the
-> recommendation and its limits explicit.
+> Check each claim against its source. Comment where the recommendation relies on an
+> assumption that the team should verify.

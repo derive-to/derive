@@ -9,7 +9,7 @@ test("Quick Create hands a Template to the agent without opening source", async 
   await owner.getByTestId("library-new-template").click()
   await expect(owner).toHaveURL(/\/templates/)
   await owner.getByTestId("template-use-decision-memo").click()
-  await expect(owner.getByRole("heading", { name: "Make Decision memo yours" })).toBeVisible()
+  await expect(owner.getByRole("heading", { name: "Use Decision memo" })).toBeVisible()
   await expect(owner.getByTestId("template-agent-brief")).toBeVisible()
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
 })
@@ -18,10 +18,8 @@ test("a Context Template prepares an agentic handoff", async ({ owner }) => {
   await owner.context().grantPermissions(["clipboard-read", "clipboard-write"])
   await owner.goto("/templates?tab=contexts")
   await owner.getByTestId("template-use-weekly-research-context").click()
-  await expect(
-    owner.getByRole("heading", { name: "Make Weekly research brief yours" }),
-  ).toBeVisible()
-  await expect(owner.getByText("Continue in your agent")).toBeVisible()
+  await expect(owner.getByRole("heading", { name: "Use Weekly research brief" })).toBeVisible()
+  await expect(owner.getByTestId("template-agent-copy")).toContainText("Copy as prompt")
   await owner
     .getByTestId("template-agent-brief")
     .fill("Research the template ecosystem using approved sources every Monday.")
@@ -58,8 +56,8 @@ test("a library pins an artifact starter and hands it to the agent", async ({ ow
   await owner.getByLabel("Description").fill("A decision-ready starting point.")
   await owner.getByTestId("template-library-entry-create").click()
   await expect(owner.getByText("Trusted decision", { exact: true })).toBeVisible()
-  await owner.getByRole("button", { name: "Make it mine" }).click()
-  await expect(owner.getByRole("heading", { name: "Make Trusted decision yours" })).toBeVisible()
+  await owner.getByRole("button", { name: "Use template" }).click()
+  await expect(owner.getByRole("heading", { name: "Use Trusted decision" })).toBeVisible()
   await expect(owner.getByTestId("template-agent-brief")).toBeVisible()
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
   await owner.keyboard.press("Escape")

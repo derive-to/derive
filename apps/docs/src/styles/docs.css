@@ -390,21 +390,6 @@ summary:focus-visible,
   content: "";
 }
 
-.navigation-meta {
-  display: flex;
-  margin-top: 2rem;
-  padding: 0.9rem 0.65rem 0;
-  align-items: center;
-  gap: 0.4rem;
-  border-top: 1px solid var(--line-soft);
-  color: var(--ink-faint);
-  font: 0.6875rem/1.4 var(--sans);
-}
-
-.navigation-meta a:hover {
-  color: var(--ink);
-}
-
 .main-column {
   padding: 3.75rem 0 6rem;
 }
@@ -848,36 +833,6 @@ summary:focus-visible,
   gap: 0.75rem 1.1rem;
 }
 
-.workflow-list {
-  display: flex;
-  padding: 0;
-  margin: 1.75rem 0 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.55rem 0;
-  list-style: none;
-}
-
-.workflow-list li {
-  display: flex;
-  align-items: center;
-  color: var(--ink-soft);
-  font-size: 0.8125rem;
-  font-weight: 520;
-}
-
-.workflow-list li:not(:last-child)::after {
-  margin: 0 0.75rem;
-  color: var(--ink-faint);
-  content: "→";
-}
-
-.workflow-list span {
-  margin-right: 0.4rem;
-  color: var(--ink-faint);
-  font: 0.625rem/1 var(--mono);
-}
-
 .home-section {
   padding: 3.25rem 0;
   border-top: 1px solid var(--line);
@@ -915,6 +870,10 @@ summary:focus-visible,
   line-height: 1.12;
   letter-spacing: -0.035em;
   text-wrap: balance;
+}
+
+.start-section .home-section-header h2 {
+  margin-top: 0;
 }
 
 .home-section-header > p:last-child {
@@ -1132,39 +1091,6 @@ summary:focus-visible,
   color: var(--ink);
 }
 
-.home-principle {
-  padding-bottom: 4.5rem;
-}
-
-.home-principle dl {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  padding: 0;
-  margin: 1.75rem 0 0;
-  border-top: 1px solid var(--line);
-}
-
-.home-principle dl > div {
-  padding: 1rem 1.25rem 0 0;
-}
-
-.home-principle dl > div + div {
-  padding-left: 1.25rem;
-  border-left: 1px solid var(--line);
-}
-
-.home-principle dt {
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.home-principle dd {
-  margin: 0.4rem 0 0;
-  color: var(--ink-soft);
-  font-size: 0.8125rem;
-  line-height: 1.6;
-}
-
 /* Search, mobile navigation, and utility pages */
 .search-dialog,
 .navigation-dialog {
@@ -1365,7 +1291,7 @@ summary:focus-visible,
 
 .site-footer {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr auto;
   padding: 1.25rem;
   align-items: center;
   gap: 2rem;
@@ -1558,15 +1484,13 @@ summary:focus-visible,
   .start-copy > span:last-child,
   .home-section-header > p:last-child,
   .quickstart-note p,
-  .browse-grid a,
-  .home-principle dd {
+  .browse-grid a {
     font-size: 1rem;
   }
 
   .start-copy strong,
   .quickstart-note strong,
   .browse-grid h3,
-  .home-principle dt,
   .page-navigation strong {
     font-size: 1rem;
   }
@@ -1579,9 +1503,6 @@ summary:focus-visible,
     grid-template-columns: 1fr auto;
   }
 
-  .site-footer > span:nth-child(2) {
-    display: none;
-  }
 }
 
 @media (max-width: 44rem) {
@@ -1625,22 +1546,11 @@ summary:focus-visible,
     font-size: clamp(2.5rem, 12vw, 3rem);
   }
 
-  .workflow-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.5rem 1rem;
-  }
-
-  .workflow-list li:not(:last-child)::after {
-    content: none;
-  }
-
   .home-section {
     padding: 2.75rem 0;
   }
 
-  .browse-grid,
-  .home-principle dl {
+  .browse-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1659,22 +1569,15 @@ summary:focus-visible,
     margin-top: 0.25rem;
   }
 
-  .browse-grid > section + section,
-  .home-principle dl > div + div {
+  .browse-grid > section + section {
     border-top: 1px solid var(--line);
     border-left: 0;
   }
 
   .browse-grid > section,
   .browse-grid > section:first-child,
-  .browse-grid > section:last-child,
-  .home-principle dl > div,
-  .home-principle dl > div + div {
+  .browse-grid > section:last-child {
     padding: 1rem 0;
-  }
-
-  .home-principle {
-    padding-bottom: 3.5rem;
   }
 
   .quickstart-terminal pre {

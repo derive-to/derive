@@ -12,7 +12,7 @@ const clip = (s: string, n = 28): string => (s.length > n ? `${s.slice(0, n - 1)
  *  in-app navigation (the blocker), Escape, and Done. */
 export const unsavedEditsCopy = (n: number) => ({
   title: "Discard your unsaved edits?",
-  description: `This document has ${n} unsaved change${n === 1 ? "" : "s"}. Leaving now discards ${n === 1 ? "it" : "them"} — that can't be undone.`,
+  description: `This document has ${n} unsaved change${n === 1 ? "" : "s"}. Leaving now discards ${n === 1 ? "it" : "them"}.`,
   confirmLabel: "Discard edits",
 })
 

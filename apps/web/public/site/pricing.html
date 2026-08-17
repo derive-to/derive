@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Pricing — Derive</title>
-<meta name="description" content="Free while we're in beta. This is the pricing we intend to charge, published early — so nothing about it surprises you.">
+<title>Pricing | Derive</title>
+<meta name="description" content="Derive is free during beta. See the planned hosted pricing and what each plan includes.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Pricing — Derive">
+<meta property="og:title" content="Pricing | Derive">
 <meta property="og:description" content="Free while we're in beta. This is the pricing we intend to charge, published early.">
 <meta property="og:url" content="https://derive.to/pricing">
 <meta property="og:image" content="https://derive.to/site/og-artifacts.png">
@@ -18,7 +18,7 @@
 {
   "@context": "https://schema.org",
   "@type": "WebPage",
-  "name": "Pricing — Derive",
+  "name": "Pricing | Derive",
   "url": "https://derive.to/pricing",
   "description": "Free while we're in beta. This is the pricing we intend to charge, published early.",
   "isPartOf": { "@id": "https://derive.to/#website" },
@@ -117,7 +117,6 @@ header.head.wrap{padding:150px 24px 0;text-align:center}
 @media(max-width:960px){.tier{border-top:1px solid var(--border-soft)}.tier:nth-child(-n+2){border-top:0}.tier:nth-child(3){border-left:0}}
 @media(max-width:560px){.tier{border-left:0;border-top:1px solid var(--border-soft)}.tier:first-child{border-top:0}}
 .tier .tname{font-size:15px;font-weight:500;display:flex;align-items:center;gap:8px}
-.tier .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;color:var(--muted-fg);border:1px solid var(--border);border-radius:4px;padding:1px 6px}
 .tier .tfor{margin-top:6px;font-size:12.5px;color:var(--muted-fg);min-height:38px}
 .tier .price{margin-top:16px;font-size:30px;font-weight:500;letter-spacing:-0.02em}
 .tier .price small{font-size:12px;font-weight:400;color:var(--muted-fg);letter-spacing:0;display:block;margin-top:2px;font-family:var(--font-mono)}
@@ -130,12 +129,6 @@ header.head.wrap{padding:150px 24px 0;text-align:center}
 section.wrap{padding:120px 24px 0}
 .section-head{max-width:640px}
 .section-head h2{font-size:clamp(26px,3.6vw,36px);line-height:1.15;margin-top:14px}
-.principles{margin-top:48px;display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border-soft);border:1px solid var(--border-soft);border-radius:12px;overflow:hidden}
-@media(max-width:720px){.principles{grid-template-columns:1fr}}
-.principle{background:var(--bg);padding:28px 30px}
-.principle h3{font-size:16px}
-.principle p{margin-top:10px;font-size:14px;color:var(--muted-fg);line-height:1.65}
-
 .faq{margin-top:48px;border-top:1px solid var(--border-soft)}
 .faq details{border-bottom:1px solid var(--border-soft)}
 .faq summary{
@@ -165,8 +158,6 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 .foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
 .foot-links{display:flex;gap:20px;font-size:13px;color:var(--muted-fg)}
 .foot-links a:hover{color:var(--fg)}
-.foot-inner .license{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.02em}
-@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
 @media(max-width:640px){
   header.head.wrap{padding-top:124px}
   .tiers{margin-top:44px}
@@ -174,7 +165,6 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   .tier .tfor{min-height:0}
   section.wrap{padding-top:92px}
   section.wrap.final{padding-top:100px}
-  .principle{padding:22px 20px}
   .waitlist input{font-size:16px} /* <16px makes iOS zoom the page on focus */
   .waitlist-done{height:auto;min-height:50px;padding:12px 16px}
   footer{margin-top:96px}
@@ -201,15 +191,16 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <a href="https://github.com/derive-to/derive">GitHub</a>
     </div>
     <div class="nav-cta">
-      <a class="nav-signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr">→</span></a>
+      <a class="nav-signin" href="/login?src=nav_signin">Sign in <span class="arr">→</span></a>
     </div>
   </div>
 </nav>
 
 <header class="head wrap">
   <div class="eyebrow">Pricing</div>
-  <h1>Free while we're in beta.</h1>
-  <p class="lede">Every feature, no card required. Below is the pricing we intend to charge, <strong>published early so nothing about it surprises you.</strong> The short version: reading and commenting stay free; teams pay for the people who create and manage shared work.</p>
+  <h1>Free during beta.</h1>
+  <p class="lede">All features are included, and no card is required. When billing starts, viewers and commenters will stay free. Paid plans will be based on the number of editors.</p>
+  <div class="beta"><strong>Planned hosted pricing.</strong> These are our current plans for after beta. They may change before billing starts.</div>
 </header>
 
 <div class="wrap">
@@ -218,21 +209,19 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <div class="tname">Free</div>
       <p class="tfor">For individuals, independent projects, and small teams.</p>
       <div class="price">$0 <small>forever</small></div>
-      <a class="btn btn-ghost" href="#join">Get beta access</a>
       <ul>
         <li>Up to <strong>3 editors</strong> per workspace</li>
         <li><strong>Unlimited viewers and commenters</strong></li>
-        <li>Comments, direct editing, proposals, and optional approvals</li>
+        <li>Comments, sharing controls, and direct editing</li>
         <li>CLI, API, and MCP for your agents</li>
         <li>Permanent URLs with full version history</li>
         <li>1 GB storage, deduplicated</li>
       </ul>
     </div>
     <div class="tier">
-      <div class="tname">Team <span class="tag">MOST TEAMS</span></div>
+      <div class="tname">Team</div>
       <p class="tfor">For teams that keep agent-made work in one shared workspace.</p>
-      <div class="price">$15 <small>per editor / month · $12 billed annually</small></div>
-      <a class="btn btn-primary" href="#join">Get beta access</a>
+      <div class="price">$15 <small>per editor each month · $12 when billed yearly</small></div>
       <ul>
         <li>Everything in Free, plus</li>
         <li><strong>Unlimited editors</strong></li>
@@ -247,8 +236,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
     <div class="tier">
       <div class="tname">Business</div>
       <p class="tfor">For organizations that need control and accountability.</p>
-      <div class="price">$30 <small>per editor / month · $25 billed annually</small></div>
-      <a class="btn btn-ghost" href="#join">Get beta access</a>
+      <div class="price">$30 <small>per editor each month · $25 when billed yearly</small></div>
       <ul>
         <li>Everything in Team, plus</li>
         <li>250 GB pooled storage, then ~$1 per extra 10 GB/month</li>
@@ -263,7 +251,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
     <div class="tier">
       <div class="tname">Enterprise</div>
       <p class="tfor">For isolation, residency, and procurement requirements.</p>
-      <div class="price">From ~$500/mo <small>custom annual contract</small></div>
+      <div class="price">From $500 <small>each month · custom annual contract</small></div>
       <a class="btn btn-ghost" href="mailto:hello@derive.to">Talk to us</a>
       <ul>
         <li>Everything in Business, plus</li>
@@ -279,38 +267,17 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 
 <section class="wrap">
   <div class="section-head">
-    <div class="eyebrow">Principles</div>
-    <h2>Four things that will stay true.</h2>
-  </div>
-  <div class="principles">
-    <div class="principle">
-      <h3>Readers and commenters are never seats.</h3>
-      <p>Viewers and commenters are free at every tier, in any number. Feedback is the point of the product. We won’t tax it.</p>
-    </div>
-    <div class="principle">
-      <h3>Billing never breaks a published URL.</h3>
-      <p>Going over a limit or lapsing a plan makes a workspace read-only. Nothing is deleted, and no link you’ve shared goes dark.</p>
-    </div>
-    <div class="principle">
-      <h3>Agents don’t consume seats.</h3>
-      <p>Your agents publish and propose through your workspace. We charge for the people who create and manage the work, not for the agents that help make it.</p>
-    </div>
-    <div class="principle">
-      <h3>Self-hosting is free, forever.</h3>
-      <p>The whole product is Fair Source and runs as one container. The hosted tier pays for the service, not the software.</p>
-    </div>
-  </div>
-</section>
-
-<section class="wrap">
-  <div class="section-head">
     <div class="eyebrow">Questions</div>
-    <h2>The fine print, said plainly.</h2>
+    <h2>Questions about billing.</h2>
   </div>
   <div class="faq">
     <details>
       <summary>What counts as an editor?</summary>
-      <p class="a">Anyone with a <strong>Creator or Admin seat</strong> during a billing period. Viewers and commenters are never counted, no matter how many. <strong>Guests can propose changes for free</strong>: a guest only becomes billable when a workspace owner explicitly grants them a Creator or Admin seat. For example, 10 people read a workspace, 2 leave comments, and 1 person holds the publishing seat: you pay for 1 editor.</p>
+      <p class="a">Anyone with a <strong>Creator or Admin seat</strong> during a billing period. Viewers can read and comment without a paid seat. They become billable only when a workspace owner grants Creator or Admin access. For example, if one person can publish and everyone else can read or comment, you pay for one editor.</p>
+    </details>
+    <details>
+      <summary>Do agents need seats?</summary>
+      <p class="a">No. Agents use the permissions granted by the workspace. Billing is based on people with Creator or Admin access.</p>
     </details>
     <details>
       <summary>What happens if we stop paying?</summary>
@@ -332,8 +299,8 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 </section>
 
 <section class="final wrap" id="join">
-  <h2>Nothing here should surprise you.</h2>
-  <p class="body">That's the point of publishing pricing before billing exists. Sign up for the beta and hold us to it.</p>
+  <h2>Want to try the hosted beta?</h2>
+  <p class="body">Sign up and we will email you an access link. You do not need a card.</p>
   <div class="waitlist">
     <form data-waitlist data-derive-source="pricing_waitlist" action="/v1/beta/signup" method="post" novalidate>
       <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
@@ -360,10 +327,10 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <a href="/pricing">Pricing</a>
       <a href="/privacy">Privacy</a>
       <a href="/security">Security</a>
+      <a href="https://docs.derive.to/reference/licensing/">Licensing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
       <a href="/login?src=nav_signin">Log in</a>
     </div>
-    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0 · Prices in USD</span>
   </div>
 </footer>
 

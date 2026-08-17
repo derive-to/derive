@@ -38,9 +38,8 @@ test.describe("templates", () => {
     await page.goto("/templates")
     await page.getByTestId("template-use-narrative-pitch").click()
 
-    await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
-    await expect(page.getByText("Use your own agent")).toBeVisible()
-    await expect(page.getByText("Continue in your agent")).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Use Narrative pitch" })).toBeVisible()
+    await expect(page.getByText("Derive will prepare a prompt for your agent.")).toBeVisible()
     await expect(page.getByTestId("template-agent-inheritance-preview")).toContainText("The change")
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
     await page
@@ -67,7 +66,7 @@ test.describe("templates", () => {
     await expect(page.getByTestId("template-agent-copy")).toContainText("Copy as prompt")
     await page.getByTestId("template-agent-copy").click()
     await expect(page.getByTestId("template-agent-copy")).toContainText(
-      "Copied — paste into your agent",
+      "Copied. Paste into your agent.",
     )
     const handoff = await page.evaluate(() => navigator.clipboard.readText())
     expect(handoff).toContain('derived_from: "derive://templates/narrative-pitch"')
@@ -132,7 +131,7 @@ test.describe("templates", () => {
     await page.getByTestId("template-use-narrative-pitch").click()
     await page.getByTestId("template-agent-brief").fill("Make a customer launch story.")
 
-    await expect(page.getByText("Continue in your agent")).toBeVisible()
+    await expect(page.getByTestId("template-agent-copy")).toContainText("Copy as prompt")
     await expect(page.getByTestId("template-agent-open-codex")).toHaveCount(0)
     await expect(page.getByTestId("template-agent-open-claude")).toHaveCount(0)
     await expect(page.getByTestId("template-agent-copy")).toBeEnabled()
@@ -176,7 +175,7 @@ test.describe("templates", () => {
     await page.getByTestId("template-source-input").fill(source)
     await page.getByTestId("template-source-submit").click()
 
-    await expect(page.getByRole("heading", { name: "Make customer-proof yours" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Use customer-proof" })).toBeVisible()
     await page
       .getByTestId("template-agent-brief")
       .fill("Turn this evidence into a concise launch page for operations leaders.")
@@ -194,10 +193,9 @@ test.describe("templates", () => {
     await page.goto("/templates")
     const firstCard = page.getByTestId("template-card-narrative-pitch")
     await expect(firstCard).toBeInViewport()
-    await expect(firstCard.getByRole("button", { name: "Preview" })).toBeVisible()
-    await expect(firstCard.getByRole("button", { name: "Make it mine" })).toBeVisible()
-    await firstCard.getByRole("button", { name: "Preview" }).click()
-    await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
+    await expect(firstCard.getByRole("button", { name: "Use template" })).toBeVisible()
+    await firstCard.getByRole("button", { name: "Use template" }).click()
+    await expect(page.getByRole("heading", { name: "Use Narrative pitch" })).toBeVisible()
   })
 
   test("a preview ahead of additive schema explains the beta release state", async ({
@@ -227,7 +225,7 @@ test.describe("templates", () => {
   }) => {
     await page.goto("/new?template=narrative-pitch")
     await expect(page).toHaveURL(/\/templates\?use=narrative-pitch/)
-    await expect(page.getByRole("heading", { name: "Make Narrative pitch yours" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Use Narrative pitch" })).toBeVisible()
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
   })
 
@@ -248,9 +246,7 @@ test.describe("templates", () => {
     const { libraryId, entryId } = await addWorkspaceStarter(page, source)
     await page.goto(`/templates?tab=libraries&library=${libraryId}`)
     await page.getByTestId(`template-library-use-${entryId}`).click()
-    await expect(
-      page.getByRole("heading", { name: "Make Launch command center yours" }),
-    ).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Use Launch command center" })).toBeVisible()
     await expect(page.getByTestId("template-agent-brief")).toBeVisible()
     await expect(page.getByTestId("artifact-source-editor")).toHaveCount(0)
     await page

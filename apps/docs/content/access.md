@@ -21,9 +21,9 @@ more to signed-in people.
 
 Workspace roles are shown in the product as:
 
-- **Admin** — manages the workspace, its members, settings, billing, and every artifact.
-- **Creator** — creates, publishes, edits, and reviews work, without workspace administration.
-- **Viewer** — reads and comments; proposed edits wait for a Creator or Admin to decide.
+- **Admin:** manages the workspace, its members, settings, billing, and every artifact.
+- **Creator:** creates, publishes, edits, and reviews work without managing the workspace.
+- **Viewer:** reads and comments. Proposed edits wait for a Creator or Admin to decide.
 
 Workspace access uses each person's existing role. There is no second per-artifact role to
 configure for the whole workspace. If somebody opens a workspace-only artifact while another

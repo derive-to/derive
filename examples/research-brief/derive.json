@@ -1,5 +1,5 @@
 {
-  "title": "Choosing a review surface for agent-made work",
+  "title": "SQLite or PostgreSQL for a small internal service",
   "entry": "report.md",
   "spa": false,
   "id": null

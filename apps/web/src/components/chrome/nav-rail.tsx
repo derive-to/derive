@@ -213,7 +213,7 @@ function RailHeader({ showSearch }: { showSearch: boolean }) {
           // so suppress it — the route-agnostic boot frame hydrates without a warning.
           suppressHydrationWarning
           onClick={() => setOpenMobile(false)}
-          aria-label="Derive — home"
+          aria-label="Derive home"
           className="flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 text-foreground outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
         >
           <Logo size={20} />

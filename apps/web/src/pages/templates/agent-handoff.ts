@@ -36,7 +36,7 @@ Exact reference: ${target.uri}
 ${destination}What I need:
 ${request}
 
-Work agentically—not as a form fill or a literal clone:
+Use the template as a reference, then make the decisions this brief needs:
 1. Use Derive's find tool once to confirm the active workspace${workspace ? ` is ${workspace.name}` : ""}. Use Derive's read tool to inspect the exact reference before creating anything.
 2. Preserve what makes the reference effective, but adapt its manifest, procedures, sources, and operating decisions to my brief. Use find when workspace evidence would improve the result.
 3. Leave the original unchanged. Ask only for authority, source, permission, or credential decisions you cannot safely infer.
@@ -50,9 +50,9 @@ Exact reference: ${target.uri}
 ${destination}What I need:
 ${request}
 
-Work agentically—not as a form fill or a literal clone:
+Use the template as a reference, then make the decisions this brief needs:
 1. Use Derive's find tool once to confirm the active workspace${workspace ? ` is ${workspace.name}` : ""}. Use Derive's read tool to inspect the exact reference before creating anything.
-2. Preserve what makes the reference effective—its structure, visual language, interactions, and narrative rhythm—but adapt every substantive decision to my brief. Use find when workspace evidence would improve the result.
+2. Keep the useful structure, visual language, interactions, and narrative rhythm. Adapt the content and other decisions to my brief. Use find when workspace evidence would improve the result.
 3. Leave the original unchanged and publish a new artifact with \`derived_from: "${target.uri}"\` so Derive records the exact reference.
 4. Render and visually inspect the finished result before reporting success. Revise it if the rendered result is weak.
 5. Return the new shareable Derive URL and briefly explain the important adaptations.`

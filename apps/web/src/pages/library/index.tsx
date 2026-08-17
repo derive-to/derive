@@ -22,6 +22,7 @@ import {
   collectionFoldersQuery,
   collectionsQuery,
   needsFeedbackArtifactsQuery,
+  onboardingQuery,
   summaryQuery,
 } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -38,7 +39,6 @@ import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
 import { CollectionsView } from "./collections-view"
-import { ConnectNudge, useConnectNudge } from "./connect-nudge"
 import { DisplayMenu } from "./display-menu"
 import { FilterMenu } from "./filter-menu"
 import { FolderGroups } from "./folder-groups"
@@ -100,6 +100,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // Boot-batch gated (same keys the NavRail reads — one seed serves both).
   const bootGate = useBootGate()
   const { data: summary } = useQuery({ ...summaryQuery(), enabled: !!me && bootGate })
+  const { data: onboarding } = useQuery({ ...onboardingQuery(), enabled: !!me && bootGate })
   const { data: collections = [] } = useQuery({ ...collectionsQuery(), enabled: !!me && bootGate })
   // The Collections view is home-only and never shows while a shelf is open — opening
   // one IS the `collection` filter, so the switch would be offering you the place you
@@ -407,7 +408,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
               ? activeCollection?.count
               : undefined
 
-  const connectNudge = useConnectNudge()
   // The page's one primary action, and it is STABLE: it does not blink out while you
   // type in the filter, and it shows alongside the connect-agent card. (It used to
   // share that card's one-prompt-at-a-time gate — inherited from the old publish
@@ -420,9 +420,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // mid-search). Keyed to the "All artifacts" tab only — an empty "Created by me" tab
   // keeps its own empty state (the workspace may hold plenty you didn't create).
   const emptyHome = homeView && filter.kind === "all" && items.length === 0
-
-  // The activation card's state — read here so the Brandprint nudge can yield to it
-  // (one onboarding surface per screen; connecting an agent comes first).
 
   // The identity row's count: the collections tab counts shelves; everything else
   // reuses the heading count (server-authoritative numbers only, or the search hits).
@@ -625,14 +622,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
         <FollowingStrip follows={follows} onUnfollow={(kind, target) => unfollow(kind, target)} />
       )}
 
-      {/* The core loop's front door: connect your agent (or make the first ask),
-          live on the page people actually land on. Above the publish card — the
-          agent path leads; hand-publishing stays one row below. */}
-      {homeView && <ConnectNudge nudge={connectNudge} />}
-
       {/* One-time, dismissible: the owner of a Brandprint-less workspace gets the
-          "first on the team" setup nudge here (spec: Onboarding / Timing). */}
-      {homeView && connectNudge.stage === null && <BrandprintNudge />}
+          setup nudge after first-run onboarding is complete. */}
+      {homeView && onboarding?.published_via_agent && <BrandprintNudge />}
 
       {showCollections ? (
         <CollectionsView
@@ -928,7 +920,7 @@ function emptyStateFor(
         icon: <Icon name="sparkles" strokeWidth={1.75} />,
         title: "Nothing you've created yet.",
         description:
-          "Publish something, or connect an agent — everything you or your agents create shows up here, whatever its audience.",
+          "Publish something or connect an agent. Work from you and your agents will appear here.",
         action: (
           // The shared ConnectAgent surface, right here in a dialog — this used to
           // land on Settings -> Agents (the workspace-bot token form), a different

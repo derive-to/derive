@@ -425,23 +425,6 @@
   animation: derive-skeleton-breath 1.6s ease-in-out infinite;
 }
 
-/* The anon comment panel's ghost drift (public-viewer.tsx) — the marketing site's
-   "chats scroll away" ocean, miniaturized: one column of placeholder chips drifts
-   up behind the sign-in CTA. The column renders its list twice, so -50% loops
-   seamlessly. Reduced motion is handled by the global rule below (the column
-   snaps to rest and reads as a static backdrop). */
-@keyframes derive-ghost-drift {
-  from {
-    transform: translateY(0);
-  }
-  to {
-    transform: translateY(-50%);
-  }
-}
-@utility animate-ghost-drift {
-  animation: derive-ghost-drift 36s linear infinite;
-}
-
 /* Honor prefers-reduced-motion (unlayered → wins over utilities without !important). */
 @media (prefers-reduced-motion: reduce) {
   *,

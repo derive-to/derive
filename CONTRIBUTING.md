@@ -18,7 +18,7 @@ understanding may be closed even when they appear to work. See the
 
 Requires Node 24+ and pnpm 10+.
 
-The dev stack is two servers — run both with one command:
+The development stack has two servers. Run both with one command:
 
 ```bash
 pnpm install
@@ -32,7 +32,7 @@ pnpm dev:all      # API on :8090 + web UI on :3090 → open http://localhost:309
 The API alone serves only a placeholder page; the web UI proxies its API calls,
 so open the web port. (Container/deploy builds serve both from one origin on 8080.)
 
-By default the API uses embedded SQLite and the local filesystem — no external
+By default the API uses embedded SQLite and the local filesystem, with no external
 services. Postgres + S3/R2 are opt-in via env: copy `.env.example` to `.env`
 (git-ignored, auto-loaded in dev) and fill in what you need. See the
 [deployment guide](apps/docs/content/self-hosting/configuration.md).
@@ -71,7 +71,7 @@ pnpm format               # format only
 
 ## Code style
 
-Enforced by [Biome](https://biomejs.dev) (`biome.json`) — run `pnpm check:fix` and
+This is enforced by [Biome](https://biomejs.dev) (`biome.json`). Run `pnpm check:fix` and
 it mostly takes care of itself:
 
 - Arrow functions, **no semicolons**, 100-char line width, double quotes, 2-space indent.
@@ -94,19 +94,19 @@ matter most:
 
 Adding a `MetaStore` method? Declare it on the relevant feature sub-port in
 [`ports.ts`](packages/core/src/ports.ts) (`ArtifactStore`, `CommentStore`, `ReviewStore`,
-… — `MetaStore` composes all of them), then implement it once in the shared sqlite repos
+and others; `MetaStore` composes all of them), then implement it once in the shared SQLite repos
 (`packages/db/src/repos.ts`, covers SQLite + D1) and once in the Postgres driver
 (`pg.ts`). The `implements MetaStore` annotation fails typecheck if a driver misses one.
 
-## Guardrails (you don't have to remember these — the tooling does)
+## Guardrails enforced by the tooling
 
 The invariants above are machine-enforced, so a mistake fails the gate instead of
 shipping. If something below surprises you, that's the guardrail doing its job:
 
 - **Forgotten `await`.** A floating promise in `apps/api` or the backend packages is a
   lint error (`noFloatingPromises`). `void` it deliberately or handle it.
-- **`console.*` in the server.** Lint error outside the logger and the process entry —
-  use `log` (`apps/api/src/log.ts`).
+- **`console.*` in the server.** Lint error outside the logger and the process entry.
+  Use `log` (`apps/api/src/log.ts`).
 - **DB drivers in routes/lib.** Importing `drizzle-orm`, a driver, or `@derive/db/*` from
   `routes/*` or `lib/*` is a lint error. Reach the database through `ctx.meta` (the
   `MetaStore` port); add a store method instead.
@@ -114,21 +114,21 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   `pnpm lint:boundaries` (dependency-cruiser, `.dependency-cruiser.mjs`): `core` may import
   nothing in-repo, `db`/`storage` depend only on `core`, the clients (`web`/`cli`/`mcp`/
   `runner`) hold no runtime `@derive/core` import, and there are no import cycles. A
-  violation — or a new cycle — fails the gate.
+  violation or a new cycle fails the gate.
 - **Config completeness.** `pnpm lint:env` (`scripts/check-env.mjs`) fails if a config var
   the server reads is missing from `.env.example`, or a var documented there is read
-  nowhere. `.env.example` is therefore the full, honest list — it can't quietly go
+  nowhere. `.env.example` is therefore the complete list. It cannot quietly become
   incomplete or advertise a setting the code ignores. A binding/platform var that isn't
   self-host config is listed in the script's `NON_CONFIG` set. (Half-configured optional
-  features — an OAuth id without its secret — warn loudly at boot and fail `derive doctor`,
-  from the capability model in `apps/api/src/capabilities.ts`.)
+  features, such as an OAuth id without its secret, warn loudly at boot and fail `derive doctor`.
+  The capability model lives in `apps/api/src/capabilities.ts`.)
 - **Schema parity + exhaustiveness.** Every drizzle table must be classified in
   `packages/db/src/parity.ts` (typed-and-shape-checked against its core Record, or named
   a junction). Add a table without classifying it and typecheck fails. A column that
   drifts from its Record fails too.
 - **DDL drift.** `packages/db/test/schema-conformance.test.ts` boots a real DB from the
   raw `SCHEMA_STATEMENTS`/`MIGRATION_STATEMENTS` and asserts every drizzle column exists
-  in the table that's actually created — so a column in the type but missing from the
+  in the table that is actually created. A column in the type but missing from the
   DDL goes red.
 - **Postgres behavioral drift.** The full `apps/api` suite also runs against a real
   Postgres in CI (`pnpm test:pg`), so a pg driver bug (a wrong query, a missing org
@@ -136,7 +136,7 @@ shipping. If something below surprises you, that's the guardrail doing its job:
 - **Destructive DDL.** The schema sources are re-applied at boot, so a `DROP TABLE` /
   `DROP COLUMN` / `TRUNCATE` / `DELETE FROM` in `packages/db/src/schema.ts`
   (`SCHEMA_STATEMENTS`/`MIGRATION_STATEMENTS`) or `pg-schema.ts` (`PG_SCHEMA_STATEMENTS`)
-  would wipe data on every restart — it fails `pnpm lint:schema`. Evolve by adding
+  would wipe data on every restart, so it fails `pnpm lint:schema`. Evolve by adding
   (expand/contract), deprecating a column in place; a deliberate, reviewed removal opts out
   with a `schema-ignore` comment. See [Database migrations](#database-migrations).
 - **Event names.** Bus and webhook event names come from one list
@@ -153,15 +153,15 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   come from the token system in `apps/web/src/styles/globals.css` (semantic utilities + the
   `text-*` scale). Raw-color data files (the logo, the avatar palette, the theme swatches)
   are allow-listed; a one-off uses a `tokens-ignore` comment.
-- **Non-null assertions.** `x!` is a lint error repo-wide (`noNonNullAssertion`) — narrow
+- **Non-null assertions.** `x!` is a lint error repo-wide (`noNonNullAssertion`). Narrow
   the value instead of asserting the null away.
 - **Hardcoded storage keys.** A `localStorage`/`sessionStorage` call keyed by a string
   literal fails `pnpm lint:frontend`; keys live in `apps/web/src/lib/storage-keys.ts`
   (`STORAGE_KEYS`).
 - **Raw full-page reloads.** `location.reload()`/`location.assign()` in `apps/web` fails
   `pnpm lint:reload` (`scripts/check-workspace-reload.mjs`). A hard navigation after the
-  active workspace changes must flag the next boot to drop the persisted query cache —
-  otherwise the restore rehydrates the old workspace's data — so it goes through
+  active workspace changes must flag the next boot to drop the persisted query cache.
+  Otherwise, the restore rehydrates the old workspace's data. Use
   `reloadAfterWorkspaceChange` (`apps/web/src/lib/persist.ts`). A genuinely
   non-workspace reload opts out with a `reload-ignore` comment. (Auth/external
   redirects via `location.href = url` are a different gesture and stay allowed.)
@@ -186,12 +186,12 @@ The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`, `
 `lint:hyperdrive`, `lint:boundaries`, `lint:env`, `lint:deadcode`) and Biome all run inside
 `pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and `pnpm test:coverage`
 (which includes the authz-coverage test and each package's coverage ratchet) complete it.
-`pnpm verify` runs all three in the same order as CI's `check` job — prefer it over running
+`pnpm verify` runs all three in the same order as CI's `check` job. Prefer it over running
 a subset, since `pnpm test` alone skips the ratchet and can pass where CI fails.
 
 ## Database migrations
 
-Derive evolves the schema with **forward-only, idempotent DDL applied at boot** — no migration
+Derive evolves the schema with **forward-only, idempotent DDL applied at boot**. There is no migration
 framework, so a fresh self-host is one command. The trade-off is that the same statements
 re-run on every start, so they must be additive (see the destructive-DDL guard above) and
 idempotent. The model is small but spread across a few files; the guards below catch anything
@@ -204,11 +204,11 @@ you miss.
 - **Postgres** ([packages/db/src/pg-schema.ts](packages/db/src/pg-schema.ts)):
   `PG_SCHEMA_STATEMENTS` mirrors it with `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE …
   ADD COLUMN IF NOT EXISTS`.
-- **D1**: `deploy/d1-schema.sql` is generated from `SCHEMA_STATEMENTS` — never hand-edit it;
+- **D1**: `deploy/d1-schema.sql` is generated from `SCHEMA_STATEMENTS`. Never hand-edit it;
   run `pnpm --filter @derive/db gen:d1-schema`. D1 can't apply schema at boot (the edge forbids
   the `sqlite_master` introspection the Node tier uses), so `pnpm deploy` runs
   [apply-d1-schema.mjs](apps/api/scripts/apply-d1-schema.mjs) first: it creates missing
-  tables/indexes, then diffs each live table's columns and `ADD COLUMN`s the missing ones — so
+  tables/indexes, then diffs each live table's columns and `ADD COLUMN`s the missing ones. This means
   an existing D1 (yours or a self-hoster's) picks up new columns on the next deploy.
 
 **A new column must be nullable or carry a constant `DEFAULT`.** SQLite/D1 reject `ADD COLUMN`
@@ -231,8 +231,8 @@ nullable (optionally backfill, then tighten in a later, separately-reviewed chan
    `pnpm test:pg`) go red if the live table's columns don't match the drizzle defs.
 4. Run `pnpm --filter @derive/db gen:d1-schema` to regenerate `deploy/d1-schema.sql`.
 
-**Removing or renaming** is the unsafe path: prefer expand/contract — add the new shape,
-move reads/writes over, and leave the old column unused — over a `DROP`. An actual drop is a
+**Removing or renaming** is the unsafe path. Prefer expand/contract: add the new shape,
+move reads and writes, and leave the old column unused. Prefer this over a `DROP`. An actual drop is a
 separate, deliberately-reviewed change that opts past `lint:schema` with a `schema-ignore`
 comment.
 
@@ -248,8 +248,8 @@ A note on CI runners: workflows in this repo run on Ubicloud runners
 (`runs-on: ubicloud-standard-*`), which are only available in the upstream repository. A
 PR you open against this repo runs CI normally (a maintainer approves the first run for
 new contributors), but pushes to your own fork will show those jobs queued forever:
-that's expected, not a broken setup. Run the gate locally with `pnpm verify` instead —
-the same three steps, in the same order, as CI's `check` job. Or, in a fork you
+that is expected, not a broken setup. Run the gate locally with `pnpm verify` instead.
+It runs the same three steps, in the same order, as CI's `check` job. Or, in a fork you
 control, swap the labels for `ubuntu-latest`, which is the only coupling to the
 provider.
 

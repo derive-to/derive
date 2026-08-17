@@ -280,7 +280,7 @@ export function ArtifactListRow({
           <span
             role="img"
             aria-label="Private"
-            title="Private — only you and people you add"
+            title="Private. Only you and people you add."
             className="text-muted-foreground/70"
           >
             <Icon name="lock" size={12} />

@@ -38,10 +38,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-// Account security — the home for the credentials that protect your account (and, since a
-// human's factor is the root of trust the agent-delegation chain hangs from, a first-class
-// surface): password + email/verification, passkeys, 2FA, connected agents, active
-// sessions, and delete-account.
+// Account credentials, authorized connections, active sessions, and account deletion.
 export function SecuritySection() {
   const { me } = useAuth()
   // What flows this instance actually supports (change-password/email only make sense where
@@ -74,9 +71,7 @@ export function SecuritySection() {
   )
 }
 
-// The friendly bit of each derive:* scope, so the grant's blast radius reads at a glance
-// (mirrors the server consent screen). Non-derive scopes (openid/profile/…) are plumbing —
-// hidden here; we surface only what the agent can DO in Derive.
+// Match the labels on the server consent screen. Identity scopes stay hidden here.
 const SCOPE_LABEL: Record<string, string> = {
   "derive:read": "Read",
   "derive:comment": "Comment",
@@ -85,9 +80,7 @@ const SCOPE_LABEL: Record<string, string> = {
   "derive:review": "Review",
 }
 
-// Connected agents — the OAuth clients (MCP agents like Claude) the user authorized to act
-// on their behalf. Listing + revocation make delegation legible and reversible: you can
-// always see what may act as you, and cut it off. The moat's human-facing trust surface.
+// OAuth clients the user has allowed to act on their behalf.
 function ConnectedAgents() {
   const qc = useQueryClient()
   const { data: agents, isPending, isError, refetch } = useQuery(connectedAgentsQuery())
@@ -99,7 +92,7 @@ function ConnectedAgents() {
       qc.setQueryData(connectedAgentsQuery().queryKey, (list) =>
         list?.filter((a) => a.clientId !== clientId),
       ),
-    success: "Access revoked — the agent must be re-authorized to act again",
+    success: "Access revoked. Authorize the agent again to restore access.",
     invalidate: [connectedAgentsQuery().queryKey],
   })
   const revoke = (clientId: string) => revokeMut.mutate(clientId)
@@ -110,8 +103,8 @@ function ConnectedAgents() {
 
   return (
     <SettingsGroup
-      title="Connected agents"
-      description="Agents you've authorized to act on your behalf. Revoke any at any time."
+      title="Authorized connections"
+      description="Coding agents and apps you allowed to use Derive on your behalf."
     >
       {isPending ? (
         <SettingsListSkeleton />
@@ -448,7 +441,7 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
               ) : (
                 <div className="flex w-full flex-col gap-1.5">
                   <div className="text-xs font-medium text-muted-foreground">
-                    Setup key — type this into your app instead
+                    Setup key. Enter this in your app instead.
                   </div>
                   <code
                     data-testid="2fa-secret"
@@ -463,7 +456,7 @@ function EnableTwoFactor({ onDone }: { onDone: () => Promise<void> }) {
               // No onDone: the dialog flow owns dismissal. (SecretReveal's buttons
               // are type="button", so the reveal is safe inside this confirm form.)
               <SecretReveal
-                title="Backup codes — save these somewhere safe"
+                title="Save these backup codes somewhere safe"
                 secret={backup}
                 copySuccess="Backup codes copied"
                 copyLabel="Copy codes"
@@ -859,7 +852,7 @@ function EmailRow({
 }) {
   const resendMut = useApiMutation({
     mutationFn: () => api.sendVerificationEmail(email, `${window.location.origin}/`),
-    success: "Verification email sent — check your inbox.",
+    success: "Verification email sent. Check your inbox.",
   })
   const resend = () => resendMut.mutate()
 

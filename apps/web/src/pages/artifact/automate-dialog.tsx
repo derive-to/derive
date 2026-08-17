@@ -39,9 +39,8 @@ export function AutomateDialog({
         <DialogHeader>
           <DialogTitle>Automate this artifact</DialogTitle>
           <DialogDescription>
-            A standing job for {title ? `“${title}”` : "this artifact"}: an agent keeps it current
-            on a schedule, on an event, or on demand from Settings → Automations. Every result keeps
-            its authorship, permissions, and version history.
+            Ask an agent to keep {title ? `“${title}”` : "this artifact"} current on a schedule,
+            after an event, or on demand. Manage it later in Settings → Automations.
           </DialogDescription>
         </DialogHeader>
         {isAdmin ? (

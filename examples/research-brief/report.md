@@ -1,45 +1,53 @@
-# A durable home for agent-made work
+# SQLite or PostgreSQL for a small internal service
 
-> Official Derive example. This is a product-decision template, not independent market
-> research or a customer endorsement.
+> Official Derive example. The service and workload below are illustrative. The linked
+> documentation is real and should be checked again when the deployment changes.
 
-## Decision
+## Question
 
-Keep agent output in a dedicated artifact when someone will need to find, understand, share,
-or update the result after the generating conversation ends. Keep disposable exploration in
-chat.
+Which database should a small internal operations service use for its first release?
 
-## Evaluation criteria
+The current plan is one application instance, fewer than 20 staff users, low write traffic,
+and a database stored on the same machine as the service. The team can stop the service for a
+restore and does not need automatic failover.
 
-| Criterion | Question | Evidence to collect |
+## Recommendation
+
+Start with SQLite while those conditions remain true. It keeps the deployment small and fits
+a workload with one application host and few simultaneous writes.
+
+Choose PostgreSQL before launch if the service needs more than one application instance,
+direct database access over a network, many concurrent writers, or database-level high
+availability. Those are architectural boundaries, not problems to postpone with tuning.
+
+## Evidence
+
+| What matters | What the documentation says | Effect on this decision |
 | --- | --- | --- |
-| Fidelity | Can a reader inspect the real rendered output? | Compare the artifact with its intended destination. |
-| Findability | Can someone locate the current result without knowing the original chat? | Ask a new teammate to find it from the workspace library. |
-| Continuity | Do later versions keep the same URL and readable history? | Publish a focused update and inspect both versions. |
-| Collaboration | Can comments and edits stay attached to the work? | Comment on exact text, revise it, and inspect re-anchoring. |
-| Portability | Can the team export source and run the system itself? | Perform an export, restore, and self-host smoke test. |
+| Deployment | SQLite describes local, application-owned storage as a strong fit. PostgreSQL uses a client-server model. | SQLite is simpler for the planned single-host service. |
+| Concurrent writes | SQLite serializes writes. WAL mode lets readers continue while a writer is active, but there is still only one writer at a time. | The expected write rate is low enough, but write contention should be tested with realistic imports. |
+| Network storage | SQLite says WAL does not work over a network filesystem because processes must share memory. | Keep the database file on the application host. Do not place it on shared network storage. |
+| Multiple servers | PostgreSQL accepts connections from separate clients and documents several high-availability configurations. | Move to PostgreSQL if the service needs horizontal application scaling or database failover. |
 
-## Findings
+## Assumptions to verify
 
-Chat is fastest while one person is exploring with one agent. Its weakness appears later:
-the result, reasoning, feedback, and current state are easily split across messages and
-tools. A repository is an excellent source of truth for code, but often asks a client,
-operator, or subject-matter expert to evaluate a diff instead of the rendered deliverable.
+- Imports do not create sustained concurrent writes.
+- One application instance is acceptable for the first release.
+- The database file stays on local storage.
+- A documented backup and restore test meets the team's recovery needs.
 
-A dedicated artifact earns its place when it preserves a useful result and makes the next
-interaction easier: find it, share it, comment on it, edit it, or publish a later version.
-Formal review is valuable for consequential decisions, but it is not the test every artifact
-must pass.
+## What would change the recommendation
 
-## Recommendation boundary
+Move to PostgreSQL if any of these become requirements:
 
-Do not introduce another system for disposable scratch work or output nobody expects to use
-again. Use it for plans, reports, pages, decks, demos, and recurring documents whose current
-state or history will matter later.
+- two or more application instances writing to the same database;
+- database access from other machines or tools;
+- automatic failover or read replicas;
+- write contention that is visible in a production-like load test.
 
-## Reading checklist
+## Sources
 
-- Are the alternatives described fairly, including when they are the better choice?
-- Does every conclusion follow from an observable criterion?
-- Are security and self-hosting assertions tested rather than assumed?
-- Are the recommendation, uncertainty, and unanswered questions easy to find?
+- [SQLite: Appropriate Uses for SQLite](https://www.sqlite.org/whentouse.html)
+- [SQLite: Write-Ahead Logging](https://www.sqlite.org/wal.html)
+- [PostgreSQL: Architectural Fundamentals](https://www.postgresql.org/docs/current/tutorial-arch.html)
+- [PostgreSQL: High Availability, Load Balancing, and Replication](https://www.postgresql.org/docs/current/high-availability.html)

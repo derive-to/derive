@@ -21,28 +21,11 @@ import { markUseIntent } from "./lib/use-intent"
 import { refFor } from "./parse-ref"
 import { Presence } from "./rail-deck"
 
-// Backdrop texture for the anon comments panel — the marketing site's "chats
-// scroll away" ocean, miniaturized to one column. Deliberately generic review
-// chatter (no names, no specifics): real comment bodies never reach anonymous
-// viewers, and these must read as decoration, not as a blurred peek at the thread.
-const GHOST_COMMENTS = [
-  "This section sings.",
-  "can we tighten the intro?",
-  "Ship it.",
-  "the chart carries this page",
-  "second look before Friday?",
-  "Approved",
-  "v4 fixed it",
-  "needs a number behind this claim",
-  "much better in this version",
-  "same note as last round, resolved",
-]
-
 // The public / viral viewer — the chrome-light experience an anonymous visitor
 // gets on a shared /artifacts/ link (the growth loop). The render is the whole page; a
 // slim public header carries the Derive brand (→ home), the artifact's identity +
 // a CREATOR BYLINE (attribution drives sharing), live presence, and the growth
-// verbs (Make your own · Sign in); a quiet "Made with Derive" mark closes it. No
+// actions (Make a copy · Sign in); a quiet "Made with Derive" mark closes it. No
 // workbench chrome (research: never gate the view; the render is the hero; the
 // verb is the growth loop). The page wires the render machinery and passes it in
 // as `children`.
@@ -169,7 +152,7 @@ export function PublicViewer({
 
         {/* The growth verb (the page's one filled primary) + a quiet sign-in. The
             source rides the signup URL, with no attribution cookie or browser store.
-            "Make your own" copies THIS artifact, deferred through login: `?use=1`
+            "Make a copy" copies THIS artifact, deferred through login: `?use=1`
             carries the intent across the auth redirect, the same-tab marker proves
             it originated from this click (a pasted ?use=1 link must not write —
             see lib/use-intent.ts), and the artifact page fires the copy once the
@@ -186,7 +169,7 @@ export function PublicViewer({
               markUseIntent(art.short_id)
             }}
           >
-            {isMobile ? "Make yours" : "Make your own"}
+            Make a copy
           </Link>
         </Button>
         <Button
@@ -243,37 +226,8 @@ export function PublicViewer({
                 <X className="size-4" aria-hidden />
               </Button>
             </div>
-            <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden px-6 text-center">
-              {/* The drifting backdrop. The list renders 4x so one loop copy (2x)
-                  outruns any panel height; the mask fades both edges the way the
-                  marketing ocean does. Texture, never content — aria-hidden. */}
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-x-5 inset-y-0 [mask-image:linear-gradient(to_bottom,transparent,black_22%,black_78%,transparent)]"
-              >
-                <div className="flex animate-ghost-drift flex-col gap-5">
-                  {Array.from({ length: 4 }, () => GHOST_COMMENTS)
-                    .flat()
-                    .map((g, i) => (
-                      <span
-                        key={`${g}-${i}`}
-                        className={cn(
-                          "whitespace-nowrap font-mono text-2xs text-foreground",
-                          i % 3 === 1 && "self-end",
-                          i % 3 === 2 && "self-center",
-                          i % 2
-                            ? "opacity-10"
-                            : "rounded-lg border border-border-soft bg-card px-3 py-2 opacity-20",
-                        )}
-                      >
-                        {g}
-                      </span>
-                    ))}
-                </div>
-              </div>
-              {/* The crisp card among the ghosts — the marketing ocean's "kept"
-                  idiom: the chatter drifts, the invitation holds still. */}
-              <div className="relative flex flex-col items-center gap-3 rounded-2xl border border-border-soft bg-background/90 px-7 py-6 shadow-[var(--shadow)] backdrop-blur-[2px]">
+            <div className="flex flex-1 items-center justify-center px-6 text-center">
+              <div className="flex max-w-64 flex-col items-center gap-3">
                 <Icon name="comments" size={24} className="text-muted-foreground" />
                 {copy.heading && <p className="text-sm text-muted-foreground">{copy.heading}</p>}
                 <Button asChild variant="default" size="sm" data-testid="public-sign-in-to-comment">

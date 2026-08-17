@@ -1,8 +1,8 @@
 # The Derive artifact authoring standard
 
 Derive artifacts are ordinary HTML, Markdown, or static bundles. Two conventions
-make them work well in the review loop: authoring so comments stay anchored, and
-the anchor-client protocol that any viewer can speak.
+help comments survive revision: stable text for anchors and an anchor-client protocol
+that any viewer can use.
 
 ## 1. Author for durable comments
 
@@ -24,8 +24,8 @@ To keep comments attached across revisions:
   the readable text in the DOM (not generated late by script), so it's there
   when the page loads and when an anchor resolves.
 
-These are guidelines, not validation — Derive never rejects content. They just
-make the loop smoother.
+These are guidelines, not validation. Derive does not reject content that ignores them,
+but stable text makes later discussion easier to follow.
 
 ## 2. The anchor-client protocol
 
@@ -43,15 +43,15 @@ compatible client. Messages are tagged with a `source` field.
 | `anchors-resolved` | `{ resolved: { [id]: boolean } }` | which anchor ids were found in the current document |
 | `anchor-click` | `{ id }` | user clicked a painted highlight |
 | `open-external` | `{ href }` | a link that must not navigate the frame (anything but an in-page `#` or a same-origin `/raw/…` bundle page); the host validates the scheme, routes its own `/artifacts/…` in-app, and opens the rest in a new tab |
-| `esc` | — | Escape pressed while focus was inside the frame; the host applies its own dismissals (e.g. exiting focus mode) |
+| `esc` | None | Escape pressed while focus was inside the frame; the host applies its own dismissals (e.g. exiting focus mode) |
 | `edit-state` | `{ dirty }` | inline edit mode: how many blocks currently differ from the pre-edit snapshot (formatting counts, even when no character changed) |
-| `edit-edits` | `{ edits: [{ quote: { exact, prefix, suffix }, new_text? , new_html? }], dirty, uncaptured, nonce }` | reply to `edit-collect`: each changed run as a quote-scoped edit, built from the PRE-edit document text. A formatted block comes back as ONE `new_html` edit for the whole block instead of per-run text edits. `dirty` is the changed-block count at collect time and `uncaptured` how many of those produced no edit — the host refuses a partial save rather than publishing some of the work and letting the reload drop the rest. `nonce` echoes the request's, so a late reply can't resolve a newer collect |
-| `edit-save` | — | ⌘S / ⌘Enter pressed inside the frame (the host's own window listener cannot see keys typed in the iframe); the host saves if there are pending edits |
-| `edit-request` | — | a double-click on text, asking the host to open edit mode; the client has already captured which text node it was, and the host answers with `edit-mode {on:true, fromPointer:true}` |
+| `edit-edits` | `{ edits: [{ quote: { exact, prefix, suffix }, new_text? , new_html? }], dirty, uncaptured, nonce }` | reply to `edit-collect`: each changed run as a quote-scoped edit, built from the PRE-edit document text. A formatted block comes back as ONE `new_html` edit for the whole block instead of per-run text edits. `dirty` is the changed-block count at collect time and `uncaptured` is the number that produced no edit. The host refuses a partial save rather than publishing only some work and dropping the rest on reload. `nonce` echoes the request, so a late reply cannot resolve a newer collect |
+| `edit-save` | None | ⌘S / ⌘Enter pressed inside the frame (the host's own window listener cannot see keys typed in the iframe); the host saves if there are pending edits |
+| `edit-request` | None | a double-click on text, asking the host to open edit mode; the client has already captured which text node it was, and the host answers with `edit-mode {on:true, fromPointer:true}` |
 | `edit-image` | `{ src, alt }` | an image was clicked in edit mode; the host uploads a replacement and swaps that URL |
-| `edit-blocked` | `{ reason }` | a gesture landed where inline editing can't reach: `"control"` (a form control/media), `"dynamic"` (content the page's own script created after the snapshot), `"offscreen"` (a slide that isn't the one on screen), `"embedded-image"` (a `data:` URI — no URL to swap), `"format-empty"` / `"format-outside"` / `"format-range"` (nothing selected, selection outside a block, or a selection that only half-contains an element) |
-| `present` | — | `p` pressed inside the frame; the host toggles present mode (a click into the document moves keyboard focus here, where the host's own listener can't see it) |
-| `deck-sniff` | `{ i, total }` | this document LOOKS like a deck (switched slides) though it never announced itself — see §3 |
+| `edit-blocked` | `{ reason }` | a gesture landed where inline editing cannot reach: `"control"` (a form control/media), `"dynamic"` (content the page's own script created after the snapshot), `"offscreen"` (a slide that is not on screen), `"embedded-image"` (a `data:` URI with no URL to swap), `"format-empty"` / `"format-outside"` / `"format-range"` (nothing selected, selection outside a block, or a selection that only half-contains an element) |
+| `present` | None | `p` pressed inside the frame; the host toggles present mode (a click into the document moves keyboard focus here, where the host's own listener can't see it) |
+| `deck-sniff` | `{ i, total }` | this document looks like a deck because it switches visible slides, though it never announced itself. See §3 |
 
 ### Host → artifact frame (`source: "derive-host"`)
 
@@ -59,10 +59,10 @@ compatible client. Messages are tagged with a `source` field.
 |---|---|---|
 | `anchors` | `{ anchors: [{ id, exact, prefix, suffix }] }` | paint these anchors as highlights; reply with `anchors-resolved` |
 | `focus-anchor` | `{ id }` | scroll to + flash that anchor |
-| `edit-mode` | `{ on, keep?, fromPointer?, fromSelection? }` | enter/leave inline edit mode. On entry the client snapshots the document text (quotes are built from it); a click then lands a caret in the nearest text block (`contenteditable`, plain text only — paste flattened, Enter inserts a line break), the block under the pointer is lit as an invitation, and while a caret is in a block the PAGE'S OWN keyboard and click handlers are suppressed (a deck's slide keys would otherwise fire as you type). `fromPointer` lands the caret on the text whose double-click asked for the mode; `fromSelection` on the live selection. `keep:true` on the way out leaves the typed text standing and only removes the editing chrome — used right after a publish, where the text on screen is what was just saved. Leaving restores anything unsaved unless `keep` |
+| `edit-mode` | `{ on, keep?, fromPointer?, fromSelection? }` | enter or leave inline edit mode. On entry, the client snapshots the document text used to build quotes. A click then lands a caret in the nearest text block (`contenteditable`, plain text only; paste is flattened and Enter inserts a line break). The block under the pointer is highlighted, and the page's own keyboard and click handlers are suppressed while a caret is active. `fromPointer` lands the caret on the text that was double-clicked; `fromSelection` uses the live selection. `keep:true` leaves the typed text in place and removes only the editing controls after a publish. Leaving restores unsaved work unless `keep` is set |
 | `edit-armed` | `{ on }` | whether this viewer may edit; arms the document's own entry gesture (a double-click asks for the mode) so a reader who could never save never fires one |
 | `edit-collect` | `{ nonce }` | reply with `edit-edits` echoing `nonce`: the changed runs diffed against the snapshot, word-snapped, as quote-scoped edits |
-| `edit-restore` | — | revert every edited block to its snapshot (the Discard verb); dirty drops to 0 |
+| `edit-restore` | None | revert every edited block to its snapshot (the Discard verb); dirty drops to 0 |
 
 ### Formatting
 
@@ -72,7 +72,7 @@ A manual edit is plain text with one exception: a run the reader made **bold**,
 `a[href]`, plus their `strong`/`em` spellings) with no other attributes and only
 http / https / mailto links. Everything else about the edit is unchanged: located
 by quote, unique or refused, never crossing the document's own markup. On a
-Markdown artifact `new_html` is refused — formatting there is Markdown text.
+Markdown artifacts refuse `new_html` because formatting there is Markdown text.
 
 ### Resolution
 
@@ -86,7 +86,7 @@ Highlights wrap matched text in `<mark data-derive-id="…">`; clicking one post
 Artifact HTML is cached immutably per version. If the client were baked into the
 HTML, old artifacts would be frozen on old client behavior forever. Serving it at
 a URL (short cache) lets the comment layer evolve independently of published
-content — and lets other tools build their own viewers against this contract.
+content. It also lets other tools build viewers against this contract.
 
 ## 3. The deck protocol (slides)
 
@@ -100,7 +100,7 @@ decks, so the injected client also SNIFFS one: slides whose visibility is switch
 (one shown, the rest hidden) is a deck whatever it says about itself, and it
 reports the position as `deck-sniff`. A page whose `.slide` sections are all
 visible is a long page and stays one. An artifact that announces itself always
-wins — once a `derive-deck` message arrives the sniff is ignored — and that also
+always wins. Once a `derive-deck` message arrives, the sniff is ignored. That also
 decides who moves it: a protocol deck answers `deck`, a sniffed one is driven by
 the client (`deck-drive`), which synthesizes the key the page already listens for
 so the page's own index, progress bar and counter stay true.
@@ -130,7 +130,7 @@ keyboard (arrows, Space, PageUp/PageDown, Home/End), and quiets its own controls
 when nothing has happened for a beat. `p` enters, Escape leaves, `?present=1`
 opens straight into it. Two things a deck should nonetheless do, because they are
 what the viewer builds on: give each slide a stable `data-derive-slide="N"`, and
-keep its own click zones off the words — a click on text belongs to the text, and
+keep its own click zones off the words. A click on text belongs to the text, and
 for someone who can edit the artifact, the viewer treats it that way.
 
 ### Editing a deck
@@ -141,9 +141,9 @@ instead of advancing, and off-screen slides stop catching clicks aimed at the
 slide on screen. With no caret in a block the deck keeps its keyboard, so you can
 still walk to slide 7 and then click a line to fix it.
 
-## 4. The agent loop
+## 4. Using an agent
 
-`derive init` scaffolds an `AGENTS.md` describing publish → read comments → revise
-→ reply/resolve over the HTTP API (and the matching `derive comments` / `reply` /
-`resolve` / `open` verbs). That's the convention for agents (and humans) to close
-the loop without prior knowledge of Derive.
+`derive init` scaffolds an `AGENTS.md` that teaches an agent to publish, catch up on
+comments, revise the same artifact, and reply or resolve when useful. The CLI exposes
+the matching `derive comments`, `reply`, `resolve`, and `open` commands. Formal review
+is optional unless permissions require a proposal.

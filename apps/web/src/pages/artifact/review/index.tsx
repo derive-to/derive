@@ -143,7 +143,7 @@ export function ReviewOverlay({
 
   const strip =
     view === "proposed"
-      ? { text: "Viewing the proposed version — not live yet", accent: true }
+      ? { text: "Viewing the proposed version. It is not live yet.", accent: true }
       : view === "current"
         ? { text: `Viewing the current live version (v${currentVersion})`, accent: false }
         : { text: `Source diff · v${active?.base_version ?? "?"} → proposed`, accent: false }

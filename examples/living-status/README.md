@@ -1,9 +1,9 @@
 # Living status example
 
-This example is meant to be revised repeatedly at the same URL. It favors decisions,
-owners, evidence, and changed assumptions over a chronological wall of activity.
+This sample keeps a customer import rollout current at one URL. It puts the present state,
+risks, and next actions ahead of a chronological activity log.
 
-[Open the official live example](https://derive.to/artifacts/active-agent-work-official-derive-example-f49k4yvg).
+[Open the official live example](https://derive.to/artifacts/customer-import-rollout-current-status-f49k4yvg).
 
 ```bash
 derive publish --name "Baseline"
@@ -13,6 +13,5 @@ derive publish --name "Decision update"
 
 Suggested recurring update prompt:
 
-> Verify changed metrics, challenge blocked items without evidence, and resolve decisions
-> that now have an owner and next action. Flag any number without a source and any risk
-> without a trigger.
+> Update the pilot results, remove anything that is no longer current, and make sure every
+> open risk has an owner and a next action.

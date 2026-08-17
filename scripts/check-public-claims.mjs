@@ -91,6 +91,71 @@ const forbidden = [
 
 const licensingPath = "apps/docs/content/reference/licensing.md"
 
+// Public prose should read like the rest of the product: short sentences and calm
+// punctuation. Comments and internal engineering docs are outside this copy check.
+const publicProseFiles = new Set([
+  "AGENTS.md",
+  "CLAUDE.md",
+  "CONTRIBUTING.md",
+  "README.md",
+  "SECURITY.md",
+  ...walkText("apps/api/src/skills"),
+  ...walkText("apps/docs/content"),
+  ...walkText("examples"),
+  "apps/web/public/llms.txt",
+  "apps/web/public/llms-full.txt",
+  "apps/web/public/security.html",
+  ...walkText("apps/web/public/site"),
+  "packages/mcp/SKILL.md",
+])
+
+const publicProseDashOffset = (path, text) => {
+  if (!path.endsWith(".html")) return text.indexOf("—")
+
+  let inHtmlComment = false
+  let inBlockComment = false
+  for (let offset = 0; offset < text.length; offset += 1) {
+    if (inHtmlComment) {
+      if (text.startsWith("-->", offset)) {
+        inHtmlComment = false
+        offset += 2
+      }
+      continue
+    }
+    if (inBlockComment) {
+      if (text.startsWith("*/", offset)) {
+        inBlockComment = false
+        offset += 1
+      }
+      continue
+    }
+    if (text.startsWith("<!--", offset)) {
+      inHtmlComment = true
+      offset += 3
+      continue
+    }
+    if (text.startsWith("/*", offset)) {
+      inBlockComment = true
+      offset += 1
+      continue
+    }
+    if (text[offset] === "—") return offset
+  }
+  return -1
+}
+
+for (const path of publicProseFiles) {
+  if (!existsSync(join(ROOT, path))) {
+    fail(`missing public-prose surface ${path}`)
+    continue
+  }
+  const text = read(path)
+  const offset = publicProseDashOffset(path, text)
+  if (offset === -1) continue
+  const line = text.slice(0, offset).split("\n").length
+  fail(`${path}:${line}: public prose uses an em dash; use a period, colon, or parentheses`)
+}
+
 for (const path of publicCopyFiles) {
   if (!existsSync(join(ROOT, path))) {
     fail(`missing public-copy surface ${path}`)
@@ -111,12 +176,16 @@ const requireText = (path, expected, reason) => {
 
 // License, access, agent compatibility, and the human decision boundary are
 // promises a copy edit must not broaden.
-requireText(licensingPath, "Strictly speaking, no.", "state the current license status plainly")
+requireText(
+  licensingPath,
+  "Not under the Open Source Initiative definition.",
+  "state the current license status plainly",
+)
 requireText("SECURITY.md", "Anonymous callers are always read-only", "match effectiveRole")
 requireText("apps/web/public/site/index.html", "Fair Source and self-hostable", "accurate metadata")
 requireText(
   "apps/web/public/site/index.html",
-  "commenting or editing requires sign-in",
+  "Commenting and editing require sign-in.",
   "match the anonymous read-only invariant",
 )
 requireText("apps/web/src/pages/login.tsx", "Fair Source.", "do not claim OSI status")
