@@ -26,6 +26,9 @@ export interface UnfurlInfo {
   oembedUrl: string
   /** Absolute embeddable-view URL (`/v1/embed/:ref`). */
   embedUrl: string
+  /** Absolute markdown-projection URL (`/artifacts/:ref.md`) — the agent-readable
+   *  form of the share URL, advertised as a `rel=alternate` link. */
+  markdownUrl: string
   /** A card-sized summary of this version's facts (`pass 48 · fail 0`), when it
    *  carries any. Leads the description: the numbers are what a reader scanning a shared
    *  link actually wants, and showing them is what rewards publishing a fact at all. */
@@ -94,7 +97,17 @@ export const unfurlMetaTags = (i: UnfurlInfo): string => {
     `<meta name="twitter:description" content="${d}">`,
     `<meta name="twitter:image" content="${img}">`,
     `<link rel="alternate" type="application/json+oembed" href="${oembed}" title="${t}">`,
+    `<link rel="alternate" type="text/markdown" href="${escapeHtml(i.markdownUrl)}">`,
   ].join("\n")
+}
+
+/** Replace the shell's generic `<title>` with the page's own (escaped); inject if absent. */
+export const setTitle = (shellHtml: string, title: string): string => {
+  const tag = `<title>${escapeHtml(title)}</title>`
+  // Non-greedy to the first close tag keeps the scan linear (see setRobotsMeta).
+  const m = shellHtml.match(/<title\b[^>]*>[\s\S]*?<\/title>/i)
+  if (!m || m.index === undefined) return injectHead(shellHtml, tag)
+  return shellHtml.slice(0, m.index) + tag + shellHtml.slice(m.index + m[0].length)
 }
 
 /** Insert head HTML just before `</head>` (case-insensitive); prepend if none. */

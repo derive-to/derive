@@ -176,6 +176,21 @@ GET /v1/artifacts/:short_id/content?v=2
 
 Returns raw source. Headers include `X-Derive-Version` and `X-Derive-Kind`.
 
+### Read a share URL as markdown (no token needed)
+
+```
+GET /artifacts/<ref>.md
+GET /artifacts/<ref>@v2.md
+GET /artifacts/<ref>            with header  Accept: text/markdown
+```
+
+The share URL's markdown projection (HTML artifacts are converted; a bundle serves its
+entry page). Anonymous access works whenever the link itself is viewable (a
+password-locked link must be unlocked on the web page first); a pinned version other
+than the current one needs a signed-in reader unless the artifact enables public
+history. Without the suffix or header the URL serves the web app's HTML shell, whose
+content loads client-side.
+
 ### Version diff
 
 ```

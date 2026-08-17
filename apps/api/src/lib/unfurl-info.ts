@@ -48,6 +48,7 @@ export const unfurlInfoFor = async (
     // trip the counts do — no added query on the most-trafficked anonymous surface there is.
     summary: version?.summary ?? null,
     pageUrl: artifactUrl(baseUrl, artifact),
+    markdownUrl: `${artifactUrl(baseUrl, artifact)}.md`,
     imageUrl: `${baseUrl}/v1/og/${artifact.short_id}`,
     oembedUrl: `${baseUrl}/v1/oembed?url=${encodeURIComponent(artifactUrl(baseUrl, artifact))}`,
     embedUrl: `${baseUrl}/v1/embed/${ref}`,
