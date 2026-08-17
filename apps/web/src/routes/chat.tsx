@@ -4,9 +4,9 @@ import { ChatPage } from "../pages/chat"
 
 // THE WORKSPACE CHAT: /chat — ask about the workspace, not one document.
 //
-// The full-width surface for the same conversation the assistant dock holds (chrome/
-// assistant-panel): reached from the dock's Expand, from the rail on a phone (where there is no
-// dock), and by direct link.
+// The full-width surface for the same conversation the ⌘K palette holds (chrome/palette-ask):
+// reached from that view's Open in chat, from the rail row on a phone (where a conversation does
+// not fit in a modal), and by direct link.
 //
 // `session` deep-links a conversation, which is what makes an answer that outgrows another
 // surface portable — the same transcript, opened here. `model` is the person's pick, in the

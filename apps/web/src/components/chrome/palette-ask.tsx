@@ -121,7 +121,7 @@ export function PaletteAsk(props: {
             <div className="flex h-full flex-col justify-center gap-3 px-1">
               <p className="text-sm text-muted-foreground">
                 {enabled
-                  ? "Derive searches and reads with your own permissions, and links what it used."
+                  ? "Derive searches, reads and writes with your own permissions, and links what it used."
                   : "Chat is not enabled here. An admin can turn it on in workspace settings."}
               </p>
               {enabled && (
