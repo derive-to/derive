@@ -1,102 +1,397 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>Pricing | Derive</title>
-<meta name="description" content="Derive is free during beta. See the hosted plans we intend to offer and what each plan includes.">
+<meta name="color-scheme" content="dark">
+<title>Pricing — Derive</title>
+<meta name="description" content="Free while we're in beta. This is the pricing we intend to charge, published early — so nothing about it surprises you.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Pricing | Derive">
-<meta property="og:description" content="Derive is free during beta. See the hosted plans we intend to offer.">
+<meta property="og:title" content="Pricing — Derive">
+<meta property="og:description" content="Free while we're in beta. This is the pricing we intend to charge, published early.">
 <meta property="og:url" content="https://derive.to/pricing">
-<meta property="og:image" content="https://derive.to/site/og-artifacts.png">
+<meta property="og:image" content="https://derive.to/site/og-approval.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/pricing">
+<!-- See index.html for why the structured data is here. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "Pricing — Derive",
+  "url": "https://derive.to/pricing",
+  "description": "Free while we're in beta. This is the pricing we intend to charge, published early.",
+  "isPartOf": { "@id": "https://derive.to/#website" },
+  "publisher": { "@id": "https://derive.to/#organization" }
+}
+</script>
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
-<script src="/site/site.js"></script>
-<link rel="stylesheet" href="/site/site.css">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Pricing | Derive","url":"https://derive.to/pricing","description":"Derive is free during beta. See the hosted plans we intend to offer.","isPartOf":{"@id":"https://derive.to/#website"},"publisher":{"@id":"https://derive.to/#organization"}}</script>
+<style>
+@font-face {
+  font-family: "Geist";
+  src: url("/site/geist.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/site/geist-mono.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+:root {
+  --bg:#0a0b0d; --fg:#f3f4f6; --card:#101216; --secondary:#16181d;
+  --muted-fg:#969aa2; --accent:#1b1d23; --border:#23252b; --border-soft:#191b1f;
+  --primary:#f3f4f6; --primary-fg:#0a0b0d;
+  --success:#74b085; --warning:#fb923c;
+  --radius:4px;
+  --font-sans:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;
+  --maxw:1060px;
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--font-sans);font-size:16px;line-height:1.6;letter-spacing:-0.011em;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+}
+::selection{background:rgba(243,244,246,.18)}
+a{color:inherit;text-decoration:none;cursor:default}
+button{cursor:default;font:inherit}
+body::after{
+  content:"";position:fixed;inset:0;z-index:200;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:screen;opacity:.05;
+}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+.eyebrow{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
+h1,h2,h3{font-weight:500;letter-spacing:-0.022em;text-wrap:balance;margin:0}
+p{text-wrap:pretty;margin:0}
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 18px;
+  border-radius:8px;font-size:14px;font-weight:500;border:1px solid transparent;white-space:nowrap;
+}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--primary);color:var(--primary-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.2)}
+.btn-primary:hover{background:#fff}
+.btn-ghost{color:var(--fg);border-color:var(--border)}
+.btn-ghost:hover{background:var(--secondary)}
+
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:100;
+  background:color-mix(in srgb,var(--bg) 82%,transparent);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border-bottom:1px solid transparent;
+}
+nav.scrolled{border-bottom-color:var(--border-soft)}
+.nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;gap:28px}
+.wordmark{display:flex;align-items:center}
+.wordmark img{height:24px;width:auto;display:block}
+.nav-links{display:flex;gap:22px;font-size:14px;color:var(--muted-fg);margin-left:8px}
+.nav-links a:hover{color:var(--fg)}
+.nav-links a.on{color:var(--fg)}
+.nav-cta{margin-left:auto;display:flex;align-items:center}
+.nav-cta .nav-signin{font-size:14px;color:var(--fg)}
+.nav-cta .nav-signin .arr{display:inline-block;transition:transform .18s ease}
+.nav-cta .nav-signin:hover .arr{transform:translateX(3px)}
+.nav-cta .btn{height:32px;padding:0 14px;border-radius:6px;font-size:13px}
+@media(max-width:720px){.nav-links{display:none}}
+
+header.head.wrap{padding:150px 24px 0;text-align:center}
+.head h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:18px auto 0;max-width:20ch}
+.head .lede{margin:22px auto 0;max-width:56ch;font-size:16px;color:var(--muted-fg)}
+.head .lede strong{color:var(--fg);font-weight:500}
+.beta{
+  margin:30px auto 0;display:inline-flex;align-items:baseline;gap:10px;
+  border:1px solid var(--border);border-radius:8px;padding:12px 18px;background:var(--card);
+  font-size:14px;color:var(--muted-fg);max-width:62ch;text-align:left;
+}
+.beta .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--warning);white-space:nowrap;position:relative;top:-1px}
+.beta strong{color:var(--fg);font-weight:500}
+
+.tiers{margin-top:64px;display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--card)}
+@media(max-width:960px){.tiers{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.tiers{grid-template-columns:1fr}}
+.tier{padding:28px 26px 30px;border-left:1px solid var(--border-soft);display:flex;flex-direction:column}
+.tier:first-child{border-left:0}
+@media(max-width:960px){.tier{border-top:1px solid var(--border-soft)}.tier:nth-child(-n+2){border-top:0}.tier:nth-child(3){border-left:0}}
+@media(max-width:560px){.tier{border-left:0;border-top:1px solid var(--border-soft)}.tier:first-child{border-top:0}}
+.tier .tname{font-size:15px;font-weight:500;display:flex;align-items:center;gap:8px}
+.tier .tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;color:var(--muted-fg);border:1px solid var(--border);border-radius:4px;padding:1px 6px}
+.tier .tfor{margin-top:6px;font-size:12.5px;color:var(--muted-fg);min-height:38px}
+.tier .price{margin-top:16px;font-size:30px;font-weight:500;letter-spacing:-0.02em}
+.tier .price small{font-size:12px;font-weight:400;color:var(--muted-fg);letter-spacing:0;display:block;margin-top:2px;font-family:var(--font-mono)}
+.tier .btn{margin-top:18px;height:34px;font-size:13px;border-radius:6px}
+.tier ul{margin:22px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+.tier li{font-size:13px;color:var(--muted-fg);padding-left:18px;position:relative;line-height:1.5}
+.tier li::before{content:"";position:absolute;left:2px;top:8px;width:7px;height:7px;border-radius:2px;background:var(--secondary);border:1px solid var(--border)}
+.tier li strong{color:var(--fg);font-weight:500}
+
+section.wrap{padding:120px 24px 0}
+.section-head{max-width:640px}
+.section-head h2{font-size:clamp(26px,3.6vw,36px);line-height:1.15;margin-top:14px}
+.principles{margin-top:48px;display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border-soft);border:1px solid var(--border-soft);border-radius:12px;overflow:hidden}
+@media(max-width:720px){.principles{grid-template-columns:1fr}}
+.principle{background:var(--bg);padding:28px 30px}
+.principle h3{font-size:16px}
+.principle p{margin-top:10px;font-size:14px;color:var(--muted-fg);line-height:1.65}
+
+.faq{margin-top:48px;border-top:1px solid var(--border-soft)}
+.faq details{border-bottom:1px solid var(--border-soft)}
+.faq summary{
+  list-style:none;display:flex;align-items:center;justify-content:space-between;gap:20px;
+  padding:22px 4px;font-size:16px;font-weight:500;
+}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font-family:var(--font-mono);color:var(--muted-fg);font-size:16px}
+.faq details[open] summary::after{content:"–"}
+.faq .a{padding:0 4px 24px;font-size:15px;color:var(--muted-fg);max-width:64ch;line-height:1.7}
+.faq .a strong{color:var(--fg);font-weight:500}
+
+section.wrap.final{padding:130px 24px 0;text-align:center}
+.final h2{font-size:clamp(28px,4vw,40px)}
+.final .body{margin:16px auto 0;max-width:50ch;font-size:15px;color:var(--muted-fg)}
+.waitlist{margin:32px auto 0;display:flex;justify-content:center}
+.waitlist form{display:flex;gap:8px;padding:6px;border-radius:12px;background:var(--card);border:1px solid var(--border);width:min(440px,100%)}
+.waitlist input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;font-size:14px;padding:0 12px}
+.waitlist input::placeholder{color:var(--muted-fg)}
+.waitlist form:focus-within{border-color:var(--fg)}
+.waitlist .btn{height:36px;border-radius:8px}
+.waitlist-done{display:none;align-items:center;gap:10px;height:50px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:var(--card);font-size:14px}
+.waitlist-done .tick{color:var(--success)}
+
+footer{margin-top:130px;border-top:1px solid var(--border-soft)}
+.foot-inner{max-width:var(--maxw);margin:0 auto;padding:34px 24px 44px;display:flex;align-items:center;gap:16px 28px;flex-wrap:wrap}
+.foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
+.foot-links{display:flex;gap:20px;font-size:13px;color:var(--muted-fg)}
+.foot-links a:hover{color:var(--fg)}
+.foot-inner .license{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.02em}
+@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
+@media(max-width:640px){
+  header.head.wrap{padding-top:124px}
+  .tiers{margin-top:44px}
+  .tier{padding:24px 20px 26px}
+  .tier .tfor{min-height:0}
+  section.wrap{padding-top:92px}
+  section.wrap.final{padding-top:100px}
+  .principle{padding:22px 20px}
+  .waitlist input{font-size:16px} /* <16px makes iOS zoom the page on focus */
+  .waitlist-done{height:auto;min-height:50px;padding:12px 16px}
+  footer{margin-top:96px}
+}
+@media(max-width:360px){
+  .waitlist form{flex-direction:column;padding:8px}
+  .waitlist input{padding:10px 8px}
+  .waitlist .btn{width:100%}
+}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
 </head>
 <body>
-<a class="skip-link" href="#main-content">Skip to content</a>
-<nav class="site-nav" data-site-nav aria-label="Main navigation">
-  <div class="nav-inner site-wrap">
-    <a class="wordmark" href="/" aria-label="Homepage"><img class="logo-light" src="/brand/wordmark-dark.svg" alt=""><img class="logo-dark" src="/brand/wordmark-light.svg" alt=""></a>
-    <div class="desktop-nav"><a href="https://docs.derive.to/">Docs</a><a href="/examples">Examples</a><a href="/pricing" aria-current="page">Pricing</a><a href="https://github.com/derive-to/derive">GitHub</a></div>
-    <div class="nav-actions">
-      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change color theme">
-        <svg class="theme-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
-        <svg class="theme-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5a8.5 8.5 0 1 0 11.7 11.7Z"/></svg>
-        <svg class="theme-system" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-      </button>
-      <a class="nav-signin" href="/login?src=nav_signin">Sign in</a>
-      <details class="mobile-nav"><summary aria-label="Open navigation menu"><svg class="menu-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><svg class="menu-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></summary><div class="mobile-nav-panel"><a href="https://docs.derive.to/">Docs <span aria-hidden="true">↗</span></a><a href="/examples">Examples</a><a href="/pricing" aria-current="page">Pricing</a><a href="https://github.com/derive-to/derive">GitHub <span aria-hidden="true">↗</span></a><a class="mobile-signin" href="/login?src=nav_signin">Sign in <span aria-hidden="true">→</span></a></div></details>
+
+<nav id="nav">
+  <div class="nav-inner">
+    <a class="wordmark" href="/">
+      <img src="/brand/wordmark-light.svg" alt="Derive">
+    </a>
+    <div class="nav-links">
+      <a href="https://docs.derive.to/">Docs</a>
+      <a href="/examples">Examples</a>
+      <a class="on" href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+    </div>
+    <div class="nav-cta">
+      <a class="nav-signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr">→</span></a>
     </div>
   </div>
 </nav>
 
-<main id="main-content" tabindex="-1">
-  <header class="subpage-hero site-wrap">
-    <p class="eyebrow">Pricing</p>
-    <h1>Free during beta</h1>
-    <p class="lede">All features are included, and no card is required. When billing starts, viewers and commenters will stay free. Paid plans will be based on the number of editors.</p>
-    <div class="notice"><strong>These plans are not live yet.</strong> They show how we currently intend to price the hosted product after beta. We will announce any changes before billing begins.</div>
-  </header>
+<header class="head wrap">
+  <div class="eyebrow">Pricing</div>
+  <h1>Free while we're in beta.</h1>
+  <p class="lede">Every feature, no card required. Below is the pricing we intend to charge, <strong>published early so nothing about it surprises you.</strong> The short version: the link is free; teams pay for the seats that publish and approve, never for the people who read and comment.</p>
+</header>
 
-  <section class="content-section site-wrap" aria-labelledby="planned-pricing">
-    <div class="content-heading"><p class="eyebrow">Hosted plans</p><h2 id="planned-pricing">Planned pricing</h2></div>
-    <div class="pricing-grid">
-      <article class="price-card">
-        <div><h3 class="price-name">Free</h3><p class="price-for">For individuals, independent projects, and small teams.</p><div class="price">$0<small>free plan</small></div></div>
-        <ul><li>Up to <strong>3 editors</strong> per workspace</li><li>Unlimited viewers and commenters</li><li>Comments, sharing controls, and direct editing</li><li>CLI, API, and MCP access</li><li>Full version history</li><li>1 GB of storage</li></ul>
-      </article>
-      <article class="price-card">
-        <div><h3 class="price-name">Team</h3><p class="price-for">For teams keeping active work in a shared workspace.</p><div class="price">$15<small>per editor each month, or $12 billed yearly</small></div></div>
-        <ul><li>Everything in Free</li><li>Unlimited editors</li><li>Custom domain</li><li>White-label shared pages</li><li>Password-protected links</li><li>Workspace brand settings for connected agents</li><li>50 GB of pooled storage</li><li>Full analytics history</li></ul>
-      </article>
-      <article class="price-card">
-        <div><h3 class="price-name">Business</h3><p class="price-for">For organizations that need more control and accountability.</p><div class="price">$30<small>per editor each month, or $25 billed yearly</small></div></div>
-        <ul><li>Everything in Team</li><li>250 GB of pooled storage</li><li>OIDC single sign-on</li><li>Audit log</li><li>Multiple custom domains</li><li>Guest editor management</li><li>Uptime SLA</li><li>Priority support</li></ul>
-      </article>
-      <article class="price-card">
-        <div><h3 class="price-name">Enterprise</h3><p class="price-for">For isolation, residency, and procurement requirements.</p><div class="price">From $500<small>each month, with an annual contract</small></div><a class="button" href="mailto:hello@derive.to">Talk to us</a></div>
-        <ul><li>Everything in Business</li><li>Dedicated single-tenant instance</li><li>Data residency in your region or cloud</li><li>Migration and onboarding help</li><li>Security review and procurement support</li></ul>
-      </article>
+<div class="wrap">
+  <div class="tiers">
+    <div class="tier">
+      <div class="tname">Free</div>
+      <p class="tfor">For individuals, independent projects, and small teams.</p>
+      <div class="price">$0 <small>forever</small></div>
+      <a class="btn btn-ghost" href="#join">Get beta access</a>
+      <ul>
+        <li>Up to <strong>3 editors</strong> per workspace</li>
+        <li><strong>Unlimited viewers and commenters</strong></li>
+        <li>The full review loop: comments, proposals, approvals</li>
+        <li>CLI, API, and MCP for your agents</li>
+        <li>Permanent URLs with full version history</li>
+        <li>1 GB storage, deduplicated</li>
+      </ul>
     </div>
-  </section>
-
-  <section class="content-section site-wrap" aria-labelledby="billing-questions">
-    <div class="content-heading"><p class="eyebrow">Details</p><h2 id="billing-questions">Billing questions</h2></div>
-    <div class="faq-list">
-      <details><summary>Who counts as an editor?</summary><p class="answer">Anyone with a <strong>Creator or Admin seat</strong> during a billing period. Viewers can read and comment without a paid seat. They become billable only when a workspace owner grants Creator or Admin access.</p></details>
-      <details><summary>Do agents need paid seats?</summary><p class="answer">No. Agents use the permissions granted by the workspace. Billing is based on people with Creator or Admin access.</p></details>
-      <details><summary>What happens if I go over a free limit?</summary><p class="answer">Your workspace becomes <strong>read-only</strong>. Every artifact stays live at its URL with its version history and comments. Publishing resumes when the workspace is within its limits or moves to a paid plan.</p></details>
-      <details><summary>Can I self-host instead?</summary><p class="answer">Yes. Derive runs as one container with SQLite and local disk, or with Postgres and S3 at scale. The hosted plans are for teams that would rather not operate it themselves.</p></details>
-      <details><summary>What license does Derive use?</summary><p class="answer">Derive is Fair Source under <strong>FSL-1.1-ALv2</strong>. You can use, modify, and self-host it for anything except selling Derive itself as a service. Each release converts to Apache-2.0 two years after it ships.</p></details>
-      <details><summary>When will billing start?</summary><p class="answer">We have not set a date. We will announce it ahead of time, give existing workspaces a grace period, and keep a free plan.</p></details>
+    <div class="tier">
+      <div class="tname">Team <span class="tag">MOST TEAMS</span></div>
+      <p class="tfor">For teams whose agents ship work that needs review.</p>
+      <div class="price">$15 <small>per editor / month · $12 billed annually</small></div>
+      <a class="btn btn-primary" href="#join">Get beta access</a>
+      <ul>
+        <li>Everything in Free, plus</li>
+        <li><strong>Unlimited editors</strong></li>
+        <li>Custom domain</li>
+        <li>White-label shared pages</li>
+        <li>Password-protected links</li>
+        <li><strong>Brandprint</strong>: your house style, available to each connected agent</li>
+        <li>50 GB pooled storage, then ~$1 per extra 10 GB/month</li>
+        <li>Full analytics history</li>
+      </ul>
     </div>
-  </section>
-
-  <section class="marketing-section access-section site-wrap" aria-labelledby="pricing-access">
-    <div class="access-panel">
-      <div><h2 id="pricing-access">Try the hosted beta</h2><p>Sign up and we will email you an access link. You do not need a card.</p></div>
-      <div>
-        <form data-waitlist class="waitlist-form" data-derive-source="pricing_waitlist" action="/v1/beta/signup" method="post" novalidate><label class="sr-only" for="pricing-email">Work email</label><input id="pricing-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required><button class="button button-primary" type="submit">Get beta access</button></form>
-        <div class="waitlist-complete" data-waitlist-complete role="status" hidden>Check your inbox for the access link.</div>
-      </div>
+    <div class="tier">
+      <div class="tname">Business</div>
+      <p class="tfor">For organizations that need control and accountability.</p>
+      <div class="price">$30 <small>per editor / month · $25 billed annually</small></div>
+      <a class="btn btn-ghost" href="#join">Get beta access</a>
+      <ul>
+        <li>Everything in Team, plus</li>
+        <li>250 GB pooled storage, then ~$1 per extra 10 GB/month</li>
+        <li>SSO with your identity provider (OIDC)</li>
+        <li>Audit log</li>
+        <li>Multiple custom domains</li>
+        <li>Guest editor management</li>
+        <li>Uptime SLA</li>
+        <li>Priority support</li>
+      </ul>
     </div>
-  </section>
-</main>
+    <div class="tier">
+      <div class="tname">Enterprise</div>
+      <p class="tfor">For isolation, residency, and procurement requirements.</p>
+      <div class="price">From ~$500/mo <small>custom annual contract</small></div>
+      <a class="btn btn-ghost" href="mailto:hello@derive.to">Talk to us</a>
+      <ul>
+        <li>Everything in Business, plus</li>
+        <li><strong>Dedicated single-tenant instance</strong></li>
+        <li>Data residency: your region, your cloud or ours</li>
+        <li>Migration and onboarding help</li>
+        <li>Support contract</li>
+        <li>Support contracts for self-hosted deployments: SLA, LTS releases, upgrade and migration help</li>
+      </ul>
+    </div>
+  </div>
+</div>
 
-<footer class="site-footer">
-  <div class="footer-inner site-wrap">
-    <div class="footer-intro"><div class="footer-brand"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/><path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Derive</div><p class="footer-note">A durable workspace for agent-made work.</p></div>
-    <dl class="footer-group"><dt>Product</dt><dd><a href="https://docs.derive.to/">Docs</a></dd><dd><a href="/examples">Examples</a></dd><dd><a href="/pricing">Pricing</a></dd></dl>
-    <dl class="footer-group"><dt>Project</dt><dd><a href="https://github.com/derive-to/derive">GitHub</a></dd><dd><a href="https://docs.derive.to/reference/licensing/">Licensing</a></dd></dl>
-    <dl class="footer-group"><dt>Company</dt><dd><a href="/privacy">Privacy</a></dd><dd><a href="/security">Security</a></dd><dd><a href="/login?src=nav_signin">Sign in</a></dd></dl>
+<section class="wrap">
+  <div class="section-head">
+    <div class="eyebrow">Principles</div>
+    <h2>Four things that will stay true.</h2>
+  </div>
+  <div class="principles">
+    <div class="principle">
+      <h3>Readers and commenters are never seats.</h3>
+      <p>Viewers and commenters are free at every tier, in any number. Feedback is the point of the product. We won’t tax it.</p>
+    </div>
+    <div class="principle">
+      <h3>Billing never breaks a published URL.</h3>
+      <p>Going over a limit or lapsing a plan makes a workspace read-only. Nothing is deleted, and no link you’ve shared goes dark.</p>
+    </div>
+    <div class="principle">
+      <h3>Agents don’t consume seats.</h3>
+      <p>Your agents publish and propose through your workspace. We charge for the people who approve work, not for the bots that draft it.</p>
+    </div>
+    <div class="principle">
+      <h3>Self-hosting is free, forever.</h3>
+      <p>The whole product is Fair Source and runs as one container. The hosted tier pays for the service, not the software.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="section-head">
+    <div class="eyebrow">Questions</div>
+    <h2>The fine print, said plainly.</h2>
+  </div>
+  <div class="faq">
+    <details>
+      <summary>What counts as an editor?</summary>
+      <p class="a">Anyone who <strong>publishes or approves work</strong> during a billing period. Viewers and commenters are never counted, no matter how many. <strong>Guests can propose changes for free</strong>: a guest only becomes a billable editor when a workspace owner explicitly grants them an editor seat. For example, 10 people read a workspace, 2 leave comments, and 1 approves and publishes: you pay for 1 editor.</p>
+    </details>
+    <details>
+      <summary>What happens if we stop paying?</summary>
+      <p class="a">Your workspace becomes <strong>read-only</strong> above the free limits. Every artifact stays live at its URL, with its full version history and comments. Publishing resumes when the plan does.</p>
+    </details>
+    <details>
+      <summary>Can we self-host instead?</summary>
+      <p class="a">Yes. <strong>One container is the whole product</strong>: SQLite and local disk by default, Postgres and S3 at scale. The hosted tier exists for teams who would rather not run it themselves.</p>
+    </details>
+    <details>
+      <summary>What is Derive's license?</summary>
+      <p class="a">Derive is fair source (<strong>FSL-1.1-ALv2</strong>): use, modify, and self-host it freely for anything except selling Derive itself as a service. Every release converts to <strong>Apache-2.0</strong> two years after it ships.</p>
+    </details>
+    <details>
+      <summary>When does billing start?</summary>
+      <p class="a">Not before we’ve told you. We’ll announce dates well ahead, existing workspaces will get a grace period, and <strong>the free tier stays</strong>.</p>
+    </details>
+  </div>
+</section>
+
+<section class="final wrap" id="join">
+  <h2>Nothing here should surprise you.</h2>
+  <p class="body">That's the point of publishing pricing before billing exists. Sign up for the beta and hold us to it.</p>
+  <div class="waitlist">
+    <form data-waitlist data-derive-source="pricing_waitlist" action="/v1/beta/signup" method="post" novalidate>
+      <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
+      <button class="btn btn-primary" type="submit">Get beta access</button>
+    </form>
+    <div class="waitlist-done" role="status">
+      <span class="tick">✓</span>
+      <span>Check your email. Your access link is on the way.</span>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-inner">
+    <span class="fm">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Derive
+    </span>
+    <div class="foot-links">
+      <a href="/">Home</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/security">Security</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <a href="/login?src=nav_signin">Log in</a>
+    </div>
+    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0 · Prices in USD</span>
   </div>
 </footer>
+
+<script>
+const nav = document.getElementById('nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
+document.querySelectorAll('[data-waitlist]').forEach(form => {
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const email = form.email.value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { form.email.focus(); return; }
+    const btn = form.querySelector('button');
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    let ok = false;
+    try {
+      const res = await fetch(form.action, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source_kind:form.dataset.deriveSource, landing_path:location.pathname})});
+      ok = res.ok;
+    } catch {}
+    if (!ok) {
+      btn.disabled = false; btn.textContent = 'Try again';
+      setTimeout(() => { btn.textContent = label; }, 2400);
+      return;
+    }
+    form.style.display = 'none';
+    form.parentElement.querySelector('.waitlist-done').style.display = 'inline-flex';
+  });
+});
+</script>
 </body>
 </html>

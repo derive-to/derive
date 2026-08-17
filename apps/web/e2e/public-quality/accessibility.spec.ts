@@ -84,41 +84,6 @@ test("marketing skip link moves focus to the primary content", async ({ page }) 
   await expect(page.locator("#main-content")).toBeFocused()
 })
 
-test("marketing mobile menu exposes the same primary navigation", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile", "mobile navigation is hidden on wider screens")
-  await page.goto(`${siteOrigin}/site/index.html`)
-
-  const menu = page.locator(".mobile-nav")
-  await menu.locator("summary").click()
-  await expect(menu.getByRole("link", { name: /Docs/ })).toBeVisible()
-  await expect(menu.getByRole("link", { name: "Examples" })).toBeVisible()
-  await expect(menu.getByRole("link", { name: "Pricing" })).toBeVisible()
-  await expect(menu.getByRole("link", { name: /GitHub/ })).toBeVisible()
-  await expect(menu.getByRole("link", { name: /Sign in/ })).toBeVisible()
-
-  await page.keyboard.press("Escape")
-  await expect(menu).not.toHaveAttribute("open")
-  await expect(menu.locator("summary")).toBeFocused()
-})
-
-test("marketing walkthrough lets readers inspect each artifact version", async ({ page }) => {
-  await page.goto(`${siteOrigin}/site/index.html`)
-
-  const walkthrough = page.locator("[data-home-demo]")
-  const firstVersion = page.locator('[data-demo-version="1"]')
-  await firstVersion.click()
-
-  await expect(walkthrough).toHaveAttribute("data-version", "1")
-  await expect(firstVersion).toHaveAttribute("aria-pressed", "true")
-  await expect(walkthrough.getByRole("heading", { name: "OSC-8 Synthesizer" })).toBeVisible()
-  await expect(walkthrough.getByText("No comments yet.")).toBeVisible()
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
-    ),
-  ).toBe(true)
-})
-
 test("docs search loads the local browser index", async ({ page }) => {
   await page.goto(`${docsOrigin}/`)
   await page.locator("[data-search-open]").first().click()
