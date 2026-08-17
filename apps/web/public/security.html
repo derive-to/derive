@@ -1,142 +1,65 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light dark">
 <title>Security and abuse | Derive</title>
-<meta name="description" content="How to report abusive content hosted on Derive, and how to report a security vulnerability.">
+<meta name="description" content="Report abusive content hosted on Derive or tell us about a security vulnerability.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Security and abuse | Derive">
-<meta property="og:description" content="How to report abusive content hosted on Derive, and how to report a security vulnerability.">
+<meta property="og:description" content="Report abusive content hosted on Derive or tell us about a security vulnerability.">
 <meta property="og:url" content="https://derive.to/security">
 <meta property="og:image" content="https://derive.to/site/og-artifacts.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/security">
-<!-- See site/index.html for why the structured data is here. The contact points
-     mirror /.well-known/security.txt — change them together. -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "WebPage",
-  "name": "Security and abuse | Derive",
-  "url": "https://derive.to/security",
-  "description": "How to report abusive content hosted on Derive, and how to report a security vulnerability.",
-  "isPartOf": { "@id": "https://derive.to/#website" },
-  "publisher": {
-    "@id": "https://derive.to/#organization",
-    "@type": "Organization",
-    "name": "Derive",
-    "url": "https://derive.to/",
-    "contactPoint": [
-      {
-        "@type": "ContactPoint",
-        "contactType": "abuse",
-        "email": "abuse@derive.to",
-        "url": "https://derive.to/security"
-      },
-      {
-        "@type": "ContactPoint",
-        "contactType": "security",
-        "email": "security@derive.to",
-        "url": "https://derive.to/security"
-      }
-    ]
-  }
-}
-</script>
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
-<style>
-@font-face {
-  font-family: "Geist";
-  src: url("/site/geist.woff2") format("woff2");
-  font-weight: 100 900; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: "Geist Mono";
-  src: url("/site/geist-mono.woff2") format("woff2");
-  font-weight: 100 900; font-style: normal; font-display: swap;
-}
-:root {
-  --bg:#0a0b0d; --fg:#f3f4f6; --card:#101216; --secondary:#16181d;
-  --muted-fg:#969aa2; --accent:#1b1d23; --border:#23252b; --border-soft:#191b1f;
-  --primary:#f3f4f6; --primary-fg:#0a0b0d;
-  --radius:4px;
-  --font-sans:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --font-mono:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;
-  --maxw:720px;
-}
-*,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{
-  margin:0;background:var(--bg);color:var(--fg);
-  font-family:var(--font-sans);font-size:16px;line-height:1.6;letter-spacing:-0.011em;
-  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
-}
-::selection{background:rgba(243,244,246,.18)}
-a{color:inherit}
-.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
-header{padding:28px 0}
-.wordmark{display:inline-flex;align-items:center;gap:8px;font-weight:500;text-decoration:none}
-.wordmark svg{display:block}
-main{padding:40px 0 120px}
-.eyebrow{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
-h1{font-weight:500;letter-spacing:-0.022em;font-size:32px;margin:10px 0 14px;text-wrap:balance}
-h2{font-weight:500;letter-spacing:-0.022em;font-size:19px;margin:0 0 8px}
-p{text-wrap:pretty;margin:0 0 12px;color:var(--muted-fg)}
-p strong,section a{color:var(--fg)}
-.lede{font-size:17px;margin-bottom:36px}
-section{
-  border:1px solid var(--border-soft);border-radius:8px;background:var(--card);
-  padding:22px 24px;margin-bottom:16px;
-}
-.addr{
-  display:inline-block;font-family:var(--font-mono);font-size:14px;color:var(--fg);
-  background:var(--secondary);border:1px solid var(--border);border-radius:var(--radius);
-  padding:3px 9px;margin:2px 0 10px;text-decoration:none;
-}
-.addr:hover{background:var(--accent)}
-footer{border-top:1px solid var(--border-soft);padding:22px 0;color:var(--muted-fg);font-size:14px}
-footer a{text-decoration:none}
-footer a:hover{color:var(--fg)}
-</style>
+<script src="/site/site.js"></script>
+<link rel="stylesheet" href="/site/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","name":"Security and abuse | Derive","url":"https://derive.to/security","description":"Report abusive content hosted on Derive or tell us about a security vulnerability.","isPartOf":{"@id":"https://derive.to/#website"},"publisher":{"@id":"https://derive.to/#organization","@type":"Organization","name":"Derive","url":"https://derive.to/","contactPoint":[{"@type":"ContactPoint","contactType":"abuse","email":"abuse@derive.to","url":"https://derive.to/security"},{"@type":"ContactPoint","contactType":"security","email":"security@derive.to","url":"https://derive.to/security"}]}}
+</script>
 </head>
 <body>
-<header class="wrap">
-  <a class="wordmark" href="/">
-    <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
-      <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
-      <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-    </svg>
-    Derive
-  </a>
-</header>
-<main class="wrap">
-  <span class="eyebrow">Security &amp; abuse</span>
-  <h1>Report abuse or a vulnerability</h1>
-  <p class="lede">Derive hosts pages and documents published by its users, including on subdomains of
-  <strong>derive.page</strong>, our dedicated user-content domain. If something hosted there or elsewhere
-  on Derive is being used for phishing, malware, impersonation, or other abuse, we want to know.</p>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="site-nav" data-site-nav aria-label="Main navigation">
+  <div class="nav-inner site-wrap">
+    <a class="wordmark" href="/" aria-label="Homepage"><img class="logo-light" src="/brand/wordmark-dark.svg" alt=""><img class="logo-dark" src="/brand/wordmark-light.svg" alt=""></a>
+    <div class="desktop-nav"><a href="https://docs.derive.to/">Docs</a><a href="/examples">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub</a></div>
+    <div class="nav-actions">
+      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change color theme">
+        <svg class="theme-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
+        <svg class="theme-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5a8.5 8.5 0 1 0 11.7 11.7Z"/></svg>
+        <svg class="theme-system" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      </button>
+      <a class="nav-signin" href="/login?src=nav_signin">Sign in</a>
+      <details class="mobile-nav"><summary aria-label="Open navigation menu"><svg class="menu-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><svg class="menu-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></summary><div class="mobile-nav-panel"><a href="https://docs.derive.to/">Docs <span aria-hidden="true">↗</span></a><a href="/examples">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub <span aria-hidden="true">↗</span></a><a class="mobile-signin" href="/login?src=nav_signin">Sign in <span aria-hidden="true">→</span></a></div></details>
+    </div>
+  </div>
+</nav>
 
-  <section>
-    <h2>Report abusive content</h2>
-    <a class="addr" href="mailto:abuse@derive.to">abuse@derive.to</a>
-    <p>Send the full URL of the page and a short description of the problem. Reports are read by a human;
-    confirmed phishing and malware are removed on an expedited basis.</p>
-  </section>
+<main id="main-content" tabindex="-1">
+  <header class="subpage-hero site-wrap">
+    <p class="eyebrow">Security and abuse</p>
+    <h1>Report a problem</h1>
+    <p class="lede">Derive hosts pages and documents published by its users, including pages on <strong>derive.page</strong>. Tell us if you find phishing, malware, impersonation, another form of abuse, or a vulnerability in Derive itself.</p>
+  </header>
 
-  <section>
-    <h2>Report a security vulnerability</h2>
-    <a class="addr" href="mailto:security@derive.to">security@derive.to</a>
-    <p>For vulnerabilities in the Derive app, API, or user-content hosting. Please give
-    us a reasonable window to remediate before public disclosure. The server is
-    <a href="https://github.com/derive-to/derive">source available</a>; issues in the code are also welcome there.</p>
+  <section class="content-section site-wrap" aria-label="Contact options">
+    <div class="contact-list">
+      <article class="contact-item"><h2>Abusive content</h2><a class="contact-address" href="mailto:abuse@derive.to">abuse@derive.to</a><p>Send the full URL and a short description of the problem. A person reads every report. We remove confirmed phishing and malware as quickly as possible.</p></article>
+      <article class="contact-item"><h2>Security vulnerabilities</h2><a class="contact-address" href="mailto:security@derive.to">security@derive.to</a><p>Use this address for vulnerabilities in the Derive app, API, or user-content hosting. Include enough detail for us to reproduce the problem, and give us a reasonable window to fix it before public disclosure. The server is <a href="https://github.com/derive-to/derive"><strong>source available</strong></a>, so code issues are also welcome on GitHub.</p></article>
+    </div>
   </section>
 </main>
-<footer>
-  <div class="wrap">
-    <a href="/">Home</a> · <a href="/pricing">Pricing</a> · <a href="https://github.com/derive-to/derive">GitHub</a>
+
+<footer class="site-footer">
+  <div class="footer-inner site-wrap">
+    <div class="footer-intro"><div class="footer-brand"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/><path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Derive</div><p class="footer-note">A durable workspace for agent-made work.</p></div>
+    <dl class="footer-group"><dt>Product</dt><dd><a href="https://docs.derive.to/">Docs</a></dd><dd><a href="/examples">Examples</a></dd><dd><a href="/pricing">Pricing</a></dd></dl>
+    <dl class="footer-group"><dt>Project</dt><dd><a href="https://github.com/derive-to/derive">GitHub</a></dd><dd><a href="https://docs.derive.to/reference/licensing/">Licensing</a></dd></dl>
+    <dl class="footer-group"><dt>Company</dt><dd><a href="/privacy">Privacy</a></dd><dd><a href="/security">Security</a></dd><dd><a href="/login?src=nav_signin">Sign in</a></dd></dl>
   </div>
 </footer>
 </body>
