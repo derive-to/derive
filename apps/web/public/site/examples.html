@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Workflow examples — Derive</title>
+<title>Workflow examples | Derive</title>
 <meta name="description" content="Publishable examples of the complete Derive review loop: a launch page, research brief, and living status report.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Derive workflow examples">
@@ -13,20 +13,53 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/examples">
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+<script>
+/* theme boot: set the class before first paint (the choice lives in localStorage) */
+(function(){
+  var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
+  if (m !== 'light' && m !== 'system') m = 'dark';
+  var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  var c = document.documentElement.classList;
+  c.toggle('light', light); c.toggle('dark', !light);
+})();
+</script>
+<link rel="stylesheet" href="/site/shell.css">
 <link rel="stylesheet" href="/site/guides.css">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"CollectionPage","name":"Derive workflow examples","url":"https://derive.to/examples","description":"Official, publishable examples of review and approval workflows for agent-made work."}</script>
+<script src="/site/shell.js" defer></script>
 </head>
 <body>
-<nav><div class="nav wrap"><a class="wordmark" href="/"><img src="/brand/wordmark-light.svg" alt="Derive"></a><a href="https://docs.derive.to/">Docs</a><a href="/examples" aria-current="page">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub</a><a class="signin" href="/login?src=examples_signin">Sign in →</a></div></nav>
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<nav class="site-nav" aria-label="Primary">
+  <div class="wrap site-nav__inner">
+    <a class="site-nav__brand" href="/">
+      <img class="wm-dark" src="/brand/wordmark-light.svg" alt="Derive">
+      <img class="wm-light" src="/brand/wordmark-dark.svg" alt="Derive">
+    </a>
+    <div class="site-nav__links">
+      <a href="https://docs.derive.to/">Docs</a>
+      <a href="/examples" aria-current="page">Examples</a>
+      <a href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <button class="site-nav__theme" type="button" data-theme-toggle aria-label="Theme">
+        <svg class="i-sun" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M7 .8v1.7M7 11.5v1.7M.8 7h1.7M11.5 7h1.7M2.6 2.6l1.2 1.2M10.2 10.2l1.2 1.2M11.4 2.6l-1.2 1.2M3.8 10.2l-1.2 1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
+      </button>
+      <a class="site-nav__signin" href="/login?src=examples_signin">Sign in to Beta <span class="arr" aria-hidden="true">→</span></a>
+    </div>
+  </div>
+</nav>
 <header><div class="wrap"><div class="eyebrow">Official examples</div><h1>Review the work, not a product promise.</h1><p class="lede">Each example is source you can inspect and publish yourself, paired with a concrete review request. They demonstrate Derive; they are not fabricated customer work or synthetic case studies.</p><div class="quick"><a class="button primary" href="#examples">Browse examples</a><a class="button" href="https://github.com/derive-to/derive/tree/main/examples">View all source</a></div></div></header>
-<main class="wrap">
+<main id="main-content" tabindex="-1" class="wrap">
   <section class="section" id="examples"><div class="section-label">Three complete jobs</div><div><h2>Start with work that needs a decision.</h2><p class="intro">The value appears when another person reviews the artifact, an agent revises it, and a named reviewer closes the loop.</p><div class="grid"><a class="card" href="https://derive.to/artifacts/example-launch-page-5cmep9l9"><h3>Designed launch page</h3><p>Review the real visual hierarchy, promise, evidence labels, and calls to action before release.</p><span class="go">Open live artifact →</span></a><a class="card" href="https://derive.to/artifacts/example-research-brief-ms66yju2"><h3>Decision-oriented research brief</h3><p>Challenge sources and inference strength, then approve the recommendation and its limits.</p><span class="go">Open live artifact →</span></a><a class="card" href="https://derive.to/artifacts/example-living-status-f49k4yvg"><h3>Living status report</h3><p>Keep changing metrics, risks, owners, and decisions at one URL across recurring reviews.</p><span class="go">Open live artifact →</span></a><a class="card" href="https://github.com/derive-to/derive/blob/main/examples/README.md"><h3>Run the complete loop</h3><p>Follow the publish, attributable feedback, focused revision, and named approval procedure.</p><span class="go">Read the workflow and source →</span></a></div></div></section>
-  <section class="section"><div class="section-label">Use one</div><div><h2>Publish with the workspace default.</h2><p class="intro">The example configurations intentionally omit access fields so cloning one never widens visibility without your decision.</p><pre>git clone https://github.com/derive-to/derive.git
+  <section class="section"><div class="section-label">Use one</div><div><h2>Publish with the workspace default.</h2><p class="intro">The example configurations intentionally omit access fields so cloning one never widens visibility without your decision.</p><pre tabindex="0">git clone https://github.com/derive-to/derive.git
 cd derive/examples/launch-page
 derive login
 derive publish</pre><div class="truth"><strong>Then invite a real review.</strong> Select the intended link role in Derive, ask a reviewer to comment on the exact output, let a compatible agent address every thread, and approve only the resulting named version.</div></div></section>
   <section class="section"><div class="section-label">Proof standard</div><div><h2>What we will and will not call evidence.</h2><div class="steps"><div class="step"><div><b>Official samples stay labeled</b><span>Illustrative metrics, companies, and scenarios are never presented as customer results.</span></div></div><div class="step"><div><b>Customer stories require consent</b><span>A real case names the workflow, baseline, revisions, outcome, and limits its participant approved for publication.</span></div></div><div class="step"><div><b>A link alone is not adoption</b><span>Success means publish → non-author feedback → revision → named approval, repeated in real work.</span></div></div></div></div></section>
 </main>
-<footer><div class="foot wrap"><span>Derive · review and approval for agent-made work</span><div><a href="https://docs.derive.to/">Docs</a><a href="/privacy">Privacy</a><a href="/security">Security</a></div></div></footer>
+<footer><div class="foot wrap"><span>Derive · a workspace for agent-made artifacts</span><div><a href="https://docs.derive.to/">Docs</a><a href="/privacy">Privacy</a><a href="/security">Security</a></div></div></footer>
 </body>
 </html>

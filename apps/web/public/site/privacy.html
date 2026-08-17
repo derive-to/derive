@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Privacy — Derive</title>
+<title>Privacy | Derive</title>
 <meta name="description" content="How Derive collects, stores, and protects your data, in plain language: what we collect, what we never do, who processes it, and how to delete it.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Privacy — Derive">
+<meta property="og:title" content="Privacy | Derive">
 <meta property="og:description" content="How Derive collects, stores, and protects your data, in plain language.">
 <meta property="og:url" content="https://derive.to/privacy">
 <meta property="og:image" content="https://derive.to/site/og-approval.png">
@@ -18,7 +18,7 @@
 {
   "@context": "https://schema.org",
   "@type": "WebPage",
-  "name": "Privacy — Derive",
+  "name": "Privacy | Derive",
   "url": "https://derive.to/privacy",
   "description": "How Derive collects, stores, and protects your data, in plain language.",
   "isPartOf": { "@id": "https://derive.to/#website" },
@@ -27,6 +27,17 @@
 </script>
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
+<script>
+/* theme boot: set the class before first paint (the choice lives in localStorage) */
+(function(){
+  var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
+  if (m !== 'light' && m !== 'system') m = 'dark';
+  var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  var c = document.documentElement.classList;
+  c.toggle('light', light); c.toggle('dark', !light);
+})();
+</script>
+<link rel="stylesheet" href="/site/shell.css">
 <style>
 @font-face {
   font-family: "Geist";
@@ -39,14 +50,7 @@
   font-weight: 100 900; font-style: normal; font-display: swap;
 }
 :root {
-  --bg:#0a0b0d; --fg:#f3f4f6; --card:#101216; --secondary:#16181d;
-  --muted-fg:#969aa2; --accent:#1b1d23; --border:#23252b; --border-soft:#191b1f;
-  --primary:#f3f4f6; --primary-fg:#0a0b0d;
-  --success:#74b085; --warning:#fb923c;
-  --radius:4px;
-  --font-sans:"Geist",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --font-mono:"Geist Mono",ui-monospace,Menlo,Consolas,monospace;
-  --maxw:1060px;
+--maxw: var(--maxw-prose);
 }
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -63,29 +67,13 @@ body::after{
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   mix-blend-mode:screen;opacity:.05;
 }
-.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
 .eyebrow{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
 h1,h2,h3{font-weight:500;letter-spacing:-0.022em;text-wrap:balance;margin:0}
 p{text-wrap:pretty;margin:0}
-nav{
-  position:fixed;top:0;left:0;right:0;z-index:100;
-  background:color-mix(in srgb,var(--bg) 82%,transparent);
-  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
-  border-bottom:1px solid transparent;
-}
 nav.scrolled{border-bottom-color:var(--border-soft)}
-.nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;gap:28px}
-.wordmark{display:flex;align-items:center}
-.wordmark img{height:24px;width:auto;display:block}
-.nav-links{display:flex;gap:22px;font-size:14px;color:var(--muted-fg);margin-left:8px}
-.nav-links a:hover{color:var(--fg)}
-.nav-links a.on{color:var(--fg)}
-.nav-cta{margin-left:auto;display:flex;align-items:center}
-.nav-cta .nav-signin{font-size:14px;color:var(--fg)}
 .nav-cta .nav-signin .arr{display:inline-block;transition:transform .18s ease}
 .nav-cta .nav-signin:hover .arr{transform:translateX(3px)}
-.nav-cta .btn{height:32px;padding:0 14px;border-radius:6px;font-size:13px}
-@media(max-width:720px){.nav-links{display:none}}
+@media(max-width:720px){}
 
 header.head.wrap{padding:150px 24px 0;text-align:center}
 .head h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:18px auto 0;max-width:20ch}
@@ -140,25 +128,34 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 }
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
+<script src="/site/shell.js" defer></script>
 </head>
 <body>
 
-<nav id="nav">
-  <div class="nav-inner">
-    <a class="wordmark" href="/">
-      <img src="/brand/wordmark-light.svg" alt="Derive">
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<nav class="site-nav" aria-label="Primary">
+  <div class="wrap site-nav__inner">
+    <a class="site-nav__brand" href="/">
+      <img class="wm-dark" src="/brand/wordmark-light.svg" alt="Derive">
+      <img class="wm-light" src="/brand/wordmark-dark.svg" alt="Derive">
     </a>
-    <div class="nav-links">
+    <div class="site-nav__links">
       <a href="https://docs.derive.to/">Docs</a>
       <a href="/examples">Examples</a>
       <a href="/pricing">Pricing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
-    </div>
-    <div class="nav-cta">
-      <a class="nav-signin" href="/login">Sign in to Beta <span class="arr">→</span></a>
+      <button class="site-nav__theme" type="button" data-theme-toggle aria-label="Theme">
+        <svg class="i-sun" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M7 .8v1.7M7 11.5v1.7M.8 7h1.7M11.5 7h1.7M2.6 2.6l1.2 1.2M10.2 10.2l1.2 1.2M11.4 2.6l-1.2 1.2M3.8 10.2l-1.2 1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
+      </button>
+      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
+
+<main id="main-content" tabindex="-1">
 
 <header class="head wrap">
   <div class="eyebrow">Privacy</div>
@@ -228,6 +225,8 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   <h2>Nothing here should surprise you.</h2>
   <p class="body">That's the point of publishing this before you have to go looking for it. Questions go to hello@derive.to.</p>
 </section>
+
+</main>
 
 <footer>
   <div class="foot-inner">
