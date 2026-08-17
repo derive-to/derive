@@ -229,6 +229,10 @@ export interface ListArtifactsOpts {
   /** Archive shelf. Omitted/`exclude` is the ordinary live library; `only` powers
    *  the Archived view; `include` is for trusted maintenance reads. */
   archived?: "exclude" | "only" | "include"
+  /** Restrict to one stored content type via the denormalized `current_content_type`
+   *  column — e.g. `derive/skill` for a workspace's skills — so a typed listing
+   *  filters in the store instead of paging the whole library. */
+  contentType?: string
 }
 
 /** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */

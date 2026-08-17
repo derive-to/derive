@@ -15,6 +15,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildPrompt,
   checkWritable,
+  DeriveClient,
   doctor,
   gitSafeEnv,
   loadRunnerConfig,
@@ -31,6 +32,39 @@ import {
   serveSession,
   syncRepos,
 } from "../src/runner.js"
+
+describe("skillApi", () => {
+  it("omits v for an unpinned skill and carries it when pinned", async () => {
+    // An unpinned manifest entry (version null) means "fetch current". Interpolating
+    // the null literally produced "?v=null", which the content route rejects with
+    // 400 "bad version" — the skill was then silently marked unavailable.
+    const paths = []
+    const c = new DeriveClient("http://x", "t")
+    c.call = async (p) => {
+      paths.push(p)
+      return {}
+    }
+    c.callRaw = async (p) => {
+      paths.push(p)
+      return { arrayBuffer: async () => new ArrayBuffer(0), text: async () => "" }
+    }
+    const api = c.skillApi()
+    await api.outline("ab12cd34", null)
+    await api.file("ab12cd34", "SKILL.md", undefined)
+    await api.content("ab12cd34", null)
+    await api.outline("ab12cd34", 3)
+    await api.file("ab12cd34", "a b.md", 3)
+    await api.content("ab12cd34", 3)
+    expect(paths).toEqual([
+      "/v1/artifacts/ab12cd34/content?outline=1",
+      "/v1/artifacts/ab12cd34/content?section=SKILL.md",
+      "/v1/artifacts/ab12cd34/content",
+      "/v1/artifacts/ab12cd34/content?outline=1&v=3",
+      "/v1/artifacts/ab12cd34/content?section=a%20b.md&v=3",
+      "/v1/artifacts/ab12cd34/content?v=3",
+    ])
+  })
+})
 
 describe("parseAnswer", () => {
   const good = `Here is my analysis.\n<answer>{"body_md":"32%","query":"select 1","confidence":0.9,"caveats":["small n"],"escalate":false,"escalation_reason":null}</answer>`
