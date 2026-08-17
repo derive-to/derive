@@ -1994,6 +1994,9 @@ export function runStoreContract(
       expect([amy, bob].filter(Boolean)).toHaveLength(1)
       expect(await store.listVersions(a.id)).toHaveLength(1)
       expect((await store.getArtifactById(a.id))?.current_version).toBe(1)
+      // Approval stamps the delivery pointer — asserted here so all three drivers
+      // (sqlite, pg, d1) keep it; the D1 batch once omitted it and failed open.
+      expect((await store.getArtifactById(a.id))?.approved_version).toBe(1)
       expect((await store.getProposal(p.id))?.decided_by_id).toBe(amy ? "u_amy" : "u_bob")
       await expect(
         store.decideProposal(p.id, {
@@ -2029,6 +2032,22 @@ export function runStoreContract(
       const settled = (await store.listReviewRounds(a.id)).find((item) => item.id === round.id)
       expect(settled?.state).toBe(approved ? "approved" : "sent_back")
       expect(settled?.resolved_by).toBe(approved ? "u_amy" : "u_bob")
+      // A version-0 round never stamps the delivery pointer (0 would read as "serve
+      // version 0", not "never approved"); a real round does, on every driver.
+      expect((await store.getArtifactById(a.id))?.approved_version).toBeNull()
+      const real = await store.createReviewRound({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        requested_by: "agent_1",
+        requested_for: "u_bob",
+      })
+      await store.resolveReviewRound(real.id, {
+        state: "approved",
+        resolved_by: "u_bob",
+        resolved_by_name: "Bob",
+      })
+      expect((await store.getArtifactById(a.id))?.approved_version).toBe(1)
     })
   })
 

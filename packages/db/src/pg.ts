@@ -3984,6 +3984,8 @@ export class PgMetaStore implements MetaStore {
         .update(artifact)
         .set({
           current_version: n,
+          // The approved-version pointer: this new version IS the approved one.
+          approved_version: n,
           current_content_type: p.content_type,
           updated_at: now,
           author_name: p.author,
@@ -4086,7 +4088,20 @@ export class PgMetaStore implements MetaStore {
       .set({ ...fields, resolved_at: new Date().toISOString() })
       .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
-    return rows[0] ?? null
+    const updated = rows[0] ?? null
+    // An approval moves the artifact's approved-version pointer, never lowering it:
+    // the round's version is what the human actually looked at, and a stale round
+    // approved after a newer one must not roll delivery back. Rounds at version 0
+    // (an unversioned artifact) stamp nothing — approved_version = 0 would read as
+    // "serve version 0" through approvedOrCurrent, not as "never approved".
+    if (updated && fields.state === "approved" && updated.version > 0)
+      await this.db
+        .update(artifact)
+        .set({
+          approved_version: sql`GREATEST(COALESCE(${artifact.approved_version}, 0), ${updated.version})`,
+        })
+        .where(eq(artifact.id, updated.artifact_id))
+    return updated
   }
 
   // ---- Contexts + sessions -------------------------------------------------

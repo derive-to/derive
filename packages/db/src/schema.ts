@@ -78,6 +78,9 @@ export const artifact = sqliteTable("artifact", {
   // proposal → approval flow (any editor can toggle it).
   locked: integer("locked").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
+  // The last version a human approved (see pg-schema.ts). Null until first approval;
+  // agent skill delivery serves approved_version ?? current_version.
+  approved_version: integer("approved_version"),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().default(now),
   // Set on every new version (publish/sync); null until first versioned. Drives the

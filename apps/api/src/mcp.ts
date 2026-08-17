@@ -57,6 +57,7 @@ import {
   AGENT_INBOX_PAGE,
   type AgentRecord,
   type ArtifactRecord,
+  approvedOrCurrent,
   brandprintInstructions,
   DECK_TEMPLATE,
   pendingRequestsPointer,
@@ -286,8 +287,11 @@ async function buildServer(
       async (uri) => {
         if (m.body !== undefined)
           return { contents: [{ uri: uri.href, mimeType: m.mimeType, text: m.body }] }
+        // The lazy body serves the delivered version — approved when one exists —
+        // so a skill whose prepared body failed at connect can't fall back to an
+        // unapproved draft here.
         const art = await ctx.meta.getByShortId(doc.short_id)
-        const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
+        const v = art ? await ctx.meta.getVersion(art.id, approvedOrCurrent(art)) : null
         const body = v ? await ctx.sourceText(v) : null
         return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: body ?? "" }] }
       },

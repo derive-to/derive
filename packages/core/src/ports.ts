@@ -134,6 +134,10 @@ export interface ArtifactRecord {
   /** Locked: direct publishes are rejected; changes must go through a proposal. */
   locked: 0 | 1
   current_version: number
+  /** The last version a human approved (a proposal's decided_version, or a review
+   *  round's version — never lowered). Null until the first approval. Agent skill
+   *  delivery serves `approved_version ?? current_version` (see approvedOrCurrent). */
+  approved_version: number | null
   /** Denormalized from the current version row — updated on every publish. */
   current_content_type: string | null
   created_at: string

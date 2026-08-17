@@ -1869,6 +1869,60 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(sec).toContain("echo ok")
   })
 
+  it("skill delivery serves the approved version once one exists", async () => {
+    const { app, token, meta } = appWithGrant(dir, "skillgate", "openid derive:read derive:publish")
+    const skill = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Gated skill",
+          files: { "SKILL.md": "---\nname: gated\n---\n\n# Gated\n\nApproved wording.\n" },
+        }),
+      ),
+    ).short_id
+    // Publish a draft v2 the team hasn't approved.
+    await call(app, token, "publish", {
+      short_id: skill,
+      files: { "SKILL.md": "---\nname: gated\n---\n\n# Gated\n\nDraft wording.\n" },
+    })
+    // Never approved: delivery serves current (the draft).
+    const before = JSON.parse(toolText(await call(app, token, "read", { short_id: skill })))
+    expect(before.version).toBe(2)
+    expect(before.content).toContain("Draft wording.")
+
+    // A human approves v1 (review round; the proposal path stamps the same pointer).
+    const art = await meta.getByShortId(skill)
+    if (!art) throw new Error("no artifact")
+    const round = `rr_gate_${skill}`
+    await meta.createReviewRound({
+      id: round,
+      artifact_id: art.id,
+      version: 1,
+      requested_by: "agent",
+      requested_for: "u_gate",
+    })
+    await meta.resolveReviewRound(round, { state: "approved" })
+
+    // Every delivery lane now serves v1; the response says so.
+    const gated = JSON.parse(toolText(await call(app, token, "read", { short_id: skill })))
+    expect(gated.version).toBe(1)
+    expect(gated.content).toContain("Approved wording.")
+    expect(gated.note).toContain("v2")
+    const uri = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: `derive://skills/${skill}` })),
+    )
+    expect(uri.content).toContain("Approved wording.")
+    const cat = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: "derive://skills" })),
+    )
+    expect(cat.workspace.find((s: { short_id: string }) => s.short_id === skill)?.version).toBe(1)
+
+    // Naming the draft explicitly still reads it, as an ordinary bundle.
+    const draft = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: skill, version: 2 })),
+    )
+    expect(draft.pages).toBeDefined()
+  })
+
   it("instructions point at the skills catalog, with the workspace's count", async () => {
     const { app, token } = appWithGrant(dir, "skillinstr", "openid derive:read derive:publish")
     const before = (await rpc(app, token, initBody)).parsed?.result as { instructions?: string }

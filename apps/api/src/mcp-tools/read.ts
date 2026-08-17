@@ -1,4 +1,5 @@
 import {
+  approvedOrCurrent,
   artifactUrl,
   DECK_TEMPLATE,
   type DocMap,
@@ -553,7 +554,13 @@ export function registerReadTool(tc: ToolContext): void {
       // after the artifact lookup, so a context named like a doc can never shadow it.
       if (!r) return (await contextPackage()) ?? notFound(docId)
       const a = r.a
-      const n = version ?? a.current_version
+      // A skill's default version is the one delivery serves (the last approved, else
+      // current), and it applies to EVERY rung — body, sections, outline, render — so
+      // the footer's "read this file" suggestions can't fetch a different version than
+      // the body they rode in on. An explicit `version` always wins.
+      const n =
+        version ??
+        (a.current_content_type === SKILL_CONTENT_TYPE ? approvedOrCurrent(a) : a.current_version)
       if (n < 1 || n > a.current_version)
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       const v = await ctx.meta.getVersion(a.id, n)
@@ -976,15 +983,17 @@ export function registerReadTool(tc: ToolContext): void {
       const pages = Object.keys(manifest.files).map(cleanPath)
       // A skill reads as its document: the SKILL.md body, with the bundle's files
       // listed alongside. The common caller was just told to follow this procedure,
-      // so the outline-first bundle default is the wrong rung here. Explicit
-      // `section` still opens one file; a pinned past version keeps the bundle view.
+      // so the outline-first bundle default is the wrong rung here. `n` already
+      // defaulted to the served (approved-or-current) version above — the response
+      // says which. Explicit `section` still opens one file; naming any other
+      // version keeps the ordinary bundle view.
       if (
         a.current_content_type === SKILL_CONTENT_TYPE &&
         !section &&
         !wantMap &&
         !node &&
         !lines &&
-        n === a.current_version
+        n === approvedOrCurrent(a)
       ) {
         const reading = await skillReading(ctx, a)
         // A giant SKILL.md keeps the ordinary outline path below — the same ceiling
@@ -994,7 +1003,10 @@ export function registerReadTool(tc: ToolContext): void {
             short_id,
             title: reading.name ?? a.title,
             kind: "skill",
-            version: n,
+            version: reading.version,
+            ...(reading.version !== a.current_version
+              ? { note: `Approved version; the latest draft is v${a.current_version}.` }
+              : {}),
             url,
             content: reading.body,
             files: pages,
