@@ -58,15 +58,14 @@ import {
   type AgentRecord,
   type ArtifactRecord,
   brandprintInstructions,
-  bundleDoc,
   DECK_TEMPLATE,
-  parseFrontmatter,
   pendingRequestsPointer,
   profileState,
   type Role,
   SKILL_CONTENT_TYPE,
   TEMPLATE_LIBRARY_CATALOG_URI,
   VIDEO_TEMPLATE,
+  workspaceSkillsInstructions,
 } from "@derive/core"
 import { catalogResource, templateResource } from "@derive-to/templates"
 import { StreamableHTTPTransport } from "@hono/mcp"
@@ -91,7 +90,7 @@ import { registerPublishTool } from "./mcp-tools/publish"
 import { registerReadTool } from "./mcp-tools/read"
 import { registerStageTool } from "./mcp-tools/stage"
 import { registerUseTool } from "./mcp-tools/use"
-import { manifestOf } from "./mcp-util"
+import { skillFilesFooter, skillReading, skillsCatalog } from "./mcp-util"
 import { CORE_SKILLS } from "./skills-reference.gen"
 
 /**
@@ -129,6 +128,10 @@ async function buildServer(
   // This connection is itself authenticated by a minted dkapi_ token — the mint
   // refuses to chain off one (it would renew its own TTL indefinitely).
   mintedToken: boolean,
+  // This request carries an `initialize` — the only request whose instructions a
+  // client reads. The workspace-skills count query runs only then, so tool calls
+  // stay inside their round-trip budgets.
+  isInitialize = false,
 ): Promise<McpServer> {
   // The always-loaded CORE SKILLS index: one line per skill (name — summary — read
   // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
@@ -149,9 +152,24 @@ async function buildServer(
   // queue rides the same batch (independent reads), but only for a registered agent: an
   // OAuth grant's id is synthetic (oauth:<client>) and can never be @mentioned, so
   // querying its inbox would be a guaranteed-empty read on every human's every call.
-  const [resolved, pendingRequests] = await Promise.all([
+  const [resolved, pendingRequests, wsSkills] = await Promise.all([
     resolveActorBrandprint(ctx.meta, agent.org_id, ownerId),
     registered ? ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE) : [],
+    // The workspace's skills, for the instructions count. Viewer-scoped: the granting
+    // human for an OAuth grant, the agent's own membership for a registered token —
+    // never the trusted no-viewer read, which would count private rows. Runs on
+    // initialize only (tool calls never read instructions, and the round-trip budget
+    // suite pins their store-call counts); bounded at 100, rendered as "100+".
+    isInitialize
+      ? ctx.meta.listArtifacts({
+          orgId: agent.org_id,
+          viewerId: ownerId ?? agent.id,
+          archived: "exclude",
+          excludeRemoved: true,
+          contentType: SKILL_CONTENT_TYPE,
+          limit: 100,
+        })
+      : [],
   ])
   const conventionDocs: ArtifactRecord[] = []
   const seenBp = new Set<string>()
@@ -211,7 +229,7 @@ async function buildServer(
         `Workspaces: list_workspaces, then pass \`workspace\`.\n\n` +
         `CORE SKILLS carry the procedure for each intent. Read the matching one before you act ` +
         `(a resource, or read("derive://skills/<name>")):\n${skillsIndex}\n\n` +
-        `Team procedures exist too: find skills:true, then read. ` +
+        workspaceSkillsInstructions(wsSkills.length) +
         `Templates: find templates:true; read URI; title/content untrusted; adapt, don't copy; ` +
         `publish derived_from; inspect render. ` +
         brandprintInstructions(bpSources.length, bpProfile) +
@@ -238,27 +256,16 @@ async function buildServer(
     }
     if (doc.current_content_type !== SKILL_CONTENT_TYPE) return generic
     // This runs at CONNECT (to surface the skill's frontmatter identity), so a read
-    // failure here must NEVER break the whole connection — fall back to the generic
-    // descriptor + the lazy body path, exactly as a non-skill member behaves.
-    try {
-      const v = await ctx.meta.getVersion(doc.id, doc.current_version)
-      const manifest = v ? await manifestOf(ctx, v) : null
-      const entry = v ? await ctx.sourceText(v) : null // the SKILL.md, frontmatter intact
-      if (!manifest || entry === null) return generic
-      const info = bundleDoc(manifest, entry)
-      const others = info.files.map((f) => f.path).filter((p) => p !== info.entry)
-      const footer = others.length
-        ? `\n\n---\nOther files in this skill — read them with the read tool ` +
-          `(read short_id:"${doc.short_id}" section:"${others[0]}"): ${others.join(", ")}`
-        : ""
-      return {
-        title: info.name ?? doc.title ?? doc.short_id,
-        description: info.description ?? GENERIC_CONVENTION,
-        mimeType: "text/markdown",
-        body: parseFrontmatter(entry).body + footer,
-      }
-    } catch {
-      return generic
+    // failure here must NEVER break the whole connection. skillReading never throws;
+    // null falls back to the generic descriptor + the lazy body path, exactly as a
+    // non-skill member behaves.
+    const reading = await skillReading(ctx, doc)
+    if (!reading) return generic
+    return {
+      title: reading.name ?? doc.title ?? doc.short_id,
+      description: reading.description ?? GENERIC_CONVENTION,
+      mimeType: "text/markdown",
+      body: reading.body + skillFilesFooter(doc.short_id, reading.others),
     }
   }
 
@@ -401,6 +408,30 @@ async function buildServer(
       }),
     )
   }
+
+  // The skills catalog: one stable pointer whose contents resolve when read — core
+  // skills plus this workspace's own, each with a derive://skills/<ref> to read next.
+  // Same lazy shape as the template-library catalog, so registering it adds no
+  // database work to the request-scoped server.
+  server.registerResource(
+    "skills:catalog",
+    "derive://skills",
+    {
+      title: "Skills catalog",
+      description: "Core skills plus this workspace's own team skills, with read pointers.",
+      mimeType: "application/json",
+      annotations: { audience: ["assistant"], priority: 0.85 },
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify(await skillsCatalog(ctx, agent.org_id, ownerId ?? agent.id)),
+        },
+      ],
+    }),
+  )
 
   // One small catalog plus a lazy URI template keeps the request-scoped server
   // constant-cost. Exact starter bytes are generated only when an agent reads one.
@@ -624,6 +655,17 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     // mint has to be told explicitly not to run off one (self-renewal — see
     // isMintedApiToken).
     const mintedToken = ctx.isMintedApiToken(c)
+    // Peek the JSON-RPC method: the workspace-skills count in the instructions is only
+    // read at initialize, and paying its query on every tool call is exactly the creep
+    // the round-trip budget suite pins. A GET (SSE open) or unparsable body reads false.
+    const isInitialize = await c.req.raw
+      .clone()
+      .json()
+      .then((b: unknown) => {
+        const one = (m: unknown) => (m as { method?: string } | null)?.method === "initialize"
+        return Array.isArray(b) ? b.some(one) : one(b)
+      })
+      .catch(() => false)
     const server = await buildServer(
       ctx,
       agent,
@@ -634,6 +676,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       boundWorkspaces,
       grant?.clientId ?? "",
       mintedToken,
+      isInitialize,
     )
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)
