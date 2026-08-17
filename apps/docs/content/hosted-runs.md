@@ -61,11 +61,11 @@ being recorded as free.
 
 Self-hosters can choose between:
 
-- **Polling runner** — the default; execution stays on an owner-operated machine.
-- **Node child process** — set `DERIVE_HOSTED_RUNS=true` so the API host starts the installed
+- **Polling runner:** the default. Execution stays on an owner-operated machine.
+- **Node child process:** set `DERIVE_HOSTED_RUNS=true` so the API host starts the installed
   Derive executor for queued work.
-- **Cloudflare Container** — an isolated scale-to-zero executor for Cloudflare deployments.
-- **Worker loop** — a lightweight model-and-fetch lane for jobs that do not require a filesystem
+- **Cloudflare Container:** an isolated scale-to-zero executor for Cloudflare deployments.
+- **Worker loop:** a lightweight model-and-fetch lane for jobs that do not require a filesystem
   or coding-agent CLI.
 
 CLI-backed modes use the same runner contract and image. The worker loop uses the same queue,

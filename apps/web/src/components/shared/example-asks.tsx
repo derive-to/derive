@@ -17,7 +17,7 @@ export function AskChip({ text, testId }: { text: string; testId: string }) {
     <button
       type="button"
       data-testid={testId}
-      onClick={() => copy(text, { success: "Copied — paste it into your agent" })}
+      onClick={() => copy(text, { success: "Copied. Paste it into your agent." })}
       className="flex items-center justify-between gap-3 rounded-lg border bg-secondary/40 px-4 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
     >
       <span className="text-pretty">"{text}"</span>

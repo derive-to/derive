@@ -125,7 +125,7 @@ export function ClaimDraft() {
         <p className="text-sm text-pretty text-muted-foreground">
           An agent published{" "}
           <span className="font-medium text-foreground">{preview.title || "Untitled draft"}</span>{" "}
-          as an expiring draft. Claim it to keep it — versions, comments, and sharing included.
+          as an expiring draft. Claim it to keep its versions, comments, and sharing controls.
         </p>
         <p className="text-sm text-muted-foreground">
           {preview.draft_url && (

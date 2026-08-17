@@ -22,16 +22,20 @@ Pick the tier that matches your scale and infrastructure:
 | **Cloudflare Basic** | Workers + D1 + DO | D1 (SQLite on edge) | R2 | Durable Objects | Edge-first, global, no infra to manage |
 | **Cloudflare Scale** | Workers + Postgres + DO | Postgres | R2 | Durable Objects | Edge serving + Postgres at scale (D1 limits exceeded) |
 
-All tiers run the same codebase and are additive: Lite + `DATABASE_URL` = Node Basic; add containers behind a load balancer for Node Scale.
+All tiers run the same codebase. Add `DATABASE_URL` to Lite for Node Basic. Put more
+containers behind a load balancer for Node Scale.
 
-¹ Realtime (live comments, presence, cursors) is currently **per-instance** on Node — a single container fans out in-process, but events do **not** yet cross containers. For cross-instance realtime today, use a Cloudflare tier (Durable Objects fan out globally); a shared Node backplane is planned but not yet built.
+¹ Realtime events for comments, presence, and cursors stay on one Node instance. A single
+container fans out events in-process, but events do not cross containers yet. Use a
+Cloudflare tier when you need cross-instance realtime. Its Durable Objects fan out events
+globally.
 
 ---
 
 ## Lite: single container
 
-One container gives you a complete, working Derive — sign-in, publish, comments, reviews,
-notifications, the sandboxed viewer — all served from `http://localhost:8080`.
+One container runs sign-in, publishing, comments, reviews, notifications, and the sandboxed
+viewer at `http://localhost:8080`.
 
 Use the [self-hosting quick start](quickstart.md#choose-one-path) for a fresh install. The
 commands there explicitly load the environment file, validate the rendered Compose model, create
@@ -60,10 +64,10 @@ instance before removing anything.
 
 - **`BASE_URL`** is the public origin you'll reach it at. It signs auth cookies and
   builds artifact share links, so set it to your real URL (behind a proxy, the
-  `https://…` domain — not `localhost`).
+  public `https://…` domain, not `localhost`).
 - **`DERIVE_AUTH_SECRET`** signs sessions. Set it (any 32-byte hex). If you don't, the
-  container generates one and persists it in the volume, so logins survive restarts —
-  but an explicit secret is what you want in production.
+  container generates one and persists it in the volume so logins survive restarts.
+  Set an explicit secret in production.
 
 ### Put it on the internet
 
@@ -86,8 +90,8 @@ Any host that builds a Dockerfile and gives you a persistent disk runs this as-i
 - **Railway**: New Project → *Deploy from GitHub repo*. `railway.json` points it at
   `deploy/Dockerfile`. Add a **Volume mounted at `/data`** for SQLite + blobs (or
   attach Railway Postgres and set `DATABASE_URL`).
-- **Fly.io**: `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`
-  then `fly deploy` — `fly.toml` already mounts `/data`.
+- **Fly.io**: `fly launch --config deploy/fly.toml --dockerfile deploy/Dockerfile`,
+  then `fly deploy`. `fly.toml` already mounts `/data`.
 - **Render**: a Docker web service + a persistent disk at `/data`.
 
 `PORT` is read from the environment, and the public URL is auto-detected from the
@@ -201,11 +205,11 @@ specialized deployments, but are intentionally not covered by the built-in backu
 Set `DERIVE_PREVIEWS=true` to enable server-side screenshot generation for artifact
 share cards (Open Graph images, link unfurls).
 
-- **Docker image**: Chromium is already bundled. Set the env var and you're done — no
-  extra steps.
+- **Docker image**: Chromium is already bundled. Set the environment variable. No extra
+  steps are needed.
 - **Bare-Node host**: run once after install to download the browser binary **and its
-  system libraries** (`--with-deps` installs the shared libs Chromium needs — libnss3,
-  libatk, etc. — on Debian/Ubuntu; without them the browser fails to launch at runtime):
+  system libraries**. On Debian or Ubuntu, `--with-deps` installs the shared libraries
+  Chromium needs, such as libnss3 and libatk. Without them, the browser fails to launch:
   ```bash
   corepack pnpm --filter @derive/api exec playwright install --with-deps chromium
   ```
@@ -228,28 +232,44 @@ https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 
 ### Slack app (optional)
 
-To connect Slack workspaces (Derive links unfurling as rich previews, comments mirrored to any
-number of subscribed channels with two-way reply-back and a Resolve/Reopen button on each comment
-card, plus top-level cards for publishes and proposal updates — with Approve / Request-changes
-buttons on a proposal card, authorized as the clicker's linked Derive account — plus **Save to
-Derive** on any message's shortcut menu, which files it as a comment on a doc you pick, plus DMs
-to a member for mentions, review requests and shares (reliable once a member links their Slack
-account), create one Slack app for this instance:
+Create one Slack app for each Derive instance. It can show link previews, mirror comments to
+subscribed channels, and let people reply or resolve a comment from Slack. It also sends updates
+for publishes and proposals, adds **Save to Derive** to message shortcuts, and can send direct
+messages for mentions, review requests, and shares. Direct messages work reliably after a member
+links their Slack account.
 
-1. Open **Settings → Integrations → Set up Slack app** (or go straight to `/settings/slack/app/new`). This renders the app manifest already filled in with this instance's URL, so the event subscriptions, interactivity, and bot scopes are configured for you — nothing to hand-edit. At [api.slack.com/apps](https://api.slack.com/apps) → **Create New App → From a manifest**, paste it, and create the app.
+1. Open **Settings → Integrations → Set up Slack app** (or go to `/settings/slack/app/new`).
+   Derive fills the app manifest with this instance's URL, event subscriptions,
+   interactivity, and bot scopes. At [api.slack.com/apps](https://api.slack.com/apps), choose
+   **Create New App → From a manifest**, paste the manifest, and create the app.
 2. From the app's **Basic Information** page, set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_SIGNING_SECRET` (all three required, or Slack stays off). On Workers these are secrets: `wrangler secret put SLACK_CLIENT_ID` (and the other two).
-3. Workspace admins connect from **Settings → Integrations → Add to Slack**, then subscribe one or more channels — from Settings, or by running `/derive subscribe` in the channel itself. Each subscription can be scoped to a collection and filtered by event type and by whether the author was a person or an agent, so `#eng-review` and `#agent-log` can want different things. Both public and private channels work; a private channel must have the bot invited (it can't self-join). A workspace connected before private-channel support was added must **reconnect** (Add to Slack again) to grant the `groups:*` scopes — there's no automatic reconnect prompt for it.
+3. Workspace admins connect from **Settings → Integrations → Add to Slack**. Subscribe a
+   channel from Settings or run `/derive subscribe` in the channel. A subscription can cover
+   one collection and filter events by type and by whether a person or agent authored them.
+   For a private channel, invite the bot first. Workspaces connected before private-channel
+   support must use **Add to Slack** again to grant the `groups:*` scopes.
 
-An app created from an older manifest won't have the newer features enabled — **interactivity** (the Resolve/Reopen buttons), the **"Sign in with Slack" redirect URL** (so members can link their account from **Settings → Integrations → Link account**), the **`/derive` slash command** (`/derive <query>` searches your artifacts; bare `/derive` lists your recent ones — results scoped to what the linking member can see; `/derive subscribe|unsubscribe|settings` manages the channel it is run in), the **Save to Derive message shortcut**, and the **`app_uninstalled` / `tokens_revoked` events** (without them, removing the app or revoking its bot token prompts no reconnect until some delivery happens to fail — which never happens on a workspace with no Slack traffic). Re-apply the manifest to your app — Slack app config → **App Manifest** → paste the updated one from `/v1/slack/manifest.json` — to turn them on. These are app-config changes, not scope changes, so they need no per-workspace reconnect.
+Apps created from an older manifest may be missing newer features. These include Resolve and
+Reopen buttons, the Slack sign-in redirect, the `/derive` command, the **Save to Derive**
+shortcut, and uninstall or token-revocation events. Reapply the current manifest from
+`/v1/slack/manifest.json` in **Slack app config → App Manifest**. These app configuration
+changes do not require each workspace to reconnect.
+
+`/derive <query>` searches the artifacts the linked member can see. Running `/derive` without
+a query lists recent artifacts. `/derive subscribe`, `/derive unsubscribe`, and
+`/derive settings` manage the current channel.
 
 Link previews need one extra step beyond a manifest re-apply: the **app unfurl domain** is
 registered on the app, and Slack only picks up a change to it when the app is **reinstalled** in
 each workspace. The manifest registers this instance's host, which also covers every vanity
-subdomain under it — but a workspace serving artifacts on its own BYO custom domain is out of
+subdomain under it. A workspace serving artifacts on its own custom domain is out of
 reach, because Slack caps an app at five unfurl domains and those hosts aren't known when the
 manifest is built. Links on such a domain simply won't preview; share the instance URL instead.
 
-Scope changes are the exception — scopes are granted at install, so a re-apply can't backfill them and the workspace must **Add to Slack** again. That applies to the `links:read` / `links:write` scopes link previews need, to the `groups:*` scopes noted above, and to the `commands` scope the `/derive` command requires, which the manifest omitted until recently: a workspace that installed before that fix has a dead slash command until it reconnects.
+Scope changes are different because Slack grants scopes at install time. Reapplying a manifest
+cannot add them. Use **Add to Slack** again when adding `links:read`, `links:write`, `groups:*`,
+or `commands`. Older installations without the `commands` scope must reconnect before
+`/derive` will work.
 
 Linking is per-user and optional: without it, DMs fall back to matching a member by their Derive account email; with it, DMs and Slack-reply attribution resolve to the member's exact Slack identity (so a Derive email that differs from the Slack email no longer drops the DM).
 
@@ -260,13 +280,13 @@ front end for it. Bot tokens are stored per workspace, encrypted at rest with `D
 
 ## Node Basic: containers + Postgres + S3/R2
 
-When one box isn't enough: put Postgres + object storage behind the API and the
-container holds no state — run as many as you like. Optionally serve the SPA from a CDN
+When one box is not enough, put Postgres and object storage behind the API. The
+container holds no state, so you can run more than one. You can also serve the SPA from a CDN
 on its own origin (then it's a cross-origin call, hence the CORS + cookie vars).
 
 ```
   browser
-    |  app.example.com   static SPA on a CDN (optional — the container also serves it)
+    |  app.example.com   static SPA on a CDN (optional; the container also serves it)
     |  api.example.com   Derive container(s): Fly / Hetzner / any host
     v
   Postgres (Neon, RDS, Supabase, self-hosted)   <- artifacts, versions, comments, users
@@ -321,18 +341,18 @@ cross-origin SPA→API request; `DERIVE_WEB_ORIGIN` allow-lists the SPA for CORS
 
 ## Node Scale: multiple containers
 
-Run several API containers behind a load balancer for request throughput — they're
+Run several API containers behind a load balancer for request throughput. They are
 stateless (session state lives in Postgres, blobs in S3/R2), so scaling out is just
 adding instances.
 
 One caveat: **realtime is per-instance.** Each container fans out SSE events (live
-comments, version publishes, presence) only to the clients connected to *that* container
-— there is no shared backplane yet, so an event on instance A doesn't reach a viewer on
+comments, version publishes, presence) only to the clients connected to *that* container.
+There is no shared backplane yet, so an event on instance A does not reach a viewer on
 instance B. If you need cross-instance realtime today, deploy a Cloudflare tier, where
 Durable Objects own each artifact's stream and fan out globally.
 
-A shared Node backplane (e.g. Redis pub/sub) to close this gap is planned but not yet
-implemented — the `Backplane` port (`apps/api/src/bus.ts`) is where it will plug in.
+A shared Node backplane, such as Redis pub/sub, is planned but not implemented. The
+`Backplane` port in `apps/api/src/bus.ts` is where it will plug in.
 
 ---
 
@@ -364,21 +384,21 @@ before the new Worker goes live, so a deploy can never ship code against a stale
 No one-shot setup SQL is needed: the two steps create the whole schema on a brand-new DB
 and reconcile an existing one.
 
-> Why this runs out of band: D1 forbids the `sqlite_master` introspection Better Auth's
-> migrator runs at boot (`SQLITE_AUTH`), and the edge — unlike the Node tier, which
-> re-applies schema on every boot — can't. So both schemas are applied at deploy time:
+> Why this runs out of band: D1 forbids the `sqlite_master` introspection that Better Auth's
+> migrator runs at boot (`SQLITE_AUTH`). Unlike the Node tier, the edge cannot reapply the
+> schema on every boot. Both schemas are therefore applied at deploy time:
 >
-> - **App schema** — `deploy:schema` re-applies `deploy/d1-schema.sql`: it creates new
+> - **App schema:** `deploy:schema` reapplies `deploy/d1-schema.sql`. It creates new
 >   tables AND adds new columns (a plain `CREATE TABLE IF NOT EXISTS` re-apply never adds
 >   columns to a table that already exists). Idempotent; run standalone with
 >   `pnpm --filter @derive/api deploy:schema`. Regenerate the SQL from the shared schema
 >   with `pnpm --filter @derive/db gen:d1-schema`.
-> - **Auth schema** — `migrate-auth-d1.ts --apply` derives the desired Better Auth schema
+> - **Auth schema:** `migrate-auth-d1.ts --apply` derives the desired Better Auth schema
 >   from the live config (the single source of truth) and reconciles the remote D1:
->   missing tables, columns, and unique indexes, idempotently. So adding a Better Auth
->   `additionalField` (or a plugin table) can never leave D1 behind the deployed Worker —
->   the gap that broke signup with `FAILED_TO_CREATE_USER` (the live `user` table was
->   missing `username`/`discoverable`). Inspect the plan with
+>   missing tables, columns, and unique indexes, idempotently. This keeps D1 aligned when
+>   you add a Better Auth `additionalField` or plugin table. A previous schema gap caused
+>   signup to fail with `FAILED_TO_CREATE_USER` because the live `user` table lacked
+>   `username` and `discoverable`. Inspect the plan with
 >   `pnpm --filter @derive/api migrate:auth` (dry run). (`gen-auth-schema.ts` remains a
 >   one-shot dump of the full auth DDL for a brand-new DB; routine deploys don't need it.)
 
@@ -394,7 +414,7 @@ catch-all that otherwise hijacks `/assets/*`); see `apps/api/scripts/prep-edge-a
 
 New D1 databases get the current shape from `deploy/d1-schema.sql` and need nothing extra.
 An **existing** one predating document chat still has `context_id NOT NULL` on
-`context_session`, and a chat session has no context — so those sessions fail to insert
+`context_session`. Chat sessions have no context, so they fail to insert
 until you run the one-shot relaxation:
 
 ```
@@ -435,7 +455,7 @@ wrangler d1 execute <db> --remote --command "SELECT sql FROM sqlite_master WHERE
 
 ### Chat (beta, off by default)
 
-Chat is gated per workspace by `chatBeta` and ships **off**, enforced server-side — the
+Chat is gated per workspace by `chatBeta` and ships **off**. The server enforces this: the
 route 404s for a workspace that has not opted in, so a stray build cannot expose it. Turn
 it on for one workspace with `PATCH /v1/workspace/settings {"chatBeta": true}`.
 
@@ -453,7 +473,7 @@ rather than a per-user one.
 
 **Streaming: the gateway should speak SSE, but need not.** When a browser is watching an
 attended reply, the request carries `stream: true` and `stream_options: {include_usage: true}`
-(the latter is what makes a streamed turn report cost at all — a stream otherwise omits usage),
+(the latter makes a streamed turn report its cost; a stream otherwise omits usage),
 and the answer is rendered as it arrives. A gateway that rejects those fields, or answers with
 ordinary JSON anyway, is **retried once without them** and the turn completes normally; the
 person just sees the reply appear all at once. So streaming is an enhancement, never a
@@ -483,7 +503,7 @@ payer a hosted workspace never has, so scheduled automations silently never fire
 > above. Unattended in-process runs (`DERIVE_LOOP_RUNS=1`) talk to the Anthropic Messages
 > API on each run's own resolved plan, so they take an **Anthropic** model id from the
 > separate `DERIVE_LOOP_MODEL` (unset = `claude-sonnet-5`). Do not set `DERIVE_LOOP_MODEL`
-> to a gateway path — `api.anthropic.com` answers `model_not_found`.
+> to a gateway path. `api.anthropic.com` will answer `model_not_found`.
 
 #### The model library (Settings → Instance → Models)
 
@@ -502,8 +522,8 @@ Models, with no redeploy and no restart:
 The line is the credential. A model added in the library rides the base URL and key this
 deployment already holds, so it costs no new secret; a genuinely different provider needs a key
 that only the environment can hold. The environment's ids are also the floor in a second sense:
-an operator can add to them, relabel them and pin to them, but cannot delete one — taking the
-last reachable model off a running deployment through a settings write is not a lever.
+an operator can add to them, relabel them, and pin to them, but cannot delete one. This prevents
+a settings change from removing the last reachable model from a running deployment.
 
 Pins take effect on the **next turn**, including in conversations that are already open. A pin
 names the model and never who pays: automation runs that resolve a connected plan through the
@@ -511,15 +531,15 @@ payer chain keep their own Anthropic model id (`DERIVE_LOOP_MODEL`), because the
 are the gateway's and the two namespaces are not interchangeable.
 
 Each model shows two timings, which answer different questions. **Observed** is the median and
-p95 of real turns, folded from the answers Derive already stores — the better number, and absent
-for a model nobody has used yet. **Probe** is one synthetic call through the exact path a turn
+p95 of real turns, calculated from the answers Derive already stores. It is the more useful
+number and is absent for a model nobody has used yet. **Probe** is one synthetic call through the path a turn
 takes, so it is comparable across models and available immediately. Adding a model probes it
 first and refuses an id the provider will not answer for.
 
 ### Automations (beta, off by default)
 
-Automations are gated per workspace by `automateBeta` and ship **off**. The gate is a real
-kill switch, enforced on every lane that creates or runs work: `POST
+Automations are gated per workspace by `automateBeta` and ship **off**. The server checks the
+gate wherever work is created or run. `POST
 /v1/automations/:id/run` and the REST create route 404, the MCP `automate` tool refuses
 `create` and `run_now`, and the deployment's cron tick will not materialize a due schedule
 for a workspace that has not opted in. Reads and deletes stay open, so a workspace that
@@ -529,24 +549,26 @@ Turn it on for one workspace with `PATCH /v1/workspace/settings {"automateBeta":
 
 ### Semantic search (optional)
 
-Workspace search is lexical (SQLite/D1 FTS + Postgres tsvector) everywhere by default. You can add a
-**hybrid dense arm** — chunk-level embeddings fused with the lexical arm (reciprocal-rank fusion) —
-that finds documents by meaning, not just literal tokens (e.g. "getting started" matches an
-*onboarding* doc); the multilingual `bge-m3` model also covers CJK, which the lexical tokenizer
-handles poorly. Visibility is unchanged: the vector index only *nominates* candidates — the same
-`listArtifacts` gate re-checks every one, so it can never widen what a viewer sees.
+Workspace search uses SQLite or D1 FTS and Postgres `tsvector` by default. You can add
+chunk-level embeddings and combine their results with lexical search through reciprocal-rank
+fusion. This helps searches based on meaning. For example, "getting started" can match a document
+about onboarding. The multilingual `bge-m3` model also handles CJK text better than the lexical
+tokenizer.
 
-The vectors live in **pgvector in your Postgres** — the same DB as everything else, so there's no
-separate vector store, no per-query vector billing, and a committed vector is queryable on the next
-request (pgvector indexes synchronously). Only the embedder differs by tier:
+Semantic search does not change access. The vector index suggests candidates, then
+`listArtifacts` checks the viewer's access to every result.
+
+Vectors live in **pgvector in your Postgres database**. You do not need a separate vector store,
+and a committed vector is available to the next request because pgvector indexes synchronously.
+The embedder depends on the deployment tier:
 
 - **Cloudflare edge** (Workers + Hyperdrive Postgres): embeddings from the Workers AI `AI` binding.
   Activates when both `AI` and `HYPERDRIVE` are bound. The pgvector table (`artifact_vec`) + its
-  HNSW index are created out of band by `deploy:pg-schema` (part of `pnpm deploy`), which also sets
-  `hnsw.ef_search` DB-wide — nothing to provision by hand.
+  HNSW index are created out of band by `deploy:pg-schema` as part of `pnpm deploy`. That command
+  also sets `hnsw.ef_search` for the database.
 - **Node self-host** (Postgres): set `DERIVE_EMBED_PROVIDER` to pick the embedder. `local` (the
-  zero-config, no-Cloudflare choice) runs an in-process ONNX model (bge-small, ~30 MB, downloaded on
-  first boot and cached) — nothing else to set. `workersai` embeds via Cloudflare Workers AI over
+  option that does not need Cloudflare) runs an in-process ONNX model (bge-small, about 30 MB,
+  downloaded on first boot and cached). `workersai` embeds via Cloudflare Workers AI over
   REST and additionally needs `DERIVE_EMBED_CF_ACCOUNT_ID` + `DERIVE_EMBED_CF_API_TOKEN`. Either way
   the `artifact_vec` table is created at boot. With the embedded-SQLite default there's no pgvector,
   so `DERIVE_EMBED_PROVIDER` is ignored and search stays lexical (a warning is logged).
@@ -559,15 +581,13 @@ After enabling + deploying, backfill the existing corpus (new publishes index au
 curl -XPOST -H "authorization: Bearer $DERIVE_TOKEN" https://<host>/v1/system/search-reindex
 ```
 
-The dense arm is best-effort on both write and read: an embed/store hiccup never fails a publish, and
-a query failure falls back to the (synchronous, read-your-writes) lexical arm — so search degrades to
-lexical rather than erroring. Left off by default so a deploy without an embedder never fails.
+Embedding failures do not fail a publish. Query failures fall back to synchronous lexical search.
+The feature is off by default, so deployments without an embedder continue to work.
 
-**Note.** Each artifact is chunk-embedded (one vector per ~1800-char passage, ≤20/doc), so the index
-holds ~5–20× more rows than one-vector-per-doc would — trivial for pgvector at this scale (HNSW reads
-stay a few ms). Re-run the backfill after changing the chunking scheme or the embedder model so the
-stored vectors match; an embedder swap that changes the dimension needs the table dropped first (the
-`ensureSchema` dimension guard refuses to mix incompatible vector spaces).
+Each artifact uses one vector per passage of about 1,800 characters, with at most 20 passages per
+document. This creates about 5 to 20 times more rows than one vector per document. Re-run the
+backfill after changing the chunking scheme or embedder model. If a new embedder changes the vector
+dimension, drop the table first. The `ensureSchema` guard will not mix vector dimensions.
 
 ---
 
@@ -580,10 +600,9 @@ When to switch: D1 has a 10 GB storage limit per database and single-region writ
 your workspace grows beyond that, or you need cross-region write performance, point the
 Worker at a Postgres instance instead. This is the tier the hosted product runs.
 
-The Worker reaches Postgres through [Hyperdrive](https://developers.cloudflare.com/hyperdrive/)
-(Cloudflare's connection pooler — a Worker opens a fresh short-lived connection per
-request, which raw Postgres handles badly; Hyperdrive holds the real server-side pool
-and the per-request dial goes to a colo-local proxy). The binding's presence is the
+The Worker reaches Postgres through [Hyperdrive](https://developers.cloudflare.com/hyperdrive/),
+Cloudflare's connection pooler. A Worker opens a short-lived connection for each request, while
+Hyperdrive holds the server-side pool and directs each connection to a nearby proxy. The binding's presence is the
 switch: `HYPERDRIVE` bound ⇒ the Postgres path; unbound ⇒ D1.
 
 ```bash
@@ -591,7 +610,7 @@ wrangler hyperdrive create derive-pg --caching-disabled \
   --connection-string='postgres://user:pass@host/db?sslmode=require'
 # put the returned id into [[hyperdrive]] in wrangler.toml
 # --caching-disabled is required, not a tuning choice: Hyperdrive caches SELECT
-# results (~60s) by default, and Derive reads its own writes — workspace
+# results (~60s) by default. Derive reads its own writes, so workspace
 # resolution and artifact read-back return stale results under caching (on first
 # login this provisioned a new workspace on every request until the TTL expired).
 wrangler r2 bucket create derive-blobs   # if not already created
@@ -600,13 +619,13 @@ pnpm --filter @derive/api deploy         # build:web → schemas (D1 + pg) → w
 ```
 
 `deploy:pg-schema` (part of `deploy`, or standalone) brings Postgres fully current
-before the new Worker goes live — the pg twin of the D1 deploy's two schema steps: it
+before the new Worker goes live. Like the D1 deploy's two schema steps, it
 applies the app DDL (idempotent) and reconciles the Better Auth schema, reading
 `DATABASE_URL` from the environment or the repo-root `.env`. Like the D1 tier, the edge
 never applies schema at runtime (the Node tier does, on boot).
 
 Durable Objects (`ArtifactRoom`, `WebhookOutbox`, `RepoSyncRunner`) continue handling
-realtime fan-out, the webhook outbox drain, and GitHub sync — those stay on the edge
+realtime fan-out, the webhook outbox drain, and GitHub sync. Those stay on the edge
 regardless, and the outbox/sync DOs read the same Postgres through Hyperdrive.
 
 The `[[d1_databases]]` binding in `wrangler.toml` is still required by the Workers
@@ -614,7 +633,7 @@ runtime even when `HYPERDRIVE` takes over at app startup. Leave the binding in p
 the D1 database itself will be idle.
 
 PlanetScale note: its connection strings end in `sslrootcert=system`, which
-node-postgres reads as a file path — drop that parameter (keep `sslmode`); the deploy
+node-postgres reads as a file path. Drop that parameter, keep `sslmode`, and the deploy
 scripts already tolerate it.
 
 ### Billing (Stripe)

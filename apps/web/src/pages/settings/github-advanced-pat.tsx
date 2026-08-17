@@ -28,7 +28,9 @@ export function AdvancedPat({ onCreated }: { onCreated: () => void }) {
   const valid = validRepo(repo)
   const repoField = fieldError(
     "github-repo-error",
-    repo.trim() && !valid ? "Use owner/repo — e.g. acme/docs (a github.com URL works too)." : null,
+    repo.trim() && !valid
+      ? "Use owner/repo, for example acme/docs. A github.com URL also works."
+      : null,
   )
   const connect = useApiMutation({
     mutationFn: () =>
@@ -38,7 +40,7 @@ export function AdvancedPat({ onCreated }: { onCreated: () => void }) {
         includes: includes.trim() || undefined,
         token: token.trim() || undefined,
       }),
-    success: "Repo connected — syncing",
+    success: "Repository connected. Syncing now.",
     onSuccess: () => {
       setRepo("")
       setRef("")

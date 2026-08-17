@@ -27,7 +27,7 @@ export function useAgentTemplateHandoff(target: AgentTemplateTarget) {
     if (!brief.trim()) return
     setError("")
     const ok = await copy(handoff, {
-      success: "Copied — paste it into your agent",
+      success: "Copied. Paste it into your agent.",
       error: null,
     })
     if (!ok) {

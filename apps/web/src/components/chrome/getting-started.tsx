@@ -25,7 +25,7 @@ const flag = (key: string): boolean => {
  * agent and had it publish — then retires itself for good. Each row completes from
  * a real signal from the server's onboarding endpoint, never from clicks. Dismiss
  * is one click and permanent
- * (per-browser); the instructions stay reachable via ⌘K → "Connect an agent".
+ * (per-browser); the instructions stay reachable through command search.
  * Rendered for EVERY signed-in user who hasn't finished or dismissed it — including
  * accounts onboarded before this shipped: they are the unactivated cohort this
  * exists for.
@@ -76,7 +76,7 @@ export function GettingStarted() {
   const steps = [
     {
       key: "connect",
-      label: "Connect an agent",
+      label: "Connect your coding agent",
       detail: "One command links the agent you already use.",
       done: ob.agent_connected,
       doneNote: ob.agent_name,
@@ -84,7 +84,7 @@ export function GettingStarted() {
     {
       key: "publish",
       label: "Publish through your agent",
-      detail: "Ask it to publish anything — you get a permanent, versioned link.",
+      detail: "Ask it to publish something. You get a permanent link with version history.",
       done: ob.published_via_agent,
       doneNote: null,
     },

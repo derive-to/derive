@@ -6,7 +6,7 @@ order: 8
 # Organizing the library (tags + collections)
 
 `organize` is the library's findability layer: browse TAGS (lightweight labels) and
-COLLECTIONS (a set treated as a unit), in one tool. Tag freely and reuse the vocabulary — a
+COLLECTIONS (a set treated as a unit), in one tool. Tag freely and reuse the vocabulary. A
 well-tagged library is findable. Reach for a collection only when a set is a real unit, not
 for plain findability. Tags can also be set at publish time via publish's `tags` param.
 
@@ -19,24 +19,24 @@ for plain findability. Tags can also be set at publish time via publish's `tags`
 
 ## Write mode (pass `short_ids` plus any of these)
 
-- **`add`** — union onto existing tags (never drops what's there).
-- **`remove`** — drop these tags.
-- **`set`** — replace the whole tag set (overrides add/remove).
-- **`collection`** — fold the artifacts into a collection, by id or by name (created if new).
+- **`add`:** add to the existing tags without removing any.
+- **`remove`:** remove these tags.
+- **`set`:** replace the whole tag set and override `add` or `remove`.
+- **`collection`:** add the artifacts to a collection by id or name; a new name creates one.
 
 Tags are normalized (trimmed, lowercased, deduped, capped 20). Each artifact is authorized on
 its own; ones you can't edit come back as `skipped`, never failing the batch.
 
 ## Cleaning up after yourself (`state`)
 
-The same tool retires, restores, and deletes — so the way back is never a separate thing to
+The same tool retires, restores, and deletes, so restoring is not a separate workflow to
 discover. Pass `short_ids` plus `state`:
 
-- **`state:'archived'`** — hide it from ordinary library views and search while keeping
+- **`state:'archived'`:** hide it from ordinary library views and search while keeping
   its URL, content, versions, comments and shares intact. The response hands you the exact
   undo call. Use this for experiments and transient work.
-- **`state:'live'`** — restore an archived artifact to the library.
-- **`state:'deleted'`** — **permanent**. Every version, comment and proposal goes, contexts
+- **`state:'live'`:** restore an archived artifact to the library.
+- **`state:'deleted'`:** **permanent**. Every version, comment and proposal is deleted. Contexts
   running from the artifact go with it, and there is no undo. The response says so and
   carries no reversing call, because there isn't one.
 

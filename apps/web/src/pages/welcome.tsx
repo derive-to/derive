@@ -42,7 +42,7 @@ const WATCH_INTERVAL_MS = 2000
  *   3. first artifact live → open it / continue
  * Profile, passkey, and Brandprint setup live in Settings and the home nudges now;
  * activation pays for everything else. Reachable any time at /welcome — it stays
- * the app's connect-an-agent surface after onboarding (⌘K → "Connect an agent"),
+ * the app's coding-agent connection surface after onboarding,
  * so the connected state keeps the tabs one click away for adding a second agent.
  */
 export function Welcome() {
@@ -130,7 +130,7 @@ export function Welcome() {
                 className="text-muted-foreground"
                 onClick={() => setShowConnect((v) => !v)}
               >
-                {showConnect ? "Hide setup" : "Connect another agent"}
+                {showConnect ? "Hide setup" : "Connect another coding agent"}
               </Button>
             </div>
             {showConnect && <ConnectAgent testidPrefix="welcome" />}
@@ -142,8 +142,7 @@ export function Welcome() {
           </section>
         )}
 
-        {/* Step 2 — the first publish, suggested in the user's own words. Appears the
-            moment the agent connects; collapses to the artifact card once it lands. */}
+        {/* Offer a first publish after connection, then replace it with the published artifact. */}
         {agent && !first && (
           <section className="flex flex-col gap-3">
             <h2 className="font-serif text-xl font-medium tracking-tight text-foreground">
@@ -162,8 +161,7 @@ export function Welcome() {
           </section>
         )}
 
-        {/* Step 3 — the aha moment, witnessed: the thing the agent made appears on the
-            page that told you to ask for it (or greets a returning visitor). */}
+        {/* Show the first artifact here for new and returning users. */}
         {first && (
           <section className="flex flex-col gap-4" data-testid="welcome-first-artifact">
             <DoneRow testId="welcome-published">First artifact published</DoneRow>
@@ -195,7 +193,6 @@ export function Welcome() {
           />
         )}
 
-        {/* Exit row: before the first artifact, a quiet skip; after it, the real doors. */}
         <div className="flex items-center justify-between gap-3">
           {first ? (
             <>
@@ -228,15 +225,14 @@ export function Welcome() {
         </div>
 
         <p className="text-center text-sm text-muted-foreground">
-          You can reopen this any time — search "Connect an agent" in ⌘K, or visit /welcome.
+          Return from the account menu or search for “Connect your coding agent.”
         </p>
       </div>
     </div>
   )
 }
 
-// A completed step: the quiet green tick + a line. The check is the whole reward —
-// no confetti, no card.
+// Compact completed state shared by the connection and publish steps.
 function DoneRow({ children, testId }: { children: React.ReactNode; testId: string }) {
   return (
     <p data-testid={testId} className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -246,8 +242,7 @@ function DoneRow({ children, testId }: { children: React.ReactNode; testId: stri
   )
 }
 
-// The honest pulse: the page really is polling the signal it names, so the moment
-// the user acts in their other window, this row is replaced by a DoneRow.
+// Replaced by DoneRow when the polling query sees the expected state.
 function WatchRow({ children, testId }: { children: React.ReactNode; testId: string }) {
   return (
     <p

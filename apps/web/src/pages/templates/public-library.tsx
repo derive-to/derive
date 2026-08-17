@@ -264,7 +264,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
                   onClick={() => setAgentTarget(targetFromLibraryEntry(data.id, entry))}
                 >
                   <Icon name="sparkles" />
-                  {entry.kind === "context" ? "Make it ours" : "Make it mine"}
+                  Use template
                 </Button>
               ) : (
                 <Button
@@ -280,7 +280,7 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
                     }}
                   >
                     <Icon name="sparkles" />
-                    {entry.kind === "context" ? "Make it ours" : "Make it mine"}
+                    Use template
                   </Link>
                 </Button>
               )

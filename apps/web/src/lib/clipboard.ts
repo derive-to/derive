@@ -23,7 +23,7 @@ export async function copyText(
   } catch {
     if (opts.error !== null)
       // A clipboard write is not an API mutation; this is the copy affordance's own failure toast.
-      toast.error(opts.error ?? "Couldn't copy — select the text and copy it manually.") // mutation-ignore
+      toast.error(opts.error ?? "Couldn't copy. Select the text and copy it manually.") // mutation-ignore
     return false
   }
 }

@@ -6,9 +6,11 @@ const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: 
 const USERS = [u(1), u(2), u(3), u(4)]
 const PAST = "2000-01-01T00:00:00Z"
 
-const boot = (name: string) => {
+const boot = (name: string, billingEnforceAt?: string) => {
   const fake = new FakeBilling()
-  const made = makeAuthedApp(name, USERS, "editor", { deps: { billing: fake } })
+  const made = makeAuthedApp(name, USERS, "editor", {
+    deps: { billing: fake, billingEnforceAt },
+  })
   return { ...made, fake }
 }
 
@@ -52,7 +54,7 @@ describe("billing routes", () => {
   })
 
   it("checkout: owner gets a URL, quantity = live seats", async () => {
-    const { app, fake } = boot("br_checkout")
+    const { app, fake } = boot("br_checkout", PAST)
     const r = await app.request(
       "/v1/billing/checkout",
       jsonAs(as("u1@x.test"), { tier: "team", interval: "month" }),
@@ -63,12 +65,26 @@ describe("billing routes", () => {
   })
 
   it("checkout: annual business maps to business_annual", async () => {
-    const { app, fake } = boot("br_annual")
+    const { app, fake } = boot("br_annual", PAST)
     await app.request(
       "/v1/billing/checkout",
       jsonAs(as("u1@x.test"), { tier: "business", interval: "year" }),
     )
     expect(fake.checkouts[0]?.priceLookupKey).toBe("business_annual")
+  })
+
+  it("checkout: beta returns 409 before creating billing state", async () => {
+    const { app, fake, meta } = boot("br_checkout_beta")
+    const r = await app.request(
+      "/v1/billing/checkout",
+      jsonAs(as("u1@x.test"), { tier: "team", interval: "month" }),
+    )
+    expect(r.status).toBe(409)
+    expect((await r.json()).error).toBe(
+      "Billing has not started. Paid plans are available after beta.",
+    )
+    expect(fake.checkouts).toHaveLength(0)
+    expect(await meta.getSubscription("default")).toBeNull()
   })
 
   it("checkout: non-owner 403; no driver 503", async () => {

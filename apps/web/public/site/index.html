@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <script>
-/* theme boot — set the class before first paint (the choice lives in localStorage) */
+/* Apply the saved theme before first paint. */
 (function(){
   var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
   if (m !== 'light' && m !== 'system') m = 'dark';
@@ -14,10 +14,10 @@
   c.toggle('light', light); c.toggle('dark', !light);
 })();
 </script>
-<title>Derive — Keep, share, and improve agent-made work.</title>
+<title>Derive | Keep, share, and improve agent-made work</title>
 <meta name="description" content="Turn agent output into work you can keep, share, and improve. Durable URLs, complete version history, comments, and optional formal review. Fair Source and self-hostable.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Derive — Keep, share, and improve agent-made work.">
+<meta property="og:title" content="Derive | Keep, share, and improve agent-made work">
 <meta property="og:description" content="One durable workspace for agent-made plans, reports, pages, decks, and sites. Hosted or self-hosted.">
 <meta property="og:url" content="https://derive.to/">
 <meta property="og:image" content="https://derive.to/site/og-artifacts.png">
@@ -27,11 +27,7 @@
 <link rel="canonical" href="https://derive.to/">
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
-<!-- Structured data. Search engines use this, but the reason it's here is URL
-     classifiers: enterprise web filters categorise unknown domains partly from
-     machine-readable identity, and an uncategorised domain gets blocked by
-     default at a lot of companies. Keep it factual — claims here are read by
-     things that penalise overreach. -->
+<!-- Keep structured data factual for search engines and URL classifiers. -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -121,7 +117,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--fg);outline-offset:
 a{color:inherit;text-decoration:none;cursor:default}
 button{cursor:default;font:inherit;background:none;border:0;color:inherit;padding:0}
 
-/* film grain — heavier here than the app: this page is a poster */
+/* Subtle texture for the marketing surface. */
 body::after{
   content:"";position:fixed;inset:0;z-index:300;pointer-events:none;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
@@ -134,7 +130,7 @@ html.light body::after{mix-blend-mode:multiply;opacity:.05}
 h1,h2,h3{font-weight:500;letter-spacing:-0.025em;margin:0}
 p{margin:0;text-wrap:pretty}
 
-/* reveal-on-scroll — quick and quiet: you should never wait to read */
+/* Short reveal that does not delay reading. */
 .reveal{opacity:0;transform:translateY(8px);transition:opacity .38s ease-out,transform .38s ease-out}
 .reveal.in{opacity:1;transform:none}
 
@@ -175,49 +171,17 @@ html.light .wordmark .wm-light{display:block}
 .nav-right .nav-signin:hover .arr{transform:translateX(3px)}
 @media(max-width:480px){.nav-right a:not(.nav-signin){display:none}}
 
-/* ══════════ HERO — the tagline, then the artifact ══════════ */
+/* Hero */
 .hero{position:relative;padding:150px 0 0}
 .hero .stage{
   max-width:var(--maxw);margin:0 auto;padding:0 28px;width:100%;
   display:flex;flex-direction:column;align-items:center;text-align:center;
 }
-.state-line{
-  font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--muted);
-  min-height:20px;display:flex;align-items:center;justify-content:center;gap:10px;
-}
-.state-line .vdot{width:6px;height:6px;border-radius:50%;background:var(--muted);transition:background .3s}
-.state-line.approved .vdot{background:var(--success)}
-.state-line .note{transition:opacity .3s}
-
 .derivation{
   margin-top:26px;
   font-size:clamp(40px,6.6vw,90px);
   line-height:1.04;letter-spacing:-0.035em;font-weight:500;
 }
-.derivation .row{display:block}
-.word{
-  display:inline-block;position:relative;white-space:nowrap;
-  opacity:0;transform:translateY(.18em);
-  transition:opacity .32s cubic-bezier(.16,1,.3,1),transform .32s cubic-bezier(.16,1,.3,1),color .35s;
-  margin-right:.22em;
-}
-.word.on{opacity:1;transform:none}
-/* the pen strike: a slightly tilted ink line drawn left→right */
-.word .strike{
-  position:absolute;left:-2%;right:auto;top:52%;height:.055em;width:0;
-  background:var(--fg);border-radius:.03em;transform:rotate(-2deg);
-  transition:width .28s cubic-bezier(.7,0,.3,1);pointer-events:none;
-}
-.word.struck{color:var(--faint)}
-.word.struck .strike{width:104%}
-.word.struck.settle{opacity:.34}
-.word.final-word.on{color:var(--fg)}
-/* the current-state underline on the surviving word */
-.word .under{
-  position:absolute;left:0;bottom:-.06em;height:.045em;width:0;background:var(--fg);
-  transition:width .4s cubic-bezier(.16,1,.3,1) .05s;border-radius:.03em;
-}
-.word.approved .under{width:100%}
 
 .hero .sub{
   margin-top:36px;max-width:52ch;font-size:clamp(16px,1.6vw,19px);color:var(--muted);line-height:1.65;
@@ -227,9 +191,7 @@ html.light .wordmark .wm-light{display:block}
   margin-top:30px;display:flex;flex-direction:column;align-items:center;gap:0;
 }
 
-/* ── the primary: hand the setup prompt to whatever agent you run.
-      Value first — the agent publishes a first page before any signup;
-      the email form below is the fallback for the agentless. ── */
+/* Primary setup action. The email form is the fallback without a coding agent. */
 .hero-cta{height:50px;padding:0 26px;font-size:15.5px;cursor:pointer}
 .hero-cta svg{flex:none;opacity:.75}
 .hero-cta.copied{background:var(--primary-hover)}
@@ -238,24 +200,19 @@ html.light .wordmark .wm-light{display:block}
   margin-top:14px;font-size:13.5px;color:var(--muted);max-width:56ch;text-align:center;line-height:1.6;text-wrap:balance;
 }
 .hero-eyebrow{margin-bottom:0;color:var(--muted);font-size:14px;letter-spacing:.14em}
-/* the tagline in gradient ink: lit at the cap line, settling toward the baseline */
+/* Tagline gradient */
 .grad-ink{
   background-image:linear-gradient(178deg,var(--ink-top) 6%,var(--fg) 44%,var(--ink-bot) 100%);
   -webkit-background-clip:text;background-clip:text;color:transparent;
 }
 .wl-note-slot{min-height:0;transition:min-height .3s ease}
-.replay{
-  font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--faint);
-  display:inline-flex;align-items:center;gap:7px;margin-top:0;
-}
-.replay:hover{color:var(--muted)}
 .hero .foot-hint{
   margin-top:22px;text-align:center;
   font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
   opacity:.8;
 }
 
-/* ══ the hero artifact: a document you can scrub through time ══ */
+/* Interactive artifact example */
 .demo{max-width:var(--maxw);margin:84px auto 0;padding:0 28px}
 .fig{
   display:flex;align-items:center;gap:10px;margin-bottom:12px;
@@ -287,7 +244,7 @@ html.light .wordmark .wm-light{display:block}
 .demo-body ::selection{background:color-mix(in srgb,var(--success) 32%,transparent)}
 @media(max-width:840px){.demo-body{grid-template-columns:minmax(0,1fr)}.demo-comments{border-left:0;border-top:1px solid var(--border-soft)}}
 .doc{padding:34px 44px 36px;text-align:left;display:flex;flex-direction:column}
-/* the OSC-8 launch page inside the frame — pure ink, drawn like a filing */
+/* Launch-page preview inside the artifact frame. */
 .doc .lnav{display:flex;align-items:baseline;gap:16px;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
 .doc .lnav .wm{color:var(--fg);font-weight:600;letter-spacing:.16em}
 .doc .lnav .lb{margin-left:auto;color:var(--fg);border-bottom:1px solid var(--fg);padding-bottom:1px}
@@ -457,57 +414,8 @@ html.light .pcursor .flag{color:#fff}
 .waitlist-done{display:none;align-items:center;gap:10px;height:52px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:var(--card);font-size:14px}
 .waitlist-done .tick{color:var(--success)}
 
-/* ══════════ MANIFESTO ══════════ */
-.manifesto{padding-top:190px}
-.manifesto .m-line{
-  font-size:clamp(26px,3.8vw,44px);line-height:1.22;letter-spacing:-0.025em;font-weight:500;
-  max-width:24ch;
-}
-.manifesto .m-line + .m-line{margin-top:64px}
-.manifesto .m-line .q{color:var(--muted)}
-.manifesto .m-kicker{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:34px;display:flex;align-items:center;gap:12px}
-.manifesto .m-kicker::after{content:"";flex:1;max-width:120px;border-top:1px dashed var(--border)}
-.m-answer{margin-top:72px;max-width:62ch;font-size:18px;color:var(--muted);line-height:1.7}
-.m-answer strong{color:var(--fg);font-weight:500}
-
-/* ══════════ THE OCEAN — chats scroll away, artifacts stay ══════════ */
-.ocean{margin-top:190px;position:relative;height:560px;overflow:hidden;border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft)}
-.ghosts{
-  position:absolute;inset:-40px 0;display:flex;justify-content:space-around;gap:40px;
-  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent);
-  mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent);
-}
-.gcol{display:flex;flex-direction:column;gap:34px;animation:drift 36s linear infinite;filter:blur(.6px)}
-.gcol.g2{animation-duration:52s;animation-delay:-18s}
-.gcol.g3{animation-duration:44s;animation-delay:-9s}
-@keyframes drift{from{transform:translateY(0)}to{transform:translateY(-50%)}}
-.ghost{
-  font-family:var(--mono);font-size:12px;color:var(--fg);opacity:.16;white-space:nowrap;
-  border:1px solid var(--border-soft);border-radius:8px;padding:9px 13px;background:var(--card);
-}
-.ghost.plain{border:0;background:none;opacity:.11}
-.kept{
-  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
-}
-.kept-card{
-  background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px 26px;
-  box-shadow:0 0 0 1px color-mix(in srgb,var(--fg) 4%,transparent),0 0 80px 30px var(--halo);
-  display:flex;flex-direction:column;gap:12px;min-width:min(430px,88vw);
-}
-.kept-card .kc-top{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px;color:var(--fg)}
-.kept-card .kc-top .lock{color:var(--success);display:inline-flex}
-.kept-card .kc-meta{display:flex;align-items:center;gap:14px;font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.03em}
-.kept-card .kc-meta .ok{color:var(--success)}
-.kept-line{
-  font-size:clamp(22px,3vw,32px);font-weight:500;letter-spacing:-0.02em;text-align:center;
-  text-shadow:0 0 24px var(--bg);
-}
-.kept-line em{font-style:normal;color:var(--muted)}
-
 /* ══════════ CHAPTERS ══════════ */
 .chapter{padding-top:210px}
-.chapter .ch-head{display:flex;align-items:baseline;gap:22px}
-.chapter .ch-num{font-family:var(--mono);font-size:13px;color:var(--faint);letter-spacing:.1em}
 .chapter h2{font-size:clamp(44px,7vw,92px);line-height:1;letter-spacing:-0.035em}
 .chapter .ch-body{margin-top:30px;display:grid;grid-template-columns:minmax(0,60ch) 1fr;gap:64px;align-items:start}
 @media(max-width:880px){.chapter .ch-body{grid-template-columns:minmax(0,1fr)}}
@@ -627,17 +535,15 @@ html.light .pcursor .flag{color:#fff}
 .price .p-vow strong{color:var(--fg);font-weight:500}
 
 /* ══════════ FINALE ══════════ */
-.finale{padding-top:230px;position:relative;text-align:center}
-.finale .state-line{margin-bottom:24px}
-.finale .derivation{font-size:clamp(32px,5vw,72px);margin:0 auto;max-width:22ch}
-.finale .derivation .word{margin-right:.18em}
+.finale{padding-top:170px;position:relative;text-align:center}
+.finale .derivation{font-size:clamp(32px,5vw,58px);margin:0 auto;max-width:22ch}
 .finale .f-sub{margin:24px auto 0;max-width:46ch;font-size:17px;color:var(--muted);line-height:1.7}
 .finale .waitlist{margin:40px auto 0;justify-content:center}
 .finale .f-alt{margin-top:18px;font-family:var(--mono);font-size:12px;color:var(--faint)}
 .finale .f-alt a{color:var(--muted);border-bottom:1px solid var(--border)}
 .finale .f-alt a:hover{color:var(--fg)}
 
-/* giant watermark footer */
+/* Footer watermark */
 footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid var(--border-soft)}
 .watermark{
   position:absolute;left:50%;bottom:-.34em;transform:translateX(-50%);
@@ -652,10 +558,8 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
 .foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
 .foot-links{display:flex;gap:22px;font-size:13px;color:var(--muted)}
 .foot-links a:hover{color:var(--fg)}
-.foot-inner .license{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.02em}
-@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
 
-/* ══════════ MOBILE — the poster, folded to phone width ══════════ */
+/* Mobile */
 @media(max-width:640px){
   .wrap{padding:0 20px}
   .nav-inner{padding:0 18px;height:58px;gap:16px}
@@ -684,16 +588,6 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   .timeline{margin-top:20px}
   .version-line{display:block}
 
-  .manifesto{padding-top:120px}
-  .manifesto .m-kicker{margin-bottom:24px}
-  .manifesto .m-line + .m-line{margin-top:40px}
-  .m-answer{margin-top:44px;font-size:16px}
-
-  .ocean{margin-top:120px;height:440px}
-  .gcol{gap:26px}
-  .ghost{font-size:11px;padding:8px 11px}
-  .kept-card{min-width:0;width:min(430px,88vw);padding:18px 20px}
-
   .chapter{padding-top:128px}
   .chapter .ch-body{margin-top:24px;gap:40px}
   .spec-body{padding:14px}
@@ -708,7 +602,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   .price{padding-top:128px}
   .price .p-sub{margin-top:18px;font-size:16px}
 
-  .finale{padding-top:150px}
+  .finale{padding-top:120px}
   .finale .f-sub{margin-top:20px;font-size:16px}
   .finale .waitlist{margin-top:32px}
   .finale .f-alt{line-height:2.2}
@@ -750,7 +644,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
         <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="nav-signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr">→</span></a>
+      <a class="nav-signin" href="/login?src=nav_signin">Sign in <span class="arr">→</span></a>
     </div>
   </div>
 </nav>
@@ -761,20 +655,20 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   <div class="stage">
     <div class="eyebrow hero-eyebrow">A workspace for agent-made artifacts</div>
     <h1 class="derivation grad-ink">Keep the result, not just the&nbsp;session.</h1>
-    <p class="sub">Turn plans, reports, pages, decks, and sites into work you can keep, share, and improve. The latest version stays at the same durable URL, with its history and comments. <strong>Hosted or self-hosted.</strong></p>
+    <p class="sub">Save plans, reports, pages, decks, and sites at one lasting URL. Share them, leave comments, and keep working without losing earlier versions. <strong>Hosted or self-hosted.</strong></p>
     <div class="cta-row">
-      <button class="btn btn-primary hero-cta" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — now paste it into your agent">
+      <button class="btn btn-primary hero-cta" type="button" data-copy-from="agentPrompt" data-copied-label="Copied. Paste it into your agent">
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M9.5 4.5v-2a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 2.5V8A1.5 1.5 0 0 0 3 9.5h1.5" stroke="currentColor" stroke-width="1.3"/></svg>
-        <span class="copy-label">Copy instructions for my agent</span>
+        <span class="copy-label">Copy setup prompt</span>
       </button>
       <a class="btn btn-ghost hero-proof" href="https://derive.to/artifacts/example-launch-page-5cmep9l9">Open a live example <span aria-hidden="true">→</span></a>
-      <p class="hero-cta-note">Publish a real page and get a durable link in about 30 seconds.</p>
+      <p class="hero-cta-note">Paste it into Claude Code, Codex, Cursor, or another MCP client.</p>
     </div>
   </div>
 
   <!-- Product walkthrough: representative UI, not a live customer artifact. -->
   <div class="demo">
-    <div class="fig">FIG. 01 — product walkthrough · one artifact, changing over time</div>
+    <div class="fig">FIG. 01 · product walkthrough · one artifact changing over time</div>
     <div class="demo-stage">
       <span class="tick tl" aria-hidden="true"></span><span class="tick tr" aria-hidden="true"></span>
       <span class="tick bl" aria-hidden="true"></span><span class="tick br" aria-hidden="true"></span>
@@ -803,7 +697,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
               <div class="lcol">
                 <div class="lphead" id="lpH">OSC-8 Synthesizer</div>
                 <p class="lsub" id="lpSub"></p>
-                <span class="lbtn" id="lpBtn">Preorder — €249</span>
+                <span class="lbtn" id="lpBtn">Preorder for €249</span>
                 <div class="lprice" id="lpPrice"></div>
               </div>
               <div class="figslot">
@@ -921,82 +815,14 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   </div>
 </header>
 
-<!-- ══════════ MANIFESTO ══════════ -->
-<section class="manifesto wrap">
-  <div class="m-kicker reveal">A question for you</div>
-  <p class="m-line reveal">Your agents shipped forty things last week.</p>
-  <p class="m-line reveal"><span class="q">Can you find them?</span></p>
-  <p class="m-answer reveal">Most of it is gone, pasted into a Slack thread or stranded in a chat that scrolled away. Making another draft was never the hard part. The hard part is finding the one from Tuesday, trusting it's the latest, and continuing from there. <strong>Derive gives every artifact a permanent link, keeps every version, and puts the conversation on the work, so "where's the latest?" always has one answer.</strong></p>
-</section>
-
-<!-- ══════════ THE OCEAN ══════════ -->
-<div class="ocean" role="img" aria-label="Ephemeral chat fragments drift past a single kept artifact.">
-  <div class="ghosts" aria-hidden="true">
-    <div class="gcol g1">
-      <span class="ghost">sure! here's a revised draft —</span>
-      <span class="ghost plain">can you resend the latest version?</span>
-      <span class="ghost">wait, that was the old one</span>
-      <span class="ghost plain">[conversation expired]</span>
-      <span class="ghost">which doc is current??</span>
-      <span class="ghost plain">pasted in slack, somewhere</span>
-      <span class="ghost">sure! here's a revised draft —</span>
-      <span class="ghost plain">can you resend the latest version?</span>
-      <span class="ghost">wait, that was the old one</span>
-      <span class="ghost plain">[conversation expired]</span>
-      <span class="ghost">which doc is current??</span>
-      <span class="ghost plain">pasted in slack, somewhere</span>
-    </div>
-    <div class="gcol g2">
-      <span class="ghost plain">context window exceeded</span>
-      <span class="ghost">final_v3_ACTUAL.html</span>
-      <span class="ghost plain">who approved this?</span>
-      <span class="ghost">link's dead, sorry</span>
-      <span class="ghost plain">it was in the thread… some thread</span>
-      <span class="ghost">regenerating from scratch</span>
-      <span class="ghost plain">context window exceeded</span>
-      <span class="ghost">final_v3_ACTUAL.html</span>
-      <span class="ghost plain">who approved this?</span>
-      <span class="ghost">link's dead, sorry</span>
-      <span class="ghost plain">it was in the thread… some thread</span>
-      <span class="ghost">regenerating from scratch</span>
-    </div>
-    <div class="gcol g3">
-      <span class="ghost">history unavailable</span>
-      <span class="ghost plain">didn't we fix this already?</span>
-      <span class="ghost">screenshot of a screenshot</span>
-      <span class="ghost plain">new chat, same question</span>
-      <span class="ghost">v2? v4? nobody knows</span>
-      <span class="ghost plain">export before it's gone</span>
-      <span class="ghost">history unavailable</span>
-      <span class="ghost plain">didn't we fix this already?</span>
-      <span class="ghost">screenshot of a screenshot</span>
-      <span class="ghost plain">new chat, same question</span>
-      <span class="ghost">v2? v4? nobody knows</span>
-      <span class="ghost plain">export before it's gone</span>
-    </div>
-  </div>
-  <div class="kept">
-    <p class="kept-line">Chats scroll away. <em>Artifacts stay.</em></p>
-    <div class="kept-card">
-      <div class="kc-top">
-        <span class="lock" aria-hidden="true">
-          <svg width="12" height="12" viewBox="0 0 11 11" fill="none"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
-        </span>
-        derive.to/artifacts/q3-launch-plan
-      </div>
-      <div class="kc-meta"><span>HTML · v7</span><span>every version kept</span><span class="ok">current</span></div>
-    </div>
-  </div>
-</div>
-
 <!-- ══════════ CHAPTERS ══════════ -->
 <section class="chapter wrap">
-  <div class="ch-head reveal"><span class="ch-num">01</span><h2>Publish</h2></div>
+  <h2 class="reveal">Publish</h2>
   <div class="ch-body">
     <div>
-      <p class="ch-lede reveal">Off the clipboard and onto the record.</p>
-      <p class="ch-text reveal">One command takes a document, a designed page, or a whole built site to a permanent URL. Fully-styled HTML renders exactly as authored, fonts and scripts and images included, in a sandboxed viewer. Every revision is a new version at the same link, so <strong>the link you shared last week still resolves, and still shows its history.</strong> You can put it on your own domain.</p>
-      <p class="ch-text reveal">If an agent can make it, Derive can hold it: Markdown, a single HTML file, or a two-hundred-file build. Publishing is instant, and <strong>you never have to decide which drafts are worth keeping</strong>, because keeping all of them is the default.</p>
+      <p class="ch-lede reveal">Give the work a home.</p>
+      <p class="ch-text reveal">Publish a Markdown file, an HTML page, or a built site to a lasting URL. Styled HTML keeps its fonts, scripts, and images inside a sandboxed viewer. <strong>The link you shared last week still works.</strong> You can also use your own domain.</p>
+      <p class="ch-text reveal">Publish again to update the same URL. Each publish creates a version you can compare or restore.</p>
     </div>
     <div class="ch-spec reveal">
       <div class="spec-card">
@@ -1012,12 +838,42 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
 </section>
 
 <section class="chapter wrap">
-  <div class="ch-head reveal"><span class="ch-num">02</span><h2>Share</h2></div>
+  <h2 class="reveal">Find</h2>
   <div class="ch-body">
     <div>
-      <p class="ch-lede reveal">Your team's library, anyone's link.</p>
-      <p class="ch-text reveal">Everything your team publishes lands in one library, so "where's that thing?" always has the same answer. When work needs to leave the building, you send a link: <strong>put a password on it for a client, open it to anyone who has it, or keep it inside the team.</strong> Whoever opens it sees the real, rendered page in their browser, not a zip or a PDF export.</p>
-      <p class="ch-text reveal">Every link carries a role you chose: viewer, commenter, or editor. <strong>Anyone with viewing access can read without an account; commenting or editing requires sign-in</strong>, so feedback has an accountable author. You can revoke a link the moment you change your mind.</p>
+      <p class="ch-lede reveal">Open the current work.</p>
+      <p class="ch-text reveal">Every artifact appears in the workspace library. Search by name, tag, collection, or content instead of returning to the chat that produced it.</p>
+      <p class="ch-text reveal">The same URL opens the current version and keeps the earlier ones close by. <strong>You can see what changed and restore a version when you need it.</strong></p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">Library · Recently updated</div>
+        <div class="share-dlg">
+          <div class="share-row">
+            <span class="sr-label">Q3 launch plan<span class="sr-sub">Plans · updated today</span></span>
+            <span class="sr-val">v7</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Customer import status<span class="sr-sub">Reports · updated yesterday</span></span>
+            <span class="sr-val">v4</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Database decision<span class="sr-sub">Research · updated Monday</span></span>
+            <span class="sr-val">v2</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter wrap">
+  <h2 class="reveal">Share</h2>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Send a link, not an export.</p>
+      <p class="ch-text reveal">Keep work inside your team, share it with anyone who has the link, or add a password for a client. The link opens the real page in a browser.</p>
+      <p class="ch-text reveal">Choose whether the link allows viewing, commenting, or editing. <strong>People can read without an account. Commenting and editing require sign-in.</strong> You can revoke access at any time.</p>
     </div>
     <div class="ch-spec reveal">
       <div class="spec-card">
@@ -1049,12 +905,12 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
 </section>
 
 <section class="chapter wrap">
-  <div class="ch-head reveal"><span class="ch-num">03</span><h2>Collaborate</h2></div>
+  <h2 class="reveal">Discuss</h2>
   <div class="ch-body">
     <div>
-      <p class="ch-lede reveal">Multiplayer for made things.</p>
-      <p class="ch-text reveal">Share the link and your team is in, with comments pinned to the exact line, @mentions for people and agents, live presence, direct editing, and optional formal review. <strong>Each version stays clear and recoverable</strong>, so everyone can see what changed without rebuilding the context. When it's just you, Derive is a private library of everything you've made.</p>
-      <p class="ch-text reveal">Presence shows who's looking right now, and threads stay attached to the version they were about, so a conversation keeps its context long after chat would have scrolled away. When the work truly needs a named decision, approval is there and recorded on the exact version.</p>
+      <p class="ch-lede reveal">Keep feedback next to the work.</p>
+      <p class="ch-text reveal">Leave comments on the exact text, mention a person or agent, or edit the artifact directly. <strong>Each version stays clear and recoverable</strong>, so everyone can see what changed.</p>
+      <p class="ch-text reveal">Threads keep the version they refer to, and presence shows who is looking now. Formal approval is available when the work needs a recorded decision.</p>
     </div>
     <div class="ch-spec reveal">
       <div class="spec-card">
@@ -1080,33 +936,12 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   </div>
 </section>
 
-<section class="chapter wrap">
-  <div class="ch-head reveal"><span class="ch-num">04</span><h2>Own</h2></div>
-  <div class="ch-body">
-    <div>
-      <p class="ch-lede reveal">Yours, not the model's, not ours.</p>
-      <p class="ch-text reveal">Claude's artifacts live in Claude. ChatGPT's canvases live in ChatGPT. If half your team runs one and half runs the other, the work ends up split across two walled gardens. <strong>Derive doesn't care which model made what</strong>: context lives with the artifact, so a page Claude drafts on Monday gets revised by Codex on Tuesday, and your team reads both in one library.</p>
-      <p class="ch-text reveal">The same openness goes all the way down. The product is <strong>Fair Source and runs as a single container on your own infrastructure</strong> if you want it to, and everything exports in open formats: artifacts, versions, and comments. If you ever leave, the record leaves with you.</p>
-    </div>
-    <div class="ch-spec reveal">
-      <div class="spec-card">
-        <div class="spec-bar">self-host</div>
-        <div class="spec-body">
-          <span class="c">$</span> docker compose -f deploy/compose.yml up -d<br>
-          <span class="dim">→ http://localhost:8080 · sqlite · local disk</span><br>
-          <span class="dim">FSL-1.1-ALv2 → Apache-2.0 after two years</span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ══════════ THE LOOP ══════════ -->
 <section class="loop wrap">
   <div class="section-head">
-    <div class="eyebrow reveal">Agent-native</div>
-    <h2 class="reveal">Where agents put their work.</h2>
-    <p class="l-sub reveal">Derive has an MCP server built in: one command connects compatible clients such as Claude Code, Codex, and Cursor. From then on the agent stops pasting walls of HTML into chat and starts publishing <strong>real pages at real URLs, with visibility you control</strong>, while you read and review them in an interface built for people. Leave a comment and the agent can answer with a revision.</p>
+    <div class="eyebrow reveal">Connect your coding agent</div>
+    <h2 class="reveal">Give your agent a place to publish.</h2>
+    <p class="l-sub reveal">Derive includes an MCP server for Claude Code, Codex, Cursor, and other compatible clients. Your agent can publish a page, read comments, and update the same artifact later. You control who can see it.</p>
   </div>
   <div class="bigterm reveal">
     <div class="tb">
@@ -1116,15 +951,15 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
     <div class="tbody" id="termBody"><span class="cursor" id="termCursor"></span></div>
   </div>
   <p class="cast reveal"><span><b>publish</b> save a revision</span><span><b>catch_up</b> what changed + open feedback</span><span><b>comment</b> reply or resolve</span><span><b>read</b> any artifact, any version</span></p>
-  <script type="text/plain" id="agentPrompt">I'd like you to set up Derive — where the work we make gets kept, shared, and improved.
+  <script type="text/plain" id="agentPrompt">I'd like you to set up Derive as the place where we keep, share, and improve our work.
 
 Install the skill if I have npm: npx skills add derive-to/derive --skill derive
 Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://derive.to/mcp).
 
-Then pick something real we've worked on recently — a plan, a report, a designed page — and publish it. If I'm not connected to Derive, use the anonymous draft flow: no account needed, and it returns a live URL plus a claim link. Send me both so I can see it and claim it.</script>
+Then pick something real we've worked on recently, such as a plan, report, or designed page, and publish it. If I'm not connected to Derive, use the anonymous draft flow. It needs no account and returns a live URL with a claim link. Send me both so I can see it and claim it.</script>
   <div class="hk-lead reveal">
-    <button class="btn btn-primary" type="button" data-copy-from="agentPrompt" data-copied-label="Copied — paste it into your agent">Copy instructions for my agent</button>
-    <span class="hk-leadnote">one paste into a compatible agent — it connects and publishes your first page</span>
+    <button class="btn btn-primary" type="button" data-copy-from="agentPrompt" data-copied-label="Copied. Paste it into your agent">Copy setup prompt</button>
+    <span class="hk-leadnote">Paste this into a compatible agent to connect Derive and publish your first page.</span>
   </div>
   <div class="hookup reveal">
     <button class="hk-row" type="button" data-copy="npx skills add derive-to/derive --skill derive" title="Copy">
@@ -1137,7 +972,7 @@ Then pick something real we've worked on recently — a plan, a report, a design
       <code>claude mcp add --transport http derive https://derive.to/mcp</code>
       <span class="hk-copy" aria-hidden="true">COPY</span>
     </button>
-    <button class="hk-row" type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" title="Copy. Publishes an expiring draft — claim it into a workspace whenever.">
+    <button class="hk-row" type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" title="Copy. This publishes an expiring draft that you can claim later.">
       <span class="hk-what">No agent, no account</span>
       <code>curl -F file=@page.html https://derive.to/v1/drafts</code>
       <span class="hk-copy" aria-hidden="true">COPY</span>
@@ -1148,8 +983,8 @@ Then pick something real we've worked on recently — a plan, a report, a design
 <!-- ══════════ PRICING ══════════ -->
 <section class="price wrap" id="pricing">
   <div class="eyebrow reveal">Pricing</div>
-  <h2 class="reveal" style="margin-top:16px">Free while it's in beta.</h2>
-  <p class="p-sub reveal">Every feature, no card required. When billing arrives someday, publishing and reading stay free, and <strong>nothing you've shipped goes dark.</strong></p>
+  <h2 class="reveal" style="margin-top:16px">Free during beta.</h2>
+  <p class="p-sub reveal">All features are included, and no card is required. We will announce billing before it starts. <strong>Existing links will keep working.</strong></p>
   <div class="p-links reveal">
     <a href="/pricing">The pricing we intend, published early →</a>
   </div>
@@ -1157,19 +992,8 @@ Then pick something real we've worked on recently — a plan, a report, a design
 
 <!-- ══════════ FINALE ══════════ -->
 <section class="finale wrap" id="finale">
-  <div class="state-line" id="stateLine">
-    <span class="vdot" aria-hidden="true"></span>
-    <span class="note" id="stateNote">v1 · drafted by an agent, 09:41:07</span>
-  </div>
-  <h2 class="derivation" aria-label="Good work is derived.">
-    <span class="row">Good work is</span>
-    <span class="row">
-      <span class="word" id="w1">generated.<span class="strike" aria-hidden="true"></span></span>
-      <span class="word" id="w2">prompted.<span class="strike" aria-hidden="true"></span></span>
-      <span class="word final-word" id="w3">derived.<span class="under" aria-hidden="true"></span></span>
-    </span>
-  </h2>
-  <p class="f-sub">Nothing you're proud of ships in one pass. It's free while we're in beta, so sign up and we'll email your access link, or clone the repo and run the whole thing tonight.</p>
+  <h2 class="derivation">Good work is derived.</h2>
+  <p class="f-sub">Publish one real piece of work, then update it at the same link. Sign up for the hosted beta, or clone the repo and run Derive yourself.</p>
   <div class="waitlist">
     <form data-waitlist data-derive-source="homepage_waitlist" action="/v1/beta/signup" method="post" novalidate>
       <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
@@ -1180,11 +1004,7 @@ Then pick something real we've worked on recently — a plan, a report, a design
     </div>
   </div>
   <p class="f-alt">
-    <button class="replay" id="replay" type="button" aria-label="Replay the edit">
-      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6a4 4 0 1 1 1.2 2.85M2 6V3.2M2 6h2.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      REPLAY THE EDIT
-    </button>
-    &nbsp;·&nbsp; $ docker compose up -d &nbsp;·&nbsp; <a href="https://github.com/derive-to/derive">derive-to/derive on GitHub</a>
+    $ docker compose up -d &nbsp;·&nbsp; <a href="https://github.com/derive-to/derive">derive-to/derive on GitHub</a>
   </p>
 </section>
 
@@ -1204,10 +1024,10 @@ Then pick something real we've worked on recently — a plan, a report, a design
       <a href="/pricing">Pricing</a>
       <a href="/privacy">Privacy</a>
       <a href="/security">Security</a>
+      <a href="https://docs.derive.to/reference/licensing/">Licensing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
       <a href="/login?src=nav_signin">Log in</a>
     </div>
-    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0 · Prices in USD</span>
   </div>
 </footer>
 
@@ -1281,58 +1101,6 @@ const io = new IntersectionObserver(es => es.forEach(en => {
   if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
 }), {threshold:.05});
 document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-
-/* ══ the hero: a sentence deriving itself ══ */
-const note = $('stateNote'), stateLine = $('stateLine');
-const w1 = $('w1'), w2 = $('w2'), w3 = $('w3');
-let editTimers = [];
-
-function editReset(){
-  editTimers.forEach(clearTimeout); editTimers = [];
-  stateLine.classList.remove('approved');
-  [w1,w2,w3].forEach(w => w.classList.remove('on','struck','settle','approved'));
-  note.textContent = 'v1 · drafted by an agent, 09:41:07';
-}
-function at(ms, fn){ editTimers.push(setTimeout(fn, ms)); }
-
-function editPlay(){
-  editReset();
-  if (reduced) { editFinal(); return; }
-  at(150,  () => w1.classList.add('on'));
-  at(900,  () => {
-    w1.classList.add('struck');
-    note.textContent = 'v2 · "good takes more than one pass." — Maeva';
-  });
-  at(1080, () => w2.classList.add('on'));
-  at(1650, () => {
-    w1.classList.add('settle');
-    w2.classList.add('struck');
-    note.textContent = 'v3 · "a prompt isn\'t craft." — Maeva';
-  });
-  at(1830, () => w3.classList.add('on'));
-  at(2350, () => {
-    w2.classList.add('settle');
-    w3.classList.add('approved');
-    stateLine.classList.add('approved');
-    note.textContent = 'v4 · current · updated from feedback.';
-  });
-}
-function editFinal(){
-  [w1,w2].forEach(w => w.classList.add('on','struck','settle'));
-  w3.classList.add('on','approved');
-  stateLine.classList.add('approved');
-  note.textContent = 'v4 · current · updated from feedback.';
-}
-$('replay').addEventListener('click', editPlay);
-/* the edit plays once, when the finale arrives */
-if (reduced) { editFinal(); }
-else {
-  editFinal(); /* sensible resting state for anyone who lands mid-page */
-  const fio = new IntersectionObserver(es => es.forEach(en => {
-    if (en.isIntersecting) { editPlay(); fio.disconnect(); }
-  }), {threshold:.5});
-  fio.observe($('finale'));
-}
 
 /* ── the figure: the OSC-8 as a live exploded wireframe (raw WebGL, zero deps).
    The drawing is the launch page's product image; its states are the versions.
@@ -1550,20 +1318,20 @@ const DOC = {
   1: { meta:'HTML · v1', v1:true,
        h:`<span class="hlspan" id="t2" style="--hlc:${GOLD}">OSC-8 Synthesizer</span>`,
        sub:'A portable 8-voice synthesizer with a built-in speaker and battery. Available for preorder now.',
-       btn:'Preorder — €249', price:'',
-       fig:'FIG. 1 — placeholder · unresolved', hint:'', specs:false,
+       btn:'Preorder for €249', price:'',
+       fig:'FIG. 1 · placeholder · unresolved', hint:'', specs:false,
        line:['v1','agent · claude-code','first draft · a template with a hole where the product goes'] },
   2: { meta:'HTML · v2', v1:false,
        h:'Eight voices.<br><em>Zero menus.</em>',
        sub:'Every parameter is a knob you can touch. No pages, no shift keys, no manual. Battery for a weekend.',
        btn:'Preorder', price:`<span class="hlspan" id="t3" style="--hlc:${VIOLET}">€249</span> · ships worldwide`,
-       fig:'FIG. 1 — top assembly · 1:2', hint:'', specs:false,
+       fig:'FIG. 1 · top assembly · 1:2', hint:'', specs:false,
        line:['v2','agent · claude-code','revision · drawn like a filing, and the type leads'] },
   3: { meta:'HTML · v3', v1:false,
        h:'Eight voices.<br><em>Zero menus.</em>',
        sub:'Every parameter is a knob you can touch. No pages, no shift keys, no manual. Battery for a weekend.',
-       btn:'Preorder — €249', price:'<b>Ships March</b> · 30-day returns · case + cable included',
-       fig:'FIG. 1 — exploded view · 1:2 · unit №0043', hint:'hover to open it up', specs:true,
+       btn:'Preorder for €249', price:'<b>Ships March</b> · 30-day returns · case + cable included',
+       fig:'FIG. 1 · exploded view · 1:2 · unit №0043', hint:'hover to open it up', specs:true,
        line:['v3','agent · claude-code','measured specs · the exploded view is the anchor'] },
 };
 const demoBody = $('demoBody'), demoFrame = document.querySelector('.demo-frame');
@@ -1699,7 +1467,7 @@ else {
   dio.observe(document.querySelector('.demo'));
 }
 
-/* quiet presence: hover the artifact and you're in it — green cursor, facepile chip */
+/* Show a local cursor and presence chip while hovering over the artifact. */
 const youChip = $('youChip'), faceLabel = $('faceLabel'), curYou = $('curYou');
 if (matchMedia('(hover:hover)').matches) {
   const fine = matchMedia('(pointer:fine)').matches && !reduced;

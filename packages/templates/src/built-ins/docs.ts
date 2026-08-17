@@ -9,9 +9,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "md",
     title: "Decision memo",
     defaultTitle: "Decision memo",
-    description:
-      "A durable record of the call, the alternatives, the rationale, and the revisit trigger.",
-    outcome: "Make a consequential choice easy to review now and understand later.",
+    description: "Record a decision, the alternatives, the reasoning, and when to revisit it.",
+    outcome: "Help readers understand the decision now and later.",
     sections: [
       "Decision",
       "Context",
@@ -36,8 +35,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "md",
     title: "Product brief",
     defaultTitle: "Product brief",
-    description: "Problem, users, principles, flows, scope, requirements, risks, and measures.",
-    outcome: "Give design and engineering enough shared truth to make good local decisions.",
+    description: "Define the problem, users, scope, requirements, risks, and measures of success.",
+    outcome: "Give design and engineering the context needed to make implementation decisions.",
     sections: [
       "Problem",
       "Users",
@@ -64,8 +63,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Technical design",
     defaultTitle: "Technical design",
     description:
-      "System context, constraints, proposal, data model, failure modes, migration, and alternatives.",
-    outcome: "Create a technical record that survives the implementation.",
+      "Explain the system, constraints, proposed design, failure modes, migration, and alternatives.",
+    outcome: "Create a technical record that remains useful during and after implementation.",
     sections: [
       "Summary",
       "System context",
@@ -92,8 +91,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "md",
     title: "Strategy narrative",
     defaultTitle: "Strategy narrative",
-    description: "A diagnosis, an explicit choice, and coherent actions—not a list of ambitions.",
-    outcome: "Make the tradeoff at the heart of the strategy impossible to miss.",
+    description: "Describe the current situation, the main choice, the actions, and the tradeoffs.",
+    outcome: "Make the strategy and its tradeoffs clear.",
     sections: [
       "Current reality",
       "Diagnosis",
@@ -118,8 +117,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Launch plan",
     defaultTitle: "Launch plan",
     description:
-      "Audience, position, channels, assets, milestones, owners, dependencies, and rollback.",
-    outcome: "Coordinate a launch without turning the plan into a task dump.",
+      "Coordinate the audience, message, channels, assets, milestones, owners, and rollback plan.",
+    outcome: "Give every launch owner the context and next action they need.",
     sections: [
       "Outcome",
       "Audience",
@@ -146,8 +145,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Postmortem",
     defaultTitle: "Postmortem",
     description:
-      "Impact, timeline, contributing conditions, response, learning, and verified corrective action.",
-    outcome: "Learn without blame and close the loop on corrective work.",
+      "Document the impact, timeline, contributing conditions, response, and corrective work.",
+    outcome: "Capture what happened and how the team will prevent a repeat.",
     sections: [
       "Summary",
       "Impact",
@@ -173,8 +172,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Meeting synthesis",
     defaultTitle: "Meeting synthesis",
     description:
-      "Signal, decisions, disagreements, actions, and unresolved questions—without transcript theater.",
-    outcome: "Turn a meeting into a compact piece of shared memory.",
+      "Summarize the important points, decisions, disagreements, actions, and open questions.",
+    outcome: "Give attendees and absent teammates a useful record of the meeting.",
     sections: [
       "Purpose",
       "Participants",
@@ -198,9 +197,8 @@ export const DOC_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "md",
     title: "Research plan",
     defaultTitle: "Research plan",
-    description:
-      "Question, hypotheses, sources, method, analysis, ethics, schedule, and output contract.",
-    outcome: "Align on how evidence will be gathered before the first interview or query.",
+    description: "Define the question, hypotheses, sources, method, ethics, schedule, and outputs.",
+    outcome: "Agree on how the research will answer the question.",
     sections: [
       "Question",
       "Hypotheses",

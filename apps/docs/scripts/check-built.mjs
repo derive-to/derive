@@ -98,7 +98,6 @@ const homeHtml = readFileSync(join(DIST, "index.html"), "utf8")
 for (const brandedContract of [
   'class="site-header"',
   'class="docs-navigation',
-  'class="workflow-list"',
   'class="start-list"',
   "Turn agent output into work you can keep, share, and improve.",
 ])

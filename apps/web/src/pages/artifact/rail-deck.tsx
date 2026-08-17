@@ -255,7 +255,7 @@ export function Presence({
           variant="ghost"
           size="xs"
           data-testid="presence-trigger"
-          aria-label={`${ordered.length} viewing — see who`}
+          aria-label={`${ordered.length} viewing. See who.`}
           className="rounded-full py-0.5 pr-2 pl-1"
         >
           <AvatarGroup>

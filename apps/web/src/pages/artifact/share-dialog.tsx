@@ -446,10 +446,10 @@ export function ShareButton({
             testPrefix="share"
             inviteCopy={
               grants.length > 0
-                ? "Only the people you add below — plus everyone reached through its collections."
+                ? "Only the people you add below and anyone with access through a collection."
                 : "Only the people you add below can open this."
             }
-            workspaceCopy="Everyone in the workspace opens this at their role — admins manage, editors edit, commenters comment."
+            workspaceCopy="Everyone in the workspace uses their existing role. Admins manage, editors edit, and commenters comment."
             readOnlyIcon={accessIcon(
               linkRole ?? "none",
               workspaceAccess ?? "member",
@@ -478,7 +478,7 @@ export function ShareButton({
                 <div className="min-w-0">
                   <div className="text-sm text-foreground">Show in the workspace library</div>
                   <div className="text-xs text-muted-foreground">
-                    Otherwise it's link-only — out of the team's feed.
+                    Otherwise, only people with the link can find it.
                   </div>
                 </div>
                 <Switch
@@ -683,7 +683,7 @@ export function ShareButton({
               </div>
               <p className="mt-1.5 text-sm text-muted-foreground">
                 {linkAccessible
-                  ? "Paste into any page — live, with a link back to Derive."
+                  ? "Paste this into any page. It stays live and links back to Derive."
                   : "Give it a link (set access to “Anyone”) for the embed to load for others."}
               </p>
             </div>

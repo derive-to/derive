@@ -160,7 +160,8 @@ export function ConnectViaApp({
             ) : (
               <>
                 <p className="mt-0.5 text-sm text-muted-foreground">
-                  Install Derive on the GitHub repos you want to mirror — then pick them here.
+                  Install Derive on the GitHub repositories you want to mirror, then choose them
+                  here.
                 </p>
                 <Button
                   data-testid="github-install"
@@ -214,7 +215,7 @@ export function ConnectViaApp({
               Manage App on GitHub
               <ExternalLink className="size-3 shrink-0" aria-hidden />
             </a>
-            <span className="text-sm text-muted-foreground">— update permissions or uninstall</span>
+            <span className="text-sm text-muted-foreground">Update permissions or uninstall</span>
           </div>
         )}
       </Card>

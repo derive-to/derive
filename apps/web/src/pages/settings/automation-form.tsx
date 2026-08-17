@@ -430,7 +430,7 @@ export function AutomationForm({
             // Said plainly rather than hidden: a run with no source can still only read what is
             // already in Derive, and that is the difference this field exists to explain.
             <span className="text-muted-foreground text-xs">
-              No sources connected yet — add one under Settings → Sources.
+              No sources connected yet. Add one under Settings → Sources.
             </span>
           ) : null}
         </div>
@@ -613,7 +613,7 @@ export function AutomationForm({
       {mintedToken && (
         <div data-testid="automation-agent-token">
           <SecretReveal
-            title="Runner token for this automation — copy it now, it won't be shown again."
+            title="Copy this runner token now. It will not be shown again."
             secret={mintedToken}
             onDone={() => {
               setMintedToken(null)

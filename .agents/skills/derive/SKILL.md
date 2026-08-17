@@ -25,7 +25,7 @@ unavailable, or project policy forbids publishing.
 1. Confirm Derive tools are connected. The current remote surface has `find`, `read`,
    `catch_up`, `comment`, `stage`, `publish`, `organize`, `checkpoint`, `use`, and
    `list_workspaces`.
-2. If the tools are missing, follow [references/connect.md](references/connect.md) —
+2. If the tools are missing, follow [references/connect.md](references/connect.md),
    or, when the user just wants something live NOW, publish an anonymous draft (next
    section). Never invent a token or ask the user to paste credentials; the draft
    flow is the one sanctioned path that needs neither.
@@ -49,7 +49,7 @@ Workspace-specific procedures may also be published as skills. Discover them wit
 ## No MCP? Publish an anonymous draft
 
 When no Derive tools are connected and the user wants a page, document, or site live
-now, publish an expiring draft — one HTTP call, no account, no token:
+now, publish an expiring draft with one HTTP call. It needs no account or token:
 
 ```bash
 curl -sS -F file=@page.html https://derive.to/v1/drafts
@@ -70,7 +70,7 @@ Report all three to the user, plainly: the page is live at `draft_url`; it expir
 72 hours unless claimed; opening `claim_url` (sign in, one click) makes it a
 permanent, versioned artifact in their workspace, after which the draft URL redirects
 to the permanent home. Never present a draft as permanent, and hand over `claim_url`
-immediately — it is the only handle on an unclaimed draft.
+immediately. It is the only handle on an unclaimed draft.
 
 Draft rules:
 
@@ -89,11 +89,10 @@ For an existing artifact:
    that applies.
 2. Call `read` for only the sections needed. For HTML edits, read the exact source with
    `format:"html"`.
-3. Acknowledge each human comment. A 👍 reaction is the minimum; reply when the answer
-   belongs in the thread.
+3. Reply when a comment needs an answer. Use a reaction for a simple acknowledgement.
 4. Revise with `publish`. Prefer exact `edits` plus `base_version` for a partial change;
    include thread ids in `addresses` on the same publish.
-5. If formal review is wanted, set `request_review:true`, then chain
+5. If someone asks for formal review, set `request_review:true`, then chain
    `catch_up({short_id, wait:50})` while the round is pending. On `sent_back`, sweep all
    threads and repeat. `approved` is the go-signal.
 
@@ -117,7 +116,7 @@ short account of what changed. Do not request review merely because an artifact 
 - If multiple workspaces are reachable and the destination is unclear, call
   `list_workspaces` and use the workspace descriptions. Ask only when the evidence does
   not identify the intended destination.
-- Derive hosts documents, pages, and versioned artifacts — not compute. Do not use it
+- Derive hosts documents, pages, and versioned artifacts. It does not run compute. Do not use it
   for server-side code execution, general-purpose data storage, secrets, or as an app
   backend; publish the artifact and keep the system elsewhere.
 - If this file and the live server disagree about a tool, parameter, or behavior, trust

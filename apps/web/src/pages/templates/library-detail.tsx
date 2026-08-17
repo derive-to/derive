@@ -139,8 +139,7 @@ export function LibraryDetail({
                   onClick={() => onUse(entry)}
                   data-testid={`template-library-use-${entry.id}`}
                 >
-                  <Icon name="sparkles" />{" "}
-                  {entry.kind === "context" ? "Make it ours" : "Make it mine"}
+                  <Icon name="sparkles" /> Use template
                 </Button>
                 {library.can_manage ? (
                   <Button

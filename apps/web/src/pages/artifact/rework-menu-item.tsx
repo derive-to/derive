@@ -67,7 +67,7 @@ export function ReworkMenuItem({
       else if (code === "brandprintDisabled")
         toast.error("Brandprint is turned off in your settings. Turn it on to rework.")
       else if (code === "alreadyQueued") toast(ALREADY_QUEUED)
-      else toast.error("Rework request failed — try again.")
+      else toast.error("Couldn’t request a rework. Try again.")
     },
   })
   // Anonymous viewers can't fire an agent or own a Brandprint — no item at all. This

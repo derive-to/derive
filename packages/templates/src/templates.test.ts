@@ -12,8 +12,8 @@ import {
 const artifactTemplates = listTemplates({ kind: "artifact" })
 const contextTemplates = listTemplates({ kind: "context" })
 
-describe("Derive built-in Templates catalog", () => {
-  it("ships the planned artifact and Context starts with durable refs", () => {
+describe("Derive built-in templates catalog", () => {
+  it("ships the planned artifact and context starts with durable refs", () => {
     expect(artifactTemplates).toHaveLength(24)
     expect(contextTemplates).toHaveLength(6)
     const all = [...artifactTemplates, ...contextTemplates]
@@ -72,8 +72,22 @@ describe("Derive built-in Templates catalog", () => {
     expect(draft?.source).toContain(
       "Bind a runner, sources, permissions, and credentials separately",
     )
-    expect(draft?.source).toContain("Template library: **derive/built-ins**")
+    expect(draft?.source).toContain("library: derive/built-ins")
     expect(draft?.source).not.toMatch(/(?:api[_-]?key|client[_-]?secret|authorization\s*:)/i)
+  })
+
+  it("keeps starter content quiet and editable", () => {
+    const markdown = renderTemplate("decision-memo")?.source ?? ""
+    const deck = renderTemplate("narrative-pitch")?.source ?? ""
+    const site = renderTemplate("launch-page")?.source ?? ""
+
+    expect(markdown).not.toContain("## Provenance")
+    expect(deck).not.toContain("<b>Claim</b>")
+    expect(deck).not.toContain("<b>Implication</b>")
+    expect(site).not.toContain("Created in Derive")
+    expect(site).toContain("<!-- Derive template:")
+    expect(site).not.toContain(".brief")
+    expect(site).not.toContain("footer{")
   })
 
   it("serializes one discoverable catalog plus a source-bearing resource per Template", () => {

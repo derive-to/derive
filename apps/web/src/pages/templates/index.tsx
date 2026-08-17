@@ -22,20 +22,10 @@ import { TemplateCard } from "./template-card"
 import { targetFromArtifact, targetFromBuiltIn, targetFromLibraryEntry } from "./template-target"
 import type { TemplateTab } from "./types"
 
-const TAB_COPY: Record<TemplateTab, { title: string; description: string }> = {
-  artifacts: {
-    title: "Useful shapes for the work that repeats.",
-    description: "Choose a strong shape, then tell your agent what to make for you.",
-  },
-  contexts: {
-    title: "Reusable setups for agent work.",
-    description: "Brief a proven setup and let your agent adapt it into a working Context.",
-  },
-  libraries: {
-    title: "A useful beginning can travel.",
-    description:
-      "Build a library from the work you trust, then share its pinned starters with the people—or agents—who need them.",
-  },
+const TAB_COPY: Record<TemplateTab, string> = {
+  artifacts: "Choose a template, describe what you need, and copy the prompt into your agent.",
+  contexts: "Start from a reusable agent setup and adapt it to your workspace.",
+  libraries: "Use templates your workspace or other teams have shared.",
 }
 
 export function Templates() {
@@ -116,9 +106,8 @@ export function Templates() {
   return (
     <PageShell width="wide" className="flex flex-col gap-6">
       <PageHeader
-        eyebrow="Built into Derive"
         title="Templates"
-        subtitle="Choose a proven starting point, brief your agent, and review a finished first draft."
+        subtitle="Start from a built-in template, a shared library, or work you already trust."
         actions={
           <>
             <Button
@@ -129,7 +118,7 @@ export function Templates() {
                 void nav({ search: { ...search, derive: true } })
               }}
             >
-              <Icon name="derive" /> From an artifact
+              <Icon name="derive" /> Start from an artifact
             </Button>
             <Button data-testid="templates-new-blank" onClick={() => nav({ to: "/new" })}>
               <Icon name="plus" /> Blank artifact
@@ -137,23 +126,6 @@ export function Templates() {
           </>
         }
       />
-
-      <section className="grid gap-4 border-y py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-        <div className="flex flex-col gap-2">
-          <h2 className="max-w-2xl font-serif text-3xl font-medium leading-tight tracking-tight text-balance text-foreground">
-            {copy.title}
-          </h2>
-          <p className="max-w-2xl text-sm text-pretty text-muted-foreground">{copy.description}</p>
-        </div>
-        <div className="flex gap-5 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-          <span>
-            <b className="text-foreground">{artifactTemplates.length}</b> artifacts
-          </span>
-          <span>
-            <b className="text-foreground">{contextTemplates.length}</b> contexts
-          </span>
-        </div>
-      </section>
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as TemplateTab)}>
         <TabsList variant="line" className="w-full justify-start">
@@ -168,6 +140,7 @@ export function Templates() {
           </TabsTrigger>
         </TabsList>
       </Tabs>
+      <p className="max-w-2xl text-sm text-pretty text-muted-foreground">{copy}</p>
 
       {requestedTemplateError ? (
         <StatusPanel

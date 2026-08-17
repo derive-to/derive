@@ -10,8 +10,8 @@ export const SITE_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Project hub",
     defaultTitle: "Project hub",
     description:
-      "A living front door for the brief, status, milestones, decisions, artifacts, and people.",
-    outcome: "Give a project one understandable home without replacing its working tools.",
+      "Bring a project's brief, status, milestones, decisions, artifacts, and people into one page.",
+    outcome: "Give the team one place to understand the project and find its work.",
     sections: ["Brief", "Now", "Milestones", "Decisions", "Artifacts", "People", "Update history"],
     inputs: [
       input("Project", "Project name", true),
@@ -28,8 +28,8 @@ export const SITE_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Launch page",
     defaultTitle: "Launch page",
     description:
-      "A focused single-page story with value, proof, product explanation, detail, and action.",
-    outcome: "Make the value obvious before asking the visitor to understand the machinery.",
+      "Build a focused page with the offer, proof, explanation, details, and next action.",
+    outcome: "Help visitors understand the offer and decide what to do next.",
     sections: ["Value proposition", "Proof", "How it works", "Use cases", "Details", "Action"],
     inputs: [
       input("Offer", "What is available?", true),

@@ -41,7 +41,4 @@ export const STORAGE_KEYS = {
   // The checklist's "shared a link" step: set by the share dialog's copy-link
   // action (per-browser; the server signals cover connect + first publish).
   sharedLink: "derive.shared-link",
-  // Dismissal of the home library's connect-your-agent card (see
-  // pages/library/connect-nudge) — per-browser, one click, permanent.
-  connectNudge: "derive.connect-nudge",
 } as const

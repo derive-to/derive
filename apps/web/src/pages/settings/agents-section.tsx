@@ -39,8 +39,8 @@ export function AgentsSection({ meId }: { meId: string }) {
 
   return (
     <SettingsSection
-      title="Agents"
-      description="Register an agent so people can @mention it in a thread. It proposes changes; a human approves."
+      title="Workspace agents"
+      description="Register an agent so teammates can @mention it and send it work. Choose what it can do."
     >
       <NewAgent onCreated={reload} />
 
@@ -135,8 +135,8 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="commenter">Commenter (propose)</SelectItem>
-            <SelectItem value="editor">Editor (publish)</SelectItem>
+            <SelectItem value="commenter">Can comment and propose</SelectItem>
+            <SelectItem value="editor">Can publish</SelectItem>
           </SelectContent>
         </Select>
       </AddForm>
@@ -146,7 +146,7 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
       {created && (
         <div data-testid="agent-token">
           <SecretReveal
-            title={`Token for ${created.name} — copy it now, it won't be shown again.`}
+            title={`Token for ${created.name}. Copy it now; it won't be shown again.`}
             secret={created.token}
             onDone={() => setCreated(null)}
             copyTestId="agent-token-copy"
@@ -260,7 +260,7 @@ function AgentRow({
           {rotated && (
             <div data-testid={`agent-rotated-${agent.id}`}>
               <SecretReveal
-                title={`New token for ${agent.name} — copy it now, it won't be shown again. The old one is dead.`}
+                title={`New token for ${agent.name}. Copy it now; it won't be shown again. The old token no longer works.`}
                 secret={rotated}
                 onDone={() => setRotated(null)}
                 copyTestId={`agent-rotated-copy-${agent.id}`}

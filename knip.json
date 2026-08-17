@@ -16,7 +16,7 @@
     },
     "apps/docs": {
       "entry": ["scripts/*.mjs"],
-      "ignore": ["content/**", "src/styles/**"]
+      "ignore": ["content/**"]
     },
     "apps/web": {
       "entry": [

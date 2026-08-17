@@ -287,7 +287,7 @@ function IndexRow({ col, onStar }: { col: Collection; onStar: (next: boolean) =>
         {col.count ?? 0}
       </span>
       <span className="w-28 shrink-0 text-right font-mono text-2xs tabular-nums text-muted-foreground">
-        {col.last_activity ? fullDate(col.last_activity) : "—"}
+        {col.last_activity ? fullDate(col.last_activity) : "Not yet"}
       </span>
       <span className="flex w-7 shrink-0 justify-end">
         <button
@@ -295,7 +295,7 @@ function IndexRow({ col, onStar }: { col: Collection; onStar: (next: boolean) =>
           data-testid={`collection-star-${col.id}`}
           aria-pressed={!!col.starred}
           aria-label={col.starred ? `Unstar ${col.title}` : `Star ${col.title}`}
-          title={col.starred ? "Unstar — remove from your sidebar" : "Star — pin to your sidebar"}
+          title={col.starred ? "Remove from sidebar" : "Pin to sidebar"}
           onClick={(e) => {
             e.preventDefault()
             onStar(!col.starred)

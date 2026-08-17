@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Privacy — Derive</title>
+<title>Privacy | Derive</title>
 <meta name="description" content="How Derive collects, stores, and protects your data, in plain language: what we collect, what we never do, who processes it, and how to delete it.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Privacy — Derive">
+<meta property="og:title" content="Privacy | Derive">
 <meta property="og:description" content="How Derive collects, stores, and protects your data, in plain language.">
 <meta property="og:url" content="https://derive.to/privacy">
 <meta property="og:image" content="https://derive.to/site/og-artifacts.png">
@@ -18,7 +18,7 @@
 {
   "@context": "https://schema.org",
   "@type": "WebPage",
-  "name": "Privacy — Derive",
+  "name": "Privacy | Derive",
   "url": "https://derive.to/privacy",
   "description": "How Derive collects, stores, and protects your data, in plain language.",
   "isPartOf": { "@id": "https://derive.to/#website" },
@@ -129,8 +129,6 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 .foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
 .foot-links{display:flex;gap:20px;font-size:13px;color:var(--muted-fg)}
 .foot-links a:hover{color:var(--fg)}
-.foot-inner .license{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.02em}
-@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
 @media(max-width:640px){
   header.head.wrap{padding-top:124px}
   section.wrap{padding-top:92px}
@@ -155,7 +153,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <a href="https://github.com/derive-to/derive">GitHub</a>
     </div>
     <div class="nav-cta">
-      <a class="nav-signin" href="/login">Sign in to Beta <span class="arr">→</span></a>
+      <a class="nav-signin" href="/login">Sign in <span class="arr">→</span></a>
     </div>
   </div>
 </nav>
@@ -163,10 +161,10 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 <header class="head wrap">
   <div class="eyebrow">Privacy</div>
   <h1>Your data, in simple terms.</h1>
-  <p class="lede">Derive stores what it takes to run your workspace: an account, the content you publish, and the bare usage signals that keep the product honest with you. Nothing more, and nothing sold. <strong>Effective August 10, 2026.</strong></p>
+  <p class="lede">Derive stores your account details, published content, comments, and limited usage data. We do not sell your data. <strong>Effective August 10, 2026.</strong></p>
   <div class="beta">
     <span class="k">NOTE</span>
-    <span>This page is a <strong>plain-language summary, not legal advice</strong>. It describes how Derive actually handles data. Full transparency, no surprises here.</span>
+    <span>This is a <strong>plain-language summary</strong> of how Derive handles data. Email hello@derive.to if you need more detail.</span>
   </div>
 </header>
 
@@ -178,19 +176,19 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   <div class="principles">
     <div class="principle">
       <h3>Account</h3>
-      <p>Your email, name, and the handle you choose. That's what it takes to sign you in and show your name on what you publish.</p>
+      <p>Your email, name, and handle. We use them to sign you in and show who published or commented.</p>
     </div>
     <div class="principle">
       <h3>Content</h3>
-      <p>The artifacts you publish, their full version history, and the comments your team leaves on them. This is the product; it's what a workspace is made of.</p>
+      <p>The artifacts you publish, their version history, and the comments people leave on them.</p>
     </div>
     <div class="principle">
       <h3>Usage</h3>
-      <p>First-party view analytics on what you publish (who's reading and when) and one coarse account-creation source carried by the signup link. We do not use an attribution cookie or browser storage.</p>
+      <p>First-party view analytics for published work, plus a broad signup source carried in the signup link. We do not use attribution cookies or browser storage.</p>
     </div>
     <div class="principle">
       <h3>What we never do</h3>
-      <p>No ad trackers. No third-party analytics scripts. We never sell your data, to anyone, for any reason.</p>
+      <p>We do not use ad trackers or third-party analytics scripts, and we do not sell your data.</p>
     </div>
   </div>
 </section>
@@ -203,30 +201,30 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   <div class="faq">
     <details>
       <summary>Who processes data on our behalf?</summary>
-      <p class="a">A short, named list, nothing hidden behind "and our partners." <strong>Cloudflare</strong> hosts the app and serves its static pages. <strong>Neon</strong> runs the database behind your workspace: artifact records, comments, and the search index; artifact files themselves live in Cloudflare storage. <strong>Stripe</strong> processes billing events. <strong>Resend</strong> delivers transactional email like password resets and notifications. <strong>Slack and GitHub</strong> only see anything once a workspace owner explicitly connects that integration, and only for that workspace. No third-party model provider sees your content unless an opt-in feature like chat or an automation is turned on; search indexing runs on models inside Cloudflare's own infrastructure, the same host that already stores your content.</p>
+      <p class="a"><strong>Cloudflare</strong> hosts the app and stores artifact files. <strong>Neon</strong> stores workspace records, comments, and the search index. <strong>Stripe</strong> processes billing events. <strong>Resend</strong> sends password resets and notifications. <strong>Slack and GitHub</strong> receive workspace data only after an owner connects the integration. A third-party model provider receives content only when an optional feature such as chat or automations uses it. Search indexing runs within Cloudflare's infrastructure.</p>
     </details>
     <details>
       <summary>What happens when I delete my account or a workspace?</summary>
-      <p class="a">Deleting your account removes your sign-in data, your memberships, and your personal workspace container, and it permanently disconnects your name from everything you authored. It does not delete the artifacts themselves: that's a separate, explicit step. Delete an artifact and its versions and search entries go with it; do that first, then delete your account. A workspace works the same way: it has to be empty before it can be deleted, so remove or move its artifacts before you delete the workspace itself. One honest exception either way: a URL you already published and shared stays live at that link until you (or a remaining owner) take it down yourself, the same way a link you emailed someone doesn't un-send when you delete the file on your end. We won't pretend a link that's already out in the world quietly disappears.</p>
+      <p class="a">Deleting your account removes your sign-in data, memberships, and personal workspace record. It also removes your name from work you authored in shared workspaces. Artifacts are deleted separately, along with their versions and search entries. Delete or move a workspace's artifacts before deleting the workspace. A URL you shared stays live until you or a remaining owner deletes its artifact.</p>
     </details>
     <details>
       <summary>How long do you keep things?</summary>
-      <p class="a">Most of it has no clock on it, and that is deliberate: your artifacts, their version history, and the comments on them stay until you delete them. A permanent URL that quietly expired would not be permanent. The things that do have a clock, all of them enforced by a job rather than a promise: view analytics are a rolling <strong>365-day</strong> window, pruned daily, so old traffic ages out instead of piling up forever. A page published without an account is a draft, and it is deleted <strong>72 hours</strong> after you create it unless you claim it into a workspace. A password reset link lasts <strong>one hour</strong>. A signed-in session's access token lasts <strong>24 hours</strong> and renews quietly until you have been away for a year. An agent app that begins connecting but never finishes the consent screen is cleared after <strong>30 days</strong>. Self-hosting changes all of this: every window above is yours to set, and the analytics one can be switched off entirely.</p>
+      <p class="a">Artifacts, versions, and comments stay until you delete them. View analytics use a rolling <strong>365-day</strong> window and are pruned daily. Unclaimed drafts are deleted after <strong>72 hours</strong>. Password reset links last <strong>one hour</strong>. Access tokens last <strong>24 hours</strong> and renew until an account has been inactive for a year. Unfinished agent connections are cleared after <strong>30 days</strong>. On a self-hosted instance, you control these retention settings and can turn analytics off.</p>
     </details>
     <details>
       <summary>Can I avoid all of this by self-hosting?</summary>
-      <p class="a">Yes. Derive is fair source and runs as one container: SQLite and local disk by default, Postgres and S3 at scale, entirely on your own infrastructure. Run it yourself, and none of the infrastructure listed above ever sees your data, because none of it is in the request path.</p>
+      <p class="a">Yes. Derive runs as one container with SQLite and local disk, or with Postgres and S3 at scale. When you self-host, the hosted service providers listed above are not in the request path.</p>
     </details>
     <details>
       <summary>How do I reach you about this?</summary>
-      <p class="a">Email <strong>hello@derive.to</strong>. We read everything ourselves, and we'd rather explain something than have you guess.</p>
+      <p class="a">Email <strong>hello@derive.to</strong>.</p>
     </details>
   </div>
 </section>
 
 <section class="final wrap">
-  <h2>Nothing here should surprise you.</h2>
-  <p class="body">That's the point of publishing this before you have to go looking for it. Questions go to hello@derive.to.</p>
+  <h2>Questions about privacy?</h2>
+  <p class="body">Email hello@derive.to and we will help.</p>
 </section>
 
 <footer>
@@ -243,10 +241,10 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <a href="/pricing">Pricing</a>
       <a href="/privacy">Privacy</a>
       <a href="/security">Security</a>
+      <a href="https://docs.derive.to/reference/licensing/">Licensing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
       <a href="/login">Log in</a>
     </div>
-    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0</span>
   </div>
 </footer>
 

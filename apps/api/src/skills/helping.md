@@ -7,9 +7,8 @@ order: 10
 
 Every other skill is about doing work IN a workspace. This one is about the app around it: "how
 do I add someone", "where do sources live", "what is a proposal", "why can't I publish". Those
-questions have no answer in anybody's documents, so searching for one wastes a turn and comes
-back with nothing — which reads as "Derive does not do that" when the truth is "it is two clicks
-away".
+questions are answered here rather than in workspace documents. Searching the library first can
+incorrectly suggest that the feature does not exist.
 
 Read this when the question is about DERIVE, not about the workspace's contents.
 
@@ -51,12 +50,12 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | --- | --- |
 | `/settings/profile` | Their name, handle, avatar. |
 | `/settings/security` | Password and sessions. |
-| `/settings/notifications` | Your own notifications — Slack DMs, account linking, what opens automatically. |
+| `/settings/notifications` | Slack DMs, account linking, and what opens automatically for you. |
 | `/settings/model-plans` | Their own model login, so their agent runs on their key. |
 | `/settings/appearance` | Theme. |
 | `/settings/general` | Workspace name and its defaults. |
 | `/settings/members` | Invite people, change roles, remove them. Admin only. |
-| `/people` | Who is in the workspace — the people directory. |
+| `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
 | `/settings/integrations` | Slack, email notifications, GitHub comment mirroring. |
 | `/settings/sources` | Connect an MCP server so an agent can read from it. |
@@ -125,7 +124,7 @@ any version can be restored.
 `/following`.
 
 **Get notified in Slack.** `/settings/integrations` connects Slack; channel routing is per-channel
-on that same screen. Derive can also DM them — that is their own switch, at
+on that same screen. Derive can also send direct messages. Each person controls that at
 `/settings/notifications`.
 
 **Put pages on our own domain.** `/settings/domains`.
@@ -140,23 +139,23 @@ on that same screen. Derive can also DM them — that is their own switch, at
 
 ## Words people ask about
 
-- **Artifact (a "derive")** — one document. A page, a plan, a report. Versioned from its first
+- **Artifact (a "derive"):** one document, such as a page, plan, or report. Versioned from its first
   publish.
-- **Version** — every publish keeps the last one. Nothing is overwritten, and any version can be
+- **Version:** every publish keeps the last one. Nothing is overwritten, and any version can be
   restored.
-- **Proposal** — a change waiting for approval instead of going live. What a Viewer's edit
+- **Proposal:** a change waiting for approval instead of going live. What a Viewer's edit
   becomes, and what anyone can choose deliberately.
-- **Review** — asking a person to look at a version, answered inline.
-- **Thread** — a comment anchored to a passage. Open until somebody resolves it.
-- **Collection** — a folder of documents. A document can be in several.
-- **Tag** — a workspace-wide label, for finding things across collections.
-- **Context** — a packaged agent: a named setup anyone can ask, with its own access.
-- **Agent** — a registered principal that acts for a person, with its own token, capped by that
+- **Review:** asking a person to look at a version, answered inline.
+- **Thread:** a comment anchored to a passage. Open until somebody resolves it.
+- **Collection:** a folder of documents. A document can be in several.
+- **Tag:** a workspace-wide label for finding things across collections.
+- **Context:** a packaged agent, with a name, a reusable setup, and its own access.
+- **Agent:** a registered principal that acts for a person, with its own token, capped by that
   person's seat.
-- **Automation** — agent work on a schedule or a trigger.
-- **Brandprint** — the workspace's brand, applied to published pages.
-- **Source** — a connected MCP server an agent can read from.
-- **Workspace** — the tenant. People, documents, settings and billing all belong to one.
+- **Automation:** agent work on a schedule or a trigger.
+- **Brandprint:** the workspace's design and writing guidance for published work.
+- **Source:** a connected MCP server an agent can read from.
+- **Workspace:** the tenant. People, documents, settings, and billing all belong to one.
 
 ## When the answer is no
 

@@ -10,8 +10,8 @@ export const AGENT_ARTIFACT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] 
     title: "Context manifest",
     defaultTitle: "Context manifest",
     description:
-      "Purpose, sources, operating rules, tool expectations, publish behavior, and starter prompts.",
-    outcome: "Make an agent setup understandable before it acts.",
+      "Define an agent's purpose, sources, rules, tools, publishing behavior, and starter prompts.",
+    outcome: "Make an agent setup clear before anyone runs it.",
     sections: [
       "Purpose",
       "What this context knows",
@@ -36,8 +36,8 @@ export const AGENT_ARTIFACT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] 
     title: "Skill package",
     defaultTitle: "Skill package",
     description:
-      "Trigger, inputs, procedure, safety boundaries, output contract, examples, and verification.",
-    outcome: "Turn expert practice into a procedure an agent can use reliably.",
+      "Define when to use a skill, its inputs, procedure, safety rules, output, examples, and checks.",
+    outcome: "Give an agent a procedure it can follow and verify.",
     sections: [
       "When to use",
       "Inputs",
@@ -62,8 +62,8 @@ export const AGENT_ARTIFACT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] 
     title: "Review rubric",
     defaultTitle: "Review rubric",
     description:
-      "Criteria, severity, evidence requirements, pass conditions, and a concise response format.",
-    outcome: "Make automated and human review consistent without hiding judgment.",
+      "Define review criteria, severity, evidence, pass conditions, and the response format.",
+    outcome: "Help people and agents review the same work against the same standards.",
     sections: [
       "Purpose",
       "Criteria",
@@ -88,8 +88,8 @@ export const AGENT_ARTIFACT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] 
     title: "Automation brief",
     defaultTitle: "Automation brief",
     description:
-      "Trigger, instruction, sources, expected outputs, failure handling, approvals, and observability.",
-    outcome: "Specify recurring agent work so its behavior can be reviewed before it runs.",
+      "Define a recurring job, its trigger, sources, output, permissions, and failure handling.",
+    outcome: "Make an automated job understandable before it runs.",
     sections: [
       "Outcome",
       "Trigger",
@@ -114,9 +114,8 @@ export const AGENT_ARTIFACT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] 
     format: "md",
     title: "Source guide",
     defaultTitle: "Source guide",
-    description:
-      "What a connected system contains, preferred tools, query patterns, caveats, and citation rules.",
-    outcome: "Help an agent use a source accurately without relearning its edges each session.",
+    description: "Explain what a connected system contains, how to query it, and how to cite it.",
+    outcome: "Help an agent use a source accurately and consistently.",
     sections: [
       "Source",
       "What it contains",

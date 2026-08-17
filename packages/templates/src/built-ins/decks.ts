@@ -9,8 +9,9 @@ export const DECK_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "html",
     title: "Narrative pitch",
     defaultTitle: "Narrative pitch",
-    description: "A spoken story that moves from a changing world to proof and a clear plan.",
-    outcome: "Win belief before asking for action.",
+    description:
+      "Explain what changed, why it matters, what you built, and what should happen next.",
+    outcome: "Give the audience a clear reason to act.",
     sections: ["The change", "The tension", "The insight", "The product", "The proof", "The plan"],
     inputs: [
       input("Audience", "Who needs to believe this?", true),
@@ -27,9 +28,8 @@ export const DECK_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "html",
     title: "Seed fundraising",
     defaultTitle: "Seed round",
-    description:
-      "A founder-led seed narrative with a sharp wedge, credible momentum, and a precise ask.",
-    outcome: "Make the opportunity legible without sanding off the founder's point of view.",
+    description: "Present the problem, product, market, traction, team, and funding request.",
+    outcome: "Help investors understand the opportunity and the funding request.",
     sections: ["Why now", "The wedge", "Product", "Market", "Traction", "Model", "Team", "The ask"],
     inputs: [
       input("Company", "Company or project name", true),
@@ -46,8 +46,8 @@ export const DECK_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Product launch",
     defaultTitle: "Product launch",
     description:
-      "A reveal built around the audience's tension, the new capability, and the moment to act.",
-    outcome: "Turn a feature announcement into a memorable change in the user's world.",
+      "Show who the launch is for, what changes, how it works, and when it is available.",
+    outcome: "Help the audience understand the launch and what to do next.",
     sections: [
       "Audience",
       "Before",
@@ -71,9 +71,8 @@ export const DECK_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "html",
     title: "Quarterly business review",
     defaultTitle: "Quarterly business review",
-    description:
-      "A decision-oriented review of goals, drivers, evidence, risks, and next-quarter commitments.",
-    outcome: "Leave the room with shared signal and named commitments.",
+    description: "Review goals, results, drivers, risks, decisions, and next-quarter commitments.",
+    outcome: "Agree on the decisions and commitments for the next quarter.",
     sections: [
       "Quarter in one page",
       "Scorecard",
@@ -98,9 +97,8 @@ export const DECK_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "html",
     title: "Research briefing",
     defaultTitle: "Research briefing",
-    description:
-      "Question, evidence, interpretation, uncertainty, and recommendation in a reviewable arc.",
-    outcome: "Help a busy audience understand what the evidence changes.",
+    description: "Present the question, method, evidence, uncertainty, and recommendation.",
+    outcome: "Help the audience understand the evidence and its practical effect.",
     sections: [
       "Question",
       "Method",
@@ -125,8 +123,8 @@ export const DECK_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Board update",
     defaultTitle: "Board update",
     description:
-      "Executive signal first: progress, financial view, strategic risk, asks, and appendix.",
-    outcome: "Use board time for judgment rather than narration.",
+      "Summarize progress, finances, strategy, risks, and the decisions needed from the board.",
+    outcome: "Give the board the context it needs to discuss decisions.",
     sections: [
       "Executive signal",
       "Progress",

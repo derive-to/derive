@@ -158,7 +158,7 @@ export function Artifact() {
     void refetch()
   }, [rawTokenStale, refreshingArtifact, failed, refetch])
 
-  // Deferred use-as-template: the public viewer's "Make your own" sends a signed-out
+  // Deferred use-as-template: the public viewer's "Make a copy" sends a signed-out
   // clicker through login with `?use=1`, and the copy fires here, right after auth.
   // The same-tab marker gates it — `?use=1` alone is a shareable URL, and a pasted
   // link must not write into the clicker's workspace (see lib/use-intent.ts). Fired
@@ -358,7 +358,7 @@ export function Artifact() {
           duration: 8000,
         })
       } else if (editingRef.current) {
-        toast.warning(`${v} was just published — publishing this edit will replace it.`, {
+        toast.warning(`${v} was just published. Publishing this edit will replace it.`, {
           id: `stale-edit-${shortId}`,
           duration: 8000,
         })
@@ -1068,7 +1068,7 @@ export function Artifact() {
             {!live.connected && (
               <span
                 data-testid="live-reconnecting"
-                title="Reconnecting to live updates — comments and presence may be briefly out of date"
+                title="Reconnecting to live updates. Comments and presence may be briefly out of date."
                 className="mr-1.5 flex items-center gap-1.5 text-2xs text-muted-foreground"
               >
                 <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/70" />

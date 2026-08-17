@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately — do not open a public issue for anything
+Please report security issues privately. Do not open a public issue for anything
 exploitable.
 
 - Use GitHub's [private vulnerability reporting](https://github.com/derive-to/derive/security/advisories/new), or
@@ -33,8 +33,8 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   reach it, each at their own SEAT role (owner→manage, editor→edit, commenter→comment)?
   **`link_role`** (`none` / viewer / commenter / editor): what merely holding the
   URL confers on anyone, including people outside the workspace (`none` = no world
-  link). **`listed`** (`none` / workspace / public): pure discoverability — the
-  workspace library or the public directory — with no access meaning of its own.
+  link). **`listed`** (`none` / workspace / public) controls whether it appears in
+  the workspace library or the public directory. It grants no access of its own.
   The active workspace is part of the authorization context: workspace seats and
   owner-level artifact/collection grants apply only while the artifact's workspace
   is active. Switching workspaces therefore never carries private ownership along.
@@ -54,30 +54,30 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   | link_role editor                 | View (sign in to edit) | Editor                        | max(seat/share, edit)     | max(share, edit)        |
 
   ¹ workspace_access=none withholds the seat grant, so a workspace owner cannot
-  open a teammate's invite-only draft by role alone — only an explicit share does.
+  open a teammate's invite-only draft by role alone. Only an explicit share does.
   Owner grants are not portable shares: they require this workspace to be active.
   ² A shared-with outsider isn't a workspace member, so their seat grant is nil;
   their share role alone applies.
 
   Two invariants (the only cross-field rules): **`listed=workspace` requires
-  `workspace_access=member`** and **`listed=public` requires a `link_role`** — a
+  `workspace_access=member`** and **`listed=public` requires a `link_role`**. A
   doc can't be listed somewhere it grants no access to. One modifier: a password
   gates the world link until unlocked (members and explicit shares never need it),
   and a locked artifact's bytes are never shared-cacheable.
 
   Every publish defaults to the **team draft**: `workspace_access=member`,
-  `link_role=none`, `listed=none` — nothing is listed anywhere, teammates reach it
+  `link_role=none`, `listed=none`. Nothing is listed anywhere, and teammates reach it
   at their seat role (so a pasted link opens for the team), and no one outside the
-  workspace can reach it. That includes AGENT publishes — the /mcp server, and any
-  /v1 publish carrying a registered agent token or OAuth bearer (the CLI and
-  stdio-shim paths) — resolved from the same workspace defaults
+  workspace can reach it. That includes agent publishes from the `/mcp` server and any
+  `/v1` publish carrying a registered agent token or OAuth bearer. The CLI and
+  stdio-shim paths resolve from the same workspace defaults
   (`defaultWorkspaceAccess` · `defaultLinkRole` · `defaultListed`). Existing
   artifacts are never retroactively widened by changing a default. Invite-only
   artifacts (workspace_access=none, no link) never appear in another viewer's
   listings, profiles, or People surfaces (your own library and the "Created by me"
-  filter always find your own). Widening — granting the workspace, listing wider,
-  or opening the link to Anyone — is always an explicit act. GitHub-mirror syncs
-  publish workspace-listed — a mirrored repo is a workspace resource, not a
+  filter always find your own). Widening access by granting the workspace, listing wider,
+  or opening the link to Anyone is always an explicit act. GitHub-mirror syncs
+  publish as workspace-listed because a mirrored repo is a workspace resource, not a
   personal draft.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
@@ -92,19 +92,19 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
 - **Webhook URLs are SSRF-filtered** (private, loopback, and cloud-metadata
   addresses are rejected) and generic payloads are signed with `X-Derive-Signature`.
 - **Rate limits + storage quotas** are available (`DERIVE_RATE_LIMIT`,
-  `DERIVE_MAX_BYTES`, `DERIVE_MAX_ARTIFACTS`, `DERIVE_PUBLISH_RATE`, `DERIVE_COMMENT_RATE`) —
-  enable them on shared instances.
+  `DERIVE_MAX_BYTES`, `DERIVE_MAX_ARTIFACTS`, `DERIVE_PUBLISH_RATE`, `DERIVE_COMMENT_RATE`).
+  Enable them on shared instances.
 - **Breached-password check** rejects passwords found in the Have I Been Pwned corpus at
   sign-up / reset / change, using k-anonymity (only a SHA-1 prefix is sent, never the
-  password). It **fails open** — if the HIBP API is unreachable (e.g. an air-gapped host)
+  password). It **fails open**: if the HIBP API is unreachable, such as on an air-gapped host,
   account creation is never blocked. Disable with `DERIVE_BREACH_CHECK=false`.
 - **Account deletion is a hard delete with anonymization.** When a user deletes their
   account, Better Auth removes the account and its sessions, passkeys, and 2FA, then the
   Derive cascade (`MetaStore.deleteUserData`) drops their memberships, follows, favorites,
-  and notifications and **anonymizes** their authorship — `author_id` on artifacts,
+  and notifications and **anonymizes** their authorship. `author_id` on artifacts,
   versions, comments, and proposals is nulled so co-authored threads survive intact rather
   than being destroyed with the account. Their personal workspace is dropped; artifact
   bytes are not hard-deleted (orphaned + anonymized, a GC concern). Deletion is **blocked**
   while the user is the sole owner of a workspace that still has other members, so a shared
-  workspace can never be stranded without an admin — they must transfer ownership or remove
+  workspace can never be stranded without an admin. They must transfer ownership or remove
   the others first.

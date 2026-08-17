@@ -99,7 +99,7 @@ export function useArtifactActions(p: {
         p.proposeMsg.trim() || "Proposed change",
       )
     },
-    success: "Proposed — sent for review",
+    success: "Sent for review",
     onSuccess: () => {
       p.setEditing(false)
       p.setProposeMsg("")

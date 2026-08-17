@@ -31,7 +31,7 @@ export const docsSections = [
       {
         source: "apps/docs/content/connect-agent.md",
         slug: "agents/connect",
-        title: "Connect an agent",
+        title: "Connect your coding agent",
         description: "Connect Claude Code, Codex, Cursor, or another MCP-compatible client.",
         stripHeading: false,
       },
@@ -77,7 +77,7 @@ export const docsSections = [
         slug: "artifacts/authoring",
         title: "Artifact authoring standard",
         description:
-          "Author HTML, Markdown, bundles, and decks that preserve durable review anchors.",
+          "Author HTML, Markdown, bundles, and decks whose comments stay attached as they change.",
       },
       {
         source: "examples/README.md",

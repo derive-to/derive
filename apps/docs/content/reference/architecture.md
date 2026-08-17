@@ -11,12 +11,12 @@ derive.to/
 │  ├─ web/         TanStack Start SPA (front-end; separate workstream)
 │  └─ docs/        Static Starlight site deployed independently at docs.derive.to
 ├─ packages/
-│  ├─ core/        runtime-agnostic domain — the MetaStore/BlobStore ports, ids,
+│  ├─ core/        runtime-agnostic domain: MetaStore/BlobStore ports, ids,
 │  │              mime, hashing, publish/propose/approve, permissions, markdown,
 │  │              the viewer shell, diff, version sessions, anchors
 │  ├─ db/          MetaStore adapters: sqlite (default), pg (scale), d1 (edge)
 │  ├─ storage/     BlobStore adapters: fs (default), s3/r2 (hosted)
-│  ├─ cli/         `derive` — init/publish/review from the terminal
+│  ├─ cli/         `derive`: init/publish/review from the terminal
 │  └─ mcp/         Model Context Protocol server for agents
 └─ deploy/         Dockerfile, compose, platform configs
 ```
@@ -42,7 +42,7 @@ the bundled SPA when present.
 
 - **Auth** is [Better Auth](https://better-auth.com) under `/api/auth/*`; a static
   `DERIVE_TOKEN` authorizes CI/agents. Every request resolves to one typed **`Principal`**
-  (`packages/core/src/principal.ts`: `anonymous | token | human | agent`) — `buildContext`'s
+  (`packages/core/src/principal.ts`: `anonymous | token | human | agent`). `buildContext`'s
   `resolvePrincipal` is the single identity resolution, and an agent Principal carries the
   human it acts `onBehalfOf` (delegation as data, not a heuristic). `permissions.ts` is the
   one authorization gate (`can(actor, action, visibility, generalRole)`): `actorFor`
@@ -61,7 +61,7 @@ the bundled SPA when present.
   iframe `sandbox` attribute is the single-origin fallback.
 - **Domain mode (C1):** hosts registered in the `domain` table (vanity subdomains,
   per-artifact drafts, workspace custom domains) serve artifact bytes at their own
-  origin — only bytes and the anchor client, never the app, auth, or API.
+  origin. It serves only bytes and the anchor client, never the app, auth, or API.
 
 ## apps/docs
 
@@ -76,13 +76,13 @@ last-updated dates, rewritten internal links, `robots.txt`, and both concise and
 The build guard validates the declared routes, local Pagefind index, canonical URLs, sitemap,
 internal links, and real 404 output before deployment.
 
-## packages/db — the adapters
+## packages/db adapters
 
 All three drivers implement the single `MetaStore` interface from `core/ports.ts`.
 
 - **sqlite** (`better-sqlite3`, synchronous) is the zero-config default.
 - **d1** (Cloudflare, async) shares the exact same `sqliteTable` schema and drizzle
-  sqlite query builder as sqlite — so the bulk of their query logic lives **once**
+  sqlite query builder as sqlite, so the bulk of their query logic lives **once**
   in `packages/db/src/repos/*` and is composed by both, with a small per-driver
   `Executor` bridging sync vs async terminals.
 - **pg** (`node-postgres`, async) is a different dialect (its own `pgTable` schema,
@@ -117,6 +117,6 @@ to a workspace role. See `packages/core/src/ports.ts` for the full record shapes
 
 ## Conventions
 
-Arrow functions, no semicolons, 100-char width, double quotes — enforced by Biome
-(`biome.json`). No `any`. Inline `import type`. Kebab-case filenames. See
+Biome (`biome.json`) enforces arrow functions, no semicolons, 100-character lines, and
+double quotes. Do not use `any`. Keep `import type` inline and filenames in kebab case. See
 [CONTRIBUTING.md](../../../../CONTRIBUTING.md) for the full gate.

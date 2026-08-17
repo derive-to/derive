@@ -57,7 +57,7 @@ export function ReviewBody({
             description={
               <>
                 Proposed against v{active.base_version}, but the live version is now v
-                {currentVersion}. Approving replaces v{currentVersion} entirely — compare against{" "}
+                {currentVersion}. Approving replaces v{currentVersion} entirely. Compare against{" "}
                 <Button
                   type="button"
                   data-testid="review-compare-current"

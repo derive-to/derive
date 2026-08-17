@@ -16,36 +16,34 @@ export function TemplateCard({
     <Card data-testid={`template-card-${template.id}`} className="h-full gap-0 py-0">
       <CardContent className="flex min-w-0 flex-col gap-3 p-3">
         <TemplateArtwork template={template} className="w-full" />
-        <span className="flex min-w-0 flex-col gap-2 px-1 pb-1">
-          <span className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-col gap-2 px-1 pb-1">
+          <div className="flex items-center gap-2">
             <Badge variant="outline" shape="pill">
               {template.kind === "context" ? "Context" : template.category}
             </Badge>
             {template.featured && (
-              <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+              <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
                 Featured
-              </span>
+              </p>
             )}
-          </span>
-          <span className="font-serif text-lg font-medium leading-tight tracking-tight text-foreground [overflow-wrap:anywhere]">
+          </div>
+          <h2 className="font-serif text-lg font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
             {template.title}
-          </span>
-          <span className="line-clamp-2 text-sm text-pretty text-muted-foreground">
+          </h2>
+          <p className="line-clamp-2 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">
             {template.description}
-          </span>
-        </span>
+          </p>
+        </div>
       </CardContent>
-      <CardFooter className="mt-auto grid grid-cols-2 gap-2 p-2">
+      <CardFooter className="mt-auto p-2">
         <Button
-          variant="outline"
+          className="w-full"
           size="sm"
+          variant="outline"
           onClick={onUse}
-          data-testid={`template-preview-${template.id}`}
+          data-testid={`template-use-${template.id}`}
         >
-          <Icon name="views" /> Preview
-        </Button>
-        <Button size="sm" onClick={onUse} data-testid={`template-use-${template.id}`}>
-          <Icon name="sparkles" /> {template.kind === "context" ? "Make it ours" : "Make it mine"}
+          <Icon name="sparkles" /> Use template
         </Button>
       </CardFooter>
     </Card>

@@ -54,13 +54,13 @@ export function FillDialog({
     errorToast: false,
     onError: (err) => {
       if (err instanceof ApiError && err.code === "alreadyQueued") toast(ALREADY_QUEUED)
-      else toast.error("Fill request failed — try again.")
+      else toast.error("Couldn’t fill this artifact. Try again.")
     },
     onSuccess: () => onOpenChange(false),
   })
   const copy = () => {
     if (!data) return
-    void copyText(data.prompt, { success: "Prompt copied — paste it into your agent." })
+    void copyText(data.prompt, { success: "Prompt copied. Paste it into your agent." })
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -68,14 +68,13 @@ export function FillDialog({
         <DialogHeader>
           <DialogTitle>Fill with your work</DialogTitle>
           <DialogDescription>
-            Your agent replaces the example content with your real work — and reshapes the document
-            to fit it.
+            Your agent replaces the example content with your work and adapts the document to fit.
           </DialogDescription>
         </DialogHeader>
         <label className="flex flex-col gap-1.5">
           <Eyebrow>
             What should this be about?{" "}
-            <span className="normal-case tracking-normal">(optional — your agent will ask)</span>
+            <span className="normal-case tracking-normal">(optional; your agent can ask)</span>
           </Eyebrow>
           <Textarea
             data-testid="fill-note"
@@ -83,7 +82,7 @@ export function FillDialog({
             onChange={(e) => setNote(e.target.value)}
             maxLength={500}
             rows={2}
-            placeholder="e.g. Week 32 for the payments team — skip the hiring section"
+            placeholder="For example: Week 32 for the payments team; skip the hiring section"
           />
         </label>
         <div className="rounded-md border border-border">

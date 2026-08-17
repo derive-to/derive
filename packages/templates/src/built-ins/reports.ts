@@ -10,8 +10,8 @@ export const REPORT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Weekly operating review",
     defaultTitle: "Weekly operating review",
     description:
-      "What changed, leading indicators, blockers, decisions, commitments, and owner follow-through.",
-    outcome: "Run the week from deltas and decisions, not status narration.",
+      "Review what changed, the leading indicators, blockers, decisions, and commitments.",
+    outcome: "Give the team a clear view of the week and its next commitments.",
     sections: [
       "Week in one line",
       "What changed",
@@ -35,8 +35,9 @@ export const REPORT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     format: "md",
     title: "Customer health report",
     defaultTitle: "Customer health report",
-    description: "Outcomes, usage, stakeholder map, risks, opportunities, and mutual commitments.",
-    outcome: "See the account as a relationship and outcome system, not a health score.",
+    description:
+      "Review customer outcomes, usage, stakeholders, risks, opportunities, and commitments.",
+    outcome: "Give the account team a current, evidence-based view of the relationship.",
     sections: [
       "Executive read",
       "Outcomes",
@@ -61,8 +62,8 @@ export const REPORT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     title: "Market landscape",
     defaultTitle: "Market landscape",
     description:
-      "Category definition, forces, segments, players, comparison method, whitespace, and implications.",
-    outcome: "Replace logo maps with a defensible view of how a market is moving.",
+      "Define a market, its segments and players, how they compare, and what is changing.",
+    outcome: "Support a product or business decision with a sourced view of the market.",
     sections: [
       "Category",
       "Forces",

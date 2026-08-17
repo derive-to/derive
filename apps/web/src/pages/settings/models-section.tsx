@@ -12,17 +12,8 @@ import { cn } from "@/lib/utils"
 import { AddForm } from "./add-form"
 import { SettingsSection } from "./settings-section"
 
-// THE MODEL LIBRARY — which models this deployment can answer with, which one serves which lane,
-// and how each is actually performing. An OPERATOR surface, not a workspace one: the operator
-// holds the model credential and pays for every turn on it, so a workspace Admin changing this
-// would be spending somebody else's key — and when a provider goes slow or dark, the person who
-// has to move everyone at once is the one who runs the instance.
-//
-// The whole page exists for one moment: a provider has gone bad and people are typing. So it
-// answers the three questions of that moment in one view — what is running, what else could run,
-// and which of them is fast — rather than making somebody assemble it from three screens. Adding
-// a model and pinning a lane both take effect on the NEXT turn, including in conversations that
-// are already open; neither needs a deploy.
+// Instance operators own the model credentials, so workspace admins cannot change this catalog.
+// Model additions and lane changes apply to the next turn without a deploy.
 
 /** ms → the shortest honest reading. Sub-second latency is the difference between a chat that
  *  feels live and one that does not, so it keeps a decimal where a whole number would round that
@@ -75,7 +66,7 @@ export function ModelsSection() {
   const add = useApiMutation({
     mutationFn: (id: string) => api.addModel(id),
     // The probe runs before it is saved, so this message is a measurement rather than a promise.
-    success: (d) => `Added ${d.id} — answered in ${ms(d.probe.total_ms) ?? "no time at all"}`,
+    success: (d) => `Added ${d.id}. It answered in ${ms(d.probe.total_ms) ?? "no time at all"}.`,
     onSuccess: () => {
       setNewId("")
       invalidate()
@@ -118,7 +109,7 @@ export function ModelsSection() {
   return (
     <SettingsSection
       title="Models"
-      description="Which models this deployment can answer with, and which one serves each lane. Changes take effect on the next turn, including in conversations that are already open, so this is the switch to reach for when a provider is slow or down."
+      description="Choose the models used for chat and automations. Changes apply to the next turn, including in open conversations."
       actions={
         models.length > 0 ? (
           <Button
@@ -163,7 +154,7 @@ export function ModelsSection() {
         <>
           <SettingsGroup
             title="Lanes"
-            description="Chat is attended, so somebody is waiting on the first token. Automations run unattended, where depth is worth more than turnaround. Pinning a lane names the model, never who pays for it."
+            description="Choose a model for chat and another for automations. This does not change which account pays for a run."
           >
             <Lane
               label="Chat"
@@ -191,7 +182,7 @@ export function ModelsSection() {
             title="Library"
             description={
               data?.can_add
-                ? "Models on the gateway this deployment is already configured with. Adding one needs no new key and no deploy; a different provider needs a key, which only the environment can hold."
+                ? "Models available through this deployment's gateway. A different provider must be configured in the environment."
                 : "This deployment has no model gateway configured, so models come from its environment and cannot be added here."
             }
           >
@@ -447,12 +438,16 @@ function Timings({
     const when = ago(probe.at)
     parts.push(
       probe.ok
-        ? `probe ${ms(probe.total_ms) ?? "—"}${when ? ` ${when}` : ""}`
+        ? `probe ${ms(probe.total_ms) ?? "not available"}${when ? ` ${when}` : ""}`
         : `probe failed${when ? ` ${when}` : ""}`,
     )
   }
   if (!parts.length)
-    return <div className="pt-1 text-xs text-muted-foreground">No timings yet — probe it.</div>
+    return (
+      <div className="pt-1 text-xs text-muted-foreground">
+        No timing data yet. Run a probe to measure it.
+      </div>
+    )
   return (
     <div className="flex flex-col gap-0.5 pt-1">
       <div className="text-xs text-muted-foreground">{parts.join(" · ")}</div>

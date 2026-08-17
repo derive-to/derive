@@ -10,7 +10,7 @@ export function BrandprintSettings() {
   return (
     <SettingsSection
       title="Brandprint"
-      description="The conventions your artifacts follow: how they look and how they read. Any agent connected to this workspace picks them up automatically."
+      description="Design and writing guidance for this workspace. Connected coding agents read it automatically."
     >
       <BrandprintBody />
     </SettingsSection>

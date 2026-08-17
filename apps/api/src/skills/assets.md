@@ -41,7 +41,7 @@ reference the result in `publish`.
    - `cost` names what this asset costs every viewer on every load, with its pixel
      dimensions. READ IT. Nothing is re-encoded (they are your bytes), but a screenshot
      exported at twice the density it displays at is the common, invisible way a page
-     gets slow — and halving the density is the lever (~78% smaller, where re-encoding
+     gets slow. Halving the density is the useful lever (~78% smaller, where re-encoding
      buys ~15%). A publish whose page references more than ~1MB of assets says so too.
    - Use permanent `url` in single-file HTML `<img src>`, CSS `url()`, Markdown
      `![]()`, or anywhere a URL is required.
