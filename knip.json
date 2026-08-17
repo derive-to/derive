@@ -23,7 +23,8 @@
         "src/components/ui/**",
         "e2e/**/*.screens.ts",
         "e2e/public-quality/static-server.mjs",
-        "public/site/guides.css"
+        "public/site/site.css",
+        "public/site/site.js"
       ]
     },
     "packages/cli": {
