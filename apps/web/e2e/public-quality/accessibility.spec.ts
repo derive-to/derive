@@ -101,6 +101,24 @@ test("marketing mobile menu exposes the same primary navigation", async ({ page 
   await expect(menu.locator("summary")).toBeFocused()
 })
 
+test("marketing walkthrough lets readers inspect each artifact version", async ({ page }) => {
+  await page.goto(`${siteOrigin}/site/index.html`)
+
+  const walkthrough = page.locator("[data-home-demo]")
+  const firstVersion = page.locator('[data-demo-version="1"]')
+  await firstVersion.click()
+
+  await expect(walkthrough).toHaveAttribute("data-version", "1")
+  await expect(firstVersion).toHaveAttribute("aria-pressed", "true")
+  await expect(walkthrough.getByRole("heading", { name: "OSC-8 Synthesizer" })).toBeVisible()
+  await expect(walkthrough.getByText("No comments yet.")).toBeVisible()
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
+    ),
+  ).toBe(true)
+})
+
 test("docs search loads the local browser index", async ({ page }) => {
   await page.goto(`${docsOrigin}/`)
   await page.locator("[data-search-open]").first().click()

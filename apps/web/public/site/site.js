@@ -142,6 +142,67 @@ function initWaitlists() {
   }
 }
 
+function initHomeDemo() {
+  const demo = document.querySelector("[data-home-demo]")
+  if (!(demo instanceof HTMLElement)) return
+
+  const versions = {
+    1: {
+      heading: "OSC-8 Synthesizer",
+      summary: "A portable eight-voice synthesizer with a built-in speaker and battery.",
+      meta: "HTML · v1",
+      badge: "Draft",
+      comments: "0",
+      message: "First draft",
+    },
+    2: {
+      heading: "Eight voices. Zero menus.",
+      summary: "Every parameter is already on the surface. No pages, no shift keys, no manual.",
+      meta: "HTML · v2",
+      badge: "Updated",
+      comments: "2",
+      message: "Product drawing and clearer direction",
+    },
+    3: {
+      heading: "Eight voices. Zero menus.",
+      summary: "Every parameter is already on the surface. No pages, no shift keys, no manual. Battery for an afternoon.",
+      meta: "HTML · v3",
+      badge: "Current",
+      comments: "3",
+      message: "Measured specs added after review",
+    },
+  }
+
+  const heading = demo.querySelector("[data-demo-heading]")
+  const summary = demo.querySelector("[data-demo-summary]")
+  const meta = demo.querySelector("[data-demo-meta]")
+  const badge = demo.querySelector("[data-demo-badge]")
+  const comments = demo.querySelector("[data-demo-comment-count]")
+  const versionLabel = demo.querySelector("[data-demo-version-label]")
+  const versionMessage = demo.querySelector("[data-demo-version-message]")
+  const buttons = [...demo.querySelectorAll("[data-demo-version]")]
+
+  const showVersion = (version) => {
+    const next = versions[version]
+    if (!next) return
+    demo.dataset.version = version
+    if (heading) heading.textContent = next.heading
+    if (summary) summary.textContent = next.summary
+    if (meta) meta.textContent = next.meta
+    if (badge) badge.textContent = next.badge
+    if (comments) comments.textContent = next.comments
+    if (versionLabel) versionLabel.textContent = `v${version}`
+    if (versionMessage) versionMessage.textContent = next.message
+    for (const button of buttons) {
+      button.setAttribute("aria-pressed", String(button.dataset.demoVersion === version))
+    }
+  }
+
+  for (const button of buttons) {
+    button.addEventListener("click", () => showVersion(button.dataset.demoVersion))
+  }
+}
+
 applyTheme()
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -149,6 +210,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initNav()
   initCopyButtons()
   initWaitlists()
+  initHomeDemo()
   for (const button of document.querySelectorAll("[data-theme-toggle]")) {
     button.addEventListener("click", cycleTheme)
   }
