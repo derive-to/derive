@@ -16,6 +16,7 @@ import {
   parseTemplateLibraryUri,
   refsOf,
   resolveNode,
+  SKILL_CONTENT_TYPE,
   sectionOf,
   TEMPLATE_LIBRARY_CATALOG_URI,
   templateLibraryUri,
@@ -53,6 +54,9 @@ import {
   parseVersionRange,
   runnerOnline,
   safeJson,
+  skillFilesFooter,
+  skillReading,
+  skillsCatalog,
   sleep,
   toBase64,
 } from "../mcp-util"
@@ -155,6 +159,7 @@ export function registerReadTool(tc: ToolContext): void {
     num,
     staleNote,
     actingFor,
+    agent,
     ownerId,
     inGrant,
     resolveWs,
@@ -317,14 +322,40 @@ export function registerReadTool(tc: ToolContext): void {
         })
       }
       const SK = "derive://skills/"
+      if (short_id === "derive://skills") {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const catalog = await skillsCatalog(ctx, t.org, actingFor?.id ?? agent.id)
+        return json({
+          uri: short_id,
+          ...catalog,
+          ...(catalog.truncated ? { next: "Use find skills:true for the full set." } : {}),
+        })
+      }
       if (short_id.startsWith(SK)) {
         const name = short_id.slice(SK.length)
         const skill = CORE_SKILLS.find((s) => s.name === name)
-        if (!skill)
-          return err(
-            `No core skill "${name}". Available: ${CORE_SKILLS.map((s) => s.name).join(", ")}.`,
-          )
-        return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
+        if (skill) return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
+        // A workspace skill rides the same prefix by short id. Core names win; short
+        // ids are exactly 8 base36 chars, so the lookup order settles the one
+        // collision a name like "contexts" could ever pose. Access is the ordinary
+        // artifact reach — tenancy, roaming, and takedowns identical to a plain read.
+        const r = await reach(name, workspace)
+        if (r && "error" in r) return err(r.error)
+        if (r && r.a.current_content_type === SKILL_CONTENT_TYPE) {
+          const reading = await skillReading(ctx, r.a)
+          if (reading)
+            return json({
+              uri: short_id,
+              mimeType: "text/markdown",
+              // Clipped like every other content read — a SKILL.md can arrive by
+              // 100MB zip upload, and this response has no outline rung to fall to.
+              content: clip(reading.body + skillFilesFooter(r.a.short_id, reading.others)),
+            })
+        }
+        return err(
+          `No skill "${name}". Core: ${CORE_SKILLS.map((s) => s.name).join(", ")}; workspace skills: read derive://skills for the catalog.`,
+        )
       }
       // The deck starter, resolved here as well as via MCP resources — the skill that
       // points at it is read through this same tool on clients without resource support,
@@ -943,6 +974,33 @@ export function registerReadTool(tc: ToolContext): void {
 
       // Bundle.
       const pages = Object.keys(manifest.files).map(cleanPath)
+      // A skill reads as its document: the SKILL.md body, with the bundle's files
+      // listed alongside. The common caller was just told to follow this procedure,
+      // so the outline-first bundle default is the wrong rung here. Explicit
+      // `section` still opens one file; a pinned past version keeps the bundle view.
+      if (
+        a.current_content_type === SKILL_CONTENT_TYPE &&
+        !section &&
+        !wantMap &&
+        !node &&
+        !lines &&
+        n === a.current_version
+      ) {
+        const reading = await skillReading(ctx, a)
+        // A giant SKILL.md keeps the ordinary outline path below — the same ceiling
+        // whole-document reads honor — so this branch can never return megabytes.
+        if (reading && reading.body.length <= FULL_DOC_MAX)
+          return json({
+            short_id,
+            title: reading.name ?? a.title,
+            kind: "skill",
+            version: n,
+            url,
+            content: reading.body,
+            files: pages,
+            next: 'Read one of the files with read(section:"<path>").',
+          })
+      }
       if (!section) {
         // Outline: every page, plus sizes + headings for the shallowest text pages
         // (each costs a blob read — the manifest has no sizes — so cap the sweep).

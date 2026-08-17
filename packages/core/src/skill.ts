@@ -82,3 +82,12 @@ export const bundleDoc = (manifest: BundleManifest, entrySource: string | null):
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
   }
 }
+
+/** The always-loaded instructions pointer for workspace skills. One short sentence —
+ *  it rides the MCP instructions, which are budget-tested (mcp-surface-budget) with a
+ *  skill published, so the count-bearing variant is the one the budget measures. The
+ *  count arrives from a limit-100 listing, so 100 reads as "100 or more". */
+export const workspaceSkillsInstructions = (count: number): string =>
+  count > 0
+    ? `${count === 100 ? "100+" : count} team skill${count === 1 ? "" : "s"} here — read derive://skills for the catalog. `
+    : `Team skills: read derive://skills for the catalog. `
