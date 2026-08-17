@@ -10,6 +10,7 @@ import {
   profileMetaTags,
   profileSummary,
   setRobotsMeta,
+  setTitle,
   type UnfurlInfo,
   unfurlDescription,
   unfurlMetaTags,
@@ -24,6 +25,7 @@ const info: UnfurlInfo = {
   imageUrl: "http://derive.test/v1/og/abc12345",
   oembedUrl: "http://derive.test/v1/oembed?url=http%3A%2F%2Fderive.test%2Fa%2Fabc12345",
   embedUrl: "http://derive.test/v1/embed/abc12345",
+  markdownUrl: "http://derive.test/artifacts/my-report-abc12345.md",
 }
 
 describe("parseRef", () => {
@@ -65,8 +67,22 @@ describe("unfurlMetaTags", () => {
       '<link rel="canonical" href="http://derive.test/artifacts/my-report-abc12345">',
     )
     expect(html).toContain('type="application/json+oembed"')
+    expect(html).toContain(
+      '<link rel="alternate" type="text/markdown" href="http://derive.test/artifacts/my-report-abc12345.md">',
+    )
     // No unescaped angle brackets from the title leak into the markup.
     expect(html).not.toContain("My <Report>")
+  })
+})
+
+describe("setTitle", () => {
+  it("replaces the shell title with the page's own, escaped", () => {
+    expect(setTitle("<head><title>Derive</title></head>", 'A "B" <c>')).toBe(
+      "<head><title>A &quot;B&quot; &lt;c&gt;</title></head>",
+    )
+  })
+  it("injects a title when the shell has none", () => {
+    expect(setTitle("<head></head>", "x")).toBe("<head><title>x</title>\n</head>")
   })
 })
 

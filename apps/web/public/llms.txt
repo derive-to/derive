@@ -31,6 +31,16 @@ The draft URL then redirects to the permanent home. The secret URL is the only
 access (view-by-link, unlisted, noindex): don't put secrets in a draft. Drafts can't
 be revised. Create a new one, or claim it before revising through MCP.
 
+## Reading a shared artifact URL (no token needed)
+
+Every `/artifacts/<ref>` share URL serves an agent-readable markdown projection of the
+document: request the URL with `Accept: text/markdown`, or append `.md` to it
+(`/artifacts/<ref>.md`, also `<ref>@vN.md` for a pinned version). Anonymous access works
+whenever the link itself is viewable (a password-locked link must be unlocked on the web
+page first); pinned versions other than the current one need a signed-in reader unless
+the artifact enables public history. Without the header or suffix the URL serves the web
+app's HTML shell, whose content loads client-side.
+
 ## Key API endpoints
 
 All requests use `Authorization: Bearer $DERIVE_TOKEN` (static agent token from Settings > Agents).

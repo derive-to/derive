@@ -1,8 +1,10 @@
 import {
   type ArtifactRecord,
   candidateShortIds,
+  elideDataUris,
   escapeHtml,
   injectHead,
+  isBundleContentType,
   normalizeUsername,
   oembedResponse,
   ogCardSvg,
@@ -13,11 +15,14 @@ import {
   profileSummary,
   refFor,
   setRobotsMeta,
+  setTitle,
+  toMarkdown,
   type UnfurlInfo,
   unfurlMetaTags,
 } from "@derive/core"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
+import { manifestOf } from "../lib/bundle"
 import { fail, toBody } from "../lib/http"
 import { SLACK_PREVIEW_ORIGIN, verifyOgToken } from "../lib/og-token"
 import { unfurlInfoFor } from "../lib/unfurl-info"
@@ -38,7 +43,7 @@ import { unfurlInfoFor } from "../lib/unfurl-info"
  * org/password artifacts never leak a title — they get a generic locked card.
  */
 export const embedRoutes = (ctx: AppContext) => {
-  const { meta, authorize, blobs, effectiveWhiteLabel } = ctx
+  const { meta, authorize, actorFor, blobs, effectiveWhiteLabel, sourceText } = ctx
   const baseUrl = ctx.deps.baseUrl
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
@@ -294,36 +299,155 @@ export const embedRoutes = (ctx: AppContext) => {
   // the Worker reaches this handler instead of serving the raw static shell.
   const getShell = async (): Promise<string | null> =>
     ctx.deps.shell ?? (ctx.deps.shellFetch ? await ctx.deps.shellFetch() : null)
+
+  // A request that names text/markdown in Accept (with nonzero q) gets the markdown
+  // projection instead of the shell. Browsers never send it in a navigation; Claude-
+  // family agent fetchers send "text/markdown, text/html, */*" on every request.
+  // Order and q-weights beyond the q=0 refusal are deliberately not compared: naming
+  // the type at all is a signal only a markdown-capable client emits.
+  const acceptsMarkdown = (accept: string | undefined): boolean =>
+    !!accept?.split(",").some((part) => {
+      const [type, ...params] = part.trim().split(";")
+      if (type?.trim().toLowerCase() !== "text/markdown") return false
+      const q = params.map((p) => p.trim().toLowerCase()).find((p) => p.startsWith("q="))
+      return !q || Number.parseFloat(q.slice(2)) > 0
+    })
+
+  // The version exists but its stored bytes don't: a server-side 500, never to be
+  // dressed up as "private" — the content API draws the same line ("blob missing").
+  const GONE = Symbol("blob missing")
+
+  // The markdown projection of one version — the same rendering the content API's
+  // `?format=markdown` serves. `null` = no such version (a caller-side 404). A
+  // bundle converts by its ENTRY's own type — pickBundleEntry prefers
+  // SKILL.md/README.md over non-root HTML, so a skill's markdown entry must pass
+  // through verbatim, not through the HTML converter.
+  const markdownOf = async (
+    artifactId: string,
+    v: number,
+  ): Promise<string | null | typeof GONE> => {
+    const version = await meta.getVersion(artifactId, v)
+    if (!version) return null
+    if (!isBundleContentType(version.content_type)) {
+      const src = await sourceText(version)
+      if (src === null) return GONE
+      return elideDataUris(toMarkdown(src, version.content_type))
+    }
+    const manifest = await manifestOf(blobs, version)
+    const entry = manifest?.files[manifest.entry]
+    const bytes = entry ? await blobs.get(entry.key) : null
+    if (!entry || !bytes) return GONE
+    return elideDataUris(toMarkdown(new TextDecoder().decode(bytes), entry.type))
+  }
+
+  // The markdown surface's error body: one line, never the app shell (a markdown-
+  // preferring client can do nothing with 20KB of chrome) and never a title — the
+  // same no-leak rule the shell branch's generic 404 draws.
+  const markdownNotFound = (c: Context) => {
+    c.header("Vary", "Accept")
+    c.header("X-Robots-Tag", "noindex")
+    // Never let a shared cache pin this 404 heuristically and starve a member who
+    // could read the artifact a moment later.
+    c.header("Cache-Control", "no-store")
+    c.header("Content-Type", "text/markdown; charset=utf-8")
+    return c.body("Not found — or this artifact is private.\n", 404)
+  }
+
   if (ctx.deps.shell || ctx.deps.shellFetch)
     // Deliberately dynamic: readability, takedown state, status, and unfurl metadata
     // can differ by artifact and request. Signup attribution is carried explicitly by
     // CTA URLs, so this response no longer sets or depends on a tracking cookie.
     app.get("/artifacts/:ref", async (c) => {
-      const shell = await getShell()
-      if (!shell) return c.notFound()
-      const ref = c.req.param("ref")
+      const rawRef = c.req.param("ref")
+      // `/artifacts/<ref>.md` is the explicit markdown URL. Unambiguous: slugs and
+      // short ids come out of slugify/newShortId, which never emit a dot.
+      const mdSuffix = rawRef.endsWith(".md")
+      const ref = mdSuffix ? rawRef.slice(0, -".md".length) : rawRef
+      const wantsMd = mdSuffix || acceptsMarkdown(c.req.header("Accept"))
       const artifact = await readable(c, ref)
       // Missing, gated, and taken-down artifacts still hydrate the SPA so a human
       // gets its access/tombstone state, but carry a real 404 plus noindex so crawlers
       // do not treat the generic application shell as a page.
-      if (!artifact || artifact.removed_at)
+      if (!artifact || artifact.removed_at) {
+        if (wantsMd) return markdownNotFound(c)
+        const shell = await getShell()
+        if (!shell) return c.notFound()
+        // Two representations live at this URL now, 404s included.
+        c.header("Vary", "Accept")
         return c.html(setRobotsMeta(shell, "noindex,nofollow"), 404)
+      }
       // Canonicalise any non-canonical ref (bare id, stale name, legacy order) to
       // /artifacts/<name>-<shortId> so the browser/crawler holds the readable URL. 302 (not
       // 301) so a later rename re-canonicalises instead of being cached. Only ever for an
       // artifact the actor may read (readable() already authorised), so a gated title can't
-      // leak via the redirect. Preserves the @vN suffix and the query string.
+      // leak via the redirect. Preserves the @vN suffix, the .md suffix and the query string.
       const { version } = parseRef(ref)
       const canonical = version ? `${refFor(artifact)}@v${version}` : refFor(artifact)
       if (ref !== canonical)
-        return c.redirect(`/artifacts/${canonical}${new URL(c.req.url).search}`, 302)
+        return c.redirect(
+          `/artifacts/${canonical}${mdSuffix ? ".md" : ""}${new URL(c.req.url).search}`,
+          302,
+        )
       const indexable =
         artifact.listed === "public" &&
         artifact.link_role !== "none" &&
         !artifact.password_hash &&
         !artifact.expires_at
+      if (wantsMd) {
+        // The expiry fence (see serveArtifact in app.ts): authorize() doesn't know
+        // about expiry — only unclaimed drafts carry one, their world link stays
+        // viewer, and the sweep is the janitor. Without this an expired-but-unswept
+        // draft would serve its whole body here.
+        if (artifact.expires_at && artifact.expires_at <= new Date().toISOString())
+          return markdownNotFound(c)
+        const v = version ?? artifact.current_version
+        // The public-history gate (mirrors anonHistoryBlocked in routes/raw.ts):
+        // unless the owner opted the page into history, an anonymous caller reads
+        // only the CURRENT version — an old version's bytes are as hidden as the
+        // workbench that lists them.
+        if (
+          v !== artifact.current_version &&
+          !artifact.public_history &&
+          (await actorFor(c, artifact)).kind === "anon"
+        )
+          return markdownNotFound(c)
+        const md = await markdownOf(artifact.id, v)
+        if (md === null) return markdownNotFound(c)
+        if (md === GONE) return fail(c, 500, "blob missing")
+        c.header("Vary", "Accept")
+        // A live draft must never be CDN-cacheable (same rule as serveArtifact):
+        // its viewer link would earn a shared cache entry that outlives the sweep.
+        // And only the .md URL may cache SHARED: the negotiated response lives at
+        // the page URL, where nothing but Vary separates it from the HTML — and
+        // several major CDNs ignore Vary: Accept, which would hand this markdown
+        // to every browser behind them for 10 minutes.
+        const shared = mdSuffix ? "public, max-age=600" : "private, max-age=600"
+        c.header("Cache-Control", artifact.expires_at ? "no-store" : cacheFor(artifact, shared))
+        c.header("X-Content-Type-Options", "nosniff")
+        c.header("X-Derive-Version", String(v))
+        // The HTML page stays the canonical form of this document; the projection
+        // also self-noindexes when the page does (unlisted, password, expiring).
+        c.header("Link", `<${baseUrl}/artifacts/${refFor(artifact)}>; rel="canonical"`)
+        if (!indexable) c.header("X-Robots-Tag", "noindex")
+        c.header("Content-Type", "text/markdown; charset=utf-8")
+        return c.body(md)
+      }
+      const shell = await getShell()
+      if (!shell) return c.notFound()
       const governedShell = setRobotsMeta(shell, indexable ? "index,follow" : "noindex,nofollow")
-      return c.html(injectHead(governedShell, unfurlMetaTags(await infoFor(artifact))))
+      const info = await infoFor(artifact)
+      c.header("Vary", "Accept")
+      // Same cache line every infoFor sibling draws (see cacheFor): the injected
+      // meta and title are built for a caller who cleared readable(), so a gated
+      // artifact's shell must never land in a shared cache.
+      c.header(
+        "Cache-Control",
+        artifact.expires_at ? "no-store" : cacheFor(artifact, "public, max-age=600"),
+      )
+      c.header("Link", `<${info.markdownUrl}>; rel="alternate"; type="text/markdown"`)
+      return c.html(
+        injectHead(setTitle(governedShell, `${info.title} · Derive`), unfurlMetaTags(info)),
+      )
     })
   // Server-rendered profile URL: the SPA shell with profile OG/Twitter meta injected for
   // crawlers (which don't run JS). Humans get the SPA as usual (the meta is inert). Only

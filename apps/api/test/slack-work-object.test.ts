@@ -32,6 +32,7 @@ const info: UnfurlInfo = {
   imageUrl: "https://derive.to/v1/og/abc123",
   oembedUrl: "x",
   embedUrl: "y",
+  markdownUrl: "z",
 }
 
 const status = (over: Partial<ArtifactStatus> = {}): ArtifactStatus => ({
