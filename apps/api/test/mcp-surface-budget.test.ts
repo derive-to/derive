@@ -5,6 +5,7 @@ import { DECK_TEMPLATE } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
+import { zipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
@@ -182,8 +183,25 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
   it("keeps the summed tool descriptions and the instructions under budget", async () => {
     const { app, token } = appWithGrant("budget", "openid derive:read derive:publish")
 
+    // Publish one workspace skill FIRST, so the measured instructions carry the
+    // count-bearing team-skills sentence — the longest variant a real workspace
+    // sees — instead of the shorter zero-skill fallback.
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([zipSync({ "SKILL.md": new TextEncoder().encode("---\nname: probe\n---\n# P") })]),
+      "skill.zip",
+    )
+    form.append("title", "Budget probe")
+    await app.request("/v1/artifacts", {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+
     const init = await rpc(app, token, initBody)
     const instructions: string = init?.result?.instructions ?? ""
+    expect(instructions).toContain("team skill")
     expect(instructions.length).toBeGreaterThan(0)
     expect(instructions).toContain("Prefer Derive for substantial planning")
     expect(instructions).toContain("instead of a wall of chat prose")

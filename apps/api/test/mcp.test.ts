@@ -1799,6 +1799,88 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(ids).not.toContain(doc)
   })
 
+  it("the derive://skills catalog lists core and workspace skills; a short id reads one", async () => {
+    const { app, token } = appWithGrant(dir, "skillcat", "openid derive:read derive:publish")
+    const doc = (await (await publish(app, token, "Not a skill")).json()).short_id
+    const skill = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Release notes",
+          files: {
+            "SKILL.md":
+              "---\nname: release-notes\ndescription: How we write release notes.\n---\n\n# Release notes\n\nName what broke.\n",
+            "references/example.md": "# Example\n",
+          },
+        }),
+      ),
+    ).short_id
+
+    // The catalog: core skills plus this workspace's skills, viewer-scoped.
+    const cat = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: "derive://skills" })),
+    )
+    expect(cat.core.map((s: { name: string }) => s.name)).toContain("loop")
+    const mine = cat.workspace.find((s: { short_id?: string }) => s.short_id === skill)
+    expect(mine).toMatchObject({
+      name: "release-notes",
+      description: "How we write release notes.",
+    })
+    expect(mine.read).toBe(`derive://skills/${skill}`)
+    expect(JSON.stringify(cat.workspace)).not.toContain(doc)
+
+    // A workspace short id rides the same prefix core names use; core still wins.
+    const body = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: `derive://skills/${skill}` })),
+    )
+    expect(body.content).toContain("Name what broke.")
+    expect(body.content).not.toContain("description:") // frontmatter stripped
+    expect(body.content).toContain("references/example.md") // other files announced
+    const core = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: "derive://skills/loop" })),
+    )
+    expect(core.content.length).toBeGreaterThan(0)
+
+    // Unknown refs still get the actionable error.
+    const miss = toolText(await call(app, token, "read", { short_id: "derive://skills/zz99zz99" }))
+    expect(miss).toContain("derive://skills")
+  })
+
+  it("plain read of a skill returns its SKILL.md body, not a bundle outline", async () => {
+    const { app, token } = appWithGrant(dir, "skillread", "openid derive:read derive:publish")
+    const skill = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Chart style",
+          files: {
+            "SKILL.md": "---\nname: chart-style\n---\n\n# Chart style\n\nInk on paper.\n",
+            "scripts/check.sh": "echo ok\n",
+          },
+        }),
+      ),
+    ).short_id
+    const r = JSON.parse(toolText(await call(app, token, "read", { short_id: skill })))
+    expect(JSON.stringify(r)).toContain("Ink on paper.")
+    expect(r.pages).toBeUndefined() // a skill reads as its document, not a file listing
+    expect(JSON.stringify(r)).toContain("scripts/check.sh") // but the files are named
+    // An explicit section still reads a single file the ordinary way.
+    const sec = toolText(
+      await call(app, token, "read", { short_id: skill, section: "scripts/check.sh" }),
+    )
+    expect(sec).toContain("echo ok")
+  })
+
+  it("instructions point at the skills catalog, with the workspace's count", async () => {
+    const { app, token } = appWithGrant(dir, "skillinstr", "openid derive:read derive:publish")
+    const before = (await rpc(app, token, initBody)).parsed?.result as { instructions?: string }
+    expect(before.instructions).toContain("derive://skills")
+    await call(app, token, "publish", {
+      title: "One skill",
+      files: { "SKILL.md": "---\nname: one\n---\n# One\n" },
+    })
+    const after = (await rpc(app, token, initBody)).parsed?.result as { instructions?: string }
+    expect(after.instructions).toMatch(/1 team skill/)
+  })
+
   it("publish fires the version.published webhook — parity with the HTTP route", async () => {
     // The bug this guards against: an MCP publish that skips the webhook outbox because its
     // side-effect chain drifted from the HTTP route's. Both now share lib/after-publish.ts.
