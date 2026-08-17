@@ -27,6 +27,8 @@
   --success: #74b085;
   --warning: #fb923c;
 
+  --primary-hover: #fff;
+
   --radius: 4px;
   --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
@@ -51,8 +53,107 @@ html.light {
   --border-soft: #e7e7e2;
   --primary: #16171b;
   --primary-fg: #f7f7f5;
+  --primary-hover: #000;
   --success: #286b41;
   --warning: #b45309;
+}
+
+/* Editorial primitives ---------------------------------------------------
+ *
+ * The house register from docs/design-system.md, shared so a page never has to
+ * restate it: one family, ink as the only accent, focus in ink rather than a
+ * hue, and the arrow cursor everywhere (hover states signal clickability).
+ */
+
+a {
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
+}
+
+/* Chrome links carry no underline, but a link sitting inside a sentence must be
+ * distinguishable without relying on colour, so prose keeps its underline. */
+p a,
+li a,
+dd a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 4px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+/* The mono micro-label. The one sanctioned uppercase, always muted. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+}
+
+/* Buttons are verbs. One filled ink action per view; everything else is ghost.
+ * Pages set the three knobs when they need a different weight of button. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: var(--btn-h, 40px);
+  padding: 0 var(--btn-px, 18px);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: var(--btn-fs, 14px);
+  font-weight: 500;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-fg);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2);
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-ghost {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.btn-ghost:hover {
+  background: var(--secondary);
+}
+
+/* Fast and quiet: motion is for things that move, never for colour. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Container ------------------------------------------------------------- */
