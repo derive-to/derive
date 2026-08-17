@@ -119,6 +119,29 @@ test("marketing walkthrough lets readers inspect each artifact version", async (
   ).toBe(true)
 })
 
+test("marketing walkthrough can be paused and respects reduced motion", async ({ page }) => {
+  await page.goto(`${siteOrigin}/site/index.html`)
+
+  const walkthrough = page.locator("[data-home-demo]")
+  const playback = page.locator("[data-demo-play]")
+  await walkthrough.scrollIntoViewIfNeeded()
+  await expect(walkthrough).toHaveAttribute("data-demo-playing", "true")
+  await expect(playback).toHaveAccessibleName("Pause walkthrough")
+
+  await playback.click()
+  await expect(walkthrough).toHaveAttribute("data-demo-playing", "false")
+  await expect(playback).toHaveAccessibleName("Continue walkthrough")
+
+  await playback.click()
+  await expect(walkthrough).toHaveAttribute("data-demo-playing", "true")
+
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await page.reload()
+  await expect(walkthrough).toHaveAttribute("data-version", "3")
+  await expect(playback).toBeHidden()
+  await expect(walkthrough.getByText("Motion reduced. Choose a version below.")).toBeVisible()
+})
+
 test("docs search loads the local browser index", async ({ page }) => {
   await page.goto(`${docsOrigin}/`)
   await page.locator("[data-search-open]").first().click()

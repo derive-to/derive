@@ -103,7 +103,7 @@
       <p class="home-hero-note">Works with Claude Code, Codex, Cursor, and other compatible MCP clients.</p>
     </div>
 
-    <figure class="home-demo site-wrap" data-home-demo data-version="3">
+    <figure class="home-demo site-wrap" data-home-demo data-version="3" data-demo-scene="current" data-demo-playing="false">
       <figcaption class="home-figure-label"><span>Product walkthrough</span><span>One artifact changing over time</span></figcaption>
       <div class="home-demo-frame">
         <div class="home-demo-bar">
@@ -119,12 +119,12 @@
             <div class="home-artifact-nav"><strong>OSC-8</strong><span>Voices</span><span>Specs</span><span>Preorder</span></div>
             <div class="home-artifact-hero">
               <div class="home-artifact-copy">
-                <h2 data-demo-heading>Eight voices. Zero menus.</h2>
+                <h2 data-demo-heading data-demo-target="headline">Eight voices. Zero menus.</h2>
                 <p data-demo-summary>Every parameter is already on the surface. No pages, no shift keys, no manual. Battery for an afternoon.</p>
-                <span class="home-artifact-button" data-demo-cta>Preorder for €249</span>
+                <span class="home-artifact-button" data-demo-cta data-demo-target="price">Preorder for €249</span>
                 <p class="home-artifact-price">Ships Monday. Thirty-day returns.</p>
               </div>
-              <div class="home-artifact-figure">
+              <div class="home-artifact-figure" data-demo-target="image">
                 <div class="home-artifact-placeholder">Product image</div>
                 <svg class="home-synth-drawing" viewBox="0 0 560 300" fill="none" aria-label="Technical line drawing of the OSC-8 synthesizer" role="img">
                   <rect x="42" y="46" width="452" height="204" rx="16"/>
@@ -148,34 +148,48 @@
           <aside class="home-demo-comments" aria-label="Artifact comments">
             <div class="home-comments-title"><span>Comments</span><span data-demo-comment-count>3</span></div>
             <p class="home-comments-empty">No comments yet.</p>
-            <div class="home-demo-comment home-comment-v2">
+            <div class="home-demo-comment home-comment-v2" data-demo-comment="image">
               <div class="home-comment-who"><span>M</span>Maeva</div>
               <blockquote>Draw the product instead of leaving a placeholder.</blockquote>
               <p>No glamour shot exists yet. Use the real dimensions and materials.</p>
               <span class="home-comment-state">Addressed in v2</span>
             </div>
-            <div class="home-demo-comment home-comment-v2">
+            <div class="home-demo-comment home-comment-v2" data-demo-comment="headline">
               <div class="home-comment-who"><span>M</span>Maeva</div>
               <blockquote>“OSC-8 Synthesizer”</blockquote>
               <p>This could describe any store template. Make the product the loudest thing on the page.</p>
               <span class="home-comment-state">Addressed in v2</span>
             </div>
-            <div class="home-demo-comment home-comment-v3">
+            <div class="home-demo-comment home-comment-v3" data-demo-comment="price">
               <div class="home-comment-who"><span>A</span>Anya</div>
               <blockquote>“€249”</blockquote>
               <p>Anchor the price with facts, not adjectives.</p>
               <span class="home-comment-state">Addressed in v3</span>
             </div>
+            <div class="home-demo-reply" data-demo-reply>
+              <div class="home-comment-who"><span>C</span>Agent · claude-code</div>
+              <p>Added measured battery, latency, and weight in v3.</p>
+            </div>
           </aside>
+          <div class="home-demo-cursor" data-demo-cursor aria-hidden="true">
+            <svg viewBox="0 0 20 24"><path d="M2 2v17l4.7-4.5 3.2 7 3-1.4-3.2-6.8H16L2 2Z"/></svg>
+            <span data-demo-cursor-label>Maeva</span>
+          </div>
         </div>
       </div>
       <div class="home-version-control" aria-label="Artifact versions">
+        <div class="home-demo-player">
+          <button class="home-demo-play" type="button" data-demo-play><span data-demo-play-label>Play walkthrough</span></button>
+          <div class="home-demo-progress" aria-hidden="true"><span data-demo-progress></span></div>
+          <p data-demo-player-status>Current version</p>
+        </div>
         <div class="home-version-tabs">
           <button type="button" data-demo-version="1" aria-pressed="false"><span>v1</span><small>First draft</small></button>
           <button type="button" data-demo-version="2" aria-pressed="false"><span>v2</span><small>Clearer direction</small></button>
           <button type="button" data-demo-version="3" aria-pressed="true"><span>v3</span><small>Current</small></button>
         </div>
         <p class="home-version-summary"><span data-demo-version-label>v3</span><span data-demo-version-message>Measured specs added after review</span></p>
+        <p class="sr-only" aria-live="polite" data-demo-announcement></p>
       </div>
     </figure>
   </header>

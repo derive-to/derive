@@ -180,12 +180,20 @@ function initHomeDemo() {
   const comments = demo.querySelector("[data-demo-comment-count]")
   const versionLabel = demo.querySelector("[data-demo-version-label]")
   const versionMessage = demo.querySelector("[data-demo-version-message]")
+  const playButton = demo.querySelector("[data-demo-play]")
+  const playLabel = demo.querySelector("[data-demo-play-label]")
+  const progress = demo.querySelector("[data-demo-progress]")
+  const playerStatus = demo.querySelector("[data-demo-player-status]")
+  const announcement = demo.querySelector("[data-demo-announcement]")
+  const demoBody = demo.querySelector(".home-demo-body")
+  const cursor = demo.querySelector("[data-demo-cursor]")
+  const cursorLabel = demo.querySelector("[data-demo-cursor-label]")
   const buttons = [...demo.querySelectorAll("[data-demo-version]")]
 
-  const showVersion = (version) => {
+  const showVersion = (version, shouldAnnounce = false) => {
     const next = versions[version]
     if (!next) return
-    demo.dataset.version = version
+    demo.dataset.version = String(version)
     if (heading) heading.textContent = next.heading
     if (summary) summary.textContent = next.summary
     if (meta) meta.textContent = next.meta
@@ -194,13 +202,318 @@ function initHomeDemo() {
     if (versionLabel) versionLabel.textContent = `v${version}`
     if (versionMessage) versionMessage.textContent = next.message
     for (const button of buttons) {
-      button.setAttribute("aria-pressed", String(button.dataset.demoVersion === version))
+      button.setAttribute("aria-pressed", String(button.dataset.demoVersion === String(version)))
+    }
+    if (shouldAnnounce && announcement) {
+      announcement.textContent = `Version ${version} published. ${next.message}.`
+    }
+  }
+
+  if (
+    !(playButton instanceof HTMLButtonElement) ||
+    !(progress instanceof HTMLElement) ||
+    !(playerStatus instanceof HTMLElement) ||
+    !(demoBody instanceof HTMLElement) ||
+    !(cursor instanceof HTMLElement)
+  ) {
+    for (const button of buttons) {
+      button.addEventListener("click", () => showVersion(button.dataset.demoVersion))
+    }
+    return
+  }
+
+  const duration = 12_400
+  const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)")
+  let elapsed = 0
+  let frame = 0
+  let lastFrame = 0
+  let nextScene = 0
+  let playing = false
+  let pausedByReader = false
+  let hasStarted = false
+  let inView = false
+  let currentStatus = "Current version"
+  let currentCursorTarget = ""
+
+  const setPlayLabel = (label) => {
+    if (playLabel) playLabel.textContent = label
+    playButton.setAttribute("aria-label", label)
+  }
+
+  const setStatus = (status) => {
+    currentStatus = status
+    playerStatus.textContent = status
+  }
+
+  const setProgress = (value) => {
+    progress.style.transform = `scaleX(${Math.max(0, Math.min(1, value))})`
+  }
+
+  const hideCursor = () => {
+    currentCursorTarget = ""
+    delete demo.dataset.demoCursorVisible
+  }
+
+  const moveCursor = (person, targetName) => {
+    const target = demo.querySelector(`[data-demo-target="${targetName}"]`)
+    if (!(target instanceof HTMLElement) && !(target instanceof SVGElement)) return
+
+    const bodyBox = demoBody.getBoundingClientRect()
+    const targetBox = target.getBoundingClientRect()
+    const x = Math.max(
+      10,
+      Math.min(
+        demoBody.clientWidth - 92,
+        targetBox.left - bodyBox.left + targetBox.width * 0.62,
+      ),
+    )
+    const y = Math.max(
+      10,
+      Math.min(
+        demoBody.clientHeight - 36,
+        targetBox.top - bodyBox.top + targetBox.height * 0.48,
+      ),
+    )
+    cursor.style.setProperty("--demo-cursor-x", `${x}px`)
+    cursor.style.setProperty("--demo-cursor-y", `${y}px`)
+    if (cursorLabel) cursorLabel.textContent = person
+    currentCursorTarget = targetName
+    demo.dataset.demoCursorVisible = "true"
+  }
+
+  const setScene = ({ name, status, focus = "", person = "", target = "", commentCount }) => {
+    demo.dataset.demoScene = name
+    if (focus) demo.dataset.demoFocus = focus
+    else delete demo.dataset.demoFocus
+    if (person && target) moveCursor(person, target)
+    else hideCursor()
+    if (commentCount !== undefined && comments) comments.textContent = String(commentCount)
+    setStatus(status)
+  }
+
+  const scenes = [
+    {
+      at: 0,
+      version: "1",
+      name: "draft",
+      status: "v1 published. Ready for review.",
+      commentCount: 0,
+    },
+    {
+      at: 900,
+      name: "review-image",
+      status: "Maeva is reviewing the product image.",
+      focus: "image",
+      person: "Maeva",
+      target: "image",
+      commentCount: 0,
+    },
+    {
+      at: 1_800,
+      name: "comment-image",
+      status: "Maeva comments on the missing product image.",
+      focus: "image",
+      person: "Maeva",
+      target: "image",
+      commentCount: 1,
+    },
+    {
+      at: 3_200,
+      name: "review-headline",
+      status: "Maeva moves to the headline.",
+      focus: "headline",
+      person: "Maeva",
+      target: "headline",
+      commentCount: 1,
+    },
+    {
+      at: 4_100,
+      name: "comment-headline",
+      status: "Maeva asks for a more specific headline.",
+      focus: "headline",
+      person: "Maeva",
+      target: "headline",
+      commentCount: 2,
+    },
+    {
+      at: 5_200,
+      name: "revising-v2",
+      status: "The agent is updating the artifact.",
+      commentCount: 2,
+    },
+    {
+      at: 6_400,
+      version: "2",
+      name: "published-v2",
+      status: "v2 published. Maeva's comments are addressed.",
+      commentCount: 2,
+    },
+    {
+      at: 7_600,
+      name: "review-price",
+      status: "Anya is reviewing the price.",
+      focus: "price",
+      person: "Anya",
+      target: "price",
+      commentCount: 2,
+    },
+    {
+      at: 8_600,
+      name: "comment-price",
+      status: "Anya asks for facts behind the price.",
+      focus: "price",
+      person: "Anya",
+      target: "price",
+      commentCount: 3,
+    },
+    {
+      at: 9_900,
+      name: "revising-v3",
+      status: "The agent is adding measured specifications.",
+      commentCount: 3,
+    },
+    {
+      at: 11_100,
+      version: "3",
+      name: "published-v3",
+      status: "v3 published. The current artifact is ready to share.",
+      commentCount: 3,
+    },
+  ]
+
+  const cancelFrame = () => {
+    if (frame) window.cancelAnimationFrame(frame)
+    frame = 0
+    lastFrame = 0
+  }
+
+  const finish = () => {
+    cancelFrame()
+    playing = false
+    pausedByReader = false
+    demo.dataset.demoPlaying = "false"
+    demo.dataset.demoScene = "complete"
+    delete demo.dataset.demoFocus
+    hideCursor()
+    setProgress(1)
+    setStatus("Walkthrough complete. v3 is ready to share.")
+    setPlayLabel("Replay walkthrough")
+  }
+
+  const tick = (time) => {
+    frame = 0
+    if (!playing || !inView || document.hidden) return
+    if (!lastFrame) lastFrame = time
+    elapsed = Math.min(duration, elapsed + time - lastFrame)
+    lastFrame = time
+
+    while (nextScene < scenes.length && elapsed >= scenes[nextScene].at) {
+      const scene = scenes[nextScene]
+      if (scene.version) showVersion(scene.version, true)
+      setScene(scene)
+      nextScene += 1
+    }
+    setProgress(elapsed / duration)
+
+    if (elapsed >= duration) finish()
+    else frame = window.requestAnimationFrame(tick)
+  }
+
+  const resumeWhenVisible = () => {
+    if (!playing || !inView || document.hidden || frame) return
+    lastFrame = 0
+    frame = window.requestAnimationFrame(tick)
+  }
+
+  const startWalkthrough = () => {
+    cancelFrame()
+    elapsed = 0
+    nextScene = 0
+    playing = true
+    pausedByReader = false
+    hasStarted = true
+    demo.dataset.demoPlaying = "true"
+    setProgress(0)
+    setPlayLabel("Pause walkthrough")
+    resumeWhenVisible()
+  }
+
+  const pauseWalkthrough = () => {
+    cancelFrame()
+    playing = false
+    pausedByReader = true
+    demo.dataset.demoPlaying = "false"
+    playerStatus.textContent = `Paused. ${currentStatus}`
+    setPlayLabel("Continue walkthrough")
+  }
+
+  const resumeWalkthrough = () => {
+    playing = true
+    pausedByReader = false
+    demo.dataset.demoPlaying = "true"
+    playerStatus.textContent = currentStatus
+    setPlayLabel("Pause walkthrough")
+    resumeWhenVisible()
+  }
+
+  const stopForVersion = (version) => {
+    cancelFrame()
+    playing = false
+    pausedByReader = false
+    hasStarted = true
+    demo.dataset.demoPlaying = "false"
+    demo.dataset.demoScene = version === "3" ? "current" : `version-${version}`
+    delete demo.dataset.demoFocus
+    hideCursor()
+    showVersion(version)
+    const selected = versions[version]
+    setProgress(version === "1" ? 0 : version === "2" ? 0.56 : 1)
+    setStatus(selected?.message ?? "Artifact version selected")
+    setPlayLabel(version === "3" ? "Replay walkthrough" : "Play walkthrough")
+    if (announcement && selected) {
+      announcement.textContent = `Showing version ${version}. ${selected.message}.`
     }
   }
 
   for (const button of buttons) {
-    button.addEventListener("click", () => showVersion(button.dataset.demoVersion))
+    button.addEventListener("click", () => stopForVersion(button.dataset.demoVersion ?? "3"))
   }
+
+  if (motionPreference.matches) {
+    playButton.hidden = true
+    setProgress(1)
+    setStatus("Motion reduced. Choose a version below.")
+    return
+  }
+
+  playButton.addEventListener("click", () => {
+    inView = true
+    if (playing) pauseWalkthrough()
+    else if (pausedByReader) resumeWalkthrough()
+    else startWalkthrough()
+  })
+
+  const observer = new IntersectionObserver(
+    ([entry]) => {
+      inView = Boolean(entry?.isIntersecting)
+      if (inView && !hasStarted) startWalkthrough()
+      else if (inView) resumeWhenVisible()
+      else cancelFrame()
+    },
+    { threshold: 0.25 },
+  )
+  observer.observe(demo)
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) cancelFrame()
+    else resumeWhenVisible()
+  })
+
+  window.addEventListener("resize", () => {
+    if (currentCursorTarget && cursorLabel) {
+      moveCursor(cursorLabel.textContent ?? "", currentCursorTarget)
+    }
+  })
 }
 
 applyTheme()
