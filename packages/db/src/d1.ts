@@ -27,6 +27,7 @@ import {
 import { makeRepos, schema } from "./repos"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
+const LAST_24H_MS = 86400_000
 
 /**
  * Cloudflare D1 driver. The bulk of the MetaStore comes from the cross-dialect
@@ -168,8 +169,12 @@ export function createD1Store(d1: D1Database): MetaStore {
     },
     viewStats: async (artifactId: string): Promise<ViewStats> => {
       const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
+      const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
       const tot = (await db.get(
         sql`SELECT count(*) n FROM view WHERE artifact_id=${artifactId}`,
+      )) as { n: number }
+      const day = (await db.get(
+        sql`SELECT count(*) n FROM view WHERE artifact_id=${artifactId} AND created_at>=${dayAgo}`,
       )) as { n: number }
       const uni = (await db.get(
         sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId}`,
@@ -186,7 +191,15 @@ export function createD1Store(d1: D1Database): MetaStore {
       const recent = (await db.all(
         sql`SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=${artifactId} GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
       )) as { viewer: string; kind: "user" | "anon"; at: string }[]
-      return { total: tot.n, unique: uni.n, anonViewers: anon.n, perVersion, daily, recent }
+      return {
+        total: tot.n,
+        last24h: day.n,
+        unique: uni.n,
+        anonViewers: anon.n,
+        perVersion,
+        daily,
+        recent,
+      }
     },
     viewCounts: async (artifactIds: string[]): Promise<Record<string, number>> => {
       if (artifactIds.length === 0) return {}

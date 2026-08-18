@@ -3379,6 +3379,10 @@
             "type": "number",
             "description": "Total recorded views across all versions (de-duped opens)"
           },
+          "last24h": {
+            "type": "number",
+            "description": "Views in the trailing 24 hours. A rolling window rather than a calendar day, so it carries no timezone assumption about the reader"
+          },
           "unique": {
             "type": "number",
             "description": "Distinct viewers; a signed-in person or anon cookie counts once"
@@ -3463,6 +3467,7 @@
         },
         "required": [
           "total",
+          "last24h",
           "unique",
           "anonViewers",
           "perVersion",

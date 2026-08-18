@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { getInitials } from "@/lib/initials"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { trendSeries } from "./insights-stats"
 
 // Stat grid per the surfaces doctrine: siblings separated by hairline dividers,
 // not boxed wells — the number/label contrast carries the hierarchy.
@@ -24,7 +25,7 @@ function StatTile({ value, label }: { value: number; label: string }) {
   )
 }
 
-const INSIGHT_STATS = ["viewers", "views", "today"]
+const INSIGHT_STATS = ["viewers", "views", "last24h"]
 const INSIGHT_ROWS = ["a", "b", "c", "d"]
 
 // First-load placeholder that mirrors the resolved dialog's own layout: the stat row
@@ -108,10 +109,12 @@ export function Insights({
         .catch(() => setFailed(true))
   }, [open, data, shortId])
 
-  const max = data ? Math.max(1, ...data.daily.map((d) => d.count)) : 1
+  // Zero-filled so the 30 bars are 30 real days: `daily` omits days with no views,
+  // and drawing it raw made scattered days look like consecutive ones.
+  const trend = data ? trendSeries(data.daily, new Date().toISOString().slice(0, 10)) : []
+  const max = Math.max(1, ...trend.map((d) => d.count))
   const vmax = data ? Math.max(1, ...data.perVersion.map((v) => v.count)) : 1
   const namedRecent = data ? data.recent.filter((r) => r.kind === "user") : []
-  const today = data?.daily.at(-1)?.count ?? 0
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -134,20 +137,27 @@ export function Insights({
               <div className="flex divide-x divide-border">
                 <StatTile value={data.unique} label={data.unique === 1 ? "viewer" : "viewers"} />
                 <StatTile value={data.total} label={data.total === 1 ? "view" : "views"} />
-                <StatTile value={today} label="today" />
+                <StatTile value={data.last24h} label="last 24hrs" />
               </div>
-              {data.daily.length > 0 && (
+              {data.total > 0 && (
                 <div className="ml-auto min-w-40 flex-1">
                   <Eyebrow as="div" className="mb-1">
                     Last 30 days
                   </Eyebrow>
                   <div className="flex h-12 items-end gap-px">
-                    {data.daily.map((d) => (
+                    {trend.map((d) => (
                       <div
                         key={d.day}
                         title={`${d.day}: ${d.count}`}
-                        className="min-w-px flex-1 rounded-xs bg-chart-1 opacity-90"
-                        style={{ height: `${Math.max(5, (d.count / max) * 100)}%` }}
+                        className={cn(
+                          "min-w-px flex-1 rounded-xs bg-chart-1",
+                          // An empty day is a floor tick, not a bar you can misread
+                          // as a small day's traffic.
+                          d.count === 0 ? "opacity-25" : "opacity-90",
+                        )}
+                        style={{
+                          height: `${d.count === 0 ? 5 : Math.max(8, (d.count / max) * 100)}%`,
+                        }}
                       />
                     ))}
                   </div>
