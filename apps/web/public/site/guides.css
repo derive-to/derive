@@ -92,7 +92,7 @@ main {
 /* Grid items default to min-width:auto, which lets a wide code block stretch
    the page instead of scrolling inside itself. */
 .section > *,
-.grid > * {
+.gallery > * {
   min-width: 0;
 }
 
@@ -121,57 +121,92 @@ main {
   color: var(--muted-fg);
 }
 
-/* Example cards --------------------------------------------------------- */
+/* Example gallery -------------------------------------------------------
+ *
+ * Each card leads with the artifact's own rendered preview, so the page shows
+ * the work rather than describing it. Derive serves the image, so a republished
+ * artifact updates its own thumbnail here.
+ */
 
-.grid {
+.gallery {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
-/* A card separates by its surface step plus a hairline. It does not lift and
-   it does not animate its colours: hover re-inks and steps the surface. */
-.card {
+/* A card separates by its surface step plus a hairline. It does not lift and it
+   does not animate its colours: hover steps the surface. */
+.shot {
   display: flex;
   flex-direction: column;
-  padding: 22px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--card);
+  overflow: hidden;
 }
 
-.card:hover {
+.shot:hover {
   background: var(--secondary);
 }
 
-.card h3 {
-  font-size: 18px;
-  letter-spacing: -0.02em;
+.shot-wide {
+  grid-column: 1 / -1;
 }
 
-.card p {
-  margin: 8px 0 0;
+/* Screenshots take an inset outline rather than a border. */
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1200 / 630;
+  object-fit: cover;
+  object-position: top center;
+  outline: 1px solid var(--border-soft);
+  outline-offset: -1px;
+}
+
+.shot .meta {
+  display: flex;
+  flex-direction: column;
+  padding: 20px 22px 22px;
+}
+
+.shot .shape {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+}
+
+.shot .title {
+  margin-top: 10px;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+.shot .body {
+  margin-top: 8px;
   color: var(--muted-fg);
   font-size: 14px;
 }
 
-/* Ink is where the eye must land, so the affordance is ink and the body stays
-   muted. The arrow moves on hover; the colour does not. */
-.card .go {
-  margin-top: auto;
-  padding-top: 18px;
-  color: var(--fg);
+.shot .go {
+  margin-top: 18px;
   font-size: 14px;
 }
 
-.card .go .arr {
+.shot .go .arr {
   display: inline-block;
   transition: transform 0.18s ease;
 }
 
-.card:hover .go .arr {
+.shot:hover .go .arr {
   transform: translateX(3px);
 }
+
 
 /* Procedure ------------------------------------------------------------- */
 
@@ -284,7 +319,7 @@ footer {
     position: static;
   }
 
-  .grid {
+  .gallery {
     grid-template-columns: 1fr;
   }
 
