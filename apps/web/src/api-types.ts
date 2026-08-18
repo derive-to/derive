@@ -7008,8 +7008,10 @@ export interface components {
             badge?: boolean;
             /** @description Open-thread count for the sign-in-to-comment pill; present only for anonymous callers on a link that grants commenting. */
             open_comment_count?: number;
-            /** @description Owner opt-in: the anonymous public page shows version history. When false, anonymous detail responses carry only the current version. */
+            /** @description Owner opt-in: readers without artifact standing can browse version history. When false, their detail responses carry only the current version. */
             public_history?: boolean;
+            /** @description True when the signed-in caller has an active seat in the artifact's workspace. False for link-only readers and members acting in another workspace. */
+            is_workspace_member?: boolean;
             /** @description The artifact's workspace id; drives move-to-workspace. */
             org_id?: string;
             /** @description Signed, short-lived token for fetching raw content; detail responses only. */

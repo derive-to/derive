@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { artifactQuery, commentsQuery, meQuery } from "../lib/queries"
 import { Artifact } from "../pages/artifact"
+import { canCommentWithRole } from "../pages/artifact/lib/comment-access"
 import { candidateShortIds } from "../pages/artifact/parse-ref"
 import { WorkbenchSkeleton } from "../pages/artifact/workbench-skeleton"
 
@@ -58,10 +59,10 @@ export const Route = createFileRoute("/artifacts/$ref")({
       for (const id of candidateShortIds(params.ref)) {
         const art = await queryClient.ensureQueryData(artifactQuery(id)).catch(() => null)
         if (art) {
-          // Comments are signed-in-only (the API 404s anon by design) — warm them
-          // only for a session the page will actually read them with.
-          if (queryClient.getQueryData(meQuery().queryKey))
-            queryClient.prefetchQuery(commentsQuery(id))
+          const signedIn = queryClient.getQueryData(meQuery().queryKey)
+          const commentsAvailable =
+            art.is_workspace_member === true || canCommentWithRole(art.my_role)
+          if (signedIn && commentsAvailable) queryClient.prefetchQuery(commentsQuery(id))
           return
         }
       }
