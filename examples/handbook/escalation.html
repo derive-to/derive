@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Escalation</title>
+<link rel="stylesheet" href="handbook.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<nav class="bar">
+  <div class="wrap row">
+    <a class="brand" href="index.html">On-call handbook</a>
+    <div class="links">
+      <a href="index.html">Start</a>
+      <a href="first-hour.html">First hour</a>
+      <a href="escalation.html" aria-current="page">Escalation</a>
+      <a href="after.html">Afterwards</a>
+    </div>
+  </div>
+</nav>
+<main id="main" tabindex="-1" class="wrap">
+<p class="eyebrow">Page 2 of 3</p>
+  <h1>Escalation</h1>
+  <p class="lede">Escalating is a routine action with a threshold, not a judgement about you.</p>
+  <h2 class="rule">When</h2>
+  <ol class="steps">
+    <li><b>Twenty minutes without progress.</b> Not without a fix, without progress.</li>
+    <li><b>Anything touching money or customer data.</b> Escalate immediately, in parallel
+      with your own work.</li>
+    <li><b>You are about to do something you cannot undo.</b> Second pair of eyes first.</li>
+  </ol>
+  <h2 class="rule">Who</h2>
+  <table class="who">
+    <tbody>
+      <tr><th scope="row">Secondary on-call</th><td>Default. Wake them for anything above.</td></tr>
+      <tr><th scope="row">Service owner</th><td>When the failure is inside one service and the secondary does not know it.</td></tr>
+      <tr><th scope="row">Incident lead</th><td>When it needs coordination or an external message.</td></tr>
+    </tbody>
+  </table>
+  <h2 class="rule">What they need in the first message</h2>
+  <p class="body">What is broken for users, when it started, what you have already tried, and
+    what you want from them. Four lines. A paste of the whole log is not a handoff.</p>
+</main>
+<footer class="wrap">Fictional handbook published as an official Derive example.</footer>
+</body>
+</html>
