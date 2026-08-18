@@ -55,6 +55,61 @@ test("owner shares an artifact and the member appears", async ({ owner, secondUs
   await expect(owner.locator('[data-testid^="share-member-row-"]')).toHaveCount(2)
 })
 
+test("a signed-in link holder gets guest chrome and can copy into their workspace", async ({
+  owner,
+  secondUser,
+}) => {
+  const shortId = await publishArtifact(owner, "guest.md", "# Someone else's document")
+  await secondUser.page.goto(`/artifacts/${shortId}`)
+
+  await expect(secondUser.page.getByTestId("artifact-make-copy")).toBeVisible()
+  await expect(secondUser.page.getByTestId("share-trigger")).toHaveCount(0)
+  await expect(secondUser.page.getByTestId("artifact-inline-edit")).toHaveCount(0)
+  await expect(secondUser.page.getByTestId("artifact-show-comments")).toHaveCount(0)
+  await expect(secondUser.page.getByTestId("library-menu")).toHaveCount(0)
+
+  await secondUser.page.getByTestId("artifact-more").click()
+  await expect(secondUser.page.getByTestId("artifact-report")).toBeVisible()
+  await expect(secondUser.page.getByTestId("artifact-create-from")).toHaveCount(0)
+  await expect(secondUser.page.getByTestId("artifact-collections")).toHaveCount(0)
+  await expect(secondUser.page.getByTestId("artifact-insights")).toHaveCount(0)
+  await secondUser.page.keyboard.press("Escape")
+
+  await secondUser.page.getByTestId("artifact-make-copy").click()
+  await expect(secondUser.page).not.toHaveURL(new RegExp(shortId))
+  await expect(secondUser.page.getByTestId("share-trigger")).toBeVisible()
+  await expect(secondUser.page.getByTestId("artifact-make-copy")).toHaveCount(0)
+})
+
+test("guest comment and edit links keep only their granted collaboration", async ({
+  owner,
+  secondUser,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "guest-roles.html",
+    "<h1>Guest roles</h1>",
+    "text/html",
+  )
+  const setLinkRole = async (linkRole: "commenter" | "editor") => {
+    const response = await owner.request.patch(`/v1/artifacts/${shortId}/access`, {
+      data: { linkRole },
+    })
+    expect(response.ok(), `access patch: ${response.status()}`).toBeTruthy()
+  }
+
+  await setLinkRole("commenter")
+  await secondUser.page.goto(`/artifacts/${shortId}`)
+  await expect(secondUser.page.getByTestId("artifact-show-comments")).toBeVisible()
+  await expect(secondUser.page.getByTestId("artifact-inline-edit")).toContainText("Suggest edits")
+  await expect(secondUser.page.getByTestId("share-trigger")).toHaveCount(0)
+
+  await setLinkRole("editor")
+  await secondUser.page.reload()
+  await expect(secondUser.page.getByTestId("artifact-inline-edit")).toContainText("Suggest edits")
+  await expect(secondUser.page.getByTestId("share-trigger")).toHaveCount(0)
+})
+
 test("brandprint 'Review & comment' opens the pending profile proposal", async ({ owner }) => {
   // The profile hand-off state, seeded through the real API: a v1 profile stub, a
   // workspace Brandprint pointing at it, and an open proposal standing in for the

@@ -146,7 +146,13 @@ export const Artifact = z
       .boolean()
       .optional()
       .describe(
-        "Owner opt-in: the anonymous public page shows version history. When false, anonymous detail responses carry only the current version.",
+        "Owner opt-in: readers without artifact standing can browse version history. When false, their detail responses carry only the current version.",
+      ),
+    is_workspace_member: z
+      .boolean()
+      .optional()
+      .describe(
+        "True when the signed-in caller has an active seat in the artifact's workspace. False for link-only readers and members acting in another workspace.",
       ),
     org_id: z
       .string()

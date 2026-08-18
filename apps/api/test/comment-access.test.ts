@@ -57,8 +57,10 @@ describe("comment access via the general-access link", () => {
     const bobView = await (await view(shortId, as(bob.email))).json()
     expect(bobView.my_role).toBe("commenter")
     expect(bobView.link_role).toBe("commenter")
+    expect(bobView.is_workspace_member).toBe(false)
     const anonView = await (await view(shortId)).json()
     expect(anonView.my_role).toBe("viewer")
+    expect(anonView.is_workspace_member).toBe(false)
   })
 
   it("revoking the comment grant locks commenting again", async () => {
@@ -125,6 +127,10 @@ describe("comment access via workspace seat", () => {
         )
       ).ok,
     ).toBe(true)
+    const memoView = await (
+      await app.request(`/v1/artifacts/${a.short_id}`, { headers: as(memo.email) })
+    ).json()
+    expect(memoView.is_workspace_member).toBe(true)
 
     // Otto is signed in but outside the workspace: the same URL is inert (404,
     // indistinguishable from not existing). Anonymous likewise.

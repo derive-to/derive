@@ -134,6 +134,17 @@ export function effectiveRole(
   return maxRole(explicit, seat, world, inheritedWorld)
 }
 
+/** Whether access comes from an active workspace seat or collaborator grant,
+ * rather than a world link. */
+export function hasArtifactStanding(
+  actor: Actor,
+  workspaceAccess: WorkspaceAccess = "none",
+): boolean {
+  if (actor.kind === "token") return true
+  if (actor.kind !== "user") return false
+  return actor.artifactRole != null || (workspaceAccess === "member" && actor.orgRole != null)
+}
+
 /** The one authorization gate. */
 export function can(
   actor: Actor,
