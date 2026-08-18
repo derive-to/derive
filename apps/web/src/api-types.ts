@@ -4709,6 +4709,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/save-as-skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The capture prompt: turn a review correction into a workspace skill. */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description The comment thread carrying the correction; omit for the whole page. */
+                    threadId?: string;
+                    /** @description Optional requester intent, appended to the prompt verbatim. */
+                    note?: string;
+                };
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The prompt. 404 when a threadId names no thread on this artifact. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            prompt: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Ask a registered agent to turn a review correction into a workspace skill. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description Which agent to ask; omit to use the sole registered agent. */
+                        agentId?: string;
+                        /** @description The comment thread carrying the correction. */
+                        threadId?: string;
+                        /** @description Optional requester intent, appended to the prompt verbatim. */
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The capture request landed in the agent's pull inbox. 404 when a threadId names no thread on this artifact; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request for this artifact still waits. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description The request comment's thread id. */
+                            requestId: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/fill": {
         parameters: {
             query?: never;

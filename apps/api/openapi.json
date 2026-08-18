@@ -8384,6 +8384,127 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/save-as-skill": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "The capture prompt: turn a review correction into a workspace skill.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The comment thread carrying the correction; omit for the whole page."
+            },
+            "required": false,
+            "description": "The comment thread carrying the correction; omit for the whole page.",
+            "name": "threadId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 500,
+              "description": "Optional requester intent, appended to the prompt verbatim."
+            },
+            "required": false,
+            "description": "Optional requester intent, appended to the prompt verbatim.",
+            "name": "note",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The prompt. 404 when a threadId names no thread on this artifact.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Ask a registered agent to turn a review correction into a workspace skill.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string",
+                    "description": "Which agent to ask; omit to use the sole registered agent."
+                  },
+                  "threadId": {
+                    "type": "string",
+                    "description": "The comment thread carrying the correction."
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "Optional requester intent, appended to the prompt verbatim."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The capture request landed in the agent's pull inbox. 404 when a threadId names no thread on this artifact; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request for this artifact still waits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "description": "The request comment's thread id."
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/fill": {
       "get": {
         "tags": [
