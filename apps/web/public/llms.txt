@@ -78,6 +78,11 @@ files listed. Skill delivery serves the last human-approved version when one exi
 (a proposal or review approval sets it); until a skill is ever approved, it serves
 current. `?v=approved` on the content API resolves the same rule.
 
+Capture: `GET /v1/artifacts/:id/save-as-skill?threadId=...` returns a prompt that turns
+a review correction into a workspace skill (read the thread, dedup against the catalog,
+publish live, link back); POST delivers the same instruction to a registered agent's
+inbox.
+
 Remote tools (ten): find, read, catch_up, comment, stage, publish, organize,
 checkpoint, use, list_workspaces.
 
