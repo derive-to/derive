@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moving scheduled jobs off the app server</title>
+<meta name="description" content="An official Derive example. A technical plan written to be revised, with the decision, the rejected option, and the triggers that would overturn it.">
+<style>
+  :root {
+    color-scheme: light;
+    --paper: #f2f1ea; --raised: #ffffff; --ink: #14150f; --muted: #55564d; --faint: #65675e;
+    --line: #d9d8cd; --hard: #14150f; --acid: #d8f24a; --max: 1120px; --gutter: 28px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.62 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.011em; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { width: min(var(--max), 100% - var(--gutter) * 2); margin-inline: auto; }
+  a { color: inherit; }
+  h1, h2, h3 { margin: 0; letter-spacing: -0.045em; text-wrap: balance; }
+  p { text-wrap: pretty; }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+  .skip { position: fixed; top: 8px; left: 8px; z-index: 30; padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--paper); transform: translateY(-160%); }
+  .skip:focus { transform: translateY(0); }
+
+  /* Masthead */
+  .bar { border-bottom: 1px solid var(--line); }
+  .bar .row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 66px; flex-wrap: wrap; }
+  .ident { display: flex; align-items: center; gap: 11px; font-weight: 620; letter-spacing: -0.035em; }
+  .chip { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--hard); color: var(--paper); font-size: 13px; font-weight: 700; }
+  .version { border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px; color: var(--faint); background: var(--raised); }
+
+  /* Decision banner */
+  .banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+    margin: 26px 0 0; padding: 18px 22px; border: 1px solid var(--hard); border-radius: 14px;
+    background: var(--acid); box-shadow: 4px 4px 0 var(--hard);
+  }
+  .banner b { letter-spacing: -0.02em; }
+  .banner span.detail { color: #3d4218; }
+  .banner a { display: inline-flex; align-items: center; gap: 8px; background: var(--hard); color: var(--paper); text-decoration: none; padding: 11px 17px; border-radius: 999px; font-size: 14px; font-weight: 560; white-space: nowrap; }
+  .banner a .arr { transition: transform .18s ease; }
+  .banner a:hover .arr { transform: translateX(3px); }
+
+  .hero { padding: 62px 0 56px; }
+  .kicker { display: flex; align-items: center; gap: 12px; color: var(--faint); margin-bottom: 22px; }
+  .kicker::before { content: ""; width: 26px; height: 1px; background: var(--ink); }
+  h1 { max-width: 16ch; font-size: clamp(42px, 7.2vw, 84px); line-height: 0.97; letter-spacing: -0.055em; }
+  .lede { max-width: 60ch; margin: 26px 0 0; color: var(--muted); font-size: clamp(17px, 2vw, 21px); line-height: 1.5; }
+
+  section.band { padding: 62px 0; border-top: 1px solid var(--line); }
+  .band h2 { font-size: clamp(25px, 3.2vw, 36px); max-width: 22ch; line-height: 1.1; }
+  .band .intro { max-width: 62ch; color: var(--muted); margin: 14px 0 34px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--raised); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  th, td { text-align: left; padding: 16px 18px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child th, tr:last-child td { border-bottom: 0; }
+  thead th { color: var(--faint); font-weight: 500; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; background: var(--paper); }
+  td.pick { font-weight: 620; letter-spacing: -0.02em; width: 22%; }
+  td.why { color: var(--muted); }
+
+  .phases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .phase { padding: 26px; background: var(--raised); border: 1px solid var(--line); border-radius: 14px; }
+  .phase .mono { color: var(--faint); }
+  .phase h3 { margin: 12px 0 0; font-size: 19px; letter-spacing: -0.03em; }
+  .phase p { margin: 10px 0 0; color: var(--muted); font-size: 15px; }
+
+  ul.q { list-style: none; margin: 0; padding: 0; }
+  ul.q li { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: baseline; padding: 17px 0; border-bottom: 1px solid var(--line); }
+  ul.q .who { color: var(--faint); white-space: nowrap; }
+
+  .trigger { padding: 28px; border: 1px solid var(--hard); border-radius: 14px; background: var(--raised); box-shadow: 4px 4px 0 var(--hard); max-width: 62ch; }
+  .trigger h3 { font-size: 19px; letter-spacing: -0.03em; }
+  .trigger ul { margin: 14px 0 0; padding-left: 20px; color: var(--muted); }
+  .trigger li { margin-bottom: 9px; }
+
+  footer { padding: 42px 0 74px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  footer .note { max-width: 68ch; }
+
+  @media (max-width: 820px) {
+    .phases { grid-template-columns: 1fr; }
+    .hero { padding: 44px 0 40px; }
+    ul.q li { grid-template-columns: 1fr; gap: 5px; }
+    thead { display: none; }
+    tr { display: block; border-bottom: 1px solid var(--line); }
+    td { display: block; border: 0; padding: 4px 18px; }
+    td.pick { padding-top: 16px; }
+    tr:last-child { border-bottom: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition-duration: 0.01ms !important; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="bar">
+  <div class="wrap row">
+    <span class="ident"><span class="chip" aria-hidden="true">P</span> Platform / scheduled jobs</span>
+    <span class="mono version">Plan &middot; v7 &middot; decided</span>
+  </div>
+</div>
+
+<main id="main" tabindex="-1">
+  <div class="wrap">
+    <div class="banner">
+      <div>
+        <b>Decided 12 March.</b>
+        <span class="detail">Build in progress. Phase one is the invoice export only.</span>
+      </div>
+      <a href="#open">See what is still open <span class="arr" aria-hidden="true">&rarr;</span></a>
+    </div>
+
+    <div class="hero">
+      <div class="mono kicker">Technical plan, revised in place</div>
+      <h1>Move the three jobs that matter. Leave the nineteen that do not.</h1>
+      <p class="lede">Twenty-two scheduled jobs run from cron on one application server. Three
+        of them are customer-visible when they fail silently. This plan moves those three and
+        deliberately leaves the rest alone.</p>
+    </div>
+  </div>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="mono kicker">The problem</div>
+      <h2>A job that fails leaves no record anywhere a person will look.</h2>
+      <p class="intro">Cron mails its output to a local mailbox nobody reads. When the server
+        was replaced in January, four jobs did not run for two days and nobody noticed until an
+        invoice was missing. Two jobs have also started to overlap: the index rebuild now takes
+        longer than its own interval, so a second copy starts while the first is still writing.</p>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="mono kicker">What we are building</div>
+      <h2>Four choices, and the reason for each.</h2>
+      <table>
+        <thead><tr><th>Piece</th><th>Choice</th><th>Why this one</th></tr></thead>
+        <tbody>
+          <tr><td class="pick">Scheduler</td><td>systemd timers</td><td class="why">Already on the host, logs to the journal, and reports failure as a unit state a monitor can read. Cron reports nothing.</td></tr>
+          <tr><td class="pick">Queue</td><td>Postgres job table</td><td class="why">The database is already there and already backed up. A dedicated broker adds a component to monitor, upgrade and restore for roughly 400 jobs a day.</td></tr>
+          <tr><td class="pick">Overlap</td><td>Advisory lock per job</td><td class="why">The index rebuild cannot start twice. The lock lives with the data, so it survives a worker restart.</td></tr>
+          <tr><td class="pick">Visibility</td><td>A row per run</td><td class="why">The question we could not answer, "did it run?", becomes a query.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="mono kicker">Rollout</div>
+      <h2>Two phases, because the load test said so.</h2>
+      <p class="intro">Phase two was originally the same change as phase one. Splitting them is
+        the single largest revision this plan has had, and the reason is recorded here rather
+        than lost in a thread.</p>
+      <div class="phases">
+        <div class="phase">
+          <div class="mono">Phase one</div>
+          <h3>The invoice export, alone.</h3>
+          <p>It runs once a day, a person checks its output the next morning, and a missed run
+            is recoverable by hand. It is the safest way to find out what we got wrong.</p>
+        </div>
+        <div class="phase">
+          <div class="mono">Phase two</div>
+          <h3>The renewal sweep and the index rebuild.</h3>
+          <p>Held until the export completes fourteen consecutive runs unassisted. The load
+            test showed the rebuild holding a lock for around nine minutes on production shaped
+            data, which would have blocked the sweep behind it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="open">
+    <div class="wrap">
+      <div class="mono kicker">Unresolved</div>
+      <h2>Open questions, with an owner each.</h2>
+      <ul class="q">
+        <li><span>Should a failed job retry automatically, or wait for a person?</span><span class="mono who">Platform &middot; before phase one</span></li>
+        <li><span>How long is run history kept? Ninety days was assumed, never agreed.</span><span class="mono who">Platform &amp; Finance</span></li>
+        <li><span>Does the index rebuild need one lock, or one per shard?</span><span class="mono who">Search &middot; before phase two</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="mono kicker">Reversal conditions</div>
+      <h2>What would overturn this plan.</h2>
+      <p class="intro">Stated as conditions rather than dates, so they survive a schedule
+        slipping. A recommendation that cannot be wrong is not useful.</p>
+      <div class="trigger">
+        <h3>Move to a dedicated broker if any of these become true.</h3>
+        <ul>
+          <li>Daily job volume passes roughly 50,000, or jobs need to fan out across workers.</li>
+          <li>The database becomes the bottleneck under normal load. The job table is the first thing to move off it.</li>
+          <li>A second application server appears. The advisory lock still holds, but the timers must run on exactly one host, which this plan does not solve.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap note">
+    Fictional plan published as an official Derive example. The service, dates and numbers are
+    illustrative. The behaviour described for cron, systemd timers and advisory locks is real
+    and worth checking against your own versions.
+  </div>
+</footer>
+</body>
+</html>

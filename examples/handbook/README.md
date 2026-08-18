@@ -7,6 +7,8 @@ handbook, a spec with appendices, a small site, a report with its own supporting
 The whole bundle is one URL, one version history, and one set of permissions. Sharing it
 shares all of it, and a reader does not have to reassemble four links.
 
+[Open the official live example](https://derive.to/artifacts/on-call-handbook-a-derive-bundle-example-7eq9ri5j).
+
 ## Publish it
 
 The CLI zips the directory for you:

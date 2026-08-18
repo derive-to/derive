@@ -8,6 +8,8 @@ This one is a designed page rather than prose, because a status is read at a gla
 is read closely. The counts are visible immediately, the reversal is visible next, and the
 detail is there for whoever needs it.
 
+[Open the official live example](https://derive.to/artifacts/customer-import-rollout-current-status-f49k4yvg).
+
 ## Publish it, then keep publishing
 
 ```bash

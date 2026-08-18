@@ -1,6 +1,6 @@
 {
   "title": "Moving scheduled jobs off the app server",
-  "entry": "plan.md",
+  "entry": "index.html",
   "spa": false,
   "id": null
 }

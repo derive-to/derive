@@ -1,12 +1,19 @@
 # Technical plan example
 
 A plan is worth keeping at one URL because it changes. This example is written to be
-revised: the decision is stated plainly, the reasoning that supports it is separable from
-the decision itself, and there is an explicit list of things that would overturn it.
+revised: the decision is stated at the top where it cannot be missed, the reasoning behind
+it is separable from the decision itself, and there is an explicit list of conditions that
+would overturn it.
+
+It is a designed page rather than prose because a plan is scanned before it is read. The
+status, the decision date, and the link to what is still unresolved are visible before the
+first scroll.
 
 The point of publishing it to Derive is not the first version. It is that six weeks later a
 reader can see what the plan said, what changed, and why, without anyone maintaining a
 changelog by hand.
+
+[Open the official live example](https://derive.to/artifacts/moving-scheduled-jobs-off-the-app-server-oukskpia).
 
 ## Publish it
 

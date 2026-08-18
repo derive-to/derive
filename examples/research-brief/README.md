@@ -7,6 +7,8 @@ evidence for it, and the conditions that would overturn it.
 The sources are real documentation and are linked, so a reader can disagree with the reading
 rather than only with the conclusion.
 
+[Open the official live example](https://derive.to/artifacts/sqlite-or-postgresql-for-a-small-internal-servic-ms66yju2).
+
 ## Publish it
 
 ```bash

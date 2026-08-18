@@ -8,6 +8,8 @@ This page is kept as the artifact itself: styled, responsive, and readable in li
 A reviewer can challenge the promise, a specific metric, or the order of the sections,
 because all of those are actually present.
 
+[Open the official live example](https://derive.to/artifacts/example-launch-page-5cmep9l9).
+
 ## Publish it
 
 ```bash

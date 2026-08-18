@@ -8,6 +8,12 @@ This example is written so a reviewer can disagree with it. Every check names it
 its result, the environment is stated because it changes what the checks are worth, and the
 gaps are listed rather than left for someone to discover.
 
+It is a designed page because a verification record is read by someone deciding whether to
+merge. The verdict is in the masthead, the environment is a strip you cannot skip, and each
+check carries its literal result rather than a tick.
+
+[Open the official live example](https://derive.to/artifacts/csv-importer-what-changed-and-how-it-was-checked-n5k7pgb5).
+
 ## Publish it
 
 ```bash

@@ -7,18 +7,23 @@ Each example is a shape people actually publish, not a feature demonstration. Th
 each is the second version as much as the first: a plan that changes, a status that moves
 backwards when evidence says so, a page whose design is the thing under review.
 
-| Example | Shape | What it is for |
-| --- | --- | --- |
-| [Technical plan](technical-plan/) | Markdown | A decision and its reasoning, written to be revised. The version history carries what changed and why. |
-| [Change review](change-review/) | Markdown | What an agent actually ran to verify a change, including what broke and what is still unproven. |
-| [Living status](living-status/) | Styled HTML + facts | The current state of a rollout at one URL, read at a glance, with the numbers readable back as a series. |
-| [Research brief](research-brief/) | Markdown | A bounded recommendation with sources a reader can check. |
-| [Launch page](launch-page/) | Styled HTML | A designed result kept as the artifact itself, with every claim paired to its limit. |
-| [On-call handbook](handbook/) | Multi-page bundle | Several pages as one artifact, one history, one set of permissions. |
+Most of them are styled HTML, because that is what substantial work looks like once it is
+worth keeping. Markdown is here too, for the case it is genuinely best at: a short document
+that is all prose and sources.
+
+| Example | Shape | Live | What it is for |
+| --- | --- | --- | --- |
+| [Technical plan](technical-plan/) | Styled HTML | [Open](https://derive.to/artifacts/moving-scheduled-jobs-off-the-app-server-oukskpia) | A decision and its reasoning, written to be revised. The version history carries what changed and why. |
+| [Change review](change-review/) | Styled HTML | [Open](https://derive.to/artifacts/csv-importer-what-changed-and-how-it-was-checked-n5k7pgb5) | What an agent actually ran to verify a change, including what broke and what is still unproven. |
+| [Living status](living-status/) | Styled HTML + facts | [Open](https://derive.to/artifacts/customer-import-rollout-current-status-f49k4yvg) | The current state of a rollout at one URL, read at a glance, with the numbers readable back as a series. |
+| [Research brief](research-brief/) | Markdown | [Open](https://derive.to/artifacts/sqlite-or-postgresql-for-a-small-internal-servic-ms66yju2) | A bounded recommendation with sources a reader can check. |
+| [Launch page](launch-page/) | Styled HTML | [Open](https://derive.to/artifacts/example-launch-page-5cmep9l9) | A designed result kept as the artifact itself, with every claim paired to its limit. |
+| [On-call handbook](handbook/) | Multi-page bundle | [Open](https://derive.to/artifacts/on-call-handbook-a-derive-bundle-example-7eq9ri5j) | Several pages as one artifact, one history, one set of permissions. |
 
 ## Publish one
 
-Access is omitted from each `derive.json`, so a new copy uses your workspace default rather
+The live links are public, viewer-only artifacts in the official Derive workspace. Access is
+omitted from each `derive.json`, so a copy you publish uses your workspace default rather
 than inheriting a decision from this repository.
 
 ```bash
