@@ -1,6 +1,6 @@
 # Derive
 
-> Keep, share, and improve agent-made pages and documents. Each artifact has a lasting URL, version history, and comments on exact text.
+> Publish AI-built artifacts (HTML pages, Markdown docs, and slide decks) with a permanent URL, version history, and comments anchored to exact text.
 
 ## What it is
 

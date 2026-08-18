@@ -2,7 +2,7 @@ interface:
   display_name: "Derive"
   short_description: "Create reviewable plans and artifacts in Derive"
   brand_color: "#6B46FF"
-  default_prompt: "Use $derive to publish this as a durable artifact I can keep, share, and improve."
+  default_prompt: "Use $derive to publish this work and run the human review loop."
 
 dependencies:
   tools:
