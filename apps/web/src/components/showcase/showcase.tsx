@@ -147,7 +147,7 @@ function TypeDemo() {
       <div>
         <Eyebrow>Voice · Geist display</Eyebrow>
         <p className="mt-2 max-w-xl text-2xl font-medium tracking-tight text-balance">
-          Turn agent output into work you can keep, share, and improve.
+          Publish, review, and own your AI artifacts.
         </p>
       </div>
       <div>

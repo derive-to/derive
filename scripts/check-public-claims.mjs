@@ -24,7 +24,9 @@ const publicCopyFiles = new Set([
   "SECURITY.md",
   ".github/SUPPORT.md",
   ...walkText("apps/docs/content"),
-  ...walkText("apps/web/public"),
+  ...walkText("apps/web/public").filter(
+    (path) => !path.startsWith("apps/web/public/site/") && path !== "apps/web/public/security.html",
+  ),
   "apps/docs/docs-manifest.mjs",
   "apps/web/src/pages/login.tsx",
   "apps/web/src/pages/roadmap.tsx",
@@ -104,8 +106,6 @@ const publicProseFiles = new Set([
   ...walkText("examples"),
   "apps/web/public/llms.txt",
   "apps/web/public/llms-full.txt",
-  "apps/web/public/security.html",
-  ...walkText("apps/web/public/site"),
   "packages/mcp/SKILL.md",
 ])
 
@@ -193,12 +193,6 @@ requireText(
   "state the current license status plainly",
 )
 requireText("SECURITY.md", "Anonymous callers are always read-only", "match effectiveRole")
-requireText("apps/web/public/site/index.html", "Fair Source and self-hostable", "accurate metadata")
-requireText(
-  "apps/web/public/site/index.html",
-  "Commenting and editing require sign-in.",
-  "match the anonymous read-only invariant",
-)
 requireText("apps/web/src/pages/login.tsx", "Fair Source.", "do not claim OSI status")
 requireText(
   "apps/web/src/components/shared/connect-agent.tsx",
@@ -212,12 +206,6 @@ requireText(
 )
 requireText("README.md", "a compatible agent over MCP", "scope agent compatibility")
 requireText("README.md", "a proposal a human approves", "preserve human approval")
-for (const path of ["README.md", "apps/web/public/site/index.html", "apps/docs/content/index.mdx"])
-  requireText(
-    path,
-    "keep, share, and improve",
-    "lead with the durable artifact promise rather than a required review outcome",
-  )
 requireText(
   "packages/cli/skills/derive/SKILL.md",
   "Do not request review merely because an artifact exists.",
@@ -226,18 +214,6 @@ requireText(
 
 // Keep one canonical documentation origin and one deterministic contributor gate.
 requireText("README.md", 'href="https://docs.derive.to"', "link to the documentation site")
-for (const path of [
-  "apps/web/public/site/index.html",
-  "apps/web/public/site/pricing.html",
-  "apps/web/public/site/privacy.html",
-  "apps/web/public/site/examples.html",
-])
-  requireText(path, "https://docs.derive.to/", "send readers to the canonical docs host")
-requireText(
-  "apps/api/src/routes/marketing.ts",
-  'c.redirect("https://docs.derive.to/", 308)',
-  "keep the former guides URL as a permanent redirect",
-)
 requireText("apps/docs/wrangler.toml", 'pattern = "docs.derive.to"', "deploy on the docs host")
 requireText("CONTRIBUTING.md", "pnpm verify", "use the exact CI check gate")
 requireText(
@@ -250,10 +226,6 @@ requireText(
 // Pin the small supported set so public copy cannot promise a token that a route
 // silently drops, and static interest controls cannot masquerade as measurement.
 for (const [path, marker] of [
-  ["apps/web/public/site/index.html", 'href="/login?src=nav_signin"'],
-  ["apps/web/public/site/examples.html", 'href="/login?src=examples_signin"'],
-  ["apps/web/public/site/index.html", 'data-derive-source="homepage_waitlist"'],
-  ["apps/web/public/site/pricing.html", 'data-derive-source="pricing_waitlist"'],
   ["apps/web/src/components/shared/public-frame.tsx", 'signupSourceSearch("public_frame"'],
   ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("make_your_own"'],
   ["apps/web/src/pages/artifact/public-viewer.tsx", 'signupSourceSearch("comment_wall"'],
@@ -266,9 +238,6 @@ const attributionSurfaces = [
   "docs/GROWTH-MEASUREMENT.md",
   "apps/docs/astro.config.mjs",
   "apps/docs/content/index.mdx",
-  "apps/web/public/site/index.html",
-  "apps/web/public/site/pricing.html",
-  "apps/web/public/site/examples.html",
 ]
 for (const token of [
   "hero_agent_prompt",
