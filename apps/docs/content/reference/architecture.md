@@ -47,8 +47,9 @@ the bundled SPA when present.
   human it acts `onBehalfOf` (delegation as data, not a heuristic). `permissions.ts` is the
   one authorization gate (`can(actor, action, visibility, generalRole)`): `actorFor`
   *narrows* the Principal to a per-artifact `Actor` and asks `can`. `effectiveRole` there is
-  the source of truth for the access matrix (anonymous is always view-only; see
-  [SECURITY.md](../../../../SECURITY.md)).
+  the source of truth for the access matrix (anonymous is view-only on workspace content,
+  with mutations refused by one structural gate in `app.ts` whose `ANON_WRITE_ALLOW`
+  allowlist enumerates every exception; see [SECURITY.md](../../../../SECURITY.md)).
 - **Workspaces** are keyed by a real `org_id` (never a magic constant). Every
   signed-in user owns a personal workspace (provisioned on first login) and can
   create/switch; the active workspace is resolved per request (cookie → membership

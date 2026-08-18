@@ -21,12 +21,28 @@ release; please run a recent build.
 
 Derive ships safe defaults, but a few choices matter for an internet-facing deploy:
 
-- **Anonymous callers are always read-only.** This is the load-bearing access
-  invariant: an anonymous (no-account) caller is never more than a viewer. Anything past
-  view (comment, propose, publish, share, manage) requires an authenticated identity, so
-  there is no "open" mode that elevates an anonymous caller. To write, a caller signs in
-  (Better Auth is always available, even zero-config) or presents a static `DERIVE_TOKEN`
-  (set it for headless CI/agent automation).
+- **Anonymous callers are read-only by default, and every exception is enumerated.** This
+  is the load-bearing access invariant: an anonymous (no-account) caller is never more than
+  a viewer of a workspace's content, and cannot comment, propose, share or manage. Mutations
+  are refused at the door by one structural gate in `apps/api/src/app.ts`, before any route
+  runs, so a newly added mutating route cannot be exposed to anonymous callers by accident.
+  That gate carries a single explicit allowlist, `ANON_WRITE_ALLOW`, and every entry on it
+  names the gate that stands in for a session: a password (artifact and collection unlock),
+  a request signature (Stripe, Slack and GitHub webhooks), a signed expiring token
+  (MCP-minted upload and publish URLs), a per-automation secret, or a hard bound on an
+  action that is anonymous by design. Under that last kind, the Core Web Vitals beacon
+  writes no state at all (it structure-logs the metric and returns), while beta signup and
+  the anonymous draft mint are IP-capped, and a draft lands in a system holding workspace
+  and expires rather than in anyone's library.
+
+  There is no "open" mode that elevates an anonymous caller. Where an entry does reach a
+  real workspace's artifacts, namely the MCP-minted publish URLs, the caller is anonymous
+  only to the transport: the token names the user and workspace it acts for, its scope is
+  fixed when it is minted (create a new artifact, or revise exactly one named artifact, and
+  a mismatch is refused), and the bound user's membership is re-checked on every use, so
+  revoking their access kills the URL mid-TTL. To act on a workspace's artifacts with no
+  such credential, a caller signs in (Better Auth is always available, even zero-config) or
+  presents a static `DERIVE_TOKEN` (set it for headless CI/agent automation).
 
   Access is three independent, single-purpose fields (docs/access-model.md).
   **`workspace_access`** (`none` / `member`): do the artifact's workspace members

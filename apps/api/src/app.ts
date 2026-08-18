@@ -386,15 +386,37 @@ export function createApp(deps: AppDeps): Hono {
   }
 
   // ---- Hard anonymous lockdown ------------------------------------------
-  // An anonymous caller (no signed-in session, no agent, no static token) may
-  // only READ and signal that they're viewing — the Google-Docs/Figma "someone
-  // is here" experience (presence, view count, and a live cursor). Every other
-  // mutation is refused here, at the door, before any route runs: one structural
-  // gate, so a newly added mutating route can never accidentally be exposed to
-  // anonymous callers. The per-route role checks still apply on top (defense in
-  // depth). Auth lives under /api/auth and reads (GET/HEAD) are untouched;
-  // OPTIONS preflights pass through to CORS. All three allowed actions are
-  // ephemeral and identity-safe (the server, not the client, names the viewer).
+  // An anonymous caller (no signed-in session, no agent, no static token) READS by
+  // default: every mutation is refused here, at the door, before any route runs. That
+  // is the point of putting it here rather than per-route — a newly added mutating
+  // route cannot be exposed to anonymous callers by forgetting a check. The per-route
+  // role checks still apply on top (defense in depth). Auth lives under /api/auth and
+  // reads (GET/HEAD) are untouched; OPTIONS preflights pass through to CORS.
+  //
+  // The exceptions are this one list, and they are not all ephemeral: the tokened
+  // publish entries do write to a real workspace's artifacts. Adding an entry is a
+  // security decision, so the bar is **name the gate that stands in for the session**
+  // in the trailing comment, and let that gate carry the scope — who the request acts
+  // for, what it may touch, and when it stops working. Today's entries are five kinds:
+  //
+  //   1. ephemeral presence the SERVER attributes, never the client (presence,
+  //      cursor, de-duped view count)
+  //   2. a password the caller must already hold (artifact + collection unlock)
+  //   3. a request signature the sender proves (Stripe, Slack x3, GitHub webhooks)
+  //   4. a credential an authorized party issued: a signed expiring token that names
+  //      its user, org and target (MCP upload + publish; see lib/publish-token.ts,
+  //      which re-checks LIVE membership so revocation kills the URL mid-TTL), or a
+  //      per-automation secret (automation fire)
+  //   5. anonymous by design, each bounded by what it can actually do: the vitals
+  //      beacon writes no state (structure-logs and returns, so the global per-IP
+  //      /v1 limiter is only a backstop); beta signup is IP-capped and idempotent
+  //      per email; the draft mint is IP-capped and its rows land in DRAFTS_ORG_ID
+  //      and expire unclaimed, never in a real workspace's library
+  //
+  // SECURITY.md states this posture publicly, and check-public-claims.mjs pins the doc
+  // and the name below to each other. The pin is deliberately rigid: renaming
+  // ANON_WRITE_ALLOW fails lint:public-claims until this file, SECURITY.md and the
+  // checker are updated together, so the public claim cannot outlive the gate.
   const ANON_WRITE_ALLOW = [
     /^\/v1\/artifacts\/[^/]+\/presence$/, // ephemeral "I'm viewing" heartbeat
     /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)

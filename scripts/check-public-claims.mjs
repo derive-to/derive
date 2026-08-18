@@ -192,7 +192,23 @@ requireText(
   "Not under the Open Source Initiative definition.",
   "state the current license status plainly",
 )
-requireText("SECURITY.md", "Anonymous callers are always read-only", "match effectiveRole")
+// The anonymous posture is stated in two halves, and both are load-bearing: the default
+// (read-only) and the fact that the exceptions are a single enumerated allowlist rather than
+// scattered per-route judgement. Pinning the allowlist's NAME ties the prose to the symbol,
+// so renaming or removing the gate in app.ts fails here instead of leaving the doc stranded.
+requireText(
+  "SECURITY.md",
+  "Anonymous callers are read-only by default",
+  "match the app.ts anonymous gate",
+)
+requireText("SECURITY.md", "ANON_WRITE_ALLOW", "name the allowlist the exceptions live on")
+// Pin BOTH ends, or the name is only half-anchored: without this line the doc could keep
+// naming a constant that no longer exists, which is the exact drift this pair exists to stop.
+requireText(
+  "apps/api/src/app.ts",
+  "const ANON_WRITE_ALLOW = [",
+  "keep the symbol name SECURITY.md points readers at",
+)
 requireText("apps/web/src/pages/login.tsx", "Fair Source.", "do not claim OSI status")
 requireText(
   "apps/web/src/components/shared/connect-agent.tsx",
