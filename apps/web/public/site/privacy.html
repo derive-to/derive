@@ -78,13 +78,13 @@ header.head.wrap{padding:150px 24px 0;text-align:center}
 .head h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:18px auto 0;max-width:20ch}
 .head .lede{margin:22px auto 0;max-width:56ch;font-size:16px;color:var(--muted-fg)}
 .head .lede strong{color:var(--fg);font-weight:500}
-.beta{
+.note{
   margin:30px auto 0;display:inline-flex;align-items:baseline;gap:10px;
   border:1px solid var(--border);border-radius:8px;padding:12px 18px;background:var(--card);
   font-size:14px;color:var(--muted-fg);max-width:62ch;text-align:left;
 }
-.beta .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--warning);white-space:nowrap;position:relative;top:-1px}
-.beta strong{color:var(--fg);font-weight:500}
+.note .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--warning);white-space:nowrap;position:relative;top:-1px}
+.note strong{color:var(--fg);font-weight:500}
 
 section.wrap{padding:120px 24px 0}
 .section-head{max-width:640px}
@@ -149,7 +149,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
         <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr" aria-hidden="true">→</span></a>
+      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
@@ -160,7 +160,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   <div class="eyebrow">Privacy</div>
   <h1>Your data, in simple terms.</h1>
   <p class="lede">Derive stores what it takes to run your workspace: an account, the content you publish, and the bare usage signals that keep the product honest with you. Nothing more, and nothing sold. <strong>Effective August 10, 2026.</strong></p>
-  <div class="beta">
+  <div class="note">
     <span class="k">NOTE</span>
     <span>This page is a <strong>plain-language summary, not legal advice</strong>. It describes how Derive actually handles data. Full transparency, no surprises here.</span>
   </div>

@@ -411,19 +411,6 @@ html.light .pcursor .flag{color:#fff}
 .dcomment .who .chip.rob{background:color-mix(in srgb,var(--gold) 16%,transparent);border-color:color-mix(in srgb,var(--gold) 35%,transparent);color:var(--gold)}
 .dcomment .who .chip.ada{background:color-mix(in srgb,var(--share) 16%,transparent);border-color:color-mix(in srgb,var(--share) 35%,transparent);color:var(--share)}
 
-/* waitlist form */
-.waitlist{display:flex}
-.waitlist form{
-  display:flex;gap:8px;padding:6px;border-radius:12px;
-  background:var(--card);border:1px solid var(--border);width:min(430px,100%);
-}
-.waitlist input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;font-size:14px;padding:0 12px}
-.waitlist input::placeholder{color:var(--faint)}
-.waitlist form:focus-within{border-color:var(--fg)}
-.waitlist .btn{height:38px;font-size:14px;padding:0 18px}
-.waitlist-done{display:none;align-items:center;gap:10px;height:52px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:var(--card);font-size:14px}
-.waitlist-done .tick{color:var(--success)}
-
 /* ══════════ MANIFESTO ══════════ */
 .manifesto{padding-top:190px}
 .manifesto .m-line{
@@ -570,36 +557,16 @@ html.light .pcursor .flag{color:#fff}
   .hookup .hk-row code{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 }
 
-/* ══════════ PRICING STATEMENT ══════════ */
-.price{padding-top:210px}
-.price h2{font-size:clamp(34px,5vw,58px);line-height:1.08;max-width:16ch}
-.price .p-sub{margin-top:22px;font-size:17px;color:var(--muted-fg);max-width:54ch;line-height:1.7}
-.price .p-sub strong{color:var(--fg);font-weight:500}
-.tier-line{
-  margin-top:48px;border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft);
-  display:grid;grid-template-columns:repeat(4,1fr);
-}
-@media(max-width:760px){.tier-line{grid-template-columns:repeat(2,1fr)}}
-.tl-cell{padding:26px 22px 28px;border-left:1px solid var(--border-soft)}
-.tl-cell:first-child{border-left:0}
-@media(max-width:760px){.tl-cell:nth-child(3){border-left:0}.tl-cell:nth-child(n+3){border-top:1px solid var(--border-soft)}}
-.tl-cell .tn{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
-.tl-cell .tp{margin-top:10px;font-size:26px;font-weight:500;letter-spacing:-0.02em}
-.tl-cell .tp small{font-size:12px;color:var(--muted-fg);font-weight:400;letter-spacing:0}
-.tl-cell .td{margin-top:6px;font-size:12.5px;color:var(--faint);line-height:1.55}
-.price .p-links{margin-top:30px;display:flex;gap:26px;align-items:center;font-size:14px}
-.price .p-links a{color:var(--fg);border-bottom:1px solid var(--border);padding-bottom:2px}
-.price .p-links a:hover{border-bottom-color:var(--fg)}
-.price .p-vow{margin-top:56px;font-size:15px;color:var(--muted-fg);max-width:60ch;line-height:1.75}
-.price .p-vow strong{color:var(--fg);font-weight:500}
-
 /* ══════════ FINALE ══════════ */
 .finale{padding-top:230px;position:relative;text-align:center}
 .finale .state-line{margin-bottom:24px}
 .finale .derivation{font-size:clamp(32px,5vw,72px);margin:0 auto;max-width:22ch}
 .finale .derivation .word{margin-right:.18em}
 .finale .f-sub{margin:24px auto 0;max-width:46ch;font-size:17px;color:var(--muted-fg);line-height:1.7}
-.finale .waitlist{margin:40px auto 0;justify-content:center}
+.finale .f-sub strong{color:var(--fg);font-weight:500}
+.finale .f-cta{margin:40px auto 0;display:flex;gap:26px;align-items:center;justify-content:center;flex-wrap:wrap}
+.finale .f-cta a:not(.btn){font-size:14px;color:var(--fg);border-bottom:1px solid var(--border);padding-bottom:2px}
+.finale .f-cta a:not(.btn):hover{border-bottom-color:var(--fg)}
 .finale .f-alt{margin-top:18px;font-family:var(--font-mono);font-size:12px;color:var(--faint)}
 .finale .f-alt a{color:var(--muted-fg);border-bottom:1px solid var(--border)}
 .finale .f-alt a:hover{color:var(--fg)}
@@ -633,10 +600,6 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   .derivation{margin-top:20px}
   .hero .sub{margin-top:26px}
   .hero .cta-row{margin-top:26px;align-self:stretch}
-  .waitlist{width:100%;justify-content:center}
-  .waitlist input{font-size:16px} /* <16px makes iOS zoom the page on focus */
-  .waitlist-done{height:auto;min-height:52px;padding:12px 16px}
-
   .demo{margin-top:52px;padding:0 20px}
   .demo-titlebar{padding:10px 14px;gap:9px}
   .demo-titlebar .doc-meta,.demo-titlebar .tb-lock,.face-label{display:none}
@@ -672,22 +635,14 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
   .bigterm{margin-top:36px}
   .bigterm .tbody{padding:18px 16px;min-height:280px;line-height:1.95}
 
-  .price{padding-top:128px}
-  .price .p-sub{margin-top:18px;font-size:16px}
-
   .finale{padding-top:150px}
   .finale .f-sub{margin-top:20px;font-size:16px}
-  .finale .waitlist{margin-top:32px}
+  .finale .f-cta{margin-top:32px}
   .finale .f-alt{line-height:2.2}
 
   footer{margin-top:104px}
   .watermark{font-size:29vw}
   .foot-inner{padding:36px 20px 100px;gap:14px 22px}
-}
-@media(max-width:360px){
-  .waitlist form{flex-direction:column;padding:8px}
-  .waitlist input{padding:10px 8px}
-  .waitlist .btn{width:100%}
 }
 
 @media (prefers-reduced-motion: reduce){
@@ -718,7 +673,7 @@ footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid v
         <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr" aria-hidden="true">→</span></a>
+      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
@@ -1113,16 +1068,6 @@ Then pick something real we've worked on recently (a plan, a report, a designed 
   </div>
 </section>
 
-<!-- ══════════ PRICING ══════════ -->
-<section class="price wrap" id="pricing">
-  <div class="eyebrow reveal">Pricing</div>
-  <h2 class="reveal" style="margin-top:16px">Free while it's in beta.</h2>
-  <p class="p-sub reveal">Every feature, no card required. When billing arrives someday, publishing and reading stay free, and <strong>nothing you've shipped goes dark.</strong></p>
-  <div class="p-links reveal">
-    <a href="/pricing">The pricing we intend, published early →</a>
-  </div>
-</section>
-
 <!-- ══════════ FINALE ══════════ -->
 <section class="finale wrap" id="finale">
   <div class="state-line" id="stateLine">
@@ -1137,15 +1082,10 @@ Then pick something real we've worked on recently (a plan, a report, a designed 
       <span class="word final-word" id="w3">derived.<span class="under" aria-hidden="true"></span></span>
     </span>
   </h2>
-  <p class="f-sub">Nothing you're proud of ships in one pass. It's free while we're in beta, so sign up and we'll email your access link, or clone the repo and run the whole thing tonight.</p>
-  <div class="waitlist">
-    <form data-waitlist data-derive-source="homepage_waitlist" action="/v1/beta/signup" method="post" novalidate>
-      <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
-      <button class="btn btn-primary" type="submit">Get beta access</button>
-    </form>
-    <div class="waitlist-done" role="status">
-      <span class="tick">✓</span><span>Check your email. Your access link is on the way.</span>
-    </div>
+  <p class="f-sub">Nothing you're proud of ships in one pass. Sign up, connect your agent, and publish your first artifact in minutes. The Free plan is free forever, no card required, and <strong>nothing you ship goes dark.</strong></p>
+  <div class="f-cta">
+    <a class="btn btn-primary" href="/login?signup=1&amp;src=homepage_finale">Start Deriving for Free</a>
+    <a href="/pricing">See pricing →</a>
   </div>
   <p class="f-alt">
     <button class="replay" id="replay" type="button" aria-label="Replay the edit">
@@ -1217,30 +1157,6 @@ document.querySelectorAll('[data-copy], [data-copy-from]').forEach(el => {
       if (tag) tag.textContent = 'COPY';
       else if (prev !== null) labelEl.textContent = prev;
     }, 1800);
-  });
-});
-
-/* beta signup: the API records the email and sends the access link */
-document.querySelectorAll('[data-waitlist]').forEach(form => {
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    const email = form.email.value.trim();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { form.email.focus(); return; }
-    const btn = form.querySelector('button');
-    const label = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Sending…';
-    let ok = false;
-    try {
-      const res = await fetch(form.action, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source_kind:form.dataset.deriveSource, landing_path:location.pathname})});
-      ok = res.ok;
-    } catch {}
-    if (!ok) {
-      btn.disabled = false; btn.textContent = 'Try again';
-      setTimeout(() => { btn.textContent = label; }, 2400);
-      return;
-    }
-    form.style.display = 'none';
-    form.parentElement.querySelector('.waitlist-done').style.display = 'inline-flex';
   });
 });
 
