@@ -24,7 +24,7 @@
       "!data",
       "!docs",
       "!**/public/brand",
-      "!**/public/site",
+      "!apps/web/hosted/site",
       "!pnpm-lock.yaml"
     ]
   },

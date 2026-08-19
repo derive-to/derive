@@ -74,4 +74,15 @@ describe("GET /.well-known/agent.json", () => {
     expect(m.protocols.mcp).toBe(true)
     expect(m.capabilities.length).toBeGreaterThan(0)
   })
+
+  // The examples page and the llms files belong to derive.to's own public surface,
+  // which only its build assembles. This app has none of it, exactly like a
+  // self-host, so the manifest must not name URLs that would 404.
+  it("omits the hosted-only endpoints when the build did not ship them", async () => {
+    const r = await anonApp.request("https://example.test/.well-known/agent.json")
+    const m = (await r.json()) as { endpoints: Record<string, string> }
+    for (const key of ["examples", "llms_txt", "llms_full_txt"])
+      expect(m.endpoints[key], `${key} must be absent without the hosted surface`).toBeUndefined()
+    expect(m.endpoints.skill).toBe("https://example.test/skill.md")
+  })
 })

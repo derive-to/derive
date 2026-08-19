@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// The blog. Posts are markdown files in apps/web/content/blog; this renders them
-// into the web build (apps/web/dist/client/blog) as plain static pages, so the blog
-// ships and is served exactly like the rest of the marketing site: files on
-// Cloudflare Static Assets, no route, no session, no database.
+// The blog. Posts are markdown files in apps/web/hosted/posts; this renders them
+// into the build (apps/web/dist/client/blog) as plain static pages, so the blog ships
+// and is served exactly like the rest of derive.to's site: files on Cloudflare Static
+// Assets, no route, no session, no database.
 //
-//   content/blog/2026-08-19-title.md  ->  /blog/title      (dist/client/blog/title.html)
-//                                         /blog            (the index)
-//                                         /blog/rss.xml    (the feed)
+//   hosted/posts/2026-08-19-title.md  ->  /blog/title      (dist/client/blog/title.html)
+//                                          /blog            (the index)
+//                                          /blog/rss.xml    (the feed)
 //
 // The date prefix on the filename is the publication order and is stripped from the
 // URL. Front matter is a plain `key: value` block: `title`, `description` and `date`
@@ -16,17 +16,18 @@
 // head, the navigation and the footer are identical on every post, and the blog is
 // the one part of the site that grows a file at a time. Why not a site framework:
 // the posts have to read as the SAME publication as index.html and pricing.html,
-// which means the hand-authored shell in public/site, not a theme.
+// which means the hand-authored shell in hosted/site, not a theme.
 //
-// Runs at the end of the web build (apps/web package.json). Idempotent: it clears
-// its own output directory and rewrites the sitemap between its own markers.
+// Runs from the hosted build (`build:site`), straight after build-hosted.mjs has
+// copied the site in — the sitemap it rewrites arrives with that copy. Idempotent: it
+// clears its own output directory and replaces its own sitemap block.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { marked } from "marked"
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), "..")
-const CONTENT = join(APP, "content/blog")
+const CONTENT = join(APP, "hosted/posts")
 const DIST = join(APP, "dist/client")
 const OUT = join(DIST, "blog")
 const SITE = "https://derive.to"
@@ -328,7 +329,7 @@ ${posts
 
 // The blog is the only part of the public surface with a changing URL list, so its
 // entries are written into the built sitemap rather than maintained by hand in
-// public/sitemap.xml. Between markers, so re-running replaces instead of appending.
+// hosted/sitemap.xml. Between markers, so re-running replaces instead of appending.
 const START = "  <!-- blog:start -->"
 const END = "  <!-- blog:end -->"
 

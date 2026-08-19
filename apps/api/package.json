@@ -16,7 +16,7 @@
     "dev": "tsx watch src/node.ts",
     "start": "tsx src/node.ts",
     "server": "tsx src/server-cli.ts",
-    "build:web": "pnpm --filter @derive/web build && node scripts/prep-edge-assets.mjs",
+    "build:web": "pnpm --filter @derive/web build && pnpm --filter @derive/web build:site && node scripts/prep-edge-assets.mjs",
     "deploy:schema": "node scripts/apply-d1-schema.mjs",
     "migrate:auth": "tsx migrate-auth-d1.ts",
     "deploy": "pnpm build:web && pnpm deploy:schema && tsx migrate-auth-d1.ts --apply && pnpm deploy:pg-schema && wrangler deploy",

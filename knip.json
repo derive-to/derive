@@ -23,10 +23,10 @@
         "src/components/ui/**",
         "e2e/**/*.screens.ts",
         "e2e/public-quality/static-server.mjs",
-        "public/site/blog.css",
-        "public/site/guides.css",
-        "public/site/shell.css",
-        "public/site/shell.js"
+        "hosted/site/blog.css",
+        "hosted/site/guides.css",
+        "hosted/site/shell.css",
+        "hosted/site/shell.js"
       ]
     },
     "packages/cli": {

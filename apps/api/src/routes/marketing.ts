@@ -4,9 +4,12 @@ import type { AppContext } from "../context"
 import { SESSION_COOKIE_NAMES } from "../lib/http"
 
 /**
- * The marketing site (the hosted front door). Self-contained HTML pages that ship
- * inside the web build at `site/` (authored in apps/web/public/site) and are served
- * worker-first by the edge asset router:
+ * The marketing site (derive.to's own front door). Self-contained HTML pages
+ * authored in apps/web/hosted/site and assembled into the build at `site/` by the
+ * HOSTED build alone (apps/web/scripts/build-hosted.mjs, run from the api package's
+ * `build:web`). A self-host builds the application without them, and every route
+ * below then falls back to the SPA, which is the point: an operator's front door is
+ * their own. Served worker-first by the edge asset router:
  *
  *   GET /          the landing page — signed-OUT visitors only. A visitor with a
  *                  session cookie (or on the app.* alias host) gets the SPA shell,
@@ -16,8 +19,8 @@ import { SESSION_COOKIE_NAMES } from "../lib/http"
  *   GET /guides    permanent redirect to the separate docs.derive.to site.
  *   GET /examples  artifact examples with inspectable source, for everyone.
  *
- * Always on when the web build ships the pages (deps.marketing); a build without
- * them keeps today's behavior, where the SPA fallback owns these paths. The session
+ * Always on when the build ships the pages (deps.marketing); a build without them
+ * (any self-host) keeps the SPA owning these paths. The session
  * check is presence-only — no DB hit on a landing view; a stale cookie serves the
  * shell and the SPA's own guard bounces to /login, exactly as it does today.
  */

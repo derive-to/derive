@@ -2,7 +2,7 @@ import type { Role } from "@/api"
 
 /** The tier cards, shared by the billing page grid and the UpgradeDialog so the
  *  two surfaces can't drift. Copy mirrors the public pricing page
- *  (apps/web/public/site/pricing.html) verbatim; the storage-overage clause is
+ *  (apps/web/hosted/site/pricing.html) verbatim; the storage-overage clause is
  *  deliberately omitted in-app because overage billing does not exist. Prices are
  *  display-only mirrors of the Stripe lookup keys seeded by the billing rail. */
 export type PaidTier = "team" | "business"

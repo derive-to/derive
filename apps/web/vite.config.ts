@@ -1,10 +1,12 @@
+import { createReadStream, existsSync, statSync } from "node:fs"
+import { extname, join, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import babel from "@rolldown/plugin-babel"
 import tailwindcss from "@tailwindcss/vite"
 import { tanstackStart } from "@tanstack/react-start/plugin/vite"
 import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react"
 import { visualizer } from "rollup-plugin-visualizer"
-import { defineConfig } from "vite"
+import { defineConfig, type Plugin } from "vite"
 
 const API = process.env.DERIVE_API ?? "http://localhost:8090"
 
@@ -18,6 +20,41 @@ const BUILD_ID = process.env.GITHUB_SHA?.slice(0, 8) ?? String(Date.now())
 const analyze = process.env.ANALYZE
   ? [visualizer({ filename: "dist/stats.html", gzipSize: true, template: "treemap" })]
   : []
+
+// derive.to's own public surface (apps/web/hosted) sits outside public/ so that a
+// self-host build never ships it — see scripts/build-hosted.mjs. That also puts it
+// out of Vite's reach, so serve the same directory in development and the marketing
+// pages, the trust files and the sitemap look exactly like production locally.
+// Registered ahead of Vite's own middlewares so the hosted robots.txt overlays the
+// generic one, which is the order the hosted build produces.
+const HOSTED = fileURLToPath(new URL("./hosted", import.meta.url))
+const HOSTED_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".txt": "text/plain; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".xml": "application/xml; charset=utf-8",
+}
+
+const hostedSite = (): Plugin => ({
+  name: "derive:hosted-site",
+  apply: "serve",
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      const path = decodeURIComponent(new URL(req.url ?? "/", "http://localhost").pathname)
+      let file = resolve(HOSTED, `.${path}`)
+      if (file !== HOSTED && !file.startsWith(`${HOSTED}${sep}`)) return next()
+      if (existsSync(file) && statSync(file).isDirectory()) file = join(file, "index.html")
+      if (!existsSync(file) || !statSync(file).isFile()) return next()
+      res.setHeader("content-type", HOSTED_TYPES[extname(file)] ?? "application/octet-stream")
+      createReadStream(file).pipe(res)
+    })
+  },
+})
 
 // TanStack Start in SPA mode: prerenders a static shell, hydrates a client-side
 // router. No SSR, no server runtime — the build is a static bundle for any CDN.
@@ -72,6 +109,7 @@ export default defineConfig({
     ),
   },
   plugins: [
+    hostedSite(),
     tailwindcss(),
     tanstackStart({ spa: { enabled: true } }),
     viteReact(),
