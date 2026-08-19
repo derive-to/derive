@@ -1,9 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
+  "//": "Runtime types are GENERATED from wrangler.toml by `pnpm gen:worker-types`, not taken from @cloudflare/workers-types. That package ships one type surface for all configurations; this file is emitted for THIS worker's compatibility date and flags, and types the real bindings (D1, R2, Hyperdrive, the Durable Object) from the same config wrangler deploys with. scripts/check-worker-types.mjs fails `pnpm ci` if it drifts from wrangler.toml.",
   "compilerOptions": {
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types", "node"],
+    "types": ["./worker-configuration.d.ts", "node"],
     "skipLibCheck": true
   },
-  "include": ["src/worker.ts", "src/realtime-do.ts"]
+  "include": ["src/worker.ts", "src/realtime-do.ts", "worker-configuration.d.ts"]
 }
