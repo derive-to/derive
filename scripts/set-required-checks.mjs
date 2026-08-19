@@ -62,48 +62,36 @@ const api = async (path, init) => {
   return response.json()
 }
 
-// --- the contexts MAIN can actually produce -------------------------------
-// Read from the DEFAULT BRANCH over the API, deliberately, not from the working
-// tree. The working tree is the wrong question: on a pull_request event GitHub
-// runs the workflow from the PR's own branch, so what decides whether a context
-// ever gets reported is what has LANDED, not what is checked out here. Reading
-// the local file would happily approve `gate` from the very branch that is
-// adding it — which is exactly the moment it does not exist yet for anyone else.
-// Job ids are the status-check contexts unless a job sets `name:`, which none do.
+// --- the contexts MAIN has actually produced ---------------------------------
+// Asked of GitHub, not inferred from the workflow YAML. An earlier version of
+// this regex-scraped job ids out of ci.yml and codeql.yml, which is a YAML parser
+// written in regex and answers the wrong question besides: what matters is not
+// whether a job is DECLARED on main, but whether main has ever REPORTED that
+// check. A job can exist and still never produce a context — if it is skipped by
+// a path filter, or the workflow errors before it runs.
+//
+// This matters because the failure mode is expensive. Requiring a context nothing
+// reports does not fail a pull request, it HANGS it at "Expected — waiting for
+// status to be reported", and with a queue of open PRs that is a repository-wide
+// outage rather than one red check.
 const defaultBranch = (await api("")).default_branch
-const workflowOnDefault = async (path) => {
-  try {
-    const file = await api(`/contents/${path}?ref=${encodeURIComponent(defaultBranch)}`)
-    return Buffer.from(file.content, "base64").toString("utf8")
-  } catch {
-    return ""
-  }
-}
-const jobsIn = (text) => {
-  const at = text.search(/^jobs:$/m)
-  if (at === -1) return []
-  return [...text.slice(at).matchAll(/^ {2}([A-Za-z0-9_-]+):$/gm)].map((m) => m[1])
-}
-const produced = new Set(
-  (
-    await Promise.all([
-      workflowOnDefault(".github/workflows/ci.yml"),
-      workflowOnDefault(".github/workflows/codeql.yml"),
-    ])
-  ).flatMap(jobsIn),
-)
+const head = (await api(`/commits/${encodeURIComponent(defaultBranch)}`)).sha
+const { check_runs: runs } = await api(`/commits/${head}/check-runs?per_page=100&filter=latest`)
+const produced = new Set(runs.map((run) => run.name))
 
 const missing = REQUIRED_CONTEXTS.filter((c) => !produced.has(c))
 if (missing.length) {
-  console.error(`refusing to continue: no job on ${defaultBranch} produces ${missing.join(", ")}.`)
+  console.error(
+    `refusing to continue: ${defaultBranch} (${head.slice(0, 8)}) has not reported ${missing.join(", ")}.`,
+  )
   console.error(
     "Requiring a context nothing reports does not fail a PR, it hangs it — every open PR would sit",
   )
   console.error(
     "at \u201cExpected \u2014 waiting for status to be reported\u201d and become unmergeable.",
   )
-  console.error(`Land the workflow change on ${defaultBranch} first, then re-run this.`)
-  console.error(`jobs on ${defaultBranch}: ${[...produced].sort().join(", ") || "none"}`)
+  console.error(`Land the workflow change on ${defaultBranch} first, let it run, then re-run this.`)
+  console.error(`reported on ${head.slice(0, 8)}: ${[...produced].sort().join(", ") || "none"}`)
   process.exit(1)
 }
 

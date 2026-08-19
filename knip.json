@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
-      "entry": ["scripts/selfhost-smoke-client.mjs"]
+      "entry": ["scripts/selfhost-smoke-client.mjs", "scripts/docs-affected.mjs"]
     },
     "apps/api": {
       "entry": [

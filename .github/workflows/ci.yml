@@ -276,23 +276,23 @@ jobs:
     needs: [check, coverage, db, images]
     runs-on: ubuntu-latest
     steps:
-      - name: Require every lane
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        shell: bash
+      # `contains(needs.*.result, ...)` is GitHub's own reduction over the needs
+      # graph. An earlier version of this shelled out and grepped `toJSON(needs)`
+      # for result strings, which is a JSON parser written in regex — it would
+      # have matched a result nested anywhere in that object, including inside a
+      # lane's `outputs`, and said nothing about which lane failed.
+      #
+      # `skipped` is deliberately NOT failed: a path-gated lane legitimately has
+      # nothing to do. Every other terminal state is.
+      - name: Fail if any lane did not pass
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
-          set -euo pipefail
-          echo "$RESULTS"
-          # `skipped` is allowed ONLY because a path-gated lane legitimately has
-          # nothing to do; `success` and `skipped` are the two acceptable states
-          # and everything else — failure, cancelled — fails the gate.
-          bad=$(printf '%s' "$RESULTS" | grep -oE '"result": *"[a-z]+"' \
-            | grep -vE '"(success|skipped)"' || true)
-          if [ -n "$bad" ]; then
-            echo "::error::a required lane did not pass: $bad"
-            exit 1
-          fi
-          echo "all lanes passed"
+          echo "::error::a required lane did not pass — check=${{ needs.check.result }} coverage=${{ needs.coverage.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
+          exit 1
+
+      - name: Summary
+        run: |
+          echo "check=${{ needs.check.result }} coverage=${{ needs.coverage.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
 
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # both lanes pass. Schemas (D1 + Postgres) land BEFORE the worker flips, so a
