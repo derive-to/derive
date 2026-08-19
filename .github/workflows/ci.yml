@@ -451,10 +451,12 @@ jobs:
   # pushes — roughly 138 minutes of runner time a month and a hundred Cloudflare
   # Worker versions that differed in nothing.
   #
-  # The paths live in .github/actions/changed, and scripts/check-docs-paths.mjs
-  # asserts they cover every source in apps/docs/docs-manifest.mjs. That guardrail
-  # is the load-bearing half: the failure mode of a stale filter is not a broken
-  # build, it is a page that quietly stops updating, which nothing would report.
+  # The answer comes from scripts/docs-affected.mjs, which reads
+  # apps/docs/docs-manifest.mjs directly — the site's pages come from canonical
+  # sources scattered across the repo (SECURITY.md, three package READMEs), and
+  # that manifest is the only place they are listed. Reading it beats keeping a
+  # second copy here: the failure mode of a stale filter is not a broken build, it
+  # is a page that quietly stops updating, which nothing would report.
   deploy-docs:
     if: >-
       github.repository == 'derive-to/derive' && github.event_name == 'push' &&
