@@ -48,6 +48,32 @@ updates:
       semver-major-days: 30
       semver-minor-days: 7
       semver-patch-days: 3
+    ignore:
+      # TypeScript 7 is the native (Go) port, and its npm package is a different
+      # artifact rather than a newer version of the old one. Its main export is
+      # `{ version, versionMajorMinor }` — the JavaScript compiler API moved to
+      # `typescript/unstable/*`, and the entry point these scripts need is not
+      # there at all: `unstable/ast` exposes SyntaxKind, the is-predicates, a
+      # factory, a scanner and a visitor, but no parser. The `createSourceFile` it
+      # does export is the FACTORY (build a node from parts), not the one that
+      # turns a file's text into a tree. `unstable/sync` is project-oriented
+      # (parseConfigFile, updateSnapshot), so the equivalent would mean loading a
+      # project rather than parsing a string.
+      #
+      # Four guardrails and one test parse standalone files that way:
+      #   scripts/check-mutations.mjs, check-workspace-reload.mjs,
+      #   check-testids.mjs, check-surfaces.mjs, apps/api/test/authz-coverage.test.ts
+      #
+      # Rewriting them against an API TypeScript itself labels `unstable` is not a
+      # trade worth making right now, and it buys nothing on speed: `typecheck`
+      # already runs on tsgo (@typescript/native-preview, pinned at a 7.0.0-dev
+      # build), so this repo is on the TS7-generation compiler where it counts.
+      # `typescript` is here for the compiler API and as the tsc cross-check.
+      #
+      # Revisit when the parser surface stabilises — drop this entry and the PR
+      # comes back.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-routine:
         patterns: ["*"]
