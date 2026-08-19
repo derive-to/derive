@@ -10,7 +10,7 @@ import type {
   VersionRecord,
 } from "@derive/core"
 import { sha256Hex } from "@derive/core"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -828,23 +828,53 @@ describe("startPreviewWorker", () => {
     for (const t of timers) clearInterval(t)
   })
 
+  // This test asserted nothing for a long time: it started a worker on a 100s
+  // interval, called stop(), and carried the comment "no assertion needed — just
+  // ensure it doesn't throw". Replacing the whole of stop() with an empty function
+  // left it green, along with every other test in this file, which is the only
+  // file that touches the preview worker. It named a guarantee nobody checked.
+  //
+  // What it has to do to be worth its name: leave real work queued, let the clock
+  // pass several intervals AFTER stop(), and prove the renderer was never called.
+  // Fake timers rather than a real sleep, so the assertion is about the contract
+  // and not about how long the test is willing to wait.
   it("stop() prevents future ticks", async () => {
-    const fakes = makeFakes()
-    const renderer = {
-      screenshot: async (_url: string) => new Uint8Array([]),
+    vi.useFakeTimers()
+    try {
+      const fakes = makeFakes()
+      await seedArtifact(fakes, { id: "a7", shortId: "short7", versionN: 1 })
+      await enqueueRender(fakes.meta, "a7", 1)
+
+      // A job IS waiting, so a tick that runs has something to render — without
+      // this the assertion below would hold for a worker that never stopped.
+      const seen: string[] = []
+      const renderer = {
+        screenshot: async (url: string) => {
+          seen.push(url)
+          return new Uint8Array([7, 7, 7])
+        },
+      }
+      const worker = startPreviewWorker(
+        {
+          meta: fakes.meta,
+          blobs: makeBlobs(),
+          renderer,
+          baseUrl: "https://d.to",
+          secret: "s",
+        },
+        1_000,
+      )
+
+      worker.stop()
+      await vi.advanceTimersByTimeAsync(10_000) // ten intervals' worth
+
+      expect(seen).toEqual([])
+      // The job is still sitting there unclaimed — the worker did not merely skip
+      // rendering, it never took the work at all.
+      expect([...fakes.jobs.values()].map((job) => job.status)).toEqual(["pending"])
+    } finally {
+      vi.useRealTimers()
     }
-    const worker = startPreviewWorker(
-      {
-        meta: fakes.meta,
-        blobs: makeBlobs(),
-        renderer,
-        baseUrl: "https://d.to",
-        secret: "s",
-      },
-      100_000, // very long interval — won't fire naturally
-    )
-    worker.stop()
-    // No assertion needed — just ensure it doesn't throw
   })
 
   it("poke() triggers a tick immediately", async () => {

@@ -1,5 +1,5 @@
 import { zipSync } from "fflate"
-import { describe, expect, it } from "vitest"
+import { beforeAll, describe, expect, it } from "vitest"
 import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -744,7 +744,11 @@ describe("contexts: the manifest package (skills, pin health, repos, description
   let currentSkillId: string
   let staleSkillId: string
 
-  it("setup: pin one skill current and one behind, add a repo, wire the context", async () => {
+  // Was `it("setup: pin one skill current and one behind, add a repo, wire the context")`. It asserted nothing — it only
+  // built the fixture the cases below run against — so reporting it as a
+  // passing test inflated the inventory and implied a guarantee it never
+  // made. As a hook it still fails the suite if it throws.
+  beforeAll(async () => {
     await app.request("/v1/me", { headers: as(owner.email) })
     await app.request("/v1/me", { headers: as(asker.email) })
 
@@ -857,7 +861,11 @@ describe("contexts: record a run that already happened locally", () => {
 
   let contextId: string
 
-  it("setup: wire a context", async () => {
+  // Was `it("setup: wire a context")`. It asserted nothing — it only
+  // built the fixture the cases below run against — so reporting it as a
+  // passing test inflated the inventory and implied a guarantee it never
+  // made. As a hook it still fails the suite if it throws.
+  beforeAll(async () => {
     await app.request("/v1/me", { headers: as(owner.email) })
     await app.request("/v1/me", { headers: as(member.email) })
     const manifestShortId = (

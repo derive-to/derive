@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { newId, publish } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { zipBundleFiles } from "../src/lib/bundle"
 import { signPreviewToken, verifyPreviewToken } from "../src/lib/preview-token"
@@ -84,7 +84,11 @@ describe("raw route: preview-access token (/pv/<token>/ path segment)", () => {
   let shortId: string
   let artifactId: string
 
-  it("setup: publish a private artifact", async () => {
+  // Was `it("setup: publish a private artifact")`. It asserted nothing — it only
+  // built the fixture the cases below run against — so reporting it as a
+  // passing test inflated the inventory and implied a guarantee it never
+  // made. As a hook it still fails the suite if it throws.
+  beforeAll(async () => {
     const key = await blobs.put(enc("<h1>Private Content</h1>"))
     const a = await meta.createArtifact({
       id: newId("a"),
