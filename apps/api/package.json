@@ -33,7 +33,7 @@
     "gen:openapi": "vitest run test/openapi.test.ts -u"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.20",
+    "@ai-sdk/anthropic": "4.0.39",
     "@ai-sdk/openai-compatible": "3.0.18",
     "@better-auth/oauth-provider": "1.6.19",
     "@better-auth/passkey": "1.6.19",
