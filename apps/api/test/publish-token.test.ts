@@ -5,7 +5,7 @@ import { newId } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { zipBundleFiles } from "../src/lib/bundle"
 import { signCapabilityToken } from "../src/lib/capability-token"
@@ -118,7 +118,11 @@ const createTok = (exp = Date.now() + 60_000, org = "default") =>
   signPublishToken(SECRET, org, "u_pub", PUBLISH_TARGET_CREATE, exp)
 
 describe("POST /v1/artifacts/t/:token (create)", () => {
-  it("setup: seat the granting user as an editor", async () => {
+  // Was `it("setup: seat the granting user as an editor")`. It asserted nothing — it only
+  // built the fixture the cases below run against — so reporting it as a
+  // passing test inflated the inventory and implied a guarantee it never
+  // made. As a hook it still fails the suite if it throws.
+  beforeAll(async () => {
     await seatUser("editor")
   })
 
@@ -219,7 +223,11 @@ describe("POST /v1/artifacts/t/:token (create)", () => {
 describe("POST /v1/artifacts/:shortId/versions/t/:token (revise)", () => {
   let shortId: string
 
-  it("setup: create an artifact to revise", async () => {
+  // Was `it("setup: create an artifact to revise")`. It asserted nothing — it only
+  // built the fixture the cases below run against — so reporting it as a
+  // passing test inflated the inventory and implied a guarantee it never
+  // made. As a hook it still fails the suite if it throws.
+  beforeAll(async () => {
     await seatUser("editor")
     const made = await (
       await postFile(
