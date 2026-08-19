@@ -1,8 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
+  "//": "`@cloudflare/workers-types/experimental`, not the main entrypoint: from v5 that one adds `declare const Buffer: any` among its nodejs_compat polyfill globals, which collides with the real Buffer from @types/node and makes node:crypto's randomBytes/getAuthTag lose their encoding-aware toString(). Reordering `types` does not help — it is a duplicate global declaration, not a precedence question. `experimental` is the only alternate entrypoint v5 ships and it omits that line; it is a superset, so it can also describe APIs behind compatibility flags. The workerd lanes (test:worker, @derive/db test:d1) are what prove the types match the runtime.",
   "compilerOptions": {
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types", "node"],
+    "types": ["@cloudflare/workers-types/experimental", "node"],
     "skipLibCheck": true
   },
   "include": ["src/worker.ts", "src/realtime-do.ts"]
