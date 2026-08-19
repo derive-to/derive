@@ -92,6 +92,10 @@ jobs:
   # and the build is path gated anyway.
   check:
     runs-on: ubicloud-standard-8
+    # Exposed so `deploy-docs` can decide whether it has anything to do. This lane
+    # already computes the filter for its own web build, so the answer is free.
+    outputs:
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -440,8 +444,21 @@ jobs:
   # (This briefly said `needs: [gate]` when the lanes were split, which contradicted
   # the comment directly above it and delayed every docs deploy by ~60s for no
   # additional proof.)
+  #
+  # AND ONLY WHEN THE DOCS CHANGED. Over the last 30 days, 409 of 423 commits on
+  # main touched none of the 16 canonical sources this site is generated from, so
+  # this job was rebuilding and redeploying a byte-identical site on ~97% of
+  # pushes — roughly 138 minutes of runner time a month and a hundred Cloudflare
+  # Worker versions that differed in nothing.
+  #
+  # The paths live in .github/actions/changed, and scripts/check-docs-paths.mjs
+  # asserts they cover every source in apps/docs/docs-manifest.mjs. That guardrail
+  # is the load-bearing half: the failure mode of a stale filter is not a broken
+  # build, it is a page that quietly stops updating, which nothing would report.
   deploy-docs:
-    if: github.repository == 'derive-to/derive' && github.event_name == 'push'
+    if: >-
+      github.repository == 'derive-to/derive' && github.event_name == 'push' &&
+      needs.check.outputs.docs == 'true'
     needs: [check]
     runs-on: ubicloud-standard-4
     environment:

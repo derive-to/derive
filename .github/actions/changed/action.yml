@@ -19,6 +19,14 @@ outputs:
   app_image:
     description: The self-host image can be affected.
     value: ${{ steps.filter.outputs.app_image }}
+  docs:
+    description: >-
+      The documentation site can be affected. Its pages are generated from
+      canonical sources scattered across the repo (see apps/docs/docs-manifest.mjs),
+      not just apps/docs, so this list is checked against that manifest by
+      scripts/check-docs-paths.mjs — add a page sourced from a new file and the
+      guardrail fails until this filter learns about it.
+    value: ${{ steps.filter.outputs.docs }}
 
 runs:
   using: composite
@@ -35,6 +43,7 @@ runs:
         web=false
         runner=false
         app_image=false
+        docs=false
         range=
 
         case "$EVENT_NAME" in
@@ -54,6 +63,7 @@ runs:
           web=true
           runner=true
           app_image=true
+          docs=true
         else
           : "${RUNNER_TEMP:?}"
           changed_paths="$RUNNER_TEMP/derive-changed-paths"
@@ -67,6 +77,12 @@ runs:
                 deploy/runner.Dockerfile | deploy/runner.Dockerfile.dockerignore | \
                 deploy/runner-entrypoint.sh)
                 runner=true
+                ;;
+            esac
+            case "$path" in
+              apps/docs/* | SECURITY.md | examples/README.md | \
+                packages/cli/README.md | packages/mcp/README.md)
+                docs=true
                 ;;
             esac
             case "$path" in
@@ -87,3 +103,4 @@ runs:
         echo "web=$web" >> "$GITHUB_OUTPUT"
         echo "runner=$runner" >> "$GITHUB_OUTPUT"
         echo "app_image=$app_image" >> "$GITHUB_OUTPUT"
+        echo "docs=$docs" >> "$GITHUB_OUTPUT"
