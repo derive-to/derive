@@ -104,6 +104,7 @@ const publicProseFiles = new Set([
   "SECURITY.md",
   ...walkText("apps/api/src/skills"),
   ...walkText("apps/docs/content"),
+  ...walkText("apps/web/content/blog"),
   ...walkText("examples"),
   "apps/web/public/llms.txt",
   "apps/web/public/llms-full.txt",

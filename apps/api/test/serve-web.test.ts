@@ -170,6 +170,53 @@ describe("serve-web: static trust-signal files are not swallowed by the shell", 
   })
 })
 
+// The blog is generated into the web build (apps/web/scripts/build-blog.mjs) and
+// served as files. On the edge Cloudflare's HTML handling gives a post its
+// extensionless URL; on Node these routes have to do it, so this pins the mapping
+// that would otherwise silently regress into shell-shaped soft 200s.
+describe("serve-web: the generated blog serves its own files", () => {
+  const rootRel = "test/.tmp-serve-web-blog"
+  const rootAbs = join(apiDir, rootRel)
+
+  beforeAll(() => {
+    mkdirSync(join(rootAbs, "blog"), { recursive: true })
+    writeFileSync(join(rootAbs, "blog", "index.html"), "<!doctype html><h1>Blog</h1>")
+    writeFileSync(join(rootAbs, "blog", "a-post.html"), "<!doctype html><h1>A post</h1>")
+    writeFileSync(join(rootAbs, "blog", "rss.xml"), '<?xml version="1.0"?><rss/>')
+  })
+  afterAll(() => rmSync(rootAbs, { recursive: true, force: true }))
+
+  const app = () => {
+    const a = new Hono()
+    mountWeb(a, { webRoot: rootRel, shellHtml: "SHELL_MARKER" })
+    return a
+  }
+
+  it("serves the index, a post at its extensionless URL, and the feed", async () => {
+    for (const path of ["/blog", "/blog/"]) {
+      const index = await app().request(path)
+      expect(index.status).toBe(200)
+      expect(await index.text()).toContain("<h1>Blog</h1>")
+    }
+
+    const post = await app().request("/blog/a-post")
+    expect(post.status).toBe(200)
+    expect(post.headers.get("content-type")).toContain("text/html")
+    expect(await post.text()).toContain("<h1>A post</h1>")
+
+    const feed = await app().request("/blog/rss.xml")
+    expect(feed.status).toBe(200)
+    expect(feed.headers.get("content-type")).toContain("xml")
+    expect(await feed.text()).toContain("<rss/>")
+  })
+
+  it("returns a real 404 for a post that does not exist", async () => {
+    const miss = await app().request("/blog/never-written")
+    expect(miss.status).toBe(404)
+    expect(await miss.text()).toBe("not found")
+  })
+})
+
 // The server-owned path set is declared in three places that can't share a value:
 // the Node server (the contract above), the Cloudflare Worker, and the dev proxy.
 // These assert the other two never drift from the contract.

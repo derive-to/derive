@@ -63,6 +63,14 @@ export const isApiPath = (path: string): boolean =>
 // build emits new hashes, so this is safe and maximizes cache hits.
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 
+/** The file behind a blog URL: the directory index for /blog, `<slug>.html` for a
+ *  post, and the file itself for anything that already names one (rss.xml). */
+const blogFile = (path: string): string => {
+  const trimmed = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path
+  if (trimmed === "/blog") return "/blog"
+  return /\.[^/]+$/.test(trimmed) ? trimmed : `${trimmed}.html`
+}
+
 export interface ServeWebOpts {
   /** serveStatic root, relative to `process.cwd()`. */
   webRoot: string
@@ -92,6 +100,11 @@ export const mountWeb = (app: Hono, { webRoot, shellHtml, notFoundHtml }: ServeW
   // the Worker's Static Assets serve them natively, so only Node needs the routes.
   app.get("/site/*", serveStatic({ root: webRoot }))
   app.get("/brand/*", serveStatic({ root: webRoot }))
+  // The blog, generated into the build by apps/web/scripts/build-blog.mjs. On the
+  // edge Cloudflare's HTML handling maps blog/<slug>.html to /blog/<slug> and the
+  // directory to /blog; do the same here so a self-host publishes the same URLs.
+  app.get("/blog", serveStatic({ root: webRoot, rewriteRequestPath: blogFile }))
+  app.get("/blog/*", serveStatic({ root: webRoot, rewriteRequestPath: blogFile }))
   // Cloudflare's Static Assets HTML handling maps the physical security.html
   // file to its canonical extensionless URL. Mirror that contract in the Node
   // self-host so links, crawlers and scanners see the same page on both tiers.

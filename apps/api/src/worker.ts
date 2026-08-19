@@ -459,14 +459,16 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
 // own /assets files live in domain mode, not the web build. (Custom domains still
 // have the shadow for these three prefixes — identifying them needs a DB lookup
 // this pre-binding hook can't afford; vanity hosts are the live product surface.)
-const staticNamespacePassthrough = (req: Request, env: Env): boolean => {
-  const path = new URL(req.url).pathname
-  if (!STATIC_NAMESPACE_PREFIXES.some((p) => path.startsWith(`${p}/`))) return false
+const vanityHost = (req: Request, env: Env): boolean => {
   const sub = subdomainBaseFromEnv(env)
-  if (!sub) return true
+  if (!sub) return false
   const host = (req.headers.get("host") ?? new URL(req.url).host).toLowerCase().split(":")[0] ?? ""
-  return host !== sub && !host.endsWith(`.${sub}`)
+  return host === sub || host.endsWith(`.${sub}`)
 }
+
+const staticNamespacePassthrough = (req: Request, env: Env): boolean =>
+  STATIC_NAMESPACE_PREFIXES.some((p) => new URL(req.url).pathname.startsWith(`${p}/`)) &&
+  !vanityHost(req, env)
 
 const appHostRequest = (req: Request, env: Env): boolean => {
   const requestHost = new URL(req.url).hostname.toLowerCase()
@@ -506,6 +508,11 @@ export default {
     // URL-string fetch (the siteFetch precedent) sidesteps the workers-types/DOM
     // Request dualism; assets are GET/HEAD-only so nothing else is intercepted.
     if (navigation && staticNamespacePassthrough(req, env))
+      return assetResponse(req, env, url.pathname)
+    // The blog index is the one static DIRECTORY url, so it can't ride the prefix
+    // rule above (which matches `/blog/...`) and it isn't a root file. Same host
+    // test though: a published bundle's own /blog must still win on a vanity host.
+    if (navigation && url.pathname === "/blog" && !vanityHost(req, env))
       return assetResponse(req, env, url.pathname)
     if (navigation && isStaticRootPath(url.pathname)) return assetResponse(req, env, url.pathname)
     // Every navigation runs through the Worker so an arbitrary path can return a
