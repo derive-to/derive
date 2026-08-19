@@ -210,6 +210,36 @@ jobs:
         uses: ./.github/actions/changed
       - uses: ./.github/actions/setup
 
+      # A docker-container builder, which the default `docker` driver is not: the
+      # gha cache backend below needs one.
+      #
+      # WHAT THIS CAN AND CANNOT BUY, because the honest number is smaller than the
+      # reputation. Timed from the self-host build's own layers (run 32257111555):
+      #
+      #   pnpm --filter @derive/api deploy --prod   21.8s   source-dependent
+      #   playwright install --only-shell chromium  19.0s   source-dependent, see below
+      #   pnpm --filter @derive/web build           15.9s   source-dependent
+      #   pnpm fetch                                11.2s   LOCKFILE-dependent
+      #   base pull + COPY + export                 10.6s   partly cacheable
+      #   boot + readiness + release-bundle test    ~32s    the proof; never cacheable
+      #
+      # Only what sits ABOVE `COPY . .` survives a source change, and that is
+      # `pnpm fetch`, `pnpm install --offline` and the base pull — roughly 16s of an
+      # 80s build. Everything after the COPY re-runs by construction, including the
+      # Playwright step: it invokes `node node_modules/playwright/cli.js` from the
+      # COPYed production graph, so it is downstream of the source by definition and
+      # no amount of layer reordering moves it. Pre-seeding /ms-playwright from a
+      # prebuilt base image is the only thing that would, and that is a separate
+      # change with a version-coupling problem of its own.
+      #
+      # So: expect ~16s, minus whatever restoring a multi-gigabyte cache costs, and
+      # be prepared for it to be a wash. The Actions cache is 10 GB per repository
+      # and evicts, so a cache that thrashes is worse than none. The two images get
+      # separate scopes to keep them from evicting each other. THIS IS AN EXPERIMENT
+      # WITH A NUMBER ATTACHED: compare a cold run against a warm one before
+      # believing it earns its place.
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
       # The runner image builds from packages/cli — this catches a CLI change that
       # breaks the container (deps, bin layout) before someone finds out on a box.
       # Build-only; no registry push.
@@ -226,7 +256,10 @@ jobs:
         # No token/context on purpose: a healthy image exits 1 with the house
         # one-liner, not a stack trace — proves node, the CLI, and its deps wired.
         run: |
-          docker build -f deploy/runner.Dockerfile -t derive-runner:ci .
+          docker buildx build -f deploy/runner.Dockerfile -t derive-runner:ci \
+            --cache-from type=gha,scope=runner-image \
+            --cache-to type=gha,scope=runner-image,mode=max \
+            --load .
           out=$(docker run --rm derive-runner:ci serve 2>&1) && exit 1 || true
           echo "$out" | grep -q "error: a context id and an agent token are required"
 
@@ -239,7 +272,10 @@ jobs:
           mkdir -p deploy/backups
           printf '%s\n' 'build-context-secret-canary' > deploy/.env
           printf '%s\n' 'build-context-backup-canary' > deploy/backups/build-context-canary
-          docker build -f deploy/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t derive:ci .
+          docker buildx build -f deploy/Dockerfile --build-arg REVISION="$GITHUB_SHA" -t derive:ci \
+            --cache-from type=gha,scope=selfhost-image \
+            --cache-to type=gha,scope=selfhost-image,mode=max \
+            --load .
 
           # Exercise the same download-and-handoff script used after a real GitHub release. This
           # local URL is the PR-safe seam; the tag workflow supplies GitHub's anonymous URL.
