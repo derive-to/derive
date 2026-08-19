@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>Pricing | Derive</title>
-<meta name="description" content="Free while we're in beta. This is the pricing we intend to charge, published early, so nothing about it surprises you.">
+<meta name="description" content="Start free. Pay for the seats that publish and approve, never for the people who read and comment.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Pricing | Derive">
-<meta property="og:description" content="Free while we're in beta. This is the pricing we intend to charge, published early.">
+<meta property="og:description" content="Start free. Pay for the seats that publish and approve, never for the people who read and comment.">
 <meta property="og:url" content="https://derive.to/pricing">
 <meta property="og:image" content="https://derive.to/site/og-approval.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -20,7 +20,7 @@
   "@type": "WebPage",
   "name": "Pricing | Derive",
   "url": "https://derive.to/pricing",
-  "description": "Free while we're in beta. This is the pricing we intend to charge, published early.",
+  "description": "Start free. Pay for the seats that publish and approve, never for the people who read and comment.",
   "isPartOf": { "@id": "https://derive.to/#website" },
   "publisher": { "@id": "https://derive.to/#organization" }
 }
@@ -78,14 +78,6 @@ header.head.wrap{padding:150px 24px 0;text-align:center}
 .head h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:18px auto 0;max-width:20ch}
 .head .lede{margin:22px auto 0;max-width:56ch;font-size:16px;color:var(--muted-fg)}
 .head .lede strong{color:var(--fg);font-weight:500}
-.beta{
-  margin:30px auto 0;display:inline-flex;align-items:baseline;gap:10px;
-  border:1px solid var(--border);border-radius:8px;padding:12px 18px;background:var(--card);
-  font-size:14px;color:var(--muted-fg);max-width:62ch;text-align:left;
-}
-.beta .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--warning);white-space:nowrap;position:relative;top:-1px}
-.beta strong{color:var(--fg);font-weight:500}
-
 .tiers{margin-top:64px;display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--card)}
 @media(max-width:960px){.tiers{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.tiers{grid-template-columns:1fr}}
@@ -128,14 +120,9 @@ section.wrap{padding:120px 24px 0}
 section.wrap.final{padding:130px 24px 0;text-align:center}
 .final h2{font-size:clamp(28px,4vw,40px)}
 .final .body{margin:16px auto 0;max-width:50ch;font-size:15px;color:var(--muted-fg)}
-.waitlist{margin:32px auto 0;display:flex;justify-content:center}
-.waitlist form{display:flex;gap:8px;padding:6px;border-radius:12px;background:var(--card);border:1px solid var(--border);width:min(440px,100%)}
-.waitlist input{flex:1;min-width:0;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;font-size:14px;padding:0 12px}
-.waitlist input::placeholder{color:var(--muted-fg)}
-.waitlist form:focus-within{border-color:var(--fg)}
-.waitlist .btn{height:36px;border-radius:8px}
-.waitlist-done{display:none;align-items:center;gap:10px;height:50px;padding:0 18px;border-radius:12px;border:1px solid var(--border);background:var(--card);font-size:14px}
-.waitlist-done .tick{color:var(--success)}
+.final .cta{margin:32px auto 0;display:flex;gap:26px;align-items:center;justify-content:center;flex-wrap:wrap}
+.final .cta a:not(.btn){font-size:14px;color:var(--fg);border-bottom:1px solid var(--border);padding-bottom:2px}
+.final .cta a:not(.btn):hover{border-bottom-color:var(--fg)}
 
 footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 .foot-inner{max-width:var(--maxw);margin:0 auto;padding:34px 24px 44px;display:flex;align-items:center;gap:16px 28px;flex-wrap:wrap}
@@ -152,14 +139,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   section.wrap{padding-top:92px}
   section.wrap.final{padding-top:100px}
   .principle{padding:22px 20px}
-  .waitlist input{font-size:16px} /* <16px makes iOS zoom the page on focus */
-  .waitlist-done{height:auto;min-height:50px;padding:12px 16px}
   footer{margin-top:96px}
-}
-@media(max-width:360px){
-  .waitlist form{flex-direction:column;padding:8px}
-  .waitlist input{padding:10px 8px}
-  .waitlist .btn{width:100%}
 }
 @media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 </style>
@@ -185,7 +165,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
         <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in to Beta <span class="arr" aria-hidden="true">→</span></a>
+      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
@@ -194,8 +174,8 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 
 <header class="head wrap">
   <div class="eyebrow">Pricing</div>
-  <h1>Free while we're in beta.</h1>
-  <p class="lede">Every feature, no card required. Below is the pricing we intend to charge, <strong>published early so nothing about it surprises you.</strong> The short version: the link is free; teams pay for the seats that publish and approve, never for the people who read and comment.</p>
+  <h1>Start free. Pay for editors.</h1>
+  <p class="lede">The Free plan is free forever, no card required. The short version: <strong>the link is free</strong>; teams pay for the seats that publish and approve, never for the people who read and comment.</p>
 </header>
 
 <div class="wrap">
@@ -204,7 +184,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <div class="tname">Free</div>
       <p class="tfor">For individuals, independent projects, and small teams.</p>
       <div class="price">$0 <small>forever</small></div>
-      <a class="btn btn-ghost" href="#join">Get beta access</a>
+      <a class="btn btn-ghost" href="/login?signup=1&amp;src=pricing_free">Start for free</a>
       <ul>
         <li>Up to <strong>3 editors</strong> per workspace</li>
         <li><strong>Unlimited viewers and commenters</strong></li>
@@ -218,7 +198,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <div class="tname">Team <span class="tag">MOST TEAMS</span></div>
       <p class="tfor">For teams whose agents ship work that needs review.</p>
       <div class="price">$15 <small>per editor / month · $12 billed annually</small></div>
-      <a class="btn btn-primary" href="#join">Get beta access</a>
+      <a class="btn btn-primary" href="/login?signup=1&amp;src=pricing_team">Start with Team</a>
       <ul>
         <li>Everything in Free, plus</li>
         <li><strong>Unlimited editors</strong></li>
@@ -234,7 +214,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <div class="tname">Business</div>
       <p class="tfor">For organizations that need control and accountability.</p>
       <div class="price">$30 <small>per editor / month · $25 billed annually</small></div>
-      <a class="btn btn-ghost" href="#join">Get beta access</a>
+      <a class="btn btn-ghost" href="/login?signup=1&amp;src=pricing_business">Start with Business</a>
       <ul>
         <li>Everything in Team, plus</li>
         <li>250 GB pooled storage, then ~$1 per extra 10 GB/month</li>
@@ -311,24 +291,18 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
       <p class="a">Derive is fair source (<strong>FSL-1.1-ALv2</strong>): use, modify, and self-host it freely for anything except selling Derive itself as a service. Every release converts to <strong>Apache-2.0</strong> two years after it ships.</p>
     </details>
     <details>
-      <summary>When does billing start?</summary>
-      <p class="a">Not before we’ve told you. We’ll announce dates well ahead, existing workspaces will get a grace period, and <strong>the free tier stays</strong>.</p>
+      <summary>Do we need a card to start?</summary>
+      <p class="a">No. <strong>The Free plan needs no card and has no time limit.</strong> When your team outgrows it, upgrade in the app; your artifacts and links are never affected.</p>
     </details>
   </div>
 </section>
 
-<section class="final wrap" id="join">
-  <h2>Nothing here should surprise you.</h2>
-  <p class="body">That's the point of publishing pricing before billing exists. Sign up for the beta and hold us to it.</p>
-  <div class="waitlist">
-    <form data-waitlist data-derive-source="pricing_waitlist" action="/v1/beta/signup" method="post" novalidate>
-      <input type="email" name="email" placeholder="you@company.com" required autocomplete="email" aria-label="Work email">
-      <button class="btn btn-primary" type="submit">Get beta access</button>
-    </form>
-    <div class="waitlist-done" role="status">
-      <span class="tick">✓</span>
-      <span>Check your email. Your access link is on the way.</span>
-    </div>
+<section class="final wrap">
+  <h2>Make things worth keeping.</h2>
+  <p class="body">Your team and its agents have never made more. Give the work one home: a permanent link, every version, a review you can stand behind. Start free and grow when your team does.</p>
+  <div class="cta">
+    <a class="btn btn-primary" href="/login?signup=1&amp;src=pricing_cta">Start Deriving for Free</a>
+    <a href="mailto:hello@derive.to">Talk to us →</a>
   </div>
 </section>
 
@@ -358,28 +332,6 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 <script>
 const nav = document.getElementById('nav');
 addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
-document.querySelectorAll('[data-waitlist]').forEach(form => {
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    const email = form.email.value.trim();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { form.email.focus(); return; }
-    const btn = form.querySelector('button');
-    const label = btn.textContent;
-    btn.disabled = true; btn.textContent = 'Sending…';
-    let ok = false;
-    try {
-      const res = await fetch(form.action, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source_kind:form.dataset.deriveSource, landing_path:location.pathname})});
-      ok = res.ok;
-    } catch {}
-    if (!ok) {
-      btn.disabled = false; btn.textContent = 'Try again';
-      setTimeout(() => { btn.textContent = label; }, 2400);
-      return;
-    }
-    form.style.display = 'none';
-    form.parentElement.querySelector('.waitlist-done').style.display = 'inline-flex';
-  });
-});
 </script>
 </body>
 </html>
