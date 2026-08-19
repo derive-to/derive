@@ -2072,6 +2072,9 @@ export function runStoreContract(
       expect(stats.total).toBe(2)
       expect(stats.unique).toBe(2)
       expect(stats.anonViewers).toBe(1)
+      // The rolling 24h window powers the Insights "24h" tile. Both rows were just
+      // recorded, so all of them fall inside it.
+      expect(stats.last24h).toBe(2)
       expect((await store.viewCounts([a.id]))[a.id]).toBe(2)
       expect(await store.viewedSince(a.id, "amy", 1, "2000-01-01T00:00:00.000Z")).toBe(true)
       // Cleanup helpers.

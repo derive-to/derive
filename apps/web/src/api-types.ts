@@ -8066,6 +8066,8 @@ export interface components {
         Analytics: {
             /** @description Total recorded views across all versions (de-duped opens) */
             total: number;
+            /** @description Views in the trailing 24 hours. A rolling window rather than a calendar day, so it carries no timezone assumption about the reader */
+            last24h: number;
             /** @description Distinct viewers; a signed-in person or anon cookie counts once */
             unique: number;
             /** @description How many of the unique viewers are anonymous */

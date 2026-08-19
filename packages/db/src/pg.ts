@@ -342,6 +342,7 @@ void _schemaExhaustive
 void _schemaShapes
 
 const VIEW_WINDOW_MS = 30 * 86400_000
+const LAST_24H_MS = 86400_000
 
 /**
  * Postgres metadata store (Neon, RDS, self-hosted) for horizontal scale — the
@@ -2042,8 +2043,13 @@ export class PgMetaStore implements MetaStore {
 
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
-    const [tot, uni, anon, perV, daily, recent] = await Promise.all([
+    const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
+    const [tot, day, uni, anon, perV, daily, recent] = await Promise.all([
       this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
+      this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1 AND created_at>=$2`, [
+        artifactId,
+        dayAgo,
+      ]),
       this.pool.query(`SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1`, [
         artifactId,
       ]),
@@ -2066,6 +2072,7 @@ export class PgMetaStore implements MetaStore {
     ])
     return {
       total: tot.rows[0].n,
+      last24h: day.rows[0].n,
       unique: uni.rows[0].n,
       anonViewers: anon.rows[0].n,
       perVersion: perV.rows.map((r) => ({ version: r.version, count: r.c })),

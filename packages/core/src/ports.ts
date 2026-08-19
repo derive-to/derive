@@ -3927,6 +3927,9 @@ export interface NewView {
 
 export interface ViewStats {
   total: number
+  /** Views in the trailing 24 hours. A rolling window, not a calendar day, so it
+   *  needs no timezone from the caller and reads the same everywhere. */
+  last24h: number
   unique: number
   /** Distinct anonymous viewers (the rest of `unique` are named users). */
   anonViewers: number

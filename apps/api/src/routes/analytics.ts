@@ -13,6 +13,11 @@ export const analyticsRoutes = (ctx: AppContext) => {
   const Analytics = z
     .object({
       total: z.number().describe("Total recorded views across all versions (de-duped opens)"),
+      last24h: z
+        .number()
+        .describe(
+          "Views in the trailing 24 hours. A rolling window rather than a calendar day, so it carries no timezone assumption about the reader",
+        ),
       unique: z
         .number()
         .describe("Distinct viewers; a signed-in person or anon cookie counts once"),
