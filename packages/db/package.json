@@ -36,7 +36,7 @@
     "@cloudflare/vitest-pool-workers": "^0.16.15",
     "@cloudflare/workers-types": "^4.20260615.1",
     "@types/better-sqlite3": "^7.6.11",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.2.0",
     "@types/pg": "^8.11.10",
     "drizzle-kit": "^0.31.0",
     "typescript": "^6.0.3",
