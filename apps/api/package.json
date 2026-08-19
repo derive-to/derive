@@ -68,7 +68,7 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.15",
-    "@cloudflare/workers-types": "^4.20260615.1",
+    "@cloudflare/workers-types": "^5.20260816.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^26.2.0",
     "@types/pg": "^8.11.10",
