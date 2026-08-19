@@ -81,7 +81,8 @@ runs:
             esac
             case "$path" in
               apps/docs/* | SECURITY.md | examples/README.md | \
-                packages/cli/README.md | packages/mcp/README.md)
+                packages/cli/README.md | packages/mcp/README.md | \
+                pnpm-lock.yaml)
                 docs=true
                 ;;
             esac

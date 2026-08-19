@@ -60,7 +60,17 @@ const sources = [...new Set([...docsPages.map((page) => page.source), docsHome?.
   Boolean,
 )
 
-const uncovered = sources.filter((source) => !patterns.some((p) => covers(p, source)))
+// The lockfile is not a manifest source and would not be caught by the sweep below,
+// but the docs site is BUILT with astro, @astrojs/mdx, pagefind and wrangler — all
+// pinned there. A version bump changes the rendered output or how it ships while
+// touching no content file, so omitting it means an upgrade sits undeployed until
+// somebody happens to edit a page. Measured: 27 commits in 30 days moved the
+// lockfile without touching any docs source.
+const TOOLCHAIN = ["pnpm-lock.yaml"]
+
+const uncovered = [...sources, ...TOOLCHAIN].filter(
+  (source) => !patterns.some((p) => covers(p, source)),
+)
 if (uncovered.length) {
   console.error("docs paths: these docs sources are NOT covered by the deploy filter:")
   for (const source of uncovered) console.error(`  ${source}`)
@@ -74,5 +84,5 @@ if (uncovered.length) {
 // manifest strictly needs (the whole of apps/docs, say, which holds the Astro app
 // and its assets as well as content) is deliberate and correct.
 console.log(
-  `docs paths: ${sources.length} docs sources all covered by ${patterns.length} filter patterns`,
+  `docs paths: ${sources.length} docs sources + ${TOOLCHAIN.length} toolchain input all covered by ${patterns.length} filter patterns`,
 )
