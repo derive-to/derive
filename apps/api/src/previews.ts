@@ -425,3 +425,5 @@ export const startPreviewWorker = (deps: RenderTickDeps, intervalMs = 1500): Pre
     poke: () => tick(),
   }
 }
+
+// touch: warm-cache measurement, reverted before merge
