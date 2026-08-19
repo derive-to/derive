@@ -430,9 +430,19 @@ jobs:
   # It deliberately does not share the product Worker's database bindings or
   # deploy transaction: a docs-only change should ship without a schema lane,
   # and a docs failure must not put the hosted application at risk.
+  #
+  # `needs: [check]`, NOT the gate, and that is the point of the paragraph above.
+  # The gate waits for Postgres, D1, workerd and the self-host image; a docs-only
+  # change touches none of them, and making the docs site wait on a schema lane is
+  # the coupling this job was separated to avoid. `check` is what actually covers
+  # it — `pnpm ci` runs `lint:docs-site`, which is the full Astro build.
+  #
+  # (This briefly said `needs: [gate]` when the lanes were split, which contradicted
+  # the comment directly above it and delayed every docs deploy by ~60s for no
+  # additional proof.)
   deploy-docs:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push'
-    needs: [gate]
+    needs: [check]
     runs-on: ubicloud-standard-4
     environment:
       name: docs-production
