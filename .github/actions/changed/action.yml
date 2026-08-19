@@ -21,11 +21,10 @@ outputs:
     value: ${{ steps.filter.outputs.app_image }}
   docs:
     description: >-
-      The documentation site can be affected. Its pages are generated from
-      canonical sources scattered across the repo (see apps/docs/docs-manifest.mjs),
-      not just apps/docs, so this list is checked against that manifest by
-      scripts/check-docs-paths.mjs — add a page sourced from a new file and the
-      guardrail fails until this filter learns about it.
+      The documentation site can be affected. Answered by
+      scripts/docs-affected.mjs, which reads apps/docs/docs-manifest.mjs — the
+      site's pages come from canonical sources scattered across the repo, not
+      just apps/docs, and that manifest is the only place they are listed.
     value: ${{ steps.filter.outputs.docs }}
 
 runs:
@@ -43,7 +42,6 @@ runs:
         web=false
         runner=false
         app_image=false
-        docs=false
         range=
 
         case "$EVENT_NAME" in
@@ -63,7 +61,6 @@ runs:
           web=true
           runner=true
           app_image=true
-          docs=true
         else
           : "${RUNNER_TEMP:?}"
           changed_paths="$RUNNER_TEMP/derive-changed-paths"
@@ -80,13 +77,6 @@ runs:
                 ;;
             esac
             case "$path" in
-              apps/docs/* | SECURITY.md | examples/README.md | \
-                packages/cli/README.md | packages/mcp/README.md | \
-                pnpm-lock.yaml)
-                docs=true
-                ;;
-            esac
-            case "$path" in
               .dockerignore | .github/workflows/ci.yml | \
                 .github/workflows/release-images.yml | QUICKSTART.md | \
                 apps/api/* | apps/web/* | packages/broker/* | packages/core/* | \
@@ -99,6 +89,15 @@ runs:
                 ;;
             esac
           done < "$changed_paths"
+        fi
+
+        # The docs answer comes from scripts/docs-affected.mjs, which reads
+        # apps/docs/docs-manifest.mjs directly. Duplicating that list of sources
+        # here is what made it possible for the two to disagree.
+        if [ -z "$range" ]; then
+          docs=$(node "$GITHUB_ACTION_PATH/../../../scripts/docs-affected.mjs" --all)
+        else
+          docs=$(node "$GITHUB_ACTION_PATH/../../../scripts/docs-affected.mjs" "$changed_paths")
         fi
 
         echo "web=$web" >> "$GITHUB_OUTPUT"
