@@ -18,66 +18,67 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
 # ---------------------------------------------------------------------------
-# TWO LANES. What a PR waits on is the LONGEST job, never the total, so the only
-# structure that matters is: how few lanes can hold the work, and are they the
-# same length?
+# FOUR LANES BEHIND ONE GATE. What a PR waits on is the LONGEST job, never the
+# total, so the only question that matters is whether independent work is
+# allowed to overlap.
 #
-# There used to be five jobs. Exactly one of those splits paid for itself — the
-# SQLite suite and the Postgres suite were ~210s each on the old runners, so they
-# must run beside each other or a PR waits seven minutes. The rest (a path-filter
-# job, a bundle job, a supply-chain job) were split for conditional execution and
-# tidy reporting, and each one bought a VM boot, a checkout and a ~28s install to
-# do 15-40s of work. Folding them onto a lane that was going to be running anyway
-# makes them free.
+# WHY THIS CHANGED, measured rather than argued. The previous design was two
+# lanes, balanced at ~85s and ~94s, and the comment here described that balance
+# for weeks after it stopped being true. Across 400 successful PR runs, split at
+# the commit that appended the self-host image proof to the end of the database
+# lane:
 #
-# So: two lanes, anchored by the two suites that cannot share one, with the small
-# work packed onto whichever lane is otherwise lighter.
+#   PR p50 BEFORE (n=288)   155s
+#   PR p50 AFTER  (n=112)   292s
 #
-# ONE JOB was measured rather than argued about, since packing everything onto a
-# single bigger machine is the obvious alternative. At the same TOTAL cores it is
-# a wash — one 16-vCPU job came in at 129s against 125s for two 8-vCPU lanes. At
-# the same MACHINE SIZE two lanes win by roughly 2x, because the two suites
-# overlap on two boxes and can never overlap on one. Since billing is per
-# core-minute the first comparison is the fair one, so the tie is broken on what
-# else two lanes buy: a failure in one still lets the other report, either can be
-# re-run alone, and there is headroom to scale each independently.
+# One commit added 137 seconds to every PR, and it did so without making
+# anything slower — it put a 112s proof behind a 109s proof that has nothing to
+# do with it. Step p50s over the latest 25 successful PR runs:
 #
-# The lanes now land within ~10s of each other (A ~85s, B ~94s), which is where
-# this wants to stay. They could not be balanced by moving steps — the Postgres
-# step alone runs longer than everything lane A does — so both levers were applied
-# to that step instead: its worker count, and turning off durability on a database
-# that gets deleted at the end of the run. See the step and scripts/test-pg.sh.
+#   self-host image 112s   postgres 109s   coverage 98s   guardrails 18s
+#   web build 17s   typecheck 11s   setup 7s   d1 6s   osv 4s   workerd 3s
 #
-# The cost of packing, stated honestly: a lane stops at its first failure, so a
-# red test now hides that gitleaks would also have failed. That is a fair trade
-# for one machine instead of five, and the failing step names itself.
+# The image build and the Postgres suite share no input and no output. Nothing
+# ever required them to be sequential.
 #
-# RUNNERS — Ubicloud x64, sized 8 vCPU for the two lanes.
+# WHY MORE JOBS IS NOW THE RIGHT ANSWER, when folding them together was right
+# before: the old rationale was that each extra job bought a VM boot, a checkout
+# and a ~28s install to do 15-40s of work. Setup is now ~7s (p50, n=50), so a
+# lane costs ~11s of overhead, not ~35s. That is cheap enough that any step over
+# ~30s deserves to overlap rather than queue.
 #
-# SIZE. Every job used to run on 2 vCPU while the suite is ~200 CPU-seconds of
-# embarrassingly parallel work (measured: 176s user + 40s system, 615% CPU across
-# 6 cores locally). Two cores is a hard ~100s floor before a single test is slow,
-# and `check` was spending 212s in tests alone. Cores were the whole lever;
-# nothing about the test code was the problem.
+#   check     lint + typecheck + web build + supply chain      ~63s
+#   coverage  the whole suite on embedded SQLite + ratchet     ~109s
+#   db        postgres + D1 + workerd                          ~129s
+#   images    self-host image, runner image                    ~123s
 #
-# ARCH — x64, and arm was TRIED AND REJECTED ON A MEASUREMENT, so please do not
-# re-litigate it without a new one. arm64 is the same price per minute here, and
-# this toolchain (biome, esbuild, vite, vitest, tsgo) is arm-native, which made it
-# look like free money. It is not: on ubicloud-standard-8-arm, identical commit,
+# The PR now waits for the slowest of four (~129s), not the sum of two (~258s).
 #
-#   lint 11s -> 24s   typecheck 6s -> 16s   sqlite suite 50s -> 91s
-#   pg suite 59s -> 94s   d1 4s -> 10s   WALL 94s -> 163s
+# THE REQUIRED CHECK IS `gate`, AND THAT IS LOAD-BEARING. GitHub's rule is that
+# "a job that is skipped will report its status as Success. It will not prevent a
+# pull request from merging, even if it is a required check." So any job named
+# directly in branch protection becomes a vacuous gate the moment it acquires a
+# job-level `if:` — a deleted gate wearing a green tick, with nothing failing to
+# say so.
 #
-# 1.7x slower for the same money. "arm-native" was true and beside the point —
-# nothing here is emulated either way; the cores are simply weaker per-core, and
-# this workload is per-core-bound (one test file per worker). Revisit only if
-# Ubicloud's arm pricing or hardware changes.
+# Today none of these four carries one: `images` gates its two builds per STEP,
+# so the job itself always runs and always reports. But "always runs" is a
+# property someone will reasonably optimize away — skipping the VM entirely when
+# no image can be affected is the obvious next saving — and the failure mode of
+# doing that is silent. Routing branch protection through `gate` makes that
+# change safe in advance, and collapses four required contexts into one.
 #
-# The arch is no longer welded into individual steps, so this stays a one-line
-# decision: gitleaks picks its release asset from `uname -m` rather than
-# hardcoding, which is what pinned the whole pipeline to x64 before.
+# `gate` runs unconditionally (if: always()), reads every lane's result, and
+# accepts only success or skipped. It cannot be satisfied by absence.
+#
+# RUNNERS — Ubicloud x64, 8 vCPU for the four working lanes. `gate` is a few
+# seconds of shell, so it takes a GitHub-hosted runner rather than occupying
+# Ubicloud capacity. ARM was TRIED AND REJECTED ON A MEASUREMENT,
+# so please do not re-litigate it without a new one: on ubicloud-standard-8-arm,
+# identical commit, lint 11s -> 24s, typecheck 6s -> 16s, sqlite suite 50s ->
+# 91s, pg suite 59s -> 94s, d1 4s -> 10s, WALL 94s -> 163s. 1.7x slower for the
+# same money, because this workload is per-core-bound and those cores are weaker.
 #
 # THE ESCAPE HATCH, which this repo has needed before: Ubicloud's integration
 # vanished on 2026-07-02 and every job sat queued forever. The runs-on label is
@@ -86,15 +87,19 @@ concurrency:
 # ---------------------------------------------------------------------------
 
 jobs:
-  # LANE A — everything that reads the source without needing a database engine:
-  # static analysis, the whole suite on embedded SQLite with the coverage
-  # ratchet, and the supply-chain gates. Coverage thresholds live in each
-  # vitest.config.ts, and since `deploy` needs this job, a coverage regression
-  # blocks the ship.
+  # STATIC — everything that reads the source and needs no engine, plus the web
+  # build, which lands here rather than on `db` because this lane is the lightest
+  # and the build is path gated anyway.
   check:
     runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `Build web client + bundle budget` is path gated on the exact base
+          # and head, which a shallow checkout cannot compare.
+          fetch-depth: 0
+      - id: filter
+        uses: ./.github/actions/changed
       - uses: ./.github/actions/setup
 
       - name: Lint + format + guardrails (biome + custom checks)
@@ -103,11 +108,15 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Test + coverage gate
-        run: pnpm test:coverage
+      # Bundle budget: build the web client and fail if the gzipped JS blows past
+      # the budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk
+      # weight can't regress silently.
+      - name: Build web client + bundle budget
+        if: steps.filter.outputs.web == 'true'
+        run: |
+          pnpm --filter @derive/web build
+          pnpm lint:bundle
 
-      # Supply chain, folded in from its own job: it reads the lockfile and the
-      # working tree, needs no install of its own, and takes only a few seconds.
       # OSV replaces pnpm audit's retired npm endpoint and checks every locked
       # dependency, not only advisories the package registry happens to expose.
       # The binary and version are fixed by independent SHA-256 values below;
@@ -141,108 +150,34 @@ jobs:
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${arch}.tar.gz" | tar -xz gitleaks
           ./gitleaks detect --no-git --source . --redact --no-banner
 
-  # LANE B — everything that needs a real engine or produces an artifact.
+
+  # COVERAGE — the whole suite on embedded SQLite with the ratchet. Split off
+  # `check` because at 98s it was two thirds of that lane and shares nothing with
+  # the static analysis around it. Thresholds live in each vitest.config.ts, and
+  # `deploy` needs `gate`, so a coverage regression still blocks the ship.
+  coverage:
+    runs-on: ubicloud-standard-8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+
+      - name: Test + coverage gate
+        run: pnpm test:coverage
+
+  # RUNTIMES — everything that needs a real engine the default Node lane cannot
+  # host.
   #
-  # Postgres: the SAME apps/api suite against a real Postgres (ephemeral Docker
-  # container, via scripts/test-pg.sh) so the hosted-tier driver is covered by the
-  # full behavioral suite. D1: the SAME @derive/db store contract against a real
-  # Cloudflare D1 inside workerd via Miniflare — the default (Node) lane can't
-  # host the D1 driver, so this is the only place src/d1.ts runs, and the edge
-  # tier runs on it.
-  #
-  # The two builds ride along, gated on the paths that can affect them. They used
-  # to be separate jobs fed by a separate path-filter job, which meant three VMs
-  # and a serial hop before either could start; as steps they cost only the
-  # seconds they actually run, and skip to nothing otherwise.
+  # Postgres: the store-backed apps/api specs against a real Postgres (ephemeral
+  # Docker container, via scripts/test-pg.sh) so the hosted-tier driver is
+  # covered by real behaviour. D1: the SAME @derive/db store contract against a
+  # real Cloudflare D1 inside workerd via Miniflare — the only place src/d1.ts
+  # runs, and the edge tier runs on it.
   db:
     runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The local path filter compares the event's exact base and head.
-          fetch-depth: 0
-      - name: Find build-affecting changes
-        id: filter
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE_SHA: ${{ github.event.before }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          web=false
-          runner=false
-          app_image=false
-          range=
-
-          case "$EVENT_NAME" in
-            pull_request)
-              if [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
-                range="${BASE_SHA}...${HEAD_SHA}"
-              fi
-              ;;
-            push)
-              if [ -n "$BEFORE_SHA" ] && [ -n "${BEFORE_SHA//0/}" ]; then
-                range="${BEFORE_SHA}..${HEAD_SHA}"
-              fi
-              ;;
-          esac
-
-          if [ -z "$range" ]; then
-            web=true
-            runner=true
-            app_image=true
-          else
-            : "${RUNNER_TEMP:?}"
-            changed_paths="$RUNNER_TEMP/derive-changed-paths"
-            git diff --name-only -z "$range" > "$changed_paths"
-            while IFS= read -r -d '' path; do
-              case "$path" in
-                apps/web/* | packages/* | pnpm-lock.yaml | package.json) web=true ;;
-              esac
-              case "$path" in
-                packages/cli/* | pnpm-lock.yaml | \
-                  deploy/runner.Dockerfile | deploy/runner.Dockerfile.dockerignore | \
-                  deploy/runner-entrypoint.sh)
-                  runner=true
-                  ;;
-              esac
-              case "$path" in
-                .dockerignore | .github/workflows/ci.yml | \
-                  .github/workflows/release-images.yml | QUICKSTART.md | \
-                  apps/api/* | apps/web/* | packages/broker/* | packages/core/* | \
-                  packages/db/* | packages/storage/* | package.json | pnpm-lock.yaml | \
-                  pnpm-workspace.yaml | deploy/Dockerfile* | deploy/compose*.yml | \
-                  deploy/selfhost.env.example | scripts/selfhost-smoke-client.mjs | \
-                  scripts/test-published-selfhost-bundle.sh | \
-                  scripts/test-selfhost-quickstart.sh)
-                  app_image=true
-                  ;;
-              esac
-            done < "$changed_paths"
-          fi
-
-          echo "web=$web" >> "$GITHUB_OUTPUT"
-          echo "runner=$runner" >> "$GITHUB_OUTPUT"
-          echo "app_image=$app_image" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup
 
-      # More workers than cores, deliberately. This lane is the critical path —
-      # the Postgres step alone runs longer than everything lane A does — and it
-      # is I/O-bound: each worker spends most of its time waiting on the single
-      # Postgres container rather than computing, so throughput keeps climbing
-      # past one worker per core.
-      #
-      # Measured, and worth stating exactly because the two effects are easy to
-      # conflate: 84s with 8 workers on 8 vCPU, 70s with 16 workers on 8 vCPU
-      # (this setting, -17%), and 40s with 16 workers on 16 vCPU. So oversubscribing
-      # workers is real but roughly half the story; the rest of that 40s was cores.
-      # Raising this further has little left to give — the container itself becomes
-      # the constraint.
-      #
-      # The bound that matters is connections, not cores: 16 workers hold ~160
-      # (node-postgres max=10 each) against the container's max_connections=400.
       - name: Test against Postgres
         env:
           DERIVE_PG_WORKERS: 16
@@ -256,14 +191,24 @@ jobs:
       - name: Test the sign-in path in workerd
         run: pnpm --filter @derive/api test:worker
 
-      # Bundle budget: build the web client and fail if the gzipped JS blows past
-      # the budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk
-      # weight can't regress silently.
-      - name: Build web client + bundle budget
-        if: steps.filter.outputs.web == 'true'
-        run: |
-          pnpm --filter @derive/web build
-          pnpm lint:bundle
+  # IMAGES — the release artifacts. This is the lane that was appended to `db`
+  # and doubled the gate; it builds nothing the other lanes need and blocks
+  # nothing they produce.
+  #
+  # It stays on every affecting PR rather than moving to a nightly, because the
+  # evidence says it earns that: in one week it caught a container base bump and
+  # a better-sqlite3 native-build break, both on dependency PRs, both of which
+  # every other lane passed.
+  images:
+    runs-on: ubicloud-standard-8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The local path filter compares the event's exact base and head.
+          fetch-depth: 0
+      - id: filter
+        uses: ./.github/actions/changed
+      - uses: ./.github/actions/setup
 
       # The runner image builds from packages/cli — this catches a CLI change that
       # breaks the container (deps, bin layout) before someone finds out on a box.
@@ -312,6 +257,39 @@ jobs:
             scripts/test-published-selfhost-bundle.sh \
               v0.0.0-ci derive:ci 18080 "$staged"
 
+  # THE GATE — the one required status check.
+  #
+  # It runs unconditionally and asserts each lane's result, so a skipped lane is
+  # reported as skipped rather than silently counted as success (see the header).
+  # `deploy` hangs off this too, which keeps "what must be green to ship" and
+  # "what must be green to merge" the same single answer.
+  #
+  # needs: every lane. if: always() so it still runs when one of them fails —
+  # without it the gate would be skipped by the failure and, per the same GitHub
+  # rule, report success.
+  gate:
+    if: always()
+    needs: [check, coverage, db, images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every lane
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          # `skipped` is allowed ONLY because a path-gated lane legitimately has
+          # nothing to do; `success` and `skipped` are the two acceptable states
+          # and everything else — failure, cancelled — fails the gate.
+          bad=$(printf '%s' "$RESULTS" | grep -oE '"result": *"[a-z]+"' \
+            | grep -vE '"(success|skipped)"' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::a required lane did not pass: $bad"
+            exit 1
+          fi
+          echo "all lanes passed"
+
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # both lanes pass. Schemas (D1 + Postgres) land BEFORE the worker flips, so a
   # new version never serves against stale DDL. Coverage GATES: it rides `check`
@@ -328,7 +306,7 @@ jobs:
   # else; the step scoping is what keeps them away from package code.
   deploy:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push' # never PRs, never forks
-    needs: [check, db]
+    needs: [gate]
     runs-on: ubicloud-standard-4
     # A running deploy is never cancelled — a schema applied for a worker that
     # then didn't ship is the state to avoid. Queued runs are NOT ordered:
@@ -454,7 +432,7 @@ jobs:
   # and a docs failure must not put the hosted application at risk.
   deploy-docs:
     if: github.repository == 'derive-to/derive' && github.event_name == 'push'
-    needs: [check]
+    needs: [gate]
     runs-on: ubicloud-standard-4
     environment:
       name: docs-production

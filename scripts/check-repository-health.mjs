@@ -106,7 +106,16 @@ const actualContexts = (statuses?.required_status_checks ?? [])
 // Accessibility remains a PR signal, but it is intentionally advisory while
 // the public-surface suite settles. Keep the faster, deterministic CI lanes as
 // strict merge requirements and surface accessibility findings for follow-up.
-const requiredContexts = ["analyze", "check", "db"]
+//
+// `gate` rather than the individual CI lanes, and that distinction is the whole
+// point of it. CI now runs four lanes, and one of them (`images`) is path gated.
+// GitHub reports a SKIPPED job as success and merges past it "even if it is a
+// required check" — so naming a conditional lane here would assert a gate that
+// passes vacuously on every PR that skips it. `gate` runs unconditionally and
+// checks each lane's result itself, so requiring exactly one context is both
+// sufficient and impossible to satisfy by absence. `analyze` is CodeQL, which
+// has no such condition.
+const requiredContexts = ["analyze", "gate"]
 requireState(
   statuses?.strict_required_status_checks_policy === true,
   "required checks are not strict",
