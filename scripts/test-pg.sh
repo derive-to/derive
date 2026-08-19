@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Run the apps/api test suite against a real Postgres in an ephemeral container.
-# The same specs that `pnpm test` runs on embedded SQLite exercise the hosted-
-# tier Postgres driver here, so a wrong WHERE / missing org scope / broken
+# Run the STORE-BACKED apps/api specs against a real Postgres in an ephemeral
+# container. The same specs that `pnpm test` runs on embedded SQLite exercise the
+# hosted-tier Postgres driver here, so a wrong WHERE / missing org scope / broken
 # transaction in pg.ts fails a test instead of shipping. Requires Docker.
 #
-#   pnpm test:pg                       # whole suite
-#   pnpm test:pg artifacts.test.ts     # one file (extra args pass through)
+# "Store-backed" is derived, not listed — see the note above the run below.
+#
+#   pnpm test:pg                       # every spec that can reach a store
+#   pnpm test:pg artifacts.test.ts     # one file, whichever lane it belongs to
 set -euo pipefail
 
 PASSWORD=postgres
@@ -90,7 +92,30 @@ cd "$ROOT/apps/api"
 WORKERS="${DERIVE_PG_WORKERS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 [ "$WORKERS" -gt 16 ] && WORKERS=16
 echo "→ ${WORKERS} vitest workers"
-pnpm exec vitest run --maxWorkers="$WORKERS" --testTimeout=15000 "$@"
+# ONLY the store-backed specs. This lane exists to run the SAME behaviour against
+# the hosted-tier driver, and a spec that never constructs a store cannot do that
+# — it executes byte-identical logic in both lanes and the SQLite lane already
+# gates it. 112 of the 253 api specs are in that category, ~16% of this lane's
+# work, and they were being replayed here for no additional signal.
+#
+# The membership is the `store` project in apps/api/vitest.config.ts, which
+# DERIVES it by walking relative imports to test/helpers.ts (where the backend
+# switch lives). Sharing that derivation is deliberate: an eligibility list kept
+# separately from the thing it describes is a list that drifts, and the failure
+# mode — a spec silently dropped from the Postgres lane — is invisible.
+#
+# Worth being honest about what this does and does not buy. It is a COST saving,
+# not a latency one: vitest distributes whole files, so this lane cannot finish
+# faster than its longest single spec, and that is slack-routes at 76s. Splitting
+# the oversized specs is what moves the wall clock; this moves the bill.
+#
+# An explicit file argument bypasses the project filter, so debugging one spec
+# still works whichever lane it belongs to.
+if [ "$#" -eq 0 ]; then
+  pnpm exec vitest run --maxWorkers="$WORKERS" --testTimeout=15000 --project=store
+else
+  pnpm exec vitest run --maxWorkers="$WORKERS" --testTimeout=15000 "$@"
+fi
 
 # Also run @derive/db's store contract against the same Postgres — the only place
 # pg.ts (the hosted-tier driver) is covered + gated by the db package's own suite.
