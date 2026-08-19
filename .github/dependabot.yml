@@ -1,4 +1,38 @@
 version: 2
+
+# HOW THIS IS TUNED, and why it is not just "grouping".
+#
+# The grouping below has worked for a while and is not the problem. The problem
+# was volume and churn, measured on 2026-08-19:
+#
+#   46% of ALL CI runs came from dependabot branches
+#   every open PR had re-run CI ~5 times
+#   one branch had failed 9 times in a row with the SAME failure since Aug 14
+#
+# Two independent causes, and two independent fixes.
+#
+# CHURN — `rebase-strategy: disabled`. Dependabot rebases every open PR whenever
+# main moves, and this repo requires branches to be up to date to merge, so every
+# merge to main invalidated all of them at once. Three merges in one afternoon
+# triggered ~33 CI runs, all of which re-confirmed failures already known. Nothing
+# is lost by turning it off: an out-of-date branch has to be rebased before it can
+# merge anyway, so the rebase now happens when someone actually intends to act
+# (`@dependabot rebase`), rather than speculatively on everyone else's schedule.
+#
+# VOLUME — `cooldown`. A dependency is not worth a pull request the hour it ships.
+# Waiting lets the ecosystem find the breakage first, and it is also the control
+# that matters most against a compromised release: a malicious version is usually
+# caught and yanked within days, so age is protection. This repo already applies
+# that reasoning at resolution time via pnpm's `minimumReleaseAge` (24h, see
+# pnpm-workspace.yaml); cooldown applies it at PR-creation time, so the two layer
+# rather than duplicate.
+#
+# Majors get 30 days deliberately. Eight major PRs sat open for five days here,
+# every one of them blocked on a real incompatibility — typescript 7 failing lint
+# and coverage, @types/node 26 failing the install outright, better-sqlite3 13
+# breaking the native image build. None of those were actionable on arrival, and
+# opening a PR the day a major lands mostly buys a notification that the ecosystem
+# is not ready yet.
 updates:
   # App + package dependencies (pnpm workspace, resolved from the root lockfile).
   # Routine updates are grouped; majors stay isolated so their migrations and
@@ -9,6 +43,11 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 10
+    rebase-strategy: disabled
+    cooldown:
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     groups:
       npm-routine:
         patterns: ["*"]
@@ -23,6 +62,9 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    rebase-strategy: disabled
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -36,6 +78,9 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    rebase-strategy: disabled
+    cooldown:
+      default-days: 7
     groups:
       container-bases:
         patterns: ["*"]
