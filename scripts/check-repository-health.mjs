@@ -6,6 +6,7 @@
 // GitHub itself, and maintainers can run `pnpm audit:repository` on demand.
 
 import { readFileSync } from "node:fs"
+import { REQUIRED_CONTEXTS } from "./required-checks.mjs"
 
 const repository = process.env.GITHUB_REPOSITORY || "derive-to/derive"
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))
@@ -107,15 +108,10 @@ const actualContexts = (statuses?.required_status_checks ?? [])
 // the public-surface suite settles. Keep the faster, deterministic CI lanes as
 // strict merge requirements and surface accessibility findings for follow-up.
 //
-// `gate` rather than the individual CI lanes, and that distinction is the whole
-// point of it. CI now runs four lanes, and one of them (`images`) is path gated.
-// GitHub reports a SKIPPED job as success and merges past it "even if it is a
-// required check" — so naming a conditional lane here would assert a gate that
-// passes vacuously on every PR that skips it. `gate` runs unconditionally and
-// checks each lane's result itself, so requiring exactly one context is both
-// sufficient and impossible to satisfy by absence. `analyze` is CodeQL, which
-// has no such condition.
-const requiredContexts = ["analyze", "gate"]
+// The list itself lives in required-checks.mjs, shared with the script that
+// APPLIES it. An audit that keeps its own copy of what it audits is an audit that
+// can agree with itself while both halves are wrong.
+const requiredContexts = [...REQUIRED_CONTEXTS].sort()
 requireState(
   statuses?.strict_required_status_checks_policy === true,
   "required checks are not strict",

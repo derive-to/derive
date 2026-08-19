@@ -101,7 +101,8 @@
     "lint:public-claims": "node scripts/check-public-claims.mjs",
     "lint:workflow-pins": "node scripts/check-workflow-pins.mjs",
     "lint:docs-site": "pnpm --filter @derive/docs build",
-    "audit:repository": "node scripts/check-repository-health.mjs"
+    "audit:repository": "node scripts/check-repository-health.mjs",
+    "ci:required-checks": "node scripts/set-required-checks.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
