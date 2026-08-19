@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "@derive/core": "workspace:*",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.13.1"
   },
