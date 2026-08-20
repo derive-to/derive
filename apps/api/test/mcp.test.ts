@@ -2929,6 +2929,9 @@ describe("remote MCP endpoint (/mcp)", () => {
     })
     const failedOff = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
     expect(failedOff).toContain("will never arrive")
+    // The deployment fact must not swallow the page fact: a render that failed says WHY it
+    // failed, because that is about the page and stays true after previews are turned off.
+    expect(failedOff).toContain("failed (timeout)")
     const after = await meta.getVersion(art.id, art.current_version)
     expect(after?.preview_status).toBe("failed")
   })

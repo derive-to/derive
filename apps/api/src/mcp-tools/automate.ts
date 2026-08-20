@@ -72,7 +72,7 @@ export function registerAutomateTool(tc: ToolContext): void {
         // action that reads it, then says the thing that silently goes wrong.
         trigger: TRIGGER.optional()
           .describe(
-            'create: {kind:"manual"|"schedule"|"event"}. schedule needs cron+tz; event needs on:"webhook" — which mints a fire secret returned ONCE.',
+            'create: {kind:"manual"|"schedule"|"event"}. schedule needs cron+tz. event: only on:"webhook" is dispatched today, and mints a fire secret returned ONCE.',
           )
           // Which sibling fields a `kind` requires is conditional, and a flat object schema
           // cannot express that. One example per kind says it without prose.

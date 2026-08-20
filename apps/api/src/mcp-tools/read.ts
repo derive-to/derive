@@ -598,8 +598,19 @@ export function registerReadTool(tc: ToolContext): void {
         // would burn the caller's whole `wait` budget), and the "try again shortly" ending.
         // An ALREADY-STORED shot still serves: previews may have been on when it rendered
         // and switched off since, and that picture is still the truth about the page.
+        // A variant that already FAILED keeps its reason. Previews may have been on when it
+        // ran and switched off since, and "this instance renders nothing" would then discard
+        // a true fact about the page (a font that never loaded, a layout that timed out) in
+        // favour of a fact about the deployment. Both are said, in that order.
         if (!ctx.deps.renderPreviews && !(variant.status === "ready" && variant.key))
-          return err(rendersOff(`The render:${render} of "${short_id}" v${n}`, url))
+          return err(
+            rendersOff(
+              variant.status === "failed"
+                ? `The render:${render} of "${short_id}" v${n} failed (${variant.error ?? "transient error"}), and a fresh one`
+                : `The render:${render} of "${short_id}" v${n}`,
+              url,
+            ),
+          )
         // SELF-HEAL on read: a dead-lettered render (a transient storage/browser
         // error that exhausted its retries) used to demand a no-op republish just to
         // re-render. Re-queue it right here instead — reset the variant to pending so

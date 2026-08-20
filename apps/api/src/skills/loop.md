@@ -84,8 +84,10 @@ before building a `create` that will be refused.
 
 - **`create`** needs `trigger` + `instruction`.
   - `trigger` is `{kind:"manual"|"schedule"|"event"}`. A schedule carries `cron` and `tz`. An
-    event carries `on`; `on:"webhook"` mints a fire secret that is returned **once**, on that
-    response. There is no way to read it again.
+    event carries `on`, an event name. The row accepts any name, but `on:"webhook"` is the
+    only one anything dispatches today, so another value creates an automation that never
+    fires. A webhook mints a fire secret returned **once**, on that response. There is no way
+    to read it again.
   - `instruction` is re-run verbatim, with no chat history behind it. Name the artifact it acts
     on inside the instruction; a run cannot infer "the report we discussed".
   - `refs` says what it acts on: artifact short ids, `{kind:"artifact",id,mode:"publish"|"propose"}`
