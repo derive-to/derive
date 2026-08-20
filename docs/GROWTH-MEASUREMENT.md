@@ -22,27 +22,33 @@ into a universal score or call an action meaningful from event data alone.
 
 ## Cookieless first-party attribution
 
-Only a link or form that explicitly hands a person into account creation carries a bounded
-source token, optional artifact short id, and coarse landing path. Beta access emails carry
-the form's same explicit handoff. After authentication, the app submits it once during a short
-account-creation window and `signup_attribution` keeps the first write. There is no attribution
-cookie, browser storage, fingerprint, raw referrer, or third-party request; abandoning or
-reloading the flow may lose attribution, which is the intended privacy tradeoff.
+Only a link that explicitly hands a person into account creation carries a bounded
+source token, optional artifact short id, and coarse landing path. After authentication, the
+app submits it once during a short account-creation window and `signup_attribution` keeps the
+first write. There is no attribution cookie, browser storage, fingerprint, raw referrer, or
+third-party request; abandoning or reloading the flow may lose attribution, which is the
+intended privacy tradeoff.
 
 Page views and interest actions are deliberately not signup attribution. Opening an example,
-copying a command, or jumping to the pricing form may show intent, but none of those actions is
-stored unless the person later chooses a source-bearing account or beta-access handoff.
+copying a command, or reading the pricing page may show intent, but none of those actions is
+stored unless the person later chooses a source-bearing account handoff.
 
 Each source token is stable, lowercase, and names a surface rather than copy that may
 change. Current public account-handoff tokens include:
 
 | Token | Intent |
 | --- | --- |
-| `homepage_waitlist`, `pricing_waitlist` | Submitted a beta access form |
+| `homepage_finale` | Chose the homepage's closing signup CTA |
+| `pricing_free`, `pricing_team`, `pricing_business` | Chose a tier's signup CTA on the pricing page |
+| `pricing_cta` | Chose the pricing page's closing signup CTA |
 | `nav_signin`, `examples_signin` | Entered the account flow |
 | `public_frame`, `make_your_own` | Chose the signup CTA on a public surface or artifact |
 | `comment_wall` | Entered the account flow to leave attributable feedback |
 | `badge` | Chose the Made with Derive signup CTA on a public artifact |
+
+`homepage_waitlist` and `pricing_waitlist` are historical: they belonged to the beta
+request-access forms, which were retired when the beta ended. Rows recorded under them
+remain valid attribution.
 
 Campaigns link directly into the same account handoff, for example
 `https://derive.to/login?signup=1&src=hn-launch&landing=/`. A campaign parameter on an

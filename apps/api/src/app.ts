@@ -21,7 +21,6 @@ import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
 import { attributionRoutes } from "./routes/attribution"
 import { automationRoutes } from "./routes/automations"
-import { betaRoutes } from "./routes/beta"
 import { billingRoutes } from "./routes/billing"
 import { blobRoutes } from "./routes/blob"
 import { bootstrapRoutes } from "./routes/bootstrap"
@@ -305,9 +304,6 @@ export function createApp(deps: AppDeps): Hono {
       "/api/auth/request-password-reset",
       "/api/auth/send-verification-email",
       "/api/auth/change-email",
-      // The beta-signup form emails an arbitrary address too (routes/beta.ts), so it
-      // rides the same tight mail-triggering cap.
-      "/v1/beta/signup",
     ])
       app.use(p, authEmailLimiter)
     // Anonymous OAuth client registration (open DCR) gets a tighter per-IP cap on
@@ -402,7 +398,6 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
     /^\/v1\/collections\/[^/]+\/unlock$/, // collection password unlock — password is the gate
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
-    /^\/v1\/beta\/signup$/, // marketing-site beta signup — anonymous is the point; IP-capped
     /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
     /^\/v1\/automations\/[^/]+\/fire$/, // automation fire URL — the per-automation secret is the gate
     /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
@@ -466,7 +461,6 @@ export function createApp(deps: AppDeps): Hono {
     oauthRoutes,
     githubAppRoutes,
     systemRoutes,
-    betaRoutes,
     marketingRoutes,
     agentDiscoveryRoutes,
   ])

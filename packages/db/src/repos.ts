@@ -163,7 +163,6 @@ import {
   asset,
   auditLog,
   automation,
-  betaSignup,
   collection,
   collectionFavorite,
   collectionInvite,
@@ -375,7 +374,6 @@ export const schema = {
   connection,
   artifactInvite,
   invitation,
-  betaSignup,
   signupAttribution,
   instanceOperator,
   subscription,
@@ -427,7 +425,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   connection: true,
   invitation: true,
   artifactInvite: true,
-  betaSignup: true,
   signupAttribution: true,
   subscription: true,
   context: true,
@@ -4641,19 +4638,6 @@ export function makeRepos(db: SqliteDb) {
     return row !== undefined
   }
 
-  // ---- Beta signups --------------------------------------------------------
-  const recordBetaSignup = async (id: string, email: string): Promise<boolean> => {
-    // The unique email index makes a concurrent duplicate a no-op; an empty
-    // RETURNING means the email was already on the list.
-    const row = await db
-      .insert(betaSignup)
-      .values({ id, email })
-      .onConflictDoNothing()
-      .returning()
-      .get()
-    return row !== undefined
-  }
-
   // ---- Signup attribution ---------------------------------------------------
   const recordSignupAttribution = async (a: NewSignupAttribution): Promise<void> => {
     // The unique user_id index makes a duplicate hook fire a no-op — first write
@@ -5380,7 +5364,6 @@ export function makeRepos(db: SqliteDb) {
     deletePendingInvitationsFor,
     deleteInvitation,
     consumeInvitation,
-    recordBetaSignup,
     recordSignupAttribution,
     getSignupAttribution,
     createArtifactInvite,

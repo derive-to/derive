@@ -245,7 +245,6 @@ for (const token of [
   "copy_skill",
   "copy_mcp",
   "copy_draft",
-  "pricing_cta",
   "docs_nav",
   "docs_home",
   "docs_hosted",
@@ -254,11 +253,6 @@ for (const token of [
   for (const path of attributionSurfaces)
     if (read(path).includes(token))
       fail(`${path} contains inert attribution token ${token}; only account handoffs are measured`)
-
-for (const path of attributionSurfaces.filter((path) => path.endsWith(".html")))
-  for (const [index, line] of read(path).split("\n").entries())
-    if (line.includes("data-derive-source") && !line.includes("<form data-waitlist"))
-      fail(`${path}:${index + 1}: data-derive-source belongs only on the beta-access form`)
 
 const pullRequestTemplate = read(".github/PULL_REQUEST_TEMPLATE.md")
 for (const stale of [/\[ \].*pnpm typecheck/, /\[ \].*biome ci/, /\[ \].*pnpm test(?:\s|`)/])

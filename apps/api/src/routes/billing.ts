@@ -11,9 +11,9 @@ import { log } from "../log"
  * checkout for a new plan, hand off to the Stripe portal for an existing one,
  * and the webhook that keeps the local subscription row in sync. Plain-Hono
  * (no OpenAPI contract — this is a fast-moving internal surface, not the
- * documented public API), matching routes/beta.ts's style. The webhook is the
- * one anonymous route here (ANON_WRITE_ALLOW entry in app.ts); the Stripe
- * signature is its gate, same pattern as the Slack webhooks in routes/slack.ts.
+ * documented public API). The webhook is the one anonymous route here
+ * (ANON_WRITE_ALLOW entry in app.ts); the Stripe signature is its gate, same
+ * pattern as the Slack webhooks in routes/slack.ts.
  */
 export const billingRoutes = (ctx: AppContext) => {
   const app = new Hono()
@@ -76,8 +76,7 @@ export const billingRoutes = (ctx: AppContext) => {
     )
     if (b instanceof Response) return b
     const state = await billingState(org)
-    if (state.betaGrace)
-      return fail(c, 409, "Billing has not started. Paid plans are available after beta.")
+    if (state.betaGrace) return fail(c, 409, "Billing is not enabled on this instance.")
     if (state.subscriptionActive)
       return fail(
         c,

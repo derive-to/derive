@@ -27,8 +27,8 @@ const statusLine = (b: BillingInfo): string | null => {
     // lapses, so it can't distinguish "never subscribed" from "canceled" — only
     // the raw status can, so the message is derived from status alone.
     if (b.status && LAPSED_STATUSES.has(b.status))
-      // Beta: nothing is actually paused yet, so don't claim it is. The beta note in
-      // the plan card covers messaging.
+      // With billing off nothing is actually paused, so don't claim it is. The
+      // plan-card note covers the messaging.
       return b.beta ? "Canceled." : "Canceled. Publishing is paused until an owner renews."
     return null
   }
@@ -171,8 +171,8 @@ function CurrentPlanCard({ billing }: { billing: BillingInfo }) {
       </div>
       {billing.beta && (
         <p className="text-sm text-muted-foreground">
-          Free during beta. We’ll give you notice before billing starts. The plans and prices below
-          are a preview, and existing workspaces will have a grace period.
+          Billing is not enabled on this instance: every feature is available and no limits are
+          enforced. The plans below show what hosted Derive charges.
         </p>
       )}
     </div>
@@ -210,9 +210,9 @@ function StorageMeter({
 }
 
 // The comparison surface: the pricing page's tier cards, in-app, with live
-// current-plan context. Checkout buttons render only after beta for admins of
-// unsubscribed workspaces; a subscribed workspace changes plans in the Stripe
-// portal below.
+// current-plan context. Checkout buttons render only where billing is enabled,
+// for admins of unsubscribed workspaces; a subscribed workspace changes plans
+// in the Stripe portal below.
 function PlanGrid({
   billing,
   cycle,

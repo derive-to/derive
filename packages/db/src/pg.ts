@@ -177,7 +177,6 @@ import {
   asset,
   auditLog,
   automation,
-  betaSignup,
   collection,
   collectionFavorite,
   collectionInvite,
@@ -266,7 +265,6 @@ export const schema = {
   connection,
   artifactInvite,
   invitation,
-  betaSignup,
   signupAttribution,
   instanceOperator,
   subscription,
@@ -318,7 +316,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   connection: true,
   invitation: true,
   artifactInvite: true,
-  betaSignup: true,
   signupAttribution: true,
   subscription: true,
   context: true,
@@ -5659,18 +5656,6 @@ export class PgMetaStore implements MetaStore {
         and(eq(invitation.id, id), isNull(invitation.accepted_at), gt(invitation.expires_at, now)),
       )
       .returning({ id: invitation.id })
-    return rows.length > 0
-  }
-
-  // ---- Beta signups --------------------------------------------------------
-  async recordBetaSignup(id: string, email: string): Promise<boolean> {
-    // The unique email index makes a concurrent duplicate a no-op; an empty
-    // RETURNING means the email was already on the list.
-    const rows = await this.db
-      .insert(betaSignup)
-      .values({ id, email })
-      .onConflictDoNothing()
-      .returning()
     return rows.length > 0
   }
 

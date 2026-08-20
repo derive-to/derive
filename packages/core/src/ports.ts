@@ -2186,11 +2186,6 @@ export interface AgentStore {
   deletePendingCollectionInvitesFor(collectionId: string, email: string): Promise<void>
   deleteCollectionInvite(id: string, collectionId: string): Promise<void>
   consumeCollectionInvite(id: string, now: string): Promise<boolean>
-  // ---- Beta signups (the marketing site's request-access form) ------------
-  /** Record a beta signup (idempotent per email). Returns true when the email is
-   *  new, false when it was already on the list — the caller resends the access
-   *  email either way, so "sign up again" doubles as "resend my link". */
-  recordBetaSignup(id: string, email: string): Promise<boolean>
 
   // ---- Signup attribution (which surface sourced a signup) -----------------
   /** Record where a signup came from, once per user — a duplicate hook fire is a
@@ -2800,18 +2795,6 @@ export interface NewInvitation {
 }
 
 /**
- * A beta signup from the marketing site's request-access form. One row per email
- * (idempotent — signing up again resends the access email, never duplicates). The
- * list is the launch audience: who asked for access, and in what order.
- */
-export interface BetaSignupRecord {
-  id: string
-  /** Normalized (lowercased) signup email. */
-  email: string
-  created_at: string
-}
-
-/**
  * Where a signup came from. One row per user, recorded by the
  * short, explicit signup URL handoff; first write wins. Organic signups have no row.
  */
@@ -2820,7 +2803,7 @@ export interface SignupAttributionRecord {
   /** The Better Auth user this attribution belongs to (no FK; auth owns its tables). */
   user_id: string
   /** The explicit account handoff: a public CTA (badge, comment_wall,
-   *  make_your_own), beta form, sign-in link, or campaign token (hn-launch, …). */
+   *  make_your_own), sign-in link, or campaign token (hn-launch, …). */
   source_kind: string
   /** The artifact (short id) the sourcing surface lived on, when known. */
   source_artifact: string | null

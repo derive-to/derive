@@ -336,7 +336,7 @@ function SharingDefaults() {
       <SettingRow
         htmlFor="toggle-white-label"
         label="White-label shared pages"
-        description="Hide the Made-with-Derive mark on public artifacts and embeds, and allow the bare embed (?chrome=none). A Team-plan feature once billing arrives; free during the beta."
+        description="Hide the Made-with-Derive mark on public artifacts and embeds, and allow the bare embed (?chrome=none). A Team-plan feature."
       >
         <Switch
           id="toggle-white-label"
