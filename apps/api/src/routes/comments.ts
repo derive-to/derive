@@ -2,6 +2,7 @@ import {
   type ArtifactRecord,
   anchorContentFor,
   type CommentRecord,
+  elementSelectorForId,
   isAnchored,
   newId,
 } from "@derive/core"
@@ -154,12 +155,23 @@ export const commentRoutes = (ctx: AppContext) => {
       const baseVersion = Number.isInteger(body.base_version)
         ? (body.base_version as number)
         : artifact.current_version
-      const anchor =
+      let anchor =
         body.anchor && typeof body.anchor === "object"
           ? JSON.stringify(body.anchor)
           : typeof body.anchor === "string"
             ? body.anchor
             : null
+      const visualTarget =
+        typeof body.visual_target === "string" && body.visual_target ? body.visual_target : null
+      if (visualTarget) {
+        if (anchor) return bail(fail(c, 400, "use either anchor or visual_target, not both"))
+        const current = await meta.getVersion(artifact.id, artifact.current_version)
+        const source = current ? await sourceText(current) : null
+        const selector = source ? elementSelectorForId(source, visualTarget) : null
+        if (!selector)
+          return bail(fail(c, 400, `visual review target "${visualTarget}" was not found`))
+        anchor = JSON.stringify(selector)
+      }
       // Cap the anchor size. body_md is bounded but the anchor was not — a real element
       // anchor (snapshot.html capped at ~2KB + a few short fields) stays well under this;
       // the limit stops a comment from storing a multi-MB blob that ships on every fetch.

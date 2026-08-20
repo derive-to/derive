@@ -45,7 +45,9 @@ export function MobileComments({
   rail,
   onRail,
   chatPanel,
+  mapPanel,
   inspectPanel,
+  mapEnabled,
   chatEnabled,
   inspectEnabled,
   openCount,
@@ -71,7 +73,9 @@ export function MobileComments({
   rail?: RailTab
   onRail?: (r: RailTab) => void
   chatPanel?: ReactNode
+  mapPanel?: ReactNode
   inspectPanel?: ReactNode
+  mapEnabled?: boolean
   chatEnabled?: boolean
   inspectEnabled?: boolean
   openCount?: number
@@ -265,6 +269,7 @@ export function MobileComments({
               <RailTabs
                 tab={rail}
                 commentCount={openCount ?? openThreads.length}
+                mapEnabled={mapEnabled}
                 chatEnabled={chatEnabled}
                 inspectEnabled={inspectEnabled}
                 onTab={onRail}
@@ -323,7 +328,9 @@ export function MobileComments({
           </Button>
         </div>
       </div>
-      {rail === "chat" && chatEnabled ? (
+      {rail === "map" && mapEnabled ? (
+        mapPanel
+      ) : rail === "chat" && chatEnabled ? (
         // CHAT owns the body, and brings its own composer — so the comments composer and
         // its keyboard handling stay untouched rather than being taught a second mode.
         chatPanel
@@ -427,6 +434,9 @@ export function OpenPanel(props: {
   onNewGeneral: () => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
+  visualPinAvailable?: boolean
+  visualPinActive?: boolean
+  onToggleVisualPin?: () => void
   reviewCard?: ReactNode
   /** See MobileComments.editing. */
   editing?: boolean
@@ -444,12 +454,19 @@ export function OpenPanel(props: {
     onNewGeneral,
     onSubmitNew,
     onCancelNew,
+    visualPinAvailable = false,
+    visualPinActive = false,
+    onToggleVisualPin,
     reviewCard,
     editing = false,
   } = props
   const { canComment } = useCommentScope()
   const { activeThread, onJump } = useCommentTree()
   const generalComposer = composer && !composer.anchor
+  // Native review surfaces (for example a linked-bundle graph) have a durable
+  // semantic anchor but no iframe document coordinate. Keep that anchor and show
+  // its composer in the fixed rail instead of silently dropping it from PinnedZone.
+  const staticAnchoredComposer = composer?.anchor && composer.docTop == null ? composer : null
   const empty = openCount === 0 && resolved.length === 0 && !composer
 
   // Prev/Next walks the SAME top-to-bottom order the sidebar itself renders:
@@ -511,6 +528,26 @@ export function OpenPanel(props: {
             </Tooltip>
           </>
         )}
+        {canComment &&
+          (visualPinAvailable && onToggleVisualPin ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={visualPinActive ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  aria-label={visualPinActive ? "Cancel visual pin" : "Pin comment to a visual"}
+                  aria-pressed={visualPinActive}
+                  data-testid="comment-visual-pin"
+                  onClick={onToggleVisualPin}
+                >
+                  <Icon name="pin" weight={visualPinActive ? "fill" : "regular"} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {visualPinActive ? "Cancel visual pin" : "Pin comment to a visual"}
+              </TooltipContent>
+            </Tooltip>
+          ) : null)}
         {canComment && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -596,8 +633,17 @@ export function OpenPanel(props: {
       </div>
 
       {/* General + resolved threads live in a scrollable footer drawer. */}
-      {(generalComposer || general.length > 0 || resolved.length > 0) && (
+      {(staticAnchoredComposer || generalComposer || general.length > 0 || resolved.length > 0) && (
         <div className="max-h-[44%] shrink-0 overflow-auto border-t border-border-soft p-2.5">
+          {staticAnchoredComposer && (
+            <div className="mb-2.5">
+              <Composer
+                quote={selLabel(staticAnchoredComposer.anchor)}
+                onSubmit={onSubmitNew}
+                onCancel={onCancelNew}
+              />
+            </div>
+          )}
           {generalComposer && (
             <div className="mb-2.5">
               <Composer quote={null} onSubmit={onSubmitNew} onCancel={onCancelNew} />

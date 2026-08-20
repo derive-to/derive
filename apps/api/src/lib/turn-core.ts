@@ -12,6 +12,7 @@ import {
   EditError,
   editsNudge,
   type GateDecision,
+  isHtmlLike,
   mapJson,
   NO_EDITS_BLOCK,
   parseAsk,
@@ -265,7 +266,7 @@ export const documentContext = (
 export const documentName = (shortId: string, contentType: string | null | undefined): string =>
   contentType === "text/markdown"
     ? `${shortId}.md`
-    : contentType === "text/html"
+    : isHtmlLike(contentType ?? "")
       ? `${shortId}.html`
       : shortId
 

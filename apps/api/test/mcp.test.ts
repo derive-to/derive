@@ -3158,6 +3158,76 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(matchRows(found).map((h) => h.short_id)).toEqual([published.short_id])
   })
 
+  it("MCP recognizes linked bundles on publish, read, and library browse", async () => {
+    const { app, token } = appWithGrant(dir, "linkedbundle", "openid derive:read derive:publish")
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Keep the loop and its evidence together.",
+      members: [
+        { id: "brief", ref: "abc12345", label: "Product brief", role: "output" },
+        { id: "evidence", ref: "def67890", label: "Evidence", role: "input" },
+      ],
+      diagrams: [
+        {
+          id: "improve",
+          title: "Improve until confident",
+          type: "loop",
+          goal: "Make the brief decision-ready",
+          evaluate: "Check claims against evidence",
+          stop: "No material objections remain",
+          nodes: [
+            {
+              id: "revise",
+              label: "Revise",
+              member: "brief",
+              state: "active",
+              basis_version: 4,
+            },
+            { id: "check", label: "Check", member: "evidence" },
+          ],
+          edges: [
+            { from: "revise", to: "check" },
+            { from: "check", to: "revise", label: "improve" },
+          ],
+        },
+      ],
+    }
+    const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body><h1>Launch loop</h1><a href="/artifacts/abc12345">Product brief</a><a href="/artifacts/def67890">Evidence</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script></body></html>`
+    const receipt = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Launch loop", content: html })),
+    )
+    expect(receipt).toMatchObject({ published: true, linked_bundle: true })
+    expect(receipt.bundle_next).toContain('data:"bundle-manifest"')
+
+    const read = toolText(await call(app, token, "read", { short_id: receipt.short_id }))
+    expect(read).toContain("bundle_purpose: Keep the loop and its evidence together.")
+    expect(read).toContain("brief=Product brief (abc12345) [output]")
+    expect(read).toContain("bundle_diagrams: loop:Improve until confident")
+    expect(read).toContain("bundle_state: improve.revise=active@v4")
+    const data = JSON.parse(
+      toolText(
+        await call(app, token, "read", {
+          short_id: receipt.short_id,
+          data: "bundle-manifest",
+        }),
+      ),
+    )
+    expect(data.data).toMatchObject({
+      schema: "derive.linked-bundle/v1",
+      members: manifest.members,
+    })
+
+    const found = JSON.parse(toolText(await call(app, token, "find")))
+    expect(
+      found.results.find((row: { short_id?: string }) => row.short_id === receipt.short_id),
+    ).toMatchObject({ is_linked_bundle: true })
+
+    const backlinks = JSON.parse(toolText(await call(app, token, "find", { links_to: "abc12345" })))
+    expect(backlinks.results).toContainEqual(
+      expect.objectContaining({ short_id: receipt.short_id, is_linked_bundle: true }),
+    )
+  })
+
   it("read: format:text on a deck artifact returns flat visible text, not raw markup (regression)", async () => {
     const { app, token } = appWithGrant(dir, "readdeck", "openid derive:read derive:publish")
     // A deck fragment: the protocol name AND real slide elements. Both are required to

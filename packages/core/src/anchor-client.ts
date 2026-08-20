@@ -191,6 +191,10 @@ interface ElReg {
      just report. tapGuard keeps the collapse that follows a tap from clearing it. */
   let emitT = 0
   let tapGuard = 0
+  // Host-controlled visual review mode. It is deliberately separate from ordinary
+  // text selection: while on, a clean click/tap chooses one semantic visual target
+  // and hands it to the existing durable ElementSelector comment path.
+  let reviewOn = false
   let tx = 0
   let ty = 0
   let tMoved = false
@@ -252,6 +256,11 @@ interface ElReg {
          a comment to it on touch. Text-ish containers (table/pre/figure cells) still
          fall through to block-tap. */
       const ael = anchorEl(el)
+      if (reviewOn && ael) {
+        tapGuard = Date.now()
+        selectReviewElement(ael)
+        return
+      }
       if (
         ael &&
         /^(img|svg|canvas|video|audio|iframe|embed|object|picture)$/.test(ael.tagName.toLowerCase())
@@ -472,6 +481,13 @@ interface ElReg {
           return
         }
         if (e.key === "Escape") {
+          if (reviewOn) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            setReviewMode(false)
+            post({ type: "review-mode-ended" })
+            return
+          }
           if (!focused && dismissEditUi()) {
             e.preventDefault()
             e.stopImmediatePropagation()
@@ -547,6 +563,13 @@ interface ElReg {
     ".derive-el-low:hover .derive-el-badge{background:rgba(100,116,139,.95)}" +
     ".derive-el-pip{position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:rgba(100,116,139,.85);border:1.5px solid #fff;box-sizing:content-box}" +
     ".derive-el-outline{position:absolute;display:none;pointer-events:none;border:2px dashed rgba(100,116,139,.6);border-radius:4px;z-index:2147483639}" +
+    /* Visual review mode: the document remains itself; only the eligible target
+       under the pointer gets a calm, explicit invitation. */
+    "body.derive-review-mode{cursor:crosshair!important}" +
+    "body.derive-review-mode :is(a,button){cursor:crosshair!important}" +
+    ".derive-review-hover{outline:2px solid rgba(100,116,139,.85)!important;outline-offset:4px!important;border-radius:4px}" +
+    ".derive-review-flash{animation:derive-review-flash 1s ease 2}" +
+    "@keyframes derive-review-flash{50%{outline:4px solid rgba(100,116,139,.72);outline-offset:6px}}" +
     /* inline edit mode: the block being edited carries a quiet ring; a block with
        unsaved changes keeps a faint tint so you can see what you touched. Same slate
        family as the comment highlights — one visual voice, nothing loud. */
@@ -709,6 +732,11 @@ interface ElReg {
   const ANCHORABLE = "img,picture,svg,canvas,video,audio,iframe,embed,object,table,pre,figure"
   const anchorEl = (t: Element | null): Element | null => {
     if (!t?.closest) return null
+    // Linked bundles author these stable targets for loop steps, policies, graph
+    // nodes, and edges. Prefer the semantic wrapper over an SVG/text child — even
+    // when the visual itself contains an otherwise-interactive link or button.
+    const review = t.closest("[data-derive-review-id]")
+    if (review) return review
     if (t.closest("[data-derive-id],.derive-el-badge,a,button,input,textarea,select,label"))
       return null
     const el = t.closest(ANCHORABLE)
@@ -719,6 +747,15 @@ interface ElReg {
     return null
   }
   const roleOf = (el: Element): string => {
+    const reviewKind = el.getAttribute("data-derive-review-kind")
+    if (
+      reviewKind === "loop-step" ||
+      reviewKind === "loop-policy" ||
+      reviewKind === "loop-transition" ||
+      reviewKind === "graph-node" ||
+      reviewKind === "graph-edge"
+    )
+      return reviewKind
     const tag = el.tagName.toLowerCase()
     if (tag === "img" || tag === "picture") return "image"
     if (tag === "video" || tag === "audio") return "media"
@@ -737,6 +774,8 @@ interface ElReg {
   }
   const trunc = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
   const labelOf = (el: Element, role: string): string => {
+    const reviewLabel = normWs(el.getAttribute("data-derive-review-label") || "")
+    if (reviewLabel) return reviewLabel
     const alt = normWs(elAlt(el))
     const host = hostOf(elSrc(el))
     if (role === "image")
@@ -782,6 +821,38 @@ interface ElReg {
       },
     }
   }
+
+  let reviewHover: Element | null = null
+  const setReviewHover = (el: Element | null) => {
+    if (el === reviewHover) return
+    reviewHover?.classList.remove("derive-review-hover")
+    reviewHover = el
+    reviewHover?.classList.add("derive-review-hover")
+  }
+  const setReviewMode = (on: boolean) => {
+    reviewOn = on && !editOn
+    document.body?.classList.toggle("derive-review-mode", reviewOn)
+    if (!reviewOn) setReviewHover(null)
+  }
+  const selectReviewElement = (el: Element) => {
+    const r = el.getBoundingClientRect()
+    post({
+      type: "select",
+      element: true,
+      reviewPicked: true,
+      rect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right },
+      selector: buildElSelector(el),
+    })
+    setReviewMode(false)
+    post({ type: "review-mode-ended" })
+  }
+  document.addEventListener("mousemove", (e) => {
+    if (!reviewOn) return
+    setReviewHover(anchorEl(asEl(e.target)))
+  })
+  document.addEventListener("mouseleave", () => {
+    if (reviewOn) setReviewHover(null)
+  })
 
   /* -- the in-browser cascade: score every candidate by signal agreement and pick
         the best over threshold (mirrors resolveElement in core) -- */
@@ -1858,6 +1929,15 @@ interface ElReg {
         if (asEl(e.target)?.closest(".derive-edit-ui")) return
         e.stopImmediatePropagation()
         editClick(e)
+        return
+      }
+      if (reviewOn) {
+        const target = anchorEl(asEl(e.target))
+        if (target) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          selectReviewElement(target)
+        }
         return
       }
       const badge = asEl(e.target)?.closest(".derive-el-badge[data-derive-id]")
@@ -3727,7 +3807,18 @@ interface ElReg {
       post({ type: "edit-edits", edits, dirty, uncaptured, nonce: d.nonce })
     } else if (d.type === "edit-restore") restoreEdits()
     else if (d.type === "scroll-by") window.scrollBy(0, d.dy || 0)
-    else if (d.type === "focus-anchor") {
+    else if (d.type === "review-mode") setReviewMode(!!d.on)
+    else if (d.type === "focus-review") {
+      const target = typeof d.id === "string" ? document.getElementById(d.id) : null
+      if (!target) return
+      const rect = target.getBoundingClientRect()
+      fastScrollTo(scrollTop() + rect.top - Math.max(16, (window.innerHeight - rect.height) / 2))
+      target.classList.remove("derive-review-flash")
+      void (target as HTMLElement).offsetWidth
+      target.classList.add("derive-review-flash")
+      window.setTimeout(() => target.classList.remove("derive-review-flash"), 2100)
+      setTimeout(reportScroll, 260)
+    } else if (d.type === "focus-anchor") {
       const entry = textEntries.find((t) => t.id === d.id)
       const ovEl = document.querySelector<HTMLElement>(`.derive-el-hl[data-derive-id="${d.id}"]`)
       /* quiet element anchors have no overlay — the element itself carries the rect. */

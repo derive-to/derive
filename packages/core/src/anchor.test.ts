@@ -172,6 +172,7 @@ describe("anchorContentFor — HTML strips, markdown/plain stays raw", () => {
     expect(isAnchored(json(sel), anchorContentFor(html, "text/html"))).toBe(true)
     // A deck is HTML-like too.
     expect(isAnchored(json(sel), anchorContentFor(html, "text/x-derive-deck"))).toBe(true)
+    expect(isAnchored(json(sel), anchorContentFor(html, "text/x-derive-linked-bundle"))).toBe(true)
   })
 
   it("leaves markdown/plain source unstripped (its source is the visible text)", () => {

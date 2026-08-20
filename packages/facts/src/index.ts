@@ -78,6 +78,13 @@ export const FACT_NAME_ATTR = "data-fact"
  */
 const LEGACY_SCRIPT_TYPES = ["application/derive-data"]
 const LEGACY_FENCE_LANGS = ["derive-data"]
+
+/** HTML-shaped source types understood by this dependency-free parser. Keep the richer Derive
+ * subtype explicit here; importing @derive/core would invert the package dependency. */
+const isHtmlSourceType = (contentType: string): boolean => {
+  const ct = contentType.toLowerCase()
+  return ct.includes("html") || ct === "text/x-derive-linked-bundle"
+}
 const NAME_ATTRS = [FACT_NAME_ATTR, "data-slot"]
 
 const isFactScriptType = (t: string): boolean =>
@@ -448,7 +455,7 @@ const isNumericCell = (s: string): boolean => NUMERIC_CELL.test(s.trim())
  */
 export const missingFactAdvisory = (source: string, contentType: string): string | null => {
   const ct = contentType.toLowerCase()
-  const isHtml = ct.includes("html")
+  const isHtml = isHtmlSourceType(ct)
   if (!isHtml && !ct.includes("markdown")) return null
   // Already carries data (or tried to — a malformed block gets its own advisory).
   if (parseFacts(source, contentType).facts.length > 0) return null
@@ -477,7 +484,7 @@ export const missingFactAdvisory = (source: string, contentType: string): string
 
 export const parseFacts = (source: string, contentType: string): FactsResult => {
   const ct = contentType.toLowerCase()
-  const raw = ct.includes("html")
+  const raw = isHtmlSourceType(ct)
     ? htmlBlocks(source)
     : ct.includes("markdown")
       ? markdownBlocks(source)

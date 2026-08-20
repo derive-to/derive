@@ -143,6 +143,35 @@ const doc = (meta: Record<string, string | number | null | undefined>, body: str
   return text(`---\n${head}\n---\n\n${body}`)
 }
 
+const linkedBundleMeta = (
+  artifact: Awaited<ReturnType<ReturnType<typeof createClient>["get"]>>,
+  shortId: string,
+): Record<string, string> => {
+  const bundle = artifact.linked_bundle
+  if (!bundle) return {}
+  const clean = (value: string) => value.replace(/\s+/g, " ").trim()
+  const members = bundle.members.slice(0, 50)
+  return {
+    bundle_purpose: clean(bundle.purpose),
+    bundle_members: `${members
+      .map(
+        (member) =>
+          `${member.id}=${clean(member.label)} (${member.ref})${member.role ? ` [${clean(member.role)}]` : ""}`,
+      )
+      .join(
+        " | ",
+      )}${bundle.members.length > members.length ? ` | +${bundle.members.length - members.length} more` : ""}`,
+    ...(bundle.diagrams?.length
+      ? {
+          bundle_diagrams: bundle.diagrams
+            .map((diagram) => `${diagram.type}:${clean(diagram.title)}`)
+            .join(" | "),
+        }
+      : {}),
+    bundle_next: `The full manifest is available from GET /raw/${shortId}/data/bundle-manifest.json. Keep member artifacts independent; revise this bundle only when its purpose, membership, or diagrams change.`,
+  }
+}
+
 // A `workspace` arg (id or name) on any tool acts in THAT workspace for the one
 // call, without re-pinning the session: the token already reaches every workspace
 // the account belongs to, so we just build a throwaway client that sends the
@@ -350,6 +379,7 @@ server.registerTool(
     const client = clientFor(ws)
     const a = await client.get(short_id)
     const v = version ?? a.current_version
+    const bundleMeta = linkedBundleMeta(a, short_id)
 
     // No section: show the outline first (mirrors the remote server's
     // outline-before-blind-dump behavior). Falls back to full content when the
@@ -362,6 +392,7 @@ server.registerTool(
           title: a.title,
           kind: a.kind,
           version: v,
+          ...bundleMeta,
           ...(outline.sections.length ? { sections: outline.sections } : {}),
           ...(outline.pages ? { pages: outline.pages } : {}),
           next:
@@ -380,7 +411,7 @@ server.registerTool(
       })
       if (!result.supportsParams)
         return doc(
-          { short_id, title: a.title, kind: a.kind, version: v },
+          { short_id, title: a.title, kind: a.kind, version: v, ...bundleMeta },
           `${result.text}\n\n[note: this server predates section/format params — returning the full raw artifact.]`,
         )
       return doc(
@@ -389,6 +420,7 @@ server.registerTool(
           title: a.title,
           kind: a.kind,
           version: v,
+          ...bundleMeta,
           ...(result.format ? { format: result.format } : {}),
           ...(result.section ? { section: result.section } : {}),
         },
@@ -589,7 +621,7 @@ server.registerTool(
   "comment",
   {
     description:
-      "Leave feedback, reply in a thread, react, and/or resolve or reopen a thread. Anchor a NEW comment to a quoted span with `quote`. Reply by passing the thread id as `reply_to`. Pass `react` with a `comment_id` (or `reply_to` to hit the thread's latest comment) to acknowledge feedback without the noise of a reply — the loop's minimum ack. Resolve/reopen by passing `set_state` with a `comment_id` from the thread (or the comment you just left).",
+      "Leave feedback, reply in a thread, react, and/or resolve or reopen a thread. Anchor a NEW comment to text with `quote`, or to a linked-bundle loop/graph part with `visual_target`. Reply by passing the thread id as `reply_to`.",
     annotations: {
       title: "Comment and review",
       readOnlyHint: false,
@@ -607,6 +639,10 @@ server.registerTool(
         .optional()
         .describe("A thread id to reply in; omit to start a new thread."),
       quote: z.string().optional().describe("Exact text to anchor a NEW comment to."),
+      visual_target: z
+        .string()
+        .optional()
+        .describe("Stable linked-bundle visual target id. Use instead of quote."),
       react: z
         .enum(["👍", "❤️", "🎉", "😄", "👀", "🙏", "🚀", "👎"])
         .optional()
@@ -619,19 +655,31 @@ server.registerTool(
       workspace: wsArg,
     },
   },
-  async ({ short_id, body, reply_to, quote, react, set_state, comment_id, workspace: ws }) => {
+  async ({
+    short_id,
+    body,
+    reply_to,
+    quote,
+    visual_target,
+    react,
+    set_state,
+    comment_id,
+    workspace: ws,
+  }) => {
     const client = clientFor(ws)
     if (!body && !set_state && !react)
       return text(
         "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
       )
+    if (quote && visual_target) return text("Use either `quote` or `visual_target`, not both.")
     let posted: Awaited<ReturnType<typeof client.createComment>> | undefined
     if (body) {
-      const anchor = quote ? { type: "TextQuoteSelector", exact: quote } : undefined
+      const anchor: unknown = quote ? { type: "TextQuoteSelector", exact: quote } : undefined
       posted = await client.createComment(short_id, {
         thread_id: reply_to,
         body_md: body,
         anchor,
+        visual_target,
         author: "agent",
       })
     }
@@ -676,7 +724,7 @@ server.registerTool(
         ? `replied in thread ${posted.thread_id}`
         : `new thread ${posted.thread_id}`
       return text(
-        `${where} (comment ${posted.id})${quote ? ` on “${quote}”` : ""}${reactNote}${stateNote}.`,
+        `${where} (comment ${posted.id})${visual_target ? ` on ${visual_target}` : quote ? ` on “${quote}”` : ""}${reactNote}${stateNote}.`,
       )
     }
     if (!set_state) return text(`Acknowledged${reactNote.replace(" · acknowledged", "")}.`)

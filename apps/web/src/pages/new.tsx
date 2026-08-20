@@ -1,7 +1,7 @@
-import { useQueryClient } from "@tanstack/react-query"
+import { type QueryClient, useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate, useSearch } from "@tanstack/react-router"
 import { useRef, useState } from "react"
-import { api } from "@/api"
+import { type Artifact, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
 import { artifactQuery, collectionsQuery, summaryQuery } from "@/lib/queries"
@@ -24,6 +24,15 @@ const detectFormat = (t: string): "md" | "html" => {
     return "html"
   if (/<\/[a-z][\w-]*>/i.test(s)) return "html"
   return "md"
+}
+
+/** Paint a newly published artifact immediately, but never let the lean publish
+ * response masquerade as authoritative detail. Native content chrome is resolved
+ * by GET /artifacts/:id, so the seed must be invalidated before the workbench mounts. */
+export const seedPublishedArtifact = (qc: QueryClient, artifact: Artifact): Promise<void> => {
+  const detail = artifactQuery(artifact.short_id)
+  qc.setQueryData(detail.queryKey, { ...artifact, my_role: "owner" })
+  return qc.invalidateQueries({ queryKey: detail.queryKey, exact: true })
 }
 
 // Create a new artifact using the exact same editor as edit mode (SourceEditor):
@@ -75,9 +84,11 @@ export function NewArtifact() {
       // Publish is the moment a person is most likely to be watching the screen.
       // The publish response is deliberately lean and has no viewer-specific role.
       // We do know one fact locally: the person who just created this artifact owns it.
-      // Preserve that while the detail query warms, otherwise the first artifact paint
-      // briefly hides every editor-only affordance (including Inspect) until a reload.
-      qc.setQueryData(artifactQuery(a.short_id).queryKey, { ...a, my_role: "owner" })
+      // Preserve that while the authoritative detail warms, otherwise the first
+      // artifact paint briefly hides every editor-only affordance (including Inspect).
+      // The helper also invalidates the lean seed so native content-type chrome does
+      // not remain incomplete until a manual reload.
+      void seedPublishedArtifact(qc, a)
       // Drop the unsaved guard before navigating to the artifact (this nav IS the save,
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.

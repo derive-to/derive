@@ -59,6 +59,15 @@ describe("deriveFacts", () => {
     expect(d.$stats.chars).toBe(heavy.length)
   })
 
+  it("treats a linked bundle as HTML while deriving its visible stats and links", () => {
+    const page =
+      '<main class="bundle"><h1>Research loop</h1><a href="/artifacts/evidence-abc12345">Evidence</a></main>'
+    const d = byName(page, "text/x-derive-linked-bundle")
+    expect(d.$links.refs).toEqual(["abc12345"])
+    expect(d.$stats.words).toBe(3)
+    expect(d.$stats.chars).toBe(page.length)
+  })
+
   it("records that a reference exists, never why: footers and citations look identical", () => {
     // The transcription line, pinned: dedup yes, judgment no.
     const page =

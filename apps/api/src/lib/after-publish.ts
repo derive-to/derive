@@ -13,6 +13,7 @@ import {
   type BlobStore,
   deriveFacts,
   FACT_GEN,
+  isAuthoredFactType,
   isHtmlLike,
   type MetaStore,
   newId,
@@ -168,7 +169,7 @@ const summarizeVersion = async (
 }
 
 /** Extract a single-file HTML/markdown version's facts and persist them (see
- *  @derive/core data-facts). Bundles, decks and non-text versions carry no facts and are
+ *  @derive/core data-facts). Zip bundles, decks and non-text versions carry no authored facts and are
  *  skipped. Writes only when at least one slot parsed — a fresh version has no prior rows,
  *  so there is nothing to clear when it has none. */
 const extractVersionData = async (
@@ -186,7 +187,7 @@ const extractVersionData = async (
   // is exactly what a map is for. Found on the preview: a freshly published deck carried no
   // $map at all. Same second-order blast radius the sniff fix documented — typing decks
   // correctly moves them off every path that asks `content_type === "text/html"`.
-  const authored = ct === "text/html" || ct === "text/markdown"
+  const authored = isAuthoredFactType(ct)
   if (!authored && !isHtmlLike(ct)) return
   const bytes = await blobs.get(version.blob_key)
   if (!bytes) return

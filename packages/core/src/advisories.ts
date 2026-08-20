@@ -6,8 +6,10 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
+import { isHtmlLike } from "./content-types"
 import { countSlideElements, isUnannouncedDeck } from "./decks"
 import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } from "./facts"
+import { linkedBundleAdvisories } from "./linked-bundle"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
 
@@ -48,6 +50,7 @@ export const publishAdvisories = (content: string, contentType: string): string[
   // duplicate, over the per-version cap). The SAME parser persists the good facts in the
   // version-bump chain, so what's advised here and what's stored can never disagree.
   out.push(...parseFacts(content, contentType).advisories)
+  out.push(...linkedBundleAdvisories(content))
 
   // A page full of figures with no slot: the nudge that keeps facts from depending on the
   // author remembering. Last, so it never crowds out something that is actually wrong.
@@ -79,7 +82,7 @@ export const publishAdvisories = (content: string, contentType: string): string[
   // on. Unlike the other checks here, the author cannot discover this by looking at the
   // render, which is exactly why it has to be said at publish time. The fix is one
   // postMessage, so the advisory names it.
-  if (contentType === "text/html" && isUnannouncedDeck(content))
+  if (isHtmlLike(contentType) && isUnannouncedDeck(content))
     out.push(
       `This page has ${countSlideElements(content)} slide elements but never posts the ` +
         "derive-deck message, so Derive serves it as an ordinary page: no deck bar, no Present " +
@@ -91,7 +94,7 @@ export const publishAdvisories = (content: string, contentType: string): string[
 
   // A page with no viewport meta gets the mobile-reflow injection, whose media
   // caps can fight an intentional layout (see reflow.ts).
-  if (contentType === "text/html" && needsReflow(content))
+  if (isHtmlLike(contentType) && needsReflow(content))
     out.push(
       'This page has no <meta name="viewport">, so Derive injects mobile-reflow CSS ' +
         "(its media caps can fight intentional layouts; data-reflow-exempt on an element " +

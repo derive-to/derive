@@ -12,6 +12,7 @@ import {
   bundleDoc,
   type ContextRecord,
   isHtmlLike,
+  LINKED_BUNDLE_CONTENT_TYPE,
   type OutlineSection,
   parseFrontmatter,
   SKILL_CONTENT_TYPE,
@@ -248,6 +249,7 @@ export const summarizeArtifact = (a: ArtifactRecord) => ({
   // alone can't distinguish it from a docs/site bundle. Surfaced so an agent can spot
   // reusable procedure without opening each bundle.
   is_skill: a.current_content_type === SKILL_CONTENT_TYPE,
+  is_linked_bundle: a.current_content_type === LINKED_BUNDLE_CONTENT_TYPE,
   version: a.current_version,
   workspace_access: a.workspace_access,
   link_role: a.link_role,
