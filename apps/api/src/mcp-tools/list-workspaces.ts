@@ -1,6 +1,7 @@
 import { type Role, roleAllows } from "@derive/core"
 import type { ToolContext } from "../mcp-tool-context"
 import { json } from "../mcp-util"
+import { CORE_SKILLS } from "../skills-reference.gen"
 
 export function registerListWorkspacesTool(
   tc: ToolContext,
@@ -78,6 +79,23 @@ export function registerListWorkspacesTool(
               surface: {
                 tools: liveTools(),
                 note: "The server's tools right now. If your cached list differs, this connection predates a deploy — reconnect to reach what's missing.",
+                // THE SAME INDEX THE SERVER `instructions` CARRY, reachable by a tool call.
+                // Orientation currently rides on the initialize response, and MCP 2026-07-28
+                // deletes that handshake: `instructions` moves to `server/discover`, which
+                // clients MAY skip entirely. A session that never reads it today (a client
+                // that drops the field, a resumed transcript, a sub-agent handed only a
+                // token) has no way to learn these URIs exist, and the whole thin-tools
+                // design assumes it can fetch the procedure on demand.
+                //
+                // Costs nothing to a session that never calls this tool, which is the rule
+                // this codebase already follows: teach in the response, not the preamble.
+                skills: CORE_SKILLS.map((s) => ({
+                  name: s.name,
+                  summary: s.summary,
+                  read: `derive://skills/${s.name}`,
+                })),
+                skills_note:
+                  'Read the one matching your intent before acting: read({short_id:"derive://skills/<name>"}). derive://skills lists these plus any this workspace publishes.',
               },
             }
           : {}),

@@ -94,6 +94,28 @@ describe("the surface a client sees", () => {
     expect(out.surface.tools).toContain("stage")
     expect(out.surface.note).toContain("reconnect")
   })
+
+  // ORIENTATION WITHOUT THE HANDSHAKE. The core-skills index rides in the `initialize`
+  // response's `instructions`, and the whole thin-tools design depends on an agent being
+  // able to fetch a procedure on demand from those URIs. MCP 2026-07-28 removes that
+  // handshake: `instructions` moves to `server/discover`, which clients MAY never call.
+  // A session that does not see it — a client that drops the field, a resumed transcript,
+  // a sub-agent handed only a token — could not learn the URIs existed.
+  //
+  // So the index is reachable by a tool call too. This is the pre-work that lets the
+  // instructions become an optimisation rather than the only path.
+  it("hands back the core-skills index, so orientation is not handshake-only", async () => {
+    const { app, token } = await setup("sc-orientation")
+    const out = JSON.parse((await callTool(app, token, "list_workspaces", {})).text)
+    const names = (out.surface.skills ?? []).map((s: { name: string }) => s.name).sort()
+    expect(names).toEqual(CORE_SKILLS.map((s) => s.name).sort())
+    for (const s of out.surface.skills ?? []) {
+      expect(s.read).toBe(`derive://skills/${s.name}`)
+      expect(s.summary.length).toBeGreaterThan(0)
+    }
+    // The pointer has to survive without the instructions, so it names the exact call.
+    expect(out.surface.skills_note).toContain("derive://skills/")
+  })
 })
 
 describe("a steer leads somewhere that covers the tool", () => {
