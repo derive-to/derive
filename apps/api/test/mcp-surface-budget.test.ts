@@ -105,9 +105,29 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // params, worked examples and edge-case history go to the skill body, which is fetched only
 // by a session that needs it, or to the tool's own RESPONSE, which teaches at the moment of
 // use and costs nothing to sessions that never call it.
+// PARAMS RAISED 8,000 → 9,300 and SURFACE 11,000 → 12,300 (2026-08-20), for `automate`'s
+// fourteen undescribed parameters. This is the one raise so far that does not pay for new
+// prose. Those params shipped with NO description at all — `action` had one, the other
+// fourteen were bare types — so the budget had been scoring the tool as if they were free.
+// They were never free to the agent reading them; they were only invisible to this test,
+// which counts characters and cannot count the ones that should have been there.
+//
+// The cost of leaving them blank was measured, not assumed. In an agent trace, a session
+// asked to schedule recurring work read derive://skills/loop (the tool's own steer, which
+// never mentioned `automate`), then the artifact, then derive://skills/sources, then
+// derive://sources, and finally called automate({action:"list"}) to probe the API for its
+// own shape: three of eight calls spent orienting. Five actions share one schema here, so
+// "which params does `create` even read" was unstated in a way no other tool's is.
+//
+// Reclaim was attempted first, per the rule below, and refused: the fourteen longest
+// descriptions on the surface were re-read and every one of them earns its length. Trimming
+// good text to pay for missing text would have made the surface worse in two places at once.
+// The new descriptions were written to the rule — each leads with the action that reads it,
+// then names the thing that silently goes wrong — and average 85 characters, below the
+// surface's existing mean. Measured 9,134 of 9,300.
 const TOOL_DESCRIPTIONS_BUDGET = 3_200
-const PARAM_DESCRIPTIONS_BUDGET = 8_000
-const SURFACE_BUDGET = 11_000
+const PARAM_DESCRIPTIONS_BUDGET = 9_300
+const SURFACE_BUDGET = 12_300
 const INSTRUCTIONS_BUDGET = 2_400
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
