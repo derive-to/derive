@@ -339,7 +339,24 @@ export function registerPublishTool(tc: ToolContext): void {
           .optional()
           .describe(
             "Revise a single-file artifact without resending it. Exact-source edits cannot mix with the other shapes. Quote edits change visible text; scene-* edits change timing and structure in an HTML Video. A miss applies nothing and says why.",
-          ),
+          )
+          // WORKED EXAMPLES, not more prose. This param accepts six object shapes behind a
+          // union, and a schema can say what is legal without showing which one a given job
+          // wants — the gap examples exist to close. One per shape an agent actually reaches
+          // for: raw-source replace, visible-text replace, and a scene op. The array nesting
+          // is half the point; the first mistake is passing a bare object.
+          .meta({
+            examples: [
+              [{ old_str: "<h1>Old title</h1>", new_str: "<h1>New title</h1>" }],
+              [
+                {
+                  quote: { exact: "4,000 events/sec", prefix: "throughput is " },
+                  new_text: "6,200 events/sec",
+                },
+              ],
+              [{ op: "scene-update", id: "intro", duration_ms: 4000, transition: "fade" }],
+            ],
+          }),
         slide_ops: z
           .array(
             z.union([

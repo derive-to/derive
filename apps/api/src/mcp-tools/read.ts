@@ -194,7 +194,11 @@ export function registerReadTool(tc: ToolContext): void {
           .optional()
           .describe(
             'A heading slug, or "@2" for a region. Bundle: a page path, optionally page.html#slug. "*" forces the whole (clipped) doc. Omitted: small returns whole, large returns an outline.',
-          ),
+          )
+          // Four different addressing schemes share one string param, and the difference is
+          // not inferable from the type. The slug form is the one to lead with because it
+          // is what an outline hands back.
+          .meta({ examples: ["risks", "@2", "docs/pricing.html#tiers", "*"] }),
         format: z
           .enum(["markdown", "html", "text"])
           .optional()
