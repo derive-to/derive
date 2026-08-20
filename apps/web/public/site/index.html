@@ -1085,7 +1085,7 @@ Then pick something real we've worked on recently (a plan, a report, a designed 
   <p class="f-sub">Nothing you're proud of ships in one pass. Sign up, connect your agent, and publish your first artifact in minutes. The Free plan is free forever, no card required, and <strong>nothing you ship goes dark.</strong></p>
   <div class="f-cta">
     <a class="btn btn-primary" href="/login?signup=1&amp;src=homepage_finale">Start Deriving for Free</a>
-    <a href="/pricing">See pricing →</a>
+    <a href="/pricing">See pricing <span aria-hidden="true">→</span></a>
   </div>
   <p class="f-alt">
     <button class="replay" id="replay" type="button" aria-label="Replay the edit">
@@ -1127,7 +1127,7 @@ const $ = id => document.getElementById(id);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* nav hairline */
-const nav = $('nav');
+const nav = document.querySelector('.site-nav');
 addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
 
 /* click-to-copy (hero curl, the connect rows, the agent-instructions prompt).

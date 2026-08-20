@@ -73,16 +73,14 @@ describe("billing routes", () => {
     expect(fake.checkouts[0]?.priceLookupKey).toBe("business_annual")
   })
 
-  it("checkout: beta returns 409 before creating billing state", async () => {
+  it("checkout: 409 while billing is off, before creating billing state", async () => {
     const { app, fake, meta } = boot("br_checkout_beta")
     const r = await app.request(
       "/v1/billing/checkout",
       jsonAs(as("u1@x.test"), { tier: "team", interval: "month" }),
     )
     expect(r.status).toBe(409)
-    expect((await r.json()).error).toBe(
-      "Billing has not started. Paid plans are available after beta.",
-    )
+    expect((await r.json()).error).toBe("Billing is not enabled on this instance.")
     expect(fake.checkouts).toHaveLength(0)
     expect(await meta.getSubscription("default")).toBeNull()
   })

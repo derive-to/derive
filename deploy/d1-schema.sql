@@ -300,13 +300,6 @@ CREATE TABLE IF NOT EXISTS collection_invite (
   UNIQUE (token)
 );
 
-CREATE TABLE IF NOT EXISTS beta_signup (
-  id TEXT PRIMARY KEY,
-  email TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (email)
-);
-
 CREATE TABLE IF NOT EXISTS signup_attribution (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

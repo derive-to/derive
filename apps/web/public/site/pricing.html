@@ -70,9 +70,6 @@ p{text-wrap:pretty;margin:0}
 .btn:active{transform:translateY(1px)}
 .btn-ghost:hover{background:var(--secondary)}
 nav.scrolled{border-bottom-color:var(--border-soft)}
-.nav-cta .nav-signin .arr{display:inline-block;transition:transform .18s ease}
-.nav-cta .nav-signin:hover .arr{transform:translateX(3px)}
-@media(max-width:720px){}
 
 header.head.wrap{padding:150px 24px 0;text-align:center}
 .head h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:18px auto 0;max-width:20ch}
@@ -302,7 +299,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
   <p class="body">Your team and its agents have never made more. Give the work one home: a permanent link, every version, a review you can stand behind. Start free and grow when your team does.</p>
   <div class="cta">
     <a class="btn btn-primary" href="/login?signup=1&amp;src=pricing_cta">Start Deriving for Free</a>
-    <a href="mailto:hello@derive.to">Talk to us →</a>
+    <a href="mailto:hello@derive.to">Talk to us <span aria-hidden="true">→</span></a>
   </div>
 </section>
 
@@ -330,7 +327,7 @@ footer{margin-top:130px;border-top:1px solid var(--border-soft)}
 </footer>
 
 <script>
-const nav = document.getElementById('nav');
+const nav = document.querySelector('.site-nav');
 addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
 </script>
 </body>

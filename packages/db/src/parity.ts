@@ -21,7 +21,6 @@ import type {
   AssetRecord,
   AuditLogRecord,
   AutomationRecord,
-  BetaSignupRecord,
   CollectionMemberRecord,
   CollectionRecord,
   CommentRecord,
@@ -83,7 +82,6 @@ export interface TypedTables {
   connection: ConnectionRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
-  betaSignup: BetaSignupRecord
   signupAttribution: SignupAttributionRecord
   subscription: SubscriptionRecord
   context: ContextRecord

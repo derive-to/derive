@@ -211,7 +211,7 @@ export function MembersSection({ meId }: { meId: string }) {
         (addRole === "editor" || addRole === "owner") && (
           <p data-testid="members-seat-warning" className="text-sm text-muted-foreground">
             {billing.beta
-              ? "Adding another editor will require a paid plan after beta. "
+              ? "Free covers 3 editor seats; billing is off on this instance, so more editors stay free. "
               : "Free covers 3 editor seats. Upgrading to Team adds unlimited editors, $15 per editor for everyone. "}
             <Link
               to="/settings/$section"

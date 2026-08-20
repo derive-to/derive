@@ -481,23 +481,9 @@ export const collectionInvite = sqliteTable(
   ],
 )
 
-// A beta signup from the marketing site's request-access form: just the email and
-// when it arrived. The access email (with the create-account link) is sent on
-// signup; this row is the audience list — who asked, and in what order.
-export const betaSignup = sqliteTable(
-  "beta_signup",
-  {
-    id: text("id").primaryKey(),
-    email: text("email").notNull(),
-    created_at: text("created_at").notNull().default(now),
-  },
-  (t) => [uniqueIndex("beta_signup_email").on(t.email)],
-)
-
 // Where a signup came from. One row per user, written from the explicit source
 // carried by the signup URL during the short post-auth window; first write wins.
-// No FK to
-// Better Auth's user table: auth owns its tables out-of-band, like beta_signup.
+// No FK to Better Auth's user table: auth owns its tables out-of-band.
 export const signupAttribution = sqliteTable(
   "signup_attribution",
   {
@@ -1285,7 +1271,6 @@ const TABLES = [
   invitation,
   artifactInvite,
   collectionInvite,
-  betaSignup,
   signupAttribution,
   instanceOperator,
   oauthClientWorkspace,
