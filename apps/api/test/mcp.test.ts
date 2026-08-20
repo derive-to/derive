@@ -2739,11 +2739,16 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(none).toContain("no landmark regions")
   })
 
+  // renderPreviews:true is LOAD-BEARING, not boilerplate. Every state this test walks —
+  // pending, ready, failed — only exists on an instance that actually renders. Without the
+  // flag the fixture has no pipeline at all, and "pending" is really "never", which is a
+  // different answer the tool now gives separately (see the previews-off test below).
   it('read render:"top" — the publish→look loop (pending, ready as an image, failed)', async () => {
     const { app, token, meta, blobs } = appWithGrant(
       dir,
       "render",
       "openid derive:read derive:publish",
+      { renderPreviews: true },
     )
     const pub = JSON.parse(
       toolText(
@@ -2758,7 +2763,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     // The publish receipt steers to the render read.
     expect(pub.render).toContain('render:"top"')
 
-    // Before the pipeline finishes: an actionable not-ready message, not a failure.
+    // A job IS queued and has not finished: an actionable not-ready message, not a failure.
     const pending = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
     expect(pending).toContain("isn't ready yet")
 
@@ -2796,6 +2801,8 @@ describe("remote MCP endpoint (/mcp)", () => {
       dir,
       "renderv",
       "openid derive:read derive:publish",
+      // As above: per-variant "not ready yet" is only a truthful answer where a renderer exists.
+      { renderPreviews: true },
     )
     const pub = JSON.parse(
       toolText(
@@ -2836,6 +2843,94 @@ describe("remote MCP endpoint (/mcp)", () => {
     const fullFailed = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
     expect(fullFailed).toContain("render:full")
     expect(fullFailed).toContain("failed (oom)")
+  })
+
+  // AN INSTANCE THAT RENDERS NOTHING — the self-host default (DERIVE_PREVIEWS unset) and any
+  // Workers deploy without a BROWSER binding. context.ts's notifyRender enqueues no job there,
+  // so "not ready" is TERMINAL. Until this test existed the surface said "try again shortly,
+  // or pass `wait`" to those callers forever: measured in an agent trace as four reads, each
+  // blocking the full 30s, on a screenshot that was never queued.
+  it("says so when the instance renders no screenshots, instead of advising a retry", async () => {
+    // No renderPreviews — exactly what `createApp` gets on a stock self-host.
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "render-off",
+      "openid derive:read derive:publish",
+    )
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Unrendered",
+          content: "<!DOCTYPE html><html><body><h1>Hi</h1></body></html>",
+          filename: "page.html",
+        }),
+      ),
+    )
+    const id = pub.short_id
+
+    // The receipt must NOT set the expectation in the first place.
+    expect(pub.render).toContain("will never arrive")
+    expect(pub.render).toContain("DERIVE_PREVIEWS=true")
+    expect(pub.render).not.toContain("queued")
+
+    // And the read says the same thing, rather than "isn't ready yet ... try again shortly".
+    const off = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
+    expect(off).toContain("will never arrive")
+    expect(off).not.toContain("isn't ready yet")
+    expect(off).not.toContain("Try again shortly")
+
+    // `wait` must not be honoured into a sleep for something that cannot arrive: the answer
+    // comes back well inside the 20s asked for. (Bounded loosely — this asserts "did not
+    // block", not a latency budget.)
+    const started = Date.now()
+    const waited = toolText(
+      await call(app, token, "read", { short_id: id, render: "full", wait: 20 }),
+    )
+    expect(waited).toContain("will never arrive")
+    expect(Date.now() - started).toBeLessThan(5_000)
+
+    // Same on the publish path: `render` + `wait` returns at once rather than polling it out.
+    const startedPub = Date.now()
+    const pub2 = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: id,
+          content: "<!DOCTYPE html><html><body><h1>Hi 2</h1></body></html>",
+          render: "top",
+          wait: 20,
+        }),
+      ),
+    )
+    expect(pub2.render).toContain("will never arrive")
+    expect(Date.now() - startedPub).toBeLessThan(5_000)
+
+    // THE CARVE-OUT: a shot that already exists still serves. Previews may have been ON when
+    // it rendered and switched off since, and that picture is still true about the page.
+    const art = await meta.getByShortId(id)
+    if (!art) throw new Error("no artifact")
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
+    const key = await blobs.put(png)
+    await meta.setVersionPreview(art.id, art.current_version, {
+      preview_key: key,
+      preview_status: "ready",
+    })
+    const stored = await call(app, token, "read", { short_id: id, render: "top" })
+    const content = (stored.parsed?.result as { content?: { type: string; text?: string }[] })
+      ?.content
+    expect(content?.[0]?.text).toContain(`render:top of "${id}"`)
+    expect(content?.[1]?.type).toBe("image")
+
+    // And a FAILED variant is left alone rather than re-queued into a permanent `pending`:
+    // the re-queue behind that self-heal is a no-op here, so flipping the status would strand
+    // the variant with nothing able to move it again.
+    await meta.setVersionPreview(art.id, art.current_version, {
+      preview_status: "failed",
+      preview_error: "timeout",
+    })
+    const failedOff = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
+    expect(failedOff).toContain("will never arrive")
+    const after = await meta.getVersion(art.id, art.current_version)
+    expect(after?.preview_status).toBe("failed")
   })
 
   it("read: windowed `lines` returns a range, and rejects bad input", async () => {

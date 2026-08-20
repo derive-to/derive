@@ -32,7 +32,7 @@ import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-referen
 import { cleanPath } from "../lib/bundle"
 import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
-import { pickVariant } from "../lib/collect-render"
+import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
@@ -587,6 +587,15 @@ export function registerReadTool(tc: ToolContext): void {
               ? "the whole page"
               : "the whole page, with the region map's @N refs drawn on it"
         let variant = pickVariant(v, render)
+        // NO RENDERER ON THIS INSTANCE — decided before anything below waits for, re-queues,
+        // or advises a retry on a screenshot that is never coming. It short-circuits three
+        // paths at once: the self-heal (which would flip a `failed` variant to a PERMANENT
+        // `pending`, since the re-queue behind it is a no-op here), the wait loop (which
+        // would burn the caller's whole `wait` budget), and the "try again shortly" ending.
+        // An ALREADY-STORED shot still serves: previews may have been on when it rendered
+        // and switched off since, and that picture is still the truth about the page.
+        if (!ctx.deps.renderPreviews && !(variant.status === "ready" && variant.key))
+          return err(rendersOff(`The render:${render} of "${short_id}" v${n}`, url))
         // SELF-HEAL on read: a dead-lettered render (a transient storage/browser
         // error that exhausted its retries) used to demand a no-op republish just to
         // re-render. Re-queue it right here instead — reset the variant to pending so
