@@ -28,13 +28,13 @@
   },
   "dependencies": {
     "@derive/core": "workspace:*",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.13.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.15",
-    "@cloudflare/workers-types": "^4.20260615.1",
+    "@cloudflare/workers-types": "^5.20260811.1",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^25.9.3",
     "@types/pg": "^8.11.10",

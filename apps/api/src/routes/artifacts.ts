@@ -1,6 +1,7 @@
 import {
   type AnyDocEdit,
   type ArtifactRecord,
+  approvedOrCurrent,
   artifactUrl,
   assertedOnly,
   type BundleDoc,
@@ -16,6 +17,7 @@ import {
   encodeCursor,
   formatDiff,
   groupSessions,
+  hasArtifactStanding,
   heavyAssetsAdvisory,
   isHtmlLike,
   isMarkdownBundle,
@@ -1447,6 +1449,9 @@ export const artifactRoutes = (ctx: AppContext) => {
             }
           : undefined,
       )
+      // Workbench actions are scoped to the active workspace. A membership in a
+      // different workspace must not enable controls backed by the active workspace.
+      const isWorkspaceMember = !!viewer && actor.orgRole != null
       if (!can(actor, "read", artifact.workspace_access, artifact.link_role)) {
         // A workspace mismatch is recoverable without weakening the boundary. Tell
         // a signed-in member where to switch only when their full standing would
@@ -1515,6 +1520,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           versions: [],
           sessions: [],
           my_role: effectiveRole(actor, artifact.workspace_access, artifact.link_role),
+          is_workspace_member: isWorkspaceMember,
           tags: [],
           favorite: false,
           collections: [],
@@ -1535,13 +1541,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         viewerId: actor.kind === "user" ? (actor.userId ?? null) : null,
       })
       const allVersions = detail.versions
-      // The public-history gate: unless the owner opted the public page in, an
-      // anonymous caller's history collapses to the current version — the payload
-      // must not leak what the page won't show (version messages and author names
-      // are workbench material). Everything below (versions, sessions, bylines)
-      // derives from this list, so trimming here keeps the response consistent.
+      // Private history requires a workspace seat or collaborator grant. A world
+      // link remains current-version-only even when its holder is signed in.
       const versions =
-        actor.kind === "anon" && !artifact.public_history
+        !hasArtifactStanding(actor, artifact.workspace_access) && !artifact.public_history
           ? allVersions.filter((v) => v.n === artifact.current_version)
           : allVersions
       const me = actor.kind === "user" ? actor.userId : null
@@ -1762,6 +1765,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         }),
         sessions: groupSessions(versions, versionWindowMs),
         my_role: myRole,
+        is_workspace_member: isWorkspaceMember,
         // Show the Made-with-Derive mark on this artifact's public surfaces? False
         // only for white-label workspaces that are also entitled to it (beta, or an
         // active subscription); the viewer reads this single boolean so workspace
@@ -1769,9 +1773,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // ride in from artifactDetail's batch, so the common case (white-label off)
         // costs no round trip at all here.
         badge: !(await effectiveWhiteLabel(artifact.org_id, detail.settings)),
-        // Owner opt-in: the anonymous public page shows version history. The
-        // client uses it to render the byline dropdown; the server enforces it
-        // above (trimmed versions) and in raw.ts (old-version bytes).
+        // The owner may expose history to readers who lack standing on the artifact.
         public_history: !!artifact.public_history,
         // Open-thread count for the public viewer's sign-in-to-comment pill. Anon
         // never sees comment bodies (collaboration, not content — see comments.ts),
@@ -1833,7 +1835,15 @@ export const artifactRoutes = (ctx: AppContext) => {
         // a different URL every fetch, which silently defeated the cache — measured, an
         // open whose URL matched served in 13ms from cache; the next one re-downloaded
         // 15KB. Validity is unchanged (verifyState still enforces the same max age).
-        raw_token: signState({ rid: artifact.id }, deps.encryptionKey ?? "", rawTokenIssuedAt),
+        raw_token: signState(
+          {
+            rid: artifact.id,
+            history:
+              artifact.public_history || hasArtifactStanding(actor, artifact.workspace_access),
+          },
+          deps.encryptionKey ?? "",
+          rawTokenIssuedAt,
+        ),
         // The detail record can outlive the capability in the browser query cache.
         // Make the lifetime explicit so the viewer never pins an expired token while
         // React Query refreshes the record in the background.
@@ -2479,7 +2489,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return fail(c, 404, "not found")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
-    const v = c.req.query("v") ? Number(c.req.query("v")) : artifact.current_version
+    // "approved" resolves the human-approved version (current when none exists) — one
+    // sentinel every skill-delivery lane shares instead of each reimplementing the rule.
+    const vq = c.req.query("v")
+    const v =
+      vq === "approved" ? approvedOrCurrent(artifact) : vq ? Number(vq) : artifact.current_version
     if (!Number.isInteger(v)) return fail(c, 400, "bad version")
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return fail(c, 404, `no version ${v}`)

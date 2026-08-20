@@ -232,6 +232,7 @@ describe("artifact access follows the active workspace", () => {
     expect(worldElsewhere.status).toBe(200)
     const worldElsewhereBody = await worldElsewhere.json()
     expect(worldElsewhereBody.my_role).toBe("viewer")
+    expect(worldElsewhereBody.is_workspace_member).toBe(false)
     // Neither creator ownership nor a foreign workspace seat may disclose the
     // collection metadata wrapped around an otherwise portable artifact.
     expect(worldElsewhereBody.collection_access).toEqual([])
@@ -250,6 +251,7 @@ describe("artifact access follows the active workspace", () => {
     expect(sharedDetail.status).toBe(200)
     const sharedDetailBody = await sharedDetail.json()
     expect(sharedDetailBody.my_role).toBe("editor")
+    expect(sharedDetailBody.is_workspace_member).toBe(false)
     expect(sharedDetailBody.collection_access).toEqual([
       expect.objectContaining({ id: collection.id, my_role: "viewer" }),
     ])
@@ -275,6 +277,6 @@ describe("artifact access follows the active workspace", () => {
       headers: atOrigin,
     })
     expect(restored.status).toBe(200)
-    expect((await restored.json()).my_role).toBe("owner")
+    expect(await restored.json()).toMatchObject({ my_role: "owner", is_workspace_member: true })
   })
 })

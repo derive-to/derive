@@ -194,6 +194,7 @@ export interface DiffJson {
 
 export interface ViewStatsJson {
   total: number
+  last24h: number
   unique: number
   perVersion: { version: number; count: number }[]
   daily: { day: string; count: number }[]

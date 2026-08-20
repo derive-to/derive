@@ -36,20 +36,36 @@ export function skillSlug(name) {
   return s || null
 }
 
-/** Fetch one pinned skill version's files WITHOUT writing them (so a caller can resolve
- *  a collision-free directory name across the whole set before touching disk). Returns
- *  { name, entry, files: Map<path, bytes> }; throws if the version has no readable tree. */
+/** Fetch one skill version's files WITHOUT writing them (so a caller can resolve a
+ *  collision-free directory name across the whole set before touching disk). Returns
+ *  { name, entry, files: Map<path, bytes> }; throws if the version has no readable tree.
+ *
+ *  A pinned entry fetches its exact version. An unpinned one (version null) asks the
+ *  server for "approved" — the last human-approved version, current when none exists.
+ *  Only a server that predates that sentinel (it 400s "bad version") falls back to
+ *  plain current; any other failure fails the skill. A broad catch here would serve
+ *  the unapproved draft on a transient error, silently defeating the gate. */
 export async function fetchSkill(api, { id, version }) {
-  const outline = await api.outline(id, version)
-  const pages = outline?.pages ?? []
-  if (pages.length === 0) throw new Error("no files in this version")
-  const entry = String(outline.entry ?? "SKILL.md").replace(/^\//, "")
-  const files = new Map()
-  for (const p of pages) {
-    const path = String(p.path).replace(/^\//, "")
-    files.set(path, await api.file(id, path, version))
+  const fetchAt = async (v) => {
+    const outline = await api.outline(id, v)
+    const pages = outline?.pages ?? []
+    if (pages.length === 0) throw new Error("no files in this version")
+    const entry = String(outline.entry ?? "SKILL.md").replace(/^\//, "")
+    const files = new Map()
+    for (const p of pages) {
+      const path = String(p.path).replace(/^\//, "")
+      files.set(path, await api.file(id, path, v))
+    }
+    return { name: skillNameFrom(files.get(entry)), entry, files }
   }
-  return { name: skillNameFrom(files.get(entry)), entry, files }
+  if (version != null) return fetchAt(version)
+  try {
+    return await fetchAt("approved")
+  } catch (e) {
+    if (!/→ 400\b/.test(String(e?.message ?? e))) throw e
+    console.error(`[skills] ${id}: server predates v=approved, serving current`)
+    return fetchAt(null)
+  }
 }
 
 /** Write a fetched skill under destRoot/<dir>/. A skills dir is DERIVED state (like the

@@ -47,7 +47,7 @@ export function ArtifactDocument({
   presentOverlay = false,
   controlsIdle = false,
   onPresent,
-  anonView = false,
+  readOnlyView = false,
 }: {
   shown: number
   currentVersion: number
@@ -88,9 +88,8 @@ export function ArtifactDocument({
   /** No input for a beat: the presentation controls fade out of the way. */
   controlsIdle?: boolean
   onPresent?: () => void
-  /** Anonymous public viewer: the past-version strip keeps only "Back to current"
-   *  (diff and restore are workbench affordances an anon caller can't use). */
-  anonView?: boolean
+  /** Public and guest readers cannot diff or restore an older version. */
+  readOnlyView?: boolean
 }) {
   const past = shown !== currentVersion
   return (
@@ -100,9 +99,9 @@ export function ArtifactDocument({
       {past && (
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 border-b border-primary/30 bg-primary/5 px-4 py-2 text-sm">
           <span className="font-medium text-primary">
-            Viewing an earlier version{anonView ? ` (v${shown})` : ""}
+            Viewing an earlier version{readOnlyView ? ` (v${shown})` : ""}
           </span>
-          {!anonView && (
+          {!readOnlyView && (
             <>
               <span className="text-muted-foreground">·</span>
               <Button
@@ -116,7 +115,7 @@ export function ArtifactDocument({
             </>
           )}
           <span className="flex-1" />
-          {!anonView && (
+          {!readOnlyView && (
             <Button
               variant="outline"
               size="sm"
@@ -133,7 +132,7 @@ export function ArtifactDocument({
             data-testid="artifact-back-to-current"
             onClick={onBackToCurrent}
           >
-            {anonView ? `Back to current (v${currentVersion})` : "Back to current"}
+            {readOnlyView ? `Back to current (v${currentVersion})` : "Back to current"}
           </Button>
         </div>
       )}

@@ -60,6 +60,11 @@ export const artifact = pgTable("artifact", {
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   locked: integer("locked").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
+  // The last version a human approved: proposal approval stamps its decided_version,
+  // review-round approval stamps the round's version (never lowering it). Null until
+  // the first approval. Agent skill delivery serves approved_version ?? current_version,
+  // so approving once implicitly gates later drafts. Nullable — ADD COLUMN clean.
+  approved_version: integer("approved_version"),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   // Set on every new version; null until first versioned (coalesces to created_at).
@@ -395,17 +400,6 @@ export const collectionInvite = pgTable(
     uniqueIndex("collection_invite_token").on(t.token),
     index("collection_invite_collection_email").on(t.collection_id, t.email),
   ],
-)
-
-// A beta signup from the marketing site (see schema.ts for the full note).
-export const betaSignup = pgTable(
-  "beta_signup",
-  {
-    id: text("id").primaryKey(),
-    email: text("email").notNull(),
-    created_at: text("created_at").notNull().$defaultFn(isoNow),
-  },
-  (t) => [uniqueIndex("beta_signup_email").on(t.email)],
 )
 
 // Where a signup came from (see schema.ts for the full note).
@@ -1047,7 +1041,6 @@ const TABLES = [
   invitation,
   artifactInvite,
   collectionInvite,
-  betaSignup,
   signupAttribution,
   instanceOperator,
   oauthClientWorkspace,

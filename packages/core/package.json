@@ -22,7 +22,7 @@
     "@derive/facts": "workspace:*",
     "fflate": "^0.8.2",
     "marked": "^18.0.5",
-    "nanoid": "^5.1.16",
+    "nanoid": "^6.0.1",
     "xss": "^1.0.15"
   },
   "devDependencies": {

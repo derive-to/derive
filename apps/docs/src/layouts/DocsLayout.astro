@@ -31,7 +31,7 @@ const pagePath = isHome ? "/" : `/${slug}/`
 const markdownPath = `/${slug}.md`
 const canonical = new URL(pagePath, Astro.site)
 const pageTitle = isHome
-  ? "Derive Docs | Keep, share, and improve agent-made work"
+  ? "Derive Docs | Publish, review, and own your AI artifacts"
   : `${title} | Derive Docs`
 const contentPages = navigation.pages.filter((page) => page.slug !== "index")
 const pageIndex = contentPages.findIndex((page) => page.slug === slug)

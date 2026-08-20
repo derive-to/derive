@@ -19,17 +19,8 @@ import { MoveToWorkspaceDialog, ReportDialog, StarButton } from "./header-action
 import { ReworkConnectDialog, ReworkMenuItem } from "./rework-menu-item"
 import { ShareButton } from "./share-dialog"
 
-/**
- * The right side of the workbench header (signed-in viewers only). Grouped by spacing,
- * not rules — two clusters read left → right by hierarchy:
- *   [ Share · ★ · ⋯ ]        [ comments ]
- *     actions cluster          the discussion panel toggle (terminal)
- * The filled-ink Share leads as the one primary; the favorited star is glanceable
- * state; the ⋯ holds everything else (Focus/Present, Collections, Insights/
- * History/Proposals, Edit/Lock/Report). Comments hugs the panel it opens. Presence +
- * the cursor picker are the ambient cluster the page renders ahead of this. Props-
- * driven; the page keeps the cache writes.
- */
+/** Actions for signed-in artifact readers. Members receive workspace controls;
+ * guests receive copy and only the collaboration granted by the link. */
 export function ArtifactTopBar(props: {
   shortId: string
   /** Feeds the collections picker's "similar title" suggestions. */
@@ -53,6 +44,9 @@ export function ArtifactTopBar(props: {
   isMobile: boolean
   panelOpen: boolean
   openCount: number
+  isGuest: boolean
+  isCopying: boolean
+  commentsAvailable: boolean
   showEdit: boolean
   editLabel: string
   /** Inline (click-to-type) editing — the primary edit affordance, shown as a real
@@ -90,8 +84,9 @@ export function ArtifactTopBar(props: {
   onArchive: () => void
   /** Enter focus/hero mode — strip the chrome to just the render. */
   onFocus: () => void
+  onCopy: () => void
 }) {
-  const { shortId, openProposals, proposalsTotal } = props
+  const { shortId, openProposals, proposalsTotal, isGuest } = props
   const { pref: cursorPref, setPref: setCursorPref } = useCursorPref()
   const [reportOpen, setReportOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
@@ -121,17 +116,29 @@ export function ArtifactTopBar(props: {
             {props.inlineEditLabel}
           </Button>
         )}
-        <ShareButton
-          shortId={shortId}
-          myRole={props.myRole}
-          workspaceAccess={props.workspaceAccess}
-          linkRole={props.linkRole}
-          listed={props.listed}
-          passwordProtected={props.passwordProtected}
-          publicHistory={props.publicHistory}
-          collectionAccess={props.collectionAccess}
-          videoMoment={props.videoMoment}
-        />
+        {isGuest ? (
+          <Button
+            variant="default"
+            size="sm"
+            data-testid="artifact-make-copy"
+            disabled={props.isCopying}
+            onClick={props.onCopy}
+          >
+            {props.isCopying ? "Copying…" : "Make a copy"}
+          </Button>
+        ) : (
+          <ShareButton
+            shortId={shortId}
+            myRole={props.myRole}
+            workspaceAccess={props.workspaceAccess}
+            linkRole={props.linkRole}
+            listed={props.listed}
+            passwordProtected={props.passwordProtected}
+            publicHistory={props.publicHistory}
+            collectionAccess={props.collectionAccess}
+            videoMoment={props.videoMoment}
+          />
+        )}
         <StarButton shortId={shortId} favorite={props.favorite} onChange={props.onFavorite} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -144,7 +151,7 @@ export function ArtifactTopBar(props: {
             >
               <Icon name="more" size={16} className="text-muted-foreground" />
               {/* Open proposals waiting on review — the ink unread-dot grammar. */}
-              {openProposals > 0 && (
+              {!isGuest && openProposals > 0 && (
                 <span
                   aria-hidden
                   className="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
@@ -162,9 +169,11 @@ export function ArtifactTopBar(props: {
                 <Icon name="present" size={16} /> Present
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem data-testid="artifact-create-from" onSelect={props.onCreateFrom}>
-              <Icon name="derive" size={16} /> Create from this
-            </DropdownMenuItem>
+            {!isGuest && (
+              <DropdownMenuItem data-testid="artifact-create-from" onSelect={props.onCreateFrom}>
+                <Icon name="derive" size={16} /> Create from this
+              </DropdownMenuItem>
+            )}
             {/* Opt out of the live-cursor layer: peers vanish and yours stops broadcasting.
                 Kept open on toggle so the state reads back; the preference persists per-browser. */}
             <DropdownMenuCheckboxItem
@@ -175,35 +184,43 @@ export function ArtifactTopBar(props: {
             >
               <MousePointer2Off className="size-4" aria-hidden /> Hide live cursors
             </DropdownMenuCheckboxItem>
-            <DropdownMenuSeparator />
+            {!isGuest && <DropdownMenuSeparator />}
 
             {/* Organize — opens as a dialog. */}
-            <DropdownMenuItem
-              data-testid="artifact-collections"
-              onSelect={() => setCollectionsOpen(true)}
-            >
-              <Icon name="collections" size={16} /> Add to collection
-              {props.collections.length > 0 && (
-                <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
-                  {props.collections.length}
-                </span>
-              )}
-            </DropdownMenuItem>
+            {!isGuest && (
+              <DropdownMenuItem
+                data-testid="artifact-collections"
+                onSelect={() => setCollectionsOpen(true)}
+              >
+                <Icon name="collections" size={16} /> Add to collection
+                {props.collections.length > 0 && (
+                  <span className="ml-auto font-mono text-2xs tabular-nums text-muted-foreground">
+                    {props.collections.length}
+                  </span>
+                )}
+              </DropdownMenuItem>
+            )}
 
             {/* Apply the Brandprint — the ask-agent handoff scoped to the whole artifact.
                 The item brings its own leading separator, so both vanish together when it
                 renders nothing (anonymous viewer, pending or failed reads). */}
-            <ReworkMenuItem shortId={shortId} onConnect={() => setReworkConnectOpen(true)} />
+            {!isGuest && (
+              <ReworkMenuItem shortId={shortId} onConnect={() => setReworkConnectOpen(true)} />
+            )}
 
             {/* Activity. */}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem data-testid="artifact-insights" onSelect={props.onInsights}>
-              <Icon name="insights" size={16} /> Insights
-            </DropdownMenuItem>
-            <DropdownMenuItem data-testid="artifact-history" onSelect={props.onHistory}>
-              <Icon name="history" size={16} /> Version history
-            </DropdownMenuItem>
-            {proposalsTotal > 0 && (
+            {(!isGuest || props.publicHistory || props.showEdit) && <DropdownMenuSeparator />}
+            {!isGuest && (
+              <DropdownMenuItem data-testid="artifact-insights" onSelect={props.onInsights}>
+                <Icon name="insights" size={16} /> Insights
+              </DropdownMenuItem>
+            )}
+            {(!isGuest || props.publicHistory) && (
+              <DropdownMenuItem data-testid="artifact-history" onSelect={props.onHistory}>
+                <Icon name="history" size={16} /> Version history
+              </DropdownMenuItem>
+            )}
+            {!isGuest && proposalsTotal > 0 && (
               <DropdownMenuItem data-testid="artifact-review" onSelect={props.onReview}>
                 <Icon name="review" size={16} />
                 {openProposals > 0 ? `Review proposals (${openProposals})` : "Proposals"}
@@ -211,31 +228,33 @@ export function ArtifactTopBar(props: {
             )}
 
             {/* Manage. */}
-            {(props.showEdit || props.canLock || props.canArchive) && <DropdownMenuSeparator />}
+            {!isGuest && (props.showEdit || props.canLock || props.canArchive) && (
+              <DropdownMenuSeparator />
+            )}
             {props.showEdit && (
               <DropdownMenuItem data-testid="artifact-edit" onSelect={props.onStartEdit}>
                 <Icon name="edit" size={16} />
                 {props.editLabel}
               </DropdownMenuItem>
             )}
-            {props.canLock && (
+            {!isGuest && props.canLock && (
               <DropdownMenuItem data-testid="artifact-lock" onSelect={props.onLockToggle}>
                 <Icon name={props.locked ? "unlock" : "lock"} size={16} />
                 {props.locked ? "Unlock changes" : "Lock changes"}
               </DropdownMenuItem>
             )}
-            {props.canArchive && (
+            {!isGuest && props.canArchive && (
               <DropdownMenuItem data-testid="artifact-archive" onSelect={props.onArchive}>
                 <Icon name={props.archived ? "undo" : "archive"} size={16} />
                 {props.archived ? "Restore to library" : "Archive"}
               </DropdownMenuItem>
             )}
-            {props.canMove && (
+            {!isGuest && props.canMove && (
               <DropdownMenuItem data-testid="artifact-move" onSelect={() => setMoveOpen(true)}>
                 <Icon name="move" size={16} /> Move to workspace…
               </DropdownMenuItem>
             )}
-            {props.canMove && props.automateBeta && (
+            {!isGuest && props.canMove && props.automateBeta && (
               <DropdownMenuItem
                 data-testid="artifact-automate"
                 onSelect={() => setAutomateOpen(true)}
@@ -253,7 +272,7 @@ export function ArtifactTopBar(props: {
 
       {/* Comments — the discussion panel toggle, terminal (hugs the panel it opens);
           held apart by spacing. On phones the bottom-right FAB owns this. */}
-      {!props.isMobile && (
+      {!props.isMobile && props.commentsAvailable && (
         <Button
           variant="ghost"
           size="sm"
@@ -273,23 +292,29 @@ export function ArtifactTopBar(props: {
       )}
 
       {/* Portaled dialogs — invisible until opened from the ⋯ menu. */}
-      <CollectionsDialog
-        shortId={shortId}
-        artifactTitle={props.artifactTitle}
-        inCollections={props.collections}
-        onChange={props.onCollections}
-        open={collectionsOpen}
-        onOpenChange={setCollectionsOpen}
-      />
+      {!isGuest && (
+        <CollectionsDialog
+          shortId={shortId}
+          artifactTitle={props.artifactTitle}
+          inCollections={props.collections}
+          onChange={props.onCollections}
+          open={collectionsOpen}
+          onOpenChange={setCollectionsOpen}
+        />
+      )}
       <ReportDialog shortId={shortId} open={reportOpen} onOpenChange={setReportOpen} />
-      <MoveToWorkspaceDialog
-        shortId={shortId}
-        currentOrgId={props.orgId}
-        open={moveOpen}
-        onOpenChange={setMoveOpen}
-      />
-      <ReworkConnectDialog open={reworkConnectOpen} onOpenChange={setReworkConnectOpen} />
-      <AutomateDialog shortId={shortId} open={automateOpen} onOpenChange={setAutomateOpen} />
+      {!isGuest && (
+        <>
+          <MoveToWorkspaceDialog
+            shortId={shortId}
+            currentOrgId={props.orgId}
+            open={moveOpen}
+            onOpenChange={setMoveOpen}
+          />
+          <ReworkConnectDialog open={reworkConnectOpen} onOpenChange={setReworkConnectOpen} />
+          <AutomateDialog shortId={shortId} open={automateOpen} onOpenChange={setAutomateOpen} />
+        </>
+      )}
     </>
   )
 }

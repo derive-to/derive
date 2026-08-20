@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   conventionsBlock,
+  fetchSkill,
   materializeNotes,
   materializeSkills,
   mergeSkillLayers,
@@ -122,6 +123,41 @@ describe("materializeSkills", () => {
     )
     expect(cat[0]).toMatchObject({ id: "missing", ok: false })
     expect(cat[1]).toMatchObject({ id: "ok1", dir: "good", ok: true })
+  })
+})
+
+describe("fetchSkill version resolution", () => {
+  const skillFiles = { entry: "SKILL.md", files: { "SKILL.md": "---\nname: vprobe\n---\n" } }
+
+  it("a pinned entry fetches its exact version; an unpinned one asks for approved", async () => {
+    const api = mockApi({ sk: { 3: skillFiles, approved: skillFiles } })
+    await fetchSkill(api, { id: "sk", version: 3 })
+    const unpinned = await fetchSkill(api, { id: "sk", version: null })
+    expect(unpinned.name).toBe("vprobe")
+  })
+
+  it("falls back to current only for the old-server 400, never on other failures", async () => {
+    // An old self-host 400s v=approved; the skill must degrade to current, not drop.
+    const oldServer = {
+      ...mockApi({ sk: { null: skillFiles } }),
+      outline: async (id, v) => {
+        if (v === "approved")
+          throw new Error(`/v1/artifacts/${id}/content?outline=1&v=approved → 400: bad version`)
+        return mockApi({ sk: { null: skillFiles } }).outline(id, v)
+      },
+    }
+    expect((await fetchSkill(oldServer, { id: "sk", version: null })).name).toBe("vprobe")
+
+    // A transient failure must FAIL the skill, not silently serve the unapproved draft.
+    const flaky = {
+      ...mockApi({ sk: { null: skillFiles } }),
+      outline: async (id, v) => {
+        if (v === "approved")
+          throw new Error(`/v1/artifacts/${id}/content?outline=1&v=approved → 503`)
+        return mockApi({ sk: { null: skillFiles } }).outline(id, v)
+      },
+    }
+    await expect(fetchSkill(flaky, { id: "sk", version: null })).rejects.toThrow("503")
   })
 })
 

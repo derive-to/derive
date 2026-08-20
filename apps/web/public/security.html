@@ -1,65 +1,156 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
 <title>Security and abuse | Derive</title>
-<meta name="description" content="Report abusive content hosted on Derive or tell us about a security vulnerability.">
+<meta name="description" content="How to report abusive content hosted on Derive, and how to report a security vulnerability.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Security and abuse | Derive">
-<meta property="og:description" content="Report abusive content hosted on Derive or tell us about a security vulnerability.">
+<meta property="og:description" content="How to report abusive content hosted on Derive, and how to report a security vulnerability.">
 <meta property="og:url" content="https://derive.to/security">
-<meta property="og:image" content="https://derive.to/site/og-artifacts.png">
+<meta property="og:image" content="https://derive.to/site/og-approval.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/security">
+<!-- See site/index.html for why the structured data is here. The contact points
+     mirror /.well-known/security.txt — change them together. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "Security and abuse | Derive",
+  "url": "https://derive.to/security",
+  "description": "How to report abusive content hosted on Derive, and how to report a security vulnerability.",
+  "isPartOf": { "@id": "https://derive.to/#website" },
+  "publisher": {
+    "@id": "https://derive.to/#organization",
+    "@type": "Organization",
+    "name": "Derive",
+    "url": "https://derive.to/",
+    "contactPoint": [
+      {
+        "@type": "ContactPoint",
+        "contactType": "abuse",
+        "email": "abuse@derive.to",
+        "url": "https://derive.to/security"
+      },
+      {
+        "@type": "ContactPoint",
+        "contactType": "security",
+        "email": "security@derive.to",
+        "url": "https://derive.to/security"
+      }
+    ]
+  }
+}
+</script>
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
-<script src="/site/site.js"></script>
-<link rel="stylesheet" href="/site/site.css">
-<script type="application/ld+json">
-{"@context":"https://schema.org","@type":"WebPage","name":"Security and abuse | Derive","url":"https://derive.to/security","description":"Report abusive content hosted on Derive or tell us about a security vulnerability.","isPartOf":{"@id":"https://derive.to/#website"},"publisher":{"@id":"https://derive.to/#organization","@type":"Organization","name":"Derive","url":"https://derive.to/","contactPoint":[{"@type":"ContactPoint","contactType":"abuse","email":"abuse@derive.to","url":"https://derive.to/security"},{"@type":"ContactPoint","contactType":"security","email":"security@derive.to","url":"https://derive.to/security"}]}}
+<script>
+/* theme boot: set the class before first paint (the choice lives in localStorage) */
+(function(){
+  var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
+  if (m !== 'light' && m !== 'system') m = 'dark';
+  var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  var c = document.documentElement.classList;
+  c.toggle('light', light); c.toggle('dark', !light);
+})();
 </script>
+<link rel="stylesheet" href="/site/shell.css">
+<style>
+@font-face {
+  font-family: "Geist";
+  src: url("/site/geist.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/site/geist-mono.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+:root {
+--maxw: var(--maxw-prose);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--font-sans);font-size:16px;line-height:1.6;letter-spacing:-0.011em;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+}
+::selection{background:rgba(243,244,246,.18)}
+a{color:inherit}
+main{padding:40px 0 120px}
+h1{font-weight:500;letter-spacing:-0.022em;font-size:32px;margin:10px 0 14px;text-wrap:balance}
+h2{font-weight:500;letter-spacing:-0.022em;font-size:19px;margin:0 0 8px}
+p{text-wrap:pretty;margin:0 0 12px;color:var(--muted-fg)}
+p strong,section a{color:var(--fg)}
+.lede{font-size:17px;margin-bottom:36px}
+section{
+  border:1px solid var(--border-soft);border-radius:8px;background:var(--card);
+  padding:22px 24px;margin-bottom:16px;
+}
+.addr{
+  display:inline-block;font-family:var(--font-mono);font-size:14px;color:var(--fg);
+  background:var(--secondary);border:1px solid var(--border);border-radius:var(--radius);
+  padding:3px 9px;margin:2px 0 10px;text-decoration:none;
+}
+.addr:hover{background:var(--accent)}
+footer{border-top:1px solid var(--border-soft);padding:22px 0;color:var(--muted-fg);font-size:14px}
+footer a{text-decoration:none}
+footer a:hover{color:var(--fg)}
+</style>
+<script src="/site/shell.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to content</a>
-<nav class="site-nav" data-site-nav aria-label="Main navigation">
-  <div class="nav-inner site-wrap">
-    <a class="wordmark" href="/" aria-label="Homepage"><img class="logo-light" src="/brand/wordmark-dark.svg" alt=""><img class="logo-dark" src="/brand/wordmark-light.svg" alt=""></a>
-    <div class="desktop-nav"><a href="https://docs.derive.to/">Docs</a><a href="/examples">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub</a></div>
-    <div class="nav-actions">
-      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change color theme">
-        <svg class="theme-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
-        <svg class="theme-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5a8.5 8.5 0 1 0 11.7 11.7Z"/></svg>
-        <svg class="theme-system" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+
+<nav class="site-nav" aria-label="Primary">
+  <div class="wrap site-nav__inner">
+    <a class="site-nav__brand" href="/">
+      <img class="wm-dark" src="/brand/wordmark-light.svg" alt="Derive">
+      <img class="wm-light" src="/brand/wordmark-dark.svg" alt="Derive">
+    </a>
+    <div class="site-nav__links">
+      <a href="https://docs.derive.to/">Docs</a>
+      <a href="/examples">Examples</a>
+      <a href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <button class="site-nav__theme" type="button" data-theme-toggle aria-label="Theme">
+        <svg class="i-sun" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M7 .8v1.7M7 11.5v1.7M.8 7h1.7M11.5 7h1.7M2.6 2.6l1.2 1.2M10.2 10.2l1.2 1.2M11.4 2.6l-1.2 1.2M3.8 10.2l-1.2 1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="nav-signin" href="/login?src=nav_signin">Sign in</a>
-      <details class="mobile-nav"><summary aria-label="Open navigation menu"><svg class="menu-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><svg class="menu-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></summary><div class="mobile-nav-panel"><a href="https://docs.derive.to/">Docs <span aria-hidden="true">↗</span></a><a href="/examples">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub <span aria-hidden="true">↗</span></a><a class="mobile-signin" href="/login?src=nav_signin">Sign in <span aria-hidden="true">→</span></a></div></details>
+      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
+<main id="main-content" tabindex="-1" class="wrap">
+  <span class="eyebrow">Security &amp; abuse</span>
+  <h1>Report abuse or a vulnerability</h1>
+  <p class="lede">Derive hosts pages and documents published by its users, including on subdomains of
+  <strong>derive.page</strong>, our dedicated user-content domain. If something hosted there, or anywhere
+  on Derive, is being used for phishing, malware, impersonation, or other abuse, we want to know.</p>
 
-<main id="main-content" tabindex="-1">
-  <header class="subpage-hero site-wrap">
-    <p class="eyebrow">Security and abuse</p>
-    <h1>Report a problem</h1>
-    <p class="lede">Derive hosts pages and documents published by its users, including pages on <strong>derive.page</strong>. Tell us if you find phishing, malware, impersonation, another form of abuse, or a vulnerability in Derive itself.</p>
-  </header>
+  <section>
+    <h2>Report abusive content</h2>
+    <a class="addr" href="mailto:abuse@derive.to">abuse@derive.to</a>
+    <p>Send the full URL of the page and a short description of the problem. Reports are read by a human;
+    confirmed phishing and malware are removed on an expedited basis.</p>
+  </section>
 
-  <section class="content-section site-wrap" aria-label="Contact options">
-    <div class="contact-list">
-      <article class="contact-item"><h2>Abusive content</h2><a class="contact-address" href="mailto:abuse@derive.to">abuse@derive.to</a><p>Send the full URL and a short description of the problem. A person reads every report. We remove confirmed phishing and malware as quickly as possible.</p></article>
-      <article class="contact-item"><h2>Security vulnerabilities</h2><a class="contact-address" href="mailto:security@derive.to">security@derive.to</a><p>Use this address for vulnerabilities in the Derive app, API, or user-content hosting. Include enough detail for us to reproduce the problem, and give us a reasonable window to fix it before public disclosure. The server is <a href="https://github.com/derive-to/derive"><strong>source available</strong></a>, so code issues are also welcome on GitHub.</p></article>
-    </div>
+  <section>
+    <h2>Report a security vulnerability</h2>
+    <a class="addr" href="mailto:security@derive.to">security@derive.to</a>
+    <p>For vulnerabilities in Derive itself (the app, the API, or the hosting of user content). Please give
+    us a reasonable window to remediate before public disclosure. The server is
+    <a href="https://github.com/derive-to/derive">source available</a>; issues in the code are also welcome there.</p>
   </section>
 </main>
-
-<footer class="site-footer">
-  <div class="footer-inner site-wrap">
-    <div class="footer-intro"><div class="footer-brand"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/><path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Derive</div><p class="footer-note">A durable workspace for agent-made work.</p></div>
-    <dl class="footer-group"><dt>Product</dt><dd><a href="https://docs.derive.to/">Docs</a></dd><dd><a href="/examples">Examples</a></dd><dd><a href="/pricing">Pricing</a></dd></dl>
-    <dl class="footer-group"><dt>Project</dt><dd><a href="https://github.com/derive-to/derive">GitHub</a></dd><dd><a href="https://docs.derive.to/reference/licensing/">Licensing</a></dd></dl>
-    <dl class="footer-group"><dt>Company</dt><dd><a href="/privacy">Privacy</a></dd><dd><a href="/security">Security</a></dd><dd><a href="/login?src=nav_signin">Sign in</a></dd></dl>
+<footer>
+  <div class="wrap">
+    <a href="/">Home</a> · <a href="/pricing">Pricing</a> · <a href="https://github.com/derive-to/derive">GitHub</a>
   </div>
 </footer>
 </body>

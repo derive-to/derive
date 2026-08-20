@@ -1,79 +1,253 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark">
 <title>Privacy | Derive</title>
-<meta name="description" content="What Derive collects, why we collect it, who processes it, how long we keep it, and how to delete it.">
+<meta name="description" content="How Derive collects, stores, and protects your data, in plain language: what we collect, what we never do, who processes it, and how to delete it.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Privacy | Derive">
-<meta property="og:description" content="How Derive handles account data, published content, comments, and usage data.">
+<meta property="og:description" content="How Derive collects, stores, and protects your data, in plain language.">
 <meta property="og:url" content="https://derive.to/privacy">
-<meta property="og:image" content="https://derive.to/site/og-artifacts.png">
+<meta property="og:image" content="https://derive.to/site/og-approval.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/privacy">
+<!-- See index.html for why the structured data is here. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "name": "Privacy | Derive",
+  "url": "https://derive.to/privacy",
+  "description": "How Derive collects, stores, and protects your data, in plain language.",
+  "isPartOf": { "@id": "https://derive.to/#website" },
+  "publisher": { "@id": "https://derive.to/#organization" }
+}
+</script>
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
-<script src="/site/site.js"></script>
-<link rel="stylesheet" href="/site/site.css">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Privacy | Derive","url":"https://derive.to/privacy","description":"How Derive handles account data, published content, comments, and usage data.","isPartOf":{"@id":"https://derive.to/#website"},"publisher":{"@id":"https://derive.to/#organization"}}</script>
+<script>
+/* theme boot: set the class before first paint (the choice lives in localStorage) */
+(function(){
+  var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
+  if (m !== 'light' && m !== 'system') m = 'dark';
+  var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  var c = document.documentElement.classList;
+  c.toggle('light', light); c.toggle('dark', !light);
+})();
+</script>
+<link rel="stylesheet" href="/site/shell.css">
+<style>
+@font-face {
+  font-family: "Geist";
+  src: url("/site/geist.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/site/geist-mono.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+:root {
+--maxw: var(--maxw-prose);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--font-sans);font-size:16px;line-height:1.6;letter-spacing:-0.011em;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+}
+::selection{background:rgba(243,244,246,.18)}
+a{color:inherit;text-decoration:none;cursor:default}
+button{cursor:default;font:inherit}
+body::after{
+  content:"";position:fixed;inset:0;z-index:200;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:screen;opacity:.05;
+}
+h1,h2,h3{font-weight:500;letter-spacing:-0.022em;text-wrap:balance;margin:0}
+p{text-wrap:pretty;margin:0}
+nav.scrolled{border-bottom-color:var(--border-soft)}
+
+header.head.wrap{padding:150px 24px 0;text-align:center}
+.head h1{font-size:clamp(32px,5vw,52px);line-height:1.1;margin:18px auto 0;max-width:20ch}
+.head .lede{margin:22px auto 0;max-width:56ch;font-size:16px;color:var(--muted-fg)}
+.head .lede strong{color:var(--fg);font-weight:500}
+.note{
+  margin:30px auto 0;display:inline-flex;align-items:baseline;gap:10px;
+  border:1px solid var(--border);border-radius:8px;padding:12px 18px;background:var(--card);
+  font-size:14px;color:var(--muted-fg);max-width:62ch;text-align:left;
+}
+.note .k{font-family:var(--font-mono);font-size:10px;letter-spacing:.06em;color:var(--warning);white-space:nowrap;position:relative;top:-1px}
+.note strong{color:var(--fg);font-weight:500}
+
+section.wrap{padding:120px 24px 0}
+.section-head{max-width:640px}
+.section-head h2{font-size:clamp(26px,3.6vw,36px);line-height:1.15;margin-top:14px}
+.principles{margin-top:48px;display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--border-soft);border:1px solid var(--border-soft);border-radius:12px;overflow:hidden}
+@media(max-width:720px){.principles{grid-template-columns:1fr}}
+.principle{background:var(--bg);padding:28px 30px}
+.principle h3{font-size:16px}
+.principle p{margin-top:10px;font-size:14px;color:var(--muted-fg);line-height:1.65}
+
+.faq{margin-top:48px;border-top:1px solid var(--border-soft)}
+.faq details{border-bottom:1px solid var(--border-soft)}
+.faq summary{
+  list-style:none;display:flex;align-items:center;justify-content:space-between;gap:20px;
+  padding:22px 4px;font-size:16px;font-weight:500;
+}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font-family:var(--font-mono);color:var(--muted-fg);font-size:16px}
+.faq details[open] summary::after{content:"–"}
+.faq .a{padding:0 4px 24px;font-size:15px;color:var(--muted-fg);max-width:64ch;line-height:1.7}
+.faq .a strong{color:var(--fg);font-weight:500}
+
+section.wrap.final{padding:130px 24px 0;text-align:center}
+.final h2{font-size:clamp(28px,4vw,40px)}
+.final .body{margin:16px auto 0;max-width:50ch;font-size:15px;color:var(--muted-fg)}
+
+footer{margin-top:130px;border-top:1px solid var(--border-soft)}
+.foot-inner{max-width:var(--maxw);margin:0 auto;padding:34px 24px 44px;display:flex;align-items:center;gap:16px 28px;flex-wrap:wrap}
+.foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
+.foot-links{display:flex;gap:20px;font-size:13px;color:var(--muted-fg)}
+.foot-links a:hover{color:var(--fg)}
+.foot-inner .license{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.02em}
+@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
+@media(max-width:640px){
+  header.head.wrap{padding-top:124px}
+  section.wrap{padding-top:92px}
+  section.wrap.final{padding-top:100px}
+  .principle{padding:22px 20px}
+  footer{margin-top:96px}
+}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+</style>
+<script src="/site/shell.js" defer></script>
 </head>
 <body>
+
 <a class="skip-link" href="#main-content">Skip to content</a>
-<nav class="site-nav" data-site-nav aria-label="Main navigation">
-  <div class="nav-inner site-wrap">
-    <a class="wordmark" href="/" aria-label="Homepage"><img class="logo-light" src="/brand/wordmark-dark.svg" alt=""><img class="logo-dark" src="/brand/wordmark-light.svg" alt=""></a>
-    <div class="desktop-nav"><a href="https://docs.derive.to/">Docs</a><a href="/examples">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub</a></div>
-    <div class="nav-actions">
-      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change color theme">
-        <svg class="theme-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
-        <svg class="theme-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5a8.5 8.5 0 1 0 11.7 11.7Z"/></svg>
-        <svg class="theme-system" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+
+<nav class="site-nav" aria-label="Primary">
+  <div class="wrap site-nav__inner">
+    <a class="site-nav__brand" href="/">
+      <img class="wm-dark" src="/brand/wordmark-light.svg" alt="Derive">
+      <img class="wm-light" src="/brand/wordmark-dark.svg" alt="Derive">
+    </a>
+    <div class="site-nav__links">
+      <a href="https://docs.derive.to/">Docs</a>
+      <a href="/examples">Examples</a>
+      <a href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <button class="site-nav__theme" type="button" data-theme-toggle aria-label="Theme">
+        <svg class="i-sun" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M7 .8v1.7M7 11.5v1.7M.8 7h1.7M11.5 7h1.7M2.6 2.6l1.2 1.2M10.2 10.2l1.2 1.2M11.4 2.6l-1.2 1.2M3.8 10.2l-1.2 1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="nav-signin" href="/login?src=nav_signin">Sign in</a>
-      <details class="mobile-nav"><summary aria-label="Open navigation menu"><svg class="menu-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><svg class="menu-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></summary><div class="mobile-nav-panel"><a href="https://docs.derive.to/">Docs <span aria-hidden="true">↗</span></a><a href="/examples">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub <span aria-hidden="true">↗</span></a><a class="mobile-signin" href="/login?src=nav_signin">Sign in <span aria-hidden="true">→</span></a></div></details>
+      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
 
 <main id="main-content" tabindex="-1">
-  <header class="subpage-hero site-wrap">
-    <p class="eyebrow">Privacy</p>
-    <h1>How Derive handles your data</h1>
-    <p class="lede">We store the account details, published content, comments, and limited usage data needed to run Derive. We do not sell your data or use ad trackers.</p>
-    <div class="notice"><strong>Effective August 10, 2026.</strong> This page is a plain-language account of how the hosted service works. Email hello@derive.to if you need more detail.</div>
-  </header>
 
-  <section class="content-section site-wrap" aria-labelledby="privacy-data">
-    <div class="content-heading"><p class="eyebrow">Data</p><h2 id="privacy-data">What we collect and why</h2></div>
-    <dl class="principle-list">
-      <div><dt>Account details</dt><dd>Your email, name, and handle. We use them to sign you in and show who published or commented.</dd></div>
-      <div><dt>Workspace content</dt><dd>The artifacts you publish, their version history, and the comments people leave on them.</dd></div>
-      <div><dt>Limited usage data</dt><dd>First-party view analytics for published work, plus a broad signup source carried in the signup link. We do not use attribution cookies or browser storage.</dd></div>
-      <div><dt>No ad tracking or data sales</dt><dd>We do not use ad trackers or third-party analytics scripts, and we do not sell your data.</dd></div>
-    </dl>
-  </section>
+<header class="head wrap">
+  <div class="eyebrow">Privacy</div>
+  <h1>Your data, in simple terms.</h1>
+  <p class="lede">Derive stores what it takes to run your workspace: an account, the content you publish, and the bare usage signals that keep the product honest with you. Nothing more, and nothing sold. <strong>Effective August 10, 2026.</strong></p>
+  <div class="note">
+    <span class="k">NOTE</span>
+    <span>This page is a <strong>plain-language summary, not legal advice</strong>. It describes how Derive actually handles data. Full transparency, no surprises here.</span>
+  </div>
+</header>
 
-  <section class="content-section site-wrap" aria-labelledby="privacy-details">
-    <div class="content-heading"><p class="eyebrow">Details</p><h2 id="privacy-details">Common questions</h2></div>
-    <div class="faq-list">
-      <details><summary>Who processes data for Derive?</summary><p class="answer"><strong>Cloudflare</strong> hosts the app and stores artifact files. <strong>Neon</strong> stores workspace records, comments, and the search index. <strong>Stripe</strong> processes billing events. <strong>Resend</strong> sends password resets and notifications. <strong>Slack and GitHub</strong> receive workspace data only after an owner connects the integration. A third-party model provider receives content only when an optional feature such as chat or automations uses it. Search indexing runs within Cloudflare's infrastructure.</p></details>
-      <details><summary>What happens when I delete my account or workspace?</summary><p class="answer">Deleting your account removes your sign-in data, memberships, and personal workspace record. It also removes your name from work you authored in shared workspaces. Artifacts are deleted separately, along with their versions and search entries. Delete or move a workspace's artifacts before deleting the workspace. A URL you shared stays live until you or a remaining owner deletes its artifact.</p></details>
-      <details><summary>How long do you keep data?</summary><p class="answer">Artifacts, versions, and comments stay until you delete them. View analytics use a rolling <strong>365-day</strong> window and are pruned daily. Unclaimed drafts are deleted after <strong>72 hours</strong>. Password reset links last <strong>one hour</strong>. Access tokens last <strong>24 hours</strong> and renew until an account has been inactive for a year. Unfinished agent connections are cleared after <strong>30 days</strong>. On a self-hosted instance, you control these retention settings and can turn analytics off.</p></details>
-      <details><summary>Can I keep data off the hosted service?</summary><p class="answer">Yes. Derive runs as one container with SQLite and local disk, or with Postgres and S3 at scale. When you self-host, the hosted service providers listed above are not in the request path.</p></details>
-      <details><summary>How do I ask a privacy question?</summary><p class="answer">Email <strong>hello@derive.to</strong> and we will help.</p></details>
+<section class="wrap">
+  <div class="section-head">
+    <div class="eyebrow">Data</div>
+    <h2>What we collect.</h2>
+  </div>
+  <div class="principles">
+    <div class="principle">
+      <h3>Account</h3>
+      <p>Your email, name, and the handle you choose. That's what it takes to sign you in and show your name on what you publish.</p>
     </div>
-  </section>
+    <div class="principle">
+      <h3>Content</h3>
+      <p>The artifacts you publish, their full version history, and the comments your team leaves on them. This is the product; it's what a workspace is made of.</p>
+    </div>
+    <div class="principle">
+      <h3>Usage</h3>
+      <p>First-party view analytics on what you publish (who's reading and when) and one coarse account-creation source carried by the signup link. We do not use an attribution cookie or browser storage.</p>
+    </div>
+    <div class="principle">
+      <h3>What we never do</h3>
+      <p>No ad trackers. No third-party analytics scripts. We never sell your data, to anyone, for any reason.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <div class="section-head">
+    <div class="eyebrow">Questions</div>
+    <h2>The details, said plainly.</h2>
+  </div>
+  <div class="faq">
+    <details>
+      <summary>Who processes data on our behalf?</summary>
+      <p class="a">A short, named list, nothing hidden behind "and our partners." <strong>Cloudflare</strong> hosts the app and serves its static pages. <strong>Neon</strong> runs the database behind your workspace: artifact records, comments, and the search index; artifact files themselves live in Cloudflare storage. <strong>Stripe</strong> processes billing events. <strong>Resend</strong> delivers transactional email like password resets and notifications. <strong>Slack and GitHub</strong> only see anything once a workspace owner explicitly connects that integration, and only for that workspace. No third-party model provider sees your content unless an opt-in feature like chat or an automation is turned on; search indexing runs on models inside Cloudflare's own infrastructure, the same host that already stores your content.</p>
+    </details>
+    <details>
+      <summary>What happens when I delete my account or a workspace?</summary>
+      <p class="a">Deleting your account removes your sign-in data, your memberships, and your personal workspace container, and it permanently disconnects your name from everything you authored. It does not delete the artifacts themselves: that's a separate, explicit step. Delete an artifact and its versions and search entries go with it; do that first, then delete your account. A workspace works the same way: it has to be empty before it can be deleted, so remove or move its artifacts before you delete the workspace itself. One honest exception either way: a URL you already published and shared stays live at that link until you (or a remaining owner) take it down yourself, the same way a link you emailed someone doesn't un-send when you delete the file on your end. We won't pretend a link that's already out in the world quietly disappears.</p>
+    </details>
+    <details>
+      <summary>How long do you keep things?</summary>
+      <p class="a">Most of it has no clock on it, and that is deliberate: your artifacts, their version history, and the comments on them stay until you delete them. A permanent URL that quietly expired would not be permanent. The things that do have a clock, all of them enforced by a job rather than a promise: view analytics are a rolling <strong>365-day</strong> window, pruned daily, so old traffic ages out instead of piling up forever. A page published without an account is a draft, and it is deleted <strong>72 hours</strong> after you create it unless you claim it into a workspace. A password reset link lasts <strong>one hour</strong>. A signed-in session's access token lasts <strong>24 hours</strong> and renews quietly until you have been away for a year. An agent app that begins connecting but never finishes the consent screen is cleared after <strong>30 days</strong>. Self-hosting changes all of this: every window above is yours to set, and the analytics one can be switched off entirely.</p>
+    </details>
+    <details>
+      <summary>Can I avoid all of this by self-hosting?</summary>
+      <p class="a">Yes. Derive is fair source and runs as one container: SQLite and local disk by default, Postgres and S3 at scale, entirely on your own infrastructure. Run it yourself, and none of the infrastructure listed above ever sees your data, because none of it is in the request path.</p>
+    </details>
+    <details>
+      <summary>How do I reach you about this?</summary>
+      <p class="a">Email <strong>hello@derive.to</strong>. We read everything ourselves, and we'd rather explain something than have you guess.</p>
+    </details>
+  </div>
+</section>
+
+<section class="final wrap">
+  <h2>Nothing here should surprise you.</h2>
+  <p class="body">That's the point of publishing this before you have to go looking for it. Questions go to hello@derive.to.</p>
+</section>
+
 </main>
 
-<footer class="site-footer">
-  <div class="footer-inner site-wrap">
-    <div class="footer-intro"><div class="footer-brand"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/><path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Derive</div><p class="footer-note">A durable workspace for agent-made work.</p></div>
-    <dl class="footer-group"><dt>Product</dt><dd><a href="https://docs.derive.to/">Docs</a></dd><dd><a href="/examples">Examples</a></dd><dd><a href="/pricing">Pricing</a></dd></dl>
-    <dl class="footer-group"><dt>Project</dt><dd><a href="https://github.com/derive-to/derive">GitHub</a></dd><dd><a href="https://docs.derive.to/reference/licensing/">Licensing</a></dd></dl>
-    <dl class="footer-group"><dt>Company</dt><dd><a href="/privacy">Privacy</a></dd><dd><a href="/security">Security</a></dd><dd><a href="/login?src=nav_signin">Sign in</a></dd></dl>
+<footer>
+  <div class="foot-inner">
+    <span class="fm">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Derive
+    </span>
+    <div class="foot-links">
+      <a href="/">Home</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/security">Security</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <a href="/login">Log in</a>
+    </div>
+    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0</span>
   </div>
 </footer>
+
+<script>
+const nav = document.querySelector('.site-nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
+</script>
 </body>
 </html>

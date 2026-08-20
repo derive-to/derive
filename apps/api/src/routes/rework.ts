@@ -7,6 +7,7 @@ import {
   newId,
   profileState,
   reworkInstruction,
+  saveAsSkillInstruction,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -18,14 +19,14 @@ import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
 
-/** The canned agent-request endpoints — Rework, generate-profile, and the fill pair
- *  (the GET returns fill's instruction for copy-paste; the POST delivers it). Thin
- *  wrappers over the existing @mention-to-inbox path: each composes its instruction
- *  server-side (the single source of truth; the client never carries a prompt) and
- *  posts it as a whole-document comment @mentioning the chosen agent, which drops
- *  into that agent's MCP pull inbox. The agent does the work and publishes per its
- *  grant: a publish-capable agent posts directly, a lower grant files a proposal —
- *  no special case here. */
+/** The canned agent-request endpoints — Rework, generate-profile, and the fill and
+ *  save-as-skill pairs (each pair: a GET returning the instruction for copy-paste, a
+ *  POST delivering it). Thin wrappers over the existing @mention-to-inbox path: each
+ *  composes its instruction server-side (the single source of truth; the client never
+ *  carries a prompt) and posts it as a whole-document comment @mentioning the chosen
+ *  agent, which drops into that agent's MCP pull inbox. The agent does the work and
+ *  publishes per its grant: a publish-capable agent posts directly, a lower grant
+ *  files a proposal — no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
   const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -62,8 +63,8 @@ export const reworkRoutes = (ctx: AppContext) => {
   // signed-in requester (the request is authored and attributed — no anonymous
   // firing), the comment rate limit, and the optional body (readJson tolerates a
   // missing one, so a bare POST means "use the sole registered agent"). `note` is
-  // consumed by fill only; Rework and generate-profile ignore it. Returns a
-  // ready-to-bail Response on any failed gate.
+  // consumed by fill and save-as-skill, `threadId` by save-as-skill only; the other
+  // endpoints ignore them. Returns a ready-to-bail Response on any failed gate.
   const requestContext = async (c: Context, shortId: string) => {
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || artifact.current_version === 0) return fail(c, 404, "not found")
@@ -74,10 +75,29 @@ export const reworkRoutes = (ctx: AppContext) => {
     if (rl) return rl
     const body = await readJson(
       c,
-      z.object({ agentId: z.string().optional(), note: z.string().max(500).optional() }),
+      z.object({
+        agentId: z.string().optional(),
+        note: z.string().max(500).optional(),
+        threadId: z.string().optional(),
+      }),
     )
     if (body instanceof Response) return body
-    return { artifact, acting, agentId: body.agentId, note: body.note }
+    return { artifact, acting, agentId: body.agentId, note: body.note, threadId: body.threadId }
+  }
+
+  // A thread reference in a capture request must name a thread ON this artifact —
+  // a stale or foreign id would send the agent chasing a conversation that isn't
+  // there. A thread's id is its root comment's id.
+  const requireThread = async (
+    c: Context,
+    artifact: ArtifactRecord,
+    threadId: string | undefined,
+  ): Promise<Response | undefined> => {
+    if (!threadId) return undefined
+    const root = await meta.getComment(threadId)
+    if (!root || root.artifact_id !== artifact.id)
+      return fail(c, 404, "no such comment thread on this artifact")
+    return undefined
   }
 
   // A fill request only makes sense on a derived copy, against a source that still
@@ -267,6 +287,114 @@ export const reworkRoutes = (ctx: AppContext) => {
         acting,
         agent,
         buildProfileInstruction(artifact.short_id),
+      )
+      if (requestId instanceof Response) return bail(requestId)
+      return c.json({ requestId }, 201)
+    },
+  )
+
+  // The copyable capture prompt — save-as-skill for whatever agent the requester
+  // already has open. This is the variant most sessions use: consumption is mostly
+  // local MCP sessions, and those need no registered agent, just the text.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}/save-as-skill",
+      tags: ["Artifacts"],
+      summary: "The capture prompt: turn a review correction into a workspace skill.",
+      request: {
+        params: z.object({ shortId: z.string() }),
+        query: z.object({
+          threadId: z
+            .string()
+            .optional()
+            .describe("The comment thread carrying the correction; omit for the whole page."),
+          note: z
+            .string()
+            .max(500)
+            .optional()
+            .describe("Optional requester intent, appended to the prompt verbatim."),
+        }),
+      },
+      responses: {
+        200: {
+          description: "The prompt. 404 when a threadId names no thread on this artifact.",
+          content: {
+            "application/json": { schema: z.object({ prompt: z.string() }) },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const acting = await actingUser(c)
+      if (!acting) return bail(fail(c, 401, "sign in to capture a skill"))
+      const threadId = c.req.query("threadId")
+      const badThread = await requireThread(c, artifact, threadId)
+      if (badThread) return bail(badThread)
+      return c.json({
+        prompt: saveAsSkillInstruction(artifact.short_id, {
+          threadId,
+          note: c.req.query("note"),
+        }),
+      })
+    },
+  )
+
+  // One-click capture: the same instruction, delivered to a registered agent's inbox.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/save-as-skill",
+      tags: ["Artifacts"],
+      summary: "Ask a registered agent to turn a review correction into a workspace skill.",
+      request: {
+        params: z.object({ shortId: z.string() }),
+        body: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: z.object({
+                agentId: z
+                  .string()
+                  .optional()
+                  .describe("Which agent to ask; omit to use the sole registered agent."),
+                threadId: z
+                  .string()
+                  .optional()
+                  .describe("The comment thread carrying the correction."),
+                note: z
+                  .string()
+                  .max(500)
+                  .optional()
+                  .describe("Optional requester intent, appended to the prompt verbatim."),
+              }),
+            },
+          },
+        },
+      },
+      responses: requestCreated(
+        "The capture request landed in the agent's pull inbox. 404 when a threadId names " +
+          "no thread on this artifact; 409 needsAgent when no agent is registered; 409 " +
+          "alreadyQueued while an earlier request for this artifact still waits.",
+      ),
+    }),
+    async (c) => {
+      const rc = await requestContext(c, c.req.param("shortId"))
+      if (rc instanceof Response) return bail(rc)
+      const { artifact, acting, agentId, note, threadId } = rc
+      const badThread = await requireThread(c, artifact, threadId)
+      if (badThread) return bail(badThread)
+      const agent = pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
+      if (agent instanceof Response) return bail(agent)
+      const requestId = await postRequest(
+        c,
+        artifact,
+        acting,
+        agent,
+        saveAsSkillInstruction(artifact.short_id, { threadId, note }),
       )
       if (requestId instanceof Response) return bail(requestId)
       return c.json({ requestId }, 201)

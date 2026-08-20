@@ -1,6 +1,6 @@
 # Derive
 
-> Keep, share, and improve agent-made pages and documents. Each artifact has a lasting URL, version history, and comments on exact text.
+> Publish AI-built artifacts (HTML pages, Markdown docs, and slide decks) with a permanent URL, version history, and comments anchored to exact text.
 
 ## What it is
 
@@ -70,6 +70,18 @@ Plus password (locks the world link; only meaningful with link_role != none). Th
 
 Prefer the remote OAuth server at `https://derive.to/mcp` (or `<instance>/mcp`).
 The local compatibility server is `npx -y @derive-to/mcp` and shares `derive login`.
+
+Skills: `read("derive://skills")` returns the catalog (core skills plus the connected
+workspace's own team skills); read one with `derive://skills/<name-or-short-id>`.
+Reading a skill artifact by short id returns its SKILL.md body with the bundle's
+files listed. Skill delivery serves the last human-approved version when one exists
+(a proposal or review approval sets it); until a skill is ever approved, it serves
+current. `?v=approved` on the content API resolves the same rule.
+
+Capture: `GET /v1/artifacts/:id/save-as-skill?threadId=...` returns a prompt that turns
+a review correction into a workspace skill (read the thread, dedup against the catalog,
+publish live, link back); POST delivers the same instruction to a registered agent's
+inbox.
 
 Remote tools (ten): find, read, catch_up, comment, stage, publish, organize,
 checkpoint, use, list_workspaces.

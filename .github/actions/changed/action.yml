@@ -1,0 +1,106 @@
+name: Find build-affecting changes
+description: >-
+  Classify the event's changed paths into the build gates that care about them.
+  Extracted from the old single `db` job so the runtime lane and the image lane
+  can each answer the question for themselves. Duplicating a ~0s step beats
+  adding a `needs:` hop, which would cost both lanes a VM boot and a checkout
+  before either could start — the exact serialization this split exists to undo.
+
+  Requires a full-history checkout (`fetch-depth: 0`): the filter compares the
+  event's exact base and head, not a shallow approximation.
+
+outputs:
+  web:
+    description: The web client build or its bundle budget can be affected.
+    value: ${{ steps.filter.outputs.web }}
+  runner:
+    description: The runner image can be affected.
+    value: ${{ steps.filter.outputs.runner }}
+  app_image:
+    description: The self-host image can be affected.
+    value: ${{ steps.filter.outputs.app_image }}
+  docs:
+    description: >-
+      The documentation site can be affected. Answered by
+      scripts/docs-affected.mjs, which reads apps/docs/docs-manifest.mjs — the
+      site's pages come from canonical sources scattered across the repo, not
+      just apps/docs, and that manifest is the only place they are listed.
+    value: ${{ steps.filter.outputs.docs }}
+
+runs:
+  using: composite
+  steps:
+    - id: filter
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BEFORE_SHA: ${{ github.event.before }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        web=false
+        runner=false
+        app_image=false
+        range=
+
+        case "$EVENT_NAME" in
+          pull_request)
+            if [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
+              range="${BASE_SHA}...${HEAD_SHA}"
+            fi
+            ;;
+          push)
+            if [ -n "$BEFORE_SHA" ] && [ -n "${BEFORE_SHA//0/}" ]; then
+              range="${BEFORE_SHA}..${HEAD_SHA}"
+            fi
+            ;;
+        esac
+
+        if [ -z "$range" ]; then
+          web=true
+          runner=true
+          app_image=true
+        else
+          : "${RUNNER_TEMP:?}"
+          changed_paths="$RUNNER_TEMP/derive-changed-paths"
+          git diff --name-only -z "$range" > "$changed_paths"
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              apps/web/* | packages/* | pnpm-lock.yaml | package.json) web=true ;;
+            esac
+            case "$path" in
+              packages/cli/* | pnpm-lock.yaml | \
+                deploy/runner.Dockerfile | deploy/runner.Dockerfile.dockerignore | \
+                deploy/runner-entrypoint.sh)
+                runner=true
+                ;;
+            esac
+            case "$path" in
+              .dockerignore | .github/workflows/ci.yml | \
+                .github/workflows/release-images.yml | QUICKSTART.md | \
+                apps/api/* | apps/web/* | packages/broker/* | packages/core/* | \
+                packages/db/* | packages/storage/* | package.json | pnpm-lock.yaml | \
+                pnpm-workspace.yaml | deploy/Dockerfile* | deploy/compose*.yml | \
+                deploy/selfhost.env.example | scripts/selfhost-smoke-client.mjs | \
+                scripts/test-published-selfhost-bundle.sh | \
+                scripts/test-selfhost-quickstart.sh)
+                app_image=true
+                ;;
+            esac
+          done < "$changed_paths"
+        fi
+
+        # The docs answer comes from scripts/docs-affected.mjs, which reads
+        # apps/docs/docs-manifest.mjs directly. Duplicating that list of sources
+        # here is what made it possible for the two to disagree.
+        if [ -z "$range" ]; then
+          docs=$(node "$GITHUB_ACTION_PATH/../../../scripts/docs-affected.mjs" --all)
+        else
+          docs=$(node "$GITHUB_ACTION_PATH/../../../scripts/docs-affected.mjs" "$changed_paths")
+        fi
+
+        echo "web=$web" >> "$GITHUB_OUTPUT"
+        echo "runner=$runner" >> "$GITHUB_OUTPUT"
+        echo "app_image=$app_image" >> "$GITHUB_OUTPUT"
+        echo "docs=$docs" >> "$GITHUB_OUTPUT"

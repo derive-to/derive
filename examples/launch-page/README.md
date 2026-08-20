@@ -1,21 +1,44 @@
 # Launch page example
 
-This fictional launch page demonstrates keeping a fully styled artifact rather than a
-plain-text approximation. A reader can inspect the actual hierarchy, challenge individual
-claims in context, and return to the same link after the page changes.
+A launch page is a design decision, not a paragraph of text. Flattening it into a summary
+throws away the hierarchy, the emphasis, and the sequence a reader moves through, which is
+most of what there is to review.
+
+This page is kept as the artifact itself: styled, responsive, and readable in light or dark.
+A reviewer can challenge the promise, a specific metric, or the order of the sections,
+because all of those are actually present.
 
 [Open the official live example](https://derive.to/artifacts/example-launch-page-5cmep9l9).
+
+## Publish it
 
 ```bash
 derive publish
 ```
 
-Suggested collaboration prompt:
+## What this example is careful about
 
-> Check whether the promise is specific, whether each metric is clearly labeled as sample
-> data, and whether the primary action is obvious. Leave comments on the exact sentences or
-> controls that need work. If this version is a release gate, request formal review after
-> the claims and presentation agree.
+**Sample numbers are labelled as sample numbers.** The metric cards say so, and the footer
+says why. A launch page that cannot show real figures should admit it rather than let three
+large numerals imply a customer base.
 
-After feedback arrives, ask a compatible agent to read `derive://skills/loop`, call
-`catch_up`, revise `index.html`, and publish a new version addressing the thread IDs.
+**The specification names what is not included.** The last row of the spec table rules
+things out. A page that only lists strengths is not reviewable, because there is nothing in
+it a reader can check and disagree with.
+
+## Suggested prompt
+
+> Read the page as a buyer who has not heard of this product. Is the promise specific enough
+> to be wrong? Is every number clearly sample data? Is the primary action obvious before the
+> first scroll? Comment on the exact sentence or control that needs work rather than
+> summarising, then revise the page and publish the new version.
+
+## Revising it
+
+Design feedback arrives as "the hero is doing too much", not as a diff. Keep the version
+message about the intent so the history stays readable.
+
+```bash
+derive publish --message "Cut the hero to one claim. Three competing statements meant a
+reader finished the fold without knowing what the product settles."
+```

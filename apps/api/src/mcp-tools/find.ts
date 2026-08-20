@@ -152,7 +152,11 @@ export function registerFindTool(tc: ToolContext): void {
           .optional()
           .describe(
             "With `short_id`: the literal text to grep within it (metacharacters are not special). Alone (no short_id): the workspace content search. Omit both to browse.",
-          ),
+          )
+          // The literal-search rule is stated in the tool description and still gets read as
+          // advice. Showing the shape is what lands it: agents send whole questions to a
+          // character-matching search, get nothing back, and report an empty workspace.
+          .meta({ examples: ["pricing", "backfill", "atlas"] }),
         short_id: z
           .string()
           .optional()
@@ -542,7 +546,7 @@ export function registerFindTool(tc: ToolContext): void {
       // askable context. A tag filter resolves to an id set first (mirrors the HTTP ?tag=
       // path); viewerId keeps private rows scoped to the agent's human (mirrors `reach`).
       const ids = tag ? await ctx.meta.artifactIdsByTag(tag.trim().toLowerCase()) : undefined
-      const arts =
+      const rows =
         ids && ids.length === 0
           ? []
           : await ctx.meta.listArtifacts({
@@ -550,9 +554,9 @@ export function registerFindTool(tc: ToolContext): void {
               ids,
               viewerId: actingFor?.id ?? agent.id,
               archived: archived ? "only" : "exclude",
+              // Skill-ness is the denormalized content type; the store filters it.
+              ...(skills ? { contentType: SKILL_CONTENT_TYPE } : {}),
             })
-      // Skill-ness isn't a store-level filter (it's the denormalized content type).
-      const rows = skills ? arts.filter((a) => a.current_content_type === SKILL_CONTENT_TYPE) : arts
       const tagMap = await ctx.meta.tagsForArtifacts(rows.map((a) => a.id))
       const artifactRows = rows.map((a) => ({
         type: "artifact" as const,

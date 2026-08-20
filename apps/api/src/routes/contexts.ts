@@ -1,5 +1,6 @@
 import { refRouter } from "@derive/broker"
 import {
+  approvedOrCurrent,
   type ContextAskerRecord,
   type ContextRecord,
   decodeCursor,
@@ -1094,7 +1095,12 @@ export const contextRoutes = (ctx: AppContext) => {
         members.push({
           short_id: a.short_id,
           title: a.title,
-          version: a.current_version,
+          // Every member materializes at the version delivery serves: approved when a
+          // human has ever approved one, current otherwise (never-approved artifacts
+          // resolve to current, so plain notes behave as before). Keying this on
+          // skill-ness instead would let a draft that renames SKILL.md shed its gate
+          // and ride the notes lane at current.
+          version: approvedOrCurrent(a),
           is_skill: a.current_content_type === SKILL_CONTENT_TYPE,
         })
       }

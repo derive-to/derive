@@ -1,24 +1,37 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>Derive | Keep agent-made work visible</title>
-<meta name="description" content="Keep, share, and improve the plans, reports, pages, decks, and sites your agents create. One workspace, lasting URLs, full version history, and comments. Fair Source and self-hostable.">
+<script>
+/* theme boot — set the class before first paint (the choice lives in localStorage) */
+(function(){
+  var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
+  if (m !== 'light' && m !== 'system') m = 'dark';
+  var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  var c = document.documentElement.classList;
+  c.toggle('light', light); c.toggle('dark', !light);
+})();
+</script>
+<title>Derive — The open source home for AI artifacts.</title>
+<meta name="description" content="You've never made more, and never kept less. Derive is where your team and its agents publish, review, and revise work. Open source and self-hostable.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Derive | Keep agent-made work visible">
-<meta property="og:description" content="A lasting workspace for the plans, reports, pages, decks, and sites your agents create.">
+<meta property="og:title" content="Derive | The open source home for AI artifacts.">
+<meta property="og:description" content="You've never made more, and never kept less. Derive is where your team and its agents publish, review, and revise work.">
 <meta property="og:url" content="https://derive.to/">
-<meta property="og:image" content="https://derive.to/site/og-artifacts.png">
+<meta property="og:image" content="https://derive.to/site/og-approval.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/">
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/brand/favicon.png" type="image/png">
-<script src="/site/site.js"></script>
-<link rel="stylesheet" href="/site/site.css">
+<!-- Structured data. Search engines use this, but the reason it's here is URL
+     classifiers: enterprise web filters categorise unknown domains partly from
+     machine-readable identity, and an uncategorised domain gets blocked by
+     default at a lot of companies. Keep it factual — claims here are read by
+     things that penalise overreach. -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -44,279 +57,1612 @@
       "applicationCategory": "BusinessApplication",
       "operatingSystem": "Web",
       "url": "https://derive.to/",
-      "description": "Derive is a workspace for agent-made artifacts you can keep, share, and improve. It is Fair Source and self-hostable.",
+      "description": "Derive is where your team and its agents publish, review, and revise work. Open source and self-hostable.",
       "isAccessibleForFree": true,
       "publisher": { "@id": "https://derive.to/#organization" }
     }
   ]
 }
 </script>
+<script>
+/* theme boot: set the class before first paint (the choice lives in localStorage) */
+(function(){
+  var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
+  if (m !== 'light' && m !== 'system') m = 'dark';
+  var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  var c = document.documentElement.classList;
+  c.toggle('light', light); c.toggle('dark', !light);
+})();
+</script>
+<link rel="stylesheet" href="/site/shell.css">
+<style>
+/* ── Geist, shipped with the site (zero third-party requests) ── */
+@font-face{
+  font-family:"Geist";
+  src:url("/site/geist.woff2") format("woff2");
+  font-weight:100 900;font-style:normal;font-display:swap;
+}
+@font-face{
+  font-family:"Geist Mono";
+  src:url("/site/geist-mono.woff2") format("woff2");
+  font-weight:100 900;font-style:normal;font-display:swap;
+}
+
+:root{
+  color-scheme:dark; --faint:#7f8590; 
+  --gold:#c2a15e; --share:#8781b0;
+  --scrim:#030712; --scrim-fg:#f4f5f8;
+  --ink-top:#ffffff; --ink-bot:rgba(243,244,246,.60);
+  --wire:#c6cad1; --wire-dim:#41454d; --key-fill:#1b1d22; --ph-line:#3a3e45;
+  --halo:rgba(3,7,18,.9);
+  --wm-ink:rgba(243,244,246,.02); --wm-stroke:rgba(243,244,246,.11);
+}
+/* light: the same ink, on paper */
+html.light{
+  color-scheme:light; --faint:#666b74; 
+  --gold:#8f6f2f; --share:#5f5a94;
+  --ink-top:#000000; --ink-bot:rgba(22,23,27,.62);
+  --wire:#3f444c; --wire-dim:#b9bdc3; --key-fill:#2b2d33; --ph-line:#c7cacf;
+  --halo:rgba(247,247,245,.92);
+  --wm-ink:rgba(22,23,27,.025); --wm-stroke:rgba(22,23,27,.10);
+}
+/* the hero runs under the transparent nav, so undo the shell offset */
+body{padding-top:0}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--font-sans);font-size:16px;line-height:1.6;letter-spacing:-0.011em;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  overflow-x:hidden;
+}
+::selection{background:color-mix(in srgb,var(--fg) 18%,transparent)}
+button{cursor:default;font:inherit;background:none;border:0;color:inherit;padding:0}
+
+/* film grain — heavier here than the app: this page is a poster */
+body::after{
+  content:"";position:fixed;inset:0;z-index:300;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode:screen;opacity:.07;
+}
+html.light body::after{mix-blend-mode:multiply;opacity:.05}
+
+p{margin:0;text-wrap:pretty}
+
+/* reveal-on-scroll — quick and quiet: you should never wait to read */
+.reveal{opacity:0;transform:translateY(8px);transition:opacity .38s ease-out,transform .38s ease-out}
+.reveal.in{opacity:1;transform:none}
+
+/* ── buttons ── */
+.btn{--btn-h:44px;--btn-px:22px;--btn-fs:15px;white-space:nowrap}
+.btn:active{transform:translateY(1px)}
+.btn-ghost:hover{background:var(--secondary)}
+
+/* ── nav: nearly nothing ── */
+nav.scrolled{border-bottom-color:var(--border-soft)}
+/* theme toggle — cycles system → light → dark */
+
+/* ══════════ HERO — the tagline, then the artifact ══════════ */
+.hero{position:relative;padding:150px 0 0}
+.hero .stage{
+  max-width:var(--maxw);margin:0 auto;padding:0 28px;width:100%;
+  display:flex;flex-direction:column;align-items:center;text-align:center;
+}
+.state-line{
+  font-family:var(--font-mono);font-size:12px;letter-spacing:.04em;color:var(--muted-fg);
+  min-height:20px;display:flex;align-items:center;justify-content:center;gap:10px;
+}
+.state-line .vdot{width:6px;height:6px;border-radius:50%;background:var(--muted-fg);transition:background .3s}
+.state-line.approved .vdot{background:var(--success)}
+.state-line .note{transition:opacity .3s}
+
+.derivation{
+  margin-top:26px;
+  font-size:clamp(40px,6.6vw,90px);
+  line-height:1.04;letter-spacing:-0.035em;font-weight:500;
+}
+.derivation .row{display:block}
+.word{
+  display:inline-block;position:relative;white-space:nowrap;
+  opacity:0;transform:translateY(.18em);
+  transition:opacity .32s cubic-bezier(.16,1,.3,1),transform .32s cubic-bezier(.16,1,.3,1),color .35s;
+  margin-right:.22em;
+}
+.word.on{opacity:1;transform:none}
+/* the pen strike: a slightly tilted ink line drawn left→right */
+.word .strike{
+  position:absolute;left:-2%;right:auto;top:52%;height:.055em;width:0;
+  background:var(--fg);border-radius:.03em;transform:rotate(-2deg);
+  transition:width .28s cubic-bezier(.7,0,.3,1);pointer-events:none;
+}
+.word.struck{color:var(--faint)}
+.word.struck .strike{width:104%}
+.word.struck.settle{opacity:.34}
+.word.final-word.on{color:var(--fg)}
+/* the approval underline on the surviving word */
+.word .under{
+  position:absolute;left:0;bottom:-.06em;height:.045em;width:0;background:var(--fg);
+  transition:width .4s cubic-bezier(.16,1,.3,1) .05s;border-radius:.03em;
+}
+.word.approved .under{width:100%}
+
+.hero .sub{
+  margin-top:36px;max-width:52ch;font-size:clamp(16px,1.6vw,19px);color:var(--muted-fg);line-height:1.65;
+}
+.hero .sub strong{color:var(--fg);font-weight:500}
+.hero .cta-row{
+  margin-top:30px;display:flex;flex-direction:column;align-items:center;gap:0;
+}
+
+/* ── the primary: hand the setup prompt to whatever agent you run.
+      Value first — the agent publishes a first page before any signup;
+      the email form below is the fallback for the agentless. ── */
+.hero-cta{height:50px;padding:0 26px;font-size:15.5px;cursor:pointer}
+.hero-cta svg{flex:none;opacity:.75}
+.hero-cta.copied{background:var(--primary-hover)}
+.hero-proof{margin-top:10px;height:42px;font-size:14px}
+.hero-cta-note{
+  margin-top:14px;font-size:13.5px;color:var(--muted-fg);max-width:56ch;text-align:center;line-height:1.6;text-wrap:balance;
+}
+.hero-eyebrow{margin-bottom:0;color:var(--muted-fg);font-size:14px;letter-spacing:.14em}
+/* the tagline in gradient ink: lit at the cap line, settling toward the baseline */
+.grad-ink{
+  background-image:linear-gradient(178deg,var(--ink-top) 6%,var(--fg) 44%,var(--ink-bot) 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.wl-note-slot{min-height:0;transition:min-height .3s ease}
+.replay{
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--faint);
+  display:inline-flex;align-items:center;gap:7px;margin-top:0;
+}
+.replay:hover{color:var(--muted-fg)}
+.hero .foot-hint{
+  margin-top:22px;text-align:center;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);
+  opacity:.8;
+}
+
+/* ══ the hero artifact: a document you can scrub through time ══ */
+.demo{max-width:var(--maxw);margin:84px auto 0;padding:0 28px}
+.fig{
+  display:flex;align-items:center;gap:10px;margin-bottom:12px;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg);
+}
+.fig::after{content:"";flex:1;border-top:1px dashed var(--border)}
+.demo-stage{position:relative}
+.demo-stage .tick{position:absolute;width:13px;height:13px;color:var(--muted-fg);opacity:.6}
+.demo-stage .tick::before,.demo-stage .tick::after{content:"";position:absolute;background:currentColor}
+.demo-stage .tick::before{left:6px;top:0;width:1px;height:13px}
+.demo-stage .tick::after{left:0;top:6px;width:13px;height:1px}
+.demo-stage .tick.tl{left:-6px;top:-6px}
+.demo-stage .tick.tr{right:-6px;top:-6px}
+.demo-stage .tick.bl{left:-6px;bottom:-6px}
+.demo-stage .tick.br{right:-6px;bottom:-6px}
+.demo-frame{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden;transition:opacity .4s ease}
+.demo-frame.resetting{opacity:.35}
+.demo-titlebar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--border-soft)}
+.demo-titlebar .doc-title{font-size:14px;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.demo-titlebar .doc-meta{font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.02em}
+.demo-titlebar .spacer{flex:1}
+.abadge{
+  display:none;align-items:center;gap:6px;border-radius:6px;padding:3px 9px;
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.03em;
+  background:color-mix(in srgb,var(--success) 12%,transparent);color:var(--success);
+}
+.abadge.show{display:inline-flex}
+.demo-body{display:grid;grid-template-columns:1fr 320px;min-height:372px;position:relative}
+.demo-body ::selection{background:color-mix(in srgb,var(--success) 32%,transparent)}
+@media(max-width:840px){.demo-body{grid-template-columns:minmax(0,1fr)}.demo-comments{border-left:0;border-top:1px solid var(--border-soft)}}
+.doc{padding:34px 44px 36px;text-align:left;display:flex;flex-direction:column}
+/* the OSC-8 launch page inside the frame — pure ink, drawn like a filing */
+.doc .lnav{display:flex;align-items:baseline;gap:16px;font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+.doc .lnav .wm{color:var(--fg);font-weight:600;letter-spacing:.16em}
+.doc .lnav .lb{margin-left:auto;color:var(--fg);border-bottom:1px solid var(--fg);padding-bottom:1px}
+.doc .lhero{display:flex;gap:38px;align-items:flex-start;margin-top:28px}
+.doc .lcol{flex:none;width:270px}
+.doc .lphead{font-size:32px;letter-spacing:-0.03em;line-height:1.1;margin:0;font-weight:500;min-height:74px}
+.doc .lphead em{font-style:normal;position:relative}
+.doc .lphead em::after{content:"";position:absolute;left:0;right:0;bottom:1px;height:2px;background:var(--fg);border-radius:2px}
+.doc .lsub{margin-top:12px;font-size:13.5px;line-height:1.6;color:var(--muted-fg);min-height:64px}
+.doc .lbtn{display:inline-block;margin-top:16px;background:var(--fg);color:var(--bg);border-radius:7px;padding:8px 16px;font-size:12.5px;font-weight:600}
+.doc .lprice{margin-top:11px;font-family:var(--font-mono);font-size:11px;color:var(--faint);min-height:16px}
+.doc .lprice b{color:var(--fg);font-weight:600}
+.doc .figslot{flex:1;min-width:0;position:relative}
+.doc .lph{height:248px;border:1px dashed var(--ph-line);border-radius:8px;position:relative}
+.doc .lph::before,.doc .lph::after{content:"";position:absolute;inset:0;background:linear-gradient(to top right,transparent calc(50% - .5px),var(--ph-line) 50%,transparent calc(50% + .5px))}
+.doc .lph::after{transform:scaleX(-1)}
+.doc .lph > span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;color:var(--faint)}
+.doc .lph > span.hlspan{position:absolute;inset:auto;left:50%;top:50%;transform:translate(-50%,-50%);padding:2px 6px}
+.doc .draw3d{position:relative;height:248px;display:none;cursor:crosshair}
+.doc .draw3d canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.doc .draw3d svg.leads{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.doc .draw3d .g-lbl{position:absolute;font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-fg);white-space:nowrap;pointer-events:none;transform:translate(-50%,-50%);text-shadow:0 1px 8px var(--card)}
+.doc .draw3d .g-lbl b{color:var(--fg);font-weight:500}
+.doc .lpsvg{display:none;height:248px}
+.doc .lpsvg svg{display:block;width:100%;height:100%}
+/* the filing's ink follows the theme (CSS wins over the SVG presentation attributes) */
+.doc .lpsvg [stroke="#c6cad1"]{stroke:var(--wire)}
+.doc .lpsvg [stroke="#f3f4f6"]{stroke:var(--fg)}
+.doc .lpsvg [stroke="#41454d"]{stroke:var(--wire-dim)}
+.doc .lpsvg [fill="#1b1d22"]{fill:var(--key-fill)}
+.doc .lpsvg [fill="#969aa2"]{fill:var(--muted-fg)}
+.doc .lpsvg [fill="#5c616b"]{fill:var(--faint)}
+.doc .figcapline{display:flex;justify-content:space-between;gap:12px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.1em;color:var(--faint);margin-top:9px;text-transform:uppercase;min-height:13px}
+.doc .lspecs{margin-top:24px;border-top:1px solid var(--border-soft);padding-top:2px;display:none;flex-wrap:wrap}
+.doc .lspecs.show{display:flex;animation:replyIn .4s ease-out}
+.doc .lspecs .sp{flex:1;min-width:120px;padding:12px 14px 0 0;border-right:1px solid var(--border-soft);margin-right:14px}
+.doc .lspecs .sp:last-child{border-right:0;margin-right:0}
+.doc .lspecs .sp .v{font-size:19px;font-weight:500;letter-spacing:-0.01em}
+.doc .lspecs .sp .v small{font-size:11px;color:var(--muted-fg);font-weight:400;margin-left:2px}
+.doc .lspecs .sp .k{font-family:var(--font-mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-top:3px}
+.doc .lspecs-note{display:none;font-family:var(--font-mono);font-size:9px;letter-spacing:.08em;color:var(--faint);margin-top:12px;text-transform:uppercase}
+.doc .lspecs-note.show{display:block}
+/* v1: the any-template wireframe register the comments tear apart */
+.doc.v1 .lnav{color:#787f88}
+.doc.v1 .lnav .wm{color:#9aa0a8;font-weight:500}
+.doc.v1 .lnav .lb{color:#9aa0a8;border-bottom-color:#4a4f57}
+.doc.v1 .lphead{font-size:23px;letter-spacing:-0.01em;color:#c6cad1;font-weight:600}
+.doc.v1 .lsub{color:#787f88}
+.doc.v1 .lbtn{background:none;border:1px solid #4a4f57;color:#c6cad1;font-weight:400}
+/* v1 stays washed-out and generic on paper too */
+html.light .doc.v1 .lnav{color:var(--faint)}
+html.light .doc.v1 .lnav .wm{color:#6f747c}
+html.light .doc.v1 .lnav .lb{color:#6f747c;border-bottom-color:#c3c7cc}
+html.light .doc.v1 .lphead{color:#6f747c}
+html.light .doc.v1 .lsub{color:var(--faint)}
+html.light .doc.v1 .lbtn{border-color:#c3c7cc;color:#6f747c}
+@media(max-width:840px){.doc .lhero{flex-wrap:wrap}.doc .lcol{width:100%}.doc .lphead,.doc .lsub{min-height:0}}
+.flash{animation:flash 1.1s ease-out}
+@keyframes flash{0%{background:color-mix(in srgb,var(--fg) 9%,transparent)}100%{background:transparent}}
+.demo-comments{border-left:1px solid var(--border-soft);padding:20px 18px;display:flex;flex-direction:column;gap:11px;text-align:left}
+.demo-comments .pane-label{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
+.dcomment{
+  display:none;border:1px solid var(--border-soft);border-radius:8px;padding:11px 13px;
+}
+.dcomment.show{display:block;animation:replyIn .35s ease-out}
+/* a resolved thread folds to one line after a beat, freeing room for open ones */
+.dcomment .mini{display:none;align-items:center;gap:8px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.02em;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dcomment .mini .tk{color:var(--success);flex:none}
+.dcomment .mini .mq{color:var(--faint);font-style:italic;overflow:hidden;text-overflow:ellipsis}
+.dcomment.collapsed{padding:9px 13px;animation:replyIn .3s ease-out}
+.dcomment.collapsed .who,.dcomment.collapsed .quote,.dcomment.collapsed .text,.dcomment.collapsed .state,.dcomment.collapsed .reply{display:none}
+.dcomment.collapsed .mini{display:flex}
+.dcomment .who{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:500}
+.dcomment .who .chip{width:18px;height:18px;border-radius:50%;background:var(--secondary);border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:9px;color:var(--muted-fg)}
+.dcomment .quote{margin-top:8px;padding-left:10px;border-left:2px solid var(--border);font-size:12px;color:var(--muted-fg);font-style:italic}
+.dcomment .text{margin-top:8px;font-size:13px;color:var(--fg)}
+.dcomment .state{margin-top:10px;font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;color:var(--muted-fg)}
+.dcomment.resolved .state{color:var(--success)}
+.dcomment.resolved{border-color:color-mix(in srgb,var(--success) 34%,var(--border-soft))}
+.comments-empty{font-size:13px;color:var(--muted-fg);margin:auto 0;text-align:center;opacity:.7}
+.timeline{margin-top:26px}
+.scrub{position:relative;height:44px;display:flex;align-items:center}
+.scrub-track{position:absolute;left:0;right:0;height:2px;background:var(--border);border-radius:1px}
+.scrub-fill{position:absolute;left:0;height:2px;background:var(--fg);border-radius:1px;transition:width .25s ease}
+.scrub input{position:absolute;inset:0;width:100%;opacity:0;margin:0;cursor:default}
+.scrub .stops{position:absolute;left:0;right:0;display:flex;justify-content:space-between;pointer-events:none}
+.scrub .stop{width:10px;height:10px;border-radius:50%;background:var(--bg);border:1px solid var(--border);transition:border-color .2s,background .2s}
+.scrub .stop.passed{border-color:var(--fg);background:var(--fg)}
+.scrub-labels{display:flex;justify-content:space-between;margin-top:2px}
+.scrub-labels span{font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.03em}
+.scrub-labels span.on{color:var(--fg)}
+.version-line{
+  margin-top:16px;display:flex;align-items:baseline;gap:12px;min-height:22px;
+  font-family:var(--font-mono);font-size:12px;letter-spacing:.01em;text-align:left;
+}
+.version-line .vn{color:var(--fg);font-weight:500}
+.version-line .vauthor{color:var(--muted-fg)}
+.version-line .vmsg{color:var(--muted-fg)}
+.version-line .tdot{
+  display:none;width:6px;height:6px;border-radius:50%;background:var(--muted-fg);
+  align-self:center;animation:tpulse 1s ease-in-out infinite;
+}
+.version-line.typing .tdot{display:inline-block}
+.version-line.typing .vn{display:none}
+@keyframes tpulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+/* ── live-collab theatre: cursors, highlights, threads ── */
+.pcursor{
+  position:absolute;left:0;top:0;z-index:6;opacity:0;pointer-events:none;will-change:transform;
+  transition:transform 950ms cubic-bezier(.25,.6,.25,1),opacity .35s ease;
+}
+.pcursor svg{display:block;filter:drop-shadow(0 1px 2px rgba(3,7,18,.55))}
+.pcursor .flag{
+  position:absolute;left:14px;top:16px;font-size:11px;font-weight:500;line-height:1;
+  padding:4px 9px;border-radius:999px;color:var(--scrim);white-space:nowrap;
+}
+html.light .pcursor .flag{color:#fff}
+.pcursor.rob svg .arrow{fill:var(--gold)}
+.pcursor.rob .flag{background:var(--gold)}
+.pcursor.ada svg .arrow{fill:var(--share)}
+.pcursor.ada .flag{background:var(--share)}
+/* YOUR cursor goes multiplayer-green inside the artifact */
+.pcursor.you{transition:opacity .2s ease;z-index:9}
+.pcursor.you svg .arrow{fill:var(--success)}
+.pcursor.you .flag{background:var(--success)}
+.demo-body.livecursor{cursor:none}
+.demo-body.livecursor *{cursor:none}
+/* presence facepile in the titlebar */
+.face{display:flex;align-items:center;margin-left:4px}
+.face .fc{
+  width:20px;height:20px;border-radius:50%;border:1.5px solid var(--card);
+  display:inline-flex;align-items:center;justify-content:center;
+  font-family:var(--font-mono);font-size:9px;margin-left:-6px;
+}
+.face .fc:first-child{margin-left:0}
+.face .fc.g{background:color-mix(in srgb,var(--gold) 22%,var(--secondary));color:var(--gold)}
+.face .fc.v{background:color-mix(in srgb,var(--share) 22%,var(--secondary));color:var(--share)}
+.face .fc.n{background:var(--secondary);color:var(--muted-fg)}
+.face .fc.y{background:color-mix(in srgb,var(--success) 22%,var(--secondary));color:var(--success);opacity:0;transform:scale(.5);transition:opacity .25s ease,transform .25s cubic-bezier(.2,.9,.3,1.4)}
+.face .fc.y.in{opacity:1;transform:none}
+.face-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.04em;color:var(--faint);margin-left:9px}
+.dcomment .who .ext{font-family:var(--font-mono);font-size:9px;letter-spacing:.05em;color:var(--faint);border:1px solid var(--border);border-radius:4px;padding:1px 5px;margin-left:4px}
+.tb-lock{display:inline-flex;align-items:center;gap:6px;border-radius:6px;padding:3px 9px;font-family:var(--font-mono);font-size:11px;background:var(--secondary);color:var(--muted-fg);border:1px solid var(--border)}
+.hlspan{
+  background-image:linear-gradient(var(--hlc,transparent),var(--hlc,transparent));
+  background-repeat:no-repeat;background-size:0% 100%;border-radius:2px;
+  transition:background-size .5s cubic-bezier(.3,.7,.3,1);
+  box-decoration-break:clone;-webkit-box-decoration-break:clone;
+}
+.hlspan.lit{background-size:100% 100%}
+.dcomment .reply{display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-soft)}
+.dcomment .reply.show{display:block;animation:replyIn .35s ease-out}
+@keyframes replyIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.dcomment .who .chip.rob{background:color-mix(in srgb,var(--gold) 16%,transparent);border-color:color-mix(in srgb,var(--gold) 35%,transparent);color:var(--gold)}
+.dcomment .who .chip.ada{background:color-mix(in srgb,var(--share) 16%,transparent);border-color:color-mix(in srgb,var(--share) 35%,transparent);color:var(--share)}
+
+/* ══════════ MANIFESTO ══════════ */
+.manifesto{padding-top:190px}
+.manifesto .m-line{
+  font-size:clamp(26px,3.8vw,44px);line-height:1.22;letter-spacing:-0.025em;font-weight:500;
+  max-width:24ch;
+}
+.manifesto .m-line + .m-line{margin-top:64px}
+.manifesto .m-line .q{color:var(--muted-fg)}
+.manifesto .m-kicker{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted-fg);margin-bottom:34px;display:flex;align-items:center;gap:12px}
+.manifesto .m-kicker::after{content:"";flex:1;max-width:120px;border-top:1px dashed var(--border)}
+.m-answer{margin-top:72px;max-width:62ch;font-size:18px;color:var(--muted-fg);line-height:1.7}
+.m-answer strong{color:var(--fg);font-weight:500}
+
+/* ══════════ THE OCEAN — chats scroll away, artifacts stay ══════════ */
+.ocean{margin-top:190px;position:relative;height:560px;overflow:hidden;border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft)}
+.ghosts{
+  position:absolute;inset:-40px 0;display:flex;justify-content:space-around;gap:40px;
+  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent);
+  mask-image:linear-gradient(to bottom,transparent,#000 18%,#000 82%,transparent);
+}
+.gcol{display:flex;flex-direction:column;gap:34px;animation:drift 36s linear infinite;filter:blur(.6px)}
+.gcol.g2{animation-duration:52s;animation-delay:-18s}
+.gcol.g3{animation-duration:44s;animation-delay:-9s}
+@keyframes drift{from{transform:translateY(0)}to{transform:translateY(-50%)}}
+.ghost{
+  font-family:var(--font-mono);font-size:12px;color:var(--fg);opacity:.16;white-space:nowrap;
+  border:1px solid var(--border-soft);border-radius:8px;padding:9px 13px;background:var(--card);
+}
+.ghost.plain{border:0;background:none;opacity:.11}
+.kept{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
+}
+.kept-card{
+  background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px 26px;
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--fg) 4%,transparent),0 0 80px 30px var(--halo);
+  display:flex;flex-direction:column;gap:12px;min-width:min(430px,88vw);
+}
+.kept-card .kc-top{display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:12.5px;color:var(--fg)}
+.kept-card .kc-top .lock{color:var(--success);display:inline-flex}
+.kept-card .kc-meta{display:flex;align-items:center;gap:14px;font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.03em}
+.kept-card .kc-meta .ok{color:var(--success)}
+.kept-line{
+  font-size:clamp(22px,3vw,32px);font-weight:500;letter-spacing:-0.02em;text-align:center;
+  text-shadow:0 0 24px var(--bg);
+}
+.kept-line em{font-style:normal;color:var(--muted-fg)}
+
+/* ══════════ CHAPTERS ══════════ */
+.chapter{padding-top:210px}
+.chapter .ch-head{display:flex;align-items:baseline;gap:22px}
+.chapter .ch-num{font-family:var(--font-mono);font-size:13px;color:var(--faint);letter-spacing:.1em}
+.chapter h2{font-size:clamp(44px,7vw,92px);line-height:1;letter-spacing:-0.035em}
+.chapter .ch-body{margin-top:30px;display:grid;grid-template-columns:minmax(0,60ch) 1fr;gap:64px;align-items:start}
+@media(max-width:880px){.chapter .ch-body{grid-template-columns:minmax(0,1fr)}}
+.chapter .ch-lede{font-size:clamp(18px,2vw,22px);color:var(--fg);line-height:1.5;font-weight:400}
+.chapter .ch-text{margin-top:18px;font-size:16px;color:var(--muted-fg);line-height:1.7}
+.chapter .ch-text strong{color:var(--fg);font-weight:500}
+.chapter .ch-spec{justify-self:end;width:100%;max-width:520px}
+@media(max-width:880px){.chapter .ch-spec{justify-self:start}}
+
+.spec-card{border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden}
+.spec-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border-soft);font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.05em}
+.spec-body{padding:16px 18px;font-family:var(--font-mono);font-size:12.5px;line-height:1.9;color:var(--muted-fg)}
+.spec-body .c{color:var(--fg)}
+.spec-body .ok{color:var(--success)}
+.spec-body .dim{color:var(--faint)}
+
+/* share-dialog specimen */
+.share-dlg{padding:16px 18px;display:flex;flex-direction:column;gap:0;font-size:13px}
+.share-row{display:flex;align-items:center;gap:12px;padding:11px 2px;border-top:1px solid var(--border-soft)}
+.share-row:first-child{border-top:0}
+.share-row .sr-label{color:var(--fg);font-weight:500;flex:1}
+.share-row .sr-sub{display:block;font-weight:400;font-size:11.5px;color:var(--faint);margin-top:2px}
+.share-row .sr-val{font-family:var(--font-mono);font-size:11.5px;color:var(--muted-fg);display:flex;align-items:center;gap:8px}
+.share-link{
+  display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg);padding:9px 12px;font-family:var(--font-mono);font-size:12px;color:var(--fg);
+  margin-bottom:6px;
+}
+.share-link .share-url{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.share-link .copy{margin-left:auto;font-size:10px;letter-spacing:.05em;color:var(--muted-fg);border:1px solid var(--border);border-radius:5px;padding:2px 8px}
+.share-link .lock{color:var(--success);display:inline-flex}
+.sw{position:relative;width:30px;height:17px;border-radius:999px;background:var(--fg);flex:none}
+.sw::after{content:"";position:absolute;top:2px;right:2px;width:13px;height:13px;border-radius:50%;background:var(--bg)}
+.sw.off{background:var(--secondary);border:1px solid var(--border)}
+.sw.off::after{right:auto;left:2px;top:1px;background:var(--muted-fg)}
+.pwdots{letter-spacing:2px;color:var(--fg)}
+
+.thread{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.thread .t-item{font-size:13px;line-height:1.55}
+.thread .t-who{font-weight:500;font-size:12.5px;display:flex;gap:8px;align-items:center}
+.thread .t-who .chip{width:18px;height:18px;border-radius:50%;background:var(--secondary);border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-family:var(--font-mono);font-size:9px;color:var(--muted-fg)}
+.thread .t-quote{margin-top:7px;padding-left:10px;border-left:2px solid var(--border);color:var(--muted-fg);font-style:italic;font-size:12px}
+.thread .t-text{margin-top:7px;color:var(--fg)}
+.thread .t-state{font-family:var(--font-mono);font-size:10px;letter-spacing:.05em;color:var(--success)}
+
+/* ══════════ LOOP / TERMINAL ══════════ */
+.loop{padding-top:210px}
+.loop .section-head{max-width:620px}
+.loop h2{font-size:clamp(32px,4.6vw,52px);line-height:1.1;margin-top:16px}
+.loop .l-sub{margin-top:20px;font-size:17px;color:var(--muted-fg);max-width:54ch;line-height:1.7}
+.loop .l-sub strong{color:var(--fg);font-weight:500}
+.bigterm{
+  margin-top:56px;border:1px solid var(--border);border-radius:14px;background:var(--card);overflow:hidden;
+}
+.bigterm .tb{display:flex;align-items:center;gap:8px;padding:13px 18px;border-bottom:1px solid var(--border-soft)}
+.bigterm .dot{width:10px;height:10px;border-radius:50%;background:var(--secondary);border:1px solid var(--border)}
+.bigterm .tl{margin-left:8px;font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);letter-spacing:.05em}
+.bigterm .tbody{
+  padding:26px 30px;font-family:var(--font-mono);font-size:clamp(12px,1.35vw,14.5px);line-height:2.1;color:var(--muted-fg);
+  min-height:340px;
+}
+.bigterm .ln{display:block;white-space:pre-wrap;overflow-wrap:break-word}
+.bigterm .ln .p{color:var(--fg)}
+.bigterm .ln .ok{color:var(--success)}
+.bigterm .ln .dim{color:var(--faint)}
+.bigterm .cursor{display:inline-block;width:.55em;height:1.1em;background:var(--fg);vertical-align:text-bottom;animation:blink 1.1s steps(1) infinite;margin-left:2px}
+@keyframes blink{50%{opacity:0}}
+.loop .cast{
+  margin-top:22px;display:flex;gap:10px 26px;flex-wrap:wrap;
+  font-family:var(--font-mono);font-size:11.5px;letter-spacing:.03em;color:var(--faint);
+}
+.loop .cast span b{color:var(--muted-fg);font-weight:500}
+/* ── connect yours: one paste for the agent, or the three commands by hand ── */
+.hk-lead{margin-top:34px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.hk-lead .hk-leadnote{font-size:13px;color:var(--muted-fg);max-width:40ch}
+.hookup{margin-top:14px;border:1px solid var(--border-soft);border-radius:10px;background:var(--card);overflow:hidden}
+.hookup .hk-row{
+  display:flex;align-items:center;gap:16px;width:100%;text-align:left;background:none;border:0;
+  padding:13px 18px;cursor:pointer;transition:background .15s ease;
+}
+.hookup .hk-row + .hk-row{border-top:1px solid var(--border-soft)}
+.hookup .hk-row:hover,.hookup .hk-row:focus-visible{background:var(--secondary)}
+.hookup .hk-what{flex:none;width:21ch;font-size:12.5px;color:var(--muted-fg)}
+.hookup .hk-row code{
+  flex:1;min-width:0;font-family:var(--font-mono);font-size:12px;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.hookup .hk-copy{flex:none;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.08em;color:var(--faint);border:1px solid var(--border);border-radius:5px;padding:2px 7px}
+.hookup .hk-row.copied .hk-copy{color:var(--success);border-color:color-mix(in srgb,var(--success) 45%,transparent)}
+@media(max-width:680px){
+  .hookup .hk-row{flex-wrap:wrap;gap:6px 12px}
+  .hookup .hk-what{width:100%}
+  .hookup .hk-row code{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+}
+
+/* ══════════ FINALE ══════════ */
+.finale{padding-top:230px;position:relative;text-align:center}
+.finale .state-line{margin-bottom:24px}
+.finale .derivation{font-size:clamp(32px,5vw,72px);margin:0 auto;max-width:22ch}
+.finale .derivation .word{margin-right:.18em}
+.finale .f-sub{margin:24px auto 0;max-width:46ch;font-size:17px;color:var(--muted-fg);line-height:1.7}
+.finale .f-sub strong{color:var(--fg);font-weight:500}
+.finale .f-cta{margin:40px auto 0;display:flex;gap:26px;align-items:center;justify-content:center;flex-wrap:wrap}
+.finale .f-cta a:not(.btn){font-size:14px;color:var(--fg);border-bottom:1px solid var(--border);padding-bottom:2px}
+.finale .f-cta a:not(.btn):hover{border-bottom-color:var(--fg)}
+.finale .f-alt{margin-top:18px;font-family:var(--font-mono);font-size:12px;color:var(--faint)}
+.finale .f-alt a{color:var(--muted-fg);border-bottom:1px solid var(--border)}
+.finale .f-alt a:hover{color:var(--fg)}
+
+/* giant watermark footer */
+footer{margin-top:170px;position:relative;overflow:hidden;border-top:1px solid var(--border-soft)}
+.watermark{
+  position:absolute;left:50%;bottom:-.34em;transform:translateX(-50%);
+  font-size:clamp(120px,24vw,340px);font-weight:500;letter-spacing:-0.04em;line-height:1;
+  color:var(--wm-ink);-webkit-text-stroke:1px var(--wm-stroke);
+  pointer-events:none;user-select:none;white-space:nowrap;
+}
+.foot-inner{
+  position:relative;max-width:var(--maxw);margin:0 auto;padding:46px 28px 150px;
+  display:flex;align-items:center;gap:16px 30px;flex-wrap:wrap;
+}
+.foot-inner .fm{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:500}
+.foot-links{display:flex;gap:22px;font-size:13px;color:var(--muted-fg)}
+.foot-links a:hover{color:var(--fg)}
+.foot-inner .license{margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--faint);letter-spacing:.02em}
+@media(max-width:720px){.foot-inner .license{margin-left:0;width:100%}}
+
+/* ══════════ MOBILE — the poster, folded to phone width ══════════ */
+@media(max-width:640px){
+  .wrap{padding:0 20px}
+  
+
+  .hero{padding-top:112px}
+  .hero .stage{padding:0 20px}
+  .hero-eyebrow{margin-bottom:0}
+  .derivation{margin-top:20px}
+  .hero .sub{margin-top:26px}
+  .hero .cta-row{margin-top:26px;align-self:stretch}
+  .demo{margin-top:52px;padding:0 20px}
+  .demo-titlebar{padding:10px 14px;gap:9px}
+  .demo-titlebar .doc-meta,.demo-titlebar .tb-lock,.face-label{display:none}
+  .demo-body{min-height:0}
+  .doc{padding:22px 18px 26px}
+  .doc .lhero{margin-top:20px;gap:22px}
+  .doc .lphead{font-size:26px}
+  .doc .lph,.doc .draw3d,.doc .lpsvg{height:200px}
+  .doc .lspecs .sp{flex:1 1 calc(50% - 14px);min-width:0}
+  .doc .lspecs .sp:nth-child(2n){border-right:0;margin-right:0}
+  .demo-comments{padding:16px 14px}
+  .timeline{margin-top:20px}
+  .version-line{display:block}
+
+  .manifesto{padding-top:120px}
+  .manifesto .m-kicker{margin-bottom:24px}
+  .manifesto .m-line + .m-line{margin-top:40px}
+  .m-answer{margin-top:44px;font-size:16px}
+
+  .ocean{margin-top:120px;height:440px}
+  .gcol{gap:26px}
+  .ghost{font-size:11px;padding:8px 11px}
+  .kept-card{min-width:0;width:min(430px,88vw);padding:18px 20px}
+
+  .chapter{padding-top:128px}
+  .chapter .ch-body{margin-top:24px;gap:40px}
+  .spec-body{padding:14px}
+  .share-dlg{padding:12px 14px}
+  .thread{padding:14px}
+
+  .loop{padding-top:128px}
+  .loop .l-sub{margin-top:16px;font-size:16px}
+  .bigterm{margin-top:36px}
+  .bigterm .tbody{padding:18px 16px;min-height:280px;line-height:1.95}
+
+  .finale{padding-top:150px}
+  .finale .f-sub{margin-top:20px;font-size:16px}
+  .finale .f-cta{margin-top:32px}
+  .finale .f-alt{line-height:2.2}
+
+  footer{margin-top:104px}
+  .watermark{font-size:29vw}
+  .foot-inner{padding:36px 20px 100px;gap:14px 22px}
+}
+
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1;transform:none}
+}
+</style>
+<script src="/site/shell.js" defer></script>
 </head>
-<body class="home-page">
+<body>
+
 <a class="skip-link" href="#main-content">Skip to content</a>
-<nav class="site-nav" data-site-nav aria-label="Main navigation">
-  <div class="nav-inner site-wrap">
-    <a class="wordmark" href="/" aria-label="Homepage">
-      <img class="logo-light" src="/brand/wordmark-dark.svg" alt="">
-      <img class="logo-dark" src="/brand/wordmark-light.svg" alt="">
+
+<nav class="site-nav" aria-label="Primary">
+  <div class="wrap site-nav__inner">
+    <a class="site-nav__brand" href="/">
+      <img class="wm-dark" src="/brand/wordmark-light.svg" alt="Derive">
+      <img class="wm-light" src="/brand/wordmark-dark.svg" alt="Derive">
     </a>
-    <div class="desktop-nav">
+    <div class="site-nav__links">
       <a href="https://docs.derive.to/">Docs</a>
       <a href="/examples">Examples</a>
       <a href="/pricing">Pricing</a>
       <a href="https://github.com/derive-to/derive">GitHub</a>
-    </div>
-    <div class="nav-actions">
-      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change color theme">
-        <svg class="theme-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
-        <svg class="theme-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5a8.5 8.5 0 1 0 11.7 11.7Z"/></svg>
-        <svg class="theme-system" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      <button class="site-nav__theme" type="button" data-theme-toggle aria-label="Theme">
+        <svg class="i-sun" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M7 .8v1.7M7 11.5v1.7M.8 7h1.7M11.5 7h1.7M2.6 2.6l1.2 1.2M10.2 10.2l1.2 1.2M11.4 2.6l-1.2 1.2M3.8 10.2l-1.2 1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="nav-signin" href="/login?src=nav_signin">Sign in</a>
-      <details class="mobile-nav">
-        <summary aria-label="Open navigation menu">
-          <svg class="menu-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-          <svg class="menu-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
-        </summary>
-        <div class="mobile-nav-panel">
-          <a href="https://docs.derive.to/">Docs <span aria-hidden="true">↗</span></a>
-          <a href="/examples">Examples</a>
-          <a href="/pricing">Pricing</a>
-          <a href="https://github.com/derive-to/derive">GitHub <span aria-hidden="true">↗</span></a>
-          <a class="mobile-signin" href="/login?src=nav_signin">Sign in <span aria-hidden="true">→</span></a>
-        </div>
-      </details>
+      <a class="site-nav__signin" href="/login?src=nav_signin">Sign in <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
 
 <main id="main-content" tabindex="-1">
-  <header class="home-hero">
-    <div class="home-stage site-wrap">
-      <p class="eyebrow">A workspace for agent-made work</p>
-      <h1>Keep the result, not just the session.</h1>
-      <p class="home-hero-copy">Give agent-made plans, reports, pages, decks, and sites a lasting URL with version history and feedback.</p>
-      <div class="home-hero-actions">
-        <button class="button button-primary home-primary-action" type="button" data-copy-from="agent-prompt" data-copied-label="Copied. Paste it into your agent."><span data-copy-label>Copy setup prompt</span></button>
-        <a class="button home-secondary-action" href="https://derive.to/artifacts/example-launch-page-5cmep9l9">Open a live example <span aria-hidden="true">→</span></a>
-      </div>
-      <p class="home-hero-note">Works with Claude Code, Codex, Cursor, and other compatible MCP clients.</p>
+<!-- ══════════ HERO ══════════ -->
+<header class="hero" id="hero">
+  <div class="stage">
+    <div class="eyebrow hero-eyebrow">Make things worth keeping</div>
+    <h1 class="derivation grad-ink">The open source home for&nbsp;AI&nbsp;artifacts.</h1>
+    <p class="sub"><strong>You've never made more, and never kept less.</strong> Derive is your team's library for the work you and your agents make: publish it, share a link, and revise it together until it is right.</p>
+    <div class="cta-row">
+      <button class="btn btn-primary hero-cta" type="button" data-copy-from="agentPrompt" data-copied-label="Copied. Now paste it into your agent">
+        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M9.5 4.5v-2a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 2.5V8A1.5 1.5 0 0 0 3 9.5h1.5" stroke="currentColor" stroke-width="1.3"/></svg>
+        <span class="copy-label">Copy instructions for my agent</span>
+      </button>
+      <a class="btn btn-ghost hero-proof" href="https://derive.to/artifacts/example-launch-page-5cmep9l9">Open a live example <span aria-hidden="true">→</span></a>
+      <p class="hero-cta-note">Publish a real page and get its review link in about 30 seconds.</p>
     </div>
+  </div>
 
-    <figure class="home-demo site-wrap" data-home-demo data-version="3">
-      <figcaption class="home-figure-label"><span>Product walkthrough</span><span>One artifact changing over time</span></figcaption>
-      <div class="home-demo-frame">
-        <div class="home-demo-bar">
-          <span class="home-demo-path">derive.to/artifacts/osc8-launch</span>
-          <span data-demo-meta>HTML · v3</span>
-          <span class="home-demo-lock">Password protected</span>
-          <span class="home-demo-spacer"></span>
-          <span class="home-demo-presence" aria-label="Three people viewing"><span>M</span><span>A</span><span>C</span></span>
-          <span class="home-demo-badge" data-demo-badge>Current</span>
+  <!-- Product walkthrough: representative UI, not a live customer artifact. -->
+  <div class="demo">
+    <div class="fig">FIG. 01 · product walkthrough · the review loop</div>
+    <div class="demo-stage">
+      <span class="tick tl" aria-hidden="true"></span><span class="tick tr" aria-hidden="true"></span>
+      <span class="tick bl" aria-hidden="true"></span><span class="tick br" aria-hidden="true"></span>
+      <div class="demo-frame">
+        <div class="demo-titlebar">
+          <span class="doc-title">derive.to/artifacts/osc8-launch</span>
+          <span class="doc-meta" id="docMeta">HTML · v1</span>
+          <span class="tb-lock">
+            <svg width="10" height="10" viewBox="0 0 11 11" fill="none" aria-hidden="true"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+            password
+          </span>
+          <span class="spacer"></span>
+          <span class="face" aria-hidden="true">
+            <span class="fc g">M</span><span class="fc v">A</span><span class="fc n">C</span><span class="fc y" id="youChip">Y</span>
+          </span>
+          <span class="face-label" id="faceLabel">3 here</span>
+          <span class="abadge" id="approvedBadge">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><path d="M1.5 5.5 4 8l4.5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Approved
+          </span>
         </div>
-        <div class="home-demo-body">
-          <article class="home-artifact" aria-label="OSC-8 launch page artifact">
-            <div class="home-artifact-nav"><strong>OSC-8</strong><span>Voices</span><span>Specs</span><span>Preorder</span></div>
-            <div class="home-artifact-hero">
-              <div class="home-artifact-copy">
-                <h2 data-demo-heading>Eight voices. Zero menus.</h2>
-                <p data-demo-summary>Every parameter is already on the surface. No pages, no shift keys, no manual. Battery for an afternoon.</p>
-                <span class="home-artifact-button" data-demo-cta>Preorder for €249</span>
-                <p class="home-artifact-price">Ships Monday. Thirty-day returns.</p>
+        <div class="demo-body" id="demoBody">
+          <div class="doc" id="docPane">
+            <div class="lnav"><span class="wm">OSC-8</span><span>Voices</span><span>Specs</span><span class="lb">Preorder</span></div>
+            <div class="lhero" id="lpHero">
+              <div class="lcol">
+                <div class="lphead" id="lpH">OSC-8 Synthesizer</div>
+                <p class="lsub" id="lpSub"></p>
+                <span class="lbtn" id="lpBtn">Preorder · €249</span>
+                <div class="lprice" id="lpPrice"></div>
               </div>
-              <div class="home-artifact-figure">
-                <div class="home-artifact-placeholder">Product image</div>
-                <svg class="home-synth-drawing" viewBox="0 0 560 300" fill="none" aria-label="Technical line drawing of the OSC-8 synthesizer" role="img">
-                  <rect x="42" y="46" width="452" height="204" rx="16"/>
-                  <text x="66" y="78">OSC-8</text>
-                  <g class="home-synth-knobs"><circle cx="118" cy="112" r="17"/><circle cx="166" cy="112" r="17"/><circle cx="214" cy="112" r="17"/><circle cx="262" cy="112" r="17"/><circle cx="310" cy="112" r="17"/><circle cx="358" cy="112" r="17"/><circle cx="406" cy="112" r="17"/><circle cx="454" cy="112" r="17"/></g>
-                  <g class="home-synth-marks"><path d="M118 98v8"/><path d="M177 101l-6 6"/><path d="M203 103l6 5"/><path d="M262 98v8"/><path d="M321 103l-6 5"/><path d="M358 98v8"/><path d="M395 101l6 6"/><path d="M465 105l-7 4"/></g>
-                  <g class="home-synth-keys"><rect x="66" y="168" width="30" height="58" rx="3"/><rect x="100" y="168" width="30" height="58" rx="3"/><rect x="134" y="168" width="30" height="58" rx="3"/><rect x="168" y="168" width="30" height="58" rx="3"/><rect x="202" y="168" width="30" height="58" rx="3"/><rect x="236" y="168" width="30" height="58" rx="3"/><rect x="270" y="168" width="30" height="58" rx="3"/><rect x="304" y="168" width="30" height="58" rx="3"/><rect x="338" y="168" width="30" height="58" rx="3"/><rect x="372" y="168" width="30" height="58" rx="3"/><rect x="406" y="168" width="30" height="58" rx="3"/><rect x="440" y="168" width="30" height="58" rx="3"/></g>
-                  <path class="home-synth-measure" d="M42 278H494M42 272v12M494 272v12"/>
-                  <text class="home-synth-measure-label" x="248" y="296">240 MM</text>
-                </svg>
-                <div class="home-artifact-figure-note"><span>Fig. 1</span><span>Production unit 0043</span></div>
+              <div class="figslot">
+                <div class="lph" id="lpPh"><span class="hlspan" id="t1">PRODUCT IMAGE</span></div>
+                <div class="draw3d" id="glStage">
+                  <canvas id="glCanvas"></canvas>
+                  <svg class="leads" id="glLeads" aria-hidden="true"></svg>
+                  <div id="glLabels" aria-hidden="true"></div>
+                </div>
+                <div class="lpsvg" id="lpSvg" aria-hidden="true">
+                  <svg viewBox="0 0 560 300" fill="none">
+                    <rect x="42" y="46" width="452" height="204" rx="16" stroke="#c6cad1" stroke-width="1.5"/>
+                    <text x="66" y="78" fill="#969aa2" font-size="11" letter-spacing="3" font-family="Geist Mono,monospace">OSC-8</text>
+                    <g stroke="#c6cad1" stroke-width="1.2">
+                      <circle cx="118" cy="112" r="17"/><circle cx="166" cy="112" r="17"/><circle cx="214" cy="112" r="17"/><circle cx="262" cy="112" r="17"/>
+                      <circle cx="310" cy="112" r="17"/><circle cx="358" cy="112" r="17"/><circle cx="406" cy="112" r="17"/><circle cx="454" cy="112" r="17"/>
+                    </g>
+                    <g stroke="#f3f4f6" stroke-width="1.6">
+                      <path d="M118 98v8"/><path d="M177 101l-6 6"/><path d="M203 103l6 5"/><path d="M262 98v8"/>
+                      <path d="M321 103l-6 5"/><path d="M358 98v8"/><path d="M395 101l6 6"/><path d="M465 105l-7 4"/>
+                    </g>
+                    <g stroke="#c6cad1" stroke-width="1.2">
+                      <rect x="66" y="168" width="30" height="58" rx="3"/><rect x="100" y="168" width="30" height="58" rx="3" fill="#1b1d22"/>
+                      <rect x="134" y="168" width="30" height="58" rx="3"/><rect x="168" y="168" width="30" height="58" rx="3" fill="#1b1d22"/>
+                      <rect x="202" y="168" width="30" height="58" rx="3"/><rect x="236" y="168" width="30" height="58" rx="3"/>
+                      <rect x="270" y="168" width="30" height="58" rx="3" fill="#1b1d22"/><rect x="304" y="168" width="30" height="58" rx="3"/>
+                      <rect x="338" y="168" width="30" height="58" rx="3" fill="#1b1d22"/><rect x="372" y="168" width="30" height="58" rx="3"/>
+                      <rect x="406" y="168" width="30" height="58" rx="3" fill="#1b1d22"/><rect x="440" y="168" width="30" height="58" rx="3"/>
+                    </g>
+                    <path d="M42 278 H494" stroke="#41454d"/>
+                    <path d="M42 272v12M494 272v12" stroke="#41454d"/>
+                    <text x="248" y="296" fill="#5c616b" font-size="9" letter-spacing="2" font-family="Geist Mono,monospace">240 MM</text>
+                  </svg>
+                </div>
+                <div class="figcapline"><span id="lpFig"></span><span id="lpHint"></span></div>
               </div>
             </div>
-            <dl class="home-demo-stats">
-              <div><dt>8</dt><dd>Voices</dd></div>
-              <div><dt>22 h</dt><dd>Measured battery</dd></div>
-              <div><dt>1.8 ms</dt><dd>Key to sound</dd></div>
-              <div><dt>380 g</dt><dd>With battery</dd></div>
-            </dl>
-          </article>
-          <aside class="home-demo-comments" aria-label="Artifact comments">
-            <div class="home-comments-title"><span>Comments</span><span data-demo-comment-count>3</span></div>
-            <p class="home-comments-empty">No comments yet.</p>
-            <div class="home-demo-comment home-comment-v2">
-              <div class="home-comment-who"><span>M</span>Maeva</div>
-              <blockquote>Draw the product instead of leaving a placeholder.</blockquote>
-              <p>No glamour shot exists yet. Use the real dimensions and materials.</p>
-              <span class="home-comment-state">Addressed in v2</span>
+            <div class="lspecs" id="lpSpecs" role="group" aria-label="Measured specifications">
+              <div class="sp"><div class="v">8<small>voices</small></div><div class="k">Polyphony</div></div>
+              <div class="sp"><div class="v">22<small>h</small></div><div class="k">Battery · measured</div></div>
+              <div class="sp"><div class="v">1.8<small>ms</small></div><div class="k">Key → sound</div></div>
+              <div class="sp"><div class="v">380<small>g</small></div><div class="k">With battery</div></div>
             </div>
-            <div class="home-demo-comment home-comment-v2">
-              <div class="home-comment-who"><span>M</span>Maeva</div>
-              <blockquote>“OSC-8 Synthesizer”</blockquote>
-              <p>This could describe any store template. Make the product the loudest thing on the page.</p>
-              <span class="home-comment-state">Addressed in v2</span>
+            <div class="lspecs-note" id="lpSpecsNote">Measured on production unit №0043 · not simulated, not quoted</div>
+          </div>
+          <aside class="demo-comments" aria-label="Review comments">
+            <div class="pane-label">Comments</div>
+            <div class="comments-empty" id="cEmpty">No comments yet.</div>
+            <div class="dcomment" id="cm1">
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Maeva · <span class="mq">"PRODUCT IMAGE"</span> · v2</div>
+              <div class="who"><span class="chip rob">M</span>Maeva</div>
+              <div class="quote">"PRODUCT IMAGE"</div>
+              <div class="text">No glamour shot exists yet, so draw it: a patent filing, dimension lines, real materials.</div>
+              <div class="state" id="cm1s">OPEN</div>
             </div>
-            <div class="home-demo-comment home-comment-v3">
-              <div class="home-comment-who"><span>A</span>Anya</div>
-              <blockquote>“€249”</blockquote>
-              <p>Anchor the price with facts, not adjectives.</p>
-              <span class="home-comment-state">Addressed in v3</span>
+            <div class="dcomment" id="cm2">
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Maeva · <span class="mq">"OSC-8 Synthesizer"</span> · v2</div>
+              <div class="who"><span class="chip rob">M</span>Maeva</div>
+              <div class="quote">"OSC-8 Synthesizer"</div>
+              <div class="text">This headline could sell any store template. It's a synth. Make the type the loudest thing on the page.</div>
+              <div class="state" id="cm2s">OPEN</div>
+            </div>
+            <div class="dcomment" id="cm3">
+              <div class="mini" aria-hidden="true"><span class="tk">✓</span>Anya · <span class="mq">"€249"</span> · v3 · 1 reply</div>
+              <div class="who"><span class="chip ada">A</span>Anya<span class="ext">CLIENT</span></div>
+              <div class="quote">"€249"</div>
+              <div class="text">€249 with no context reads expensive. Anchor it with facts, not adjectives.</div>
+              <div class="reply" id="cm3r">
+                <div class="who"><span class="chip">C</span>agent · claude-code</div>
+                <div class="text">Opened the figure and added the measured specs: battery and latency are from the bench. In v3.</div>
+              </div>
+              <div class="state" id="cm3s">OPEN</div>
             </div>
           </aside>
-        </div>
-      </div>
-      <div class="home-version-control" aria-label="Artifact versions">
-        <div class="home-version-tabs">
-          <button type="button" data-demo-version="1" aria-pressed="false"><span>v1</span><small>First draft</small></button>
-          <button type="button" data-demo-version="2" aria-pressed="false"><span>v2</span><small>Clearer direction</small></button>
-          <button type="button" data-demo-version="3" aria-pressed="true"><span>v3</span><small>Current</small></button>
-        </div>
-        <p class="home-version-summary"><span data-demo-version-label>v3</span><span data-demo-version-message>Measured specs added after review</span></p>
-      </div>
-    </figure>
-  </header>
-
-  <section class="home-chapter site-wrap" aria-labelledby="publish-heading">
-    <h2 id="publish-heading">Publish</h2>
-    <div class="home-chapter-body">
-      <div class="home-chapter-copy">
-        <p class="home-chapter-lede">Give the work a home.</p>
-        <p>Publish a Markdown file, an HTML page, or a built site to a lasting URL. Styled HTML keeps its fonts, scripts, and images inside a sandboxed viewer. The link you shared last week still works.</p>
-        <p>Publish again to update the same URL. Each publish creates a version you can compare or restore.</p>
-      </div>
-      <div class="home-specimen" aria-label="Example publish command">
-        <div class="home-specimen-bar">derive publish</div>
-        <div class="home-code-lines"><span>$ derive publish launch/</span><span class="home-code-muted">→ 14 files · 1.2 MB · sandboxed</span><span class="home-code-success">✓ live at derive.to/artifacts/q3-launch-plan</span></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="home-chapter site-wrap" aria-labelledby="find-heading">
-    <h2 id="find-heading">Find</h2>
-    <div class="home-chapter-body">
-      <div class="home-chapter-copy">
-        <p class="home-chapter-lede">Open the current work.</p>
-        <p>Every artifact appears in the workspace library. Search by name, tag, collection, or content instead of returning to the chat that produced it.</p>
-        <p>The same URL opens the current version and keeps earlier ones close by. You can see what changed and restore a version when you need it.</p>
-      </div>
-      <div class="home-specimen" aria-label="Recently updated artifacts">
-        <div class="home-specimen-bar">Library · Recently updated</div>
-        <dl class="home-library-list">
-          <div><dt>Q3 launch plan<small>Plans · updated today</small></dt><dd>v7</dd></div>
-          <div><dt>Customer import status<small>Reports · updated yesterday</small></dt><dd>v4</dd></div>
-          <div><dt>Database decision<small>Research · updated Monday</small></dt><dd>v2</dd></div>
-        </dl>
-      </div>
-    </div>
-  </section>
-
-  <section class="home-chapter site-wrap" aria-labelledby="share-heading">
-    <h2 id="share-heading">Share</h2>
-    <div class="home-chapter-body">
-      <div class="home-chapter-copy">
-        <p class="home-chapter-lede">Send a link, not an export.</p>
-        <p>Keep work inside your team, share it with anyone who has the link, or add a password for a client. The link opens the real page in a browser.</p>
-        <p>People can read without an account. Commenting and editing require sign-in. You can change or revoke access at any time.</p>
-      </div>
-      <div class="home-specimen" aria-label="Artifact sharing settings">
-        <div class="home-specimen-bar">Share · redesign-proposal</div>
-        <div class="home-share-link"><span>derive.to/artifacts/redesign-proposal</span><strong>Copy</strong></div>
-        <dl class="home-share-options">
-          <div><dt>Workspace<small>Everyone on your team</small></dt><dd>Editor</dd></div>
-          <div><dt>Anyone with the link<small>No account needed</small></dt><dd>Viewer</dd></div>
-          <div><dt>Password<small>For client access</small></dt><dd>On</dd></div>
-        </dl>
-      </div>
-    </div>
-  </section>
-
-  <section class="home-chapter site-wrap" aria-labelledby="discuss-heading">
-    <h2 id="discuss-heading">Discuss</h2>
-    <div class="home-chapter-body">
-      <div class="home-chapter-copy">
-        <p class="home-chapter-lede">Keep feedback next to the work.</p>
-        <p>Leave comments on exact text, mention a person or agent, or edit the artifact directly. Each version stays clear and recoverable, so everyone can see what changed.</p>
-        <p>Most work moves through comments and edits. Formal review is available when the work needs a recorded decision.</p>
-      </div>
-      <div class="home-specimen" aria-label="Artifact comment thread">
-        <div class="home-specimen-bar">Comments · q3-launch-plan</div>
-        <div class="home-thread">
-          <div><strong><span>A</span>Ada</strong><blockquote>“pilot cohort first”</blockquote><p>Which nine teams? Name them or nobody plans around it.</p></div>
-          <div><strong><span>C</span>agent · claude-code</strong><p>All nine are listed with owners in v3.</p><small>Resolved in v3</small></div>
+          <!-- live cursors -->
+          <div class="pcursor rob" id="curRob" aria-hidden="true">
+            <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
+              <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
+            </svg>
+            <span class="flag">Maeva</span>
+          </div>
+          <div class="pcursor ada" id="curAda" aria-hidden="true">
+            <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
+              <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
+            </svg>
+            <span class="flag">Anya</span>
+          </div>
+          <div class="pcursor you" id="curYou" aria-hidden="true">
+            <svg width="17" height="19" viewBox="0 0 17 19" fill="none">
+              <path class="arrow" d="M1 1l5.2 15.6 2.6-6.2 6.6-1.8L1 1Z" stroke="rgba(3,7,18,.5)" stroke-width="1"/>
+            </svg>
+            <span class="flag">you</span>
+          </div>
         </div>
       </div>
     </div>
-  </section>
+    <div class="timeline">
+      <div class="scrub">
+        <div class="scrub-track"></div>
+        <div class="scrub-fill" id="fill"></div>
+        <div class="stops" id="stops">
+          <span class="stop"></span><span class="stop"></span><span class="stop"></span>
+        </div>
+      </div>
+      <div class="scrub-labels" id="labels">
+        <span>v1</span><span>v2</span><span>v3</span>
+      </div>
+      <div class="version-line" id="vline">
+        <span class="tdot" aria-hidden="true"></span>
+        <span class="vn" id="vn">v1</span>
+        <span class="vauthor" id="va">agent · claude-code</span>
+        <span class="vmsg" id="vm">first draft · three directions, one straw-man rec</span>
+      </div>
+    </div>
+  </div>
+</header>
 
-  <section class="home-agent site-wrap" aria-labelledby="agent-heading">
-    <div class="home-agent-heading">
-      <p class="eyebrow">Connect your coding agent</p>
-      <h2 id="agent-heading">Give your agent a place to publish.</h2>
-      <p>Derive includes an MCP server for Claude Code, Codex, Cursor, and other compatible clients. Your agent can publish a page, read comments, and update the same artifact later.</p>
-    </div>
-    <div class="home-terminal" aria-label="Example Derive agent session">
-      <div class="home-terminal-bar"><span></span><span></span><span></span><strong>derive · agent session</strong></div>
-      <div class="home-terminal-lines"><span>$ claude mcp add derive https://derive.to/mcp</span><span class="home-code-success">✓ connected as @claude-code · role: editor</span><span></span><span>› publish “August growth report”</span><span class="home-code-muted">→ derive.to/artifacts/august-growth-report · v1 live</span><span></span><span>› catch_up</span><span class="home-code-muted">← 1 comment · Maeva on “+18% MoM”</span><span></span><span>› publish --addresses c_41x</span><span class="home-code-success">✓ v2 live · spike annotated · thread resolved</span></div>
-    </div>
-    <dl class="home-agent-tools">
-      <div><dt>publish</dt><dd>Save a revision</dd></div>
-      <div><dt>catch_up</dt><dd>Read new feedback</dd></div>
-      <div><dt>comment</dt><dd>Reply or resolve</dd></div>
-      <div><dt>read</dt><dd>Open any version</dd></div>
-    </dl>
-    <div class="home-connect-actions">
-      <button class="button" type="button" data-copy-from="agent-prompt" data-copied-label="Copied. Paste it into your agent."><span data-copy-label>Copy setup prompt</span></button>
-      <a class="text-link" href="https://docs.derive.to/agents/connect/">Read the connection guide <span aria-hidden="true">→</span></a>
-    </div>
-    <div class="home-connect-list" aria-label="Ways to connect and publish">
-      <button type="button" data-copy="npx skills add derive-to/derive --skill derive" data-copied-label="Copied"><span>Install the Derive skill</span><code>npx skills add derive-to/derive --skill derive</code><strong data-copy-label>Copy</strong></button>
-      <button type="button" data-copy="claude mcp add --transport http derive https://derive.to/mcp" data-copied-label="Copied"><span>Connect over MCP</span><code>claude mcp add --transport http derive https://derive.to/mcp</code><strong data-copy-label>Copy</strong></button>
-      <button type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" data-copied-label="Copied"><span>Publish without an account</span><code>curl -F file=@page.html https://derive.to/v1/drafts</code><strong data-copy-label>Copy</strong></button>
-    </div>
-    <div id="agent-prompt" hidden>Set up Derive as the place where we keep, share, and improve our work. Install the skill with: npx skills add derive-to/derive --skill derive. Otherwise read https://derive.to/skill.md and connect to https://derive.to/mcp. Then publish one real plan, report, or designed page we have worked on recently. If I am not connected, use the anonymous draft flow and send me both the live URL and claim link.</div>
-  </section>
+<!-- ══════════ MANIFESTO ══════════ -->
+<section class="manifesto wrap">
+  <div class="m-kicker reveal">A question for you</div>
+  <p class="m-line reveal">Your agents shipped forty things last week.</p>
+  <p class="m-line reveal"><span class="q">Can you find them?</span></p>
+  <p class="m-answer reveal">Most of it is gone, pasted into a Slack thread or stranded in a chat that scrolled away. Making another draft was never the hard part. The hard part is finding the one from Tuesday, trusting it's the latest, and getting a second pair of eyes on it before it goes out. <strong>Derive gives every artifact a permanent link, keeps every version, and puts the review right on it, so "where's the latest?" always has one answer.</strong></p>
+</section>
 
-  <section class="home-price site-wrap" aria-labelledby="beta-heading">
-    <p class="eyebrow">Hosted or self-hosted</p>
-    <h2 id="beta-heading">Free during beta.</h2>
-    <p>All hosted features are included, and no card is required. Derive is Fair Source and self-hostable. Run it with SQLite and local disk, or use Postgres and S3 when you need them.</p>
-    <div class="home-price-links">
-      <a class="text-link" href="/pricing">Read the pricing plan <span aria-hidden="true">→</span></a>
-      <a class="text-link" href="https://docs.derive.to/self-hosting/quickstart/">Self-host Derive <span aria-hidden="true">→</span></a>
+<!-- ══════════ THE OCEAN ══════════ -->
+<div class="ocean" role="img" aria-label="Ephemeral chat fragments drift past a single kept artifact.">
+  <div class="ghosts" aria-hidden="true">
+    <div class="gcol g1">
+      <span class="ghost">sure! here's a revised draft...</span>
+      <span class="ghost plain">can you resend the latest version?</span>
+      <span class="ghost">wait, that was the old one</span>
+      <span class="ghost plain">[conversation expired]</span>
+      <span class="ghost">which doc is current??</span>
+      <span class="ghost plain">pasted in slack, somewhere</span>
+      <span class="ghost">sure! here's a revised draft...</span>
+      <span class="ghost plain">can you resend the latest version?</span>
+      <span class="ghost">wait, that was the old one</span>
+      <span class="ghost plain">[conversation expired]</span>
+      <span class="ghost">which doc is current??</span>
+      <span class="ghost plain">pasted in slack, somewhere</span>
     </div>
-  </section>
+    <div class="gcol g2">
+      <span class="ghost plain">context window exceeded</span>
+      <span class="ghost">final_v3_ACTUAL.html</span>
+      <span class="ghost plain">who approved this?</span>
+      <span class="ghost">link's dead, sorry</span>
+      <span class="ghost plain">it was in the thread… some thread</span>
+      <span class="ghost">regenerating from scratch</span>
+      <span class="ghost plain">context window exceeded</span>
+      <span class="ghost">final_v3_ACTUAL.html</span>
+      <span class="ghost plain">who approved this?</span>
+      <span class="ghost">link's dead, sorry</span>
+      <span class="ghost plain">it was in the thread… some thread</span>
+      <span class="ghost">regenerating from scratch</span>
+    </div>
+    <div class="gcol g3">
+      <span class="ghost">history unavailable</span>
+      <span class="ghost plain">didn't we fix this already?</span>
+      <span class="ghost">screenshot of a screenshot</span>
+      <span class="ghost plain">new chat, same question</span>
+      <span class="ghost">v2? v4? nobody knows</span>
+      <span class="ghost plain">export before it's gone</span>
+      <span class="ghost">history unavailable</span>
+      <span class="ghost plain">didn't we fix this already?</span>
+      <span class="ghost">screenshot of a screenshot</span>
+      <span class="ghost plain">new chat, same question</span>
+      <span class="ghost">v2? v4? nobody knows</span>
+      <span class="ghost plain">export before it's gone</span>
+    </div>
+  </div>
+  <div class="kept">
+    <p class="kept-line">Chats scroll away. <em>Artifacts stay.</em></p>
+    <div class="kept-card">
+      <div class="kc-top">
+        <span class="lock" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 11 11" fill="none"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+        </span>
+        derive.to/artifacts/q3-launch-plan
+      </div>
+      <div class="kc-meta"><span>HTML · v7</span><span>every version kept</span><span class="ok">approved</span></div>
+    </div>
+  </div>
+</div>
 
-  <section class="home-finale site-wrap" aria-labelledby="finale-heading">
-    <h2 id="finale-heading">Good work is derived.</h2>
-    <p>Publish one real piece of work, then keep improving it at the same link.</p>
-    <div class="home-finale-actions">
-      <form data-waitlist class="waitlist-form" data-derive-source="homepage_waitlist" action="/v1/beta/signup" method="post" novalidate>
-        <label class="sr-only" for="home-email">Work email</label>
-        <input id="home-email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required>
-        <button class="button" type="submit">Get beta access</button>
-      </form>
-      <div class="waitlist-complete" data-waitlist-complete role="status" hidden>Check your inbox for the access link.</div>
+<!-- ══════════ CHAPTERS ══════════ -->
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">01</span><h2>Publish</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Off the clipboard and onto the record.</p>
+      <p class="ch-text reveal">One command takes a document, a designed page, or a whole built site to a permanent URL. Fully-styled HTML renders exactly as authored, fonts and scripts and images included, in a sandboxed viewer. Every revision is a new version at the same link, so <strong>the link you shared last week still resolves, and still shows its history.</strong> You can put it on your own domain.</p>
+      <p class="ch-text reveal">If an agent can make it, Derive can hold it: Markdown, a single HTML file, or a two-hundred-file build. Publishing is instant, and <strong>you never have to decide which drafts are worth keeping</strong>, because keeping all of them is the default.</p>
     </div>
-    <p class="home-finale-note">Already have access? <a href="/login?src=nav_signin">Sign in to your workspace</a>.</p>
-  </section>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">derive publish</div>
+        <div class="spec-body">
+          <span class="c">$</span> derive publish launch/<br>
+          <span class="dim">→ 14 files · 1.2 MB · sandboxed</span><br>
+          <span class="ok">✓ live at derive.to/artifacts/q3-launch-plan</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">02</span><h2>Share</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">One place for the work.</p>
+      <p class="ch-text reveal">Everything your team publishes lands in one library, so "where's that thing?" has one answer. When work needs to leave the building, you send a link: <strong>password it for a client, open it to anyone with a link, or keep it inside the team.</strong> Whoever opens it sees the real page in their browser, not a zip or PDF export.</p>
+      <p class="ch-text reveal">Every link has one role you chose: viewer, commenter, or editor. <strong>Anyone with viewing access can read without an account. Commenting and editing require sign-in.</strong> Feedback always has an accountable author. You can revoke a link the moment you change your mind.</p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">Share · redesign-proposal</div>
+        <div class="share-dlg">
+          <div class="share-link">
+            <span class="lock" aria-hidden="true">
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><rect x="1.5" y="4.5" width="8" height="5.5" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3.5 4.5V3a2 2 0 1 1 4 0v1.5" stroke="currentColor" stroke-width="1.2"/></svg>
+            </span>
+            <span class="share-url">derive.to/artifacts/redesign-proposal</span>
+            <span class="copy">COPY</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Workspace<span class="sr-sub">everyone on your team</span></span>
+            <span class="sr-val">editor</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Anyone with the link<span class="sr-sub">no account needed</span></span>
+            <span class="sr-val">viewer</span>
+          </div>
+          <div class="share-row">
+            <span class="sr-label">Password<span class="sr-sub">for the outside world</span></span>
+            <span class="sr-val"><span class="pwdots">••••••••</span><span class="sw" aria-hidden="true"></span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">03</span><h2>Collaborate</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Built for review.</p>
+      <p class="ch-text reveal">Share the link and your team is in. Comments pin to the exact line. @mentions work for people and agents, and approvals are visible. <strong>A draft stays a draft until a named person approves a version</strong>, so nobody has to guess whether what they're reading is final. When it's just you, Derive is still a private library of everything you've made, with the same review loop.</p>
+      <p class="ch-text reveal">Presence shows who's looking right now, and threads stay attached to the version they were about, so a decision keeps its context long after the conversation would have scrolled away. <strong>An approval is meaningful because it is on the record.</strong></p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">Comments · q3-launch-plan</div>
+        <div class="thread">
+          <div class="t-item">
+            <div class="t-who"><span class="chip">A</span>Ada</div>
+            <div class="t-quote">"pilot cohort first"</div>
+            <div class="t-text">Which nine teams? Name them or nobody plans around it.</div>
+          </div>
+          <div class="t-item">
+            <div class="t-who"><span class="chip">M</span>Maeva</div>
+            <div class="t-text">Seconding. Owners too, @claude-code.</div>
+          </div>
+          <div class="t-item">
+            <div class="t-who"><span class="chip">C</span>agent · claude-code</div>
+            <div class="t-text">All nine listed, with owners, in v3.</div>
+            <div class="t-state" style="margin-top:7px">RESOLVED IN V3</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter wrap">
+  <div class="ch-head reveal"><span class="ch-num">04</span><h2>Own</h2></div>
+  <div class="ch-body">
+    <div>
+      <p class="ch-lede reveal">Owned by you.</p>
+      <p class="ch-text reveal">Claude's artifacts stay in Claude. ChatGPT's canvases stay in ChatGPT. If half your team uses one and half uses the other, the work gets split. <strong>Derive doesn't care which model made what</strong>: context lives with the artifact, so a page Claude drafts on Monday can be revised by Codex on Tuesday, and your team reads both in one library.</p>
+      <p class="ch-text reveal">The same setup carries through. The product is <strong>Fair Source and runs as a single container on your own infrastructure</strong> if you want it to, and everything exports in open formats: artifacts, versions, and comments. If you ever leave, the record leaves with you.</p>
+    </div>
+    <div class="ch-spec reveal">
+      <div class="spec-card">
+        <div class="spec-bar">self-host</div>
+        <div class="spec-body">
+          <span class="c">$</span> docker compose -f deploy/compose.yml up -d<br>
+          <span class="dim">→ http://localhost:8080 · sqlite · local disk</span><br>
+          <span class="dim">FSL-1.1-ALv2 → Apache-2.0 after two years</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ THE LOOP ══════════ -->
+<section class="loop wrap">
+  <div class="section-head">
+    <div class="eyebrow reveal">Agent-native</div>
+    <h2 class="reveal">Where agents publish their work.</h2>
+    <p class="l-sub reveal">Derive has an MCP server built in: one command connects compatible clients such as Claude Code, Codex, and Cursor. From then on the agent stops pasting walls of HTML into chat and starts publishing <strong>real pages at real URLs, with visibility you control</strong>, while you read and review them in an interface built for people. Leave a comment and the agent can answer with a revision.</p>
+  </div>
+  <div class="bigterm reveal">
+    <div class="tb">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="tl">derive · agent session</span>
+    </div>
+    <div class="tbody" id="termBody"><span class="cursor" id="termCursor"></span></div>
+  </div>
+  <p class="cast reveal"><span><b>publish</b> save a revision</span><span><b>catch_up</b> what changed + open feedback</span><span><b>comment</b> reply or resolve</span><span><b>read</b> any artifact, any version</span></p>
+  <script type="text/plain" id="agentPrompt">I'd like you to set up Derive as the place where we keep, share, and improve our work.
+
+Install the skill if I have npm: npx skills add derive-to/derive --skill derive
+Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://derive.to/mcp).
+
+Then pick something real we've worked on recently (a plan, a report, a designed page) and publish it. If I'm not connected to Derive, use the anonymous draft flow: no account needed, and it returns a live URL plus a claim link. Send me both so I can see it and claim it.</script>
+  <div class="hk-lead reveal">
+    <button class="btn btn-primary" type="button" data-copy-from="agentPrompt" data-copied-label="Copied. Paste it into your agent">Copy instructions for my agent</button>
+    <span class="hk-leadnote">one paste into a compatible agent: it connects and publishes your first page</span>
+  </div>
+  <div class="hookup reveal">
+    <button class="hk-row" type="button" data-copy="npx skills add derive-to/derive --skill derive" title="Copy">
+      <span class="hk-what">Give a compatible agent the skill</span>
+      <code>npx skills add derive-to/derive --skill derive</code>
+      <span class="hk-copy" aria-hidden="true">COPY</span>
+    </button>
+    <button class="hk-row" type="button" data-copy="claude mcp add --transport http derive https://derive.to/mcp" title="Copy">
+      <span class="hk-what">Or connect over MCP</span>
+      <code>claude mcp add --transport http derive https://derive.to/mcp</code>
+      <span class="hk-copy" aria-hidden="true">COPY</span>
+    </button>
+    <button class="hk-row" type="button" data-copy="curl -F file=@page.html https://derive.to/v1/drafts" title="Copy. Publishes an expiring draft. Claim it into a workspace whenever.">
+      <span class="hk-what">No agent, no account</span>
+      <code>curl -F file=@page.html https://derive.to/v1/drafts</code>
+      <span class="hk-copy" aria-hidden="true">COPY</span>
+    </button>
+  </div>
+</section>
+
+<!-- ══════════ FINALE ══════════ -->
+<section class="finale wrap" id="finale">
+  <div class="state-line" id="stateLine">
+    <span class="vdot" aria-hidden="true"></span>
+    <span class="note" id="stateNote">v1 · drafted by an agent, 09:41:07</span>
+  </div>
+  <h2 class="derivation" aria-label="Good work is derived.">
+    <span class="row">Good work is</span>
+    <span class="row">
+      <span class="word" id="w1">generated.<span class="strike" aria-hidden="true"></span></span>
+      <span class="word" id="w2">prompted.<span class="strike" aria-hidden="true"></span></span>
+      <span class="word final-word" id="w3">derived.<span class="under" aria-hidden="true"></span></span>
+    </span>
+  </h2>
+  <p class="f-sub">Nothing you're proud of ships in one pass. Sign up, connect your agent, and publish your first artifact in minutes. The Free plan is free forever, no card required, and <strong>nothing you ship goes dark.</strong></p>
+  <div class="f-cta">
+    <a class="btn btn-primary" href="/login?signup=1&amp;src=homepage_finale">Start Deriving for Free</a>
+    <a href="/pricing">See pricing <span aria-hidden="true">→</span></a>
+  </div>
+  <p class="f-alt">
+    <button class="replay" id="replay" type="button" aria-label="Replay the edit">
+      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6a4 4 0 1 1 1.2 2.85M2 6V3.2M2 6h2.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      REPLAY THE EDIT
+    </button>
+    &nbsp;·&nbsp; $ docker compose up -d &nbsp;·&nbsp; <a href="https://github.com/derive-to/derive">derive-to/derive on GitHub</a>
+  </p>
+</section>
+
 </main>
 
-<footer class="site-footer">
-  <div class="home-footer-watermark" aria-hidden="true">Derive</div>
-  <div class="footer-inner site-wrap">
-    <div class="footer-intro">
-      <div class="footer-brand"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/><path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Derive</div>
-      <p class="footer-note">A durable workspace for agent-made work.</p>
+<footer>
+  <div class="watermark" aria-hidden="true">Derive</div>
+  <div class="foot-inner">
+    <span class="fm">
+      <svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      Derive
+    </span>
+    <div class="foot-links">
+      <a href="/pricing">Pricing</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/security">Security</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <a href="/login?src=nav_signin">Log in</a>
     </div>
-    <dl class="footer-group"><dt>Product</dt><dd><a href="https://docs.derive.to/">Docs</a></dd><dd><a href="/examples">Examples</a></dd><dd><a href="/pricing">Pricing</a></dd></dl>
-    <dl class="footer-group"><dt>Project</dt><dd><a href="https://github.com/derive-to/derive">GitHub</a></dd><dd><a href="https://docs.derive.to/reference/licensing/">Licensing</a></dd></dl>
-    <dl class="footer-group"><dt>Company</dt><dd><a href="/privacy">Privacy</a></dd><dd><a href="/security">Security</a></dd><dd><a href="/login?src=nav_signin">Sign in</a></dd></dl>
+    <span class="license">Fair source · FSL-1.1-ALv2 → Apache-2.0 · Prices in USD</span>
   </div>
 </footer>
-<div class="sr-only" data-copy-status role="status" aria-live="polite"></div>
+
+<!-- announces copy-button success to assistive tech; visually hidden -->
+<div id="copyStatus" role="status" aria-live="polite" style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* nav hairline */
+const nav = document.querySelector('.site-nav');
+addEventListener('scroll', () => nav.classList.toggle('scrolled', scrollY > 8), {passive:true});
+
+/* click-to-copy (hero curl, the connect rows, the agent-instructions prompt).
+   data-copy holds the text inline; data-copy-from points at a text/plain block
+   for multi-line prompts. Clipboard API needs a secure context; if it's
+   unavailable the click quietly does nothing — the text is there to select. */
+const copyStatus = $('copyStatus');
+document.querySelectorAll('[data-copy], [data-copy-from]').forEach(el => {
+  el.addEventListener('click', async () => {
+    if (el.classList.contains('copied')) return; // still showing the last copy
+    const text = el.dataset.copy ?? $(el.dataset.copyFrom)?.textContent.trim();
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); } catch { return; }
+    el.classList.add('copied');
+    copyStatus.textContent = 'Copied to clipboard';
+    const tag = el.querySelector('.hc-copy, .hk-copy');
+    // The confirmation label swaps into .copy-label when present (keeps icon
+    // siblings intact), else the whole button.
+    const labelEl = el.querySelector('.copy-label') ?? el;
+    const label = el.dataset.copiedLabel;
+    const prev = label && !tag ? labelEl.textContent : null;
+    if (tag) tag.textContent = 'COPIED';
+    else if (label) labelEl.textContent = label;
+    setTimeout(() => {
+      el.classList.remove('copied');
+      copyStatus.textContent = '';
+      if (tag) tag.textContent = 'COPY';
+      else if (prev !== null) labelEl.textContent = prev;
+    }, 1800);
+  });
+});
+
+/* reveal on scroll */
+const io = new IntersectionObserver(es => es.forEach(en => {
+  if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+}), {threshold:.05});
+document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+/* ══ the hero: a sentence deriving itself ══ */
+const note = $('stateNote'), stateLine = $('stateLine');
+const w1 = $('w1'), w2 = $('w2'), w3 = $('w3');
+let editTimers = [];
+
+function editReset(){
+  editTimers.forEach(clearTimeout); editTimers = [];
+  stateLine.classList.remove('approved');
+  [w1,w2,w3].forEach(w => w.classList.remove('on','struck','settle','approved'));
+  note.textContent = 'v1 · drafted by an agent, 09:41:07';
+}
+function at(ms, fn){ editTimers.push(setTimeout(fn, ms)); }
+
+function editPlay(){
+  editReset();
+  if (reduced) { editFinal(); return; }
+  at(150,  () => w1.classList.add('on'));
+  at(900,  () => {
+    w1.classList.add('struck');
+    note.textContent = 'v2 · "good takes more than one pass." · Maeva';
+  });
+  at(1080, () => w2.classList.add('on'));
+  at(1650, () => {
+    w1.classList.add('settle');
+    w2.classList.add('struck');
+    note.textContent = 'v3 · "a prompt isn\'t craft." · Maeva';
+  });
+  at(1830, () => w3.classList.add('on'));
+  at(2350, () => {
+    w2.classList.add('settle');
+    w3.classList.add('approved');
+    stateLine.classList.add('approved');
+    note.textContent = 'v4 · approved · this is the one.';
+  });
+}
+function editFinal(){
+  [w1,w2].forEach(w => w.classList.add('on','struck','settle'));
+  w3.classList.add('on','approved');
+  stateLine.classList.add('approved');
+  note.textContent = 'v4 · approved · this is the one.';
+}
+$('replay').addEventListener('click', editPlay);
+/* the edit plays once, when the finale arrives */
+if (reduced) { editFinal(); }
+else {
+  editFinal(); /* sensible resting state for anyone who lands mid-page */
+  const fio = new IntersectionObserver(es => es.forEach(en => {
+    if (en.isIntersecting) { editPlay(); fio.disconnect(); }
+  }), {threshold:.5});
+  fio.observe($('finale'));
+}
+
+/* ── the figure: the OSC-8 as a live exploded wireframe (raw WebGL, zero deps).
+   The drawing is the launch page's product image; its states are the versions.
+   No WebGL → the flat filing (SVG) takes the slot; reduced motion → one still frame. ── */
+const glStage = $('glStage'), glCanvas = $('glCanvas'), glLeads = $('glLeads');
+const glCtx = glCanvas.getContext('webgl', { antialias: true, alpha: true });
+const glOk = !!glCtx;
+let glSetVersion = (n) => {
+  $('lpPh').style.display = n === 1 ? 'block' : 'none';
+  glStage.style.display = 'none';
+  const svg = $('lpSvg'); if (svg) svg.style.display = n >= 2 ? 'block' : 'none';
+};
+let glSnap = () => {};
+let glSetTheme = () => {};
+if (glOk) (() => {
+  const gl = glCtx;
+  const M = {
+    mul(a, b) {
+      const o = new Float32Array(16);
+      for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++)
+        o[c*4+r] = a[r]*b[c*4] + a[4+r]*b[c*4+1] + a[8+r]*b[c*4+2] + a[12+r]*b[c*4+3];
+      return o;
+    },
+    persp(fov, asp, n, f) {
+      const t = 1 / Math.tan(fov / 2);
+      return new Float32Array([t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]);
+    },
+    rotX(a){const c=Math.cos(a),si=Math.sin(a);return new Float32Array([1,0,0,0, 0,c,si,0, 0,-si,c,0, 0,0,0,1])},
+    rotY(a){const c=Math.cos(a),si=Math.sin(a);return new Float32Array([c,0,-si,0, 0,1,0,0, si,0,c,0, 0,0,0,1])},
+    trans(x,y,z){return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1])},
+  };
+  const seg = (a, p1, p2) => a.push(p1[0],p1[1],p1[2], p2[0],p2[1],p2[2]);
+  const box = (a, cx, cy, cz, w, h, d) => {
+    const x=w/2, y=h/2, z=d/2;
+    const v = [[-x,-y,-z],[x,-y,-z],[x,-y,z],[-x,-y,z],[-x,y,-z],[x,y,-z],[x,y,z],[-x,y,z]]
+      .map(pt => [pt[0]+cx, pt[1]+cy, pt[2]+cz]);
+    for (const [i,j] of [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]]) seg(a, v[i], v[j]);
+  };
+  const circle = (a, cx, cy, cz, r, segs=20) => {
+    let prev = null;
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs * Math.PI * 2;
+      const pt = [cx + Math.cos(t)*r, cy, cz + Math.sin(t)*r];
+      if (prev) seg(a, prev, pt);
+      prev = pt;
+    }
+  };
+  const parts = [];
+  const part = (verts, dir, min, int=false) => parts.push({ v: new Float32Array(verts), dir, min, int, buf: null, n: verts.length/3 });
+  { const a = []; box(a, 0, 0, 0, 240, 26, 96);
+    const ix=108, iz=36;
+    seg(a,[-ix,13,-iz],[ix,13,-iz]); seg(a,[ix,13,-iz],[ix,13,iz]); seg(a,[ix,13,iz],[-ix,13,iz]); seg(a,[-ix,13,iz],[-ix,13,-iz]);
+    part(a, [0,0,0], 2); }
+  for (let k = 0; k < 8; k++) {
+    const a = [], x = -104 + k*26, z = -20;
+    circle(a, x, 13, z, 9); circle(a, x, 24, z, 9);
+    for (let q = 0; q < 4; q++) { const t = q/4*Math.PI*2, dx = Math.cos(t)*9, dz = Math.sin(t)*9;
+      seg(a, [x+dx,13,z+dz], [x+dx,24,z+dz]); }
+    seg(a, [x,24,z], [x,24,z-9]);
+    part(a, [0, 26 + (k%3)*7, 0], 2);
+  }
+  { const a = [];
+    for (let k = 0; k < 13; k++) {
+      const x = -84 + k*14, black = [1,3,6,8,10].includes(k);
+      if (black) box(a, x, 16.5, 24, 10, 5, 18);
+      else box(a, x, 15, 30, 11, 4, 30);
+    }
+    seg(a, [-93, 12.5, 14], [93, 12.5, 14]); seg(a, [93, 12.5, 14], [93, 12.5, 46]);
+    seg(a, [93, 12.5, 46], [-93, 12.5, 46]); seg(a, [-93, 12.5, 46], [-93, 12.5, 14]);
+    part(a, [0, 34, 16], 2); }
+  { const a = []; circle(a, 100, 13.5, -18, 4, 12); circle(a, 100, 13.5, -18, 9, 16); circle(a, 100, 13.5, -18, 14, 20);
+    part(a, [12, 22, 0], 2); }
+  { const a = []; const y = -1;
+    seg(a,[-104,y,-38],[104,y,-38]); seg(a,[104,y,-38],[104,y,38]); seg(a,[104,y,38],[-104,y,38]); seg(a,[-104,y,38],[-104,y,-38]);
+    for (const t of [[-90,-30,-40,-30,-40,10],[-70,34,-70,0,20,0],[36,-28,36,18,88,18],[60,-30,96,-30,96,-6],[-20,-20,-20,26,8,26]]) {
+      seg(a,[t[0],y,t[1]],[t[2],y,t[3]]); seg(a,[t[2],y,t[3]],[t[4],y,t[5]]);
+    }
+    box(a, -52, y, -12, 26, 3, 26); box(a, 58, y, 2, 18, 3, 18);
+    part(a, [0, -34, 0], 3, true); }
+  { const a = []; box(a, -30, -8, 8, 96, 12, 52);
+    seg(a,[10,-4,34],[16,-4,34]); seg(a,[13,-7,34],[13,-1,34]); seg(a,[-64,-4,34],[-58,-4,34]);
+    part(a, [0, -50, 0], 3, true); }
+
+  const sh = (t, src) => { const o = gl.createShader(t); gl.shaderSource(o, src); gl.compileShader(o); return o; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER,
+    'attribute vec3 p; uniform mat4 mvp; uniform vec3 off; varying float w;' +
+    'void main(){ vec4 c = mvp * vec4(p + off, 1.0); w = c.w; gl_Position = c; }'));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER,
+    'precision mediump float; uniform float ua; uniform vec3 uc; varying float w;' +
+    'void main(){ float d = clamp((w - 240.0) / 260.0, 0.0, 1.0);' +
+    'gl_FragColor = vec4(uc, ua * mix(1.0, 0.22, d)); }'));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  const aP = gl.getAttribLocation(prog, 'p');
+  const uMVP = gl.getUniformLocation(prog, 'mvp');
+  const uOff = gl.getUniformLocation(prog, 'off');
+  const uA = gl.getUniformLocation(prog, 'ua');
+  const uC = gl.getUniformLocation(prog, 'uc');
+  gl.enableVertexAttribArray(aP);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  for (const pp of parts) { pp.buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pp.buf); gl.bufferData(gl.ARRAY_BUFFER, pp.v, gl.STATIC_DRAW); }
+
+  const GLBL = [
+    { html: 'encoder ×8 · <b>brass</b>', p: [-104, 26, -20], d: [0, 26, 0], dx: -56, dy: -40, min: 3 },
+    { html: 'li-ion · <b>22 h measured</b>', p: [-78, -2, 8], d: [0, -50, 0], dx: -14, dy: 40, min: 3, int: true },
+  ];
+  for (const L of GLBL) {
+    L.el = document.createElement('div'); L.el.className = 'g-lbl'; L.el.innerHTML = L.html;
+    $('glLabels').appendChild(L.el);
+    L.ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    L.ln.setAttribute('stroke', 'rgba(150,154,162,.4)'); L.ln.setAttribute('stroke-dasharray', '1 4');
+    glLeads.appendChild(L.ln);
+    L.dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    L.dot.setAttribute('r', '2'); L.dot.setAttribute('fill', '#969aa2');
+    glLeads.appendChild(L.dot);
+  }
+
+  let glVersion = 1, e = 0, eT = 0, ry = 2.65, rx = -0.3, rxT = -0.3, ryOff = 0, ryOffT = 0;
+  let W = 0, H = 0, vis = false, rafOn = false, last = 0;
+
+  const glResize = () => {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    W = glStage.clientWidth; H = glStage.clientHeight;
+    glCanvas.width = W * dpr; glCanvas.height = H * dpr;
+    gl.viewport(0, 0, glCanvas.width, glCanvas.height);
+    glLeads.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  };
+  const project = (m, pt) => {
+    const x = m[0]*pt[0]+m[4]*pt[1]+m[8]*pt[2]+m[12], y = m[1]*pt[0]+m[5]*pt[1]+m[9]*pt[2]+m[13],
+          w = m[3]*pt[0]+m[7]*pt[1]+m[11]*pt[2]+m[15];
+    return [(x/w+1)/2*W, (1-y/w)/2*H];
+  };
+  const glDraw = (dt) => {
+    if (glVersion < 2 || !W) return;
+    if (!reduced) ry += dt * 0.00013;
+    e += (eT - e) * Math.min(1, dt * 0.006 + 0.04);
+    rx += (rxT - rx) * 0.07; ryOff += (ryOffT - ryOff) * 0.07;
+    const asp = W / H;
+    const dist = -330 * Math.max(1, 1.85 / asp); // narrow canvas → pull back, never clip
+    const mvp = M.mul(M.persp(0.5, asp, 10, 1200),
+                M.mul(M.trans(0, 0, dist), M.mul(M.rotX(rx), M.rotY(ry + ryOff))));
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniformMatrix4fv(uMVP, false, mvp);
+    for (const pp of parts) {
+      if (!(pp.min >= 2 && pp.min <= glVersion)) continue;
+      gl.uniform1f(uA, pp.int ? 0.25 + 0.75 * e : 0.92);
+      gl.uniform3f(uOff, pp.dir[0] * e, pp.dir[1] * e, pp.dir[2] * e);
+      gl.bindBuffer(gl.ARRAY_BUFFER, pp.buf);
+      gl.vertexAttribPointer(aP, 3, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.LINES, 0, pp.n);
+    }
+    for (const L of GLBL) {
+      const on = glVersion >= L.min && (!L.int || e > 0.12);
+      L.el.style.opacity = on ? Math.min(1, L.int ? (e - 0.12) * 3 : 1) : 0;
+      L.ln.style.opacity = on ? 1 : 0; L.dot.style.opacity = on ? 1 : 0;
+      if (!on) continue;
+      const q = project(mvp, [L.p[0] + L.d[0]*e, L.p[1] + L.d[1]*e, L.p[2] + L.d[2]*e]);
+      const lx = Math.max(56, Math.min(W - 56, q[0] + L.dx));
+      const ly = Math.max(14, Math.min(H - 16, q[1] + L.dy));
+      L.el.style.left = lx + 'px'; L.el.style.top = ly + 'px';
+      L.dot.setAttribute('cx', q[0]); L.dot.setAttribute('cy', q[1]);
+      L.ln.setAttribute('x1', q[0]); L.ln.setAttribute('y1', q[1]);
+      L.ln.setAttribute('x2', lx + (L.dx > 0 ? -30 : 30)); L.ln.setAttribute('y2', ly + (L.dy > 0 ? -7 : 7));
+    }
+  };
+  const glLoop = (t) => {
+    if (!vis || reduced) { rafOn = false; return; }
+    glDraw(t - last); last = t;
+    requestAnimationFrame(glLoop);
+  };
+  const wake = () => {
+    if (!rafOn && vis && !reduced) { rafOn = true; last = performance.now(); requestAnimationFrame(glLoop); }
+  };
+  new IntersectionObserver(es => { vis = es[0].isIntersecting; wake(); })
+    .observe(document.querySelector('.demo'));
+  if (!reduced && matchMedia('(pointer:fine)').matches) {
+    glStage.addEventListener('pointermove', (ev) => {
+      const r = glStage.getBoundingClientRect();
+      ryOffT = ((ev.clientX - r.left) / r.width - 0.5) * 0.5;
+      rxT = -0.3 - ((ev.clientY - r.top) / r.height - 0.5) * 0.3;
+    });
+    glStage.addEventListener('pointerenter', () => { if (glVersion === 3) eT = 1; });
+    glStage.addEventListener('pointerleave', () => { if (glVersion === 3) eT = 0.4; rxT = -0.3; ryOffT = 0; });
+  }
+  glSetVersion = (n) => {
+    glVersion = n;
+    $('lpPh').style.display = n === 1 ? 'block' : 'none';
+    $('lpSvg').style.display = 'none';
+    glStage.style.display = n >= 2 ? 'block' : 'none';
+    if (n >= 2) {
+      glResize();
+      eT = n === 3 ? 0.4 : 0;
+      if (reduced) e = eT;
+      glDraw(0); wake();
+    }
+  };
+  /* approval snaps the object shut, then it settles back open at rest */
+  glSnap = () => {
+    eT = 0;
+    setTimeout(() => { if (glVersion === 3) eT = 0.4; }, 950);
+  };
+  /* line ink per theme: #f3f4f6 on the dark bg, #16171b on paper */
+  glSetTheme = (light) => {
+    gl.uniform3f(uC, light ? 0.086 : 0.953, light ? 0.090 : 0.957, light ? 0.106 : 0.965);
+    if (glVersion >= 2) glDraw(0);
+  };
+  glSetTheme(document.documentElement.classList.contains('light'));
+  addEventListener('resize', () => { if (glVersion >= 2) { glResize(); glDraw(0); } });
+})();
+
+/* ══ the hero artifact: the loop, played live ══ */
+const GOLD = 'color-mix(in srgb, var(--gold) 26%, transparent)';
+const VIOLET = 'color-mix(in srgb, var(--share) 26%, transparent)';
+const DOC = {
+  1: { meta:'HTML · v1', v1:true,
+       h:`<span class="hlspan" id="t2" style="--hlc:${GOLD}">OSC-8 Synthesizer</span>`,
+       sub:'A portable 8-voice synthesizer with a built-in speaker and battery. Available for preorder now.',
+       btn:'Preorder · €249', price:'',
+       fig:'FIG. 1 · placeholder · unresolved', hint:'', specs:false,
+       line:['v1','agent · claude-code','first draft · a template with a hole where the product goes'] },
+  2: { meta:'HTML · v2', v1:false,
+       h:'Eight voices.<br><em>Zero menus.</em>',
+       sub:'Every parameter is a knob you can touch. No pages, no shift keys, no manual. Battery for a weekend.',
+       btn:'Preorder', price:`<span class="hlspan" id="t3" style="--hlc:${VIOLET}">€249</span> · ships worldwide`,
+       fig:'FIG. 1 · top assembly · 1:2', hint:'', specs:false,
+       line:['v2','agent · claude-code','revision · drawn like a filing, and the type leads'] },
+  3: { meta:'HTML · v3', v1:false,
+       h:'Eight voices.<br><em>Zero menus.</em>',
+       sub:'Every parameter is a knob you can touch. No pages, no shift keys, no manual. Battery for a weekend.',
+       btn:'Preorder · €249', price:'<b>Ships March</b> · 30-day returns · case + cable included',
+       fig:'FIG. 1 · exploded view · 1:2 · unit №0043', hint:'hover to open it up', specs:true,
+       line:['v3','agent · claude-code','measured specs · the exploded view is the anchor'] },
+};
+const demoBody = $('demoBody'), demoFrame = document.querySelector('.demo-frame');
+const fill = $('fill'), stops = [...$('stops').children], labels = [...$('labels').children];
+const vline = $('vline');
+
+function setLine(n, author, msg){
+  vline.classList.remove('typing');
+  $('vn').textContent = n; $('va').textContent = author; $('vm').textContent = msg;
+}
+function setTyping(){
+  vline.classList.add('typing');
+  $('va').textContent = 'claude-code'; $('vm').textContent = 'is revising…';
+}
+function setDoc(n, flash){
+  const d = DOC[n];
+  $('docMeta').textContent = d.meta;
+  $('docPane').classList.toggle('v1', !!d.v1);
+  $('lpH').innerHTML = d.h;
+  $('lpSub').textContent = d.sub;
+  $('lpBtn').textContent = d.btn;
+  $('lpPrice').innerHTML = d.price;
+  $('lpFig').textContent = d.fig;
+  $('lpHint').textContent = glOk && matchMedia('(hover:hover)').matches ? d.hint : '';
+  $('lpSpecs').classList.toggle('show', !!d.specs);
+  $('lpSpecsNote').classList.toggle('show', !!d.specs);
+  glSetVersion(n);
+  if (flash) { const h = $('lpHero'); h.classList.remove('flash'); void h.offsetWidth; h.classList.add('flash'); }
+  fill.style.width = ((n-1)/(labels.length-1)*100) + '%';
+  stops.forEach((s,k)=>s.classList.toggle('passed', k < n));
+  labels.forEach((l,k)=>l.classList.toggle('on', k === n-1));
+  setLine(...d.line);
+}
+function cursorTo(cur, targetId, dx=10, dy=6){
+  const t = $(targetId); if (!t) return;
+  const tb = t.getBoundingClientRect(), bb = demoBody.getBoundingClientRect();
+  const x = tb.left - bb.left + tb.width*0.72 + dx;
+  const y = tb.top - bb.top + tb.height*0.85 + dy;
+  cur.style.transform = `translate(${x}px, ${y}px)`;
+}
+function cursorShow(cur, on){ cur.style.opacity = on ? '1' : '0'; }
+function lit(id, on=true){ const el = $(id); if (el) el.classList.toggle('lit', on); }
+function thread(id, on){ $(id).classList.toggle('show', on); }
+function resolved(id, sid, label){ $(id).classList.add('resolved'); $(sid).textContent = label; }
+function openState(id, sid){ $(id).classList.remove('resolved'); $(sid).textContent = 'OPEN'; }
+
+const curRob = $('curRob'), curAda = $('curAda');
+let sceneTimers = [];
+function s(ms, fn){ sceneTimers.push(setTimeout(fn, ms)); }
+function clearScene(){ sceneTimers.forEach(clearTimeout); sceneTimers = []; }
+
+let sceneDone = false;
+function sceneReset(){
+  demoFrame.classList.remove('resetting');
+  sceneDone = false;
+  setDoc(1, false);
+  $('cEmpty').style.display = 'block';
+  ['cm1','cm2','cm3'].forEach(id => { $(id).classList.remove('show','resolved','collapsed'); });
+  $('cm3r').classList.remove('show');
+  $('cm1s').textContent = $('cm2s').textContent = $('cm3s').textContent = 'OPEN';
+  $('approvedBadge').classList.remove('show');
+  cursorShow(curRob, false); cursorShow(curAda, false);
+  /* park cursors off to the right so entrances glide in */
+  curRob.style.transform = 'translate(' + (demoBody.clientWidth*0.55) + 'px, ' + (demoBody.clientHeight*0.9) + 'px)';
+  curAda.style.transform = 'translate(' + (demoBody.clientWidth*0.6) + 'px, 20px)';
+}
+function sceneFinal(){
+  setDoc(3, false);
+  $('cEmpty').style.display = 'none';
+  ['cm1','cm2','cm3'].forEach(id => $(id).classList.add('show'));
+  $('cm3r').classList.add('show');
+  resolved('cm1','cm1s','RESOLVED IN V2'); resolved('cm2','cm2s','RESOLVED IN V2');
+  resolved('cm3','cm3s','RESOLVED IN V3');
+  $('cm1').classList.add('collapsed'); $('cm2').classList.add('collapsed');
+  $('approvedBadge').classList.add('show');
+  setLine('v3','Anya · approval','approved · preorders open Monday');
+  sceneDone = true;
+}
+
+function scenePlay(){
+  clearScene();
+  sceneReset();
+  /* Maeva arrives, highlights, comments twice */
+  s(700,  () => { cursorShow(curRob, true); cursorTo(curRob, 't1'); });
+  s(1700, () => { lit('t1'); });
+  s(2250, () => { $('cEmpty').style.display='none'; thread('cm1', true); });
+  s(3000, () => { cursorTo(curRob, 't2'); });
+  s(3800, () => { lit('t2'); });
+  s(4300, () => { thread('cm2', true); });
+  /* the agent picks it up */
+  s(5000, () => { cursorShow(curRob, false); setTyping(); });
+  s(6100, () => {
+    setDoc(2, true);
+    lit('t1', false); lit('t2', false);
+    resolved('cm1','cm1s','RESOLVED IN V2'); resolved('cm2','cm2s','RESOLVED IN V2');
+  });
+  /* the settled threads fold away, making room for the next reviewer */
+  s(7500, () => { $('cm1').classList.add('collapsed'); });
+  s(7750, () => { $('cm2').classList.add('collapsed'); });
+  /* Ada arrives with a fresh eye */
+  s(7300, () => { cursorShow(curAda, true); cursorTo(curAda, 't3', 8, 4); });
+  s(8300, () => { lit('t3'); });
+  s(8850, () => { thread('cm3', true); });
+  /* the agent answers in-thread, then publishes */
+  s(9800, () => { $('cm3r').classList.add('show'); setTyping(); });
+  s(10900,() => {
+    setDoc(3, true);
+    resolved('cm3','cm3s','RESOLVED IN V3');
+  });
+  /* approval */
+  s(11900,() => {
+    $('approvedBadge').classList.add('show');
+    setLine('v3','Anya · approval','approved · preorders open Monday');
+    cursorShow(curAda, false);
+    glSnap();
+    sceneDone = true;
+  });
+  s(13400,() => { $('cm3').classList.add('collapsed'); });
+  /* hold, then loop */
+  s(15200,() => { demoFrame.classList.add('resetting'); });
+  s(15650,() => { sceneReset(); demoFrame.classList.remove('resetting'); });
+  s(16400,() => { scenePlay(); });
+}
+
+if (reduced) { sceneFinal(); }
+else {
+  sceneReset();
+  let playing = false;
+  const dio = new IntersectionObserver(es => es.forEach(en => {
+    if (en.isIntersecting && !playing) { playing = true; scenePlay(); }
+    else if (!en.isIntersecting && playing) { playing = false; clearScene(); sceneReset(); }
+  }), {threshold:.35});
+  dio.observe(document.querySelector('.demo'));
+}
+
+/* quiet presence: hover the artifact and you're in it — green cursor, facepile chip */
+const youChip = $('youChip'), faceLabel = $('faceLabel'), curYou = $('curYou');
+if (matchMedia('(hover:hover)').matches) {
+  const fine = matchMedia('(pointer:fine)').matches && !reduced;
+  if (fine) {
+    demoBody.classList.add('livecursor');
+    let raf = null, px = 0, py = 0;
+    demoBody.addEventListener('pointermove', e => {
+      const b = demoBody.getBoundingClientRect();
+      px = e.clientX - b.left; py = e.clientY - b.top;
+      if (!raf) raf = requestAnimationFrame(() => {
+        curYou.style.transform = `translate(${px}px, ${py}px)`;
+        raf = null;
+      });
+    });
+  }
+  demoBody.addEventListener('pointerenter', () => {
+    if (fine) curYou.style.opacity = '1';
+    youChip.classList.add('in');
+    faceLabel.textContent = '4 here · you';
+  });
+  demoBody.addEventListener('pointerleave', () => {
+    if (fine) curYou.style.opacity = '0';
+    youChip.classList.remove('in');
+    faceLabel.textContent = '3 here';
+  });
+}
+
+/* ══ the terminal: one full round of the loop, typed ══ */
+const LINES = [
+  ['p','$ claude mcp add derive https://derive.to/mcp'],
+  ['ok','✓ connected as @claude-code · role: editor'],
+  ['p','› publish "August growth report"'],
+  ['dim','→ derive.to/artifacts/august-growth-report · v1 live'],
+  ['p','› catch_up'],
+  ['dim','← 1 comment · Maeva on "+18% MoM": "the pricing change'],
+  ['dim','  spiked signups for a week. Annotate it or the number lies."'],
+  ['p','› publish --addresses c_41x'],
+  ['ok','✓ v2 live · spike annotated · thread resolved'],
+  ['ok','✓ v3 approved by Maeva · shipped'],
+];
+const termBody = $('termBody'), cursor = $('termCursor');
+let termStarted = false;
+
+function typeTerm(){
+  if (termStarted) return; termStarted = true;
+  cursor.remove();
+  if (reduced) {
+    termBody.innerHTML = LINES.map(([k,t]) => `<span class="ln"><span class="${k}">${t}</span></span>`).join('');
+    return;
+  }
+  let li = 0, ci = 0;
+  function newLine(){
+    const ln = document.createElement('span'); ln.className = 'ln';
+    const tx = document.createElement('span');
+    ln.appendChild(tx); ln.appendChild(cursor);
+    termBody.appendChild(ln);
+    return tx;
+  }
+  let tx = newLine();
+  function step(){
+    if (li >= LINES.length) { cursor.remove(); return; }
+    const [k, text] = LINES[li];
+    tx.className = k;
+    if (ci < text.length) {
+      tx.textContent = text.slice(0, ++ci);
+      setTimeout(step, text[ci-1] === ' ' ? 5 : 9);
+    } else {
+      li++; ci = 0;
+      if (li < LINES.length) tx = newLine(); else cursor.remove();
+      setTimeout(step, li === 9 ? 450 : 180);
+    }
+  }
+  step();
+}
+const tio = new IntersectionObserver(es => es.forEach(en => { if (en.isIntersecting) { typeTerm(); tio.disconnect(); } }), {threshold:.35});
+tio.observe(document.querySelector('.bigterm'));
+
+/* ══ theme: shell.js owns the control; the canvas repaints on its event ══ */
+document.addEventListener('derive:theme', (e) => glSetTheme(e.detail.light));
+</script>
 </body>
 </html>

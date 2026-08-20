@@ -163,7 +163,6 @@ import {
   asset,
   auditLog,
   automation,
-  betaSignup,
   collection,
   collectionFavorite,
   collectionInvite,
@@ -223,6 +222,7 @@ export function artifactListConditions(
     created_at: Column
     updated_at: Column
     current_version: Column
+    current_content_type: Column
     id: Column
     org_id: Column
     listed: Column
@@ -241,6 +241,9 @@ export function artifactListConditions(
   // Anonymous / non-member callers only ever see the public directory — a
   // workspace-listed title must not leak to someone outside the workspace.
   if (opts?.publicOnly) conds.push(eq(art.listed, "public"))
+  // Typed listings (a workspace's skills) filter on the denormalized content type
+  // here rather than paging the library and filtering in memory.
+  if (opts?.contentType) conds.push(eq(art.current_content_type, opts.contentType))
   // A listing surfaces feed-listed rows (`workspace`/`public`) to members, plus any
   // row the viewer is an explicit member of (their own drafts, shares, collections)
   // — an UNlisted row (listed='none') never appears in a feed by access alone. The
@@ -371,7 +374,6 @@ export const schema = {
   connection,
   artifactInvite,
   invitation,
-  betaSignup,
   signupAttribution,
   instanceOperator,
   subscription,
@@ -423,7 +425,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   connection: true,
   invitation: true,
   artifactInvite: true,
-  betaSignup: true,
   signupAttribution: true,
   subscription: true,
   context: true,
@@ -3368,13 +3369,29 @@ export function makeRepos(db: SqliteDb) {
       resolved_by?: string | null
       resolved_by_name?: string | null
     },
-  ): Promise<ReviewRoundRecord | null> =>
-    (await db
-      .update(reviewRound)
-      .set({ ...fields, resolved_at: new Date().toISOString() })
-      .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
-      .returning()
-      .get()) ?? null
+  ): Promise<ReviewRoundRecord | null> => {
+    const updated =
+      (await db
+        .update(reviewRound)
+        .set({ ...fields, resolved_at: new Date().toISOString() })
+        .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
+        .returning()
+        .get()) ?? null
+    // An approval moves the artifact's approved-version pointer, never lowering it:
+    // the round's version is what the human actually looked at, and a stale round
+    // approved after a newer one must not roll delivery back. Rounds at version 0
+    // (an unversioned artifact) stamp nothing — approved_version = 0 would read as
+    // "serve version 0" through approvedOrCurrent, not as "never approved".
+    if (updated && fields.state === "approved" && updated.version > 0)
+      await db
+        .update(artifact)
+        .set({
+          approved_version: sql`MAX(COALESCE(${artifact.approved_version}, 0), ${updated.version})`,
+        })
+        .where(eq(artifact.id, updated.artifact_id))
+        .run()
+    return updated
+  }
 
   // ---- Contexts + sessions -------------------------------------------------
   const createContext = async (x: NewContext): Promise<ContextRecord> =>
@@ -4622,19 +4639,6 @@ export function makeRepos(db: SqliteDb) {
     return row !== undefined
   }
 
-  // ---- Beta signups --------------------------------------------------------
-  const recordBetaSignup = async (id: string, email: string): Promise<boolean> => {
-    // The unique email index makes a concurrent duplicate a no-op; an empty
-    // RETURNING means the email was already on the list.
-    const row = await db
-      .insert(betaSignup)
-      .values({ id, email })
-      .onConflictDoNothing()
-      .returning()
-      .get()
-    return row !== undefined
-  }
-
   // ---- Signup attribution ---------------------------------------------------
   const recordSignupAttribution = async (a: NewSignupAttribution): Promise<void> => {
     // The unique user_id index makes a duplicate hook fire a no-op — first write
@@ -5361,7 +5365,6 @@ export function makeRepos(db: SqliteDb) {
     deletePendingInvitationsFor,
     deleteInvitation,
     consumeInvitation,
-    recordBetaSignup,
     recordSignupAttribution,
     getSignupAttribution,
     createArtifactInvite,

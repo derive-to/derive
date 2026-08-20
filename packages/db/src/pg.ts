@@ -177,7 +177,6 @@ import {
   asset,
   auditLog,
   automation,
-  betaSignup,
   collection,
   collectionFavorite,
   collectionInvite,
@@ -266,7 +265,6 @@ export const schema = {
   connection,
   artifactInvite,
   invitation,
-  betaSignup,
   signupAttribution,
   instanceOperator,
   subscription,
@@ -318,7 +316,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   connection: true,
   invitation: true,
   artifactInvite: true,
-  betaSignup: true,
   signupAttribution: true,
   subscription: true,
   context: true,
@@ -342,6 +339,7 @@ void _schemaExhaustive
 void _schemaShapes
 
 const VIEW_WINDOW_MS = 30 * 86400_000
+const LAST_24H_MS = 86400_000
 
 /**
  * Postgres metadata store (Neon, RDS, self-hosted) for horizontal scale — the
@@ -627,7 +625,40 @@ export class PgMetaStore implements MetaStore {
       connectionTimeoutMillis: 10_000,
     })
     pool.on("error", (err) => onError?.(err))
-    for (const stmt of PG_SCHEMA_STATEMENTS) await pool.query(stmt)
+    // ONE round trip, not 294. The statements are joined and sent as a single
+    // simple query rather than awaited one at a time.
+    //
+    // This is a latency fix, and the size of it depends on who is paying the
+    // round trips. The test suite provisions 915 stores per Postgres run (counted
+    // from information_schema.schemata after a full run), and each one was
+    // replaying all 294 statements sequentially: 234ms per store measured, ~1.4x
+    // of which is round-trip overhead rather than work. Measured on the five
+    // heaviest api specs against a clean database, 287 tests passing either way:
+    // 56.1s -> 46.5s wall, 84.3s -> 60.3s of test-body time.
+    //
+    // Production gains MORE than the suite does, not less, which is the opposite
+    // of what a local benchmark suggests. Against a networked Postgres every one
+    // of those 294 statements paid a full RTT; at a Neon-ish 20ms that is ~6s of
+    // pure latency on every boot, and it collapses to one RTT here.
+    //
+    // Two properties change, both checked before doing this:
+    //   - ATOMICITY. A multi-statement simple query runs in one implicit
+    //     transaction, so a failure now rolls the whole schema back instead of
+    //     leaving it half applied. That is strictly better for a boot, and it does
+    //     not change the failure POLICY: this boot has never had a per-statement
+    //     try/catch, so any failing statement was already fatal (see the note on
+    //     SLACK_THREAD_LINK_REKEY_PG in pg-schema.ts). Postgres has transactional
+    //     DDL and nothing here uses CREATE INDEX CONCURRENTLY, which is the one
+    //     thing that could not run inside it.
+    //   - TIMEOUT SCOPE. statement_timeout above now bounds the whole schema pass
+    //     rather than each statement. The pass measures ~117ms against a local
+    //     engine and is one round trip against a remote one, so 30s keeps roughly
+    //     two orders of magnitude of headroom.
+    //
+    // The conformance test in packages/db/test deliberately still applies these
+    // one at a time — it is asserting per-statement idempotency and the legacy
+    // migration paths, which is a different property from how boot applies them.
+    await pool.query(PG_SCHEMA_STATEMENTS.join(";\n"))
     return PgMetaStore.fromPool(pool)
   }
 
@@ -2010,8 +2041,13 @@ export class PgMetaStore implements MetaStore {
 
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
-    const [tot, uni, anon, perV, daily, recent] = await Promise.all([
+    const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
+    const [tot, day, uni, anon, perV, daily, recent] = await Promise.all([
       this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
+      this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1 AND created_at>=$2`, [
+        artifactId,
+        dayAgo,
+      ]),
       this.pool.query(`SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1`, [
         artifactId,
       ]),
@@ -2034,6 +2070,7 @@ export class PgMetaStore implements MetaStore {
     ])
     return {
       total: tot.rows[0].n,
+      last24h: day.rows[0].n,
       unique: uni.rows[0].n,
       anonViewers: anon.rows[0].n,
       perVersion: perV.rows.map((r) => ({ version: r.version, count: r.c })),
@@ -3985,6 +4022,8 @@ export class PgMetaStore implements MetaStore {
         .update(artifact)
         .set({
           current_version: n,
+          // The approved-version pointer: this new version IS the approved one.
+          approved_version: n,
           current_content_type: p.content_type,
           updated_at: now,
           author_name: p.author,
@@ -4087,7 +4126,20 @@ export class PgMetaStore implements MetaStore {
       .set({ ...fields, resolved_at: new Date().toISOString() })
       .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
-    return rows[0] ?? null
+    const updated = rows[0] ?? null
+    // An approval moves the artifact's approved-version pointer, never lowering it:
+    // the round's version is what the human actually looked at, and a stale round
+    // approved after a newer one must not roll delivery back. Rounds at version 0
+    // (an unversioned artifact) stamp nothing — approved_version = 0 would read as
+    // "serve version 0" through approvedOrCurrent, not as "never approved".
+    if (updated && fields.state === "approved" && updated.version > 0)
+      await this.db
+        .update(artifact)
+        .set({
+          approved_version: sql`GREATEST(COALESCE(${artifact.approved_version}, 0), ${updated.version})`,
+        })
+        .where(eq(artifact.id, updated.artifact_id))
+    return updated
   }
 
   // ---- Contexts + sessions -------------------------------------------------
@@ -5605,18 +5657,6 @@ export class PgMetaStore implements MetaStore {
         and(eq(invitation.id, id), isNull(invitation.accepted_at), gt(invitation.expires_at, now)),
       )
       .returning({ id: invitation.id })
-    return rows.length > 0
-  }
-
-  // ---- Beta signups --------------------------------------------------------
-  async recordBetaSignup(id: string, email: string): Promise<boolean> {
-    // The unique email index makes a concurrent duplicate a no-op; an empty
-    // RETURNING means the email was already on the list.
-    const rows = await this.db
-      .insert(betaSignup)
-      .values({ id, email })
-      .onConflictDoNothing()
-      .returning()
     return rows.length > 0
   }
 

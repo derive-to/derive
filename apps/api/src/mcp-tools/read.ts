@@ -1,4 +1,5 @@
 import {
+  approvedOrCurrent,
   artifactUrl,
   DECK_TEMPLATE,
   type DocMap,
@@ -18,6 +19,7 @@ import {
   parseTemplateLibraryUri,
   refsOf,
   resolveNode,
+  SKILL_CONTENT_TYPE,
   sectionOf,
   TEMPLATE_LIBRARY_CATALOG_URI,
   templateLibraryUri,
@@ -33,7 +35,7 @@ import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-referen
 import { cleanPath } from "../lib/bundle"
 import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
-import { pickVariant } from "../lib/collect-render"
+import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
@@ -56,6 +58,9 @@ import {
   parseVersionRange,
   runnerOnline,
   safeJson,
+  skillFilesFooter,
+  skillReading,
+  skillsCatalog,
   sleep,
   toBase64,
 } from "../mcp-util"
@@ -158,6 +163,7 @@ export function registerReadTool(tc: ToolContext): void {
     num,
     staleNote,
     actingFor,
+    agent,
     ownerId,
     inGrant,
     resolveWs,
@@ -191,7 +197,11 @@ export function registerReadTool(tc: ToolContext): void {
           .optional()
           .describe(
             'A heading slug, or "@2" for a region. Bundle: a page path, optionally page.html#slug. "*" forces the whole (clipped) doc. Omitted: small returns whole, large returns an outline.',
-          ),
+          )
+          // Four different addressing schemes share one string param, and the difference is
+          // not inferable from the type. The slug form is the one to lead with because it
+          // is what an outline hands back.
+          .meta({ examples: ["risks", "@2", "docs/pricing.html#tiers", "*"] }),
         format: z
           .enum(["markdown", "html", "text"])
           .optional()
@@ -320,14 +330,40 @@ export function registerReadTool(tc: ToolContext): void {
         })
       }
       const SK = "derive://skills/"
+      if (short_id === "derive://skills") {
+        const t = await resolveWs(workspace)
+        if ("error" in t) return err(t.error)
+        const catalog = await skillsCatalog(ctx, t.org, actingFor?.id ?? agent.id)
+        return json({
+          uri: short_id,
+          ...catalog,
+          ...(catalog.truncated ? { next: "Use find skills:true for the full set." } : {}),
+        })
+      }
       if (short_id.startsWith(SK)) {
         const name = short_id.slice(SK.length)
         const skill = CORE_SKILLS.find((s) => s.name === name)
-        if (!skill)
-          return err(
-            `No core skill "${name}". Available: ${CORE_SKILLS.map((s) => s.name).join(", ")}.`,
-          )
-        return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
+        if (skill) return json({ uri: short_id, mimeType: "text/markdown", content: skill.body })
+        // A workspace skill rides the same prefix by short id. Core names win; short
+        // ids are exactly 8 base36 chars, so the lookup order settles the one
+        // collision a name like "contexts" could ever pose. Access is the ordinary
+        // artifact reach — tenancy, roaming, and takedowns identical to a plain read.
+        const r = await reach(name, workspace)
+        if (r && "error" in r) return err(r.error)
+        if (r && r.a.current_content_type === SKILL_CONTENT_TYPE) {
+          const reading = await skillReading(ctx, r.a)
+          if (reading)
+            return json({
+              uri: short_id,
+              mimeType: "text/markdown",
+              // Clipped like every other content read — a SKILL.md can arrive by
+              // 100MB zip upload, and this response has no outline rung to fall to.
+              content: clip(reading.body + skillFilesFooter(r.a.short_id, reading.others)),
+            })
+        }
+        return err(
+          `No skill "${name}". Core: ${CORE_SKILLS.map((s) => s.name).join(", ")}; workspace skills: read derive://skills for the catalog.`,
+        )
       }
       // The deck starter, resolved here as well as via MCP resources — the skill that
       // points at it is read through this same tool on clients without resource support,
@@ -525,7 +561,13 @@ export function registerReadTool(tc: ToolContext): void {
       // after the artifact lookup, so a context named like a doc can never shadow it.
       if (!r) return (await contextPackage()) ?? notFound(docId)
       const a = r.a
-      const n = version ?? a.current_version
+      // A skill's default version is the one delivery serves (the last approved, else
+      // current), and it applies to EVERY rung — body, sections, outline, render — so
+      // the footer's "read this file" suggestions can't fetch a different version than
+      // the body they rode in on. An explicit `version` always wins.
+      const n =
+        version ??
+        (a.current_content_type === SKILL_CONTENT_TYPE ? approvedOrCurrent(a) : a.current_version)
       if (n < 1 || n > a.current_version)
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       const v = await ctx.meta.getVersion(a.id, n)
@@ -552,6 +594,26 @@ export function registerReadTool(tc: ToolContext): void {
               ? "the whole page"
               : "the whole page, with the region map's @N refs drawn on it"
         let variant = pickVariant(v, render)
+        // NO RENDERER ON THIS INSTANCE — decided before anything below waits for, re-queues,
+        // or advises a retry on a screenshot that is never coming. It short-circuits three
+        // paths at once: the self-heal (which would flip a `failed` variant to a PERMANENT
+        // `pending`, since the re-queue behind it is a no-op here), the wait loop (which
+        // would burn the caller's whole `wait` budget), and the "try again shortly" ending.
+        // An ALREADY-STORED shot still serves: previews may have been on when it rendered
+        // and switched off since, and that picture is still the truth about the page.
+        // A variant that already FAILED keeps its reason. Previews may have been on when it
+        // ran and switched off since, and "this instance renders nothing" would then discard
+        // a true fact about the page (a font that never loaded, a layout that timed out) in
+        // favour of a fact about the deployment. Both are said, in that order.
+        if (!ctx.deps.renderPreviews && !(variant.status === "ready" && variant.key))
+          return err(
+            rendersOff(
+              variant.status === "failed"
+                ? `The render:${render} of "${short_id}" v${n} failed (${variant.error ?? "transient error"}), and a fresh one`
+                : `The render:${render} of "${short_id}" v${n}`,
+              url,
+            ),
+          )
         // SELF-HEAL on read: a dead-lettered render (a transient storage/browser
         // error that exhausted its retries) used to demand a no-op republish just to
         // re-render. Re-queue it right here instead — reset the variant to pending so
@@ -1001,6 +1063,38 @@ export function registerReadTool(tc: ToolContext): void {
 
       // Bundle.
       const pages = Object.keys(manifest.files).map(cleanPath)
+      // A skill reads as its document: the SKILL.md body, with the bundle's files
+      // listed alongside. The common caller was just told to follow this procedure,
+      // so the outline-first bundle default is the wrong rung here. `n` already
+      // defaulted to the served (approved-or-current) version above — the response
+      // says which. Explicit `section` still opens one file; naming any other
+      // version keeps the ordinary bundle view.
+      if (
+        a.current_content_type === SKILL_CONTENT_TYPE &&
+        !section &&
+        !wantMap &&
+        !node &&
+        !lines &&
+        n === approvedOrCurrent(a)
+      ) {
+        const reading = await skillReading(ctx, a)
+        // A giant SKILL.md keeps the ordinary outline path below — the same ceiling
+        // whole-document reads honor — so this branch can never return megabytes.
+        if (reading && reading.body.length <= FULL_DOC_MAX)
+          return json({
+            short_id,
+            title: reading.name ?? a.title,
+            kind: "skill",
+            version: reading.version,
+            ...(reading.version !== a.current_version
+              ? { note: `Approved version; the latest draft is v${a.current_version}.` }
+              : {}),
+            url,
+            content: reading.body,
+            files: pages,
+            next: 'Read one of the files with read(section:"<path>").',
+          })
+      }
       if (!section) {
         // Outline: every page, plus sizes + headings for the shallowest text pages
         // (each costs a blob read — the manifest has no sizes — so cap the sweep).

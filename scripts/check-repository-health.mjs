@@ -6,6 +6,7 @@
 // GitHub itself, and maintainers can run `pnpm audit:repository` on demand.
 
 import { readFileSync } from "node:fs"
+import { REQUIRED_CONTEXTS } from "./required-checks.mjs"
 
 const repository = process.env.GITHUB_REPOSITORY || "derive-to/derive"
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository))
@@ -106,7 +107,11 @@ const actualContexts = (statuses?.required_status_checks ?? [])
 // Accessibility remains a PR signal, but it is intentionally advisory while
 // the public-surface suite settles. Keep the faster, deterministic CI lanes as
 // strict merge requirements and surface accessibility findings for follow-up.
-const requiredContexts = ["analyze", "check", "db"]
+//
+// The list itself lives in required-checks.mjs, shared with the script that
+// APPLIES it. An audit that keeps its own copy of what it audits is an audit that
+// can agree with itself while both halves are wrong.
+const requiredContexts = [...REQUIRED_CONTEXTS].sort()
 requireState(
   statuses?.strict_required_status_checks_policy === true,
   "required checks are not strict",

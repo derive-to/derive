@@ -55,6 +55,7 @@ import {
 } from "./schema"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
+const LAST_24H_MS = 86400_000
 
 /**
  * Embedded SQLite (WAL) — the zero-dependency default; no external services. The
@@ -277,6 +278,8 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         tx.update(artifact)
           .set({
             current_version: n,
+            // The approved-version pointer: this new version IS the approved one.
+            approved_version: n,
             current_content_type: p.content_type,
             updated_at: now,
             author_name: p.author,
@@ -470,9 +473,15 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     },
     viewStats: async (artifactId): Promise<ViewStats> => {
       const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
+      const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
       const n = (q: string, ...p: unknown[]) => (raw.prepare(q).get(...p) as { n: number }).n
       return {
         total: n(`SELECT count(*) n FROM view WHERE artifact_id=?`, artifactId),
+        last24h: n(
+          `SELECT count(*) n FROM view WHERE artifact_id=? AND created_at>=?`,
+          artifactId,
+          dayAgo,
+        ),
         unique: n(`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=?`, artifactId),
         anonViewers: n(
           `SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=? AND viewer_kind='anon'`,

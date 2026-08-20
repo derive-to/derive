@@ -13,6 +13,22 @@ export type RenderVariant = (typeof RENDER_VARIANTS)[number]
 export const RENDER_WAIT_MAX = 30
 
 /**
+ * What to say when this instance renders no screenshots at all — shared by `read` and
+ * `publish` so the two cannot drift into describing different instances.
+ *
+ * `deps.renderPreviews` is the tier-agnostic answer to "will a screenshot EVER exist":
+ * node.ts sets it from DERIVE_PREVIEWS, worker.ts from the BROWSER binding, and
+ * context.ts's `notifyRender` never enqueues a job when it is false. So a not-ready
+ * variant on such an instance is TERMINAL, not slow — and the ordinary "try again
+ * shortly, or pass `wait`" ending is advice that cannot succeed no matter how many times
+ * it is taken. Measured in an agent trace: four reads, each blocking the full 30s, before
+ * the caller gave up on a screenshot that was never queued.
+ */
+export const rendersOff = (what: string, url: string): string =>
+  `${what} will never arrive: this instance does not render screenshots. Open ${url} to see the page instead. ` +
+  `An operator turns them on with DERIVE_PREVIEWS=true (Node tier) or a BROWSER binding (Workers tier).`
+
+/**
  * A variant's three columns. THE one place that maps a variant name onto storage: three
  * variants times three columns is nine names to get right, and a second copy of that
  * mapping is how `read` and `publish` would quietly come to disagree about which

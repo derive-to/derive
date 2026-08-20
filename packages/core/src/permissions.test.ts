@@ -4,6 +4,7 @@ import {
   type Actor,
   can,
   effectiveRole,
+  hasArtifactStanding,
   isRole,
   type LinkRole,
   maxRole,
@@ -212,6 +213,18 @@ describe("effectiveRole — the anonymous invariant", () => {
     expect(effectiveRole({ kind: "anon", locked: true, unlocked: true }, "none", "viewer")).toBe(
       "viewer",
     )
+  })
+})
+
+describe("hasArtifactStanding", () => {
+  it("counts collaborator grants and active workspace seats, but not world links", () => {
+    expect(hasArtifactStanding({ kind: "token" })).toBe(true)
+    expect(hasArtifactStanding({ kind: "anon" }, "member")).toBe(false)
+    expect(hasArtifactStanding(user(), "member")).toBe(false)
+    expect(hasArtifactStanding(user({ orgRole: "viewer" }), "none")).toBe(false)
+    expect(hasArtifactStanding(user({ orgRole: "viewer" }), "member")).toBe(true)
+    expect(hasArtifactStanding(user({ artifactRole: "commenter" }), "none")).toBe(true)
+    expect(hasArtifactStanding(user({ inheritedLinkRole: "editor" }), "member")).toBe(false)
   })
 })
 

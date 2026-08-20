@@ -1,6 +1,6 @@
 ---
 name: loop
-summary: catch up on an artifact, respond to comments, publish updates, and pull queued work (catch_up, comment, clear_queue)
+summary: catch up, respond to comments, publish updates, pull queued work, and schedule standing work (catch_up, comment, clear_queue, automate)
 order: 1
 ---
 # Comments and updates
@@ -71,6 +71,44 @@ names the artifact, comment thread, and requested work. An OAuth connection with
 - **Wait (long-poll).** Pass `wait` (seconds, max 50). When the queue is
   empty, the call blocks until a new request lands or the time runs out, then returns it.
   Chain `wait` calls to react in seconds instead of polling on a cadence.
+
+## automate: standing work, on a clock or a trigger
+
+`automate` is the same loop without a person starting it: a stored instruction that re-runs on a
+schedule or an event. Five actions share one schema, so pass only the parameters the action reads.
+
+**Two gates, both refusing in the tool result rather than failing later.** Standing jobs need a
+manage-level (owner) grant, and the workspace must have turned automations on (`automateBeta`,
+which ships off). `list` works either way and reports `automations_enabled`, so check there
+before building a `create` that will be refused.
+
+- **`create`** needs `trigger` + `instruction`.
+  - `trigger` is `{kind:"manual"|"schedule"|"event"}`. A schedule carries `cron` and `tz`. An
+    event carries `on`, an event name. The row accepts any name, but `on:"webhook"` is the
+    only one anything dispatches today, so another value creates an automation that never
+    fires. A webhook mints a fire secret returned **once**, on that response. There is no way
+    to read it again.
+  - `instruction` is re-run verbatim, with no chat history behind it. Name the artifact it acts
+    on inside the instruction; a run cannot infer "the report we discussed".
+  - `refs` says what it acts on: artifact short ids, `{kind:"artifact",id,mode:"publish"|"propose"}`
+    to choose whether that target is written directly or proposed, or `{kind:"tag",tag}` for a set.
+  - `context_id` binds the run to a context, and that context's agent acts. Omit it and Derive
+    mints a managed agent for the automation.
+  - `provider` picks the executing coding agent (`claude-code` by default, or `codex`).
+- **`list`** returns each automation's id, truncated instruction, bound context, provider and
+  enabled flag, plus the beta-gate state described above.
+- **`run_now`** fires one by `automation_id`. A disabled automation, or one whose workspace has
+  no way to pay for the run, is refused here rather than queued and dropped.
+- **`record`** logs a run this session executed LOCALLY, so it lands in the same ledger as hosted
+  runs: `outcome`, an optional `note`, and `wrote` for the short_ids it published. Only
+  `outcome:"failed"` marks the run failed.
+- **`create_context`** wires a new context to a manifest artifact (`name` + `manifest_short_id`),
+  which needs share standing on that manifest. Skills load **only** from the manifest's
+  frontmatter `skills:` list. Naming one in the body pins nothing, and the response says so
+  when it spots that mistake. The context's `dk_agt_` token is deliberately not returned here.
+
+Automations are not the way to answer a comment or ship one revision; that is the loop above.
+Reach for one when the same instruction should run again without anyone remembering to start it.
 
 ## When formal review is requested
 

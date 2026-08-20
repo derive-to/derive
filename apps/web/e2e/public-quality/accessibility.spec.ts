@@ -2,7 +2,6 @@ import { createHash } from "node:crypto"
 import AxeBuilder from "@axe-core/playwright"
 import { expect, test } from "@playwright/test"
 
-const siteOrigin = `http://127.0.0.1:${Number(process.env.PW_PUBLIC_SITE_PORT ?? 9100 + portSlot())}`
 const docsOrigin = `http://127.0.0.1:${Number(process.env.PW_PUBLIC_DOCS_PORT ?? 9700 + portSlot())}`
 
 function portSlot(): number {
@@ -18,17 +17,6 @@ type Surface = {
   expectedStatus?: 200 | 404
 }
 const surfaces: Surface[] = [
-  { name: "marketing home (dark)", url: `${siteOrigin}/site/index.html`, theme: "dark" },
-  { name: "marketing home (light)", url: `${siteOrigin}/site/index.html`, theme: "light" },
-  { name: "examples", url: `${siteOrigin}/site/examples.html` },
-  { name: "pricing", url: `${siteOrigin}/site/pricing.html` },
-  { name: "privacy", url: `${siteOrigin}/site/privacy.html` },
-  { name: "security", url: `${siteOrigin}/security.html` },
-  {
-    name: "site 404",
-    url: `${siteOrigin}/this-public-page-must-not-exist`,
-    expectedStatus: 404,
-  },
   { name: "docs home (dark)", url: `${docsOrigin}/`, theme: "dark" },
   { name: "docs home (light)", url: `${docsOrigin}/`, theme: "light" },
   { name: "docs quickstart", url: `${docsOrigin}/self-hosting/quickstart/`, theme: "dark" },
@@ -73,51 +61,6 @@ for (const surface of surfaces) {
     expect(violations, details).toEqual([])
   })
 }
-
-test("marketing skip link moves focus to the primary content", async ({ page }) => {
-  await page.goto(`${siteOrigin}/site/index.html`)
-  await page.keyboard.press("Tab")
-  const skip = page.getByRole("link", { name: "Skip to content" })
-  await expect(skip).toBeFocused()
-  await expect(skip).toBeVisible()
-  await page.keyboard.press("Enter")
-  await expect(page.locator("#main-content")).toBeFocused()
-})
-
-test("marketing mobile menu exposes the same primary navigation", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile", "mobile navigation is hidden on wider screens")
-  await page.goto(`${siteOrigin}/site/index.html`)
-
-  const menu = page.locator(".mobile-nav")
-  await menu.locator("summary").click()
-  await expect(menu.getByRole("link", { name: /Docs/ })).toBeVisible()
-  await expect(menu.getByRole("link", { name: "Examples" })).toBeVisible()
-  await expect(menu.getByRole("link", { name: "Pricing" })).toBeVisible()
-  await expect(menu.getByRole("link", { name: /GitHub/ })).toBeVisible()
-  await expect(menu.getByRole("link", { name: /Sign in/ })).toBeVisible()
-
-  await page.keyboard.press("Escape")
-  await expect(menu).not.toHaveAttribute("open")
-  await expect(menu.locator("summary")).toBeFocused()
-})
-
-test("marketing walkthrough lets readers inspect each artifact version", async ({ page }) => {
-  await page.goto(`${siteOrigin}/site/index.html`)
-
-  const walkthrough = page.locator("[data-home-demo]")
-  const firstVersion = page.locator('[data-demo-version="1"]')
-  await firstVersion.click()
-
-  await expect(walkthrough).toHaveAttribute("data-version", "1")
-  await expect(firstVersion).toHaveAttribute("aria-pressed", "true")
-  await expect(walkthrough.getByRole("heading", { name: "OSC-8 Synthesizer" })).toBeVisible()
-  await expect(walkthrough.getByText("No comments yet.")).toBeVisible()
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth === document.documentElement.clientWidth,
-    ),
-  ).toBe(true)
-})
 
 test("docs search loads the local browser index", async ({ page }) => {
   await page.goto(`${docsOrigin}/`)

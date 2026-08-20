@@ -401,3 +401,61 @@ describe("sqlite store: OAuth grants (Better Auth oauth-provider tables)", () =>
     rmSync(dir, { recursive: true, force: true })
   })
 })
+
+// The trailing-24h count is the one view statistic that depends on WHEN a row was
+// written, and `recordView` always stamps "now" — so backdating needs a raw INSERT.
+// The cutoff predicate is the same shape in every driver (`created_at >= ?`, the one
+// `viewedSince` already uses), so exercising it once here covers the SQL; the shared
+// contract asserts the counting itself on every dialect.
+describe("sqlite store: rolling 24h view window", () => {
+  it("counts only views inside the trailing 24 hours", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const dir = mkdtempSync(join(tmpdir(), "derive-db-views-"))
+    const path = join(dir, "store.db")
+    const s = new SqliteMetaStore(path)
+    const art = await s.createArtifact({
+      id: "art_24h",
+      short_id: "a24h0000",
+      org_id: "org_24h",
+      slug: "doc",
+      title: "Doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      format: "md",
+      created_by: "amy",
+    })
+    // Inside the window: stamped now by the store's own default.
+    await s.recordView({
+      id: "v_fresh",
+      artifact_id: art.id,
+      version: 1,
+      viewer: "fresh",
+      viewer_kind: "anon",
+    })
+    // Outside it: 30 hours old, still inside the 30-day `daily` window.
+    const raw = new Database(path)
+    raw
+      .prepare(
+        `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind, created_at) VALUES (?,?,?,?,?,?)`,
+      )
+      .run(
+        "v_stale",
+        art.id,
+        1,
+        "stale",
+        "anon",
+        new Date(Date.now() - 30 * 3600_000).toISOString(),
+      )
+    raw.close()
+
+    const stats = await s.viewStats(art.id)
+    expect(stats.total).toBe(2) // all-time is unchanged
+    expect(stats.last24h).toBe(1) // the 30-hour-old row aged out
+    s.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+})

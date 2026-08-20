@@ -7,11 +7,14 @@
 
 import {
   type ArtifactRecord,
+  approvedOrCurrent,
   type BundleManifest,
+  bundleDoc,
   type ContextRecord,
   isHtmlLike,
   LINKED_BUNDLE_CONTENT_TYPE,
   type OutlineSection,
+  parseFrontmatter,
   SKILL_CONTENT_TYPE,
   type VersionRecord,
 } from "@derive/core"
@@ -21,6 +24,7 @@ import { cleanPath, manifestOf as sharedManifestOf } from "./lib/bundle"
 import { MAX_CHARS } from "./lib/clip"
 import { quoteOf } from "./lib/comments"
 import { baseType, type ReadFormat } from "./lib/search"
+import { CORE_SKILLS } from "./skills-reference.gen"
 
 export const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] })
 // Bound a best-effort promise (the tab-delivery receipt) so it can never stall a
@@ -283,6 +287,107 @@ export const summarizeComment = (c: {
 // A version's bundle manifest, presented cleanly. Lets the loop tools see a
 // multi-page artifact's actual files, not just its entry doc.
 export const manifestOf = (ctx: AppContext, v: VersionRecord) => sharedManifestOf(ctx.blobs, v)
+
+/** A skill's declared identity and reading body, from its SERVED version — the last
+ *  human-approved one, or current when none exists (approvedOrCurrent): frontmatter
+ *  name/description, the SKILL.md body with frontmatter stripped, and the bundle's
+ *  other files (invisible unless announced). Never throws — null covers a missing
+ *  version, an unreadable blob, and a corrupt manifest alike (sourceText re-parses the
+ *  manifest and can throw on one), so callers fall back to their generic shape instead
+ *  of failing a whole surface over one bad skill. */
+export const skillReading = async (
+  ctx: AppContext,
+  a: ArtifactRecord,
+): Promise<{
+  name: string | null
+  description: string | null
+  body: string
+  others: string[]
+  version: number
+} | null> => {
+  try {
+    const v = await ctx.meta.getVersion(a.id, approvedOrCurrent(a))
+    const manifest = v ? await manifestOf(ctx, v) : null
+    const entry = v ? await ctx.sourceText(v) : null // the SKILL.md, frontmatter intact
+    if (!manifest || entry === null) return null
+    const info = bundleDoc(manifest, entry)
+    return {
+      name: info.name,
+      description: info.description,
+      body: parseFrontmatter(entry).body,
+      others: info.files.map((f) => f.path).filter((p) => p !== info.entry),
+      version: approvedOrCurrent(a),
+    }
+  } catch {
+    return null
+  }
+}
+
+/** The footer a skill body carries when served as one text (a resource or a
+ *  derive://skills read), so its auxiliary files stay reachable. */
+export const skillFilesFooter = (shortId: string, others: string[]): string =>
+  others.length
+    ? `\n\n---\nOther files in this skill — read them with the read tool ` +
+      `(read short_id:"${shortId}" section:"${others[0]}"): ${others.join(", ")}`
+    : ""
+
+/** The derive://skills catalog: core skills plus the workspace's own, each row carrying
+ *  the URI to read next. One builder for the MCP resource and the read tool, so the two
+ *  can't drift. Workspace rows are viewer-scoped and resolved only when the catalog is
+ *  actually read, never at connect. */
+export const skillsCatalog = async (
+  ctx: AppContext,
+  org: string,
+  viewerId: string,
+): Promise<{
+  core: { name: string; summary: string; read: string }[]
+  workspace: {
+    short_id: string
+    name: string
+    description: string | null
+    version: number
+    read: string
+  }[]
+  truncated?: true
+}> => {
+  const arts = await ctx.meta.listArtifacts({
+    orgId: org,
+    viewerId,
+    archived: "exclude",
+    excludeRemoved: true,
+    contentType: SKILL_CONTENT_TYPE,
+    limit: 101,
+  })
+  const listed = arts.slice(0, 100)
+  // Frontmatter identity costs a version row + two blob reads per skill; sweep the
+  // first 25 in parallel (the bundle-outline sweep's cap — serialized latency and
+  // Workers subrequest limits both bite) and let the rest carry their artifact
+  // title, which publish set from the same frontmatter anyway.
+  const detail = new Map(
+    await Promise.all(
+      listed.slice(0, 25).map(async (a) => [a.id, await skillReading(ctx, a)] as const),
+    ),
+  )
+  return {
+    core: CORE_SKILLS.map((s) => ({
+      name: s.name,
+      summary: s.summary,
+      read: `derive://skills/${s.name}`,
+    })),
+    workspace: listed.map((a) => {
+      const reading = detail.get(a.id)
+      return {
+        short_id: a.short_id,
+        name: reading?.name ?? a.title ?? a.short_id,
+        description: reading?.description ?? null,
+        // The version delivery serves — approved when a human has approved one.
+        version: approvedOrCurrent(a),
+        read: `derive://skills/${a.short_id}`,
+      }
+    }),
+    ...(arts.length > 100 ? { truncated: true as const } : {}),
+  }
+}
 
 // Which pages changed between two bundle versions — by comparing each file's
 // content-addressed blob key. This is the "what's new" a coalesced catch-up needs.

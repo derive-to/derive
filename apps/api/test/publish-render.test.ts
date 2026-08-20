@@ -45,7 +45,11 @@ const callRaw = async (
 }
 
 const setup = async (name: string) => {
-  const { app, meta } = makeAuthedApp(name, [owner], "editor")
+  // Every case in this file is about what happens once a render has been QUEUED — delivered
+  // inline, still pending inside `wait`, or not waited for. None of those states exist on an
+  // instance with no renderer, where publish now says so outright instead (mcp.test.ts covers
+  // that path). So the flag is part of the fixture's meaning, not boilerplate.
+  const { app, meta } = makeAuthedApp(name, [owner], "editor", { deps: { renderPreviews: true } })
   await app.request("/v1/me", { headers: as(owner.email) })
   const bot = await (
     await app.request("/v1/agents", jsonAs(as(owner.email), { name: "PrBot", role: "editor" }))

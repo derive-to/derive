@@ -134,6 +134,10 @@ export interface ArtifactRecord {
   /** Locked: direct publishes are rejected; changes must go through a proposal. */
   locked: 0 | 1
   current_version: number
+  /** The last version a human approved (a proposal's decided_version, or a review
+   *  round's version — never lowered). Null until the first approval. Agent skill
+   *  delivery serves `approved_version ?? current_version` (see approvedOrCurrent). */
+  approved_version: number | null
   /** Denormalized from the current version row — updated on every publish. */
   current_content_type: string | null
   created_at: string
@@ -229,6 +233,10 @@ export interface ListArtifactsOpts {
   /** Archive shelf. Omitted/`exclude` is the ordinary live library; `only` powers
    *  the Archived view; `include` is for trusted maintenance reads. */
   archived?: "exclude" | "only" | "include"
+  /** Restrict to one stored content type via the denormalized `current_content_type`
+   *  column — e.g. `derive/skill` for a workspace's skills — so a typed listing
+   *  filters in the store instead of paging the whole library. */
+  contentType?: string
 }
 
 /** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */
@@ -2179,11 +2187,6 @@ export interface AgentStore {
   deletePendingCollectionInvitesFor(collectionId: string, email: string): Promise<void>
   deleteCollectionInvite(id: string, collectionId: string): Promise<void>
   consumeCollectionInvite(id: string, now: string): Promise<boolean>
-  // ---- Beta signups (the marketing site's request-access form) ------------
-  /** Record a beta signup (idempotent per email). Returns true when the email is
-   *  new, false when it was already on the list — the caller resends the access
-   *  email either way, so "sign up again" doubles as "resend my link". */
-  recordBetaSignup(id: string, email: string): Promise<boolean>
 
   // ---- Signup attribution (which surface sourced a signup) -----------------
   /** Record where a signup came from, once per user — a duplicate hook fire is a
@@ -2793,18 +2796,6 @@ export interface NewInvitation {
 }
 
 /**
- * A beta signup from the marketing site's request-access form. One row per email
- * (idempotent — signing up again resends the access email, never duplicates). The
- * list is the launch audience: who asked for access, and in what order.
- */
-export interface BetaSignupRecord {
-  id: string
-  /** Normalized (lowercased) signup email. */
-  email: string
-  created_at: string
-}
-
-/**
  * Where a signup came from. One row per user, recorded by the
  * short, explicit signup URL handoff; first write wins. Organic signups have no row.
  */
@@ -2813,7 +2804,7 @@ export interface SignupAttributionRecord {
   /** The Better Auth user this attribution belongs to (no FK; auth owns its tables). */
   user_id: string
   /** The explicit account handoff: a public CTA (badge, comment_wall,
-   *  make_your_own), beta form, sign-in link, or campaign token (hn-launch, …). */
+   *  make_your_own), sign-in link, or campaign token (hn-launch, …). */
   source_kind: string
   /** The artifact (short id) the sourcing surface lived on, when known. */
   source_artifact: string | null
@@ -3920,6 +3911,9 @@ export interface NewView {
 
 export interface ViewStats {
   total: number
+  /** Views in the trailing 24 hours. A rolling window, not a calendar day, so it
+   *  needs no timezone from the caller and reads the same everywhere. */
+  last24h: number
   unique: number
   /** Distinct anonymous viewers (the rest of `unique` are named users). */
   anonViewers: number

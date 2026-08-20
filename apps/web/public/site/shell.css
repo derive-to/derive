@@ -1,0 +1,330 @@
+/* Shared shell for the public marketing pages.
+ *
+ * This file owns exactly three things: the design tokens every page agrees on,
+ * the page container, and the primary navigation. Everything else stays in the
+ * page it belongs to, so a page can be redesigned without touching the shell
+ * and the shell can be corrected once instead of five times.
+ *
+ * Pages link this file first, then their own styles, so a page can still
+ * override a token when it genuinely needs to.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces and text. Every marketing page already agreed on these values;
+   * they live here now so they can only be changed in one place. */
+  --bg: #0a0b0d;
+  --fg: #f3f4f6;
+  --card: #101216;
+  --secondary: #16181d;
+  --muted-fg: #969aa2;
+  --accent: #1b1d23;
+  --border: #23252b;
+  --border-soft: #191b1f;
+  --primary: #f3f4f6;
+  --primary-fg: #0a0b0d;
+  --success: #74b085;
+  --warning: #fb923c;
+
+  --primary-hover: #fff;
+
+  --radius: 4px;
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  /* One container, two widths. Marketing pages run wide; pages that are mostly
+   * long-form text run narrow so the measure stays readable. */
+  --maxw: 1260px;
+  --maxw-prose: 720px;
+  --gutter: 24px;
+  --nav-height: 64px;
+}
+
+html.light {
+  color-scheme: light;
+  --bg: #f7f7f5;
+  --fg: #16171b;
+  --card: #fdfdfc;
+  --secondary: #eeeeeb;
+  --muted-fg: #5d626b;
+  --accent: #e9e9e6;
+  --border: #d9d9d4;
+  --border-soft: #e7e7e2;
+  --primary: #16171b;
+  --primary-fg: #f7f7f5;
+  --primary-hover: #000;
+  --success: #286b41;
+  --warning: #b45309;
+}
+
+/* Editorial primitives ---------------------------------------------------
+ *
+ * The house register from docs/design-system.md, shared so a page never has to
+ * restate it: one family, ink as the only accent, focus in ink rather than a
+ * hue, and the arrow cursor everywhere (hover states signal clickability).
+ */
+
+a {
+  color: inherit;
+  text-decoration: none;
+  cursor: default;
+}
+
+/* Chrome links carry no underline, but a link sitting inside a sentence must be
+ * distinguishable without relying on colour, so prose keeps its underline. */
+p a,
+li a,
+dd a {
+  color: var(--fg);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 4px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+/* The mono micro-label. The one sanctioned uppercase, always muted. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+}
+
+/* Buttons are verbs. One filled ink action per view; everything else is ghost.
+ * Pages set the three knobs when they need a different weight of button. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: var(--btn-h, 40px);
+  padding: 0 var(--btn-px, 18px);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: var(--btn-fs, 14px);
+  font-weight: 500;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-fg);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.2);
+}
+
+.btn-primary:hover {
+  background: var(--primary-hover);
+}
+
+.btn-ghost {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.btn-ghost:hover {
+  background: var(--secondary);
+}
+
+/* Fast and quiet: motion is for things that move, never for colour. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Container ------------------------------------------------------------- */
+
+/* The navigation is fixed, so every page starts below it. The landing page
+ * deliberately runs its hero underneath a transparent nav and overrides this
+ * back to 0; that is the one case where a page should touch this rule. */
+body {
+  padding-top: var(--nav-height);
+}
+
+.wrap {
+  width: min(var(--maxw), 100% - var(--gutter) * 2);
+  margin-inline: auto;
+}
+
+/* Opt a page, or one section of a page, down to the reading measure. */
+.wrap-prose {
+  --maxw: var(--maxw-prose);
+}
+
+/* Navigation ------------------------------------------------------------ */
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1000;
+  padding: 9px 12px;
+  border-radius: 6px;
+  background: var(--fg);
+  color: var(--bg);
+  transform: translateY(-150%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+/* The border is inside the declared height, so --nav-height is the whole bar and
+ * the body offset below can rely on it exactly. */
+.site-nav {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  box-sizing: border-box;
+  height: var(--nav-height);
+  border-bottom: 1px solid transparent;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.site-nav__inner {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+
+.site-nav__brand {
+  display: flex;
+  align-items: center;
+}
+
+.site-nav__brand img {
+  height: 26px;
+  width: auto;
+  display: block;
+}
+
+/* The wordmark ships in two colourways; the theme decides which one shows. */
+.site-nav__brand .wm-light {
+  display: none;
+}
+
+html.light .site-nav__brand .wm-dark {
+  display: none;
+}
+
+html.light .site-nav__brand .wm-light {
+  display: block;
+}
+
+.site-nav__links {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  font-size: 14px;
+}
+
+.site-nav__links a {
+  color: var(--muted-fg);
+  text-decoration: none;
+}
+
+.site-nav__links a:hover,
+.site-nav__links a[aria-current="page"] {
+  color: var(--fg);
+}
+
+.site-nav__signin {
+  color: var(--fg);
+}
+
+.site-nav__signin .arr {
+  display: inline-block;
+  transition: transform 0.18s ease;
+}
+
+.site-nav__signin:hover .arr {
+  transform: translateX(3px);
+}
+
+/* Theme control. The button cycles dark, light, then system; the icon shown
+ * reflects the stored choice rather than the resolved colour. */
+.site-nav__theme {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted-fg);
+  cursor: pointer;
+}
+
+.site-nav__theme:hover {
+  color: var(--fg);
+  background: var(--secondary);
+}
+
+.site-nav__theme svg {
+  display: none;
+}
+
+.site-nav__theme[data-mode="light"] .i-sun {
+  display: block;
+}
+
+.site-nav__theme[data-mode="dark"] .i-moon {
+  display: block;
+}
+
+.site-nav__theme[data-mode="system"] .i-sys {
+  display: block;
+}
+
+/* The script sets data-mode on load. Until it does, show one icon rather than
+ * an empty square, so the nav does not flicker on a slow connection. */
+.site-nav__theme:not([data-mode]) .i-moon {
+  display: block;
+}
+
+@media (max-width: 480px) {
+  :root {
+    --gutter: 18px;
+    --nav-height: 58px;
+  }
+
+  .site-nav__inner {
+    gap: 16px;
+  }
+
+  /* Below this width only the sign-in action stays; the rest of the
+   * navigation is reachable from the footer on every page. */
+  .site-nav__links a:not(.site-nav__signin) {
+    display: none;
+  }
+}

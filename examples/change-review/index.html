@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSV importer: what changed and how it was checked</title>
+<meta name="description" content="An official Derive example. A verification record: what was claimed, what was actually run, what broke while checking, and what is still unproven.">
+<style>
+  :root {
+    color-scheme: dark;
+    --paper: #0a0c0b; --raised: #101412; --ink: #eef2ef; --muted: #98a29c; --faint: #7c877f;
+    --line: #1d2421; --pass: #7fd99a; --fail: #ff9d8a; --warn: #ffcf8b;
+    --max: 1060px; --gutter: 28px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.62 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.011em; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { width: min(var(--max), 100% - var(--gutter) * 2); margin-inline: auto; }
+  a { color: inherit; }
+  h1, h2, h3 { margin: 0; letter-spacing: -0.04em; text-wrap: balance; }
+  p { text-wrap: pretty; }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+  code, .code { font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .skip { position: fixed; top: 8px; left: 8px; z-index: 30; padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--paper); transform: translateY(-160%); }
+  .skip:focus { transform: translateY(0); }
+
+  .bar { border-bottom: 1px solid var(--line); }
+  .bar .row { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 64px; flex-wrap: wrap; }
+  .ident { font-weight: 620; letter-spacing: -0.035em; }
+  .verdict { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; color: var(--pass); background: var(--raised); }
+  .verdict::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--pass); }
+
+  .head { padding: 60px 0 40px; }
+  .kicker { display: flex; align-items: center; gap: 12px; color: var(--pass); margin-bottom: 20px; }
+  .kicker::before { content: ""; width: 26px; height: 1px; background: var(--pass); }
+  h1 { font-size: clamp(32px, 5vw, 54px); line-height: 1.02; max-width: 20ch; }
+  .lede { max-width: 62ch; margin: 22px 0 0; color: var(--muted); font-size: clamp(17px, 1.9vw, 20px); line-height: 1.5; }
+
+  .env { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .env div { background: var(--raised); padding: 20px 22px; }
+  .env .mono { color: var(--faint); }
+  .env b { display: block; margin-top: 7px; font-weight: 600; letter-spacing: -0.02em; }
+
+  section.band { padding: 56px 0; border-top: 1px solid var(--line); }
+  .band h2 { font-size: clamp(22px, 2.8vw, 30px); }
+  .band .intro { max-width: 62ch; color: var(--muted); margin: 12px 0 28px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 15px 14px 15px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { color: var(--faint); font-weight: 500; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+  td.result { color: var(--muted); }
+  td.result code { color: var(--ink); font-size: 13px; }
+  .chip { display: inline-block; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .chip.pass { color: var(--pass); background: rgba(127, 217, 154, 0.13); }
+
+  .broke { padding: 26px; border: 1px solid var(--line); border-left: 3px solid var(--fail); border-radius: 12px; background: var(--raised); max-width: 66ch; }
+  .broke .mono { color: var(--fail); }
+  .broke h3 { margin: 12px 0 0; font-size: 19px; letter-spacing: -0.03em; }
+  .broke p { margin: 10px 0 0; color: var(--muted); font-size: 15px; }
+
+  .gaps { display: grid; gap: 12px; }
+  .gap { padding: 22px 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--raised); }
+  .gap .mono { color: var(--warn); }
+  .gap b { display: block; margin-top: 10px; font-weight: 600; letter-spacing: -0.02em; }
+  .gap p { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+
+  footer { padding: 40px 0 72px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  footer .note { max-width: 68ch; }
+
+  @media (max-width: 760px) {
+    .env { grid-template-columns: 1fr; }
+    thead { display: none; }
+    table tr { display: block; padding: 14px 0; border-bottom: 1px solid var(--line); }
+    table td { display: block; border: 0; padding: 3px 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0.01ms !important; } }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="bar">
+  <div class="wrap row">
+    <span class="ident">CSV importer / verification</span>
+    <span class="mono verdict">Ready to merge, one follow-up filed</span>
+  </div>
+</div>
+
+<main id="main" tabindex="-1">
+  <div class="wrap">
+    <div class="head">
+      <div class="mono kicker">What was actually run</div>
+      <h1>Malformed rows now stop the row instead of importing a blank.</h1>
+      <p class="lede">The importer used to accept a row whose date could not be parsed, store an
+        empty value, and report success. That turned a visible failure into a silent one, which
+        surfaced weeks later in reporting.</p>
+    </div>
+
+    <div class="env">
+      <div><div class="mono">Environment</div><b>Deploy preview</b></div>
+      <div><div class="mono">Data</div><b>Seeded demo workspace</b></div>
+      <div><div class="mono">Not used</div><b>A local machine</b></div>
+    </div>
+  </div>
+
+  <section class="band">
+    <div class="wrap">
+      <h2>Checks</h2>
+      <p class="intro">Run against the deploy preview, not a development machine. Local runs
+        miss the object storage path, which is where the previous attempt at this change broke.
+        Each row records the literal result, because the error string is what a user reads.</p>
+      <table>
+        <thead><tr><th>Check</th><th>Input</th><th>Result</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>Unchanged behaviour</td><td>500 valid rows</td><td class="result">500 imported, no warnings</td><td><span class="chip pass">Pass</span></td></tr>
+          <tr><td>The reported bug</td><td>One row, <code>12/31/2025</code> under an ISO header</td><td class="result">Rejected: <code>row 4: expected YYYY-MM-DD in "start_date"</code></td><td><span class="chip pass">Pass</span></td></tr>
+          <tr><td>Partial failure</td><td>200 rows, 6 malformed</td><td class="result">194 imported, all 6 listed with row numbers</td><td><span class="chip pass">Pass</span></td></tr>
+          <tr><td>Whole file malformed</td><td>50 rows, every date wrong</td><td class="result">Nothing imported, one summary</td><td><span class="chip pass">Pass</span></td></tr>
+          <tr><td>Optional field blank</td><td>Note column empty</td><td class="result">Accepted</td><td><span class="chip pass">Pass</span></td></tr>
+          <tr><td>Re-import after fixing</td><td>The 6 rows corrected</td><td class="result">6 imported, no duplicates of the 194</td><td><span class="chip pass">Pass</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <h2>What broke while checking</h2>
+      <p class="intro">Kept in the record rather than quietly fixed, because the cause explains
+        why the partial-failure case is now a regression test.</p>
+      <div class="broke">
+        <div class="mono">Found and fixed</div>
+        <h3>The mixed file returned a 500 on the first attempt.</h3>
+        <p>The error collector held a reference to the open file handle, so serialising the
+          response after the stream closed threw. It only appeared with a partial failure: a
+          file that was entirely valid or entirely broken never hit it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <h2>Not covered</h2>
+      <p class="intro">The shape of the hole, so a reviewer does not assume there is none.</p>
+      <div class="gaps">
+        <div class="gap">
+          <div class="mono">Untested</div>
+          <b>Files above 10 MB.</b>
+          <p>The largest file tested was 2.1 MB. The streaming path is unchanged by this work,
+            but unchanged is an argument, not a test.</p>
+        </div>
+        <div class="gap">
+          <div class="mono">Untested</div>
+          <b>Non-UTF-8 encodings.</b>
+          <p>A spreadsheet export in an older encoding was not tried. Out of scope for the
+            reported bug, and a plausible next report.</p>
+        </div>
+        <div class="gap">
+          <div class="mono">Untested</div>
+          <b>Concurrent imports into one workspace.</b>
+          <p>Single-user testing only.</p>
+        </div>
+        <div class="gap">
+          <div class="mono">Filed, not fixed</div>
+          <b>The error list caps at 100 rows with no sign it was truncated.</b>
+          <p>Someone fixing a 900 row file corrects 100 problems, re-uploads, and meets the next
+            100. The fix is a pagination decision, not part of stopping the silent failure.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap note">
+    Fictional change published as an official Derive example. The change, test data and results
+    are illustrative. The structure is the point: what was claimed, what was actually run, what
+    broke on the way, and what is still unproven.
+  </div>
+</footer>
+</body>
+</html>

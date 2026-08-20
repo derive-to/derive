@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The first hour</title>
+<link rel="stylesheet" href="handbook.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<nav class="bar">
+  <div class="wrap row">
+    <a class="brand" href="index.html">On-call handbook</a>
+    <div class="links">
+      <a href="index.html">Start</a>
+      <a href="first-hour.html" aria-current="page">First hour</a>
+      <a href="escalation.html">Escalation</a>
+      <a href="after.html">Afterwards</a>
+    </div>
+  </div>
+</nav>
+<main id="main" tabindex="-1" class="wrap">
+<p class="eyebrow">Page 1 of 3</p>
+  <h1>The first hour</h1>
+  <p class="lede">Do these in order. Skipping ahead to diagnosis is the most common way an
+    incident gets longer.</p>
+  <ol class="steps">
+    <li><b>Acknowledge within five minutes.</b> Silence reads as nobody looking. Even
+      "seen it, digging" stops a second person duplicating your work.</li>
+    <li><b>Say what is broken, for users.</b> Not "queue depth rising" but "invoices are not
+      sending". If you cannot phrase it that way, that is the first thing to find out.</li>
+    <li><b>Check whether anything shipped.</b> Most incidents follow a change. Look at the
+      last deploy before you look at anything clever.</li>
+    <li><b>Restore, then understand.</b> Roll back, fail over, or turn the feature off. A
+      clean diagnosis at 4am is worth less than a working system at 3am.</li>
+    <li><b>Write as you go.</b> A running note costs nothing now and is the whole review
+      later. Timestamps matter more than prose.</li>
+  </ol>
+  <h2 class="rule">If you are stuck for twenty minutes</h2>
+  <p class="body">Escalate. Twenty minutes without progress is the threshold, not a sign of
+    weakness. See <a href="escalation.html">escalation</a>.</p>
+</main>
+<footer class="wrap">Fictional handbook published as an official Derive example.</footer>
+</body>
+</html>

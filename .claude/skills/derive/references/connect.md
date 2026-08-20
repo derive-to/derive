@@ -43,14 +43,13 @@ OAuth on first use.
 
 ## Verify
 
-The complete remote server advertises these ten tools:
+Call `list_workspaces`. It answers with this connection's identity and role, every
+workspace the grant reaches, and `surface.tools`: the tool list the server is serving
+right now, read from its own registry. That is the check worth making. A hand-kept list
+in a file goes stale the next time a tool ships, and this one cannot.
 
-`find`, `read`, `catch_up`, `comment`, `stage`, `publish`, `organize`, `checkpoint`,
-`use`, and `list_workspaces`.
-
-Its initialization instructions identify the active role and workspace and list the
-`derive://skills/*` resources. Call `list_workspaces` when the intended destination is
-not already clear.
+The connection's initialization instructions also identify the active role and workspace
+and list the `derive://skills/*` resources.
 
 ## Self-hosted Derive
 

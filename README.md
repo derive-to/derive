@@ -5,10 +5,10 @@
   </picture>
 </p>
 
-<h1 align="center">Turn agent output into work you can keep, share, and improve.</h1>
+<h1 align="center">Publish, review, and own your AI artifacts.</h1>
 
 <p align="center">
-One durable workspace for plans, reports, pages, decks, and sites. Keep the latest version at the same URL and continue the work with people or agents. Use the hosted service or run one self-hosted container.
+One durable URL for every version, comment, revision, and decision. Your team reviews the work; any compatible agent can act on the feedback. Hosted, or one self-hosted container.
 </p>
 
 <p align="center">
@@ -49,7 +49,7 @@ claude mcp add --transport http derive https://derive.to/mcp   # or connect over
 Or paste this into a compatible coding agent and let it set itself up:
 
 ```text
-I'd like you to set up Derive so we can keep, share, and improve our work.
+I'd like you to set up Derive: where the work we make gets published, reviewed, and kept.
 
 Install the skill if I have npm: npx skills add derive-to/derive --skill derive
 Otherwise, read https://derive.to/skill.md and follow it (MCP server: https://derive.to/mcp).

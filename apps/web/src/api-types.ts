@@ -4709,6 +4709,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/save-as-skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The capture prompt: turn a review correction into a workspace skill. */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description The comment thread carrying the correction; omit for the whole page. */
+                    threadId?: string;
+                    /** @description Optional requester intent, appended to the prompt verbatim. */
+                    note?: string;
+                };
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The prompt. 404 when a threadId names no thread on this artifact. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            prompt: string;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Ask a registered agent to turn a review correction into a workspace skill. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description Which agent to ask; omit to use the sole registered agent. */
+                        agentId?: string;
+                        /** @description The comment thread carrying the correction. */
+                        threadId?: string;
+                        /** @description Optional requester intent, appended to the prompt verbatim. */
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The capture request landed in the agent's pull inbox. 404 when a threadId names no thread on this artifact; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request for this artifact still waits. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description The request comment's thread id. */
+                            requestId: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/fill": {
         parameters: {
             query?: never;
@@ -6927,8 +7008,10 @@ export interface components {
             badge?: boolean;
             /** @description Open-thread count for the sign-in-to-comment pill; present only for anonymous callers on a link that grants commenting. */
             open_comment_count?: number;
-            /** @description Owner opt-in: the anonymous public page shows version history. When false, anonymous detail responses carry only the current version. */
+            /** @description Owner opt-in: readers without artifact standing can browse version history. When false, their detail responses carry only the current version. */
             public_history?: boolean;
+            /** @description True when the signed-in caller has an active seat in the artifact's workspace. False for link-only readers and members acting in another workspace. */
+            is_workspace_member?: boolean;
             /** @description The artifact's workspace id; drives move-to-workspace. */
             org_id?: string;
             /** @description Signed, short-lived token for fetching raw content; detail responses only. */
@@ -8026,6 +8109,8 @@ export interface components {
         Analytics: {
             /** @description Total recorded views across all versions (de-duped opens) */
             total: number;
+            /** @description Views in the trailing 24 hours. A rolling window rather than a calendar day, so it carries no timezone assumption about the reader */
+            last24h: number;
             /** @description Distinct viewers; a signed-in person or anon cookie counts once */
             unique: number;
             /** @description How many of the unique viewers are anonymous */

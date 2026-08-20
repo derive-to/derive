@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest"
-import { anonApp, app, bearer, meta, TEST_TOKEN, upload } from "./helpers"
+import {
+  anonApp,
+  app,
+  as,
+  bearer,
+  makeAuthedApp,
+  meta,
+  publishAs,
+  TEST_TOKEN,
+  type TestUser,
+  upload,
+} from "./helpers"
 
 const idOf = async (res: Response): Promise<string> => (await res.json()).short_id
 
@@ -19,10 +30,8 @@ const addVersion = async (short: string) => {
   if (res.status !== 201 && res.status !== 200) throw new Error(`version failed: ${res.status}`)
 }
 
-// public_history (the launch-essay toggle): the owner opts the ANONYMOUS public
-// page into version history. Off (the default), anon must not see history at all —
-// not in the payload, not via a hand-typed @vN, not via old-version raw. Signed-in
-// readers are untouched either way (auth is the gate, like comments).
+// Private history is visible to members and collaborators, not world-link holders.
+// public_history opts those link readers in, whether or not they are signed in.
 describe("public history", () => {
   it("defaults off: anon detail carries only the current version and public_history false", async () => {
     const short = await idOf(await upload("ph.md", "# One", { visibility: "public", title: "PH" }))
@@ -35,7 +44,7 @@ describe("public history", () => {
     expect(detail.sessions.length).toBe(1)
   })
 
-  it("authenticated callers keep full history regardless of the flag", async () => {
+  it("the authenticated owner keeps full history regardless of the flag", async () => {
     const short = await idOf(await upload("pha.md", "# One", { visibility: "public", title: "A" }))
     await addVersion(short)
 
@@ -76,5 +85,57 @@ describe("public history", () => {
     await meta.setPublicHistory(art.id, 1)
     const oldOn = await anonApp.request(`/raw/${short}/v/1/index.md`)
     expect(oldOn.status).toBe(200)
+  })
+})
+
+describe("private history standing", () => {
+  const owner: TestUser = { id: "u_ph_owner", email: "owner@ph.test", name: "Owner" }
+  const stranger: TestUser = {
+    id: "u_ph_stranger",
+    email: "stranger@ph.test",
+    name: "Stranger",
+  }
+  const { app } = makeAuthedApp("private-history-standing", [owner, stranger], undefined, {
+    isolated: true,
+  })
+
+  it("a signed-in world-link holder gets only current history and a current-only raw token", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(stranger.email) })
+    const first = await (await publishAs(app, "<h1>One</h1>", {}, as(owner.email))).json()
+    const short = first.short_id as string
+    const access = await app.request(`/v1/artifacts/${short}/access`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ linkRole: "viewer" }),
+    })
+    expect(access.status).toBe(200)
+    expect((await publishAs(app, "<h1>Two</h1>", {}, as(owner.email), short)).status).toBe(201)
+
+    const outside = await (
+      await app.request(`/v1/artifacts/${short}`, { headers: as(stranger.email) })
+    ).json()
+    expect(outside.is_workspace_member).toBe(false)
+    expect(outside.versions.map((v: { n: number }) => v.n)).toEqual([2])
+    expect(
+      (
+        await app.request(`/raw/${short}/v/1/t/${outside.raw_token}/index.html`, {
+          headers: as(stranger.email),
+        })
+      ).status,
+    ).toBe(404)
+
+    const inside = await (
+      await app.request(`/v1/artifacts/${short}`, { headers: as(owner.email) })
+    ).json()
+    expect(inside.is_workspace_member).toBe(true)
+    expect(inside.versions.map((v: { n: number }) => v.n)).toEqual([1, 2])
+    expect(
+      (
+        await app.request(`/raw/${short}/v/1/t/${inside.raw_token}/index.html`, {
+          headers: as(owner.email),
+        })
+      ).status,
+    ).toBe(200)
   })
 })

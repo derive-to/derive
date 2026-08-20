@@ -16,6 +16,7 @@
       "!**/openapi.json",
       "!apps/api/test/e2e",
       "!**/api-types.ts",
+      "!**/worker-configuration.d.ts",
       "!**/dist",
       "!**/.output",
       "!**/.astro",

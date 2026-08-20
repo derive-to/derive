@@ -50,6 +50,7 @@ describe("view analytics", () => {
 
     const a = await (await app.request(`/v1/artifacts/${short_id}/analytics`)).json()
     expect(a.total).toBe(3) // viewerA@v1 (de-duped from 3), viewerA@v2, viewerB@v2
+    expect(a.last24h).toBe(3) // every view was just recorded, so all are inside the window
     expect(a.unique).toBe(2) // two distinct anon cookies
     expect(a.perVersion).toEqual([
       { version: 1, count: 1 },

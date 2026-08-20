@@ -232,7 +232,11 @@
           },
           "public_history": {
             "type": "boolean",
-            "description": "Owner opt-in: the anonymous public page shows version history. When false, anonymous detail responses carry only the current version."
+            "description": "Owner opt-in: readers without artifact standing can browse version history. When false, their detail responses carry only the current version."
+          },
+          "is_workspace_member": {
+            "type": "boolean",
+            "description": "True when the signed-in caller has an active seat in the artifact's workspace. False for link-only readers and members acting in another workspace."
           },
           "org_id": {
             "type": "string",
@@ -3547,6 +3551,10 @@
             "type": "number",
             "description": "Total recorded views across all versions (de-duped opens)"
           },
+          "last24h": {
+            "type": "number",
+            "description": "Views in the trailing 24 hours. A rolling window rather than a calendar day, so it carries no timezone assumption about the reader"
+          },
           "unique": {
             "type": "number",
             "description": "Distinct viewers; a signed-in person or anon cookie counts once"
@@ -3631,6 +3639,7 @@
         },
         "required": [
           "total",
+          "last24h",
           "unique",
           "anonViewers",
           "perVersion",
@@ -8536,6 +8545,127 @@
         "responses": {
           "201": {
             "description": "The build request was posted and landed in the agent's pull inbox. 400 when the artifact is not the workspace's brand profile; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request still waits.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "description": "The request comment's thread id."
+                    }
+                  },
+                  "required": [
+                    "requestId"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/save-as-skill": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "The capture prompt: turn a review correction into a workspace skill.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The comment thread carrying the correction; omit for the whole page."
+            },
+            "required": false,
+            "description": "The comment thread carrying the correction; omit for the whole page.",
+            "name": "threadId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 500,
+              "description": "Optional requester intent, appended to the prompt verbatim."
+            },
+            "required": false,
+            "description": "Optional requester intent, appended to the prompt verbatim.",
+            "name": "note",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The prompt. 404 when a threadId names no thread on this artifact.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Ask a registered agent to turn a review correction into a workspace skill.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string",
+                    "description": "Which agent to ask; omit to use the sole registered agent."
+                  },
+                  "threadId": {
+                    "type": "string",
+                    "description": "The comment thread carrying the correction."
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "Optional requester intent, appended to the prompt verbatim."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The capture request landed in the agent's pull inbox. 404 when a threadId names no thread on this artifact; 409 needsAgent when no agent is registered; 409 alreadyQueued while an earlier request for this artifact still waits.",
             "content": {
               "application/json": {
                 "schema": {

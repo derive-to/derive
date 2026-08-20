@@ -33,7 +33,7 @@
     "gen:openapi": "vitest run test/openapi.test.ts -u"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.20",
+    "@ai-sdk/anthropic": "4.0.39",
     "@ai-sdk/openai-compatible": "3.0.18",
     "@better-auth/oauth-provider": "1.6.19",
     "@better-auth/passkey": "1.6.19",
@@ -52,7 +52,7 @@
     "@scalar/hono-api-reference": "^0.11.9",
     "ai": "7.0.44",
     "better-auth": "^1.6.22",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "croner": "^10.0.1",
     "drizzle-orm": "^0.45.2",
     "fflate": "^0.8.2",
@@ -68,9 +68,9 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.15",
-    "@cloudflare/workers-types": "^4.20260615.1",
+    "@cloudflare/workers-types": "^5.20260811.1",
     "@types/better-sqlite3": "^7.6.11",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.2.0",
     "@types/pg": "^8.11.10",
     "express": "^5.1.0",
     "typescript": "^6.0.3",

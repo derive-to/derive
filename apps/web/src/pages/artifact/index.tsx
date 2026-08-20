@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate, useParams, useSearch } from "@tanstack/react-router"
 import { Minimize2 } from "lucide-react"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
-import { ApiError, api } from "@/api"
+import { ApiError, api, workspaceDisplayName } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
@@ -19,6 +19,7 @@ import {
   commentsQuery,
   rawArtifactUrl,
   workspaceSettingsQuery,
+  workspacesQuery,
 } from "@/lib/queries"
 import { rawTokenNeedsRefresh } from "@/lib/raw-token"
 import { ago } from "@/lib/time"
@@ -162,6 +163,10 @@ export function Artifact() {
     refetchInterval: (query) => (query.state.data?.linked_bundle ? 10_000 : false),
     refetchIntervalInBackground: false,
   })
+  const isAnon = !me
+  // List rows do not carry caller membership. Defer guest-only behavior until
+  // the detail response resolves rather than briefly rendering the wrong controls.
+  const isGuest = !!me && !seeded && art?.is_workspace_member === false
 
   // A restored/in-memory detail can carry a raw capability that expired long before
   // this click. Refresh it before the iframe gets a src; otherwise the first token is
@@ -210,13 +215,18 @@ export function Artifact() {
   }, [search.use, loading, me, shortId, ref, nav])
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
-  // Comments are signed-in-only (the API 404s anon by design) — don't fire the
-  // query just to watch it fail on every public view.
-  const { data: comments = [] } = useQuery({ ...commentsQuery(shortId), enabled: !!me })
-  // Agents this viewer can hand a revision to (the "ask an agent" flow). Empty for
-  // an anon viewer (the query is authed) or a workspace with no agents — then the
-  // affordance simply doesn't appear.
-  const { data: agents = [] } = useQuery({ ...artifactAgentsQuery(shortId), enabled: !!me })
+  const commentsAvailable =
+    !!me && !seeded && !!art && (!isGuest || canCommentWithRole(art.my_role))
+  const { data: comments = [] } = useQuery({
+    ...commentsQuery(shortId),
+    enabled: commentsAvailable,
+  })
+  // Workspace tools are loaded only when their workspace is active.
+  const { data: agents = [] } = useQuery({
+    ...artifactAgentsQuery(shortId),
+    enabled: !!me && art?.is_workspace_member === true,
+  })
+  const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: isGuest })
   // A password artifact returns 401 until the visitor unlocks it — show the
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
@@ -322,7 +332,11 @@ export function Artifact() {
   const [rail, setRail] = useState<RailTab>("comments")
   // BETA: chat only renders where the workspace has opted in. The server refuses too —
   // this just avoids showing a tab that would 404 (see the chat-session route).
-  const settings = useQuery({ ...workspaceSettingsQuery(), staleTime: 60_000 }).data
+  const settings = useQuery({
+    ...workspaceSettingsQuery(),
+    staleTime: 60_000,
+    enabled: !!me && art?.is_workspace_member === true,
+  }).data
   const chatBeta = settings?.chatBeta === true
   // Automations are BETA the same way, read from the same fetch.
   const automateBeta = settings?.automateBeta === true
@@ -668,6 +682,7 @@ export function Artifact() {
     // URL's version rather than the shown one. The two differ only while the mode
     // is open (it freezes the view), and the mode can't be re-entered from inside.
     canEdit: canEditArtifactDoc(art, version ?? art?.current_version, editing),
+    forceProposal: isGuest,
     // The frame always contains rendered HTML, including for Markdown. Only an
     // HTML/deck source supports the opening-tag operation; Markdown keeps image
     // replacement but gets no resize handle.
@@ -702,7 +717,9 @@ export function Artifact() {
   const inspectSessionActive =
     inlineEdit.active &&
     inlineEdit.allowElementEdits &&
-    (art?.my_role === "editor" || art?.my_role === "owner")
+    !isGuest &&
+    !!art &&
+    canPublishArtifact(art)
   const hadInspectSession = useRef(false)
   useEffect(() => {
     if (inspectSessionActive) {
@@ -738,6 +755,21 @@ export function Artifact() {
     mutationFn: () => api.reinstate(shortId),
     success: "Reinstated",
     onSuccess: () => load(),
+  })
+  const copyMut = useApiMutation({
+    mutationFn: () => api.deriveArtifact(shortId),
+    invalidate: [["artifacts"], ["summary"]],
+    success: (copy) => {
+      const workspace = workspaces?.workspaces.find((w) => w.id === copy.org_id)
+      return workspace
+        ? `Copied to ${workspaceDisplayName(workspace)}`
+        : "Copied to your current workspace"
+    },
+    onSuccess: (copy) =>
+      nav({
+        to: "/artifacts/$ref",
+        params: { ref: refFor({ short_id: copy.short_id, title: copy.title }) },
+      }),
   })
   const lockMut = useApiMutation({
     mutationFn: (next: boolean) => api.setLocked(shortId, next),
@@ -824,13 +856,14 @@ export function Artifact() {
   // cannot render it. Surface the retry state instead of leaving Loading preview… forever.
   if (failed && rawTokenStale && !pinnedForShown)
     return <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
-  // The public-history gate, client half: an anonymous @vN link on an artifact whose
-  // owner kept history private is a 404, not a downgrade — the server already
-  // refuses the old version's bytes (raw.ts), so render the same not-found the
-  // hand-typed-id case gets rather than a broken frame. Only once auth has
-  // SETTLED anonymous: while it loads, `me` is null for signed-in users too,
-  // and they must not flash a not-found for a version they can see.
-  if (!loading && !me && shown !== art.current_version && !art.public_history)
+  // A requested version omitted by the server is not readable. Return the same
+  // not-found state as the raw endpoint instead of mounting a frame that will 404.
+  if (
+    !loading &&
+    shown !== art.current_version &&
+    !art.public_history &&
+    !art.versions.some((v) => v.n === shown)
+  )
     return <ArtifactNotFound onBack={() => nav({ to: "/" })} />
   // The `t/:raw_token` segment is the sandboxed iframe's own proof of access: it has no
   // `allow-same-origin` (by design — the content must never touch our cookies/storage),
@@ -867,16 +900,16 @@ export function Artifact() {
   // never requested.
   const rawSrc =
     seeded || (rawTokenStale && !pinnedForShown) ? null : rawArtifactUrl(shortId, shown, rawToken)
-  // Editors publish directly; commenters propose a candidate for review.
-  const canPublish = art.my_role === "editor" || art.my_role === "owner"
+  // Direct publishing is a workbench capability. Guest edits always become proposals.
+  const canPublish = !isGuest && (art.my_role === "editor" || art.my_role === "owner")
   // md vs html drives syntax highlighting + how the live preview renders.
   const format = formatOf(art)
   // Lock: any editor can toggle it (advanced menu). While locked, even an editor
   // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
   const canLock = canPublish
-  const canMove = art.my_role === "owner"
+  const canMove = !isGuest && art.my_role === "owner"
   const isLocked = !!art.locked
-  const effectiveCanPublish = canPublishArtifact(art)
+  const effectiveCanPublish = !isGuest && canPublishArtifact(art)
   // The ONE eligibility base both edit affordances (inline + raw source) share, so
   // a new rule can't land in one and not the other; the deck test likewise has a
   // single spelling that the isDeck prop and the inline gate both read.
@@ -888,16 +921,9 @@ export function Artifact() {
   const inspectEnabled = canInspect && inlineEdit.active
   const mapEnabled = !!art.linked_bundle && !inlineEdit.active
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
-  // A logged-out visitor on a public/link artifact: strictly view-only. They get
-  // the document + live presence/cursors (Google-Docs style) and nothing else —
-  // no favorite, collections, share, report, comments, or version tools.
-  // The API gates every one of those for anon (anonLocked); hiding them here keeps
-  // the chrome honest so there's no dead/forbidden affordance to bump into.
-  const isAnon = !me
-  // Commenting needs commenter+ (matches the API's `comment` gate). A signed-in viewer
-  // reading via a view-only link sees comments but gets no write affordance. An
-  // anonymous visitor never qualifies — PublicViewer carries their sign-in-to-comment
-  // nudge (auth is the gate; see the access matrix).
+  // Commenting needs commenter+ (matches the API's `comment` gate). An outside
+  // view-link holder gets no conversation surface; commenter/editor links do.
+  // Anonymous visitors never qualify — PublicViewer carries their sign-in nudge.
   const canComment = canCommentWithRole(art.my_role)
 
   // Sort threads into pinned (anchored & present in this live doc), general
@@ -929,10 +955,9 @@ export function Artifact() {
   // entry point — there's no top-bar toggle or `c` key on a phone, and a hidden
   // panel made comments unreachable). Computed here rather than in the panel hook
   // so a desktop→mobile resize with a persisted "hidden" can't strand a phone.
-  const effectivePanel = isMobile && !isAnon ? "open" : panel
+  const effectivePanel = isMobile && commentsAvailable ? "open" : panel
 
-  // The rendered artifact frame — identical for the anon public viewer and the authed
-  // workbench, so build it once and place it in both branches (no prop drift).
+  // Build the document once; public, guest, and workbench layouts share this surface.
   const documentEl = (
     <ArtifactDocument
       shown={shown}
@@ -981,7 +1006,7 @@ export function Artifact() {
       presentOverlay={present.overlay}
       controlsIdle={present.idle}
       onPresent={present.toggle}
-      anonView={isAnon}
+      readOnlyView={isAnon || isGuest}
     />
   )
 
@@ -1160,7 +1185,7 @@ export function Artifact() {
       {/* data-artifact-view: while the workbench is mounted, globals.css drops the
           film-grain overlay so Derive's material steps back inside the author's document. */}
       <div data-artifact-view className="flex min-h-0 flex-1 flex-col">
-        <FocusShellSync focus={focus} />
+        <FocusShellSync focus={focus || isGuest} />
         {/* The workbench bar — full-width now (sidebar-first shell), so the
               comments panel docks BELOW it instead of squeezing it into the
               remaining width. The page owns its toolbar: the artifact title (the
@@ -1206,7 +1231,7 @@ export function Artifact() {
             )}
             <Presence viewers={live.viewers} selfId={me?.id} compact={isMobile} />
           </div>
-          {!isAnon && (
+          {!isAnon && !seeded && (
             <ArtifactTopBar
               shortId={shortId}
               artifactTitle={art.title ?? undefined}
@@ -1225,6 +1250,9 @@ export function Artifact() {
               isMobile={isMobile}
               panelOpen={panel === "open"}
               openCount={openCount}
+              isGuest={isGuest}
+              isCopying={copyMut.isPending}
+              commentsAvailable={commentsAvailable}
               // The source editor unmounts the iframe — mid-inline-session that
               // silently discards typed edits, so its entry hides while editing.
               showEdit={canEditDoc && !inlineEdit.active}
@@ -1273,6 +1301,7 @@ export function Artifact() {
               onStartEdit={startEdit}
               onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
               onFocus={() => setFocus(true)}
+              onCopy={() => copyMut.mutate()}
             />
           )}
         </div>
@@ -1366,7 +1395,7 @@ export function Artifact() {
                 the empty panel. On mobile NEITHER exists (the toggle is desktop-only,
                 there's no keyboard), so the FAB is the sole entry point and must show
                 even at zero — otherwise a comment-less doc has no way into comments. */}
-            {!isAnon && !focus && !isMobile && panel === "hidden" && openCount > 0 && (
+            {commentsAvailable && !focus && !isMobile && panel === "hidden" && openCount > 0 && (
               <DocFab
                 title="Show comments (c)"
                 testId="artifact-comments-fab"
@@ -1393,7 +1422,7 @@ export function Artifact() {
             )}
           </div>
 
-          {!focus && (
+          {!focus && commentsAvailable && (
             <ArtifactComments
               rail={mapEnabled || rail !== "map" ? rail : "comments"}
               onRail={setRail}
@@ -1464,7 +1493,9 @@ export function Artifact() {
               canComment={canComment}
               reviewCard={
                 // Top of the comments rail, not its own pane; members who can act only.
-                canComment ? <ReviewCard shortId={shortId} refreshKey={reviewTick} /> : undefined
+                !isGuest && canComment ? (
+                  <ReviewCard shortId={shortId} refreshKey={reviewTick} />
+                ) : undefined
               }
               onSheetHeight={setSheetInset}
               docLive={docLive}

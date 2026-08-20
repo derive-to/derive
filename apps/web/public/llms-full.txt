@@ -1,6 +1,6 @@
 # Derive: full reference for LLMs
 
-> Keep, share, and improve agent-made pages and documents. Each artifact has a lasting URL, version history, and comments on exact text.
+> Publish AI-built artifacts (HTML pages, Markdown docs, and slide decks) with a permanent URL, version history, and comments anchored to exact text.
 
 Derive is a workspace for work made with agents. Publish to a lasting URL, keep each revision,
 comment on exact text with W3C TextQuoteSelector, edit directly, and control who can read or

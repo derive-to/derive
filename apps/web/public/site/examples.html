@@ -2,73 +2,63 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>Examples | Derive</title>
-<meta name="description" content="Open real Derive artifacts and inspect the source for a designed page, a technical brief, and a rollout report.">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Workflow examples | Derive</title>
+<meta name="description" content="Publishable examples of AI artifacts: a launch page, a research brief, and a living status report.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Examples | Derive">
-<meta property="og:description" content="Open real Derive artifacts and inspect the source behind them.">
+<meta property="og:title" content="Derive workflow examples">
+<meta property="og:description" content="Real source, explicit review requests, no invented customer claims.">
 <meta property="og:url" content="https://derive.to/examples">
-<meta property="og:image" content="https://derive.to/site/og-artifacts.png">
+<meta property="og:image" content="https://derive.to/site/og-approval.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="canonical" href="https://derive.to/examples">
 <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
-<link rel="icon" href="/brand/favicon.png" type="image/png">
-<script src="/site/site.js"></script>
-<link rel="stylesheet" href="/site/site.css">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"CollectionPage","name":"Examples | Derive","url":"https://derive.to/examples","description":"Open real Derive artifacts and inspect the source behind them.","isPartOf":{"@id":"https://derive.to/#website"},"publisher":{"@id":"https://derive.to/#organization"}}</script>
+<script>
+/* theme boot: set the class before first paint (the choice lives in localStorage) */
+(function(){
+  var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
+  if (m !== 'light' && m !== 'system') m = 'dark';
+  var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
+  var c = document.documentElement.classList;
+  c.toggle('light', light); c.toggle('dark', !light);
+})();
+</script>
+<link rel="stylesheet" href="/site/shell.css">
+<link rel="stylesheet" href="/site/guides.css">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"CollectionPage","name":"Derive workflow examples","url":"https://derive.to/examples","description":"Official, publishable examples of review and approval workflows for agent-made work."}</script>
+<script src="/site/shell.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main-content">Skip to content</a>
-<nav class="site-nav" data-site-nav aria-label="Main navigation">
-  <div class="nav-inner site-wrap">
-    <a class="wordmark" href="/" aria-label="Homepage"><img class="logo-light" src="/brand/wordmark-dark.svg" alt=""><img class="logo-dark" src="/brand/wordmark-light.svg" alt=""></a>
-    <div class="desktop-nav"><a href="https://docs.derive.to/">Docs</a><a href="/examples" aria-current="page">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub</a></div>
-    <div class="nav-actions">
-      <button class="theme-toggle" type="button" data-theme-toggle aria-label="Change color theme">
-        <svg class="theme-sun" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"/></svg>
-        <svg class="theme-moon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5a8.5 8.5 0 1 0 11.7 11.7Z"/></svg>
-        <svg class="theme-system" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+
+<nav class="site-nav" aria-label="Primary">
+  <div class="wrap site-nav__inner">
+    <a class="site-nav__brand" href="/">
+      <img class="wm-dark" src="/brand/wordmark-light.svg" alt="Derive">
+      <img class="wm-light" src="/brand/wordmark-dark.svg" alt="Derive">
+    </a>
+    <div class="site-nav__links">
+      <a href="https://docs.derive.to/">Docs</a>
+      <a href="/examples" aria-current="page">Examples</a>
+      <a href="/pricing">Pricing</a>
+      <a href="https://github.com/derive-to/derive">GitHub</a>
+      <button class="site-nav__theme" type="button" data-theme-toggle aria-label="Theme">
+        <svg class="i-sun" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M7 .8v1.7M7 11.5v1.7M.8 7h1.7M11.5 7h1.7M2.6 2.6l1.2 1.2M10.2 10.2l1.2 1.2M11.4 2.6l-1.2 1.2M3.8 10.2l-1.2 1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <svg class="i-moon" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M11.8 8.6A5.2 5.2 0 1 1 5.4 2.2a4.2 4.2 0 0 0 6.4 6.4Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+        <svg class="i-sys" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.3"/><path d="M7 1.6v10.8A5.4 5.4 0 0 0 7 1.6Z" fill="currentColor"/></svg>
       </button>
-      <a class="nav-signin" href="/login?src=examples_signin">Sign in</a>
-      <details class="mobile-nav"><summary aria-label="Open navigation menu"><svg class="menu-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><svg class="menu-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></summary><div class="mobile-nav-panel"><a href="https://docs.derive.to/">Docs <span aria-hidden="true">↗</span></a><a href="/examples" aria-current="page">Examples</a><a href="/pricing">Pricing</a><a href="https://github.com/derive-to/derive">GitHub <span aria-hidden="true">↗</span></a><a class="mobile-signin" href="/login?src=examples_signin">Sign in <span aria-hidden="true">→</span></a></div></details>
+      <a class="site-nav__signin" href="/login?src=examples_signin">Sign in <span class="arr" aria-hidden="true">→</span></a>
     </div>
   </div>
 </nav>
-
-<main id="main-content" tabindex="-1">
-  <header class="subpage-hero site-wrap">
-    <p class="eyebrow">Examples</p>
-    <h1>See what a Derive artifact can be</h1>
-    <p class="lede">Open the finished artifact, inspect its source, and adapt it to your own work. These are product examples, not customer case studies.</p>
-    <div class="subpage-actions"><a class="button" href="https://github.com/derive-to/derive/tree/main/examples">Browse the source on GitHub</a></div>
-  </header>
-
-  <section class="content-section site-wrap" aria-labelledby="example-artifacts">
-    <div class="content-heading"><p class="eyebrow">Live artifacts</p><h2 id="example-artifacts">Three useful starting points</h2><p>Each example uses the same publishing, version history, sharing, and comment system as any other artifact.</p></div>
-    <div class="example-grid">
-      <a class="example-card" href="https://derive.to/artifacts/example-launch-page-5cmep9l9"><span class="example-type">Designed page</span><h3>Product launch page</h3><p>Keep the design and message together in the page people will actually see.</p><span class="text-link">Open the live artifact <span aria-hidden="true">→</span></span></a>
-      <a class="example-card" href="https://derive.to/artifacts/sqlite-or-postgresql-for-a-small-internal-servic-ms66yju2"><span class="example-type">Technical brief</span><h3>Database decision</h3><p>Compare SQLite and PostgreSQL with official sources, assumptions, and clear limits.</p><span class="text-link">Open the live artifact <span aria-hidden="true">→</span></span></a>
-      <a class="example-card" href="https://derive.to/artifacts/customer-import-rollout-current-status-f49k4yvg"><span class="example-type">Status report</span><h3>Customer import rollout</h3><p>Keep pilot results, risks, owners, and next actions current at one URL.</p><span class="text-link">Open the live artifact <span aria-hidden="true">→</span></span></a>
-    </div>
-  </section>
-
-  <section class="content-section site-wrap" aria-labelledby="publish-example">
-    <div class="content-heading"><p class="eyebrow">Try one</p><h2 id="publish-example">Publish an example to your workspace</h2><p>The files do not set access rules. Your copy uses the defaults already chosen for your workspace.</p></div>
-    <pre class="code-block" tabindex="0"><code>git clone https://github.com/derive-to/derive.git
-cd derive/examples
-derive publish launch-page.html</code></pre>
-  </section>
+<header class="masthead"><div class="wrap"><div class="eyebrow">Official examples</div><h1>These are the artifacts, not pictures of them.</h1><p class="lede">Every card below opens the real page in Derive: same URL, same version history, same permissions you get publishing your own. The source for each one is in the repository if you want to start from it.</p><div class="quick"><a class="btn btn-ghost" href="https://github.com/derive-to/derive/tree/main/examples">Browse the source</a></div></div></header>
+<main id="main-content" tabindex="-1" class="wrap">
+  <section class="section" id="examples"><div class="fig">FIG. 01 · Six live artifacts</div><div><h2>Open one.</h2><p class="intro">All six are public and viewer-only. Nothing here is customer work; the numbers are made up and the pages say so.</p><div class="gallery"><a class="shot shot-wide" href="https://derive.to/artifacts/example-launch-page-5cmep9l9"><img src="https://derive.to/v1/og/5cmep9l9" alt="" loading="lazy" decoding="async" width="1200" height="630"><span class="meta"><span class="shape">Styled HTML</span><span class="title">Designed launch page</span><span class="body">A release page that shows its own limits. Each claim sits beside what it does not cover.</span><span class="go">Open live artifact <span class="arr" aria-hidden="true">→</span></span></span></a><a class="shot" href="https://derive.to/artifacts/moving-scheduled-jobs-off-the-app-server-oukskpia"><img src="https://derive.to/v1/og/oukskpia" alt="" loading="lazy" decoding="async" width="1200" height="630"><span class="meta"><span class="shape">Styled HTML</span><span class="title">Technical plan</span><span class="body">A plan built to change. The decision is up front, and so is what would overturn it.</span><span class="go">Open live artifact <span class="arr" aria-hidden="true">→</span></span></span></a><a class="shot" href="https://derive.to/artifacts/csv-importer-what-changed-and-how-it-was-checked-n5k7pgb5"><img src="https://derive.to/v1/og/n5k7pgb5" alt="" loading="lazy" decoding="async" width="1200" height="630"><span class="meta"><span class="shape">Styled HTML</span><span class="title">Change review</span><span class="body">Proof that a change works, including the bug found while proving it.</span><span class="go">Open live artifact <span class="arr" aria-hidden="true">→</span></span></span></a><a class="shot" href="https://derive.to/artifacts/customer-import-rollout-current-status-f49k4yvg"><img src="https://derive.to/v1/og/f49k4yvg" alt="" loading="lazy" decoding="async" width="1200" height="630"><span class="meta"><span class="shape">Styled HTML + facts</span><span class="title">Living status</span><span class="body">A rollout at a glance. Its numbers are pulled out per version, so weekly updates become a series you can chart.</span><span class="go">Open live artifact <span class="arr" aria-hidden="true">→</span></span></span></a><a class="shot" href="https://derive.to/artifacts/on-call-handbook-a-derive-bundle-example-7eq9ri5j"><img src="https://derive.to/v1/og/7eq9ri5j" alt="" loading="lazy" decoding="async" width="1200" height="630"><span class="meta"><span class="shape">Multi-page bundle</span><span class="title">On-call handbook</span><span class="body">Four pages, one artifact. One history, one link, one set of permissions.</span><span class="go">Open live artifact <span class="arr" aria-hidden="true">→</span></span></span></a><a class="shot" href="https://derive.to/artifacts/sqlite-or-postgresql-for-a-small-internal-servic-ms66yju2"><img src="https://derive.to/v1/og/ms66yju2" alt="" loading="lazy" decoding="async" width="1200" height="630"><span class="meta"><span class="shape">Markdown</span><span class="title">Research brief</span><span class="body">SQLite or Postgres, settled in one page, with the sources to argue back.</span><span class="go">Open live artifact <span class="arr" aria-hidden="true">→</span></span></span></a></div></div></section>
+  <section class="section"><div class="fig">FIG. 02 · Clone and publish</div><div><h2>Start from one.</h2><p class="intro">Each example ships its source and a small config. Access is deliberately left out, so a copy you publish takes your workspace default instead of inheriting ours.</p><pre tabindex="0">git clone https://github.com/derive-to/derive.git
+cd derive/examples/technical-plan
+derive login
+derive publish</pre><div class="truth"><strong>Then change it.</strong> Edit the file, publish again, and the link you already shared does not move. What changed lives in the version history instead of a follow-up message.</div></div></section>
 </main>
-
-<footer class="site-footer">
-  <div class="footer-inner site-wrap">
-    <div class="footer-intro"><div class="footer-brand"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 15V3h5.2a6 6 0 0 1 0 12H3Z" stroke="currentColor" stroke-width="1.6"/><path d="M11.5 15 15 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Derive</div><p class="footer-note">A durable workspace for agent-made work.</p></div>
-    <dl class="footer-group"><dt>Product</dt><dd><a href="https://docs.derive.to/">Docs</a></dd><dd><a href="/examples">Examples</a></dd><dd><a href="/pricing">Pricing</a></dd></dl>
-    <dl class="footer-group"><dt>Project</dt><dd><a href="https://github.com/derive-to/derive">GitHub</a></dd><dd><a href="https://docs.derive.to/reference/licensing/">Licensing</a></dd></dl>
-    <dl class="footer-group"><dt>Company</dt><dd><a href="/privacy">Privacy</a></dd><dd><a href="/security">Security</a></dd><dd><a href="/login?src=examples_signin">Sign in</a></dd></dl>
-  </div>
-</footer>
+<footer><div class="foot wrap"><span>Derive · a workspace for agent-made artifacts</span><div><a href="https://docs.derive.to/">Docs</a><a href="/privacy">Privacy</a><a href="/security">Security</a></div></div></footer>
 </body>
 </html>

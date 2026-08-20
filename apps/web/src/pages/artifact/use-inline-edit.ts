@@ -98,6 +98,8 @@ export function useInlineEdit(p: {
    *  bundle, not GitHub-managed). Gates every entry point — the header button, the
    *  `e` shortcut, and the Edit verb on a selection. */
   canEdit: boolean
+  /** Force saved edits through review even when the effective role is editor. */
+  forceProposal?: boolean
   /** The stored source can carry selector-scoped element operations. Markdown is
    *  rendered as HTML in the frame, but does not support that source operation. */
   allowElementEdits: boolean
@@ -471,7 +473,7 @@ export function useInlineEdit(p: {
   })
   const swapImage = (oldSrc: string) => {
     const art = p.art
-    if (!art || !canPublishArtifact(art)) {
+    if (!art || p.forceProposal || !canPublishArtifact(art)) {
       toast("Replacing an image needs edit access on this artifact.", { id: "inline-edit-image" })
       return
     }
@@ -499,7 +501,7 @@ export function useInlineEdit(p: {
       // anything that moved), which is the closest thing to a clean auto-merge.
       const base = art.current_version
       const message = editMessage(collected)
-      if (canPublishArtifact(art)) {
+      if (!p.forceProposal && canPublishArtifact(art)) {
         const a = await api.publishEdits(p.shortId, collected, base, message)
         return { kind: "published", version: a.current_version }
       }

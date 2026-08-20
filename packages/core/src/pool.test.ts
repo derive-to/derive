@@ -111,4 +111,28 @@ describe("mapPoolSettled", () => {
     )
     expect(probe.peak).toBe(4)
   })
+
+  // The two below came from a second, older pool.test.ts under test/ that
+  // duplicated most of this file. Everything else it covered is already asserted
+  // above; these two behaviours were the only ones unique to it, so they moved
+  // here and the duplicate was deleted rather than left to drift.
+
+  it("resolves on empty input", async () => {
+    // mapPool's empty case is covered above; mapPoolSettled takes a different
+    // path out (it resolves to void rather than a result array).
+    await expect(mapPoolSettled([], 8, async () => {})).resolves.toBeUndefined()
+  })
+
+  it("lets siblings FINISH after one item rejects", async () => {
+    // Distinct from "processes every item" above, which records entry and so only
+    // proves each item was STARTED. A pool that abandoned its remaining work the
+    // moment one worker threw would pass that and fail this.
+    const finished: number[] = []
+    await mapPoolSettled([1, 2, 3, 4], 2, async (n) => {
+      if (n === 2) throw new Error("boom")
+      await delay(5)
+      finished.push(n)
+    })
+    expect(finished.sort((a, b) => a - b)).toEqual([1, 3, 4])
+  })
 })

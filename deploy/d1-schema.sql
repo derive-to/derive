@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS artifact (
   spa INTEGER NOT NULL DEFAULT 0,
   locked INTEGER NOT NULL DEFAULT 0,
   current_version INTEGER NOT NULL DEFAULT 0,
+  approved_version INTEGER,
   current_content_type TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
@@ -297,13 +298,6 @@ CREATE TABLE IF NOT EXISTS collection_invite (
   expires_at TEXT NOT NULL,
   accepted_at TEXT,
   UNIQUE (token)
-);
-
-CREATE TABLE IF NOT EXISTS beta_signup (
-  id TEXT PRIMARY KEY,
-  email TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (email)
 );
 
 CREATE TABLE IF NOT EXISTS signup_attribution (

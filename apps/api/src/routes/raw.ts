@@ -1,4 +1,9 @@
-import { ANCHOR_CLIENT_JS, type ArtifactRecord, isDerivedFactName } from "@derive/core"
+import {
+  ANCHOR_CLIENT_JS,
+  type ArtifactRecord,
+  hasArtifactStanding,
+  isDerivedFactName,
+} from "@derive/core"
 import type { Context } from "hono"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
@@ -28,15 +33,12 @@ export const rawRoutes = (ctx: AppContext) => {
   const { meta, blobs, deps, authorize, actorFor, background } = ctx
   const app = new Hono()
 
-  // The public-history gate: unless the owner opted the public page into history,
-  // an anonymous caller reads only the CURRENT version — an old version's bytes are
-  // as hidden as the workbench that lists them. Applies to the viewer entry points
-  // (cookie + raw_token) only: the preview route's token is a server-minted
-  // capability for exactly one artifact+version, and proposals aren't versions.
-  const anonHistoryBlocked = async (c: Context, artifact: ArtifactRecord, n: number) =>
+  // Private history requires artifact standing. The preview route is exempt because
+  // its server-minted token already names one artifact and version.
+  const privateHistoryBlocked = async (c: Context, artifact: ArtifactRecord, n: number) =>
     n !== artifact.current_version &&
     !artifact.public_history &&
-    (await actorFor(c, artifact)).kind === "anon"
+    !hasArtifactStanding(await actorFor(c, artifact), artifact.workspace_access)
 
   // The comment-anchor client, referenced by URL from artifact HTML. Artifact
   // pages are cached immutable; this is cached short so the client can evolve
@@ -101,7 +103,7 @@ export const rawRoutes = (ctx: AppContext) => {
     if (!Number.isInteger(v) || v < 1 || v > artifact.current_version)
       return fail(c, 404, `no version ${v}`)
     if (!(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
-    if (await anonHistoryBlocked(c, artifact, v)) return fail(c, 404, "not found")
+    if (await privateHistoryBlocked(c, artifact, v)) return fail(c, 404, "not found")
 
     // THE SERIES EXPORT: one JSON object per version, oldest first. This is the substrate
     // the rest of the querying story stands on — a page charts its own history from it, an
@@ -110,10 +112,8 @@ export const rawRoutes = (ctx: AppContext) => {
     // consumer queries, which is why there is no query language here to defend.
     // JSONL on purpose: a new version is a LINE append, and it streams.
     if (wantsSeries) {
-      // An anonymous caller who may not read history gets only the current point — the
-      // export must never be a way around the public-history gate.
-      const anonCurrentOnly = await anonHistoryBlocked(c, artifact, 1)
-      const series = anonCurrentOnly
+      const currentOnly = await privateHistoryBlocked(c, artifact, 1)
+      const series = currentOnly
         ? await meta.getVersionData(artifact.id, artifact.current_version, slot)
         : await meta.getVersionDataSeries(artifact.id, slot, 1, artifact.current_version, 5000)
       if (!series.length) return fail(c, 404, `no facts "${slot}"`)
@@ -225,14 +225,19 @@ export const rawRoutes = (ctx: AppContext) => {
     const n = Number(c.req.param("n"))
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
-    const claim = verifyState<{ rid: string }>(
+    const claim = verifyState<{ rid: string; history?: boolean }>(
       c.req.param("token"),
       deps.encryptionKey ?? "",
       RAW_TOKEN_MAX_AGE_MS,
     )
     const ok = claim?.rid === artifact.id || (await authorize(c, "read", artifact))
     if (!ok) return c.text("not found", 404)
-    if (await anonHistoryBlocked(c, artifact, n)) return c.text("not found", 404)
+    const historyAllowed =
+      claim?.rid === artifact.id && claim.history !== undefined
+        ? claim.history
+        : !(await privateHistoryBlocked(c, artifact, n))
+    if (n !== artifact.current_version && !artifact.public_history && !historyAllowed)
+      return c.text("not found", 404)
     return serveVersion(
       c,
       artifact,
@@ -282,7 +287,7 @@ export const rawRoutes = (ctx: AppContext) => {
     const artifact = await meta.getByShortId(shortId)
     if (!artifact || !Number.isInteger(n)) return c.text("not found", 404)
     if (!(await authorize(c, "read", artifact))) return c.text("not found", 404)
-    if (await anonHistoryBlocked(c, artifact, n)) return c.text("not found", 404)
+    if (await privateHistoryBlocked(c, artifact, n)) return c.text("not found", 404)
     return serveVersion(c, artifact, n, `/raw/${shortId}/v/${c.req.param("n")}/`)
   })
 
