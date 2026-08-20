@@ -29,6 +29,7 @@ import {
   RENDER_VARIANTS,
   RENDER_WAIT_MAX,
   type RenderVariant,
+  rendersOff,
 } from "../lib/collect-render"
 import {
   type MaterializedEdits,
@@ -338,7 +339,24 @@ export function registerPublishTool(tc: ToolContext): void {
           .optional()
           .describe(
             "Revise a single-file artifact without resending it. Exact-source edits cannot mix with the other shapes. Quote edits change visible text; scene-* edits change timing and structure in an HTML Video. A miss applies nothing and says why.",
-          ),
+          )
+          // WORKED EXAMPLES, not more prose. This param accepts six object shapes behind a
+          // union, and a schema can say what is legal without showing which one a given job
+          // wants — the gap examples exist to close. One per shape an agent actually reaches
+          // for: raw-source replace, visible-text replace, and a scene op. The array nesting
+          // is half the point; the first mistake is passing a bare object.
+          .meta({
+            examples: [
+              [{ old_str: "<h1>Old title</h1>", new_str: "<h1>New title</h1>" }],
+              [
+                {
+                  quote: { exact: "4,000 events/sec", prefix: "throughput is " },
+                  new_text: "6,200 events/sec",
+                },
+              ],
+              [{ op: "scene-update", id: "intro", duration_ms: 4000, transition: "fade" }],
+            ],
+          }),
         slide_ops: z
           .array(
             z.union([
@@ -947,8 +965,13 @@ export function registerPublishTool(tc: ToolContext): void {
           ...(artifact.kind === "file" ? { content_sha256: version.blob_key } : {}),
           ...(pageUrls ? { page_urls: pageUrls } : {}),
           // The publish→look loop: a screenshot of the served page is queued at every
-          // publish; seeing it is the only way to catch purely-visual breakage.
-          render: `queued — call read(short_id:"${artifact.short_id}", render:"top") in a few seconds to SEE the published page ("full"/"marked" for the whole page, or with the region map's @N refs drawn on it).`,
+          // publish; seeing it is the only way to catch purely-visual breakage. Where the
+          // instance renders nothing, this pointer would send the caller to a `read` that
+          // can only fail — so it says that here instead, at the moment the expectation is
+          // set, rather than one wasted round trip later.
+          render: ctx.deps.renderPreviews
+            ? `queued — call read(short_id:"${artifact.short_id}", render:"top") in a few seconds to SEE the published page ("full"/"marked" for the whole page, or with the region map's @N refs drawn on it).`
+            : rendersOff("A screenshot of this page", url),
           title: artifact.title,
           workspace_access: artifact.workspace_access,
           link_role: artifact.link_role,
@@ -991,7 +1014,12 @@ export function registerPublishTool(tc: ToolContext): void {
         // response. With it, wait for the shot and hand it back here, because the
         // publish-then-go-look-at-it loop is two calls and a guess at how long to
         // sleep — and an agent cannot simply open the tab instead.
-        if (render) {
+        // Asked for a picture this instance cannot take: `collectRender` would poll out the
+        // caller's whole `wait` before returning null, and the ordinary not-ready ending
+        // would then advise a `read` that fails the same way. Answer immediately instead.
+        if (render && !ctx.deps.renderPreviews) {
+          payload.render = rendersOff(`The render:${render} of this page`, url)
+        } else if (render) {
           const shot = await collectRender(
             ctx,
             artifact.id,

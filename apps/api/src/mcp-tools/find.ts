@@ -151,7 +151,11 @@ export function registerFindTool(tc: ToolContext): void {
           .optional()
           .describe(
             "With `short_id`: the literal text to grep within it (metacharacters are not special). Alone (no short_id): the workspace content search. Omit both to browse.",
-          ),
+          )
+          // The literal-search rule is stated in the tool description and still gets read as
+          // advice. Showing the shape is what lands it: agents send whole questions to a
+          // character-matching search, get nothing back, and report an empty workspace.
+          .meta({ examples: ["pricing", "backfill", "atlas"] }),
         short_id: z
           .string()
           .optional()

@@ -119,6 +119,15 @@ publishes as a multi-page bundle). The URL is reusable until it expires (~15 min
 the plain publish tool for small docs and for surgical `edits`; reach for stage target:'doc'
 only when inlining would chunk.
 
+**It needs a signed-in user.** A publish is attributed to a person and re-checked against
+that person's live rights, so a connection authenticated by a static agent token
+(`dk_agt_`, or `DERIVE_TOKEN`) has nobody to attribute to and is refused. That is the usual
+shape for a self-hosted runner, a CI job, or a registered workspace agent. The way through
+is the same bytes to a different door: `POST /v1/artifacts` with that token in the
+`Authorization` header, multipart `file` (plus `title` on a create). The refusal says this
+too, so a run that hits it recovers in one call rather than concluding large documents are
+unavailable.
+
 ## Structured facts (publish numbers you can read back)
 
 A page you republish on a schedule is a time series you cannot query: answering "how did

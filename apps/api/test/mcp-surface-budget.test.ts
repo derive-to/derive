@@ -105,9 +105,37 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // params, worked examples and edge-case history go to the skill body, which is fetched only
 // by a session that needs it, or to the tool's own RESPONSE, which teaches at the moment of
 // use and costs nothing to sessions that never call it.
+// PARAMS RAISED 8,000 → 9,300 and SURFACE 11,000 → 12,300 (2026-08-20), for `automate`'s
+// fourteen undescribed parameters. This is the one raise so far that does not pay for new
+// prose. Those params shipped with NO description at all — `action` had one, the other
+// fourteen were bare types — so the budget had been scoring the tool as if they were free.
+// They were never free to the agent reading them; they were only invisible to this test,
+// which counts characters and cannot count the ones that should have been there.
+//
+// The cost of leaving them blank was measured, not assumed. In an agent trace, a session
+// asked to schedule recurring work read derive://skills/loop (the tool's own steer, which
+// never mentioned `automate`), then the artifact, then derive://skills/sources, then
+// derive://sources, and finally called automate({action:"list"}) to probe the API for its
+// own shape: three of eight calls spent orienting. Five actions share one schema here, so
+// "which params does `create` even read" was unstated in a way no other tool's is.
+//
+// Reclaim was attempted first, per the rule below, and refused: the fourteen longest
+// descriptions on the surface were re-read and every one of them earns its length. Trimming
+// good text to pay for missing text would have made the surface worse in two places at once.
+// The new descriptions were written to the rule — each leads with the action that reads it,
+// then names the thing that silently goes wrong — and average 85 characters, below the
+// surface's existing mean. Measured 9,134 of 9,300.
+// RAISED AGAIN in the same change, 9,300 -> 9,750 and 12,300 -> 12,750, for param
+// `examples`. JSON Schema 2020-12 allows the keyword and Zod 4 emits it through `.meta()`,
+// so four params that a type genuinely cannot describe now carry worked instances:
+// publish.edits (six object shapes behind a union, where the first mistake is passing a
+// bare object instead of an array), automate.trigger (which sibling fields a `kind`
+// requires is conditional), find.query (the literal-search rule, which reads as advice
+// until you see one keyword instead of a question), and read.section (four addressing
+// schemes sharing one string). 431 characters for the four. Measured 9,565 of 9,750.
 const TOOL_DESCRIPTIONS_BUDGET = 3_200
-const PARAM_DESCRIPTIONS_BUDGET = 8_000
-const SURFACE_BUDGET = 11_000
+const PARAM_DESCRIPTIONS_BUDGET = 9_750
+const SURFACE_BUDGET = 12_750
 const INSTRUCTIONS_BUDGET = 2_400
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
@@ -221,15 +249,22 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     // were not counted here: the surface was budgeted at its tool descriptions (~8.9k)
     // while its schemas quietly carried ~16k more. Every char of both is re-sent to the
     // model on every turn, so the honest number is the sum.
+    // Param `examples` are counted WITH descriptions, deliberately. They are the same
+    // always-loaded payload — a JSON Schema keyword that ships inside inputSchema and is
+    // re-sent to the model every turn — and leaving them out would recreate exactly the
+    // blind spot this budget was widened to close, one keyword later. An example that
+    // earns its place is cheaper than the prose it replaces; one that doesn't should
+    // fail here like anything else.
     const paramChars = tools.reduce((n, t) => {
       const props = (t as { inputSchema?: { properties?: Record<string, unknown> } }).inputSchema
         ?.properties
       return (
         n +
-        Object.values(props ?? {}).reduce(
-          (m: number, p) => m + ((p as { description?: string })?.description?.length ?? 0),
-          0,
-        )
+        Object.values(props ?? {}).reduce((m: number, p) => {
+          const prop = p as { description?: string; examples?: unknown[] }
+          const examples = prop?.examples ? JSON.stringify(prop.examples).length : 0
+          return m + (prop?.description?.length ?? 0) + examples
+        }, 0)
       )
     }, 0)
     console.log(
@@ -253,6 +288,48 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
         expect(len, `${t.name}.${param} sprawls`).toBeLessThanOrEqual(MAX_PARAM_DESCRIPTION)
       }
     }
+  })
+
+  it("keeps every param example shaped like the param it illustrates", async () => {
+    // An example that does not match its own schema is worse than none: it is a confident
+    // wrong answer, and it is invisible until a call fails. The realistic drift is nesting
+    // (an edit object where an ARRAY of them belongs) and primitives, so those are checked
+    // against the declared type. Deeper union-member validation would need a JSON Schema
+    // validator, which is not a dependency of this package; the shape check is what catches
+    // the mistake anyone actually makes.
+    const { app, token } = appWithGrant("examples", "openid derive:read derive:publish")
+    await rpc(app, token, initBody)
+    const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
+    const tools: { name: string; inputSchema?: { properties?: Record<string, unknown> } }[] =
+      list?.result?.tools ?? []
+
+    let checked = 0
+    for (const t of tools) {
+      for (const [param, raw] of Object.entries(t.inputSchema?.properties ?? {})) {
+        const schema = raw as { type?: string; examples?: unknown[]; properties?: unknown }
+        if (!schema.examples) continue
+        expect(
+          schema.examples.length,
+          `${t.name}.${param} has an empty examples array`,
+        ).toBeGreaterThan(0)
+        for (const ex of schema.examples) {
+          checked += 1
+          const where = `${t.name}.${param} example ${JSON.stringify(ex).slice(0, 60)}`
+          if (schema.type === "array")
+            expect(Array.isArray(ex), `${where} must be an ARRAY, matching the param`).toBe(true)
+          else if (schema.type === "string")
+            expect(typeof ex, `${where} must be a string`).toBe("string")
+          else if (schema.type === "object" || schema.properties)
+            expect(
+              ex !== null && typeof ex === "object" && !Array.isArray(ex),
+              `${where} must be an object`,
+            ).toBe(true)
+        }
+      }
+    }
+    // The examples are worth budgeting for only if they exist; a refactor that silently
+    // drops them should fail here rather than quietly shrink the surface.
+    expect(checked).toBeGreaterThan(8)
   })
 
   it("resolves every core skill through read('derive://skills/<name>')", async () => {

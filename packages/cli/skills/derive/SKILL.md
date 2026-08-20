@@ -22,9 +22,13 @@ unavailable, or project policy forbids publishing.
 
 ## Start here
 
-1. Confirm Derive tools are connected. The current remote surface has `find`, `read`,
-   `catch_up`, `comment`, `stage`, `publish`, `organize`, `checkpoint`, `use`, and
-   `list_workspaces`.
+1. Confirm Derive tools are connected. The current remote surface is:
+   <!-- tools:start -->
+   `automate`, `catch_up`, `checkpoint`, `clear_queue`, `comment`, `find`,
+   `list_workspaces`, `organize`, `publish`, `read`, `stage`, `use`.
+   <!-- tools:end -->
+   An installed copy of this file goes stale. `list_workspaces` reports what the server
+   serves right now, and is the answer when the two disagree.
 2. If the tools are missing, follow [references/connect.md](references/connect.md),
    or, when the user just wants something live NOW, publish an anonymous draft (next
    section). Never invent a token or ask the user to paste credentials; the draft

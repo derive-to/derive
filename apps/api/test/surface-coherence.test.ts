@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest"
+import { AGENT_SKILL_MD } from "../src/agent-skill.gen"
 import { badChoice, choiceDescription } from "../src/lib/open-choice"
+import { CORE_SKILLS } from "../src/skills-reference.gen"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // SURFACE COHERENCE — the failure this file exists to prevent: a client caches the tool
@@ -91,6 +93,99 @@ describe("the surface a client sees", () => {
     expect(out.surface.tools).toEqual(advertised)
     expect(out.surface.tools).toContain("stage")
     expect(out.surface.note).toContain("reconnect")
+  })
+
+  // ORIENTATION WITHOUT THE HANDSHAKE. The core-skills index rides in the `initialize`
+  // response's `instructions`, and the whole thin-tools design depends on an agent being
+  // able to fetch a procedure on demand from those URIs. MCP 2026-07-28 removes that
+  // handshake: `instructions` moves to `server/discover`, which clients MAY never call.
+  // A session that does not see it — a client that drops the field, a resumed transcript,
+  // a sub-agent handed only a token — could not learn the URIs existed.
+  //
+  // So the index is reachable by a tool call too. This is the pre-work that lets the
+  // instructions become an optimisation rather than the only path.
+  it("hands back the core-skills index, so orientation is not handshake-only", async () => {
+    const { app, token } = await setup("sc-orientation")
+    const out = JSON.parse((await callTool(app, token, "list_workspaces", {})).text)
+    const names = (out.surface.skills ?? []).map((s: { name: string }) => s.name).sort()
+    expect(names).toEqual(CORE_SKILLS.map((s) => s.name).sort())
+    for (const s of out.surface.skills ?? []) {
+      expect(s.read).toBe(`derive://skills/${s.name}`)
+      expect(s.summary.length).toBeGreaterThan(0)
+    }
+    // The pointer has to survive without the instructions, so it names the exact call.
+    expect(out.surface.skills_note).toContain("derive://skills/")
+  })
+})
+
+describe("a steer leads somewhere that covers the tool", () => {
+  // The thin surface spends its brevity on a promise: each description states intent and
+  // points at derive://skills/<name> for the procedure. The budget suite already proves
+  // those URIs RESOLVE. It cannot see whether the destination says anything about the tool
+  // that sent you there, and that gap shipped: `automate` steered to `loop`, whose body
+  // contained the string "automate" zero times. An agent asked to schedule work read the
+  // named skill, found nothing, read three more documents, and finally probed the API with
+  // automate({action:"list"}) to learn the tool's own shape.
+  //
+  // A resolving link is not documentation. This asserts the other half.
+  it("every skill a tool steers to mentions that tool", async () => {
+    const { app, token } = await setup("sc-steer-covers")
+    const listed = await rpc(app, token, "tools/list", {})
+    const tools = (listed?.result?.tools ?? []) as { name: string; description?: string }[]
+    const bodies = new Map(CORE_SKILLS.map((s) => [s.name, s.body]))
+
+    const steers = tools.flatMap((t) =>
+      [...(t.description ?? "").matchAll(/derive:\/\/skills\/([a-z]+)/g)].map((m) => ({
+        tool: t.name,
+        skill: m[1] as string,
+      })),
+    )
+    // Guard the guard: if the steer convention is ever renamed, this must fail loudly
+    // rather than pass by matching nothing.
+    expect(steers.length).toBeGreaterThan(5)
+
+    for (const { tool, skill } of steers) {
+      const body = bodies.get(skill)
+      expect(
+        body,
+        `${tool} steers to derive://skills/${skill}, which is not a core skill`,
+      ).toBeTruthy()
+      expect(
+        body,
+        `${tool} steers to derive://skills/${skill}, whose body never mentions ${tool} — the ` +
+          `documented path leads somewhere that does not answer the question`,
+      ).toContain(tool)
+    }
+  })
+})
+
+describe("the published skill agrees with the served surface", () => {
+  // packages/cli/skills/derive/SKILL.md is the front door for an agent that has NOT connected:
+  // it is served at /skill.md, shipped in the npm skill, and bundled in the Claude Code plugin.
+  // It claimed a ten-tool surface while the server served twelve. `automate` landed 2026-07-25
+  // and `clear_queue` 2026-08-10; the file was edited on 2026-08-17 and still said ten, because
+  // sync-derive-agent-skill.mjs only diffs the copies against each other and would happily keep
+  // three identical copies of a wrong list in sync.
+  //
+  // The list now lives between markers so it can be compared to the registry instead of read by
+  // eye. registerToolSurface already captures the served names for exactly this reason.
+  it("the tool list in SKILL.md is the tool list tools/list returns", async () => {
+    const { app, token } = await setup("sc-skill-md")
+    const listed = await rpc(app, token, "tools/list", {})
+    const served = ((listed?.result?.tools ?? []) as { name: string }[]).map((t) => t.name).sort()
+
+    const region = AGENT_SKILL_MD.match(/tools:start\s*-->([\s\S]*?)<!--\s*tools:end/)
+    expect(region, "SKILL.md lost its <!-- tools:start --> region").toBeTruthy()
+    const documented = [...(region?.[1] ?? "").matchAll(/`([a-z_]+)`/g)]
+      .map((m) => m[1] as string)
+      .sort()
+
+    // Equality both ways on purpose: a tool that ships undocumented is the drift that
+    // happened, and a tool documented after it was removed is the same bug pointing the
+    // other way. The fixture registers the hosted shape — a tool that registers only when
+    // a deploy configures something extra (a code sandbox, connected sources) is absent
+    // here and absent from the skill, which is what this document should describe.
+    expect(documented).toEqual(served)
   })
 })
 

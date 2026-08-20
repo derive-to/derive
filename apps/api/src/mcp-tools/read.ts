@@ -32,7 +32,7 @@ import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-referen
 import { cleanPath } from "../lib/bundle"
 import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
-import { pickVariant } from "../lib/collect-render"
+import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
@@ -194,7 +194,11 @@ export function registerReadTool(tc: ToolContext): void {
           .optional()
           .describe(
             'A heading slug, or "@2" for a region. Bundle: a page path, optionally page.html#slug. "*" forces the whole (clipped) doc. Omitted: small returns whole, large returns an outline.',
-          ),
+          )
+          // Four different addressing schemes share one string param, and the difference is
+          // not inferable from the type. The slug form is the one to lead with because it
+          // is what an outline hands back.
+          .meta({ examples: ["risks", "@2", "docs/pricing.html#tiers", "*"] }),
         format: z
           .enum(["markdown", "html", "text"])
           .optional()
@@ -587,6 +591,26 @@ export function registerReadTool(tc: ToolContext): void {
               ? "the whole page"
               : "the whole page, with the region map's @N refs drawn on it"
         let variant = pickVariant(v, render)
+        // NO RENDERER ON THIS INSTANCE — decided before anything below waits for, re-queues,
+        // or advises a retry on a screenshot that is never coming. It short-circuits three
+        // paths at once: the self-heal (which would flip a `failed` variant to a PERMANENT
+        // `pending`, since the re-queue behind it is a no-op here), the wait loop (which
+        // would burn the caller's whole `wait` budget), and the "try again shortly" ending.
+        // An ALREADY-STORED shot still serves: previews may have been on when it rendered
+        // and switched off since, and that picture is still the truth about the page.
+        // A variant that already FAILED keeps its reason. Previews may have been on when it
+        // ran and switched off since, and "this instance renders nothing" would then discard
+        // a true fact about the page (a font that never loaded, a layout that timed out) in
+        // favour of a fact about the deployment. Both are said, in that order.
+        if (!ctx.deps.renderPreviews && !(variant.status === "ready" && variant.key))
+          return err(
+            rendersOff(
+              variant.status === "failed"
+                ? `The render:${render} of "${short_id}" v${n} failed (${variant.error ?? "transient error"}), and a fresh one`
+                : `The render:${render} of "${short_id}" v${n}`,
+              url,
+            ),
+          )
         // SELF-HEAL on read: a dead-lettered render (a transient storage/browser
         // error that exhausted its retries) used to demand a no-op republish just to
         // re-render. Re-queue it right here instead — reset the variant to pending so

@@ -66,9 +66,35 @@ export function registerAutomateTool(tc: ToolContext): void {
         // so a newly-shipped action never even reaches the server. See lib/open-choice.ts.
         // Checked server-side below.
         action: z.string().describe(choiceDescription(AUTOMATE_ACTIONS, "What to do.")),
-        trigger: TRIGGER.optional(),
-        instruction: z.string().min(1).max(4000).optional(),
-        provider: z.enum(EXECUTION_PROVIDERS).optional(),
+        // EVERY PARAM BELOW SHIPPED WITH NO DESCRIPTION. Five actions share one schema, so
+        // which params an action even reads was unstated — an agent asked to schedule work
+        // had to call list() and infer the shape from what came back. Each one leads with the
+        // action that reads it, then says the thing that silently goes wrong.
+        trigger: TRIGGER.optional()
+          .describe(
+            'create: {kind:"manual"|"schedule"|"event"}. schedule needs cron+tz. event: only on:"webhook" is dispatched today, and mints a fire secret returned ONCE.',
+          )
+          // Which sibling fields a `kind` requires is conditional, and a flat object schema
+          // cannot express that. One example per kind says it without prose.
+          .meta({
+            examples: [
+              { kind: "schedule", cron: "0 8 * * 1", tz: "America/Los_Angeles" },
+              { kind: "event", on: "webhook" },
+              { kind: "manual" },
+            ],
+          }),
+        instruction: z
+          .string()
+          .min(1)
+          .max(4000)
+          .optional()
+          .describe(
+            "create: the standing instruction, re-run verbatim. Name the target artifact — a run has no chat history to infer it from.",
+          ),
+        provider: z
+          .enum(EXECUTION_PROVIDERS)
+          .optional()
+          .describe("create: which coding agent executes it. Default claude-code."),
         refs: z
           .array(
             z.union([
@@ -82,17 +108,59 @@ export function registerAutomateTool(tc: ToolContext): void {
             ]),
           )
           .max(100)
-          .optional(),
-        context_id: z.string().max(64).optional(),
-        connection_ids: z.array(z.string().max(64)).max(20).optional(),
-        automation_id: z.string().max(64).optional(),
+          .optional()
+          .describe(
+            'create: what the run acts on — short ids, {kind:"artifact",id,mode:"publish"|"propose"}, or {kind:"tag",tag}. Duplicates are dropped.',
+          ),
+        context_id: z
+          .string()
+          .max(64)
+          .optional()
+          .describe(
+            "create: bind the run to a context, whose agent then acts. Omit and a managed agent is minted for it.",
+          ),
+        connection_ids: z
+          .array(z.string().max(64))
+          .max(20)
+          .optional()
+          .describe("create: connected sources the run may call. An unbound id is refused by id."),
+        automation_id: z
+          .string()
+          .max(64)
+          .optional()
+          .describe(
+            "run_now: which automation to fire. record: what to attribute to — an id outside this workspace records unattributed.",
+          ),
         // `record` only — what a LOCALLY executed run did, so it lands in the same ledger.
-        wrote: z.array(z.string().max(64)).max(20).optional(),
-        outcome: z.enum(["published", "proposed", "answered", "shadow", "failed"]).optional(),
-        note: z.string().max(500).optional(),
+        wrote: z
+          .array(z.string().max(64))
+          .max(20)
+          .optional()
+          .describe("record: short_ids this run published."),
+        outcome: z
+          .enum(["published", "proposed", "answered", "shadow", "failed"])
+          .optional()
+          .describe("record: how it ended. Only 'failed' marks the run failed."),
+        note: z
+          .string()
+          .max(500)
+          .optional()
+          .describe("record: one line on why, kept with the run."),
         // `create_context` only — wire a new context to a manifest artifact.
-        name: z.string().trim().min(1).max(80).optional(),
-        manifest_short_id: z.string().max(64).optional(),
+        name: z
+          .string()
+          .trim()
+          .min(1)
+          .max(80)
+          .optional()
+          .describe("create_context: display name; a collision takes a numeric suffix."),
+        manifest_short_id: z
+          .string()
+          .max(64)
+          .optional()
+          .describe(
+            "create_context: the manifest artifact. Skills load ONLY from its frontmatter `skills:` list — naming one in prose pins nothing.",
+          ),
         // Coerced for the same reason as publish.wait: added after clients connected, so a
         // stale schema sends these as strings.
         max_run_ms: z.coerce
@@ -100,8 +168,15 @@ export function registerAutomateTool(tc: ToolContext): void {
           .int()
           .min(30_000)
           .max(6 * 60 * 60_000)
-          .optional(),
-        max_concurrency: z.coerce.number().int().min(1).max(10).optional(),
+          .optional()
+          .describe("create_context: per-run wall-clock cap, ms (30000 to 21600000)."),
+        max_concurrency: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(10)
+          .optional()
+          .describe("create_context: runs allowed in flight at once (1 to 10)."),
       },
     },
     async (input) => {

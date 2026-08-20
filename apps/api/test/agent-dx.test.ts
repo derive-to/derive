@@ -156,7 +156,10 @@ describe("read render self-heal", () => {
     // marks it done without rendering). So healing an old version would flip `failed` to
     // `pending` with nothing able to render it, and the heal could never fire again --
     // it only triggers on `failed`. An honest error would become "not ready yet" forever.
-    const { app, meta, token } = await setup("dx-render-heal-old")
+    // Previews ON: the point of this case is that the heal declines a SUPERSEDED version even
+    // where a renderer exists. With previews off the read short-circuits earlier, for a
+    // different reason, and would pass without exercising the rule at all.
+    const { app, meta, token } = await setup("dx-render-heal-old", { renderPreviews: true })
     const pub = await call(app, token, "publish", {
       title: "Superseded",
       filename: "index.html",
