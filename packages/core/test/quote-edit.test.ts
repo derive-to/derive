@@ -246,11 +246,29 @@ describe("applyQuoteEdits — html", () => {
     expect(out).toBe("<p>The value is high.</p><p>Set the number now.</p>")
   })
 
-  it("rejects a span that crosses an element boundary", () => {
+  it("replaces across balanced inline formatting", () => {
     const doc = "<p>first part <b>bold bit</b> tail</p>"
-    // "part bold" spans the <b> open tag — a structural change, not a text edit.
-    expect(() => applyQuoteEdits(doc, HTML, [qe("part bold", "x")])).toThrow(
-      /crosses formatting or element boundaries/,
+    expect(applyQuoteEdits(doc, HTML, [qe("part bold bit tail", "replacement")])).toBe(
+      "<p>first replacement</p>",
+    )
+  })
+
+  it("repairs formatting that is active at only one edge of the selection", () => {
+    const startsInside = "<h1><span>Agentic Content</span> Analysis</h1>"
+    expect(applyQuoteEdits(startsInside, HTML, [qe("Agentic Content Analysis", "New title")])).toBe(
+      "<h1><span></span>New title</h1>",
+    )
+
+    const endsInside = "<p>before <b>bold after</b></p>"
+    expect(applyQuoteEdits(endsInside, HTML, [qe("before bold", "changed")])).toBe(
+      "<p>changed<b> after</b></p>",
+    )
+  })
+
+  it("still rejects a span across structural elements", () => {
+    const doc = "<p>first part</p><p>second part</p>"
+    expect(() => applyQuoteEdits(doc, HTML, [qe("part second", "x")])).toThrow(
+      /crosses an element boundary/,
     )
   })
 
@@ -379,10 +397,10 @@ describe("applyQuoteEdits — new_html", () => {
     ).toThrow(/Markdown/)
   })
 
-  it("still refuses a span that crosses an element boundary", () => {
-    expect(() =>
+  it("allows formatted replacement across inline formatting", () => {
+    expect(
       applyQuoteEdits("<p>part <b>bold</b> tail</p>", HTML, [htmlEdit("part bold", "<i>x</i>")]),
-    ).toThrow(EditError)
+    ).toBe("<p><i>x</i><b></b> tail</p>")
   })
 
   it("isQuoteEdit takes exactly one replacement", () => {

@@ -86,6 +86,121 @@ const segmentIndexAt = (segments: PageTextSegment[], t: number): number => {
   return -1
 }
 
+const INLINE_TAGS = new Set([
+  "a",
+  "abbr",
+  "b",
+  "bdi",
+  "bdo",
+  "cite",
+  "code",
+  "del",
+  "em",
+  "i",
+  "ins",
+  "kbd",
+  "mark",
+  "q",
+  "s",
+  "samp",
+  "small",
+  "span",
+  "strong",
+  "sub",
+  "sup",
+  "time",
+  "u",
+  "var",
+])
+
+interface OpenInlineTag {
+  name: string
+  raw: string
+  at: number
+}
+
+/**
+ * Preserve the HTML topology around a replacement that crosses inline markup.
+ *
+ * The raw splice removes every tag inside the selected range. Tags that were open
+ * at only one edge are therefore closed before, or reopened after, the replacement.
+ * The replacement inherits only formatting common to both edges — the same useful
+ * rule a rich-text editor applies when a selection crosses formatting runs.
+ * Structural tags remain a hard boundary.
+ */
+const inlineBoundaryRepair = (
+  src: string,
+  rStart: number,
+  rEnd: number,
+  label: string,
+): { before: string; after: string } => {
+  const stack: OpenInlineTag[] = []
+  let atStart: OpenInlineTag[] = []
+  let atEnd: OpenInlineTag[] = []
+  let capturedStart = false
+  let capturedEnd = false
+  const tag = /<!--[\s\S]*?-->|<[^>]+>/g
+  for (let match = tag.exec(src); match; match = tag.exec(src)) {
+    const at = match.index
+    if (at >= rStart && !capturedStart) {
+      atStart = stack.slice()
+      capturedStart = true
+    }
+    if (at >= rEnd) {
+      atEnd = stack.slice()
+      capturedEnd = true
+      break
+    }
+    const raw = match[0]
+    const parsed = /^<\s*(\/?)\s*([a-z][\w:-]*)\b[^>]*?>$/i.exec(raw)
+    if (!parsed) {
+      if (at >= rStart)
+        throw new EditError(`${label} failed: the selection crosses a non-text HTML boundary.`)
+      continue
+    }
+    const name = (parsed[2] ?? "").toLowerCase()
+    if (!INLINE_TAGS.has(name)) {
+      if (at >= rStart)
+        throw new EditError(
+          `${label} failed: the selection crosses an element boundary in the source.`,
+        )
+      continue
+    }
+    if (parsed[1]) {
+      let open = -1
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i]?.name === name) {
+          open = i
+          break
+        }
+      }
+      if (open >= 0) stack.splice(open, 1)
+    } else if (!raw.endsWith("/>")) {
+      stack.push({ name, raw, at })
+    }
+  }
+  if (!capturedStart) atStart = stack.slice()
+  if (!capturedEnd) atEnd = stack.slice()
+
+  let common = 0
+  while (
+    common < atStart.length &&
+    common < atEnd.length &&
+    atStart[common]?.at === atEnd[common]?.at
+  )
+    common++
+  const before = atStart
+    .slice(common)
+    .reverse()
+    .map((entry) => `</${entry.name}>`)
+    .join("")
+  const after = atEnd
+    .slice(common)
+    .map((entry) => entry.raw)
+    .join("")
+  return { before, after }
+}
+
 /**
  * Map a [start, end) span of the projection back to raw-source offsets. Refuses a
  * span that includes a `gap` (it would cross a tag — a structural change, not a text
@@ -93,22 +208,21 @@ const segmentIndexAt = (segments: PageTextSegment[], t: number): number => {
  * half of a decoded character).
  */
 const spanToRaw = (
+  src: string,
   segments: PageTextSegment[],
   start: number,
   end: number,
   label: string,
-): { rStart: number; rEnd: number } => {
+): { rStart: number; rEnd: number; before: string; after: string } => {
   const firstIdx = segmentIndexAt(segments, start)
   const lastIdx = segmentIndexAt(segments, end - 1)
   if (firstIdx < 0 || lastIdx < 0)
     throw new EditError(`${label} failed: the matched text fell outside the document.`)
-  // Every segment the span touches must be visible text — a gap inside means the
-  // selection crosses an element boundary in the source.
+  // Gaps may be inline formatting tags. Structural tags are still rejected by the
+  // boundary repair below.
+  let crossesMarkup = false
   for (let i = firstIdx; i <= lastIdx; i++) {
-    if ((segments[i] as PageTextSegment).kind === "gap")
-      throw new EditError(
-        `${label} failed: the selection crosses formatting or element boundaries in the source — edit a smaller run of plain text, or open the source editor.`,
-      )
+    if ((segments[i] as PageTextSegment).kind === "gap") crossesMarkup = true
   }
   const first = segments[firstIdx] as PageTextSegment
   const lastSeg = segments[lastIdx] as PageTextSegment
@@ -122,7 +236,8 @@ const spanToRaw = (
     )
   const rStart = first.kind === "entity" ? first.rStart : first.rStart + (start - first.tStart)
   const rEnd = lastSeg.kind === "entity" ? lastSeg.rEnd : lastSeg.rStart + (end - lastSeg.tStart)
-  return { rStart, rEnd }
+  const repair = crossesMarkup ? inlineBoundaryRepair(src, rStart, rEnd, label) : null
+  return { rStart, rEnd, before: repair?.before ?? "", after: repair?.after ?? "" }
 }
 
 /**
@@ -145,7 +260,14 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
     segments = parts.segments
   }
 
-  const spans: { rStart: number; rEnd: number; replacement: string; label: string }[] = []
+  const spans: {
+    rStart: number
+    rEnd: number
+    replacement: string
+    label: string
+    before: string
+    after: string
+  }[] = []
   for (const [i, e] of edits.entries()) {
     const label = `Edit ${i + 1} of ${edits.length}`
     const exact = e.quote.exact
@@ -173,8 +295,8 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
         )
     }
     const raw = segments
-      ? spanToRaw(segments, span.start, span.end, label)
-      : { rStart: span.start, rEnd: span.end }
+      ? spanToRaw(src, segments, span.start, span.end, label)
+      : { rStart: span.start, rEnd: span.end, before: "", after: "" }
     // Markup, only where markup is the language. On markdown the source IS what the
     // author writes, so formatting is `**bold**` typed as text; splicing tags there
     // would put literal HTML in someone's prose.
@@ -188,7 +310,7 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
         : isHtml
           ? escapeHtml(e.new_text ?? "")
           : (e.new_text ?? "")
-    spans.push({ ...raw, replacement, label })
+    spans.push({ ...raw, replacement: raw.before + replacement + raw.after, label })
   }
 
   // Overlapping spans would make the result order-dependent — refuse the batch.
