@@ -120,6 +120,73 @@ interface OpenInlineTag {
   at: number
 }
 
+interface ParsedHtmlTag {
+  closing: boolean
+  name: string
+  selfClosing: boolean
+}
+
+const isHtmlSpace = (char: string): boolean =>
+  char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f"
+
+const isTagNameStart = (char: string): boolean =>
+  (char >= "a" && char <= "z") || (char >= "A" && char <= "Z")
+
+const isTagNameChar = (char: string): boolean =>
+  isTagNameStart(char) ||
+  (char >= "0" && char <= "9") ||
+  char === "_" ||
+  char === ":" ||
+  char === "-"
+
+/** Parse only the tag facts boundary repair needs, in one bounded pass. */
+const parseHtmlTag = (raw: string): ParsedHtmlTag | null => {
+  if (raw.length < 3 || raw[0] !== "<" || raw[raw.length - 1] !== ">") return null
+  let i = 1
+  while (i < raw.length - 1 && isHtmlSpace(raw[i] ?? "")) i++
+  const closing = raw[i] === "/"
+  if (closing) {
+    i++
+    while (i < raw.length - 1 && isHtmlSpace(raw[i] ?? "")) i++
+  }
+  if (!isTagNameStart(raw[i] ?? "")) return null
+  const nameStart = i
+  while (i < raw.length - 1 && isTagNameChar(raw[i] ?? "")) i++
+  const name = raw.slice(nameStart, i).toLowerCase()
+  const selfClosing = !closing && raw.slice(0, -1).trimEnd().endsWith("/")
+  return { closing, name, selfClosing }
+}
+
+/** Return the next complete tag/comment without backtracking over attacker input. */
+const nextHtmlBoundary = (
+  src: string,
+  from: number,
+): { at: number; raw: string; next: number } | null => {
+  const at = src.indexOf("<", from)
+  if (at < 0) return null
+  const comment = src.startsWith("<!--", at)
+  const end = comment ? src.indexOf("-->", at + 4) : src.indexOf(">", at + 1)
+  if (end < 0) return null
+  const next = end + (comment ? 3 : 1)
+  return { at, raw: src.slice(at, next), next }
+}
+
+const closingTagLengthAt = (src: string, at: number, expectedName: string): number => {
+  if (src[at] !== "<") return 0
+  const end = src.indexOf(">", at + 1)
+  if (end < 0) return 0
+  const raw = src.slice(at, end + 1)
+  const parsed = parseHtmlTag(raw)
+  if (!parsed?.closing || parsed.name !== expectedName) return 0
+  let i = 1
+  while (i < raw.length - 1 && isHtmlSpace(raw[i] ?? "")) i++
+  i++
+  while (i < raw.length - 1 && isHtmlSpace(raw[i] ?? "")) i++
+  i += parsed.name.length
+  while (i < raw.length - 1 && isHtmlSpace(raw[i] ?? "")) i++
+  return i === raw.length - 1 ? raw.length : 0
+}
+
 /**
  * Preserve the HTML topology around a replacement that crosses inline markup.
  *
@@ -140,9 +207,12 @@ const inlineBoundaryRepair = (
   let atEnd: OpenInlineTag[] = []
   let capturedStart = false
   let capturedEnd = false
-  const tag = /<!--[\s\S]*?-->|<[^>]+>/g
-  for (let match = tag.exec(src); match; match = tag.exec(src)) {
-    const at = match.index
+  for (
+    let boundary = nextHtmlBoundary(src, 0);
+    boundary;
+    boundary = nextHtmlBoundary(src, boundary.next)
+  ) {
+    const { at, raw } = boundary
     if (at >= rStart && !capturedStart) {
       atStart = stack.slice()
       capturedStart = true
@@ -152,14 +222,13 @@ const inlineBoundaryRepair = (
       capturedEnd = true
       break
     }
-    const raw = match[0]
-    const parsed = /^<\s*(\/?)\s*([a-z][\w:-]*)\b[^>]*?>$/i.exec(raw)
+    const parsed = parseHtmlTag(raw)
     if (!parsed) {
       if (at >= rStart)
         throw new EditError(`${label} failed: the selection crosses a non-text HTML boundary.`)
       continue
     }
-    const name = (parsed[2] ?? "").toLowerCase()
+    const name = parsed.name
     if (!INLINE_TAGS.has(name)) {
       if (at >= rStart)
         throw new EditError(
@@ -167,7 +236,7 @@ const inlineBoundaryRepair = (
         )
       continue
     }
-    if (parsed[1]) {
+    if (parsed.closing) {
       let open = -1
       for (let i = stack.length - 1; i >= 0; i--) {
         if (stack[i]?.name === name) {
@@ -176,7 +245,7 @@ const inlineBoundaryRepair = (
         }
       }
       if (open >= 0) stack.splice(open, 1)
-    } else if (!raw.endsWith("/>")) {
+    } else if (!parsed.selfClosing) {
       stack.push({ name, raw, at })
     }
   }
@@ -212,9 +281,9 @@ const inlineBoundaryRepair = (
   let consumedEnd = 0
   for (let i = endOnly.length - 1; i >= 0; i--) {
     const entry = endOnly[i] as OpenInlineTag
-    const close = new RegExp(`^<\\/\\s*${entry.name}\\s*>`, "i").exec(src.slice(adjustedEnd))
-    if (!close) break
-    adjustedEnd += close[0].length
+    const closeLength = closingTagLengthAt(src, adjustedEnd, entry.name)
+    if (!closeLength) break
+    adjustedEnd += closeLength
     consumedEnd++
   }
 
