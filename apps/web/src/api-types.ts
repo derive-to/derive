@@ -1552,7 +1552,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Lock or unlock an artifact (locked ⇒ changes go through review). */
+        /** Lock or unlock an artifact (locked ⇒ nothing publishes until unlocked). */
         patch: {
             parameters: {
                 query?: never;
@@ -3801,7 +3801,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             subscriptions: components["schemas"]["SlackSubscription"][];
-                            event_options: ("comment.created" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested" | "review.requested" | "review.sent_back" | "review.approved")[];
+                            event_options: ("comment.created" | "version.published" | "review.requested" | "review.sent_back")[];
                         };
                     };
                 };
@@ -4265,232 +4265,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/artifacts/{shortId}/proposals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List an artifact's proposals (optionally filtered by state). */
-        get: {
-            parameters: {
-                query?: {
-                    state?: "open" | "approved" | "changes_requested" | "withdrawn";
-                };
-                header?: never;
-                path: {
-                    shortId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The artifact's proposals. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            proposals: components["schemas"]["Proposal"][];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        /** Propose a candidate version (multipart, like publish). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    shortId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The created proposal, plus the thread ids it marked addressed. */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Proposal"] & {
-                            /** @description Thread ids this proposal flipped to addressed (pending review). */
-                            addressed: string[];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/{shortId}/proposals/{proposalId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** One proposal, with a line diff against its base version. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    shortId: string;
-                    proposalId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The proposal, with its diff. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Proposal"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/{shortId}/proposals/{proposalId}/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve a proposal (its content goes live as a new version). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    shortId: string;
-                    proposalId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The approved proposal + the version number it became. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Proposal"] & {
-                            /** @description The version number the approved proposal became live as. */
-                            published: number;
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/{shortId}/proposals/{proposalId}/request-changes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Request changes on a proposal (it stays open for revision). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    shortId: string;
-                    proposalId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The proposal, now changes_requested. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Proposal"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/{shortId}/proposals/{proposalId}/withdraw": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Withdraw an open proposal (proposer or a manager). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    shortId: string;
-                    proposalId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The proposal, now withdrawn. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Proposal"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/artifacts/{shortId}/review/send-back": {
         parameters: {
             query?: never;
@@ -4520,46 +4294,6 @@ export interface paths {
             };
             responses: {
                 /** @description The round, now sent_back. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            round: components["schemas"]["ReviewRound"];
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/artifacts/{shortId}/review/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve a review (the go-signal). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    shortId: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The round, now approved. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -4889,7 +4623,7 @@ export interface paths {
         get: {
             parameters: {
                 query?: {
-                    state?: "open" | "resolved" | "outdated" | "addressed";
+                    state?: "open" | "resolved" | "outdated";
                 };
                 header?: never;
                 path: {
@@ -6453,7 +6187,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             webhooks: components["schemas"]["Webhook"][];
-                            event_options: ("comment.created" | "comment.mention" | "comment.resolved" | "version.published" | "proposal.created" | "proposal.approved" | "proposal.changes_requested" | "review.requested" | "review.sent_back" | "review.approved")[];
+                            event_options: ("comment.created" | "comment.mention" | "comment.resolved" | "version.published" | "review.requested" | "review.sent_back")[];
                         };
                     };
                 };
@@ -7062,10 +6796,6 @@ export interface components {
             favorite?: boolean;
             /** @description true when the current version has a ready screenshot preview. */
             has_preview?: boolean;
-            /** @description Count of open (pending-review) proposals. */
-            open_proposals?: number;
-            /** @description Count of all proposals except withdrawn ones. */
-            proposals_total?: number;
             /** @description Count of open (unresolved) comment threads. */
             open_threads?: number;
             /** @description true when an open thread @mentions the calling user. */
@@ -7358,7 +7088,7 @@ export interface components {
             id: string;
             name: string;
             /**
-             * @description Permission level; commenter proposes only, editor can write, owner never allowed
+             * @description Permission level; commenter comments only, editor can write, owner never allowed
              * @enum {string}
              */
             role: "viewer" | "commenter" | "editor" | "owner";
@@ -7768,55 +7498,6 @@ export interface components {
             detail: string | null;
             created_at: string;
         };
-        DiffOp: {
-            /**
-             * @description Line op: ctx = unchanged context, add = added, del = removed.
-             * @enum {string}
-             */
-            t: "ctx" | "add" | "del";
-            /** @description The line's text; the +/- marker lives in `t`, not here. */
-            line: string;
-        };
-        Proposal: {
-            id: string;
-            /**
-             * @description Review state: open, approved (went live), changes_requested, or withdrawn.
-             * @enum {string}
-             */
-            state: "open" | "approved" | "changes_requested" | "withdrawn";
-            /** @description Proposer's display name; "anonymous" if not signed in. */
-            author: string;
-            /** @description When an agent proposed, the human it acted on behalf of; null for a direct human proposal. */
-            on_behalf_of?: {
-                handle: string | null;
-                name: string | null;
-            } | null;
-            /** @description Proposer's cover message; null if none. */
-            message: string | null;
-            /** @description Artifact version this proposal was authored against. */
-            base_version: number;
-            /**
-             * @description Content shape: a single file or a multi-file bundle.
-             * @enum {string}
-             */
-            kind: "file" | "bundle";
-            /** @description Who approved/requested-changes/withdrew it; null while still open. */
-            decided_by: string | null;
-            /** @description The version it went live as when approved; null otherwise. */
-            decided_version: number | null;
-            /** @description Reviewer's note on the decision; null while open or if none. */
-            decision_note: string | null;
-            /** @description When it was decided; null while still open. */
-            decided_at: string | null;
-            created_at: string;
-            /** @description URL that renders the proposed content like a live version. */
-            preview_url: string;
-            /** @description Line diff vs the base version; present only on the single-proposal fetch. */
-            diff?: {
-                base_version: number;
-                ops: components["schemas"]["DiffOp"][];
-            };
-        };
         ReviewRound: {
             id: string;
             artifact_id: string;
@@ -7824,19 +7505,19 @@ export interface components {
             version: number;
             /** @description Who asked for the review (usually the agent that published). */
             requested_by: string;
-            /** @description The person asked to answer or approve this round. */
+            /** @description The person asked to answer this round. */
             requested_for: string;
             /**
-             * @description Round state: pending, sent_back (answers returned), or approved (the go-signal).
+             * @description Round state: pending, or sent_back (the answers came back — a note saying go IS the go-signal).
              * @enum {string}
              */
-            state: "pending" | "sent_back" | "approved";
+            state: "pending" | "sent_back";
             /** @description Free-text note attached to the round; null if none. */
             note: string | null;
             /** @description The human who settled the round; null while pending or for legacy history. */
             resolved_by_name: string | null;
             created_at: string;
-            /** @description When it was sent back or approved; null while pending. */
+            /** @description When it was sent back; null while pending. */
             resolved_at: string | null;
         };
         Comment: {
@@ -7854,10 +7535,10 @@ export interface components {
             /** @description Author's display name; "anonymous" for an anonymous poster. */
             author: string;
             /**
-             * @description Thread state: open, addressed (a proposal in review claims to fix it), resolved, or outdated (the quoted text changed).
+             * @description Thread state: open, resolved, or outdated (the quoted text changed).
              * @enum {string}
              */
-            state: "open" | "addressed" | "resolved" | "outdated";
+            state: "open" | "resolved" | "outdated";
             created_at: string;
             /** @description Whether the anchor still resolves against the current version (list only). */
             anchored?: boolean;

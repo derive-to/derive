@@ -21,7 +21,7 @@ export type ImportResult = {
 }
 
 /** Publish the brand-profile placeholder into the collection and return its short_id —
- *  the fixed address the agent's proposal files against. Callers treat a failure as
+ *  the fixed address the agent's build publishes to. Callers treat a failure as
  *  "no placeholder yet" (the docs themselves must never be lost to it). */
 export async function ensureProfilePlaceholder(collectionId: string): Promise<string> {
   const a = await api.publish(placeholderFile())

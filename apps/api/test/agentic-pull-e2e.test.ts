@@ -58,7 +58,6 @@ const detail = async (shortId: string) =>
   (await (await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })).json()) as {
     current_version: number
     tags: string[]
-    open_proposals: number
   }
 const content = async (shortId: string) =>
   await (await app.request(`/v1/artifacts/${shortId}/content`, { headers: as(owner.email) })).text()

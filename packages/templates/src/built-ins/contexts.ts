@@ -55,7 +55,7 @@ export const CONTEXT_TEMPLATE_DEFINITIONS: readonly TemplateDefinition[] = [
     inputs: [
       input("Strategy", "The strategy artifacts to hold constant", true),
       input("Evidence", "Research and product sources"),
-      input("Authority", "Proposal-only or publish"),
+      input("Authority", "Comment-only or publish"),
     ],
     tags: ["product", "decision", "context"],
     starterPrompts: [

@@ -361,7 +361,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
   const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
     useCommentTree()
-  const { openReview, meName } = useActions()
+  const { meName } = useActions()
   const [reply, setReply] = useState("")
   const [replyMentions, setReplyMentions] = useState<Mention[]>([])
   const root = thread[0]
@@ -391,16 +391,15 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
   }
   const resolved = root.state === "resolved"
   const outdated = root.state === "outdated"
-  const addressed = root.state === "addressed"
   // A "revision request" thread is a comment addressed to an agent (the moat flow). We
   // detect it from the root's mentions overlapping the known agent ids — no schema
-  // change. Its lifecycle reads as a legible machine: Requested → Revision ready ·
-  // Review (agent proposed → addressed) → Applied (approved → resolved). An `outdated`
-  // request (its anchored text changed before the agent responded) falls through to the
-  // normal "outdated" badge — "awaiting revision" would misread a stale request as live.
+  // change. Its lifecycle reads as a legible machine: Requested (waiting on the agent) →
+  // Applied (the agent's publish resolved this thread). An `outdated` request (its
+  // anchored text changed before the agent responded) falls through to the normal
+  // "outdated" badge — "awaiting revision" would misread a stale request as live.
   const isAgentRequest = !!root.mentions?.some((m) => agentIds?.has(m.id))
-  const requestStage: "requested" | "ready" | "applied" | null =
-    !isAgentRequest || outdated ? null : resolved ? "applied" : addressed ? "ready" : "requested"
+  const requestStage: "requested" | "applied" | null =
+    !isAgentRequest || outdated ? null : resolved ? "applied" : "requested"
   const parsed = parseAnchor(root.anchor)
   const isEl = !!parsed?.element
   // The reference label: a text quote, or an element's snapshot label.
@@ -449,53 +448,25 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
       )}
     >
       {/* Agent-revision request ribbon — the moat's status machine, read at a glance:
-          Requested (waiting on the agent) → Revision ready (a proposal is in review) →
-          Applied (approved). A quiet ink-tinted strip so it's clearly "an agent task",
-          distinct from a plain comment. */}
+          Requested (waiting on the agent) → Applied (the revision landed). A quiet
+          ink-tinted strip so it's clearly "an agent task", distinct from a plain
+          comment. */}
       {requestStage && (
         <div
           data-testid={`agent-request-${requestStage}`}
-          className={cn(
-            "flex items-center gap-1.5 border-b px-2.5 py-1.5 text-sm font-medium",
-            requestStage === "ready"
-              ? "border-primary/25 bg-primary/10 text-foreground"
-              : "border-border-soft bg-secondary text-muted-foreground",
-          )}
+          className="flex items-center gap-1.5 border-b border-border-soft bg-secondary px-2.5 py-1.5 text-sm font-medium text-muted-foreground"
           title={
             requestStage === "requested"
-              ? "Sent to an agent. Waiting for a proposed revision."
-              : requestStage === "ready"
-                ? "The agent proposed a revision. Open Review to inspect it."
-                : "The agent's revision was approved and applied"
+              ? "Sent to an agent. Waiting for the revision."
+              : "The agent's revision was published and resolved this thread"
           }
         >
-          <Icon
-            name="sparkles"
-            size={14}
-            className={requestStage === "ready" ? "text-primary" : "text-muted-foreground"}
-          />
+          <Icon name="sparkles" size={14} className="text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate">
             {requestStage === "requested"
               ? "Agent request · awaiting revision"
-              : requestStage === "ready"
-                ? "Revision ready"
-                : "Revision applied"}
+              : "Revision applied"}
           </span>
-          {/* Ready → the one click from "the agent proposed" to the review overlay that
-              lets you approve it, closing the loop without hunting through the ⋯ menu. */}
-          {requestStage === "ready" && canComment && (
-            <Button
-              variant="default"
-              size="xs"
-              data-testid="agent-request-review"
-              onClick={(e) => {
-                e.stopPropagation()
-                openReview()
-              }}
-            >
-              Review
-            </Button>
-          )}
         </div>
       )}
       {onDeck && slideNum != null && (
@@ -596,8 +567,8 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           state in the ribbon above, so the plain badge is suppressed there too. */}
       {active &&
         (() => {
-          const changed = refLabel && !textPresent && !resolved && !outdated && !addressed
-          const statused = !requestStage && (resolved || outdated || addressed)
+          const changed = refLabel && !textPresent && !resolved && !outdated
+          const statused = !requestStage && (resolved || outdated)
           if (!changed && !statused) return null
           return (
             <div className="flex flex-wrap items-center gap-1.5 px-3 pt-2">
@@ -608,12 +579,10 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                   title={
                     outdated
                       ? "The text for this thread changed in a later version. This feedback may no longer apply."
-                      : addressed
-                        ? "A proposed revision addressing this thread is pending review"
-                        : undefined
+                      : undefined
                   }
                 >
-                  {resolved ? "resolved" : outdated ? "outdated" : "addressed"}
+                  {resolved ? "resolved" : "outdated"}
                 </Badge>
               )}
               {changed && (

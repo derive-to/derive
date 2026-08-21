@@ -27,8 +27,8 @@ import { safeJson } from "../mcp-util"
 // it's kept short — long enough to browse one sitting of a multi-page/image bundle,
 // short enough to bound exposure if the URL leaks (browser history, a proxy log, ...).
 
-/** The sandbox: raw artifact + proposal bytes under /raw/*. Served with an
- *  opaque-origin CSP; a proposal renders exactly like the live version will. */
+/** The sandbox: raw artifact bytes under /raw/*. Served with an
+ *  opaque-origin CSP. */
 export const rawRoutes = (ctx: AppContext) => {
   const { meta, blobs, deps, authorize, actorFor, background } = ctx
   const app = new Hono()
@@ -289,23 +289,6 @@ export const rawRoutes = (ctx: AppContext) => {
     if (!(await authorize(c, "read", artifact))) return c.text("not found", 404)
     if (await privateHistoryBlocked(c, artifact, n)) return c.text("not found", 404)
     return serveVersion(c, artifact, n, `/raw/${shortId}/v/${c.req.param("n")}/`)
-  })
-
-  // Render a proposed version exactly like a live one, so review is of the
-  // experience, not a source dump. Read-gated; the proposal must belong here.
-  app.get("/raw/:shortId/p/:proposalId/*", async (c) => {
-    const shortId = c.req.param("shortId")
-    const artifact = await meta.getByShortId(shortId)
-    if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
-    if (artifact.removed_at) return c.text(TOMBSTONE, 410)
-    const proposal = await meta.getProposal(c.req.param("proposalId"))
-    if (!proposal || proposal.artifact_id !== artifact.id) return c.text("not found", 404)
-
-    const prefix = `/raw/${shortId}/p/${proposal.id}/`
-    const path = decodeURIComponent(c.req.path.slice(prefix.length))
-    // A proposal is in-review, transient content (it can be withdrawn or change);
-    // never let a shared cache hold it, regardless of the artifact's visibility.
-    return serveContent(c, blobs, proposal, artifact.title, prefix, path, "private, no-store")
   })
 
   return app

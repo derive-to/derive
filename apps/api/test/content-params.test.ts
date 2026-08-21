@@ -126,7 +126,7 @@ describe("/v1/artifacts/:shortId/content — format, section, outline params", (
   })
 })
 
-describe("/v1 publish + proposals — edits form field", () => {
+describe("/v1 publish — edits form field", () => {
   it("versions: edits materializes a new version without a file upload", async () => {
     const { short_id } = await (
       await upload("e.html", "<h1>Title</h1><p>alpha beta gamma</p>")
@@ -160,22 +160,6 @@ describe("/v1 publish + proposals — edits form field", () => {
       }),
     })
     expect(res.status).toBe(409)
-  })
-
-  it("proposals: edits stages a proposal from the materialized text, live version untouched", async () => {
-    const { short_id } = await (await upload("e3.html", "<h1>x</h1><p>keep this</p>")).json()
-
-    const direct = await app.request(`/v1/artifacts/${short_id}/proposals`, {
-      method: "POST",
-      headers: bearer,
-      body: new URLSearchParams({
-        edits: JSON.stringify([{ old_str: "keep this", new_str: "changed this" }]),
-      }),
-    })
-    expect(direct.status).toBe(201)
-    const live = await (await app.request(`/v1/artifacts/${short_id}/content`)).text()
-    expect(live).toContain("keep this")
-    expect(live).not.toContain("changed this")
   })
 
   it("versions: a malformed base_version fails clearly (400) instead of silently coercing to NaN and always rejecting (regression)", async () => {

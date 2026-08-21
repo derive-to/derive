@@ -70,7 +70,6 @@ import type {
   NewMembership,
   NewNotification,
   NewPlan,
-  NewProposal,
   NewRenderJob,
   NewReport,
   NewRepoSource,
@@ -94,9 +93,6 @@ import type {
   PlanKind,
   PlanRecord,
   PreviewStatus,
-  ProposalApproval,
-  ProposalRecord,
-  ProposalState,
   RenderJobRecord,
   RenderJobStatus,
   ReportRecord,
@@ -201,7 +197,6 @@ import {
   orgSettings,
   PG_SCHEMA_STATEMENTS,
   plan,
-  proposal,
   renderJob,
   report,
   repoSource,
@@ -255,7 +250,6 @@ export const schema = {
   artifactFavorite,
   follow,
   artifactTag,
-  proposal,
   reviewRound,
   agent,
   agentMention,
@@ -306,7 +300,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactMember: true,
   notification: true,
   follow: true,
-  proposal: true,
   reviewRound: true,
   agent: true,
   agentMention: true,
@@ -861,7 +854,7 @@ export class PgMetaStore implements MetaStore {
 
   async artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail> {
     const { artifactId, orgId, viewerId } = opts
-    // Seven sequential ~80ms round trips (versions, tags, collection ids, proposals,
+    // Seven sequential ~80ms round trips (versions, tags, collection ids,
     // open threads, favorite, settings, managed) collapsed into one UNION ALL. Whole
     // rows ride as JSON in `doc` so branches with different column sets can share the
     // union; the scalar branches carry a count or a marker row.
@@ -875,8 +868,6 @@ export class PgMetaStore implements MetaStore {
        SELECT 'tag', to_json(t.tag) FROM artifact_tag t WHERE t.artifact_id = $1
        UNION ALL
        SELECT 'collection', to_json(ci.collection_id) FROM collection_item ci WHERE ci.artifact_id = $1
-       UNION ALL
-       SELECT 'proposal', row_to_json(p) FROM proposal p WHERE p.artifact_id = $1
        UNION ALL
        SELECT 'threads', to_json(count(DISTINCT c.thread_id)::int) FROM comment c
         WHERE c.artifact_id = $1 AND c.state = 'open'
@@ -909,7 +900,6 @@ export class PgMetaStore implements MetaStore {
     const bylines: { id: string; name: string | null; username: string | null }[] = []
     const tags: string[] = []
     const collectionIds: string[] = []
-    const proposals: ProposalRecord[] = []
     const sourceFiles: { files: string }[] = []
     let openThreads = 0
     let favorite = false
@@ -928,9 +918,6 @@ export class PgMetaStore implements MetaStore {
         case "collection":
           collectionIds.push(r.doc as string)
           break
-        case "proposal":
-          proposals.push(r.doc as ProposalRecord)
-          break
         case "threads":
           openThreads = (r.doc as number) ?? 0
           break
@@ -946,19 +933,15 @@ export class PgMetaStore implements MetaStore {
       }
     }
     // Same orderings the individual queries guaranteed: versions ascending by n (the
-    // detail route indexes `versions[i]` against its own mapped array), proposals newest
+    // detail route indexes `versions[i]` against its own mapped array),
     // first, tags sorted.
     versions.sort((a, b) => a.n - b.n)
-    proposals.sort((a, b) =>
-      a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0,
-    )
     tags.sort()
     return {
       versions,
       bylines,
       tags,
       collectionIds,
-      proposals,
       openThreads,
       favorite,
       settings: parseOrgSettings(settingsJson),
@@ -1398,7 +1381,6 @@ export class PgMetaStore implements MetaStore {
       handles: [],
       bylines: [],
       signals: {},
-      proposals: {},
       shareRoles: {},
       favorites: [],
     }
@@ -1418,8 +1400,6 @@ export class PgMetaStore implements MetaStore {
         `SELECT 'preview', a.id, NULL, NULL, NULL FROM artifact a
            JOIN version v ON v.artifact_id = a.id AND v.n = a.current_version
           WHERE v.preview_status = 'ready' AND a.id = ANY(${page})`,
-        `SELECT 'proposal', artifact_id, count(*)::text, NULL, NULL FROM proposal
-          WHERE state = 'open' AND artifact_id = ANY(${page}) GROUP BY artifact_id`,
       )
       if (views)
         branches.push(
@@ -1504,9 +1484,6 @@ export class PgMetaStore implements MetaStore {
         }
         case "preview":
           out.previews[r.k] = true
-          break
-        case "proposal":
-          out.proposals[r.k] = Number(r.c1)
           break
         case "view":
           out.views[r.k] = Number(r.c1)
@@ -1613,7 +1590,6 @@ export class PgMetaStore implements MetaStore {
       handles: [],
       bylines: [],
       signals: {},
-      proposals: {},
       shareRoles: {},
       favorites: [],
     }
@@ -1634,9 +1610,6 @@ export class PgMetaStore implements MetaStore {
       sql`select 'preview', jsonb_build_array(p.id) from page p
             join version v on v.artifact_id = p.id and v.n = p.current_version
            where v.preview_status = 'ready'`,
-      sql`select 'proposal', jsonb_build_array(pr.artifact_id, count(*)::text) from proposal pr
-            join page p on p.id = pr.artifact_id
-           where pr.state = 'open' group by pr.artifact_id`,
     ]
     if (views)
       core.push(
@@ -1697,7 +1670,6 @@ export class PgMetaStore implements MetaStore {
       collections: {},
       views: {},
       previews: {},
-      proposals: {},
       shareRoles: {},
     }
     const ranked: { n: number; a: ArtifactRecord }[] = []
@@ -1728,9 +1700,6 @@ export class PgMetaStore implements MetaStore {
         }
         case "preview":
           out.previews[d[0] as string] = true
-          break
-        case "proposal":
-          out.proposals[d[0] as string] = Number(d[1])
           break
         case "view":
           out.views[d[0] as string] = Number(d[1])
@@ -3959,117 +3928,6 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(domain).where(and(eq(domain.host, host), eq(domain.org_id, orgId)))
   }
 
-  // ---- Reviews: proposed versions ----------------------------------------
-  async createProposal(p: NewProposal): Promise<ProposalRecord> {
-    const rows = await this.db.insert(proposal).values(p).returning()
-    return one(rows)
-  }
-  async getProposal(id: string): Promise<ProposalRecord | null> {
-    const rows = await this.db.select().from(proposal).where(eq(proposal.id, id))
-    return rows[0] ?? null
-  }
-  listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]> {
-    const where = opts?.state
-      ? and(eq(proposal.artifact_id, artifactId), eq(proposal.state, opts.state))
-      : eq(proposal.artifact_id, artifactId)
-    return this.db.select().from(proposal).where(where).orderBy(desc(proposal.created_at))
-  }
-  async openProposalCounts(artifactIds: string[]): Promise<Record<string, number>> {
-    if (artifactIds.length === 0) return {}
-    const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
-    const { rows } = await this.pool.query(
-      `SELECT artifact_id, count(*)::int c FROM proposal WHERE state='open' AND artifact_id IN (${ph}) GROUP BY artifact_id`,
-      artifactIds,
-    )
-    const out: Record<string, number> = {}
-    for (const r of rows) out[r.artifact_id] = r.c
-    return out
-  }
-  async approveOpenProposal(id: string, approval: ProposalApproval): Promise<VersionRecord | null> {
-    return this.db.transaction(async (tx) => {
-      // Lock the proposal first: exactly one caller may observe it as open. The
-      // version append and audit decision then commit or roll back together.
-      const open = await tx
-        .select()
-        .from(proposal)
-        .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
-        .for("update")
-      const p = open[0]
-      if (!p) return null
-
-      const current = await tx
-        .select({ cv: artifact.current_version })
-        .from(artifact)
-        .where(eq(artifact.id, p.artifact_id))
-        .for("update")
-      if (!current[0]) throw new Error(`artifact not found: ${p.artifact_id}`)
-      const n = current[0].cv + 1
-      const now = new Date().toISOString()
-
-      await tx.insert(version).values({
-        id: approval.version_id,
-        artifact_id: p.artifact_id,
-        n,
-        blob_key: p.blob_key,
-        content_type: p.content_type,
-        size_bytes: approval.size_bytes,
-        author: p.author,
-        author_id: p.author_id,
-        message: p.message ?? "Approved proposal",
-        name: null,
-      })
-      await tx
-        .update(artifact)
-        .set({
-          current_version: n,
-          // The approved-version pointer: this new version IS the approved one.
-          approved_version: n,
-          current_content_type: p.content_type,
-          updated_at: now,
-          author_name: p.author,
-          author_login: null,
-          author_avatar: null,
-          author_gh_id: null,
-          author_id: p.author_id,
-        })
-        .where(eq(artifact.id, p.artifact_id))
-      await tx
-        .update(proposal)
-        .set({
-          state: "approved",
-          decided_by: approval.decided_by,
-          decided_by_id: approval.decided_by_id,
-          decided_version: n,
-          decision_note: approval.decision_note ?? null,
-          decided_at: now,
-        })
-        .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
-
-      const rows = await tx
-        .select()
-        .from(version)
-        .where(and(eq(version.artifact_id, p.artifact_id), eq(version.n, n)))
-      return one(rows)
-    })
-  }
-  async decideProposal(
-    id: string,
-    fields: {
-      state: ProposalState
-      decided_by: string | null
-      decided_by_id?: string | null
-      decided_version: number | null
-      decision_note?: string | null
-    },
-  ): Promise<ProposalRecord | null> {
-    const rows = await this.db
-      .update(proposal)
-      .set({ ...fields, decided_at: new Date().toISOString() })
-      .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
-      .returning()
-    return rows[0] ?? null
-  }
-
   // ---- Review rounds -----------------------------------------------------
   async createReviewRound(r: NewReviewRound): Promise<ReviewRoundRecord> {
     // Replace this person's prior pending round so the re-request wins and the
@@ -4127,18 +3985,6 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
     const updated = rows[0] ?? null
-    // An approval moves the artifact's approved-version pointer, never lowering it:
-    // the round's version is what the human actually looked at, and a stale round
-    // approved after a newer one must not roll delivery back. Rounds at version 0
-    // (an unversioned artifact) stamp nothing — approved_version = 0 would read as
-    // "serve version 0" through approvedOrCurrent, not as "never approved".
-    if (updated && fields.state === "approved" && updated.version > 0)
-      await this.db
-        .update(artifact)
-        .set({
-          approved_version: sql`GREATEST(COALESCE(${artifact.approved_version}, 0), ${updated.version})`,
-        })
-        .where(eq(artifact.id, updated.artifact_id))
     return updated
   }
 
@@ -5509,8 +5355,8 @@ export class PgMetaStore implements MetaStore {
   async firstAgentPublish(
     userId: string,
   ): Promise<{ short_id: string; title: string | null } | null> {
-    // The first artifact an agent produced FOR this user: a direct MCP publish, or an
-    // approved agent proposal on their behalf. Earliest wins. Mirrors repos.ts.
+    // The first artifact an agent produced FOR this user: the earliest direct MCP
+    // publish. Mirrors repos.ts.
     const direct = (
       await this.db
         .select({ short_id: artifact.short_id, title: artifact.title, at: version.created_at })
@@ -5526,29 +5372,7 @@ export class PgMetaStore implements MetaStore {
         .orderBy(asc(version.created_at), asc(version.id))
         .limit(1)
     )[0]
-    const approved = (
-      await this.db
-        .select({ short_id: artifact.short_id, title: artifact.title, at: proposal.decided_at })
-        .from(proposal)
-        .innerJoin(artifact, eq(artifact.id, proposal.artifact_id))
-        .where(
-          and(
-            eq(proposal.on_behalf_of, userId),
-            eq(proposal.state, "approved"),
-            isNull(artifact.removed_at),
-          ),
-        )
-        .orderBy(asc(proposal.decided_at), asc(proposal.id))
-        .limit(1)
-    )[0]
-    // A null decided_at (defensive; decide always stamps it) sorts LAST, never first.
-    const winner =
-      direct && approved
-        ? approved.at && approved.at < direct.at
-          ? approved
-          : direct
-        : (direct ?? approved)
-    return winner ? { short_id: winner.short_id, title: winner.title } : null
+    return direct ? { short_id: direct.short_id, title: direct.title } : null
   }
   async listUserGrants(userId: string): Promise<OAuthGrantSummary[]> {
     try {
@@ -5836,7 +5660,6 @@ export class PgMetaStore implements MetaStore {
     await this.db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId))
     await this.db.update(version).set({ author_id: null }).where(eq(version.author_id, userId))
     await this.db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId))
-    await this.db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId))
     await this.db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId))
     await this.db
       .update(invitation)
@@ -5986,7 +5809,6 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, id))
       await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, id))
       await tx.delete(domain).where(eq(domain.artifact_id, id))
-      await tx.delete(proposal).where(eq(proposal.artifact_id, id))
       await tx.delete(report).where(eq(report.artifact_id, id))
       await tx.delete(notification).where(eq(notification.artifact_id, id))
       await tx.delete(agentMention).where(eq(agentMention.artifact_id, id))

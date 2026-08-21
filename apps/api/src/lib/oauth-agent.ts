@@ -51,17 +51,17 @@ export function makeOauthAgent({
   audiences,
   provisionPersonal,
 }: OauthAgentDeps) {
-  // The least-privilege role an OAuth-granted scope set maps to: publish/review earn
-  // editor; propose/comment earn commenter; read alone is viewer.
+  // The least-privilege role an OAuth-granted scope set maps to: publish earns
+  // editor; comment earns commenter; read alone is viewer.
   // derive:manage maps to owner-grade, but scopeRole is always capped by the
   // grantor's ACTUAL membership role (capRole below) — the scope can widen what
   // the grant may attempt, never what the human could do themselves.
   const roleFromScopes = (scopes: string[]): Role =>
     scopes.includes("derive:manage")
       ? "owner"
-      : scopes.includes("derive:publish") || scopes.includes("derive:review")
+      : scopes.includes("derive:publish")
         ? "editor"
-        : scopes.includes("derive:propose") || scopes.includes("derive:comment")
+        : scopes.includes("derive:comment")
           ? "commenter"
           : "viewer"
 
@@ -125,7 +125,7 @@ export function makeOauthAgent({
           org_id: ws.org,
           name: grant.clientName,
           token: "",
-          // Scopes propose the role; the owner's membership in the resolved
+          // Scopes suggest the role; the owner's membership in the resolved
           // workspace is the ceiling (a publish scope is not an editorship in a
           // workspace where the granting user is only a viewer).
           role: capRole(scopeRole, ws.memberRole),

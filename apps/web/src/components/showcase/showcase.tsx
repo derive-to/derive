@@ -331,8 +331,8 @@ function ButtonsDemo() {
         <Button variant="ghost">Ghost</Button>
         <Button variant="destructive">Delete</Button>
         <Button variant="destructive-ghost">Remove</Button>
-        <Button variant="success">Approve</Button>
-        <Button variant="warning">Request changes</Button>
+        <Button variant="success">Confirm</Button>
+        <Button variant="warning">Flag</Button>
         <Button variant="link">Link</Button>
       </div>
       <div className="flex flex-wrap items-center gap-2.5">

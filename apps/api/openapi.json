@@ -15,12 +15,8 @@
       "description": "Threaded, anchored comments with reactions, edits, and resolution."
     },
     {
-      "name": "Proposals",
-      "description": "Suggested revisions awaiting review — the propose → approve / request-changes flow."
-    },
-    {
       "name": "Review",
-      "description": "Review rounds on an artifact: request a review, send it back, or approve."
+      "description": "Review rounds on an artifact: request a review, or send it back with a note."
     },
     {
       "name": "Collections",
@@ -352,14 +348,6 @@
           "has_preview": {
             "type": "boolean",
             "description": "true when the current version has a ready screenshot preview."
-          },
-          "open_proposals": {
-            "type": "number",
-            "description": "Count of open (pending-review) proposals."
-          },
-          "proposals_total": {
-            "type": "number",
-            "description": "Count of all proposals except withdrawn ones."
           },
           "open_threads": {
             "type": "number",
@@ -1244,7 +1232,7 @@
               "editor",
               "owner"
             ],
-            "description": "Permission level; commenter proposes only, editor can write, owner never allowed"
+            "description": "Permission level; commenter comments only, editor can write, owner never allowed"
           },
           "hosted": {
             "type": "boolean",
@@ -2425,146 +2413,6 @@
           "created_at"
         ]
       },
-      "DiffOp": {
-        "type": "object",
-        "properties": {
-          "t": {
-            "type": "string",
-            "enum": [
-              "ctx",
-              "add",
-              "del"
-            ],
-            "description": "Line op: ctx = unchanged context, add = added, del = removed."
-          },
-          "line": {
-            "type": "string",
-            "description": "The line's text; the +/- marker lives in `t`, not here."
-          }
-        },
-        "required": [
-          "t",
-          "line"
-        ]
-      },
-      "Proposal": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "open",
-              "approved",
-              "changes_requested",
-              "withdrawn"
-            ],
-            "description": "Review state: open, approved (went live), changes_requested, or withdrawn."
-          },
-          "author": {
-            "type": "string",
-            "description": "Proposer's display name; \"anonymous\" if not signed in."
-          },
-          "on_behalf_of": {
-            "type": "object",
-            "nullable": true,
-            "properties": {
-              "handle": {
-                "type": "string",
-                "nullable": true
-              },
-              "name": {
-                "type": "string",
-                "nullable": true
-              }
-            },
-            "required": [
-              "handle",
-              "name"
-            ],
-            "description": "When an agent proposed, the human it acted on behalf of; null for a direct human proposal."
-          },
-          "message": {
-            "type": "string",
-            "nullable": true,
-            "description": "Proposer's cover message; null if none."
-          },
-          "base_version": {
-            "type": "number",
-            "description": "Artifact version this proposal was authored against."
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "file",
-              "bundle"
-            ],
-            "description": "Content shape: a single file or a multi-file bundle."
-          },
-          "decided_by": {
-            "type": "string",
-            "nullable": true,
-            "description": "Who approved/requested-changes/withdrew it; null while still open."
-          },
-          "decided_version": {
-            "type": "number",
-            "nullable": true,
-            "description": "The version it went live as when approved; null otherwise."
-          },
-          "decision_note": {
-            "type": "string",
-            "nullable": true,
-            "description": "Reviewer's note on the decision; null while open or if none."
-          },
-          "decided_at": {
-            "type": "string",
-            "nullable": true,
-            "description": "When it was decided; null while still open."
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "preview_url": {
-            "type": "string",
-            "description": "URL that renders the proposed content like a live version."
-          },
-          "diff": {
-            "type": "object",
-            "properties": {
-              "base_version": {
-                "type": "number"
-              },
-              "ops": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/DiffOp"
-                }
-              }
-            },
-            "required": [
-              "base_version",
-              "ops"
-            ],
-            "description": "Line diff vs the base version; present only on the single-proposal fetch."
-          }
-        },
-        "required": [
-          "id",
-          "state",
-          "author",
-          "message",
-          "base_version",
-          "kind",
-          "decided_by",
-          "decided_version",
-          "decision_note",
-          "decided_at",
-          "created_at",
-          "preview_url"
-        ]
-      },
       "ReviewRound": {
         "type": "object",
         "properties": {
@@ -2584,16 +2432,15 @@
           },
           "requested_for": {
             "type": "string",
-            "description": "The person asked to answer or approve this round."
+            "description": "The person asked to answer this round."
           },
           "state": {
             "type": "string",
             "enum": [
               "pending",
-              "sent_back",
-              "approved"
+              "sent_back"
             ],
-            "description": "Round state: pending, sent_back (answers returned), or approved (the go-signal)."
+            "description": "Round state: pending, or sent_back (the answers came back — a note saying go IS the go-signal)."
           },
           "note": {
             "type": "string",
@@ -2611,7 +2458,7 @@
           "resolved_at": {
             "type": "string",
             "nullable": true,
-            "description": "When it was sent back or approved; null while pending."
+            "description": "When it was sent back; null while pending."
           }
         },
         "required": [
@@ -2663,11 +2510,10 @@
             "type": "string",
             "enum": [
               "open",
-              "addressed",
               "resolved",
               "outdated"
             ],
-            "description": "Thread state: open, addressed (a proposal in review claims to fix it), resolved, or outdated (the quoted text changed)."
+            "description": "Thread state: open, resolved, or outdated (the quoted text changed)."
           },
           "created_at": {
             "type": "string"
@@ -5376,7 +5222,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "Lock or unlock an artifact (locked ⇒ changes go through review).",
+        "summary": "Lock or unlock an artifact (locked ⇒ nothing publishes until unlocked).",
         "parameters": [
           {
             "schema": {
@@ -7555,12 +7401,8 @@
                         "enum": [
                           "comment.created",
                           "version.published",
-                          "proposal.created",
-                          "proposal.approved",
-                          "proposal.changes_requested",
                           "review.requested",
-                          "review.sent_back",
-                          "review.approved"
+                          "review.sent_back"
                         ]
                       }
                     }
@@ -8043,276 +7885,6 @@
         }
       }
     },
-    "/v1/artifacts/{shortId}/proposals": {
-      "post": {
-        "tags": [
-          "Proposals"
-        ],
-        "summary": "Propose a candidate version (multipart, like publish).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "shortId",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "The created proposal, plus the thread ids it marked addressed.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    {
-                      "$ref": "#/components/schemas/Proposal"
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "addressed": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          },
-                          "description": "Thread ids this proposal flipped to addressed (pending review)."
-                        }
-                      },
-                      "required": [
-                        "addressed"
-                      ]
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Proposals"
-        ],
-        "summary": "List an artifact's proposals (optionally filtered by state).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "shortId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string",
-              "enum": [
-                "open",
-                "approved",
-                "changes_requested",
-                "withdrawn"
-              ]
-            },
-            "required": false,
-            "name": "state",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The artifact's proposals.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "proposals": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/Proposal"
-                      }
-                    }
-                  },
-                  "required": [
-                    "proposals"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/artifacts/{shortId}/proposals/{proposalId}": {
-      "get": {
-        "tags": [
-          "Proposals"
-        ],
-        "summary": "One proposal, with a line diff against its base version.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "shortId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "proposalId",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The proposal, with its diff.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Proposal"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/artifacts/{shortId}/proposals/{proposalId}/approve": {
-      "post": {
-        "tags": [
-          "Proposals"
-        ],
-        "summary": "Approve a proposal (its content goes live as a new version).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "shortId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "proposalId",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The approved proposal + the version number it became.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "allOf": [
-                    {
-                      "$ref": "#/components/schemas/Proposal"
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "published": {
-                          "type": "number",
-                          "description": "The version number the approved proposal became live as."
-                        }
-                      },
-                      "required": [
-                        "published"
-                      ]
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/artifacts/{shortId}/proposals/{proposalId}/request-changes": {
-      "post": {
-        "tags": [
-          "Proposals"
-        ],
-        "summary": "Request changes on a proposal (it stays open for revision).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "shortId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "proposalId",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The proposal, now changes_requested.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Proposal"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/artifacts/{shortId}/proposals/{proposalId}/withdraw": {
-      "post": {
-        "tags": [
-          "Proposals"
-        ],
-        "summary": "Withdraw an open proposal (proposer or a manager).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "shortId",
-            "in": "path"
-          },
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "proposalId",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The proposal, now withdrawn.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Proposal"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/artifacts/{shortId}/review/send-back": {
       "post": {
         "tags": [
@@ -8349,44 +7921,6 @@
         "responses": {
           "200": {
             "description": "The round, now sent_back.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "round": {
-                      "$ref": "#/components/schemas/ReviewRound"
-                    }
-                  },
-                  "required": [
-                    "round"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/artifacts/{shortId}/review/approve": {
-      "post": {
-        "tags": [
-          "Review"
-        ],
-        "summary": "Approve a review (the go-signal).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "shortId",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The round, now approved.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8864,8 +8398,7 @@
               "enum": [
                 "open",
                 "resolved",
-                "outdated",
-                "addressed"
+                "outdated"
               ]
             },
             "required": false,
@@ -10622,12 +10155,8 @@
                           "comment.mention",
                           "comment.resolved",
                           "version.published",
-                          "proposal.created",
-                          "proposal.approved",
-                          "proposal.changes_requested",
                           "review.requested",
-                          "review.sent_back",
-                          "review.approved"
+                          "review.sent_back"
                         ]
                       }
                     }

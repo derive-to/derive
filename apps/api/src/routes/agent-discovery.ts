@@ -77,7 +77,7 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
           "Revise in place with surgical edits; every version stays addressable",
           "Stage large documents and binary assets (images, fonts) out of band via short-lived upload URLs",
           "Text-anchored comment threads that survive rewrites; reply, react, resolve",
-          "Optional proposals and formal review rounds for work that needs a named decision",
+          "Optional review rounds — a person answers in comments and sends the work back with a note",
           "Search and browse workspace libraries; tags and collections",
           "Ask live workspace contexts (agents) for answers or delegated work",
           "Save resumable checkpoints of working state",

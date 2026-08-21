@@ -1,6 +1,6 @@
 ---
 name: publishing
-summary: create and revise artifacts, including styled HTML pages; stage large documents; and handle permission-gated proposals (publish, stage)
+summary: create and revise artifacts, including styled HTML pages; stage large documents; ask for review when it matters (publish, stage)
 order: 3
 ---
 # Publishing to Derive
@@ -38,7 +38,7 @@ sandboxed viewer, so publish real designed pages, not just prose.
   picks one of several. An empty `new_str` deletes the match. The batch applies nothing if
   any `old_str` matches zero times, or matches more than once without `occurrence`; the
   error explains why (a whitespace difference, or the doc changed) so you can fix it in
-  one round. Requires `short_id`; use INSTEAD of `content`. Composes with `for_review`,
+  one round. Requires `short_id`; use INSTEAD of `content`. Composes with
   `addresses`, `message`, `request_review`.
 - **base_version safety.** With `edits`, pass the version you read as `base_version`; the
   publish errors instead of applying when the artifact has moved past it.
@@ -205,22 +205,17 @@ A single-file publish's response echoes `content_sha256` of the stored bytes (th
 content-addressed blob key). Verify it when the content passed through your context, so
 you know what landed matches what you sent.
 
-## Proposals and formal review
+## Review
 
-The normal path is a direct publish. `publish` goes live immediately for a Creator or Admin.
-When your permissions do not allow that, Derive files a proposal for someone with publish access
-to decide. Passing `for_review:true` also creates a proposal. Proposals support single files only;
-bundles must be published directly.
+`publish` goes live immediately for anyone with publish standing. Without it, leave your
+suggested change as a comment on the document; someone who can publish applies it.
 
-Do not create a proposal or request formal review unless permissions require it or the user asks
-for it.
-
-- **addresses**: pass the thread ids (from catch_up) this revision resolves. On a live
-  publish they resolve; on a proposal they flip to `addressed` and resolve on approval.
-- **request_review**: after a LIVE publish, open a review round asking your human to review
-  this version. They can answer inline, send it back, or approve it. Poll `catch_up`'s `review`
-  field for the state. This has no effect on a proposal because a proposal already needs a
-  decision.
+- **addresses**: pass the thread ids (from catch_up) this revision resolves; the publish
+  resolves those threads.
+- **request_review**: after a publish, open a review round asking your human to look at this
+  version. They answer in comments and Send back with a note. A note that reads "good to go"
+  IS the go-signal. Poll `catch_up`'s `review` field for the state. Ask for review when the
+  work needs their eyes or they asked for it, not on every write.
 
 ## Access on a NEW artifact
 

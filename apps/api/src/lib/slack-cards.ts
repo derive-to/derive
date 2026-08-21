@@ -4,7 +4,7 @@
 // two different treatments:
 //   - short identity fields (author, title, a Slack display name) → `escapeMrkdwn`; they are
 //     labels, so rendering markdown in them would be wrong as well as unsafe.
-//   - authored prose (a comment body, a proposal note, a publish message) → `mrkdwnBody`,
+//   - authored prose (a comment body, a review note, a publish message) → `mrkdwnBody`,
 //     which escapes AND renders the markdown subset Slack has an equivalent for.
 // A plain-text `text` fallback rides alongside every message and needs the same treatment: it
 // is what the push/desktop notification shows, and what Slack renders if it rejects the blocks

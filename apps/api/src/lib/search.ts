@@ -17,8 +17,8 @@ import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
 import { visibleArtifacts } from "./visibility"
 
-// The minimal store surface search needs — a BlobStore, a version→text resolver
-// (works for a version OR a proposal, same as the rest of the app), and (only for
+// The minimal store surface search needs — a BlobStore, a version→text resolver,
+// and (only for
 // workspace-wide search) the artifact-listing slice of MetaStore. Narrow deps over
 // the full AppContext, same convention as MaterializeEditsDeps in edits.ts: keeps
 // this file testable without booting a real app, and importable from a REST route
@@ -284,7 +284,7 @@ export const searchReport = (
 // ---------------------------------------------------------------------------
 // Index maintenance — the WRITE side of workspace search, for BOTH arms: the lexical
 // FTS/tsvector index behind searchArtifactIds, and (when bound) the dense SearchIndex.
-// emitVersionBump calls indexArtifactVersion on every publish/restore/proposal-approve,
+// emitVersionBump calls indexArtifactVersion on every publish/restore,
 // keeping both current. On delete/move the two diverge by necessity: the FTS lives IN the
 // MetaStore, so deleteArtifact/moveArtifactOrg maintain it transactionally; the dense arm
 // lives outside the DB, so the delete/move ROUTES unindex/re-scope it best-effort — and any
@@ -336,7 +336,7 @@ export async function versionIndexText(blobs: BlobStore, v: VersionRecord): Prom
 }
 
 // Upsert an artifact's current-version text into the search index. Called from
-// emitVersionBump so publish, restore, and proposal-approve all keep it current.
+// emitVersionBump so publish and restore both keep it current.
 export async function indexArtifactVersion(
   meta: Pick<MetaStore, "indexArtifact">,
   blobs: BlobStore,

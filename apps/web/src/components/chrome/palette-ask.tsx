@@ -144,7 +144,7 @@ export function PaletteAsk(props: {
         />
       </div>
 
-      {/* WHERE THE ANSWER POINTS, as somewhere you can go. The agent proposes and the person
+      {/* WHERE THE ANSWER POINTS, as somewhere you can go. The agent publishes and the person
           commits: it never navigates on its own, because a model deciding to move you off the
           page you were on is delightful exactly once. */}
       {destinations.length > 0 && (

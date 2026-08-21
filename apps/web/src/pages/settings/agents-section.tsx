@@ -182,7 +182,7 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="commenter">Can comment and propose</SelectItem>
+            <SelectItem value="commenter">Can comment</SelectItem>
             <SelectItem value="editor">Can publish</SelectItem>
           </SelectContent>
         </Select>

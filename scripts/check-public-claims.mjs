@@ -71,7 +71,8 @@ const forbidden = [
   },
   {
     pattern: /turn agent output into approved work/i,
-    reason: "formal approval is an optional control, not every artifact's promised outcome",
+    reason:
+      "work publishes as versions people review in the open; there is no approval step to promise",
   },
   {
     pattern: /review and approval for (?:work made by ai agents|agent-made work)/i,
@@ -205,7 +206,11 @@ requireText(
   "describe the current license",
 )
 requireText("README.md", "a compatible agent over MCP", "scope agent compatibility")
-requireText("README.md", "a proposal a human approves", "preserve human approval")
+requireText(
+  "README.md",
+  "suggests changes in comments",
+  "keep the lower-scope suggestion path stated",
+)
 requireText(
   "packages/cli/skills/derive/SKILL.md",
   "Do not request review merely because an artifact exists.",

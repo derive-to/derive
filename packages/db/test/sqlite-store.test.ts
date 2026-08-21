@@ -299,7 +299,7 @@ describe("sqlite store: OAuth grants (Better Auth oauth-provider tables)", () =>
         "cons1",
         "client_a",
         "u1",
-        JSON.stringify(["derive:read", "derive:propose"]),
+        JSON.stringify(["derive:read", "derive:comment"]),
         "2026-06-01T00:00:00.000Z",
       )
     // A live access + refresh token under that grant, and an unrelated other user's consent.
@@ -331,7 +331,7 @@ describe("sqlite store: OAuth grants (Better Auth oauth-provider tables)", () =>
     const grants = await s.listUserGrants("u1")
     expect(grants).toHaveLength(1)
     expect(grants[0]).toMatchObject({ clientId: "client_a", clientName: "Claude Code" })
-    expect(grants[0]?.scopes).toEqual(["derive:read", "derive:propose"])
+    expect(grants[0]?.scopes).toEqual(["derive:read", "derive:comment"])
 
     await s.revokeUserGrant("u1", "client_a")
     // u1's grant + BOTH token kinds are gone; the other user's consent is untouched.

@@ -26,7 +26,7 @@ import { notifyCommentBells } from "../lib/notify-comment"
  *  carries a prompt) and posts it as a whole-document comment @mentioning the chosen
  *  agent, which drops into that agent's MCP pull inbox. The agent does the work and
  *  publishes per its grant: a publish-capable agent posts directly, a lower grant
- *  files a proposal — no special case here. */
+ *  answers in comments — no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
   const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
   const app = new OpenAPIHono<BlankEnv>()

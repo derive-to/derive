@@ -12,7 +12,7 @@
 // a match with no seat is nobody. It is not defensible for WRITING, because the thing an
 // attacker needs is different in kind: setting a Slack profile email (normally verifiable only
 // with the mailbox, but settable by an admin through SCIM without one) would otherwise let
-// somebody approve a publish, settle a review, or comment under another person's name.
+// somebody settle a review or comment under another person's name.
 //
 // So: email resolves WHO you probably are, and oauth is what lets us act as you.
 //
@@ -43,10 +43,10 @@ export const linkToActMessage = (what: string, link?: SlackUserLinkRecord | null
  *
  *  An email-matched asker is clamped to `viewer`, which is the whole enforcement: the chat
  *  tools take their ceiling from the seat, so every write stops at the same gate a real
- *  viewer's does. `publish` routes a sub-editor to a proposal and then refuses at `propose`
- *  (which needs `commenter`), and `comment`, `organize` and `checkpoint` refuse outright — so
- *  nothing is written, including nothing pending. No policy layer, no tool list to keep in
- *  step, and no future tool that can be added without inheriting the rule.
+ *  viewer's does. `publish` refuses below `editor`, and `comment`, `organize` and
+ *  `checkpoint` refuse outright — so nothing is written, including nothing pending. No
+ *  policy layer, no tool list to keep in step, and no future tool that can be added
+ *  without inheriting the rule.
  *
  *  Reading, finding and catching up are untouched, so the reason email identity exists at all
  *  — answering a question in Slack without a detour — still works for anyone.

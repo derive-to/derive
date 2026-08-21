@@ -25,7 +25,7 @@ export const buildSlackManifest = (baseUrl: string) => {
       // pins it, the same way the 35-char name cap is pinned.
       name: "Derive",
       description:
-        "Derive comments, publishes and proposal updates in a Slack channel. Reply from the thread; DMs for mentions, review requests and shares.",
+        "Derive comments, publishes and review updates in a Slack channel. Reply from the thread; DMs for mentions, review requests and shares.",
       background_color: "#1a1a2e",
     },
     features: {

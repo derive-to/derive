@@ -145,5 +145,5 @@ still walk to slide 7 and then click a line to fix it.
 
 `derive init` scaffolds an `AGENTS.md` that teaches an agent to publish, catch up on
 comments, revise the same artifact, and reply or resolve when useful. The CLI exposes
-the matching `derive comments`, `reply`, `resolve`, and `open` commands. Formal review
-is optional unless permissions require a proposal.
+the matching `derive comments`, `reply`, `resolve`, and `open` commands. Review is
+optional; request it when the work needs a person's eyes.

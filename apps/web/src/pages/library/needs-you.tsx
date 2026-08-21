@@ -1,36 +1,24 @@
 import type { Artifact } from "@/api"
 import { cn } from "@/lib/utils"
 
-type Signals = Pick<
-  Artifact,
-  "open_proposals" | "open_threads" | "my_role" | "mentions_me" | "i_participated"
->
+type Signals = Pick<Artifact, "open_threads" | "my_role" | "mentions_me" | "i_participated">
 
-/** Everything on a card that means "this wants you", as ONE number.
- *
- *  A card used to carry an open-proposal count and an open-thread count side by side.
- *  Two numbers answering one question: while scanning a grid you are deciding whether to
- *  open something, not triaging what kind of attention it needs — the artifact itself
- *  tells you that, and it has room to. */
-export const needsYouCount = (a: Signals): number => (a.open_proposals ?? 0) + (a.open_threads ?? 0)
+/** Everything on a card that means "this wants you", as ONE number: the open threads.
+ *  While scanning a grid you are deciding whether to open something, not triaging what
+ *  kind of attention it needs — the artifact itself tells you that. */
+export const needsYouCount = (a: Signals): number => a.open_threads ?? 0
 
-/** Whether it needs YOU, rather than merely being busy. Each side has to match on both
- *  counts: `mentions_me`/`i_participated` are facts about threads, so they only mean
- *  something while a thread is actually open — an old thread you commented in must not
- *  ink a badge whose only open item is a proposal you cannot act on. */
-const needsYouIsMine = (a: Signals): boolean => {
-  const threadWantsMe = (a.open_threads ?? 0) > 0 && (!!a.mentions_me || !!a.i_participated)
-  const canReview = (a.open_proposals ?? 0) > 0 && (a.my_role === "owner" || a.my_role === "editor")
-  return threadWantsMe || canReview
-}
+/** Whether it needs YOU, rather than merely being busy: `mentions_me`/`i_participated`
+ *  are facts about threads, so they only mean something while a thread is actually
+ *  open — an old thread you commented in must not ink a badge on its own. */
+const needsYouIsMine = (a: Signals): boolean =>
+  (a.open_threads ?? 0) > 0 && (!!a.mentions_me || !!a.i_participated)
 
 export function NeedsYou({ artifact: a, className }: { artifact: Signals; className?: string }) {
   const n = needsYouCount(a)
   if (n === 0) return null
   const mine = needsYouIsMine(a)
   const parts = [
-    (a.open_proposals ?? 0) > 0 &&
-      `${a.open_proposals} open ${a.open_proposals === 1 ? "proposal" : "proposals"}`,
     (a.open_threads ?? 0) > 0 &&
       `${a.open_threads} open ${a.open_threads === 1 ? "thread" : "threads"}`,
   ].filter(Boolean)

@@ -27,11 +27,10 @@ import {
 } from "@derive/core"
 import { type ArtifactStatus, artifactStatus } from "./artifact-status"
 import { context, mrkdwnLabel, section } from "./slack-cards"
-import { encodeProposalAction, SLACK_PROPOSAL_ACTION } from "./slack-comments"
 import { unfurlInfoFor } from "./unfurl-info"
 
 /** The card for an artifact the channel may see: title, one-line description, the screenshot
- *  when one is ready, and — for an open proposal — the buttons to decide it.
+ *  when one is ready.
  *
  *  `imageUrl` is the caller's decision, not `info.imageUrl` verbatim: Slack fetches an unfurl's
  *  image ANONYMOUSLY, and `/v1/og/:ref` answers an anonymous fetch by the artifact's link role —
@@ -40,13 +39,7 @@ import { unfurlInfoFor } from "./unfurl-info"
  *  it KNOWS answers anonymously with the rendered PNG (a signed OG token for a workspace doc,
  *  the bare URL for a public one — see routes/slack.ts previewUrlFor), or null, and null means
  *  no image at all. A broken-looking card is worse than none. */
-export const unfurlBlocks = (
-  info: UnfurlInfo,
-  imageUrl: string | null,
-  hasOpenProposal: boolean,
-  artifactId: string,
-  proposalId: string | null,
-): unknown[] => {
+export const unfurlBlocks = (info: UnfurlInfo, imageUrl: string | null): unknown[] => {
   const blocks: unknown[] = [
     section(
       `*<${info.pageUrl}|${mrkdwnLabel(info.title)}>*\n${mrkdwnLabel(unfurlDescription(info), 120)}`,
@@ -61,32 +54,6 @@ export const unfurlBlocks = (
       image_url: imageUrl,
       alt_text: `Preview of ${info.title}`.slice(0, 200),
     })
-  // An open proposal turns the preview into somewhere you can act, the way Linear's issue
-  // unfurls do. The clicker is re-authorized as their own linked account by the interactivity
-  // handler, so showing the buttons to a channel is safe — an unauthorized click gets an
-  // ephemeral refusal, not an action.
-  if (hasOpenProposal && proposalId) {
-    const value = encodeProposalAction(artifactId, proposalId)
-    blocks.push({
-      type: "actions",
-      elements: [
-        {
-          type: "button",
-          action_id: SLACK_PROPOSAL_ACTION.approve,
-          text: { type: "plain_text", text: "Approve" },
-          value,
-          style: "primary",
-        },
-        {
-          type: "button",
-          action_id: SLACK_PROPOSAL_ACTION.requestChanges,
-          text: { type: "plain_text", text: "Request changes" },
-          value,
-        },
-        { type: "button", text: { type: "plain_text", text: "Open in Derive" }, url: info.pageUrl },
-      ],
-    })
-  }
   blocks.push(context("Derive"))
   return blocks
 }
@@ -210,11 +177,10 @@ export const decideUnfurl = async (
   const info = await unfurlInfoFor(deps.meta, deps.baseUrl, artifact)
   const status = await artifactStatus(deps.meta, artifact)
   const previewUrl = (await deps.previewUrl?.(artifact, info, status)) ?? null
-  const open = await deps.meta.listProposals(artifact.id, { state: "open" })
   return {
     kind: "card",
     url,
-    blocks: unfurlBlocks(info, previewUrl, open.length > 0, artifact.id, open[0]?.id ?? null),
+    blocks: unfurlBlocks(info, previewUrl),
     artifact,
     info,
     status,

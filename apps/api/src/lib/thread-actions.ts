@@ -2,7 +2,7 @@
 // route (routes/comments.ts) and the Slack interactivity handler (routes/slack.ts) run the
 // EXACT same pipeline — flip every comment in the thread, announce it on the realtime bus,
 // fan the event out to webhooks, and bring every mirrored Slack card in line. Callers own
-// authorization; this just executes the action. Mirrors lib/proposal-actions.ts.
+// authorization; this just executes the action.
 //
 // That last step lives HERE rather than at each call site on purpose: the state a Slack card
 // shows has to follow the thread no matter what moved it, and three of the four ways to resolve

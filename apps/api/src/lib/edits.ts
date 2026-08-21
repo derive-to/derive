@@ -145,10 +145,10 @@ const conflictDiffNote = async (
  * Turn an `edits` request into stored-revision bytes: validate the artifact can take
  * edits at all (single-file, `base_version` still fresh), load its current source,
  * apply the edits, and infer a content-type-preserving filename. Shared by the MCP
- * `publish` tool and the REST `/versions` + `/proposals` routes — the three surfaces
+ * `publish` tool and the REST `/versions` route — the two surfaces
  * that offer `edits` — so the semantics and error text can't drift between them the
  * way they had (mismatched wording, and the MCP path silently skipping the size/
- * storage-quota check the REST routes both apply after calling this).
+ * storage-quota check the REST route applies after calling this).
  *
  * Throws `EditConflictError` for a state conflict (409-shaped), plain `EditError` for
  * a malformed edit (400-shaped) — never a partial/silent failure. Callers translate

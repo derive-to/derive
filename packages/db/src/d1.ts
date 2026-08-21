@@ -3,7 +3,6 @@ import type {
   GithubUserMapping,
   MetaStore,
   NewView,
-  ProposalApproval,
   UserDir,
   UserProfile,
   VersionRecord,
@@ -63,63 +62,6 @@ export function createD1Store(d1: D1Database): MetaStore {
     | "orgContext"
   > = {
     ...repos,
-
-    approveOpenProposal: async (
-      id: string,
-      approval: ProposalApproval,
-    ): Promise<VersionRecord | null> => {
-      const now = new Date().toISOString()
-      // D1 has no interactive transaction, but batch() is transactional. Each
-      // statement predicates on the proposal still being open; concurrent batches
-      // serialize, so only the first inserts a version and advances the artifact.
-      const results = await d1.batch([
-        d1
-          .prepare(
-            `INSERT INTO version
-              (id, artifact_id, n, blob_key, content_type, size_bytes, author, author_id, message, name)
-             SELECT ?, p.artifact_id, a.current_version + 1, p.blob_key, p.content_type, ?,
-                    p.author, p.author_id, coalesce(p.message, 'Approved proposal'), NULL
-             FROM proposal p JOIN artifact a ON a.id = p.artifact_id
-             WHERE p.id = ? AND p.state = 'open'`,
-          )
-          .bind(approval.version_id, approval.size_bytes, id),
-        d1
-          .prepare(
-            `UPDATE artifact
-             SET current_version = current_version + 1,
-                 approved_version = current_version + 1,
-                 current_content_type = (SELECT content_type FROM proposal WHERE id = ? AND state = 'open'),
-                 updated_at = ?,
-                 author_name = (SELECT author FROM proposal WHERE id = ? AND state = 'open'),
-                 author_login = NULL,
-                 author_avatar = NULL,
-                 author_gh_id = NULL,
-                 author_id = (SELECT author_id FROM proposal WHERE id = ? AND state = 'open')
-             WHERE id = (SELECT artifact_id FROM proposal WHERE id = ? AND state = 'open')`,
-          )
-          .bind(id, now, id, id, id),
-        d1
-          .prepare(
-            `UPDATE proposal
-             SET state = 'approved', decided_by = ?, decided_by_id = ?,
-                 decided_version = (SELECT current_version FROM artifact WHERE id = proposal.artifact_id),
-                 decision_note = ?, decided_at = ?
-             WHERE id = ? AND state = 'open'`,
-          )
-          .bind(
-            approval.decided_by,
-            approval.decided_by_id,
-            approval.decision_note ?? null,
-            now,
-            id,
-          ),
-      ])
-      if ((results[0]?.meta.changes ?? 0) !== 1) return null
-      const decided = await repos.getProposal(id)
-      if (!decided || decided.decided_version === null)
-        throw new Error(`approved proposal did not record a version: ${id}`)
-      return repos.getVersion(decided.artifact_id, decided.decided_version)
-    },
 
     // D1 batch is transactional. A failed second statement cannot strand an
     // empty library after its entries were deleted.
@@ -209,19 +151,6 @@ export function createD1Store(d1: D1Database): MetaStore {
       )
       const rows = (await db.all(
         sql`SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ids}) GROUP BY artifact_id`,
-      )) as { artifact_id: string; c: number }[]
-      const out: Record<string, number> = {}
-      for (const r of rows) out[r.artifact_id] = r.c
-      return out
-    },
-    openProposalCounts: async (artifactIds: string[]): Promise<Record<string, number>> => {
-      if (artifactIds.length === 0) return {}
-      const ids = sql.join(
-        artifactIds.map((id) => sql`${id}`),
-        sql`, `,
-      )
-      const rows = (await db.all(
-        sql`SELECT artifact_id, count(*) c FROM proposal WHERE state='open' AND artifact_id IN (${ids}) GROUP BY artifact_id`,
       )) as { artifact_id: string; c: number }[]
       const out: Record<string, number> = {}
       for (const r of rows) out[r.artifact_id] = r.c

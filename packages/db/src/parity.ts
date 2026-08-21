@@ -37,7 +37,6 @@ import type {
   MembershipRecord,
   NotificationRecord,
   PlanRecord,
-  ProposalRecord,
   RenderJobRecord,
   ReportRecord,
   RepoSourceRecord,
@@ -72,7 +71,6 @@ export interface TypedTables {
   artifactMember: ArtifactMemberRecord
   notification: NotificationRecord
   follow: FollowRecord
-  proposal: ProposalRecord
   reviewRound: ReviewRoundRecord
   agent: AgentRecord
   agentMention: AgentMentionRecord

@@ -62,7 +62,7 @@ describe("oauth agent role capping + consent binding", () => {
     expect(o?.scopeRole).toBe("editor") // uncapped, for header re-homes to re-cap
   })
 
-  it("derive:manage proposes owner — and the membership ceiling still holds", async () => {
+  it("derive:manage maps to owner — and the membership ceiling still holds", async () => {
     const manage = { ...grant, scopes: ["openid", "derive:read", "derive:manage"] }
     const asOwner = await resolve(stub({ getOAuthGrant: async () => manage }))
     expect(asOwner?.scopeRole).toBe("owner")

@@ -26,7 +26,7 @@ export function useArtifactLive(opts: {
   /** A new version landed live, with its number when the event carried one — the
    *  page refetches AND may cue the user (toast / mid-edit warning). */
   onVersion: (n?: number) => void
-  /** A review round changed (requested / sent back / approved) — the review card
+  /** A review round changed (requested / sent back) — the review card
    *  refetches, so an agent's re-request appears live instead of on reload. */
   onReview?: () => void
   /** The stream (re)connected after a coverage gap — a hidden tab returning (its
@@ -76,7 +76,6 @@ export function useArtifactLive(opts: {
     ev.addEventListener("comment.created", onComment)
     ev.addEventListener("comment.resolved", onComment)
     ev.addEventListener("comment.outdated", onComment)
-    ev.addEventListener("comment.addressed", onComment)
     ev.addEventListener("comment.reacted", onComment)
     ev.addEventListener("comment.updated", onComment)
     ev.addEventListener("version.published", (e) => {
@@ -98,7 +97,6 @@ export function useArtifactLive(opts: {
     if (onReview) {
       ev.addEventListener("review.requested", onReview)
       ev.addEventListener("review.sent_back", onReview)
-      ev.addEventListener("review.approved", onReview)
     }
     ev.addEventListener("presence", (e) => {
       try {

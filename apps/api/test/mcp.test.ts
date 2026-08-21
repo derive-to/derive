@@ -1671,7 +1671,7 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("publish to derive://brandprint/profile requires an Admin/Owner role to scaffold", async () => {
-    const { app, token } = appWithGrant(dir, "bp-setup-denied", "openid derive:read derive:propose")
+    const { app, token } = appWithGrant(dir, "bp-setup-denied", "openid derive:read derive:comment")
     expect(
       toolText(
         await call(app, token, "publish", {
@@ -1893,60 +1893,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       await call(app, token, "read", { short_id: skill, section: "scripts/check.sh" }),
     )
     expect(sec).toContain("echo ok")
-  })
-
-  it("skill delivery serves the approved version once one exists", async () => {
-    const { app, token, meta } = appWithGrant(dir, "skillgate", "openid derive:read derive:publish")
-    const skill = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Gated skill",
-          files: { "SKILL.md": "---\nname: gated\n---\n\n# Gated\n\nApproved wording.\n" },
-        }),
-      ),
-    ).short_id
-    // Publish a draft v2 the team hasn't approved.
-    await call(app, token, "publish", {
-      short_id: skill,
-      files: { "SKILL.md": "---\nname: gated\n---\n\n# Gated\n\nDraft wording.\n" },
-    })
-    // Never approved: delivery serves current (the draft).
-    const before = JSON.parse(toolText(await call(app, token, "read", { short_id: skill })))
-    expect(before.version).toBe(2)
-    expect(before.content).toContain("Draft wording.")
-
-    // A human approves v1 (review round; the proposal path stamps the same pointer).
-    const art = await meta.getByShortId(skill)
-    if (!art) throw new Error("no artifact")
-    const round = `rr_gate_${skill}`
-    await meta.createReviewRound({
-      id: round,
-      artifact_id: art.id,
-      version: 1,
-      requested_by: "agent",
-      requested_for: "u_gate",
-    })
-    await meta.resolveReviewRound(round, { state: "approved" })
-
-    // Every delivery lane now serves v1; the response says so.
-    const gated = JSON.parse(toolText(await call(app, token, "read", { short_id: skill })))
-    expect(gated.version).toBe(1)
-    expect(gated.content).toContain("Approved wording.")
-    expect(gated.note).toContain("v2")
-    const uri = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: `derive://skills/${skill}` })),
-    )
-    expect(uri.content).toContain("Approved wording.")
-    const cat = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: "derive://skills" })),
-    )
-    expect(cat.workspace.find((s: { short_id: string }) => s.short_id === skill)?.version).toBe(1)
-
-    // Naming the draft explicitly still reads it, as an ordinary bundle.
-    const draft = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: skill, version: 2 })),
-    )
-    expect(draft.pages).toBeDefined()
   })
 
   it("instructions point at the skills catalog, with the workspace's count", async () => {
@@ -3419,47 +3365,11 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(done.count).toBe(2)
   })
 
-  it("publish with for_review stages a proposal instead of going live", async () => {
-    // Even with an editor grant, for_review:true files a proposal that never auto-goes-live.
-    const { app, token } = appWithGrant(dir, "review", "openid derive:read derive:publish")
-    const shortId = (await (await publish(app, token, "Draft")).json()).short_id
-
-    const p = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          short_id: shortId,
-          content: "<h1>Revised draft</h1>",
-          message: "tightened the intro",
-          for_review: true,
-        }),
-      ),
-    )
-    expect(p.published).toBe(false)
-    expect(p.proposed).toBe(true)
-    expect(p.proposal_id).toBeTruthy()
-    expect(p.base_version).toBe(1)
-
-    // Delegation provenance: the agent proposed on behalf of the human who authorized the
-    // grant (Owner / u_o), so the review surface can show "Claude on behalf of Owner."
-    const list = await (
-      await app.request(`/v1/artifacts/${shortId}/proposals`, {
-        headers: { authorization: `Bearer ${token}` },
-      })
-    ).json()
-    expect(list.proposals[0].on_behalf_of).toMatchObject({ name: "Owner" })
-
-    // The live version is untouched — a proposal is not a publish.
-    const read = toolText(await call(app, token, "read", { short_id: shortId }))
-    expect(read).toContain("version: 1 (current)")
-    expect(read).toContain("Draft")
-    expect(read).not.toContain("Revised")
-  })
-
   // The sniffer types by filename first, so a bare index.html fallback silently
   // re-types a markdown artifact as HTML on any revision that omits `filename` —
   // the browser then parses the raw markdown as markup and swallows tag-like text.
-  // These three pin every no-filename path: full-content republish, new-artifact
-  // sniff, and the proposal route.
+  // These two pin every no-filename path: full-content republish and new-artifact
+  // sniff.
   it("publish: a full-content republish without a filename keeps a markdown doc markdown", async () => {
     const { app, token } = appWithGrant(dir, "retype", "openid derive:read derive:publish")
     const created = JSON.parse(
@@ -3502,37 +3412,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     const readHtml = toolText(await call(app, token, "read", { short_id: html.short_id }))
     expect(readHtml).toContain("markdown (converted from text/html)")
-  })
-
-  it("publish: an approved no-filename proposal keeps a markdown doc markdown", async () => {
-    const { app, token } = appWithGrant(dir, "retypeprop", "openid derive:read derive:publish")
-    const created = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Spec",
-          content: "# Spec\n\ndraft\n",
-          filename: "spec.md",
-        }),
-      ),
-    )
-    const p = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          short_id: created.short_id,
-          content: "# Spec\n\nproposed body\n",
-          for_review: true,
-        }),
-      ),
-    )
-    const approved = await app.request(
-      `/v1/artifacts/${created.short_id}/proposals/${p.proposal_id}/approve`,
-      { method: "POST", headers: { "x-test-user": "owner@x.test" } },
-    )
-    expect(approved.status).toBe(200)
-    const read = toolText(await call(app, token, "read", { short_id: created.short_id }))
-    expect(read).toContain("version: 2 (current)")
-    expect(read).toContain("format: markdown (source)")
-    expect(read).toContain("proposed body")
   })
 
   // End-to-end through the RENDER pipeline (not just the stored-type label): publish
@@ -3632,51 +3511,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cu.summary).toContain("outdated")
     expect(cu.outdated_comments).toHaveLength(1)
     expect(cu.outdated_comments[0].quote).toBe("beta")
-  })
-
-  it("publish for_review with `addresses` marks the cited threads addressed (pending review)", async () => {
-    const { app, token } = appWithGrant(
-      dir,
-      "addr",
-      "openid derive:read derive:comment derive:publish",
-    )
-    const shortId = (await (await publish(app, token, "headline to fix")).json()).short_id
-    const cm = await (
-      await app.request(`/v1/artifacts/${shortId}/comments`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ body_md: "fix the headline" }),
-      })
-    ).json()
-
-    const p = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          short_id: shortId,
-          content: "<h1>fixed headline</h1>",
-          message: "fixed it",
-          for_review: true,
-          addresses: [cm.thread_id],
-        }),
-      ),
-    )
-    expect(p.proposed).toBe(true)
-    expect(p.addressed).toEqual([cm.thread_id])
-
-    // The thread is now addressed — off the open list, listed under `addressed`.
-    const open = JSON.parse(
-      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "open" })),
-    )
-    expect(open.count).toBe(0)
-    const addr = JSON.parse(
-      toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "addressed" })),
-    )
-    expect(addr.count).toBe(1)
-    expect(addr.comments[0].state).toBe("addressed")
-
-    // catch_up flags it so the agent won't re-address the same fix.
-    const cu = JSON.parse(toolText(await call(app, token, "catch_up", { short_id: shortId })))
-    expect(cu.summary).toContain("addressed")
   })
 
   it("a live publish with `addresses` resolves those threads directly", async () => {
@@ -3924,24 +3758,6 @@ describe("remote MCP endpoint (/mcp)", () => {
         }),
       ),
     ).toContain("multi-page bundle")
-
-    // edits + for_review files a proposal with the materialized text, not live.
-    const proposal = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          short_id: shortId,
-          for_review: true,
-          edits: [{ old_str: "gamma", new_str: "GAMMA" }],
-        }),
-      ),
-    )
-    expect(proposal.published).toBe(false)
-    expect(proposal.proposed).toBe(true)
-    expect(proposal.edits_applied).toBe(1)
-    const stillLive = toolText(
-      await call(app, token, "read", { short_id: shortId, format: "html" }),
-    )
-    expect(stillLive).not.toContain("GAMMA") // the proposal never touched the live version
   })
 
   it("publish edits: over the workspace storage quota is rejected, same as content/files (regression: the MCP edits path used to skip this check)", async () => {
@@ -3970,8 +3786,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const noTitle = await call(app, token, "publish", { content: "<h1>x</h1>" })
     expect(toolText(noTitle)).toContain("title")
 
-    // A comment-only grant can't publish live — and can't create a NEW artifact even
-    // via review (a proposal revises an existing one). Steered to publish rights.
+    // A comment-only grant can't publish — steered to publish rights.
     const weak = appWithGrant(dir, "pub3", "openid derive:read derive:comment")
     const denied = await call(weak.app, weak.token, "publish", {
       title: "Nope",
@@ -4027,24 +3842,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(await call(app, token, "catch_up", { short_id: shortId, since_version: 1 })),
     )
     expect(cu.pages_changed.added).toContain("new.html")
-  })
-
-  it("a bundle can't be filed for review (single-file proposals only)", async () => {
-    const { app, token } = appWithGrant(dir, "bundlereview", "openid derive:read derive:publish")
-    const created = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Site",
-          files: { "index.html": "<h1>home</h1>" },
-        }),
-      ),
-    )
-    const r = await call(app, token, "publish", {
-      short_id: created.short_id,
-      files: { "index.html": "<h1>home v2</h1>" },
-      for_review: true,
-    })
-    expect(toolText(r)).toContain("bundles can't be proposed")
   })
 
   it("publish steers between content and files by kind", async () => {
@@ -4107,33 +3904,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     const due2 = await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)
     expect(due2).toHaveLength(1)
     expect(due2[0]?.version_n).toBe(2)
-  })
-
-  it("publish with for_review (a proposal) does NOT enqueue a render job", async () => {
-    const { app, token, meta } = appWithGrant(
-      dir,
-      "proprender",
-      "openid derive:read derive:publish",
-      {
-        renderPreviews: true,
-      },
-    )
-    const created = JSON.parse(
-      toolText(await call(app, token, "publish", { title: "Base", content: "<h1>v1</h1>" })),
-    )
-    await new Promise((r) => setTimeout(r, 20))
-    // Drain the publish's own job so the assertion below isolates the proposal.
-    const lease = new Date(Date.now() + 60_000).toISOString()
-    await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)
-
-    const proposed = await call(app, token, "publish", {
-      short_id: created.short_id,
-      content: "<h1>proposed</h1>",
-      for_review: true,
-    })
-    expect(JSON.parse(toolText(proposed)).proposed).toBe(true)
-    await new Promise((r) => setTimeout(r, 20))
-    expect(await meta.claimDueRenderJobs(new Date().toISOString(), 10, lease)).toHaveLength(0)
   })
 })
 

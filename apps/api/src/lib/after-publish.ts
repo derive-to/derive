@@ -2,8 +2,7 @@
 // "live" from three entry points — the HTTP publish route, the MCP publish tool, and a
 // version restore — and each used to hand-copy the same fan-out. When they drift, an MCP
 // publish silently skips webhooks (the exact bug this consolidation exists to prevent from
-// recurring). Proposal-approve shares the realtime core via `emitVersionBump` but keeps its
-// own `proposal.approved` webhook, so it stays in proposal-actions.ts.
+// recurring).
 //
 // `lint:api` forbids constructing a raw `version.published` bus event or the follower
 // fan-out anywhere but this file — every publish path must route through here.
@@ -29,8 +28,8 @@ import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
 import { indexArtifactVersion, isTextType } from "./search"
 
-/** The realtime + render + re-anchor core shared by every version bump (publish, restore,
- *  proposal-approve): announce the new version so open tabs live-reload, enqueue its preview
+/** The realtime + render + re-anchor core shared by every version bump (publish, restore):
+ *  announce the new version so open tabs live-reload, enqueue its preview
  *  render, then re-anchor existing threads against the new content. Webhook delivery and
  *  follower fan-out are NOT here — they differ per path and live in {@link afterPublish}. */
 export interface VersionBumpDeps {
@@ -46,7 +45,7 @@ export interface VersionBumpDeps {
   search?: SearchIndex
   /** Off-hot-path escape hatch (waitUntil on Workers, inline on Node), used for the data-slot
    *  history backfill — the one bump-time job that can cost dozens of blob reads. Optional
-   *  because restore and proposal-approve reach this without one; they just pay it inline. */
+   *  because restore reaches this without one; it just pays it inline. */
   background?: (work: Promise<unknown>) => Promise<void>
   /** Generates the one-line summary every unfurl surface describes this version with. Optional
    *  and normally ABSENT: only the edge binds a model here, so self-host publishes exactly as
@@ -73,7 +72,7 @@ export const emitVersionBump = async (
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
   }
   // Extract this version's structured facts into queryable rows. Sibling to search
-  // indexing — same "every publish/restore/proposal-approve" reach, same best-effort
+  // indexing — same "every publish/restore" reach, same best-effort
   // contract (a hiccup must never fail a publish that already went live). The publish
   // response already advises about any UNstored slot via publishAdvisories; this is the
   // persistence half, and both call the one parser so they can't disagree.

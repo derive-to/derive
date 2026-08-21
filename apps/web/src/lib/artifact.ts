@@ -7,18 +7,18 @@ export const dirOf = (path: string): string => {
   return i < 0 ? "" : path.slice(0, i)
 }
 
-/** Can this viewer publish a change straight to the artifact, or must it go through
- *  review? Editors and owners publish; a LOCKED artifact sends even them to the
- *  propose path. One spelling, because the page (which labels the buttons) and the
- *  inline-edit hook (which picks the endpoint) both decide this, and the two
- *  disagreeing means a button that says Save and files a proposal. */
+/** Can this viewer publish a change straight to the artifact? Editors and owners
+ *  publish; a LOCK is a freeze that stops even them until someone unlocks. One
+ *  spelling, because the page (which labels the buttons) and the inline-edit hook
+ *  both decide this. */
 export const canPublishArtifact = (a: Artifact): boolean =>
   (a.my_role === "editor" || a.my_role === "owner") && !a.locked
 
 /** The ONE eligibility base every manual-edit affordance shares — the inline mode,
  *  the in-document gesture that opens it, and the raw source editor: a single file
- *  at its current version that this viewer can at least propose against, with no
- *  source editor already open and no GitHub sync owning the bytes. Kept here rather
+ *  at its current version that this viewer can PUBLISH to (editing is publishing;
+ *  a commenter suggests changes in comments instead), unlocked, with no source
+ *  editor already open and no GitHub sync owning the bytes. Kept here rather
  *  than inline on the page because the page and the frame's arming decide it at
  *  different points in the render, and a new rule must land in both. */
 export const canEditArtifactDoc = (
@@ -29,7 +29,8 @@ export const canEditArtifactDoc = (
   !!a &&
   a.kind === "file" &&
   shownVersion === a.current_version &&
-  (a.my_role === "editor" || a.my_role === "owner" || a.my_role === "commenter") &&
+  (a.my_role === "editor" || a.my_role === "owner") &&
+  !a.locked &&
   !sourceEditorOpen &&
   !a.managed
 

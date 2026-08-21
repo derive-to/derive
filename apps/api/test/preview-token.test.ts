@@ -244,36 +244,4 @@ describe("raw route: preview-access token (/pv/<token>/ path segment)", () => {
     const anon = await app.request(`/raw/${artifact.short_id}/v/1/pv/chart.png`)
     expect(anon.status).toBe(404)
   })
-
-  it("the pv token does not apply to the proposal route (nonexistent proposal)", async () => {
-    const exp = Date.now() + 60_000
-    const tok = await signPreviewToken(TEST_SECRET, artifactId, 1, exp)
-    // There is no /pv/ segment on the proposal route; a stray query token is inert.
-    const res = await app.request(`/raw/${shortId}/p/nonexistent-proposal/?pv=${tok}`)
-    // Should 404 because the proposal doesn't exist (not because pv granted access)
-    expect(res.status).toBe(404)
-  })
-
-  it("the pv token does NOT bypass the proposal route for a real proposal on a private artifact", async () => {
-    // Create a proposal on the private artifact (using the owner token)
-    const propForm = new FormData()
-    propForm.append("file", new Blob([new TextEncoder().encode("<h1>proposed</h1>")]), "f.html")
-    const pr = await app.request(`/v1/artifacts/${shortId}/proposals`, {
-      method: "POST",
-      body: propForm,
-      headers: { authorization: "Bearer tok" },
-    })
-    expect(pr.status).toBe(201)
-    const proposal = (await pr.json()) as { id: string }
-
-    // Mint a valid pv token for the artifact at version 1
-    const exp = Date.now() + 60_000
-    const tok = await signPreviewToken(TEST_SECRET, artifactId, 1, exp)
-
-    // Anonymous GET to the proposal raw route WITH the pv token — must NOT be authorized
-    const res = await app.request(`/raw/${shortId}/p/${proposal.id}/index.html?pv=${tok}`)
-    // The pv grant only exists on /v/:n/pv/:pv/*, not /p/:proposalId/*; anonymous
-    // reads of a private artifact's proposals are rejected (404 — existence never leaks)
-    expect(res.status).toBe(404)
-  })
 })

@@ -1,6 +1,5 @@
 import { refRouter } from "@derive/broker"
 import {
-  approvedOrCurrent,
   type ContextAskerRecord,
   type ContextRecord,
   decodeCursor,
@@ -567,7 +566,7 @@ export const contextRoutes = (ctx: AppContext) => {
         )
         return
       }
-      // GitHub-synced artifacts are read-only in Derive, exactly as the proposal route says —
+      // GitHub-synced artifacts are read-only in Derive —
       // changes belong in the repo, and chat must not be a way around that.
       if (await meta.isManagedArtifact(artifact.org_id, artifact.id)) {
         await reply(
@@ -1089,12 +1088,7 @@ export const contextRoutes = (ctx: AppContext) => {
         members.push({
           short_id: a.short_id,
           title: a.title,
-          // Every member materializes at the version delivery serves: approved when a
-          // human has ever approved one, current otherwise (never-approved artifacts
-          // resolve to current, so plain notes behave as before). Keying this on
-          // skill-ness instead would let a draft that renames SKILL.md shed its gate
-          // and ride the notes lane at current.
-          version: approvedOrCurrent(a),
+          version: a.current_version,
           is_skill: a.current_content_type === SKILL_CONTENT_TYPE,
         })
       }

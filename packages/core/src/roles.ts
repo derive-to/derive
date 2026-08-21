@@ -2,9 +2,8 @@
  * The role vocabulary, in increasing power. A higher role can do everything a
  * lower one can.
  *  - viewer:    read
- *  - commenter: + comment, and propose a candidate version for review
- *               (creates content to be reviewed; cannot publish/approve)
- *  - editor:    + publish versions directly, approve others' proposals, and
+ *  - commenter: + comment (suggesting a change is a comment; cannot publish)
+ *  - editor:    + publish versions directly, and
  *               share (invite collaborators, change general access)
  *  - owner:     + manage (transfer/settings, delete)
  *

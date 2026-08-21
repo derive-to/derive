@@ -236,7 +236,7 @@ export function registerOrganizeTool(tc: ToolContext): void {
               deleted: gone.length,
               skipped,
               note: gone.length
-                ? "Permanently deleted, with every version, comment and proposal. This cannot be undone — `state:'archived'` is the reversible option if that is what you wanted."
+                ? "Permanently deleted, with every version and comment. This cannot be undone — `state:'archived'` is the reversible option if that is what you wanted."
                 : "Nothing was deleted.",
               ...(cascaded.length
                 ? {

@@ -14,9 +14,9 @@ import { notifyThreadReplyAgents } from "../src/lib/mentions"
 import {
   ingestSlackReply,
   makeSlackIngestSender,
-  SLACK_PROPOSAL_ACTION,
   SLACK_THREAD_ACTION,
 } from "../src/lib/slack-comments"
+import { SLACK_REVIEW_ACTION } from "../src/lib/slack-work-object"
 import { runDeliveryTick } from "../src/webhooks"
 import { as, jsonAs, quotaApp, type TestUser } from "./helpers"
 
@@ -105,15 +105,6 @@ const postCommand = (app: TestApp, fields: Record<string, string>) => {
     body: raw,
   })
 }
-
-const proposalAction = (artifactId: string, proposalId: string, actionId: string) => ({
-  type: "block_actions",
-  response_url: "https://hooks.slack.test/response",
-  team: { id: "T1" },
-  user: { id: "U777", username: "dana" },
-  actions: [{ action_id: actionId, value: JSON.stringify({ a: artifactId, p: proposalId }) }],
-  message: { blocks: [{ type: "section", text: { type: "mrkdwn", text: "a proposal" } }] },
-})
 
 // "T1" matches the team_id seedResolvable stores on the install (the acting-team authz bind).
 const threadAction = (
@@ -1787,7 +1778,7 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     const { app } = make("slack-int-null-value")
     // Regression: the old inline decode destructured the parse result OUTSIDE its try, so a
     // literal "null" (valid JSON, parses to null) threw a TypeError → 500 instead of acking.
-    for (const actionId of [SLACK_THREAD_ACTION.resolve, SLACK_PROPOSAL_ACTION.approve]) {
+    for (const actionId of [SLACK_THREAD_ACTION.resolve, SLACK_REVIEW_ACTION.sendBack]) {
       const r = await postInteract(app, {
         type: "block_actions",
         response_url: "https://hooks.slack.test/response",
@@ -1820,18 +1811,6 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     expect(r.status).toBe(200)
     const cm = (await meta.listComments(artifact.id)).find((c) => c.id === "c-int-o")
     expect(cm?.state).toBe("open")
-  })
-
-  it("acks a proposal Approve interaction (dispatched off the ack path)", async () => {
-    const { app } = make("slack-int-proposal")
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("ok", { status: 200 })),
-    )
-    // The approve work runs via response_url off the ack path; the endpoint just acks 200
-    // (authorization + execution are covered by slack-proposal.test.ts).
-    const r = await postInteract(app, proposalAction("a-x", "p-x", SLACK_PROPOSAL_ACTION.approve))
-    expect(r.status).toBe(200)
   })
 
   it("ignores a click whose thread has no link (no forged targets)", async () => {
@@ -2750,7 +2729,7 @@ describe("review buttons reach the handler from every surface", () => {
       user: { id: "U1" },
       channel: { id: "C1" },
       response_url: "https://hooks.slack.test/x",
-      actions: [{ action_id: "derive_review_approve", ...extra }],
+      actions: [{ action_id: "derive_review_send_back", ...extra }],
     })
   }
 
@@ -2776,7 +2755,7 @@ describe("review buttons reach the handler from every surface", () => {
       channel: { id: "C1" },
       response_url: "https://hooks.slack.test/x",
       entity: { external_ref: { id: artifact.short_id, type: "artifact" } },
-      actions: [{ action_id: "derive_review_approve" }],
+      actions: [{ action_id: "derive_review_send_back" }],
     })
     expect(withEntity.status).toBe(200)
     await vi.waitFor(async () => expect(await meta.getPendingRound(artifact.id)).toBeNull())

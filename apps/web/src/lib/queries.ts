@@ -525,7 +525,7 @@ export const customDomainsQuery = () =>
     queryFn: () => api.listWorkspaceDomains(),
   })
 
-// Registered agents (scoped tokens that can @mention-reply + propose). Invalidated
+// Registered agents (scoped tokens that can @mention-reply + publish). Invalidated
 // on create / delete.
 export const agentsQuery = () =>
   queryOptions({

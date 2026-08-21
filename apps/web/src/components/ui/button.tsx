@@ -36,7 +36,7 @@ const buttonVariants = cva(
         // the soft wash appears on hover only.
         "destructive-ghost":
           "text-destructive hover:bg-destructive/10 aria-expanded:bg-destructive/10",
-        // Status-soft pair (approve / request-changes) — the destructive soft-fill
+        // Status-soft pair — the destructive soft-fill
         // grammar in the status hues; status is success/warning, not the accent.
         success: "bg-success/10 text-success hover:bg-success/15",
         warning: "bg-warning/10 text-warning hover:bg-warning/15",

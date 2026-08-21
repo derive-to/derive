@@ -412,8 +412,8 @@ export function useArtifactFrame(p: {
     return () => window.removeEventListener("keydown", onKey)
   }, [deck, deckCmd])
 
-  // Paint highlights for active (open or addressed), anchored threads whenever
-  // the doc or comments change. RESOLVED threads ride along as `quiet` anchors:
+  // Paint highlights for open, anchored threads whenever the doc or comments
+  // change. RESOLVED threads ride along as `quiet` anchors:
   // resolved in the doc (so "jump to context" works from their cards, with a
   // one-time flash) but never painted, hover-lit, or pinned. Outdated threads
   // stay out — their anchor is known-stale.
@@ -422,10 +422,7 @@ export function useArtifactFrame(p: {
     if (!w) return
     const anchors = groupThreads(comments)
       .map((t) => t[0])
-      .filter(
-        (head): head is Comment =>
-          head?.state === "open" || head?.state === "addressed" || head?.state === "resolved",
-      )
+      .filter((head): head is Comment => head?.state === "open" || head?.state === "resolved")
       .flatMap((head) => {
         const sel = parseAnchor(head.anchor)
         if (!sel) return []

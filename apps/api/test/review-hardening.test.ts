@@ -1,14 +1,5 @@
 import { describe, expect, it } from "vitest"
-import {
-  app,
-  as,
-  jsonAs,
-  makeAuthedApp,
-  proposeAs,
-  publishAs,
-  type TestUser,
-  upload,
-} from "./helpers"
+import { app, as, jsonAs, makeAuthedApp, publishAs, type TestUser, upload } from "./helpers"
 
 // Authorship must key on the stable actor id, never the mutable display name:
 // renaming your profile to a victim's name must not grant edit/delete/withdraw.
@@ -55,21 +46,6 @@ describe("authorship is keyed on id, not display name", () => {
     })
     expect(edit.status).toBe(200)
     expect((await edit.json()).body_md).toBe("sam1 edited")
-  })
-
-  it("refuses proposal withdraw from a same-named non-author, allows the author", async () => {
-    const p = await (await proposeAs(authed, shortId, "<h1>v2</h1>", as(sam1.email))).json()
-    const bad = await authed.request(`/v1/artifacts/${shortId}/proposals/${p.id}/withdraw`, {
-      method: "POST",
-      headers: as(sam2.email),
-    })
-    expect(bad.status).toBe(403)
-    const ok = await authed.request(`/v1/artifacts/${shortId}/proposals/${p.id}/withdraw`, {
-      method: "POST",
-      headers: as(sam1.email),
-    })
-    expect(ok.status).toBe(200)
-    expect((await ok.json()).state).toBe("withdrawn")
   })
 })
 

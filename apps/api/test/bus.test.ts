@@ -39,7 +39,7 @@ describe("in-process backplane: receipt + long-poll", () => {
 
   it("waitFor wakes on the first matching event and ignores other types", async () => {
     const bp = createInProcessBackplane()
-    const woke = bp.waitFor?.("art_1", ["review.sent_back", "review.approved"], 5_000)
+    const woke = bp.waitFor?.("art_1", ["review.sent_back", "review.requested"], 5_000)
     bp.publish("art_1", { type: "comment.reacted" }) // not a wake type
     bp.publish("art_1", { type: "review.sent_back", round_id: "rr_1" })
     const e = await woke
@@ -48,9 +48,9 @@ describe("in-process backplane: receipt + long-poll", () => {
 
   it("waitFor resolves null on timeout with the subscription cleaned up", async () => {
     const bp = createInProcessBackplane()
-    expect(await bp.waitFor?.("art_2", ["review.approved"], 20)).toBeNull()
+    expect(await bp.waitFor?.("art_2", ["review.sent_back"], 20)).toBeNull()
     // The temporary subscription is gone: a later publish reaches nobody.
-    expect(await bp.publishWithReceipt?.("art_2", { type: "review.approved" })).toBe(0)
+    expect(await bp.publishWithReceipt?.("art_2", { type: "review.sent_back" })).toBe(0)
   })
 })
 

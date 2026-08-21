@@ -22,7 +22,7 @@ export const STORAGE_CAPS = {
 export interface BillingState {
   tier: BillingTier
   subscriptionActive: boolean
-  canPublishApprove: boolean
+  canPublish: boolean
   blockedReason?: "needs_team" | "lapsed"
   /** undefined = unlimited (self-host with no DERIVE_MAX_BYTES). */
   storageCapBytes?: number
@@ -41,7 +41,7 @@ export interface BillingState {
  *  3. After enforcement: a lapsed subscription is read-only; a free workspace
  *     over FREE_SEAT_LIMIT is read-only until an owner upgrades; within the
  *     limit it keeps publishing at the free cap. Read/comment are never touched
- *     here; callers gate only publish/approve.
+ *     here; callers gate only publish.
  */
 export const resolveBillingState = (args: {
   subscription: SubscriptionRecord | null
@@ -55,7 +55,7 @@ export const resolveBillingState = (args: {
     return {
       tier: sub.tier,
       subscriptionActive: true,
-      canPublishApprove: true,
+      canPublish: true,
       storageCapBytes: STORAGE_CAPS[sub.tier],
       whiteLabelEntitled: true,
       betaGrace: false,
@@ -66,7 +66,7 @@ export const resolveBillingState = (args: {
     return {
       tier: "free",
       subscriptionActive: false,
-      canPublishApprove: true,
+      canPublish: true,
       storageCapBytes: fallbackMaxBytes,
       whiteLabelEntitled: true,
       betaGrace: true,
@@ -80,8 +80,8 @@ export const resolveBillingState = (args: {
     betaGrace: false,
   }
   if (sub && (LAPSED_SUBSCRIPTION_STATUSES as readonly string[]).includes(sub.status))
-    return { ...base, canPublishApprove: false, blockedReason: "lapsed" }
+    return { ...base, canPublish: false, blockedReason: "lapsed" }
   if (seatCount > FREE_SEAT_LIMIT)
-    return { ...base, canPublishApprove: false, blockedReason: "needs_team" }
-  return { ...base, canPublishApprove: true }
+    return { ...base, canPublish: false, blockedReason: "needs_team" }
+  return { ...base, canPublish: true }
 }

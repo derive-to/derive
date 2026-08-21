@@ -31,7 +31,7 @@ describe("resolveBillingState", () => {
     expect(s).toEqual({
       tier: "free",
       subscriptionActive: false,
-      canPublishApprove: true,
+      canPublish: true,
       storageCapBytes: 123,
       whiteLabelEntitled: true,
       betaGrace: true,
@@ -41,7 +41,7 @@ describe("resolveBillingState", () => {
   it("beta with no fallback cap: storage unlimited (self-host)", () => {
     const s = resolveBillingState({ subscription: null, seatCount: 1, now: NOW })
     expect(s.storageCapBytes).toBeUndefined()
-    expect(s.canPublishApprove).toBe(true)
+    expect(s.canPublish).toBe(true)
   })
 
   it("an active subscription always wins, beta or enforced, and gets its tier cap", () => {
@@ -55,7 +55,7 @@ describe("resolveBillingState", () => {
       })
       expect(s.tier).toBe("team")
       expect(s.subscriptionActive).toBe(true)
-      expect(s.canPublishApprove).toBe(true)
+      expect(s.canPublish).toBe(true)
       expect(s.storageCapBytes).toBe(STORAGE_CAPS.team)
       expect(s.whiteLabelEntitled).toBe(true)
     }
@@ -78,14 +78,14 @@ describe("resolveBillingState", () => {
       now: NOW,
       enforceAt: PAST,
     })
-    expect(dunning.canPublishApprove).toBe(true)
+    expect(dunning.canPublish).toBe(true)
     const lapsed = resolveBillingState({
       subscription: sub({ status: "canceled" }),
       seatCount: 4,
       now: NOW,
       enforceAt: PAST,
     })
-    expect(lapsed.canPublishApprove).toBe(false)
+    expect(lapsed.canPublish).toBe(false)
     expect(lapsed.blockedReason).toBe("lapsed")
     expect(lapsed.whiteLabelEntitled).toBe(false)
   })
@@ -98,7 +98,7 @@ describe("resolveBillingState", () => {
       enforceAt: PAST,
       fallbackMaxBytes: 999,
     })
-    expect(s.canPublishApprove).toBe(true)
+    expect(s.canPublish).toBe(true)
     expect(s.storageCapBytes).toBe(STORAGE_CAPS.free)
     expect(s.whiteLabelEntitled).toBe(false)
   })
@@ -110,7 +110,7 @@ describe("resolveBillingState", () => {
       now: NOW,
       enforceAt: PAST,
     })
-    expect(s.canPublishApprove).toBe(false)
+    expect(s.canPublish).toBe(false)
     expect(s.blockedReason).toBe("needs_team")
   })
 
@@ -121,7 +121,7 @@ describe("resolveBillingState", () => {
       now: NOW,
       enforceAt: PAST,
     })
-    expect(s.canPublishApprove).toBe(true)
+    expect(s.canPublish).toBe(true)
     expect(s.blockedReason).toBeUndefined()
   })
 
@@ -132,7 +132,7 @@ describe("resolveBillingState", () => {
       now: NOW,
       enforceAt: FUTURE,
     })
-    expect(s.canPublishApprove).toBe(true)
+    expect(s.canPublish).toBe(true)
     expect(s.whiteLabelEntitled).toBe(true)
   })
 

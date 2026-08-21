@@ -2,7 +2,6 @@ import type {
   GithubUserMapping,
   MetaStore,
   NewVersion,
-  ProposalApproval,
   UserDir,
   UserProfile,
   VersionRecord,
@@ -42,7 +41,6 @@ import {
   domain,
   MIGRATION_STATEMENTS,
   notification,
-  proposal,
   report,
   reviewRound,
   SCHEMA_STATEMENTS,
@@ -241,71 +239,6 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       return (await repos.getVersion(artifactId, n)) as VersionRecord
     },
 
-    approveOpenProposal: async (
-      id: string,
-      approval: ProposalApproval,
-    ): Promise<VersionRecord | null> => {
-      const approved = db.transaction((tx) => {
-        const p = tx
-          .select()
-          .from(proposal)
-          .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
-          .get()
-        if (!p) return null
-        const current = tx
-          .select({ cv: artifact.current_version })
-          .from(artifact)
-          .where(eq(artifact.id, p.artifact_id))
-          .get()
-        if (!current) throw new Error(`artifact not found: ${p.artifact_id}`)
-        const n = current.cv + 1
-        const now = new Date().toISOString()
-
-        tx.insert(version)
-          .values({
-            id: approval.version_id,
-            artifact_id: p.artifact_id,
-            n,
-            blob_key: p.blob_key,
-            content_type: p.content_type,
-            size_bytes: approval.size_bytes,
-            author: p.author,
-            author_id: p.author_id,
-            message: p.message ?? "Approved proposal",
-            name: null,
-          })
-          .run()
-        tx.update(artifact)
-          .set({
-            current_version: n,
-            // The approved-version pointer: this new version IS the approved one.
-            approved_version: n,
-            current_content_type: p.content_type,
-            updated_at: now,
-            author_name: p.author,
-            author_login: null,
-            author_avatar: null,
-            author_gh_id: null,
-            author_id: p.author_id,
-          })
-          .where(eq(artifact.id, p.artifact_id))
-          .run()
-        tx.update(proposal)
-          .set({
-            state: "approved",
-            decided_by: approval.decided_by,
-            decided_by_id: approval.decided_by_id,
-            decided_version: n,
-            decision_note: approval.decision_note ?? null,
-            decided_at: now,
-          })
-          .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
-          .run()
-        return { artifactId: p.artifact_id, n }
-      })
-      return approved ? await repos.getVersion(approved.artifactId, approved.n) : null
-    },
-
     setArtifactTags: async (artifactId: string, tags: string[]): Promise<void> => {
       raw.transaction(() => {
         db.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId)).run()
@@ -381,7 +314,6 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
         db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
         db.delete(domain).where(eq(domain.artifact_id, id)).run()
-        db.delete(proposal).where(eq(proposal.artifact_id, id)).run()
         db.delete(report).where(eq(report.artifact_id, id)).run()
         db.delete(notification).where(eq(notification.artifact_id, id)).run()
         db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
@@ -510,18 +442,6 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       const rows = raw
         .prepare(
           `SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ph}) GROUP BY artifact_id`,
-        )
-        .all(...artifactIds) as { artifact_id: string; c: number }[]
-      const out: Record<string, number> = {}
-      for (const r of rows) out[r.artifact_id] = r.c
-      return out
-    },
-    openProposalCounts: async (artifactIds): Promise<Record<string, number>> => {
-      if (artifactIds.length === 0) return {}
-      const ph = artifactIds.map(() => "?").join(",")
-      const rows = raw
-        .prepare(
-          `SELECT artifact_id, count(*) c FROM proposal WHERE state='open' AND artifact_id IN (${ph}) GROUP BY artifact_id`,
         )
         .all(...artifactIds) as { artifact_id: string; c: number }[]
       const out: Record<string, number> = {}

@@ -80,7 +80,7 @@ interface GitHubWebhookPayload {
  * Sync from GitHub: mirror a repo's Markdown/HTML into a collection, one-way.
  * Two ways in — a GitHub App (install → pick repos → push auto-sync, no stored
  * secret) or a pasted read-only PAT (self-host without an App). Synced artifacts
- * are read-only (the gate lives in the publish/propose routes); this manages the
+ * are read-only (the gate lives in the publish routes); this manages the
  * connection, the App install handshake, and drives the engine (lib/sync). The
  * RepoSource / PrPreview / GithubSyncStatus / … schemas are the single source for
  * the web client's types. The install callback (a browser redirect) and the webhook

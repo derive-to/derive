@@ -1,26 +1,10 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { sha256Hex } from "../src/hash"
-import type {
-  ArtifactRecord,
-  BlobStore,
-  MetaStore,
-  NewArtifact,
-  NewProposal,
-  NewVersion,
-} from "../src/ports"
-import {
-  approveProposal,
-  artifactUrl,
-  type ProposeInput,
-  PublishError,
-  type PublishInput,
-  propose,
-  publish,
-  toJson,
-} from "../src/publish"
+import type { ArtifactRecord, BlobStore, MetaStore, NewArtifact, NewVersion } from "../src/ports"
+import { artifactUrl, PublishError, type PublishInput, publish, toJson } from "../src/publish"
 
-// publish()/propose() store content then write the artifact/version. The
+// publish() stores content then writes the artifact/version. The
 // interesting, security-relevant logic is storeContent's bundle handling (zip
 // entry detection + path cleaning), reachable only through publish(). Drive it with
 // a Map-backed blob store and a tiny fake MetaStore implementing just the handful of
@@ -37,18 +21,16 @@ const makeBlobs = (): BlobStore => {
   }
 }
 
-// A focused in-memory fake: only the handful of methods publish/propose/approve
-// actually call, over plain records (no `any`). Cast through MetaStore at the end —
+// A focused in-memory fake: only the handful of methods publish() actually calls,
+// over plain records (no `any`). Cast through MetaStore at the end —
 // the uncalled ~75 methods are never reached.
 type FakeArtifact = NewArtifact & { current_version: number; created_at: string; removed_at: null }
 type FakeVersion = NewVersion & { n: number; artifact_id: string; created_at: string }
-type FakeProposal = NewProposal & { state: string; created_at: string }
 
 const makeMeta = (): MetaStore => {
   const byShort = new Map<string, FakeArtifact>()
   const byId = new Map<string, FakeArtifact>()
   const versions = new Map<string, FakeVersion[]>()
-  const proposals = new Map<string, FakeProposal>()
   const meta = {
     createArtifact: async (a: NewArtifact): Promise<FakeArtifact> => {
       // Mirror the store's fail-closed column defaults for omitted access fields
@@ -81,57 +63,6 @@ const makeMeta = (): MetaStore => {
       const art = byId.get(artifactId)
       if (art) art.current_version = rec.n
       return rec
-    },
-    createProposal: async (p: NewProposal): Promise<FakeProposal> => {
-      const rec: FakeProposal = { ...p, state: "open", created_at: "t" }
-      proposals.set(p.id, rec)
-      return rec
-    },
-    getProposal: async (id: string) => proposals.get(id) ?? null,
-    approveOpenProposal: async (
-      id: string,
-      approval: {
-        version_id: string
-        size_bytes: number
-        decided_by: string
-        decided_by_id: string
-        decision_note?: string | null
-      },
-    ) => {
-      const p = proposals.get(id)
-      if (p?.state !== "open") return null
-      const list = versions.get(p.artifact_id) ?? []
-      const rec: FakeVersion = {
-        id: approval.version_id,
-        artifact_id: p.artifact_id,
-        n: list.length + 1,
-        blob_key: p.blob_key,
-        content_type: p.content_type,
-        size_bytes: approval.size_bytes,
-        author: p.author,
-        author_id: p.author_id ?? null,
-        message: p.message ?? "Approved proposal",
-        name: null,
-        created_at: "t",
-      }
-      list.push(rec)
-      versions.set(p.artifact_id, list)
-      const art = byId.get(p.artifact_id)
-      if (art) art.current_version = rec.n
-      Object.assign(p, {
-        state: "approved",
-        decided_by: approval.decided_by,
-        decided_by_id: approval.decided_by_id,
-        decided_version: rec.n,
-        decision_note: approval.decision_note ?? null,
-      })
-      return rec
-    },
-    decideProposal: async (id: string, f: Record<string, unknown>) => {
-      const p = proposals.get(id)
-      if (p?.state !== "open") return null
-      Object.assign(p, f)
-      return p
     },
     setVersionPreview: async () => {},
   }
@@ -389,51 +320,6 @@ describe("publish: republish an existing artifact", () => {
     const { artifact } = await publish(meta, blobs, file("a file"))
     await expect(
       publish(meta, blobs, bundle({ "index.html": "x" }), artifact.short_id),
-    ).rejects.toMatchObject({ statusCode: 409 })
-  })
-})
-
-describe("propose: a candidate version awaiting review", () => {
-  const proposeInput = (body: string): ProposeInput => ({
-    bytes: new TextEncoder().encode(body),
-    filename: "page.html",
-    isBundle: false,
-    author: "bob",
-    message: "tweak",
-  })
-
-  it("stores an open proposal against an existing artifact", async () => {
-    const meta = makeMeta()
-    const blobs = makeBlobs()
-    const { artifact } = await publish(meta, blobs, file("v1"))
-    const { proposal } = await propose(meta, blobs, artifact.short_id, proposeInput("candidate"))
-    expect(proposal.state).toBe("open")
-    expect(proposal.author).toBe("bob")
-  })
-
-  it("404s when proposing against an unknown artifact", async () => {
-    await expect(
-      propose(makeMeta(), makeBlobs(), "nope", proposeInput("x")),
-    ).rejects.toBeInstanceOf(PublishError)
-  })
-
-  it("approveProposal promotes the candidate to the next live version", async () => {
-    const meta = makeMeta()
-    const blobs = makeBlobs()
-    const { artifact } = await publish(meta, blobs, file("v1"))
-    const { proposal } = await propose(meta, blobs, artifact.short_id, proposeInput("candidate"))
-    const version = await approveProposal(meta, blobs, proposal, "amy", "u_amy", "lgtm")
-    expect(version.n).toBe(2)
-    expect(version.blob_key).toBe(proposal.blob_key) // reuses the proposal's stored bytes
-  })
-
-  it("approveProposal 409s if the proposal isn't open", async () => {
-    const meta = makeMeta()
-    const blobs = makeBlobs()
-    const { artifact } = await publish(meta, blobs, file("v1"))
-    const { proposal } = await propose(meta, blobs, artifact.short_id, proposeInput("candidate"))
-    await expect(
-      approveProposal(meta, blobs, { ...proposal, state: "approved" }, "amy", "u_amy"),
     ).rejects.toMatchObject({ statusCode: 409 })
   })
 })

@@ -588,7 +588,7 @@ export const sessionRoutes = (ctx: AppContext) => {
       // The page's decoration in ONE store call, the same batch the library list uses.
       // These were four separate round trips (~80ms each on the edge) keyed on the same
       // page of ids. Only the pieces this surface renders are requested: no comment
-      // signals, proposal counts or share roles, so those branches never run.
+      // signals or share roles, so those branches never run.
       const enrichment = await meta.listEnrichment({
         ids: page.map((a) => a.id),
         ghIds: [...new Set(page.map((a) => a.author_gh_id).filter((x): x is string => !!x))],

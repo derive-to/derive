@@ -45,11 +45,12 @@ derive status                 # review state and open threads
 derive comments               # full comment threads
 derive reply <thread-id> "Updated the evidence and conclusion."
 derive publish --name "Revision 2"
-derive approve --note "Ready to ship"
+derive send-back --note "Good to go — ship it"
 ```
 
-Approval is a human action. An agent can publish directly only at a role that permits
-it; otherwise it submits a proposal for a person to accept.
+The Send back note is the human's answer — a note that reads "good to go" IS the
+go-signal. An agent publishes directly only at a role that permits it; otherwise it
+suggests the change in a comment for a person to apply.
 
 ## Connect a project to agents
 

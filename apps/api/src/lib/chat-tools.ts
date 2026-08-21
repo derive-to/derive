@@ -24,8 +24,7 @@ import { AGENT_WRITES_OFF } from "./agent-writes"
  *   - `scopeForCap`/`defaultRole` are the seat the turn acts at — normally the asker's real
  *     one, but a caller may hand down a lower one (lib/slack-identity.ts clamps an
  *     email-matched Slack asker to `viewer`). Either way a viewer's chat cannot publish
- *     because `publish` routes a sub-editor to a proposal and `propose` needs `commenter`,
- *     not because chat remembered to check.
+ *     because `publish` needs `editor`, not because chat remembered to check.
  *   - `boundWorkspaces` is the ONE workspace of the conversation, so cross-workspace reach is
  *     structurally impossible even though the same code CAN roam for an OAuth grant.
  *   - `registered: false` — no inbox, no @mention identity, nothing to administer. It is a
@@ -104,7 +103,7 @@ const SKILL_FOR_TOOL: Record<string, readonly string[]> = {
 /**
  * THE SKILL THAT BELONGS TO THE SURFACE RATHER THAN TO A TOOL.
  *
- * `helping` answers questions about DERIVE — where members are added, what a proposal is, which
+ * `helping` answers questions about DERIVE — where members are added, how review works, which
  * setting to change. No tool produces those answers, so the map above can never reach it, and
  * without it the honest thing an agent can do with "how do I add someone" is search the library
  * and report that nothing matched. That reads as "Derive cannot do that" about a screen two

@@ -234,7 +234,7 @@ https://derive.example.com/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>
 
 Create one Slack app for each Derive instance. It can show link previews, mirror comments to
 subscribed channels, and let people reply or resolve a comment from Slack. It also sends updates
-for publishes and proposals, adds **Save to Derive** to message shortcuts, and can send direct
+for publishes, adds **Save to Derive** to message shortcuts, and can send direct
 messages for mentions, review requests, and shares. Direct messages work reliably after a member
 links their Slack account.
 

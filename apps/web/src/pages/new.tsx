@@ -118,19 +118,15 @@ export function NewArtifact() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <SourceEditor
-        canPublish
         title={title}
         onTitle={setTitle}
         format={format}
         src={src}
         message={message}
-        proposeMsg=""
         onSrc={setSrc}
         onMessage={setMessage}
-        onProposeMsg={() => {}}
         onCancel={() => nav({ to: "/" })}
         onPublish={publish}
-        onPropose={() => {}}
         publishing={publishMut.isPending}
         placeholder="Write or paste Markdown or HTML. The preview updates as you type."
       />

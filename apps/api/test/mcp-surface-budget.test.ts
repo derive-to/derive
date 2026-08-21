@@ -59,7 +59,7 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // Measured 8936 across 11 tools, keeping the ~2% headroom the previous raises settled on.
 // INSTRUCTIONS RAISED 2400 → 2500 (2026-08-02) for the `helping` skill: the eighth core skill,
 // and the first about DERIVE itself rather than a workspace's contents ("how do I add someone",
-// "what is a proposal"). It earns a permanent index line because the alternative is an agent
+// "how does review work"). It earns a permanent index line because the alternative is an agent
 // searching the library for an answer that was never going to be in a document and reporting that
 // nothing matched — which reads as the app not having the feature. Trimmed first, per the rule
 // above: the summary went in at 147 chars and was cut to 92, taking its index line from 190 to
@@ -394,7 +394,7 @@ describe("the surface does NOT vary by scope", () => {
   // Built, measured and reverted, pinned here so the next attempt confronts the reason.
   //
   // Hiding publish's live-only params (workspace_access, link_role, listed, request_review)
-  // from a grant that can only propose saved 197 tokens — 4.1% of the tool surface, and ONLY
+  // from a grant that can only comment saved 197 tokens — 4.1% of the tool surface, and ONLY
   // for read-only connections, which are the ones doing the least work. A publishing agent,
   // the connection that matters, saw every param either way.
   //

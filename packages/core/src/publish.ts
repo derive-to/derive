@@ -11,7 +11,6 @@ import {
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
   type MetaStore,
-  type ProposalRecord,
   SKILL_CONTENT_TYPE,
   type VersionRecord,
   type VersionSource,
@@ -150,7 +149,7 @@ const cleanPath = (raw: string): string | null => {
   return `/${p}`
 }
 
-/** A piece of stored content, ready to become a version or a proposal. */
+/** A piece of stored content, ready to become a version. */
 interface StoredContent {
   blobKey: string
   contentType: string
@@ -163,7 +162,7 @@ interface StoredContent {
 /**
  * Stores raw bytes (a file) or a zip (a bundle) into the blob store and returns
  * the content-addressed key, content type, and kind. Shared by publish() and
- * propose() so a candidate version is processed exactly like a published one.
+ * every write path, so all content is processed identically.
  */
 async function storeContent(
   blobs: BlobStore,
@@ -367,95 +366,6 @@ export async function publish(
   return { artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord, version }
 }
 
-export interface ProposeInput {
-  bytes: Uint8Array
-  filename: string
-  isBundle: boolean
-  spa?: boolean
-  /** What the proposer is changing, in their words. */
-  message?: string
-  author?: string
-  /** Stable id of the proposer (user/agent); persisted for withdraw authorization. */
-  author_id?: string | null
-  /** When an agent proposed, the human it acted on behalf of (delegation provenance). */
-  on_behalf_of?: string | null
-}
-
-export interface ProposeResult {
-  artifact: ArtifactRecord
-  proposal: ProposalRecord
-}
-
-/**
- * Stores a candidate version for review WITHOUT making it current. A commenter
- * (or an agent) proposes; a human editor approves. The content is processed exactly
- * like a publish, so the proposal renders identically to how it will once live.
- */
-export async function propose(
-  meta: MetaStore,
-  blobs: BlobStore,
-  shortId: string,
-  input: ProposeInput,
-): Promise<ProposeResult> {
-  const artifact = await meta.getByShortId(shortId)
-  if (!artifact) throw new PublishError(404, `no artifact with short_id ${shortId}`)
-
-  const { blobKey, contentType, kind } = await storeContent(
-    blobs,
-    input.bytes,
-    input.filename,
-    input.isBundle,
-    !!input.spa,
-  )
-  if (artifact.kind !== kind)
-    throw new PublishError(409, `artifact is a ${artifact.kind}; propose the same kind`)
-
-  const proposal = await meta.createProposal({
-    id: newId("p"),
-    artifact_id: artifact.id,
-    blob_key: blobKey,
-    content_type: contentType,
-    kind,
-    title: null,
-    message: input.message ?? null,
-    author: input.author ?? "anonymous",
-    author_id: input.author_id ?? null,
-    on_behalf_of: input.on_behalf_of ?? null,
-    base_version: artifact.current_version,
-  })
-  return { artifact, proposal }
-}
-
-/**
- * Approving a proposal appends its stored content as the new current version
- * (the experience goes live) and stamps the proposal decided. History is never
- * rewritten: the proposal row keeps both the human's stable id and display-name
- * snapshot as the audit trail of who approved what.
- */
-export async function approveProposal(
-  meta: MetaStore,
-  blobs: BlobStore,
-  proposal: ProposalRecord,
-  approver: string,
-  approverId: string,
-  note?: string | null,
-): Promise<VersionRecord> {
-  if (proposal.state !== "open")
-    throw new PublishError(409, `proposal is ${proposal.state}, not open`)
-  // The proposal already stored its blob; the approved version reuses it, so
-  // its byte cost is first counted here (proposals don't create versions).
-  const stored = await blobs.get(proposal.blob_key)
-  const version = await meta.approveOpenProposal(proposal.id, {
-    version_id: newId("v"),
-    size_bytes: stored?.length ?? 0,
-    decided_by: approver,
-    decided_by_id: approverId,
-    decision_note: note ?? null,
-  })
-  if (!version) throw new PublishError(409, "proposal is not open")
-  return version
-}
-
 // Name-first ref: the slug reads first, the short id is the final token. parseRef
 // reverses it (the short id is always the last hyphen segment).
 export const artifactUrl = (baseUrl: string, a: ArtifactRecord): string =>
@@ -471,7 +381,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   link_role: a.link_role,
   listed: a.listed,
   // A password on the world link (never the hash itself). Distinct from
-  // `locked`, which is the publish lock (changes must go through proposals).
+  // `locked`, which is the publish lock (suggest changes in comments instead).
   password_protected: !!a.password_hash,
   spa: !!a.spa,
   locked: !!a.locked,

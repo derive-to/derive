@@ -39,7 +39,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
         since_version: z.coerce.number().optional(),
         to_version: z.coerce.number().optional(),
         comments: z
-          .enum(["open", "addressed", "resolved", "outdated"])
+          .enum(["open", "resolved", "outdated"])
           .optional()
           .describe(
             "Return ONLY this state's comment threads (the feedback queue) instead of the delta.",
@@ -85,13 +85,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
         const waited = ctx.bus
           .waitFor(
             a.id,
-            [
-              "review.sent_back",
-              "review.approved",
-              "comment.created",
-              "comment.updated",
-              "version.published",
-            ],
+            ["review.sent_back", "comment.created", "comment.updated", "version.published"],
             wait * 1000,
             release.signal,
           )
@@ -103,8 +97,8 @@ export function registerCatchUpTool(tc: ToolContext): void {
           rounds[0] ??
           null
         // Actionable = a settled decision the agent hasn't built on yet (it still
-        // applies to the current head). A stale sent_back/approved from an older
-        // version never disables the long-poll — the agent already consumed it.
+        // applies to the current head). A stale sent_back from an older version
+        // never disables the long-poll — the agent already consumed it.
         const actionable = round && round.state !== "pending" && round.version >= a.current_version
         if (actionable) {
           release.abort()
@@ -165,11 +159,6 @@ export function registerCatchUpTool(tc: ToolContext): void {
       const outdatedBit = outdated.length
         ? ` ${outdated.length} now outdated (the quoted text changed).`
         : ""
-      // Threads with a proposal already pending — the agent shouldn't re-address them.
-      const addressed = allComments.filter((cm) => cm.state === "addressed")
-      const addressedBit = addressed.length
-        ? ` ${addressed.length} addressed (a proposal is pending review).`
-        : ""
       const pageBits =
         pagesChanged && changeCount(pagesChanged)
           ? ` Pages: ${[
@@ -182,7 +171,8 @@ export function registerCatchUpTool(tc: ToolContext): void {
           : ""
       // The review round this agent is waiting on (the loop's poll target): the round
       // it requested most recently. `pending` = still waiting; `sent_back` = the human
-      // returned answers — read the open threads and revise; `approved` = the go-signal.
+      // returned answers — read the open threads and their note; a note that reads
+      // "good to go" is the go-signal.
       const rounds = await ctx.meta.listReviewRounds(a.id)
       const myRound =
         rounds.find((r) => r.state === "pending") ??
@@ -204,14 +194,12 @@ export function registerCatchUpTool(tc: ToolContext): void {
       const reviewBit = review
         ? review.state === "pending"
           ? ` Review requested on v${review.version} — waiting for the human.`
-          : review.state === "sent_back"
-            ? ` The human sent back their review of v${review.version} — read the open threads and their note, then revise and re-request, or stop if the note says it's good.${noteBit}`
-            : ` The human approved v${review.version} — you're clear to proceed.${noteBit}`
+          : ` The human sent back their review of v${review.version} — read the open threads and their note, then revise and re-request, or stop if the note says it's good.${noteBit}`
         : ""
       const summary =
         since >= to
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${addressedBit}${outdatedBit}${reviewBit}`
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}`
       // What the NUMBERS did between the versions being compared. The prose diff already
       // shows what the page says; without this a review round sees everything except the
       // figures the page is about.

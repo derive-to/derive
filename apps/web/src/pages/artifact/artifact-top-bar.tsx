@@ -39,8 +39,6 @@ export function ArtifactTopBar(props: {
   collections: string[]
   /** Collections whose sharing reaches this artifact — the share dialog's disclosure rows. */
   collectionAccess: CollectionGrant[]
-  openProposals: number
-  proposalsTotal: number
   isMobile: boolean
   panelOpen: boolean
   openCount: number
@@ -73,7 +71,6 @@ export function ArtifactTopBar(props: {
   onCollections: (ids: string[]) => void
   onInsights: () => void
   onHistory: () => void
-  onReview: () => void
   onStartEdit: () => void
   onInlineEdit: () => void
   onToggleComments: () => void
@@ -86,7 +83,7 @@ export function ArtifactTopBar(props: {
   onFocus: () => void
   onCopy: () => void
 }) {
-  const { shortId, openProposals, proposalsTotal, isGuest } = props
+  const { shortId, isGuest } = props
   const { pref: cursorPref, setPref: setCursorPref } = useCursorPref()
   const [reportOpen, setReportOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
@@ -100,8 +97,7 @@ export function ArtifactTopBar(props: {
           cluster and comments toggle are held apart by spacing, not vertical rules. */}
       <div className="flex items-center gap-0.5">
         {/* Inline editing leads the cluster as a labeled ghost verb — the calm
-            counterpart to the filled Share. Editors see Edit; commenters (and
-            locked artifacts) see Suggest edits, which lands as a proposal.
+            counterpart to the filled Share. Only someone who can publish sees it.
             It is no longer the only way in (`e`, or Edit on a selection), but it
             stays: it's what tells a first-time reader the document is editable. */}
         {props.showInlineEdit && (
@@ -150,13 +146,6 @@ export function ArtifactTopBar(props: {
               className="relative"
             >
               <Icon name="more" size={16} className="text-muted-foreground" />
-              {/* Open proposals waiting on review — the ink unread-dot grammar. */}
-              {!isGuest && openProposals > 0 && (
-                <span
-                  aria-hidden
-                  className="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
-                />
-              )}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
@@ -218,12 +207,6 @@ export function ArtifactTopBar(props: {
             {(!isGuest || props.publicHistory) && (
               <DropdownMenuItem data-testid="artifact-history" onSelect={props.onHistory}>
                 <Icon name="history" size={16} /> Version history
-              </DropdownMenuItem>
-            )}
-            {!isGuest && proposalsTotal > 0 && (
-              <DropdownMenuItem data-testid="artifact-review" onSelect={props.onReview}>
-                <Icon name="review" size={16} />
-                {openProposals > 0 ? `Review proposals (${openProposals})` : "Proposals"}
               </DropdownMenuItem>
             )}
 

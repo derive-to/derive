@@ -440,7 +440,7 @@ server.registerTool(
       "START HERE on an artifact. Its state in one call: a summary, the review round, the versions since `since_version`, the open (and outdated) comment threads, and the full version history. " +
       "Pass `comments` (open / addressed / resolved / outdated) to instead get that filtered thread list — your feedback queue. " +
       "Pass `response_format='detailed'` (optionally with `since_version`/`to_version`) to fold in a line diff between two versions — of their readable Markdown form, not raw HTML. " +
-      "WAITING ON A REVIEW? Pass `wait` (seconds, max 50) to block until the human sends back or approves — chain these instead of sleeping between polls.",
+      "WAITING ON A REVIEW? Pass `wait` (seconds, max 50) to block until the human sends back — chain these instead of sleeping between polls.",
     annotations: {
       title: "Catch up on changes",
       readOnlyHint: true,
@@ -579,9 +579,7 @@ server.registerTool(
     const reviewBit = review
       ? review.state === "pending"
         ? ` Review requested on v${review.version} — waiting for the human.`
-        : review.state === "sent_back"
-          ? ` The human sent back their review of v${review.version} — read the open threads and their note, then revise and re-request, or stop if the note says it's good.${noteBit}`
-          : ` The human approved v${review.version} — you're clear to proceed.${noteBit}`
+        : ` The human sent back their review of v${review.version} — read the open threads and their note, then revise and re-request, or stop if the note says it's good.${noteBit}`
       : ""
     let entryDiff: string | undefined
     if (response_format === "detailed" && since < to) {
@@ -845,12 +843,12 @@ server.registerTool(
   },
 )
 
-// WRITE — publish live, or file a proposal for review -------------------------
+// WRITE — every publish lands live ---------------------------------------------
 server.registerTool(
   "publish",
   {
     description:
-      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). Provide the body as `content_path` (a local file this server reads and uploads — preferred, zero tokens) or `content` (inline text). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Pass for_review:true to file it as a PROPOSAL a human approves instead of going live. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — declare your own <meta name=\"viewport\"> to skip the mobile-reflow injection, and self-host binaries via POST /v1/assets (images and woff2 fonts) instead of inlining base64.",
+      "Publish a single-file artifact and get a permanent URL. OMIT short_id to create a NEW artifact (title recommended); PASS short_id to publish a new version (same URL). Provide the body as `content_path` (a local file this server reads and uploads — preferred, zero tokens) or `content` (inline text). To CHANGE PART of an existing artifact, prefer `edits` (exact-match search/replace against the stored source — read format:'html' first) over resending everything. Pass `addresses` with the thread ids this revision resolves. (Multi-page bundles are published via the web app or the remote /mcp server.) FULLY-STYLED HTML renders as-authored (own <style>/scripts/fonts) in the sandboxed viewer — declare your own <meta name=\"viewport\"> to skip the mobile-reflow injection, and self-host binaries via POST /v1/assets (images and woff2 fonts) instead of inlining base64.",
     annotations: {
       title: "Publish an artifact",
       readOnlyHint: false,
@@ -916,14 +914,7 @@ server.registerTool(
       link_role: z.enum(["none", "viewer", "commenter", "editor"]).optional(),
       listed: z.enum(["none", "workspace", "public"]).optional(),
       message: z.string().optional().describe("What changed in this version."),
-      for_review: z
-        .boolean()
-        .optional()
-        .describe("File as a proposal for human review instead of publishing live."),
-      addresses: z
-        .array(z.string())
-        .optional()
-        .describe("Thread ids this revision resolves (live publish) or addresses (proposal)."),
+      addresses: z.array(z.string()).optional().describe("Thread ids this revision resolves."),
       request_review: z
         .boolean()
         .optional()
@@ -946,7 +937,6 @@ server.registerTool(
     link_role,
     listed,
     message,
-    for_review,
     addresses,
     request_review,
     workspace: ws,
@@ -968,34 +958,6 @@ server.registerTool(
         )
       }
       pathSha = createHash("sha256").update(pathBytes).digest("hex")
-    }
-    if (for_review) {
-      if (!short_id) return text("A proposal revises an EXISTING artifact — pass its short_id.")
-      try {
-        const p = await client.propose(short_id, {
-          content: pathBytes ?? content,
-          edits,
-          baseVersion: base_version,
-          filename:
-            filename ??
-            (content_path !== undefined
-              ? basename(content_path)
-              : edits
-                ? undefined
-                : fallbackFilename(content)),
-          message: message ?? "Proposed revision",
-          addresses,
-        })
-        const note = p.addressed?.length ? ` · addressed ${p.addressed.length} thread(s)` : ""
-        return json({
-          proposed: true,
-          proposal_id: p.id,
-          base_version: p.base_version,
-          note: `Submitted for review (not live)${note}.`,
-        })
-      } catch (e) {
-        return err(e instanceof Error ? e.message : "propose failed")
-      }
     }
     if (edits && !short_id) return text("`edits` revises an EXISTING artifact — pass its short_id.")
     let a: Awaited<ReturnType<typeof client.publish>>

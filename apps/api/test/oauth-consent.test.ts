@@ -5,7 +5,7 @@ import { consentHTML } from "../src/oauth-consent"
 describe("oauth consent screen", () => {
   const html = consentHTML({
     clientName: "Claude Code",
-    scopes: ["openid", "derive:read", "derive:propose", "derive:publish"],
+    scopes: ["openid", "derive:read", "derive:comment", "derive:publish"],
     query: "client_id=cli&scope=openid+derive:read&code=abc",
   })
 
@@ -13,7 +13,7 @@ describe("oauth consent screen", () => {
     expect(html).toContain("wants to act in your workspace")
     expect(html).toContain("Claude Code")
     expect(html).toContain("Read your artifacts and comments")
-    expect(html).toContain("Propose new versions")
+    expect(html).toContain("Comment on your artifacts")
   })
 
   it("labels the manage scope — a manage-grade grant must never render as an unknown blob", () => {

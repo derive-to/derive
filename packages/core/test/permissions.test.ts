@@ -2,24 +2,15 @@ import { describe, expect, it } from "vitest"
 import { type Actor, can, effectiveRole, roleAllows } from "../src/permissions"
 
 describe("roleAllows", () => {
-  it("editors publish + approve but only owners manage", () => {
+  it("editors publish but only owners manage", () => {
     expect(roleAllows("editor", "publish")).toBe(true)
-    expect(roleAllows("editor", "approve")).toBe(true)
     expect(roleAllows("editor", "manage")).toBe(false)
     expect(roleAllows("owner", "manage")).toBe(true)
   })
-  it("commenters comment + read but cannot publish or approve", () => {
+  it("commenters comment + read but cannot publish", () => {
     expect(roleAllows("commenter", "comment")).toBe(true)
     expect(roleAllows("commenter", "read")).toBe(true)
     expect(roleAllows("commenter", "publish")).toBe(false)
-    expect(roleAllows("commenter", "approve")).toBe(false)
-  })
-  it("sets the role floor for approval; the API separately requires a human principal", () => {
-    expect(roleAllows("commenter", "propose")).toBe(true)
-    expect(roleAllows("commenter", "approve")).toBe(false)
-    expect(roleAllows("viewer", "propose")).toBe(false)
-    expect(roleAllows("editor", "propose")).toBe(true)
-    expect(roleAllows("editor", "approve")).toBe(true)
   })
   it("viewers only read", () => {
     expect(roleAllows("viewer", "read")).toBe(true)

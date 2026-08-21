@@ -6,7 +6,7 @@ import { chatSeatFor, isVerifiedLink, linkToActMessage } from "../src/lib/slack-
 // control of the Derive account, `email` only matched its address. Reading may rest on either —
 // the address is one the workspace's own directory verified, and membership is checked anyway.
 // Writing may not: an admin can set a Slack profile email through SCIM without the mailbox, and
-// that must not become the power to approve a publish or comment under somebody's name.
+// that must not become the power to settle a review or comment under somebody's name.
 const link = (origin: SlackUserLinkRecord["origin"]) => ({ origin }) as SlackUserLinkRecord
 
 describe("isVerifiedLink", () => {
@@ -44,16 +44,16 @@ describe("chatSeatFor", () => {
 describe("linkToActMessage", () => {
   // The fix is thirty seconds away, so the refusal names the place rather than the policy.
   it("names the destination and the specific action", () => {
-    const m = linkToActMessage("approve or send back a review", link("email"))
+    const m = linkToActMessage("send back a review", link("email"))
     expect(m).toContain("Settings → Integrations")
-    expect(m).toContain("approve or send back a review")
+    expect(m).toContain("send back a review")
   })
 
   // To somebody we just answered by name, a bare "connect your accounts" reads as amnesia — so
   // an email match is told what we know. To a stranger the same sentence would be a lie.
   it("claims to know the person only when it does", () => {
-    expect(linkToActMessage("decide proposals", link("email"))).toContain("from your email")
-    expect(linkToActMessage("decide proposals", null)).not.toContain("from your email")
-    expect(linkToActMessage("decide proposals")).not.toContain("from your email")
+    expect(linkToActMessage("send back a review", link("email"))).toContain("from your email")
+    expect(linkToActMessage("send back a review", null)).not.toContain("from your email")
+    expect(linkToActMessage("send back a review")).not.toContain("from your email")
   })
 })

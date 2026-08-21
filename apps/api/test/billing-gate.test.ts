@@ -58,23 +58,6 @@ describe("billing gate", () => {
     expect((await r.json()).code).toBe("billing_lapsed")
   })
 
-  it("lapse blocks review approve too, but reading stays open", async () => {
-    const { app, meta } = makeAuthedApp("bg_lapse_read", THREE, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
-    })
-    const pub = await publishAs(app, "hello", {}, as("u2@x.test"))
-    expect(pub.status).toBe(201)
-    const { short_id } = await pub.json()
-    await seedSub(meta, "canceled")
-    const approve = await app.request(
-      `/v1/artifacts/${short_id}/review/approve`,
-      jsonAs(as("u1@x.test"), {}),
-    )
-    expect(approve.status).toBe(402)
-    const read = await app.request(`/v1/artifacts/${short_id}`, { headers: as("u2@x.test") })
-    expect(read.status).toBe(200)
-  })
-
   it("an active Team sub lifts a tiny fallback storage cap to the tier cap", async () => {
     const { app, meta } = makeAuthedApp("bg_cap", THREE, "editor", {
       deps: { billing: new FakeBilling(), maxBytes: 10 },
@@ -175,9 +158,8 @@ describe("billing gate", () => {
 // resolveBrandprintProfileTarget (mcp-tools/publish.ts) scaffolds the Brandprint slot
 // (a collection create + a placeholder publishVersion) the first time an Admin/Owner
 // publishes to derive://brandprint/profile. That scaffold write runs BEFORE the tool's
-// own billing gate (the review/propose split routes the profile's actual reveal to a
-// free proposal, and the live-publish billing check sits strictly after that split) —
-// so a billing-blocked workspace could still get the scaffold's live writes. Driven
+// own billing gate, so a billing-blocked workspace could still get the scaffold's
+// live writes. Driven
 // through the real /mcp JSON-RPC surface (not just the underlying function) because
 // that IS the only route this scaffold is reachable through — there is no separate
 // HTTP endpoint (the old setup_brandprint tool was folded into publish) — mirroring the

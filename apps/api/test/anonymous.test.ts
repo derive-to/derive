@@ -3,7 +3,7 @@ import { as, json, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // An anonymous visitor (no session, no token) can view a public artifact and send
 // the ephemeral "I'm here" signals — a presence heartbeat and a live cursor. Nothing
-// else: no comments, members, proposals, analytics, sharing, or any write. There is
+// else: no comments, members, analytics, sharing, or any write. There is
 // no "open" mode that would elevate them.
 // Authenticated users keep normal role-based access — a viewer still sees comments.
 describe("anonymous lockdown (secure instance)", () => {
@@ -40,10 +40,9 @@ describe("anonymous lockdown (secure instance)", () => {
     expect((await a("/presence", json({ name: "Guest" }))).status).toBe(200)
     expect((await a("/cursor", json({ id: "g", x: 0.5, y: 0.5 }))).status).toBe(204)
 
-    // hidden: comments, members, proposals, analytics
+    // hidden: comments, members, analytics
     expect((await a("/comments")).status).toBe(404)
     expect((await a("/members")).status).toBe(404)
-    expect((await a("/proposals")).status).toBe(404)
     expect((await a("/analytics")).status).toBe(404)
 
     // forbidden writes: comment, share, publish a new version
@@ -114,7 +113,6 @@ describe("anonymous can never write — global lockdown sweep", () => {
     // artifact-scoped writes
     expect((await publishAs(app, "<h1>v2</h1>", {}, {}, shortId)).status).toBe(403)
     expect((await at("/comments", json({ body_md: "x" }))).status).toBe(403)
-    expect((await at("/proposals", json({}))).status).toBe(403)
     expect((await at("/report", json({ reason: "spam" }))).status).toBe(403)
     expect((await at("/takedown", json({}))).status).toBe(403)
     expect((await at("/restore", json({ version: 1 }))).status).toBe(403)

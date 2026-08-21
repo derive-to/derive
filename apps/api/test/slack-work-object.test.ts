@@ -129,10 +129,7 @@ describe("artifactEntity", () => {
     const actions = (withRound.entity_payload as { actions?: unknown }).actions as {
       primary_actions: { action_id: string }[]
     }
-    expect(actions.primary_actions.map((a) => a.action_id)).toEqual([
-      SLACK_REVIEW_ACTION.approve,
-      SLACK_REVIEW_ACTION.sendBack,
-    ])
+    expect(actions.primary_actions.map((a) => a.action_id)).toEqual([SLACK_REVIEW_ACTION.sendBack])
     const settled = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
     expect((settled.entity_payload as Record<string, never>).actions).toBeUndefined()
   })
@@ -205,7 +202,7 @@ describe("artifactDetails (the flexpane)", () => {
     expect(ids(pane.entity_payload as Record<string, unknown>)).toEqual(
       ids(card.entity_payload as Record<string, unknown>),
     )
-    expect(ids(pane.entity_payload as Record<string, unknown>)).toHaveLength(2)
+    expect(ids(pane.entity_payload as Record<string, unknown>)).toHaveLength(1)
   })
 
   it("offers no actions once the round is settled", () => {
@@ -276,8 +273,8 @@ describe("agoLabel", () => {
 // The loop's most decision-relevant moment. These reached the reviewer's DM but no CHANNEL could
 // hear that a doc was blocked on someone — the fact a team most wants ambient.
 describe("review events are channel-subscribable", () => {
-  it("offers the review round alongside publishes and proposals", () => {
-    for (const e of ["review.requested", "review.sent_back", "review.approved"])
+  it("offers the review round alongside publishes", () => {
+    for (const e of ["review.requested", "review.sent_back"])
       expect(SLACK_SUBSCRIBABLE_EVENTS).toContain(e)
   })
 })

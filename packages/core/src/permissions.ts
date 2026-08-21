@@ -9,17 +9,13 @@ export type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 export { BILLABLE_ROLES, isBillableRole } from "./roles"
 
 /** What an actor wants to do. Kept coarse on purpose; `can()` is the only gate. */
-export type Action = "read" | "comment" | "propose" | "publish" | "approve" | "share" | "manage"
+export type Action = "read" | "comment" | "publish" | "share" | "manage"
 
 const RANK: Record<Role, number> = { viewer: 0, commenter: 1, editor: 2, owner: 3 }
 const NEEDS: Record<Action, Role> = {
   read: "viewer",
   comment: "commenter",
-  // A commenter can propose a candidate version, but an editor must approve it
-  // before it goes live. This is the review gate: propose ≠ publish.
-  propose: "commenter",
   publish: "editor",
-  approve: "editor",
   // Editors can share (invite people, change general access) — GDocs model — but
   // not `manage` (transfer ownership, delete), which stays owner-only.
   share: "editor",
@@ -100,7 +96,7 @@ export interface Actor {
  * not part of this gate.
  *
  * Invariant: an anonymous caller is never more than `viewer`, regardless of the
- * grant. Anything past view (comment, propose, publish, share, manage) needs an
+ * grant. Anything past view (comment, publish, share, manage) needs an
  * authenticated identity — a signed-in user or a `DERIVE_TOKEN`. There is
  * deliberately no "trusted anonymous" path.
  */

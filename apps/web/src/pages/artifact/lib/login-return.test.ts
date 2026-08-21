@@ -15,10 +15,10 @@ describe("artifactLoginSearch", () => {
     expect(
       artifactLoginSearch({
         pathname: "/artifacts/quarterly-plan-abc12345@v3",
-        search: "?comment=thread_1&review=proposal_2",
+        search: "?comment=thread_1&review=1",
       }),
     ).toEqual({
-      return_to: "/artifacts/quarterly-plan-abc12345@v3?comment=thread_1&review=proposal_2",
+      return_to: "/artifacts/quarterly-plan-abc12345@v3?comment=thread_1&review=1",
     })
   })
 })

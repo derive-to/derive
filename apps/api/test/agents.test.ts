@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { as, bearer, jsonAs, makeAuthedApp, proposeAs, publishAs, type TestUser } from "./helpers"
+import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-describe("agents: @mention → pull inbox → propose → ack", () => {
+describe("agents: @mention → pull inbox → ack", () => {
   const owner: TestUser = { id: "u_ag_own", email: "agown@derive.test", name: "Owner" }
   const dev: TestUser = { id: "u_ag_dev", email: "agdev@derive.test", name: "Dev" }
   const { app } = makeAuthedApp("agents", [owner, dev], "commenter")
@@ -77,36 +77,6 @@ describe("agents: @mention → pull inbox → propose → ack", () => {
     expect(inbox.mentions[0].artifact).toBe(shortId)
     expect(inbox.mentions[0].body).toContain("tighten the headline")
     mentionId = inbox.mentions[0].id
-  })
-
-  it("the agent proposes a candidate (commenter rank) authored as itself", async () => {
-    const res = await proposeAs(app, shortId, "<h1>A tighter headline</h1>", bearer(agentToken), {
-      message: "tightened per the mention",
-    })
-    expect(res.status).toBe(201)
-    const p = await res.json()
-    expect(p.author).toBe("Claude")
-    expect(p.state).toBe("open")
-    // It did NOT go live — a human still approves.
-    const art = await (
-      await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
-    ).json()
-    expect(art.current_version).toBe(1)
-    expect(art.open_proposals).toBe(1)
-  })
-
-  it("the default commenter agent cannot approve its own proposal", async () => {
-    const open = await (
-      await app.request(`/v1/artifacts/${shortId}/proposals?state=open`, {
-        headers: as(owner.email),
-      })
-    ).json()
-    const pid = open.proposals[0].id
-    const res = await app.request(`/v1/artifacts/${shortId}/proposals/${pid}/approve`, {
-      method: "POST",
-      headers: bearer(agentToken),
-    })
-    expect(res.status).toBe(403)
   })
 
   it("acking the mention clears it from the inbox", async () => {

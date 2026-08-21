@@ -77,10 +77,6 @@ export function ArtifactCard({
   const _versionDepth = Math.max(a.current_version, a.versions.length)
   const sourceDir = a.source_path ? dirOf(a.source_path) : ""
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
-  // Proposals you can act on (owner/editor) are a "needs you" signal — they soft-ink
-  // the card edge (the `i_participated` tier) and the review count.
-  const awaitingReview =
-    (a.my_role === "owner" || a.my_role === "editor") && (a.open_proposals ?? 0) > 0
 
   // Machine-register state line under the title (house " · " join, matching the
   // workbench header): a synced file's folder, else its version when there's history,
@@ -100,12 +96,12 @@ export function ArtifactCard({
         // thing the card must answer is "am I in it?".
         selected
           ? "border-primary ring-2 ring-primary/40"
-          : // A direct @mention gets the full accent + ring; a thread you're in — or
-            // proposals waiting on your review — gets a softer accent border. The ink
-            // accent is the sanctioned attention signal, shown at rest.
+          : // A direct @mention gets the full accent + ring; a thread you're in gets a
+            // softer accent border. The ink accent is the sanctioned attention signal,
+            // shown at rest.
             a.mentions_me
             ? "border-primary ring-1 ring-primary/30"
-            : a.i_participated || awaitingReview
+            : a.i_participated
               ? "border-primary/60"
               : "border-border hover:border-foreground/25",
       )}

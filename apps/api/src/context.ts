@@ -438,7 +438,7 @@ export function buildContext(deps: AppDeps) {
       })
       .catch(logEnqueueError("webhook", a, event))
     // The connected Slack App's channel — a top-level card for artifact-lifecycle events
-    // (publish / proposal), gated inside the helper on visibility + the channel subscriptions.
+    // (publishes, review rounds), gated inside the helper on visibility + the channel subscriptions.
     // Skipped entirely when no Slack app is configured on this instance (no wasted lookup).
     const channel = deps.slack
       ? enqueueSlackChannelEvent(meta, deps.baseUrl, a, event, data)
@@ -852,7 +852,7 @@ export function buildContext(deps: AppDeps) {
   }
 
   // Apply a keyed limiter to the caller; returns a 429 Response when over, else
-  // null to continue. Helper because publish + propose + comment share it.
+  // null to continue. Helper because publish + comment share it.
   const limited = async (c: Context, limiter: Limiter | null): Promise<Response | null> => {
     if (!limiter) return null
     const r = await limiter(await actorKey(c))
@@ -887,13 +887,13 @@ export function buildContext(deps: AppDeps) {
       fallbackMaxBytes: deps.maxBytes,
     })
   }
-  // Null = free to publish/approve; otherwise the refusal copy (code + message) to
+  // Null = free to publish; otherwise the refusal copy (code + message) to
   // surface to the caller.
   const billingBlocked = async (
     orgId: string,
   ): Promise<{ code: string; message: string } | null> => {
     const s = await billingState(orgId)
-    return s.canPublishApprove || !s.blockedReason ? null : blockCopy[s.blockedReason]
+    return s.canPublish || !s.blockedReason ? null : blockCopy[s.blockedReason]
   }
   // The full gate as a route guard, mirroring `limited`: a Response to return when
   // blocked, else null to continue.
@@ -1413,12 +1413,6 @@ export function buildContext(deps: AppDeps) {
    *  and the world link (link_role, clamped to view for anonymous holders and gated
    *  by unlock when the link is password-locked). See effectiveRole. */
   const authorize = async (c: Context, action: Action, a: ArtifactRecord): Promise<boolean> => {
-    // `approve` is both a capability and an identity-sensitive signature. Agents
-    // may hold editor standing so they can publish work, but no machine principal
-    // can turn that standing into the human go-signal advertised by Derive. Put
-    // the rule in the shared authorization seam so every present and future HTTP
-    // approval route inherits it before route-specific attribution runs.
-    if (action === "approve" && (await resolvePrincipal(c)).kind !== "human") return false
     const actor = await actorFor(c, a)
     return can(actor, action, a.workspace_access, a.link_role)
   }
@@ -1455,7 +1449,7 @@ export function buildContext(deps: AppDeps) {
 
   /**
    * True when the caller is an anonymous visitor — they may view public content
-   * but nothing collaborative (comments, member list, proposals, analytics).
+   * but nothing collaborative (comments, member list, analytics).
    * Anonymous is never a trusted principal, so this is a simple kind check. Use
    * as a post-`read` gate to hide collaboration from public link-visitors without
    * touching the role model.
@@ -1489,8 +1483,7 @@ export function buildContext(deps: AppDeps) {
   }
 
   /**
-   * Source text of stored content (entry document for bundles); null if missing.
-   * Works for a version or a proposal — both carry blob_key + content_type.
+   * Source text of a stored version (entry document for bundles); null if missing.
    */
   const sourceText = async (content: {
     blob_key: string
@@ -1583,7 +1576,7 @@ export function buildContext(deps: AppDeps) {
   // unauthorized, so a gated artifact you can't read is indistinguishable from one
   // that isn't there (existence never leaks) — right for `read`. Pass
   // `{ split: true }` for actions where the caller SHOULD learn "it exists but you
-  // can't <action> it" (comment/propose/share/approve/manage) — 404 missing, 403
+  // can't <action> it" (comment/publish/share/manage) — 404 missing, 403
   // unauthorized. Returns the artifact, or the Response to return.
   const requireArtifact = async (
     c: Context,
