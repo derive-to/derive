@@ -26,10 +26,9 @@ import { commentDeepLink } from "./comments"
 import { mrkdwnBody } from "./slack-cards"
 import { encodeQuestionReply, SLACK_QUESTION_REPLY_ACTION } from "./slack-question"
 
-/** The interactivity `action_id`s a Work Object's buttons carry. Routed as ordinary
- *  `block_actions`, so they land beside the thread and proposal handlers. */
+/** The interactivity `action_id` a Work Object's button carries. Routed as an ordinary
+ *  `block_action`, so it lands beside the thread handlers. */
 export const SLACK_REVIEW_ACTION = {
-  approve: "derive_review_approve",
   sendBack: "derive_review_send_back",
 } as const
 
@@ -37,7 +36,7 @@ export const SLACK_REVIEW_ACTION = {
  *
  *  A Work Object button needs none of this — Slack round-trips the entity and the handler reads
  *  `external_ref`. A button on a DM or a channel card has no entity behind it, so the target
- *  travels in `value`, exactly as the thread and proposal buttons already do. It only NAMES the
+ *  travels in `value`, exactly as the thread buttons already do. It only NAMES the
  *  artifact: runSlackReviewAction re-reads it and re-authorizes the clicker, so a forged value
  *  can at worst point at a doc they still cannot act on. */
 export const encodeReviewAction = (artifactId: string): string => JSON.stringify({ a: artifactId })
@@ -134,7 +133,6 @@ const reviewLabel = (s: ArtifactStatus): string | null => {
   return {
     pending: "Awaiting review",
     sent_back: "Answers sent back",
-    approved: "Approved",
   }[s.review.state]
 }
 
@@ -143,22 +141,17 @@ const reviewLabel = (s: ArtifactStatus): string | null => {
  *  Shared by the card and the flexpane ON PURPOSE. Opening a flexpane updates the unfurl from
  *  the metadata the app answers with — Slack's words: "the unfurl will also be updated given the
  *  entity metadata that has changed" — so a details payload that omitted these would silently
- *  STRIP Approve and Send back from a card that had them. The two surfaces have to agree on the
+ *  STRIP Send back from a card that had it. The two surfaces have to agree on the
  *  actions for the same reason a PATCH has to send the fields it does not mean to clear. */
 const reviewActions = (artifactId: string) => ({
   primary_actions: [
     {
-      text: "Approve",
-      action_id: SLACK_REVIEW_ACTION.approve,
+      text: "Send back",
+      action_id: SLACK_REVIEW_ACTION.sendBack,
       style: "primary",
       // Carried even though a Work Object click also echoes `external_ref`: one target
       // mechanism for all three surfaces is one thing to get right, and it means the handler
       // never depends on Slack round-tripping the entity to know what was clicked.
-      value: encodeReviewAction(artifactId),
-    },
-    {
-      text: "Send back",
-      action_id: SLACK_REVIEW_ACTION.sendBack,
       value: encodeReviewAction(artifactId),
     },
   ],

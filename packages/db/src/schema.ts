@@ -17,7 +17,6 @@ import type {
   NotificationKind,
   PlanKind,
   PreviewStatus,
-  ProposalState,
   RenderJobStatus,
   ReportState,
   ReviewRoundState,
@@ -74,13 +73,10 @@ export const artifact = sqliteTable("artifact", {
   // deploy/drop-v1-access.sql — new ones never create them.)
   kind: text("kind").$type<ArtifactKind>().notNull(),
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
-  // When locked, direct publishes are rejected — changes must go through the
-  // proposal → approval flow (any editor can toggle it).
+  // When locked, publishes are rejected — the lock is a freeze until an editor
+  // unlocks (any editor can toggle it).
   locked: integer("locked").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
-  // The last version a human approved (see pg-schema.ts). Null until first approval;
-  // agent skill delivery serves approved_version ?? current_version.
-  approved_version: integer("approved_version"),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().default(now),
   // Set on every new version (publish/sync); null until first versioned. Drives the
@@ -262,8 +258,6 @@ export const automation = sqliteTable("automation", {
     .notNull()
     .default("claude-code"),
   // Serialized inputs/targets (artifact ids, urls, arbitrary), or null.
-  // How each write lands (publish vs propose) rides IN the refs blob per target —
-  // policy is config, config evolves, and evolving config never gets a column.
   refs: text("refs"),
   // JSON array of bound connection ids — the sources a run may read from (least privilege).
   // Nullable + no default, so it ALTER ADDs cleanly on existing databases.
@@ -983,33 +977,6 @@ export const domain = sqliteTable("domain", {
   created_at: text("created_at").notNull().default(now),
 })
 
-export const proposal = sqliteTable("proposal", {
-  id: text("id").primaryKey(),
-  artifact_id: text("artifact_id")
-    .notNull()
-    .references(() => artifact.id),
-  blob_key: text("blob_key").notNull(),
-  content_type: text("content_type").notNull(),
-  kind: text("kind").$type<ArtifactKind>().notNull(),
-  title: text("title"),
-  message: text("message"),
-  author: text("author").notNull(),
-  // Stable identity of the proposer (user or agent id). Withdraw authorization
-  // keys on this, never the mutable display `author` name. Nullable for legacy.
-  author_id: text("author_id"),
-  // When an agent proposed this, the human it acted on behalf of (delegation provenance).
-  on_behalf_of: text("on_behalf_of"),
-  base_version: integer("base_version").notNull(),
-  state: text("state").$type<ProposalState>().notNull().default("open"),
-  decided_by: text("decided_by"),
-  // Stable decider identity. Nullable for historical rows that stored only a name.
-  decided_by_id: text("decided_by_id"),
-  decided_version: integer("decided_version"),
-  decision_note: text("decision_note"),
-  decided_at: text("decided_at"),
-  created_at: text("created_at").notNull().default(now),
-})
-
 // A review round: an agent asks a specific person to review a live version, and
 // polls for the answer. Keyed per (artifact, requested_for) — one PENDING round
 // per person, so several reviewers can be asked in parallel without collision; a
@@ -1144,9 +1111,6 @@ export const contextSession = sqliteTable(
     // What this session is ABOUT, as a Selector (packages/core/src/selectors.ts) —
     // the same JSON shape automation.refs stores, so one address type serves both
     // lanes. Null = a plain ask with no subject, which is every session before this.
-    //
-    // It carries the write mode too (`propose` by default), so "what it is about"
-    // and "how a write lands" are one field rather than two that can disagree.
     subject_ref: text("subject_ref"),
   },
   (t) => [
@@ -1296,7 +1260,6 @@ const TABLES = [
   githubApp,
   githubInstallation,
   domain,
-  proposal,
   reviewRound,
   context,
   contextAsker,

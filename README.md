@@ -206,7 +206,7 @@ codex mcp add derive --url https://derive.to/mcp
 npx -y @derive-to/mcp
 ```
 
-The agent acts at the role you grant. Publish access publishes directly; a lower scope files a proposal a human approves. Full setup and tool guidance is in
+The agent acts at the role you grant. Publish access publishes directly, as a kept and restorable version with the workspace notified; a lower scope suggests changes in comments for a person to apply. Full setup and tool guidance is in
 [packages/mcp/SKILL.md](packages/mcp/SKILL.md).
 
 ## How it works

@@ -33,7 +33,7 @@ export const agentRoutes = (ctx: AppContext) => {
       role: z
         .enum(["viewer", "commenter", "editor", "owner"])
         .describe(
-          "Permission level; commenter proposes only, editor can write, owner never allowed",
+          "Permission level; commenter comments only, editor can write, owner never allowed",
         ),
       hosted: z
         .boolean()
@@ -95,7 +95,7 @@ export const agentRoutes = (ctx: AppContext) => {
   // Create an agent + mint its token. The token is returned ONCE here; only its
   // SHA-256 hash is stored, so a database leak can't expose usable credentials
   // (the token is high-entropy random, so a plain hash is sufficient — no salt
-  // or slow KDF needed). Default role commenter (propose-only); editor is
+  // or slow KDF needed). Default role commenter (comment-only); editor is
   // opt-in. Owner is never allowed for an agent.
   app.openapi(
     createRoute({

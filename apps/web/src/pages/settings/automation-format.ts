@@ -77,7 +77,7 @@ export function runStatusLabel(status: Run["status"]): string {
   return { queued: "Queued", running: "Running", succeeded: "Done", failed: "Failed" }[status]
 }
 
-/** The semantic outcome (published/proposed/answered/…) recorded in a run's meta blob, or null. */
+/** The semantic outcome (published/answered/…) recorded in a run's meta blob, or null. */
 export function runOutcome(meta: string | null): string | null {
   if (!meta) return null
   try {

@@ -6,11 +6,7 @@ import { candidateShortIds } from "../pages/artifact/parse-ref"
 import { WorkbenchSkeleton } from "../pages/artifact/workbench-skeleton"
 
 export const Route = createFileRoute("/artifacts/$ref")({
-  // Two deep links, each naming its target: `comment` opens a thread (panel + anchor),
-  // `review` opens the proposal-review overlay on that proposal. Surfaces that point a
-  // human at a pending proposal (the Brandprint profile panel's "Review & comment") use
-  // it — landing on the live version would show them the wrong thing, and with several
-  // proposals open the overlay must not have to guess which one they meant.
+  // The `comment` deep link opens a thread (panel + anchor).
   // `collection` carries the list context you opened FROM, so the header breadcrumb can
   // page between siblings in that collection (dropped otherwise — a direct link has no
   // context and falls back to the artifact's sole collection, if any).
@@ -25,7 +21,6 @@ export const Route = createFileRoute("/artifacts/$ref")({
     s: Record<string, unknown>,
   ): {
     comment?: string
-    review?: string
     collection?: string
     present?: boolean
     use?: boolean
@@ -33,7 +28,6 @@ export const Route = createFileRoute("/artifacts/$ref")({
     t?: number
   } => ({
     ...(typeof s.comment === "string" && s.comment ? { comment: s.comment } : {}),
-    ...(typeof s.review === "string" && s.review ? { review: s.review } : {}),
     ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
     ...(s.present === true || s.present === "1" || s.present === "true" ? { present: true } : {}),
     ...(s.use === true || s.use === "1" || s.use === "true" ? { use: true } : {}),

@@ -14,8 +14,8 @@ import {
   type WorkspaceAccess,
 } from "./permissions"
 
-const ACTIONS: Action[] = ["read", "comment", "propose", "publish", "approve", "share", "manage"]
-const WRITE_ACTIONS: Action[] = ["comment", "propose", "publish", "approve", "share", "manage"]
+const ACTIONS: Action[] = ["read", "comment", "publish", "share", "manage"]
+const WRITE_ACTIONS: Action[] = ["comment", "publish", "share", "manage"]
 const LINK_ROLES: LinkRole[] = ["none", "viewer", "commenter", "editor"]
 const WORKSPACE_ACCESS: WorkspaceAccess[] = ["none", "member"]
 
@@ -25,9 +25,7 @@ const WORKSPACE_ACCESS: WorkspaceAccess[] = ["none", "member"]
 const MIN_ROLE: Record<Action, Role> = {
   read: "viewer",
   comment: "commenter",
-  propose: "commenter",
   publish: "editor",
-  approve: "editor",
   share: "editor",
   manage: "owner",
 }
@@ -54,10 +52,9 @@ describe("roleAllows — the action/role matrix", () => {
     }
   })
 
-  it("encodes the review gate: a commenter may propose but not publish or approve", () => {
-    expect(roleAllows("commenter", "propose")).toBe(true)
+  it("a commenter comments but never publishes", () => {
+    expect(roleAllows("commenter", "comment")).toBe(true)
     expect(roleAllows("commenter", "publish")).toBe(false)
-    expect(roleAllows("commenter", "approve")).toBe(false)
   })
 
   it("keeps manage owner-only", () => {
@@ -248,12 +245,10 @@ describe("can — the one authorization gate", () => {
     expect(can(user(), "read")).toBe(false)
   })
 
-  it("routes a commenter through propose, never publish", () => {
+  it("a commenter comments, never publishes", () => {
     const commenter = user({ orgRole: "commenter" })
     expect(can(commenter, "comment", "member")).toBe(true)
-    expect(can(commenter, "propose", "member")).toBe(true)
     expect(can(commenter, "publish", "member")).toBe(false)
-    expect(can(commenter, "approve", "member")).toBe(false)
   })
 
   it("lets a token (CI/agent) do everything", () => {

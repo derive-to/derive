@@ -17,17 +17,16 @@ publish(
   title?:     string,      // display title (required when creating a new artifact)
   slug?:      string,      // custom URL slug
   visibility? "public" | "link" | "org" | "password" | "private",  // default: "private"
-  for_review? boolean      // file a proposal instead of going live
 )
 ```
 
 Returns: `{ short_id, url, current_version }`.
 
-Whether a `publish` goes live or files a proposal is decided by your role (Creator/Admin
-publish live; a commenter role files a proposal), with `for_review:true` to force review.
+Every `publish` goes live as a new kept version. It needs publish standing (editor or
+owner); a lower role suggests the change in a comment for someone who can publish.
 
 **Keep the `short_id`.** It's the artifact's permanent identity. Every future version,
-comment, and proposal references it.
+comment, and review round references it.
 
 ### Visibility
 

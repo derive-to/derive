@@ -35,7 +35,7 @@ worktree and agent gets its own and runs never collide. Override with
   (a second user in their own browser context) are the auth/seed layer. Tests
   declare what they need; no per-test signup boilerplate.
 - **Helpers** (`helpers.ts`): `signUp`, `publishArtifact`, `openArtifact`,
-  `addComment`, `activateThread`, `proposeEdit`, `shareArtifact`. Unique-per-worker
+  `addComment`, `activateThread`, `shareArtifact`. Unique-per-worker
   emails (UUID), and API calls wrapped in `expect(...).toPass()` for
   eventual-consistency, not arbitrary waits.
 - **Test-ids everywhere**: selectors are `getByTestId(...)` against stable

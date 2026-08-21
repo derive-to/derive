@@ -1,7 +1,6 @@
 import {
   type AnyDocEdit,
   type ArtifactRecord,
-  approvedOrCurrent,
   artifactUrl,
   assertedOnly,
   type BundleDoc,
@@ -401,7 +400,7 @@ export const artifactRoutes = (ctx: AppContext) => {
 
       // ALL of the page's decoration — view counts, tags, preview readiness, author
       // handles + bylines (the self-heal for stale agent-client names), the viewer's
-      // comment signals, open-proposal counts, and the viewer's per-artifact share
+      // comment signals, and the viewer's per-artifact share
       // roles (for a linked agent these are the registrant's rows, so the cap
       // applies) — in ONE store round trip. These are seven trivial lookups keyed on
       // the same page of ids; issued separately, each one was a full ~80ms edge→
@@ -424,7 +423,6 @@ export const artifactRoutes = (ctx: AppContext) => {
       const handleByGhId = handlesFrom(enrichment.handles)
       const bylineByUserId = bylinesFrom(enrichment.bylines)
       const feedback = enrichment.signals
-      const proposalCounts = enrichment.proposals
       const shareRoles = enrichment.shareRoles
       const scopedShareRole = (artifact: ArtifactRecord): Role | null => {
         const role = shareRoles[artifact.id] ?? null
@@ -472,8 +470,6 @@ export const artifactRoutes = (ctx: AppContext) => {
           author: authorProfile(a, handleByGhId, bylineByUserId),
           // open_threads + mentions_me + i_participated (defaults for anon / no signals).
           ...(feedback[a.id] ?? { open_threads: 0, mentions_me: false, i_participated: false }),
-          // The review queue — proposals awaiting a decision (owner/editor acts on them).
-          open_proposals: proposalCounts[a.id] ?? 0,
         })),
         next_cursor,
         ...(collectionInfo ? { collection: collectionInfo } : {}),
@@ -960,13 +956,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             requestedByName: actor?.name ?? "An agent",
             version: version.n,
             note: str(body["review_note"]) ?? null,
-            // `author` is what the channel card renders, and `actor_id` is what its human/agent
-            // filter keys on — enqueueSlackChannelEvent reads both. Without them a review
-            // request reaching a channel would be attributed to "someone" and counted as human.
-            notifyExtras: {
-              author: actor?.name ?? "An agent",
-              actor_id: agentPrincipal?.id ?? actor?.id ?? null,
-            },
+            actorId: agentPrincipal?.id ?? actor?.id ?? null,
             selfId: actor?.id ?? null,
           })
           roundCreated = true
@@ -988,7 +978,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           requestedById: agentPrincipal.id,
           requestedByName: agentPrincipal.name,
           version: version.n,
-          notifyExtras: { author: agentPrincipal.name, actor_id: agentPrincipal.id },
+          actorId: agentPrincipal.id,
           selfId: null,
         })
         roundCreated = true
@@ -1501,13 +1491,11 @@ export const artifactRoutes = (ctx: AppContext) => {
           favorite: false,
           collections: [],
           collection_access: [],
-          open_proposals: 0,
-          proposals_total: 0,
           removed: true,
           managed: false,
         })
       // The detail response's whole artifact-scoped context — versions, tags, the
-      // collections it sits in, its proposals, the open-thread count, the viewer's
+      // collections it sits in, the open-thread count, the viewer's
       // favorite, the workspace's settings, and whether it is a read-only GitHub mirror
       // — in ONE store call. These were eight sequential round trips (~80ms each on the
       // edge, see edge-pg.ts) all keyed on this one artifact or its org.
@@ -1602,7 +1590,6 @@ export const artifactRoutes = (ctx: AppContext) => {
             owner_name: creatorNames[col.created_by]?.name ?? null,
           }))
       }
-      const proposals = detail.proposals
       // A markdown bundle (a skill — entry SKILL.md — or a docs folder) gets a `bundle`
       // block: the entry + file tree (so the client can render the doc and navigate
       // siblings) plus skill identity when it is one. One manifest read, on the detail
@@ -1718,9 +1705,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const rawTokenIssuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
-      // which actions to surface; `open_proposals` badges the review queue while
-      // `proposals_total` (everything but withdrawn) gates the Proposals entry so a
-      // proposer can return to read feedback after their candidate leaves the queue.
+      // which actions to surface.
       return c.json({
         ...base,
         // Resolved author profile for the current author (null when there's none, or the
@@ -1785,8 +1770,6 @@ export const artifactRoutes = (ctx: AppContext) => {
         favorite,
         collections,
         collection_access: collectionAccess,
-        open_proposals: proposals.filter((p) => p.state === "open").length,
-        proposals_total: proposals.filter((p) => p.state !== "withdrawn").length,
         // Present for a markdown bundle (skill or docs folder): { isSkill, name,
         // description, entry, files } — the client renders the file tree + skill chrome.
         ...(bundle ? { bundle } : {}),
@@ -1795,7 +1778,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // UI shows a tombstone instead of the iframe.
         removed: !!artifact.removed_at,
         // Mirrored from a GitHub sync source → read-only in Derive (the client hides
-        // Edit/Propose; the publish/propose routes also refuse it server-side).
+        // Edit; the publish routes also refuse it server-side).
         managed: detail.managed,
         // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
         // it must not be able to touch derive.to cookies/storage), which means it also has
@@ -1927,14 +1910,14 @@ export const artifactRoutes = (ctx: AppContext) => {
   )
 
   // Lock / unlock an artifact. Any editor (publish rights) can flip it. While
-  // locked, direct publishes are rejected (handlePublish) so changes must go through
-  // the proposal → approval flow; the web UI routes editors to "propose".
+  // locked, publishes are rejected (handlePublish) — the lock is a freeze: suggest
+  // the change as a comment, or unlock to publish.
   app.openapi(
     createRoute({
       method: "patch",
       path: "/v1/artifacts/{shortId}/locked",
       tags: ["Artifacts"],
-      summary: "Lock or unlock an artifact (locked ⇒ changes go through review).",
+      summary: "Lock or unlock an artifact (locked ⇒ nothing publishes until unlocked).",
       request: { params: z.object({ shortId: z.string() }) },
       responses: {
         200: {
@@ -2072,7 +2055,7 @@ export const artifactRoutes = (ctx: AppContext) => {
   )
 
   // Permanently delete an artifact and all its dependents (versions, comments,
-  // proposals, memberships, etc.). Owner-only: gated by the `manage` action.
+  // memberships, etc.). Owner-only: gated by the `manage` action.
   app.openapi(
     createRoute({
       method: "delete",
@@ -2465,11 +2448,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
       return fail(c, 404, "not found")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
-    // "approved" resolves the human-approved version (current when none exists) — one
-    // sentinel every skill-delivery lane shares instead of each reimplementing the rule.
     const vq = c.req.query("v")
-    const v =
-      vq === "approved" ? approvedOrCurrent(artifact) : vq ? Number(vq) : artifact.current_version
+    const v = vq ? Number(vq) : artifact.current_version
     if (!Number.isInteger(v)) return fail(c, 400, "bad version")
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return fail(c, 404, `no version ${v}`)

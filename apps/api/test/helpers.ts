@@ -456,19 +456,6 @@ export const jsonAs = (
   body: JSON.stringify(body),
 })
 
-export const proposeAs = (
-  app: ReturnType<typeof createApp>,
-  shortId: string,
-  content: string,
-  headers: Record<string, string> = {},
-  fields: Record<string, string> = {},
-) => {
-  const form = new FormData()
-  form.append("file", new Blob([new TextEncoder().encode(content)]), "f.html")
-  for (const [k, v] of Object.entries(fields)) form.append(k, v)
-  return app.request(`/v1/artifacts/${shortId}/proposals`, { method: "POST", body: form, headers })
-}
-
 export const bearer = (token: string) => ({ authorization: `Bearer ${token}` })
 
 // C4b — launch-gate prevention: storage quotas + per-actor rate limits.

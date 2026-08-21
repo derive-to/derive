@@ -17,7 +17,6 @@ import type {
   NotificationKind,
   PlanKind,
   PreviewStatus,
-  ProposalState,
   RenderJobStatus,
   ReportState,
   ReviewRoundState,
@@ -60,11 +59,6 @@ export const artifact = pgTable("artifact", {
   spa: integer("spa").$type<0 | 1>().notNull().default(0),
   locked: integer("locked").$type<0 | 1>().notNull().default(0),
   current_version: integer("current_version").notNull().default(0),
-  // The last version a human approved: proposal approval stamps its decided_version,
-  // review-round approval stamps the round's version (never lowering it). Null until
-  // the first approval. Agent skill delivery serves approved_version ?? current_version,
-  // so approving once implicitly gates later drafts. Nullable — ADD COLUMN clean.
-  approved_version: integer("approved_version"),
   current_content_type: text("current_content_type"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
   // Set on every new version; null until first versioned (coalesces to created_at).
@@ -766,32 +760,6 @@ export const domain = pgTable("domain", {
   redirect_to: text("redirect_to"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
-export const proposal = pgTable("proposal", {
-  id: text("id").primaryKey(),
-  artifact_id: text("artifact_id")
-    .notNull()
-    .references(() => artifact.id),
-  blob_key: text("blob_key").notNull(),
-  content_type: text("content_type").notNull(),
-  kind: text("kind").$type<ArtifactKind>().notNull(),
-  title: text("title"),
-  message: text("message"),
-  author: text("author").notNull(),
-  // Stable identity of the proposer (user or agent id). Withdraw authorization
-  // keys on this, never the mutable display `author` name. Nullable for legacy.
-  author_id: text("author_id"),
-  // When an agent proposed this, the human it acted on behalf of (delegation provenance).
-  on_behalf_of: text("on_behalf_of"),
-  base_version: integer("base_version").notNull(),
-  state: text("state").$type<ProposalState>().notNull().default("open"),
-  decided_by: text("decided_by"),
-  decided_by_id: text("decided_by_id"),
-  decided_version: integer("decided_version"),
-  decision_note: text("decision_note"),
-  decided_at: text("decided_at"),
-  created_at: text("created_at").notNull().$defaultFn(isoNow),
-})
-
 // A review round: an agent asks a person to review a live version and polls for the
 // answer. One PENDING round per (artifact, requested_for) — parallel reviewers safe;
 // a re-request replaces that person's pending row. See the sqlite schema for detail.
@@ -1065,7 +1033,6 @@ const TABLES = [
   githubApp,
   githubInstallation,
   domain,
-  proposal,
   reviewRound,
   context,
   contextAsker,

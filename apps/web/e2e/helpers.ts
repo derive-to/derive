@@ -97,27 +97,8 @@ export async function activateThread(page: Page, text: string): Promise<void> {
   }).toPass({ timeout: 15_000 })
 }
 
-// Propose a candidate version on an artifact through the API (commenter+ — an
-// editor teammate in tests). Drives the review flow without the editor UI.
-export async function proposeEdit(
-  req: APIRequestContext,
-  shortId: string,
-  message: string,
-  body: string,
-): Promise<void> {
-  await expect(async () => {
-    const res = await req.post(`/v1/artifacts/${shortId}/proposals`, {
-      multipart: {
-        file: { name: "edit.md", mimeType: "text/markdown", buffer: Buffer.from(body) },
-        message,
-      },
-    })
-    expect(res.ok(), `propose failed: ${res.status()}`).toBeTruthy()
-  }).toPass({ timeout: 10_000 })
-}
-
 // Grant another account a role on an artifact (the GDocs-style per-artifact share).
-// Needed so a collaborator can comment/propose — only members can; an anonymous or
+// Needed so a collaborator can comment — only members can; an anonymous or
 // non-member link visitor is read-only.
 export async function shareArtifact(
   req: APIRequestContext,

@@ -69,7 +69,7 @@ export function resolvePasskey(opts: { baseUrl: string; webOrigins: string[] }):
 
 // Scopes an agent can be granted via the OAuth consent. The derive:* scopes map to
 // what the issued token may do; openid/profile/email/offline_access are the
-// standard OIDC set the flow needs. Least-privilege default is propose+comment+read.
+// standard OIDC set the flow needs. Least-privilege default is comment+read.
 export const OAUTH_SCOPES = [
   "openid",
   "profile",
@@ -77,9 +77,7 @@ export const OAUTH_SCOPES = [
   "offline_access",
   "derive:read",
   "derive:comment",
-  "derive:propose",
   "derive:publish",
-  "derive:review",
   "derive:manage",
 ] as const
 

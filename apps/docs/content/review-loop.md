@@ -28,11 +28,11 @@ Publish focused edits against the version you read. The URL does not change. Add
 thread IDs travel with the revision, so the relationship between feedback and change is
 explicit rather than inferred from a message.
 
-## Request approval only when it matters
+## Request review only when it matters
 
 For a release gate, policy decision, unattended automation, or other consequential change,
-request formal review. A named reviewer can approve the current version or send it back with
-more feedback. Approval belongs to that version; a later revision is new work and can be
-reviewed independently. Otherwise, publish the useful revision and continue when needed.
+request a review round. The reviewer answers in comments and sends the work back with a note.
+A note that reads "good to go" is the go-signal; one that asks for changes starts the next
+revision. Otherwise, publish the useful revision and continue when needed.
 
 For agent-side commands and tools, continue with [Connect your coding agent](/agents/connect/).

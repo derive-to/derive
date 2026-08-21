@@ -31,7 +31,7 @@ const editMessage = (edits: InlineEditInput[]): string => {
   return `Inline edit: "${clip(first.quote.exact.trim())}" → "${clip(first.new_text.trim())}"`
 }
 
-type SaveOutcome = { kind: "published"; version: number } | { kind: "proposed" } | null
+type SaveOutcome = { kind: "published"; version: number } | null
 
 export type InlineMentionMenuState = {
   query: string
@@ -71,7 +71,7 @@ const BLOCKED_COPY: Record<string, string> = {
  * frame owns the caret, the snapshots, and the diff→quote construction; this hook
  * owns the MODE — entering it (freezing the shown version so an SSE republish can't
  * reload the frame and wipe typed text), the dirty count the save bar shows, and
- * landing the collected quote edits through publish (editors) or propose
+ * landing the collected quote edits through publish
  * (commenters / locked artifacts) with the shared error grammar:
  *
  *  - 409 (a publish raced ours): refetch the head; edits stay in the frame, saving
@@ -99,7 +99,6 @@ export function useInlineEdit(p: {
    *  `e` shortcut, and the Edit verb on a selection. */
   canEdit: boolean
   /** Force saved edits through review even when the effective role is editor. */
-  forceProposal?: boolean
   /** The stored source can carry selector-scoped element operations. Markdown is
    *  rendered as HTML in the frame, but does not support that source operation. */
   allowElementEdits: boolean
@@ -154,8 +153,7 @@ export function useInlineEdit(p: {
 
   // Every way out of the mode funnels through here.
   //   "restore" — revert unsaved text and re-arm the read grammar (Done, Escape,
-  //               discard-and-leave, and a filed PROPOSAL: nothing is live until
-  //               approval, so the page must not keep the suggestion painted).
+  //               discard-and-leave).
   //   "settle"  — keep the text, drop the editing chrome. Right after a PUBLISH the
   //               text on screen IS what was saved; restoring would flash the old
   //               wording for the beat before the version swap reloads the frame.
@@ -450,8 +448,7 @@ export function useInlineEdit(p: {
    * is no visible text to quote. So the history reads "Replaced an image" as its own
    * revision, which is also how a reader would describe it.
    *
-   * Only for someone who can publish: routing this through review would mean
-   * uploading an asset for a proposal that may never land.
+   * Only for someone who can publish.
    */
   const imageSwap = useApiMutation({
     mutationFn: async (v: { file: File; oldSrc: string; base: number }) => {
@@ -473,7 +470,7 @@ export function useInlineEdit(p: {
   })
   const swapImage = (oldSrc: string) => {
     const art = p.art
-    if (!art || p.forceProposal || !canPublishArtifact(art)) {
+    if (!art || !canPublishArtifact(art)) {
       toast("Replacing an image needs edit access on this artifact.", { id: "inline-edit-image" })
       return
     }
@@ -501,12 +498,8 @@ export function useInlineEdit(p: {
       // anything that moved), which is the closest thing to a clean auto-merge.
       const base = art.current_version
       const message = editMessage(collected)
-      if (!p.forceProposal && canPublishArtifact(art)) {
-        const a = await api.publishEdits(p.shortId, collected, base, message)
-        return { kind: "published", version: a.current_version }
-      }
-      await api.proposeEdits(p.shortId, collected, base, message)
-      return { kind: "proposed" }
+      const a = await api.publishEdits(p.shortId, collected, base, message)
+      return { kind: "published", version: a.current_version }
     },
     errorToast: false,
     onSuccess: (r) => {
@@ -533,19 +526,10 @@ export function useInlineEdit(p: {
         // Stay in the mode: exiting on a no-op would make ⌘S feel like a cancel.
         return
       }
-      if (r.kind === "published") {
-        // The version bump reloads the frame onto the published content; posting
-        // mode-off here would flash the pre-edit text for a beat first.
-        exit("settle")
-        toast.success(`Saved v${r.version}`)
-      } else {
-        // A proposal does NOT change the live document — no version bump, no frame
-        // reload. Mode-off restores the pre-edit text (the suggestion lives in the
-        // review queue now) and re-arms the normal read grammar; without it the
-        // frame stays edit-locked forever.
-        exit("restore")
-        toast.success("Suggestion sent for review")
-      }
+      // The version bump reloads the frame onto the published content; posting
+      // mode-off here would flash the pre-edit text for a beat first.
+      exit("settle")
+      toast.success(`Saved v${r.version}`)
       p.load()
     },
     onError: (err) => {

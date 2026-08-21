@@ -35,11 +35,11 @@ describe("version sessions", () => {
   it("pins a named checkpoint as its own session", async () => {
     const { short_id } = await (await upload("p.md", "v1")).json()
     await upload("p.md", "v2", {}, short_id)
-    await upload("p.md", "v3", { name: "Approved" }, short_id)
+    await upload("p.md", "v3", { name: "Final" }, short_id)
     const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
     // newest-first: [named v3], [v1+v2 burst]
     expect(a.sessions).toHaveLength(2)
-    expect(a.sessions[0]).toMatchObject({ n: 3, name: "Approved", count: 1 })
+    expect(a.sessions[0]).toMatchObject({ n: 3, name: "Final", count: 1 })
     expect(a.sessions[1]).toMatchObject({ n: 2, from_n: 1, count: 2 })
   })
 

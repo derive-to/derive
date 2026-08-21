@@ -131,13 +131,9 @@ export interface ArtifactRecord {
   password_hash: string | null
   kind: ArtifactKind
   spa: 0 | 1
-  /** Locked: direct publishes are rejected; changes must go through a proposal. */
+  /** Locked: publishes are rejected until unlocked — suggest changes as comments. */
   locked: 0 | 1
   current_version: number
-  /** The last version a human approved (a proposal's decided_version, or a review
-   *  round's version — never lowered). Null until the first approval. Agent skill
-   *  delivery serves `approved_version ?? current_version` (see approvedOrCurrent). */
-  approved_version: number | null
   /** Denormalized from the current version row — updated on every publish. */
   current_content_type: string | null
   created_at: string
@@ -274,7 +270,6 @@ export interface ArtifactDetail {
   tags: string[]
   /** Ids of the collections containing this artifact. */
   collectionIds: string[]
-  proposals: ProposalRecord[]
   /** Distinct OPEN comment threads on this artifact (the public viewer's pill count). */
   openThreads: number
   favorite: boolean
@@ -325,7 +320,6 @@ export interface ListEnrichment {
    *  byline self-heal needs). */
   bylines: { id: string; name: string | null; username: string | null }[]
   signals: Record<string, CommentSignals>
-  proposals: Record<string, number>
   shareRoles: Record<string, Role>
   /** Which of `ids` the viewer has starred. Page-scoped on purpose: a listing only ever
    *  asks "is THIS row a favorite", and the route used to answer it by fetching the
@@ -771,7 +765,7 @@ export interface ArtifactQueryStore {
   listArtifacts(opts?: ListArtifactsOpts): Promise<ArtifactRecord[]>
   /**
    * Everything the artifact DETAIL response needs about one artifact, in ONE store call:
-   * its versions, tags, the collections it sits in, its proposals, its open-thread count,
+   * its versions, tags, the collections it sits in, its open-thread count,
    * whether the viewer has favorited it, its workspace's settings, and whether it is a
    * read-only GitHub mirror. Same motivation as `listEnrichment` — these were seven
    * sequential ~80ms round trips on the edge tier, all keyed on the same artifact (or its
@@ -785,7 +779,7 @@ export interface ArtifactQueryStore {
   /**
    * Everything the library list decorates a page of rows with, in ONE store call:
    * view counts, tags, preview readiness, author handle + byline directory rows,
-   * the viewer's comment signals, open-proposal counts, and the viewer's per-artifact
+   * the viewer's comment signals, and the viewer's per-artifact
    * share roles. Each piece is a trivial lookup keyed on the same page of ids, but on
    * the edge tier a Postgres round trip costs ~80ms no matter how little it fetches
    * (one serialized `pg.Client` per invocation — see edge-pg.ts), so issuing them as
@@ -1444,29 +1438,6 @@ export interface IntegrationStore {
 }
 
 export interface ReviewStore {
-  // ---- Reviews: proposed versions awaiting approval ----------------------
-  createProposal(p: NewProposal): Promise<ProposalRecord>
-  getProposal(id: string): Promise<ProposalRecord | null>
-  /** Proposals for an artifact, newest first; filterable by state. */
-  listProposals(artifactId: string, opts?: { state?: ProposalState }): Promise<ProposalRecord[]>
-  /** How many proposals are still awaiting a decision (for badges, no N+1). */
-  openProposalCounts(artifactIds: string[]): Promise<Record<string, number>>
-  /** Promote one still-open proposal and record its approval in the same database
-   * transaction. Null means another decision already won. */
-  approveOpenProposal(id: string, approval: ProposalApproval): Promise<VersionRecord | null>
-  /** Record a non-publishing decision on a still-open proposal. Null means another
-   * decision already won. */
-  decideProposal(
-    id: string,
-    fields: {
-      state: ProposalState
-      decided_by: string | null
-      decided_by_id?: string | null
-      decided_version: number | null
-      decision_note?: string | null
-    },
-  ): Promise<ProposalRecord | null>
-
   // ---- Review rounds (the agent↔human review loop) ----------------------
   /** Open a review round for a person, replacing their existing pending round on
    *  this artifact (one pending per (artifact, requested_for)). */
@@ -1476,11 +1447,12 @@ export interface ReviewStore {
   getPendingRound(artifactId: string, requestedFor?: string): Promise<ReviewRoundRecord | null>
   /** All rounds on an artifact, newest first (the audit trail). */
   listReviewRounds(artifactId: string): Promise<ReviewRoundRecord[]>
-  /** Settle a round (`sent_back` or `approved`), stamping resolved_at + note. */
+  /** Settle a round (`sent_back`), stamping resolved_at + note. */
+  /** Settle the pending round as sent back — the loop's one settling gesture.
+   *  Returns null when the round is not pending (someone else settled it first). */
   resolveReviewRound(
     id: string,
     fields: {
-      state: Extract<ReviewRoundState, "sent_back" | "approved">
       note?: string | null
       resolved_by?: string | null
       resolved_by_name?: string | null
@@ -1815,14 +1787,14 @@ export interface DirectoryStore {
   setUserOnboarded(userId: string, onboarded: boolean): Promise<void>
   /** Purge a user's Derive-domain data on account deletion: remove their association rows
    *  (memberships, artifact/collection members, follows, favorites, notifications), ANONYMIZE
-   *  their authorship (author_id → null on artifacts/versions/comments/proposals, so others'
+   *  their authorship (author_id → null on artifacts/versions/comments, so others'
    *  threads survive), null the nullable back-references keyed to them (agent.created_by,
    *  invitation.invited_by), and drop their personal workspace row. Better Auth removes the
    *  account itself + its sessions/passkeys/2FA.
    *
    *  NOT hard-deleted: artifact/collection content is anonymized + orphaned (a GC concern),
-   *  and NON-nullable historical metadata that merely records a past action (a proposal's
-   *  decided_by, a review round's requester, an audit-log actor, a repo/collection creator)
+   *  and NON-nullable historical metadata that merely records a past action (a review
+   *  round's requester, an audit-log actor, a repo/collection creator)
    *  keeps the raw id. That id is safe: once Better Auth removes the user row it resolves to
    *  nothing (getUsers → []), so it's an unresolvable tombstone, not recoverable identity —
    *  the same shape as an orphaned git author. */
@@ -2134,8 +2106,8 @@ export interface AgentStore {
    *  empty when they aren't present. */
   listUserGrants(userId: string): Promise<OAuthGrantSummary[]>
   /** The first artifact an agent produced for this user — a direct MCP publish
-   *  (version.source='mcp', attributed to them) or an approved agent proposal on their
-   *  behalf (proposal.on_behalf_of). The onboarding "published via agent" signal. */
+   *  (version.source='mcp', attributed to them). The onboarding "published via
+   *  agent" signal. */
   firstAgentPublish(userId: string): Promise<{ short_id: string; title: string | null } | null>
   /** Revoke a user's grant to one OAuth client: drop the consent + every live access/refresh
    *  token, so the agent loses access immediately and must re-consent. */
@@ -2217,7 +2189,7 @@ export interface ModerationStore {
   countOpenReports(orgId: string | undefined): Promise<number>
   setReportState(id: string, state: ReportState, orgId?: string): Promise<void>
   /** Hard-delete an artifact and all its dependent rows (versions, comments,
-   *  proposals, memberships, favorites, tags, collection items, domains, etc.).
+   *  memberships, favorites, tags, collection items, domains, etc.).
    *  Ownership check is the caller's responsibility. For moderation takedowns
    *  use setArtifactRemoved() instead — that tombstones without deleting. */
   deleteArtifact(id: string, orgId: string): Promise<void>
@@ -2475,8 +2447,8 @@ export interface TakedownInput {
 
 /**
  * A registered agent: a mentionable principal that acts through a scoped token.
- * Default role is commenter, so an agent can propose but never publish directly
- * — a human still approves. Treated like a member of the workspace.
+ * Default role is commenter, so an agent can read and comment but never publish
+ * directly. Treated like a member of the workspace.
  */
 export interface AgentRecord {
   id: string
@@ -2891,76 +2863,10 @@ export interface NewCollectionInvite {
   expires_at: string
 }
 
-/**
- * A candidate version awaiting review. It holds content exactly like a version
- * (blob_key + content_type, file or bundle manifest) but is NOT current until a
- * reviewer approves it, at which point it is appended as the new live version.
- *   open → approved | changes_requested | withdrawn
- */
-export type ProposalState = "open" | "approved" | "changes_requested" | "withdrawn"
-
-export interface ProposalRecord {
-  id: string
-  artifact_id: string
-  blob_key: string
-  content_type: string
-  kind: ArtifactKind
-  /** Optional new title the proposal would set on approval. */
-  title: string | null
-  /** What the proposer is changing, in their words. */
-  message: string | null
-  author: string
-  /** Stable id of the proposer (user/agent); withdraw authorization keys on this,
-   *  not `author`. Null for legacy rows and anonymous proposals. */
-  author_id: string | null
-  /** When an AGENT proposed this, the human it acted on behalf of (the granting/registering
-   *  user) — so a reviewer sees "proposed by Agent X on behalf of Alice." Null for a direct
-   *  human proposal or an agent with no known principal. The delegation made legible. */
-  on_behalf_of: string | null
-  /** The current_version this candidate was proposed against (for the diff). */
-  base_version: number
-  state: ProposalState
-  /** Set once decided. */
-  decided_by: string | null
-  /** Stable identity of the decider. Null only for historical rows that
-   *  predate identity-backed decisions. */
-  decided_by_id: string | null
-  /** The version number it became on approval; null otherwise. */
-  decided_version: number | null
-  /** The reviewer's note when approving or requesting changes; the feedback. */
-  decision_note: string | null
-  decided_at: string | null
-  created_at: string
-}
-
-export interface NewProposal {
-  id: string
-  artifact_id: string
-  blob_key: string
-  content_type: string
-  kind: ArtifactKind
-  title?: string | null
-  message?: string | null
-  author: string
-  author_id?: string | null
-  on_behalf_of?: string | null
-  base_version: number
-}
-
-/** The non-content inputs needed to promote one still-open proposal. The store
- * owns the proposal bytes/byline and commits the version + decision together. */
-export interface ProposalApproval {
-  version_id: string
-  size_bytes: number
-  decided_by: string
-  decided_by_id: string
-  decision_note?: string | null
-}
-
 /** A review round's lifecycle. `pending` = the agent asked and is waiting;
- *  `sent_back` = the human returned their answers (the poll target); `approved` =
- *  the human signed off (the build go-signal). One pending round per person. */
-export type ReviewRoundState = "pending" | "sent_back" | "approved"
+ *  `sent_back` = the human returned their answers (the poll target — a note that
+ *  reads "good to go" IS the go-signal). One pending round per person. */
+export type ReviewRoundState = "pending" | "sent_back"
 
 export interface ReviewRoundRecord {
   id: string
@@ -3929,16 +3835,12 @@ export interface ViewStats {
 }
 
 // open      — live feedback awaiting a reply/resolution
-// addressed — a proposed revision that cites this thread is pending review. Set
-//             when an agent/author `propose`s with `addresses`; clears to
-//             `resolved` if that proposal is approved (the fix landed) or back to
-//             `open` if it's withdrawn / sent back for changes.
-// resolved  — a human marked the thread done (or an addressing proposal landed)
+// resolved  — a human marked the thread done, or a publish with `addresses` landed the fix
 // outdated  — the text this thread anchored to changed or vanished in a later
 //             version, so the feedback may no longer apply. Set automatically by
 //             the re-anchor sweep on every version bump; flips back to `open` if
-//             the quoted text reappears. Never overwrites `resolved`/`addressed`.
-export type CommentState = "open" | "addressed" | "resolved" | "outdated"
+//             the quoted text reappears. Never overwrites `resolved`.
+export type CommentState = "open" | "resolved" | "outdated"
 
 /** Per-artifact comment signals for a viewer (see `MetaStore.commentSignals`).
  *  `open_threads` is the count of distinct OPEN threads; `mentions_me` / `i_participated`

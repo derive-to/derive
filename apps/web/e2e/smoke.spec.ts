@@ -3,7 +3,6 @@ import {
   addComment,
   expect,
   openArtifact,
-  proposeEdit,
   publishArtifact,
   signUp,
   test,
@@ -101,19 +100,22 @@ test("guest comment and edit links keep only their granted collaboration", async
   await setLinkRole("commenter")
   await secondUser.page.goto(`/artifacts/${shortId}`)
   await expect(secondUser.page.getByTestId("artifact-show-comments")).toBeVisible()
-  await expect(secondUser.page.getByTestId("artifact-inline-edit")).toContainText("Suggest edits")
+  // A commenter gets no edit affordance — suggesting a change is a comment.
+  await expect(secondUser.page.getByTestId("artifact-inline-edit")).toHaveCount(0)
   await expect(secondUser.page.getByTestId("share-trigger")).toHaveCount(0)
 
   await setLinkRole("editor")
   await secondUser.page.reload()
-  await expect(secondUser.page.getByTestId("artifact-inline-edit")).toContainText("Suggest edits")
+  await expect(secondUser.page.getByTestId("artifact-inline-edit")).toContainText("Edit")
   await expect(secondUser.page.getByTestId("share-trigger")).toHaveCount(0)
 })
 
-test("brandprint 'Review & comment' opens the pending profile proposal", async ({ owner }) => {
-  // The profile hand-off state, seeded through the real API: a v1 profile stub, a
-  // workspace Brandprint pointing at it, and an open proposal standing in for the
-  // agent's build.
+test("brandprint panel flips from the hand-off brief to live when the build lands", async ({
+  owner,
+}) => {
+  // The profile hand-off state, seeded through the real API: a v1 profile stub and a
+  // workspace Brandprint pointing at it. v1 is always the intake's stub; the agent's
+  // publish (v2) IS the reveal.
   const profileId = await publishArtifact(
     owner,
     "index.html",
@@ -134,7 +136,6 @@ test("brandprint 'Review & comment' opens the pending profile proposal", async (
     const echo = await (await owner.request.get("/v1/workspace/settings")).json()
     expect(echo.brandprint?.profileId).toBe(profileId)
   }).toPass({ timeout: 10_000 })
-  await proposeEdit(owner.request, profileId, "the build", "<h1>Proposed profile</h1>")
 
   // That seeding went around the app, and workspace settings are Infinity-fresh in the
   // query cache the app restores from IndexedDB on boot (lib/persist.ts) — so drop the
@@ -142,12 +143,23 @@ test("brandprint 'Review & comment' opens the pending profile proposal", async (
   // refetches. Real flows write through the app's mutations, which invalidate.
   await owner.addInitScript(() => indexedDB.deleteDatabase("keyval-store"))
   await owner.goto("/brandprint")
-  await owner.getByTestId("brandprint-profile-review").click()
-  // The link names the proposal, and the overlay opens on it — landing on the live
-  // version would show the reviewer the v1 stub they came here to replace.
-  await expect(owner).toHaveURL(/review=p_/)
-  await expect(owner.getByTestId("review-title")).toBeVisible()
-  await expect(owner.getByTestId("review-frame")).toHaveAttribute("src", /\/p\//)
+  await expect(owner.getByTestId("brandprint-handoff")).toBeVisible()
+
+  // The build lands as v2 — live, like every agent write now. The panel polls the
+  // artifact and flips to the live state without a reload.
+  const built = await owner.request.post(`/v1/artifacts/${profileId}/versions`, {
+    multipart: {
+      file: {
+        name: "index.html",
+        mimeType: "text/html",
+        buffer: Buffer.from("<h1>Built profile</h1>"),
+      },
+      message: "the build",
+    },
+  })
+  expect(built.ok(), `build publish: ${built.status()}`).toBeTruthy()
+  await expect(owner.getByTestId("brandprint-profile-live")).toBeVisible({ timeout: 15_000 })
+  await expect(owner.getByTestId("brandprint-profile-frame")).toBeVisible()
 })
 
 test("settings save and theme switch persist", async ({ owner }) => {
@@ -273,7 +285,7 @@ test("a card states three facts, not nine", async ({ owner }) => {
   // missing chip ambiguous — "you made it" and "we don't know who did" looked alike.
   await expect(owner.getByTestId(`artifact-card-author-${id}`)).toBeVisible()
 
-  // No view count, and no separate proposal/comment counts — a quiet document says
+  // No view count, and no separate comment counts — a quiet document says
   // nothing at all in the meta row.
   await expect(owner.getByTestId("needs-you")).toHaveCount(0)
 })

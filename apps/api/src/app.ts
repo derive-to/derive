@@ -42,7 +42,6 @@ import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
 import { planRoutes } from "./routes/plans"
-import { proposalRoutes } from "./routes/proposals"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { reviewRoutes } from "./routes/review"
@@ -438,7 +437,6 @@ export function createApp(deps: AppDeps): Hono {
     vitalsRoutes,
     bootstrapRoutes,
     moderationRoutes,
-    proposalRoutes,
     reviewRoutes,
     automationRoutes,
     planRoutes,
@@ -497,13 +495,8 @@ export function createApp(deps: AppDeps): Hono {
         description: "Threaded, anchored comments with reactions, edits, and resolution.",
       },
       {
-        name: "Proposals",
-        description:
-          "Suggested revisions awaiting review — the propose → approve / request-changes flow.",
-      },
-      {
         name: "Review",
-        description: "Review rounds on an artifact: request a review, send it back, or approve.",
+        description: "Review rounds on an artifact: request a review, or send it back with a note.",
       },
       {
         name: "Collections",

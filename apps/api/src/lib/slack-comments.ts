@@ -169,7 +169,7 @@ export const enqueueSlackComment = async (
   return channels.length
 }
 
-/** The self-contained payload for a channel EVENT card (publish / proposal lifecycle). Carried
+/** The self-contained payload for a channel EVENT card (publish / review lifecycle). Carried
  *  on a `slack_app` delivery whose `event_type` is the event — the sender routes on that, so
  *  event cards and the comment mirror share the kind without a payload discriminator. */
 interface SlackEventPayload {
@@ -183,33 +183,6 @@ interface SlackEventPayload {
   author: string
   version: number | null
   message: string | null
-  /** The proposal id, for a proposal.created card — carried on its Approve buttons. */
-  proposalId: string | null
-}
-
-/** The interactivity `action_id`s an in-channel proposal card's buttons carry. */
-export const SLACK_PROPOSAL_ACTION = {
-  approve: "derive_proposal_approve",
-  requestChanges: "derive_proposal_request_changes",
-} as const
-
-/** Encode a proposal button's `value`: which proposal on which artifact to act on. */
-export const encodeProposalAction = (artifactId: string, proposalId: string): string =>
-  JSON.stringify({ a: artifactId, p: proposalId })
-
-/** Decode a proposal button `value` back to its target ids — the inverse of
- *  encodeProposalAction. Tolerant of a malformed/attacker-supplied value (returns null): the
- *  ids only NAME the target, which the handler re-authorizes against the account link, so a
- *  bad value can at worst pick a nonexistent proposal. */
-export const decodeProposalAction = (
-  value: string,
-): { artifactId: string; proposalId: string } | null => {
-  try {
-    const { a, p } = JSON.parse(value) as { a?: string; p?: string }
-    return a && p ? { artifactId: a, proposalId: p } : null
-  } catch {
-    return null
-  }
 }
 
 /** Artifact-lifecycle events that post a top-level card to the connected channel (comments
@@ -217,12 +190,8 @@ export const decodeProposalAction = (
  *  webhooks only. */
 const CHANNEL_EVENTS = new Set<WebhookEvent>([
   "version.published",
-  "proposal.created",
-  "proposal.approved",
-  "proposal.changes_requested",
   "review.requested",
   "review.sent_back",
-  "review.approved",
 ])
 
 /** Enqueue a top-level channel card for an artifact-lifecycle event, when the org has a
@@ -250,7 +219,7 @@ export const enqueueSlackChannelEvent = async (
     ),
   )
   if (!channels.length) return false
-  const actor = [data.author, data.approver, data.reviewer].find((v) => typeof v === "string")
+  const actor = [data.author, data.reviewer].find((v) => typeof v === "string")
   for (const sub of channels) {
     const payload: SlackEventPayload = {
       channel: sub.channel_id,
@@ -262,7 +231,6 @@ export const enqueueSlackChannelEvent = async (
       author: typeof actor === "string" ? actor : "someone",
       version: typeof data.version === "number" ? data.version : null,
       message: typeof data.message === "string" ? data.message : null,
-      proposalId: typeof data.proposal_id === "string" ? data.proposal_id : null,
     }
     await enqueueChannelDelivery(meta, "slack_app", event, payload)
   }
@@ -279,25 +247,13 @@ const eventBlocks = (p: SlackEventPayload): unknown[] => {
     case "version.published":
       head = `:package: *${link}* — v${p.version ?? "?"} published by ${who}`
       break
-    case "proposal.created":
-      head = `:pencil2: *${who}* proposed a change to ${link}`
-      break
-    case "proposal.approved":
-      head = `:white_check_mark: A proposal for ${link} was approved${p.version ? ` — now v${p.version}` : ""}`
-      break
-    case "proposal.changes_requested":
-      head = `:leftwards_arrow_with_hook: Changes were requested on a proposal for ${link}`
-      break
     // The review round. `who` is the actor — the agent that asked, or the human who answered —
-    // so the line names whoever moved it, the same way the proposal cases do.
+    // so the line names whoever moved it.
     case "review.requested":
       head = `:mag: *${who}* asked for a review of ${link}`
       break
     case "review.sent_back":
       head = `:leftwards_arrow_with_hook: *${who}* sent back answers on ${link}`
-      break
-    case "review.approved":
-      head = `:white_check_mark: *${who}* approved ${link}`
       break
     default:
       head = `${link} — ${escapeMrkdwn(p.event)}`
@@ -312,25 +268,13 @@ const eventBlocks = (p: SlackEventPayload): unknown[] => {
     blocks.push(
       actions([
         actionButton(
-          SLACK_REVIEW_ACTION.approve,
-          "Approve",
+          SLACK_REVIEW_ACTION.sendBack,
+          "Send back",
           encodeReviewAction(p.artifactId),
           "primary",
         ),
-        actionButton(SLACK_REVIEW_ACTION.sendBack, "Send back", encodeReviewAction(p.artifactId)),
       ]),
     )
-  // An open proposal gets Approve / Request-changes buttons (the clicker is authorized as
-  // their linked Derive user in the interactivity handler).
-  if (p.event === "proposal.created" && p.proposalId) {
-    const value = encodeProposalAction(p.artifactId, p.proposalId)
-    blocks.push(
-      actions([
-        actionButton(SLACK_PROPOSAL_ACTION.approve, "Approve", value, "primary"),
-        actionButton(SLACK_PROPOSAL_ACTION.requestChanges, "Request changes", value),
-      ]),
-    )
-  }
   blocks.push(context(`Derive · ${p.event}`))
   return blocks
 }
@@ -437,7 +381,7 @@ export const makeSlackSender =
         return slackFailure(meta, p.orgId, err)
       }
     }
-    // Event cards (publish / proposal lifecycle) ride the same kind but a different event_type,
+    // Event cards (publish / review lifecycle) ride the same kind but a different event_type,
     // and post top-level (not threaded under an artifact's comment message).
     if (d.event_type !== "comment.created") {
       const e = JSON.parse(d.payload) as SlackEventPayload

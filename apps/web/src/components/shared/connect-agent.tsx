@@ -42,7 +42,7 @@ const hostedPrompt = (url: string) =>
    The first call opens a browser so I can approve access. The access I grant follows my Derive role.
 2. Call the "find" tool to confirm the connection and list what is available.
 
-After that, use Derive to publish useful work, find it later, read comments, and update the same artifact. Only use formal review when I ask for it or the permissions require a proposal.`
+After that, use Derive to publish useful work, find it later, read comments, and update the same artifact. Only ask for review when I ask for it.`
 
 // Self-host: run Derive yourself first, then connect. Mirrors the deployment guide's single-
 // container quickstart; the MCP endpoint is always <your BASE_URL>/mcp.
@@ -61,7 +61,7 @@ const selfHostPrompt = () =>
    The first call opens a browser so I can approve access.
 3. Call the "find" tool to confirm the connection and list what is available.
 
-After that, use Derive to publish useful work, find it later, read comments, and update the same artifact. Only use formal review when I ask for it or the permissions require a proposal.`
+After that, use Derive to publish useful work, find it later, read comments, and update the same artifact. Only ask for review when I ask for it.`
 
 /**
  * The connect surface: one tab per agent, each showing the lightest possible setup

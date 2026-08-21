@@ -244,32 +244,6 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     expect(report).not.toContain("Workspace Doc B")
   })
 
-  it("proposes a single-file revision for review (with and without addresses)", async () => {
-    const a = await client.publish({ content: "# headline", filename: "p.md", title: "Proposable" })
-    const c = await client.createComment(a.short_id, { body_md: "fix headline", author: "jess" })
-    const p = await client.propose(a.short_id, {
-      content: "# fixed headline",
-      message: "tightened",
-      addresses: [c.thread_id],
-    })
-    expect(p.id).toBeTruthy()
-    expect(p.base_version).toBe(1)
-    expect(p.addressed).toEqual([c.thread_id])
-    // The live version is untouched — a proposal is not a publish.
-    expect((await client.getContent(a.short_id)).text).toBe("# headline")
-
-    // No `addresses` (default filename) covers the other branch.
-    const p2 = await client.propose(a.short_id, { content: "# again", message: "another pass" })
-    expect(p2.id).toBeTruthy()
-
-    // Bytes content (the content_path lane) proposes the same as a string.
-    const p3 = await client.propose(a.short_id, {
-      content: new TextEncoder().encode("# from a file"),
-      message: "by path",
-    })
-    expect(p3.id).toBeTruthy()
-  })
-
   it("getContent format:'html' returns the exact stored source (the edits precondition)", async () => {
     const src = "<html><head><title>t</title></head><body><h1>H</h1><p>body</p></body></html>"
     const a = await client.publish({ content: src, filename: "h.html", title: "Html read" })
@@ -334,22 +308,6 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
         baseVersion: 1,
       }),
     ).rejects.toThrow(/derive 409/)
-  })
-
-  it("propose edits: stages a proposal from materialized text, live version untouched", async () => {
-    const a = await client.publish({
-      content: "<h1>x</h1><p>keep this</p>",
-      filename: "pe.html",
-      title: "Propose Edits",
-    })
-    const p = await client.propose(a.short_id, {
-      edits: [{ old_str: "keep this", new_str: "changed this" }],
-      message: "tweak",
-    })
-    expect(p.id).toBeTruthy()
-    const live = await client.getContent(a.short_id)
-    expect(live.text).toContain("keep this")
-    expect(live.text).not.toContain("changed this")
   })
 
   it("diff: content=markdown diffs the readable form", async () => {

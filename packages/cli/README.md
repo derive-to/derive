@@ -37,19 +37,20 @@ derive publish dist/ --title "Launch page" --spa
 
 ## Continue work at the same URL
 
-Use comments and later versions when they help. Formal approval is available for work that
-needs a named decision; it is not required for every artifact.
+Use comments and later versions when they help. A review round is there for work that
+needs a named look; it is not required for every artifact.
 
 ```bash
 derive status                 # review state and open threads
 derive comments               # full comment threads
 derive reply <thread-id> "Updated the evidence and conclusion."
 derive publish --name "Revision 2"
-derive approve --note "Ready to ship"
+derive send-back --note "Good to go — ship it"
 ```
 
-Approval is a human action. An agent can publish directly only at a role that permits
-it; otherwise it submits a proposal for a person to accept.
+The Send back note is the human's answer — a note that reads "good to go" IS the
+go-signal. An agent publishes directly only at a role that permits it; otherwise it
+suggests the change in a comment for a person to apply.
 
 ## Connect a project to agents
 

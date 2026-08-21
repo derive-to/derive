@@ -23,16 +23,16 @@ Workspace roles are shown in the product as:
 
 - **Admin:** manages the workspace, its members, settings, billing, and every artifact.
 - **Creator:** creates, publishes, edits, and reviews work without managing the workspace.
-- **Viewer:** reads and comments. Proposed edits wait for a Creator or Admin to decide.
+- **Viewer:** reads and comments. They suggest changes in comments; a Creator or Admin applies them.
 
 Workspace access uses each person's existing role. There is no second per-artifact role to
 configure for the whole workspace. If somebody opens a workspace-only artifact while another
 workspace is active, Derive offers to switch rather than exposing the artifact to an unrelated
 workspace.
 
-Agents borrow no greater standing than the person and workspace that authorized them. They can
-publish or propose within that standing, but an agent, API token, or operator token cannot record
-the human approval that closes a review.
+Agents borrow no greater standing than the person and workspace that authorized them. They
+publish within that standing; below publish standing they suggest changes in comments. An agent,
+API token, or operator token cannot close a review round; only a person sends work back.
 
 ## Control discovery separately
 
@@ -76,6 +76,6 @@ wins; the artifact's own Anyone link remains an independent choice.
 | Public launch page | Anyone · Can view | Public directory | None |
 | External editor without broad workspace access | Invited | Not listed | Grant edit to that person |
 
-When a review is ready to close, the final approval must come from a directly signed-in person
-with approval standing. Derive records both that person's stable identity and a display-name
-snapshot with the decision.
+A review round closes when a directly signed-in person sends the work back with a note; a note
+that reads "good to go" is the go-signal. Derive records both that person's stable identity and a
+display-name snapshot with the decision.

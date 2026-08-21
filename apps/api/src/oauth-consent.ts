@@ -15,21 +15,13 @@ const SCOPE_LABELS: Record<string, string> = {
   offline_access: "Stay connected without asking again (refresh access)",
   "derive:read": "Read your artifacts and comments",
   "derive:comment": "Comment on your artifacts",
-  "derive:propose": "Propose new versions (you approve before they go live)",
   "derive:publish": "Publish new versions directly",
-  "derive:review": "Approve or request changes on proposals",
   "derive:manage": "Manage agents and contexts (only as far as your workspace role allows)",
 }
 
 // Scopes that let the agent change something get a distinct accent tick; read-only
 // scopes get a quieter one — so the grant's blast radius reads at a glance.
-const WRITE_SCOPES = new Set([
-  "derive:comment",
-  "derive:propose",
-  "derive:publish",
-  "derive:review",
-  "derive:manage",
-])
+const WRITE_SCOPES = new Set(["derive:comment", "derive:publish", "derive:manage"])
 
 const esc = (s: string): string =>
   s.replace(/[&<>"']/g, (c) =>

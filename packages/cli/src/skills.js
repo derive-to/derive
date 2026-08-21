@@ -40,11 +40,8 @@ export function skillSlug(name) {
  *  collision-free directory name across the whole set before touching disk). Returns
  *  { name, entry, files: Map<path, bytes> }; throws if the version has no readable tree.
  *
- *  A pinned entry fetches its exact version. An unpinned one (version null) asks the
- *  server for "approved" — the last human-approved version, current when none exists.
- *  Only a server that predates that sentinel (it 400s "bad version") falls back to
- *  plain current; any other failure fails the skill. A broad catch here would serve
- *  the unapproved draft on a transient error, silently defeating the gate. */
+ *  A pinned entry fetches its exact version. An unpinned one (version null) serves the
+ *  artifact's current version. */
 export async function fetchSkill(api, { id, version }) {
   const fetchAt = async (v) => {
     const outline = await api.outline(id, v)
@@ -58,14 +55,7 @@ export async function fetchSkill(api, { id, version }) {
     }
     return { name: skillNameFrom(files.get(entry)), entry, files }
   }
-  if (version != null) return fetchAt(version)
-  try {
-    return await fetchAt("approved")
-  } catch (e) {
-    if (!/→ 400\b/.test(String(e?.message ?? e))) throw e
-    console.error(`[skills] ${id}: server predates v=approved, serving current`)
-    return fetchAt(null)
-  }
+  return fetchAt(version ?? null)
 }
 
 /** Write a fetched skill under destRoot/<dir>/. A skills dir is DERIVED state (like the

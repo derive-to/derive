@@ -1242,7 +1242,7 @@ export function runStoreContract(
       const me = `u_${uuid()}`
       const a = await store.createArtifact(newArtifact())
       const b = await store.createArtifact(newArtifact())
-      // a: tags, a ready preview, views, an open comment thread, an open proposal, a share.
+      // a: tags, a ready preview, views, an open comment thread, a share.
       await store.setArtifactTags(a.id, ["beta", "alpha"])
       await store.addVersion(a.id, newVersion())
       await store.setVersionPreview(a.id, 1, { preview_key: "png", preview_status: "ready" })
@@ -1269,15 +1269,6 @@ export function runStoreContract(
         author: "me",
         author_id: me,
       })
-      await store.createProposal({
-        id: uuid(),
-        artifact_id: a.id,
-        blob_key: `blob_${uuid()}`,
-        content_type: "text/html",
-        kind: "file",
-        author: "amy",
-        base_version: 1,
-      })
       await store.setArtifactMember({ id: uuid(), artifact_id: a.id, user_id: me, role: "editor" })
       await store.setFavorite(a.id, me)
 
@@ -1295,7 +1286,6 @@ export function runStoreContract(
       expect(enr.tags).toEqual(await store.tagsForArtifacts(ids))
       expect(enr.previews).toEqual(await store.previewReady(ids))
       expect(enr.signals).toEqual(await store.commentSignals(ids, me))
-      expect(enr.proposals).toEqual(await store.openProposalCounts(ids))
       expect(enr.shareRoles).toEqual(await store.artifactRolesFor(me, ids))
       // Page-scoped by contract: the whole-list call clipped to `ids`, which is what the
       // pg driver's arm returns natively and what the compose path has to narrow to.
@@ -1307,7 +1297,6 @@ export function runStoreContract(
       expect(enr.tags[a.id]).toEqual(["alpha", "beta"])
       expect(enr.previews[a.id]).toBe(true)
       expect(enr.signals[a.id]?.open_threads).toBe(1)
-      expect(enr.proposals[a.id]).toBe(1)
       expect(enr.shareRoles[a.id]).toBe("editor")
       expect(enr.favorites).toEqual([a.id])
       expect(enr.views[b.id]).toBeUndefined()
@@ -1373,7 +1362,6 @@ export function runStoreContract(
         handles: [],
         bylines: [],
         signals: {},
-        proposals: {},
         shareRoles: {},
         favorites: [],
       })
@@ -1936,118 +1924,40 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: proposals (reviews)`, () => {
-    it("creates proposals, lists open ones, records a decision", async () => {
-      const a = await store.createArtifact(newArtifact())
-      const p = await store.createProposal({
-        id: uuid(),
-        artifact_id: a.id,
-        blob_key: `blob_${uuid()}`,
-        content_type: "text/html",
-        kind: "file",
-        title: "proposed",
-        message: "please review",
-        author: "bob",
-        base_version: 1,
-      })
-      expect(await store.getProposal(p.id)).toMatchObject({ state: "open" })
-      expect(await store.listProposals(a.id, { state: "open" })).toHaveLength(1)
-      expect((await store.openProposalCounts([a.id]))[a.id]).toBe(1)
-      const decided = await store.decideProposal(p.id, {
-        state: "approved",
-        decided_by: "amy",
-        decided_version: 2,
-        decision_note: "lgtm",
-      })
-      expect(decided?.state).toBe("approved")
-      expect((await store.openProposalCounts([a.id]))[a.id] ?? 0).toBe(0)
-    })
-
-    it("lets exactly one concurrent proposal decision publish", async () => {
-      const a = await store.createArtifact(newArtifact())
-      const p = await store.createProposal({
-        id: uuid(),
-        artifact_id: a.id,
-        blob_key: `blob_${uuid()}`,
-        content_type: "text/html",
-        kind: "file",
-        title: null,
-        message: "candidate",
-        author: "agent",
-        author_id: "agent_1",
-        base_version: 0,
-      })
-      const [amy, bob] = await Promise.all([
-        store.approveOpenProposal(p.id, {
-          version_id: uuid(),
-          size_bytes: 10,
-          decided_by: "Amy",
-          decided_by_id: "u_amy",
-        }),
-        store.approveOpenProposal(p.id, {
-          version_id: uuid(),
-          size_bytes: 10,
-          decided_by: "Bob",
-          decided_by_id: "u_bob",
-        }),
-      ])
-      expect([amy, bob].filter(Boolean)).toHaveLength(1)
-      expect(await store.listVersions(a.id)).toHaveLength(1)
-      expect((await store.getArtifactById(a.id))?.current_version).toBe(1)
-      // Approval stamps the delivery pointer — asserted here so all three drivers
-      // (sqlite, pg, d1) keep it; the D1 batch once omitted it and failed open.
-      expect((await store.getArtifactById(a.id))?.approved_version).toBe(1)
-      expect((await store.getProposal(p.id))?.decided_by_id).toBe(amy ? "u_amy" : "u_bob")
-      await expect(
-        store.decideProposal(p.id, {
-          state: "changes_requested",
-          decided_by: "late",
-          decided_version: null,
-        }),
-      ).resolves.toBeNull()
-    })
-
+  describe(`${label}: review rounds`, () => {
     it("lets exactly one concurrent review-round settlement win", async () => {
       const a = await store.createArtifact(newArtifact())
       const round = await store.createReviewRound({
         id: uuid(),
         artifact_id: a.id,
-        version: 0,
+        version: 1,
         requested_by: "agent_1",
         requested_for: "u_amy",
       })
-      const [approved, sentBack] = await Promise.all([
+      const [amy, bob] = await Promise.all([
         store.resolveReviewRound(round.id, {
-          state: "approved",
+          note: "good to go",
           resolved_by: "u_amy",
           resolved_by_name: "Amy",
         }),
         store.resolveReviewRound(round.id, {
-          state: "sent_back",
+          note: "needs another pass",
           resolved_by: "u_bob",
           resolved_by_name: "Bob",
         }),
       ])
-      expect([approved, sentBack].filter(Boolean)).toHaveLength(1)
+      expect([amy, bob].filter(Boolean)).toHaveLength(1)
       const settled = (await store.listReviewRounds(a.id)).find((item) => item.id === round.id)
-      expect(settled?.state).toBe(approved ? "approved" : "sent_back")
-      expect(settled?.resolved_by).toBe(approved ? "u_amy" : "u_bob")
-      // A version-0 round never stamps the delivery pointer (0 would read as "serve
-      // version 0", not "never approved"); a real round does, on every driver.
-      expect((await store.getArtifactById(a.id))?.approved_version).toBeNull()
-      const real = await store.createReviewRound({
-        id: uuid(),
-        artifact_id: a.id,
-        version: 1,
-        requested_by: "agent_1",
-        requested_for: "u_bob",
-      })
-      await store.resolveReviewRound(real.id, {
-        state: "approved",
-        resolved_by: "u_bob",
-        resolved_by_name: "Bob",
-      })
-      expect((await store.getArtifactById(a.id))?.approved_version).toBe(1)
+      expect(settled?.state).toBe("sent_back")
+      expect(settled?.resolved_by).toBe(amy ? "u_amy" : "u_bob")
+      expect(settled?.note).toBe(amy ? "good to go" : "needs another pass")
+      // The loser got null back, and a late second settlement stays null.
+      await expect(
+        store.resolveReviewRound(round.id, {
+          resolved_by: "u_late",
+          resolved_by_name: "Late",
+        }),
+      ).resolves.toBeNull()
     })
   })
 
@@ -2455,15 +2365,6 @@ export function runStoreContract(
         created_by: "amy",
       })
       await store.addCollectionItem(col.id, a.id)
-      await store.createProposal({
-        id: uuid(),
-        artifact_id: a.id,
-        blob_key: `blob_${uuid()}`,
-        content_type: "text/html",
-        kind: "file",
-        author: "amy",
-        base_version: 1,
-      })
       // Two comments in ONE open thread + one resolved thread: openThreads counts
       // DISTINCT open threads, so this must be 1, not 2 and not 3.
       const openThread = uuid()
@@ -2493,7 +2394,6 @@ export function runStoreContract(
       expect(detail.versions).toEqual(await store.listVersions(a.id))
       expect(detail.tags).toEqual((await store.tagsForArtifacts([a.id]))[a.id] ?? [])
       expect(detail.collectionIds).toEqual(await store.collectionIdsForArtifact(a.id))
-      expect(detail.proposals).toEqual(await store.listProposals(a.id))
       expect(detail.openThreads).toBe(
         (await store.commentSignals([a.id], null))[a.id]?.open_threads ?? 0,
       )
@@ -2505,7 +2405,6 @@ export function runStoreContract(
       expect(detail.versions.map((v) => v.n)).toEqual([1, 2])
       expect(detail.tags).toEqual(["alpha", "zeta"])
       expect(detail.collectionIds).toEqual([col.id])
-      expect(detail.proposals).toHaveLength(1)
       expect(detail.openThreads).toBe(1)
       expect(detail.favorite).toBe(true)
       expect(detail.settings.whiteLabel).toBe(true)
@@ -2537,7 +2436,6 @@ export function runStoreContract(
       expect(detail.versions).toEqual([])
       expect(detail.tags).toEqual([])
       expect(detail.collectionIds).toEqual([])
-      expect(detail.proposals).toEqual([])
       expect(detail.openThreads).toBe(0)
       expect(detail.favorite).toBe(false)
       expect(detail.managed).toBe(false)
@@ -2545,7 +2443,7 @@ export function runStoreContract(
       expect(detail.settings).toEqual(await store.getOrgSettings(org))
     })
 
-    it("artifactDetail scopes to ITS artifact — a sibling's versions/tags/proposals never bleed in", async () => {
+    it("artifactDetail scopes to ITS artifact — a sibling's versions/tags/comments never bleed in", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Scoping")
       const mine = await store.createArtifact(newArtifact({ org_id: org }))
@@ -2554,15 +2452,6 @@ export function runStoreContract(
       await store.addVersion(other.id, newVersion())
       await store.addVersion(other.id, newVersion())
       await store.setArtifactTags(other.id, ["not-mine"])
-      await store.createProposal({
-        id: uuid(),
-        artifact_id: other.id,
-        blob_key: `blob_${uuid()}`,
-        content_type: "text/html",
-        kind: "file",
-        author: "amy",
-        base_version: 1,
-      })
       await store.createComment({
         id: uuid(),
         artifact_id: other.id,
@@ -2578,7 +2467,6 @@ export function runStoreContract(
       })
       expect(detail.versions).toHaveLength(1)
       expect(detail.tags).toEqual([])
-      expect(detail.proposals).toEqual([])
       expect(detail.openThreads).toBe(0)
     })
 
@@ -5481,7 +5369,7 @@ export function runStoreContract(
       await store.setMembership({ id: uuid(), org_id: org, user_id: me, role: "owner" })
 
       // Enough shape to light up every arm: several artifacts (so order is observable),
-      // tags, a favorite, a share, an open proposal and an open comment.
+      // tags, a favorite, a share and an open comment.
       const made = []
       for (let i = 0; i < 5; i++) {
         const a = newArtifact({ org_id: org, title: `Page ${i}` })
@@ -5530,7 +5418,6 @@ export function runStoreContract(
       expect(fast.enrichment.tags).toEqual(slow.tags)
       expect(fast.enrichment.collections).toEqual(slow.collections)
       expect(fast.enrichment.previews).toEqual(slow.previews)
-      expect(fast.enrichment.proposals).toEqual(slow.proposals)
       expect(fast.enrichment.views).toEqual(slow.views)
       expect(fast.enrichment.signals).toEqual(slow.signals)
       expect(fast.enrichment.shareRoles).toEqual(slow.shareRoles)

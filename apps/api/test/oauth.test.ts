@@ -127,13 +127,13 @@ describe("OAuth access token acts as a scoped agent", () => {
     expect(j.versions[0].author).toBe("OAuth Owner")
   })
 
-  it("a propose-only grant cannot publish (least privilege)", async () => {
-    const app = appWithGrant("prop", {
-      token: "tok_prop",
-      scopes: "openid derive:propose",
+  it("a comment-only grant cannot publish (least privilege)", async () => {
+    const app = appWithGrant("cmt", {
+      token: "tok_cmt",
+      scopes: "openid derive:comment",
       expiresAt: future(),
     })
-    expect((await publish(app, "tok_prop")).status).toBe(403)
+    expect((await publish(app, "tok_cmt")).status).toBe(403)
   })
 
   it("an expired grant is rejected — the caller falls back to anonymous", async () => {

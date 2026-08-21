@@ -4,7 +4,7 @@ import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./h
 // Save-as-skill: the capture pair. GET returns the copyable prompt; POST delivers the
 // identical instruction (saveAsSkillInstruction is the single source) to a registered
 // agent's pull inbox — the rework-route pattern. The captured skill publishes LIVE and
-// gets reviewed by comments; there is no proposal step.
+// gets reviewed by comments on the live version.
 
 const owner: TestUser = {
   id: "u_cap_own",
@@ -56,7 +56,7 @@ describe("GET /save-as-skill — the copyable capture prompt", () => {
     expect(prompt).toContain("derive://skills") // dedup: read the catalog first
     expect(prompt).toContain("SKILL.md")
     expect(prompt).toContain("leave a comment on this skill") // the deviation footer
-    expect(prompt).toContain("live") // no proposal step
+    expect(prompt).toContain("live") // publishes live
     expect(prompt).toContain("From the requester: pricing pages only")
   })
 

@@ -6,7 +6,8 @@
 
 Derive is a workspace for work made with agents. Publish to a lasting URL, keep each revision,
 comment on exact text with W3C TextQuoteSelector, edit directly, and control who can read or
-change the work. Proposals and formal review are available when permissions or a decision require them.
+change the work. Review rounds are there when a decision needs a named look: the reviewer
+answers in comments and sends the work back with a note.
 
 Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to. The FSL license converts each release to Apache-2.0 after two years.
 
@@ -48,7 +49,6 @@ All requests use `Authorization: Bearer $DERIVE_TOKEN` (static agent token from 
 ```
 POST   /v1/artifacts                           publish new artifact (multipart: file, title, visibility)
 POST   /v1/artifacts/:id/versions              publish new version of existing artifact
-POST   /v1/artifacts/:id/proposals             propose a candidate version for human approval
 GET    /v1/artifacts/:id                       artifact metadata + version list
 GET    /v1/artifacts/:id/content?v=N           source read-back (current version by default)
 GET    /v1/artifacts/:id/comments?state=open   comment threads
@@ -74,9 +74,7 @@ The local compatibility server is `npx -y @derive-to/mcp` and shares `derive log
 Skills: `read("derive://skills")` returns the catalog (core skills plus the connected
 workspace's own team skills); read one with `derive://skills/<name-or-short-id>`.
 Reading a skill artifact by short id returns its SKILL.md body with the bundle's
-files listed. Skill delivery serves the last human-approved version when one exists
-(a proposal or review approval sets it); until a skill is ever approved, it serves
-current. `?v=approved` on the content API resolves the same rule.
+files listed. Skill delivery serves the artifact's current version.
 
 Capture: `GET /v1/artifacts/:id/save-as-skill?threadId=...` returns a prompt that turns
 a review correction into a workspace skill (read the thread, dedup against the catalog,

@@ -3,7 +3,6 @@ import {
   activateThread,
   addComment,
   openArtifact,
-  proposeEdit,
   publishArtifact,
   shareArtifact,
   signUp,
@@ -39,13 +38,4 @@ export const test = base.extend<Fixtures>({
   },
 })
 
-export {
-  activateThread,
-  addComment,
-  expect,
-  openArtifact,
-  proposeEdit,
-  publishArtifact,
-  shareArtifact,
-  signUp,
-}
+export { activateThread, addComment, expect, openArtifact, publishArtifact, shareArtifact, signUp }

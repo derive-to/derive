@@ -38,7 +38,6 @@ export const composeListEnrichment = async (
     | "usersByGithubIds"
     | "getUsers"
     | "commentSignals"
-    | "openProposalCounts"
     | "artifactRolesFor"
     | "listUserFavoriteIds"
   >,
@@ -59,7 +58,6 @@ export const composeListEnrichment = async (
     username: u.username ?? null,
   }))
   const signals = opts.viewerId ? await store.commentSignals(opts.ids, opts.viewerId) : {}
-  const proposals = await store.openProposalCounts(opts.ids)
   const shareRoles = opts.memberId ? await store.artifactRolesFor(opts.memberId, opts.ids) : {}
   // Narrowed to the page here, where the pg driver narrows in SQL — the contract is
   // "which of `ids` are starred", so a driver that reads the whole list must still clip
@@ -75,7 +73,6 @@ export const composeListEnrichment = async (
     handles,
     bylines,
     signals,
-    proposals,
     shareRoles,
     favorites,
   }
@@ -88,7 +85,6 @@ export const composeArtifactDetail = async (
     | "listVersions"
     | "tagsForArtifacts"
     | "collectionIdsForArtifact"
-    | "listProposals"
     | "commentSignals"
     | "listUserFavoriteIds"
     | "getOrgSettings"
@@ -98,12 +94,11 @@ export const composeArtifactDetail = async (
   opts: ArtifactDetailOpts,
 ): Promise<ArtifactDetail> => {
   const { artifactId, orgId, viewerId } = opts
-  const [versions, tagsById, collectionIds, proposals, signals, favIds, settings, managedIds] =
+  const [versions, tagsById, collectionIds, signals, favIds, settings, managedIds] =
     await Promise.all([
       store.listVersions(artifactId),
       store.tagsForArtifacts([artifactId]),
       store.collectionIdsForArtifact(artifactId),
-      store.listProposals(artifactId),
       store.commentSignals([artifactId], null),
       viewerId ? store.listUserFavoriteIds(viewerId) : Promise.resolve<string[]>([]),
       store.getOrgSettings(orgId),
@@ -121,7 +116,6 @@ export const composeArtifactDetail = async (
     bylines,
     tags: tagsById[artifactId] ?? [],
     collectionIds,
-    proposals,
     openThreads: signals[artifactId]?.open_threads ?? 0,
     favorite: favIds.includes(artifactId),
     settings,

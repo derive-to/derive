@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest"
 // therefore never receives a ctx, and `c.executionCtx` throws on Workers, not merely on Node.
 //
 // That is not a theoretical mismatch. `runAfterAck` used to try it and swallow the throw into
-// fire-and-forget, so every deferred Slack path — link previews, proposal decisions, the
+// fire-and-forget, so every deferred Slack path — link previews, review send-backs, the
 // interactivity repaint, the deferred /derive search — returned its response and was torn down at
 // the promise's FIRST await. Silently: no log and no exception, because everything worth logging
 // happens after that await. Link previews were dead in production for a day, with `link_shared`

@@ -58,7 +58,7 @@ interactive clients. Treat static tokens as credentials and never commit them.
 - `read`: read artifact content or a specific version.
 - `catch_up`: retrieve changed work, open feedback, history, or the current work queue.
 - `comment`: leave feedback, reply, resolve, or reopen a thread.
-- `publish`: create an artifact or save a revision; lower roles create proposals.
+- `publish`: create an artifact or save a revision; publishes live.
 - `stage`: upload images, fonts, and other bundle assets out of band.
 - `use`: ask a workspace context to perform work.
 - `checkpoint`: save resumable working state as a one-page artifact.
@@ -70,7 +70,7 @@ read the relevant workflow before performing a multi-step operation. The canonic
 ## Permission model
 
 The MCP server does not bypass Derive permissions. The authenticated agent can only
-read, comment, propose, publish, or manage what its role allows. Anonymous callers are
+read, comment, publish, or manage what its role allows. Anonymous callers are
 always read-only, and mutations retain the authenticated actor for accountability.
 See the
 [access model](https://docs.derive.to/concepts/access/).

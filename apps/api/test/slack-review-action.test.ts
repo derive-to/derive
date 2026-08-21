@@ -6,15 +6,14 @@ import { SqliteMetaStore } from "@derive/db/sqlite"
 import { afterAll, describe, expect, it, vi } from "vitest"
 import { runSlackReviewAction } from "../src/lib/slack-review"
 
-// Approving from Slack must land in exactly the state `derive approve` or the sidebar button
-// would produce — the agent polling catch_up cannot tell which surface settled the round, and
-// must not have to. So the permissions mirror routes/review.ts rather than inventing a
-// Slack-specific rule: `comment` to send back, `approve` to approve.
+// Sending back from Slack must land in exactly the state `derive send-back` or the sidebar
+// button would produce — the agent polling catch_up cannot tell which surface settled the
+// round, and must not have to. So the permissions mirror routes/review.ts rather than
+// inventing a Slack-specific rule: `comment` standing, because answering is collaboration.
 const dir = mkdtempSync(join(tmpdir(), "derive-slack-review-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 const bus = { publish: () => {}, subscribe: () => () => {} } as never
-const noBilling = async () => null
 
 const setup = async (
   name: string,
@@ -62,51 +61,41 @@ const setup = async (
   return { meta, artifact: artifact as ArtifactRecord, round }
 }
 
-const run = (
-  meta: SqliteMetaStore,
-  artifact: ArtifactRecord,
-  op: "approve" | "send_back",
-  sent: string[],
-) => {
+const run = (meta: SqliteMetaStore, artifact: ArtifactRecord, sent: string[]) => {
   vi.stubGlobal("fetch", async (_u: string, init: RequestInit) => {
     sent.push(String((JSON.parse(String(init.body)) as { text?: string }).text ?? ""))
     return new Response("ok", { status: 200 })
   })
   return runSlackReviewAction(
-    { meta: meta as never, bus, billingBlocked: noBilling },
+    { meta: meta as never, bus },
     {
       teamId: "T1",
       slackUserId: "U1",
       artifact,
-      op,
       responseUrl: "https://hooks.slack.test/x",
     },
   )
 }
 
 describe("runSlackReviewAction", () => {
-  it("approves as the linked account, settling the round", async () => {
-    const { meta, artifact, round } = await setup("approve-ok", { role: "owner" })
-    const sent: string[] = []
-    await run(meta, artifact, "approve", sent)
-    expect(await meta.getPendingRound(artifact.id)).toBeNull()
-    const rounds = await meta.listReviewRounds(artifact.id)
-    expect(rounds.find((r) => r.id === round.id)?.state).toBe("approved")
-    expect(sent.join(" ")).toContain("Approved")
-  })
-
-  it("sends back on a comment-level role, which may not approve", async () => {
+  it("sends back as the linked account, settling the round with who decided", async () => {
     const { meta, artifact, round } = await setup("sendback-ok", { role: "commenter" })
     const sent: string[] = []
-    await run(meta, artifact, "send_back", sent)
+    await run(meta, artifact, sent)
+    expect(await meta.getPendingRound(artifact.id)).toBeNull()
     const rounds = await meta.listReviewRounds(artifact.id)
-    expect(rounds.find((r) => r.id === round.id)?.state).toBe("sent_back")
+    const settled = rounds.find((r) => r.id === round.id)
+    expect(settled?.state).toBe("sent_back")
+    expect(settled?.resolved_by).toBe("u-1")
+    expect(sent.join(" ")).toContain("Sent back")
+  })
 
-    const second = await setup("approve-denied", { role: "commenter" })
-    const denied: string[] = []
-    await run(second.meta, second.artifact, "approve", denied)
-    expect(denied.join(" ")).toContain("permission")
-    expect(await second.meta.getPendingRound(second.artifact.id)).not.toBeNull()
+  it("refuses a clicker with no comment standing", async () => {
+    const { meta, artifact } = await setup("no-standing")
+    const sent: string[] = []
+    await run(meta, artifact, sent)
+    expect(sent.join(" ")).toContain("permission")
+    expect(await meta.getPendingRound(artifact.id)).not.toBeNull()
   })
 
   // An email match says who somebody probably is. Settling a round is recorded as their
@@ -114,16 +103,16 @@ describe("runSlackReviewAction", () => {
   it("refuses an email-matched identity, and says how to fix it", async () => {
     const { meta, artifact } = await setup("email-origin", { role: "owner", origin: "email" })
     const sent: string[] = []
-    await run(meta, artifact, "approve", sent)
+    await run(meta, artifact, sent)
     expect(sent.join(" ")).toContain("Settings → Integrations")
     expect(await meta.getPendingRound(artifact.id)).not.toBeNull()
   })
 
-  // No Derive principal ⇒ nothing to authorize against. Same prompt the proposal buttons give.
+  // No Derive principal ⇒ nothing to authorize against.
   it("refuses an unlinked clicker", async () => {
     const { meta, artifact } = await setup("no-link", { role: "owner", link: false })
     const sent: string[] = []
-    await run(meta, artifact, "approve", sent)
+    await run(meta, artifact, sent)
     expect(sent.join(" ")).toContain("Settings → Integrations")
     expect(sent.join(" ")).not.toContain("from your email")
     expect(await meta.getPendingRound(artifact.id)).not.toBeNull()
@@ -132,34 +121,9 @@ describe("runSlackReviewAction", () => {
   // The card may have been rendered minutes ago; the round can be settled from Derive meanwhile.
   it("says so when the round is already gone, rather than acting", async () => {
     const { meta, artifact, round } = await setup("already", { role: "owner" })
-    await meta.resolveReviewRound(round.id, { state: "approved", note: null })
+    await meta.resolveReviewRound(round.id, { note: null })
     const sent: string[] = []
-    await run(meta, artifact, "approve", sent)
+    await run(meta, artifact, sent)
     expect(sent.join(" ")).toContain("no review pending")
-  })
-
-  it("honours the billing gate on approve only", async () => {
-    const { meta, artifact } = await setup("billing", { role: "owner" })
-    const sent: string[] = []
-    vi.stubGlobal("fetch", async (_u: string, init: RequestInit) => {
-      sent.push(String((JSON.parse(String(init.body)) as { text?: string }).text ?? ""))
-      return new Response("ok", { status: 200 })
-    })
-    await runSlackReviewAction(
-      {
-        meta: meta as never,
-        bus,
-        billingBlocked: async () => ({ code: "past_due", message: "Billing is past due." }),
-      },
-      {
-        teamId: "T1",
-        slackUserId: "U1",
-        artifact,
-        op: "approve",
-        responseUrl: "https://hooks.slack.test/x",
-      },
-    )
-    expect(sent.join(" ")).toContain("past due")
-    expect(await meta.getPendingRound(artifact.id)).not.toBeNull()
   })
 })

@@ -110,6 +110,5 @@ export const statusPhrase = (
     return mine
       ? { text: "Awaiting your review", reviewerName: null }
       : { text: "Awaiting review from", reviewerName: s.review.reviewerName }
-  if (s.review.state === "sent_back") return { text: "Answers sent back", reviewerName: null }
-  return { text: "Approved", reviewerName: null }
+  return { text: "Answers sent back", reviewerName: null }
 }

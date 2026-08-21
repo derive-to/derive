@@ -12,7 +12,7 @@ derive.to/
 │  └─ docs/        Static Starlight site deployed independently at docs.derive.to
 ├─ packages/
 │  ├─ core/        runtime-agnostic domain: MetaStore/BlobStore ports, ids,
-│  │              mime, hashing, publish/propose/approve, permissions, markdown,
+│  │              mime, hashing, publish, review rounds, permissions, markdown,
 │  │              the viewer shell, diff, version sessions, anchors
 │  ├─ db/          MetaStore adapters: sqlite (default), pg (scale), d1 (edge)
 │  ├─ storage/     BlobStore adapters: fs (default), s3/r2 (hosted)
@@ -100,8 +100,8 @@ the Workers entry can only reach `./d1` + `./schema`.
 ## Data model
 
 Artifacts have versions (content-addressed blobs); comments anchor to text quotes
-and survive republish; proposals are candidate versions awaiting review; collections
-group artifacts and propagate a shared role to their items; memberships scope a user
+and survive republish; collections group artifacts and propagate a shared role to
+their items; memberships scope a user
 to a workspace role. See `packages/core/src/ports.ts` for the full record shapes and
 `packages/db/src/schema.ts` for the tables.
 

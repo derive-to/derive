@@ -229,7 +229,7 @@ describe("B-020: view-analytics is collaborator-gated + never leaks email", () =
 })
 
 // B-021: author/actor attribution shown to others (publish + version author byline,
-// comment author, proposal approver/reviewer) must fall back to the public handle
+// comment author, review-round resolver) must fall back to the public handle
 // when a user has no display name — never the email. The email→handle migration
 // fixed the rosters but missed these byline paths. See bug-hunt B-021.
 describe("B-021: author/actor attribution falls back to handle, never email", () => {

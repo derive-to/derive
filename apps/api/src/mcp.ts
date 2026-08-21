@@ -40,8 +40,8 @@
 // one intent where Derive routes a question to a runner).
 // Variation lives in parameters, never a new tool: `since_version`/`to_version` turn
 // catch_up into a diff and omitting `short_id` turns it into the work queue,
-// `reply_to`/`set_state` fold reply+resolve into comment, `for_review`/role turn publish
-// into a human-reviewed proposal, and `find` collapses browse/grep/search/contexts onto
+// `reply_to`/`set_state` fold reply+resolve into comment, `request_review` folds the
+// review ask into publish, and `find` collapses browse/grep/search/contexts onto
 // `query`/`short_id`/`tag`. A new capability is a parameter on an existing tool, not a
 // new tool — every extra tool costs the agent a slot to understand and choose between.
 //
@@ -57,7 +57,6 @@ import {
   AGENT_INBOX_PAGE,
   type AgentRecord,
   type ArtifactRecord,
-  approvedOrCurrent,
   brandprintInstructions,
   DECK_TEMPLATE,
   pendingRequestsPointer,
@@ -97,9 +96,9 @@ import { CORE_SKILLS } from "./skills-reference.gen"
 /**
  * A new MCP server for one request, scoped to `agent` (the OAuth-resolved identity).
  * Tools act in the bearer's workspace at the bearer's role: reads + comments for
- * commenter+, and writes via `publish` — which goes live for an editor/owner, or is
- * filed as a human-reviewed proposal for a commenter (or anyone passing
- * `for_review`). So a low-privilege agent is a safe contributor, not a publisher.
+ * commenter+, and writes via `publish`, which needs an editor/owner grant — a lower
+ * grant suggests changes in comments. So a low-privilege agent is a safe
+ * contributor, not a publisher.
  * Identity rides in the server `instructions` (below), not a `whoami` tool — it's a
  * one-shot fact, not a per-call action.
  */
@@ -286,11 +285,10 @@ async function buildServer(
       async (uri) => {
         if (m.body !== undefined)
           return { contents: [{ uri: uri.href, mimeType: m.mimeType, text: m.body }] }
-        // The lazy body serves the delivered version — approved when one exists —
-        // so a skill whose prepared body failed at connect can't fall back to an
-        // unapproved draft here.
+        // The lazy body serves the current version, so a skill whose prepared body
+        // failed at connect still reads consistently here.
         const art = await ctx.meta.getByShortId(doc.short_id)
-        const v = art ? await ctx.meta.getVersion(art.id, approvedOrCurrent(art)) : null
+        const v = art ? await ctx.meta.getVersion(art.id, art.current_version) : null
         const body = v ? await ctx.sourceText(v) : null
         return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: body ?? "" }] }
       },

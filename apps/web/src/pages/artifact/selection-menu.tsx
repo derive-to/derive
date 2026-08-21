@@ -12,9 +12,9 @@ import type { FrameGeom, Selection } from "./types"
  *
  * Two verbs, and they are the two things a reader does with a sentence they stopped
  * on: say something about it, or change it. Edit only appears for someone who can
- * actually land the change (it files a proposal for a commenter, hence the label
- * swap) — and it opens the mode with the caret already in that block, so the fix
- * costs one click instead of a trip to the header. Addressing an agent is NOT a
+ * actually land the change — and it opens the mode with the caret already in that
+ * block, so the fix costs one click instead of a trip to the header. Addressing an
+ * agent is NOT a
  * third verb: that's an @mention typed into the composer (see the "Comments,
  * Sessions & Presence" RFC).
  *
@@ -44,8 +44,8 @@ export function SelectionMenu({
   subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
   asideWidth: number
   onComment: () => void
-  /** "Edit" for someone who publishes, "Suggest" where it lands as a proposal.
-   *  Absent ⇒ this viewer can't edit and the verb doesn't appear at all. */
+  /** The edit verb's label. Absent ⇒ this viewer can't edit and the verb doesn't
+   *  appear at all. */
   editLabel?: string
   onEdit?: () => void
 }) {

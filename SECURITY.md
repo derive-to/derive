@@ -23,7 +23,7 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
 
 - **Anonymous callers are always read-only.** This is the load-bearing access
   invariant: an anonymous (no-account) caller is never more than a viewer. Anything past
-  view (comment, propose, publish, share, manage) requires an authenticated identity, so
+  view (comment, publish, share, manage) requires an authenticated identity, so
   there is no "open" mode that elevates an anonymous caller. To write, a caller signs in
   (Better Auth is always available, even zero-config) or presents a static `DERIVE_TOKEN`
   (set it for headless CI/agent automation).
@@ -102,7 +102,7 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   account, Better Auth removes the account and its sessions, passkeys, and 2FA, then the
   Derive cascade (`MetaStore.deleteUserData`) drops their memberships, follows, favorites,
   and notifications and **anonymizes** their authorship. `author_id` on artifacts,
-  versions, comments, and proposals is nulled so co-authored threads survive intact rather
+  versions, and comments is nulled so co-authored threads survive intact rather
   than being destroyed with the account. Their personal workspace is dropped; artifact
   bytes are not hard-deleted (orphaned + anonymized, a GC concern). Deletion is **blocked**
   while the user is the sole owner of a workspace that still has other members, so a shared

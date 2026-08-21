@@ -12,7 +12,6 @@ import {
   newId,
   PublishError,
   parseTemplateLibraryUri,
-  propose as proposeChange,
   publishAdvisories,
   publish as publishVersion,
   type Role,
@@ -23,7 +22,6 @@ import {
 import { getTemplate as getBuiltInTemplate } from "@derive-to/templates"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
-import { markAddressed } from "../lib/addressed"
 import { afterPublish } from "../lib/after-publish"
 import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
 import { cleanPath, mergeBundleZip, zipBundleFiles } from "../lib/bundle"
@@ -60,7 +58,7 @@ import {
 
 export function registerPublishTool(tc: ToolContext): void {
   // NOTE: the surface deliberately does NOT vary by scope. Hiding publish's live-only access
-  // params from a grant that can only propose was built, measured (197 tokens, 4.1%) and
+  // params from a grant that can only comment was built, measured (197 tokens, 4.1%) and
   // REVERTED: derive://skills/publishing names `workspace_access`, `link_role`, `listed` and
   // `request_review` outright, and skills are static, so a gated connection reads a procedure
   // naming params its schema does not contain. That is the same contradiction that stopped
@@ -169,16 +167,16 @@ export function registerPublishTool(tc: ToolContext): void {
     return { profileShortId: artifact.short_id }
   }
 
-  // WRITE — publish live, or file a proposal for review -----------------------
+  // WRITE — every publish lands live -------------------------------------------
   server.registerTool(
     "publish",
     {
       description:
-        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. LIVE unless for_review. For related artifacts or a loop/graph, read derive://skills/bundles. See derive://skills/publishing.",
+        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Publishes LIVE; `request_review` asks for a human look. Bundles: derive://skills/bundles. See derive://skills/publishing.",
       // Additive versioning: a republish creates a new current version and the prior ones
       // stay in history (read short_id, version:N) — nothing is overwritten irreversibly,
       // so not destructive. Not idempotent: calling twice with the same content still
-      // creates two versions (or two proposals). Derive's own backend (the email/Slack
+      // creates two versions. Derive's own backend (the email/Slack
       // review-request DM is a side notification, not the tool's domain).
       annotations: {
         title: "Publish an artifact",
@@ -247,12 +245,6 @@ export function registerPublishTool(tc: ToolContext): void {
             "Workspace-wide labels that make it findable; reuse an existing tag over a near-duplicate. REPLACES the set (trimmed, lowercased, deduped, capped 20); [] clears; omitted leaves them untouched.",
           ),
         filename: z.string().optional(),
-        for_review: z
-          .boolean()
-          .optional()
-          .describe(
-            "File this as a PROPOSAL a human approves, instead of publishing live (single-file only).",
-          ),
         addresses: z
           .array(z.string())
           .optional()
@@ -406,7 +398,6 @@ export function registerPublishTool(tc: ToolContext): void {
       derived_from,
       tags,
       filename,
-      for_review,
       addresses,
       request_review,
       render,
@@ -509,7 +500,7 @@ export function registerPublishTool(tc: ToolContext): void {
       // Revise an existing artifact wherever it lives (reach roams to its
       // workspace, within the grant); create a new one in the targeted (or
       // default) workspace. The acting role is re-capped to that workspace, so
-      // publish/propose gating is correct there, not just in the default one.
+      // the publish gate is correct there, not just in the default one.
       const reached = short_id ? await reach(short_id, workspace) : null
       if (reached && "error" in reached) return text(reached.error)
       const existing = reached && !("error" in reached) ? reached.a : null
@@ -528,8 +519,8 @@ export function registerPublishTool(tc: ToolContext): void {
         actRole = t.role
       }
 
-      // THE AGENT-WRITE SWITCH binds every write this tool makes — a live publish, a
-      // proposal, whichever grant is calling (a standing MCP connection, an agent bearer,
+      // THE AGENT-WRITE SWITCH binds every write this tool makes, whichever grant is
+      // calling (a standing MCP connection, an agent bearer,
       // the code sandbox) — so "agents stop writing" is true wherever an agent-credentialed
       // write can start. Checked as soon as the target workspace is known, before anything
       // lands a row; one settings read serves the switch and the brand-profile pointer
@@ -602,7 +593,7 @@ export function registerPublishTool(tc: ToolContext): void {
       }
 
       // `edits` / `slide_ops` — materialize the full new content up front, then fall
-      // through to the untouched publish/proposal pipeline (sweep, addresses, receipts
+      // through to the untouched publish pipeline (sweep, addresses, receipts
       // all inherit). Text and structure are separate fields because they are separate
       // kinds of intent, and a batch mixing them would have no honest ordering.
       let editsApplied = 0
@@ -628,7 +619,7 @@ export function registerPublishTool(tc: ToolContext): void {
           if (e instanceof EditError) return err(e.message)
           throw e
         }
-        // Same size/storage ceiling the REST /versions and /proposals routes apply
+        // Same size/storage ceiling the REST /versions route applies
         // after materializing edits — without this the MCP tool could write an
         // over-quota version the HTTP surfaces would have rejected.
         const editedBytes = new TextEncoder().encode(materialized.content).length
@@ -666,66 +657,14 @@ export function registerPublishTool(tc: ToolContext): void {
           )
       }
 
-      // Direct publish is gated on the agent's role (Creator/Admin). A commenter-level
-      // grant — or anyone asking for_review — is routed to a human-reviewed proposal, so a
-      // low-privilege agent still can't push live content.
-      const review = for_review === true || !roleAllows(actRole, "publish")
-      if (review) {
-        if (!roleAllows(actRole, "propose"))
-          return text(
-            "Your grant is read-only (derive:read). Re-authorize with derive:propose (or a publish scope) to suggest changes.",
-          )
-        if (isBundle)
-          return text(
-            "Multi-page bundles can't be proposed for review yet — only published directly. Ask an editor to publish, or submit a single-file `content` revision.",
-          )
-        if (!existing)
-          return text(
-            "A proposal revises an EXISTING artifact — pass its `short_id`. Creating a new artifact needs publish rights (a Creator/Admin grant).",
-          )
-        try {
-          const { proposal } = await proposeChange(ctx.meta, ctx.blobs, short_id as string, {
-            bytes: new TextEncoder().encode(content as string),
-            // The sniffer types by filename first: a bare index.html default would
-            // re-type a markdown artifact as HTML when the proposal is approved.
-            filename: filename ?? preservingFilename(existing.current_content_type),
-            isBundle: false,
-            message: message ?? "Proposed revision",
-            author: agent.name,
-            author_id: agent.id,
-            // Delegation provenance: the agent proposes on behalf of the human that
-            // authorized it, so reviewers see "Agent X on behalf of Alice."
-            on_behalf_of: actingFor?.id ?? null,
-          })
-          const addressed = addresses?.length
-            ? await markAddressed(ctx.meta, existing.id, proposal.id, addresses)
-            : []
-          for (const threadId of addressed)
-            ctx.bus.publish(existing.id, {
-              type: "comment.addressed",
-              thread_id: threadId,
-              state: "addressed",
-            })
-          return json({
-            published: false,
-            proposed: true,
-            proposal_id: proposal.id,
-            base_version: proposal.base_version,
-            addressed,
-            ...(editsApplied ? { edits_applied: editsApplied } : {}),
-            ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
-            note: "Submitted for review — a human approves it or requests changes. It is NOT live yet.",
-          })
-        } catch (e) {
-          return text(
-            `Couldn't store the proposal: ${e instanceof PublishError ? e.message : "unknown error"}.`,
-          )
-        }
-      }
+      // Publishing needs publish standing — a commenter-grade grant is steered to
+      // comments, where its suggestion reaches a person who can apply it.
+      if (!roleAllows(actRole, "publish"))
+        return text(
+          "Your grant can't publish here. Leave your suggested change as a comment on the document instead, and someone with publish rights can apply it.",
+        )
 
-      // Gated on billing here, not up with the `edits` storage check above — that check
-      // also runs for the propose branch (which stays free), so the billing gate has to
-      // sit strictly after the review/propose split.
+      // Billing gates the live write, after the standing check above.
       const blocked = await ctx.billingBlocked(targetOrg)
       if (blocked) return err(blocked.message)
       if (merge) {
@@ -821,8 +760,7 @@ export function registerPublishTool(tc: ToolContext): void {
         // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, via the
         // one shared helper — event parity with the HTTP publish route (an open tab
         // live-reloads, the webhook outbox reaches integrations) with no chance to drift.
-        // A live publish that fixes feedback resolves those threads directly here (no
-        // approval step, unlike a proposal's `addressed`).
+        // A publish that fixes feedback resolves those threads directly here.
         const { resolved } = await afterPublish(
           {
             meta: ctx.meta,
@@ -868,7 +806,7 @@ export function registerPublishTool(tc: ToolContext): void {
               requestedById: agent.id,
               requestedByName: agent.name,
               version: version.n,
-              notifyExtras: { author: agent.name, actor_id: agent.id },
+              actorId: agent.id,
               // A detached executor's request interrupts the human it acts for — that is
               // the point. An attended surface's request is the person's own conversational
               // edit: the round is the record, and emailing them about it would be noise.

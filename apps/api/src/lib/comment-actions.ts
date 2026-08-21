@@ -1,7 +1,7 @@
 // The side-effect chain that follows a NEW comment, extracted so every path that creates one
 // runs the EXACT same fan-out: the HTTP route (routes/comments.ts) and the MCP `comment` tool
 // (mcp-tools/comment.ts). Callers own authorization and the comment write; this just executes
-// the consequences. Mirrors lib/thread-actions.ts and lib/proposal-actions.ts.
+// the consequences. Mirrors lib/thread-actions.ts.
 //
 // Before this existed the fan-out was inlined in the HTTP route, and the MCP tool grew its own
 // partial copy: it belled people and published on the bus, but reached no webhook, no Slack

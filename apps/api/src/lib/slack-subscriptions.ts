@@ -18,16 +18,12 @@ import type { WebhookEvent } from "../events"
 export const SLACK_SUBSCRIBABLE_EVENTS = [
   "comment.created",
   "version.published",
-  "proposal.created",
-  "proposal.approved",
-  "proposal.changes_requested",
   // The review round — the loop's most decision-relevant moment. These already reach the
   // reviewer's DM, but until now no CHANNEL could hear that a doc was blocked on someone, which
   // is exactly the fact a team wants ambient. Existing subscriptions are unaffected: `*` picks
   // them up, an explicit list does not, and the Settings picker reads this constant.
   "review.requested",
   "review.sent_back",
-  "review.approved",
 ] as const satisfies readonly WebhookEvent[]
 
 /** Whether an author id belongs to an agent. Two shapes count: a registered agent row, and the

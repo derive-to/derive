@@ -88,4 +88,4 @@ spend forever.
 
 Hosted execution changes where an agent works; it does not change the review model. Agent work
 remains attributable to the agent and its authorizing person, and only a directly signed-in human
-can record final approval.
+can send a review round back.

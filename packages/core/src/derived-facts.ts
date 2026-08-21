@@ -5,7 +5,7 @@
  *
  * The one line every deriver must hold: TRANSCRIPTION, NEVER INTERPRETATION. Counting
  * words is derivation; deciding what a number means is testimony only an author can give
- * (that path is the proposal channel, not this file). Nothing here may guess.
+ * (that path is an authored revision, not this file). Nothing here may guess.
  *
  * Derivers live HERE and not in @derive/facts deliberately: $outline needs sectionMarkers,
  * and the facts package is dependency-free by contract (lint-enforced) because it is the

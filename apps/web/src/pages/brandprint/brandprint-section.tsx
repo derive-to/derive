@@ -138,7 +138,7 @@ export function BrandprintSection({ scope }: { scope: "workspace" | "account" })
 
   const updateWorkspace = useApiMutation({
     // Any workspace pointer-write also seeds the brand-profile placeholder when one is
-    // missing, so the hand-off beat always has an address to propose against — whether
+    // missing, so the hand-off beat always has an address to publish to — whether
     // the collection came from the main picker or the dialog's "Use a collection" tab.
     // Best-effort: a placeholder failure still sets the pointer; a later write heals it.
     // The generated OrgSettings types brandprint non-nullable, but the PATCH takes null to

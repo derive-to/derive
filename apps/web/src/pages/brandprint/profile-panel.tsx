@@ -13,41 +13,25 @@ import { refFor } from "../artifact/parse-ref"
 import type { AgentTarget } from "../artifact/types"
 
 /**
- * The workspace brand profile's home on /brandprint. Renders the panel's three states:
- * - hand-off: sources saved, profile still the stub, no proposal — the copyable brief.
- *   Doubles as the spec's no-agent state; ConnectAgent rides the card.
- * - reveal: the agent's proposal is in — full-width preview, Approve, comments.
- * - live: an approved profile fronts the page; Regenerate re-surfaces the brief.
+ * The workspace brand profile's home on /brandprint. Renders the panel's two states:
+ * - hand-off: sources saved, profile still the stub — the copyable brief. Doubles as
+ *   the spec's no-agent state; ConnectAgent rides the card.
+ * - live: the agent published the profile (a review round opened for you on the
+ *   artifact page); Regenerate re-surfaces the brief.
  * The page owns the remaining spec states: "empty" is the section's create flow, and
  * without a profileId it mounts ApplyNudge instead of this panel.
  */
-const profileProposalsQuery = (profileId: string) =>
-  queryOptions({
-    queryKey: ["brandprint-profile-proposals", profileId] as const,
-    queryFn: () => api.listProposals(profileId, "open").then((r) => r.proposals),
-  })
-
 export function ProfilePanel({ profileId }: { profileId: string }) {
-  const { data: ws } = useQuery(workspaceQuery())
-  const { data: art, isError: artError } = useQuery(artifactQuery(profileId))
+  const { data: art, isError: artError } = useQuery({
+    ...artifactQuery(profileId),
+    // Poll only while we wait on the agent: the publish bumps current_version, which
+    // IS the reveal now. Once live the interval stands down.
+    refetchInterval: (q) => ((q.state.data?.current_version ?? 0) >= 2 ? false : 5000),
+  })
   // Client mirror of packages/core/src/brandprint.ts profileState — v1 is always the
   // intake's stub (the SPA deliberately doesn't import @derive/core).
   const live = (art?.current_version ?? 0) >= 2
-  // Poll only while we actually wait on the agent: profile not live, no proposal in
-  // yet. Once the reveal is up (or the profile is live) the interval stands down.
-  const { data: proposals } = useQuery({
-    ...profileProposalsQuery(profileId),
-    refetchInterval: (q) => (art && !live && !q.state.data?.length ? 5000 : false),
-  })
-  const open = proposals?.[0]
   const [showBrief, setShowBrief] = useState(false)
-
-  const approve = useApiMutation({
-    mutationFn: (proposalId: string) => api.approveProposal(profileId, proposalId),
-    success: "Brand profile approved. Connected coding agents can now use it.",
-    onSuccess: () => setShowBrief(false),
-    invalidate: [artifactQuery(profileId).queryKey, profileProposalsQuery(profileId).queryKey],
-  })
 
   // An unreadable profile artifact degrades to nothing rather than a broken band —
   // the section below still renders and the docs stay manageable.
@@ -60,45 +44,6 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
       </div>
     )
 
-  if (open)
-    return (
-      <section className="flex flex-col gap-3" data-testid="brandprint-profile-reveal">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-medium text-foreground">Your brand profile is ready</h2>
-            <p className="text-sm text-muted-foreground">
-              Your agent built it from your sources. Review it, leave comments, or approve it to
-              make it active for connected agents.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" asChild data-testid="brandprint-profile-review">
-              <Link to="/artifacts/$ref" params={{ ref: refFor(art) }} search={{ review: open.id }}>
-                Review and comment
-              </Link>
-            </Button>
-            {ws?.role === "owner" ? (
-              <Button
-                size="sm"
-                data-testid="brandprint-profile-approve"
-                loading={approve.isPending}
-                disabled={approve.isPending}
-                onClick={() => approve.mutate(open.id)}
-              >
-                Approve
-              </Button>
-            ) : (
-              <p className="text-sm text-muted-foreground">An admin approves this.</p>
-            )}
-          </div>
-        </div>
-        <ProfileFrame
-          title="Proposed brand profile"
-          src={`${API_BASE}/raw/${profileId}/p/${open.id}/index.html`}
-        />
-      </section>
-    )
-
   if (live && !showBrief)
     return (
       <section className="flex flex-col gap-3" data-testid="brandprint-profile-live">
@@ -106,7 +51,8 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
           <div>
             <h2 className="text-base font-medium text-foreground">Brand profile</h2>
             <p className="text-sm text-muted-foreground">
-              Live. Every agent connected to this workspace reads it before authoring.
+              Live. Every agent connected to this workspace reads it before authoring. An agent's
+              change to it always opens a review round for you on the document.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -146,7 +92,7 @@ const briefFor = (url: string, profileId: string) =>
   `Finish setting up our Brandprint in Derive.
 1. Connect to Derive over MCP if you aren't already: claude mcp add --transport http derive ${url}/mcp
 2. Read derive://brandprint/reference and derive://brandprint/template, then our source docs (the other derive://brandprint/* resources).
-3. Build our brand profile as ONE self-contained HTML file following the reference, and publish it with for_review: true to artifact ${profileId}.`
+3. Build our brand profile as ONE self-contained HTML file following the reference, and publish it with request_review: true to artifact ${profileId}.`
 
 // The hand-off card: the spec's state 2 (and state 5, where Connect leads because no
 // agent was ever authorized — ConnectAgentButton is one tap away either way). With a
@@ -159,7 +105,7 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
   const regenerating = !!onDismiss
   // Queued is session-local by design: a reload re-offers the button, and the server's
   // alreadyQueued dedupe both blocks a duplicate and flips this card straight back to
-  // the queued state. The proposals poll above flips to the reveal when the build lands.
+  // the queued state. The artifact poll above flips to live when the build lands.
   const [queued, setQueued] = useState(false)
   const { data: agents = [] } = useQuery(artifactAgentsQuery(profileId))
   const send = useApiMutation<{ requestId: string }, AgentTarget>({
@@ -187,7 +133,7 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
           Your agent is building your Brandprint
         </h2>
         <p className="text-sm text-pretty text-muted-foreground">
-          The build brief is queued. The proposed profile will appear here after your agent's next
+          The build brief is queued. The built profile will appear here after your agent's next
           session. You can leave this page open or come back later.
         </p>
       </section>
@@ -268,8 +214,8 @@ function SendToAgent({
   )
 }
 
-// One recipe for both previews (proposal and live), the review overlay's exact
-// sandboxed-iframe treatment at a fixed page-friendly height.
+// The live profile preview — the sandboxed-iframe treatment at a fixed
+// page-friendly height.
 function ProfileFrame({ title, src }: { title: string; src: string }) {
   return (
     <div className="h-[480px] overflow-hidden rounded-lg border">

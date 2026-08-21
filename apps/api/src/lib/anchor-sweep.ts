@@ -17,7 +17,7 @@ import { pageTextResolver } from "./bundle"
  * Re-anchor an artifact's threads against a new version (see {@link sweepAnchors})
  * AND announce each transition on the realtime bus: feedback whose quoted text
  * changed flips to `outdated`, and back to `resolved` when it reappears. The HTTP
- * and MCP publish paths and proposal-approval all run this identical fan-out.
+ * and MCP publish paths run this identical fan-out.
  */
 export async function publishSweepEvents(
   meta: SweepStore,
@@ -55,7 +55,7 @@ type SweepStore = Pick<
 /**
  * Re-anchor a published artifact's comment threads against the new version and
  * apply the resulting state flips (open↔outdated). Called after every version
- * bump (publish, restore, proposal approve) so feedback whose anchor changed is
+ * bump (publish, restore) so feedback whose anchor changed is
  * marked `outdated` — and un-marked if it reappears.
  *
  * Text anchors re-grep their quote; element anchors relocate via the cascade

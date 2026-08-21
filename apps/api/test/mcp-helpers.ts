@@ -81,9 +81,9 @@ export function appWithGrant(
     return tokenName
   }
   const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
-  // A grant-backed agent may propose, but only a directly signed-in human may
-  // settle that proposal. Tests opt into the owner's real session explicitly
-  // with `x-test-user: owner@x.test`; requests without it remain sessionless.
+  // Only a directly signed-in human may settle a review round. Tests opt into
+  // the owner's real session explicitly with `x-test-user: owner@x.test`;
+  // requests without it remain sessionless.
   const auth = {
     handler: async () => new Response(null, { status: 404 }),
     api: {

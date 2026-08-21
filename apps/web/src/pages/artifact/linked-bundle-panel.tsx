@@ -23,7 +23,7 @@ export const linkedBundleReviewTarget = (
 export const linkedBundleCommentCounts = (comments: Comment[]): Map<string, number> => {
   const roots = new Map<string, Comment>()
   for (const comment of comments) {
-    if (comment.state !== "open" && comment.state !== "addressed") continue
+    if (comment.state !== "open") continue
     if (!roots.has(comment.thread_id) || comment.id === comment.thread_id)
       roots.set(comment.thread_id, comment)
   }

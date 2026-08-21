@@ -14,7 +14,7 @@ type Me = { name?: string | null; email?: string | null } | null
 
 /**
  * Every mutating action the artifact page drives: editing (publish a version / submit a
- * proposal), the comment loop (add / reply / resolve / react / edit / delete / copy-link),
+ * the comment loop (add / reply / resolve / react / edit / delete / copy-link),
  * thread activation + the comment-on-selection composer, and version restore. A hook, so
  * each write runs through the one governed mutation primitive (`useApiMutation`): uniform
  * pending (surfaced as `publishing` / `restoring`), optimistic rollback, and the error
@@ -31,7 +31,6 @@ export function useArtifactActions(p: {
   me: Me
   src: string
   title: string
-  proposeMsg: string
   message: string
   composer: ComposerState
   sel: Selection
@@ -40,11 +39,9 @@ export function useArtifactActions(p: {
   refetchComments: () => void
   onRestoredJump: () => void
   /** Open the review overlay (from an agent-request card whose revision is ready). */
-  onOpenReview: () => void
   setEditing: Dispatch<SetStateAction<boolean>>
   setSrc: Dispatch<SetStateAction<string>>
   setTitle: Dispatch<SetStateAction<string>>
-  setProposeMsg: Dispatch<SetStateAction<string>>
   setComposer: Dispatch<SetStateAction<ComposerState>>
   setSel: Dispatch<SetStateAction<Selection>>
   setActiveThread: Dispatch<SetStateAction<string | null>>
@@ -87,26 +84,6 @@ export function useArtifactActions(p: {
       load()
     },
   })
-  // A commenter can't publish; their edit becomes a proposal for review. The message is
-  // the "why" the reviewer reads, so we ask for it before sending.
-  const propose = useApiMutation({
-    mutationFn: () => {
-      if (!p.art) throw new Error("propose fired before the artifact loaded")
-      return api.propose(
-        shortId,
-        p.src,
-        `${p.art.short_id}.${formatOf(p.art)}`,
-        p.proposeMsg.trim() || "Proposed change",
-      )
-    },
-    success: "Sent for review",
-    onSuccess: () => {
-      p.setEditing(false)
-      p.setProposeMsg("")
-      load()
-    },
-  })
-
   // Add / reply: optimistic temp row so the comment appears the instant you hit send. A
   // `temp-` id marks it in-flight; the server's row swaps in on success and a refetch
   // reconciles ordering + anchored flags. On failure the rollback removes ONLY the temp
@@ -261,7 +238,6 @@ export function useArtifactActions(p: {
         if (!ok) toast(url)
       })
     },
-    openReview: p.onOpenReview,
   }
 
   const restore = useApiMutation({
@@ -276,7 +252,6 @@ export function useArtifactActions(p: {
   return {
     startEdit,
     publishEdit: () => publish.mutate(),
-    proposeEdit: () => propose.mutate(),
     reply,
     submitNew,
     toggleResolve,
@@ -286,7 +261,7 @@ export function useArtifactActions(p: {
     restore: (n: number) => restore.mutate(n),
     // Pending flags the page threads into the editor toolbar + version rail, replacing the
     // hand-rolled `restoring` state and the editor's local double-click guard.
-    publishing: publish.isPending || propose.isPending,
+    publishing: publish.isPending,
     restoring: restore.isPending,
   }
 }

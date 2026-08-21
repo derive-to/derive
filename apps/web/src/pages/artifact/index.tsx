@@ -75,8 +75,7 @@ import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
 // Heavy on-demand surfaces — split out of the artifact route's initial chunk and
-// loaded only when the user opens them (review proposals / insights / history).
-const ReviewOverlay = lazy(() => import("./review").then((m) => ({ default: m.ReviewOverlay })))
+// loaded only when the user opens them (insights / history).
 const Insights = lazy(() => import("./insights-history").then((m) => ({ default: m.Insights })))
 const HistoryDrawer = lazy(() =>
   import("./insights-history").then((m) => ({ default: m.HistoryDrawer })),
@@ -301,12 +300,8 @@ export function Artifact() {
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [])
-  // The review overlay: null = closed. A ?review deep link (or a surface that knows
-  // which proposal it means) opens it ON that proposal; the ⋯ menu opens it bare.
-  const [reviewing, setReviewing] = useState<{ proposalId?: string } | null>(null)
   // Which "⋯ More" surface is open (large dialog / drawer).
   const [surface, setSurface] = useState<null | "insights" | "history">(null)
-  const [proposeMsg, setProposeMsg] = useState("")
   const [message, setMessage] = useState("")
   const [src, setSrc] = useState("")
   // See the `rawSrc` construction below: pins the raw-content token per (shortId,
@@ -455,7 +450,7 @@ export function Artifact() {
     anchorTops,
     subscribeGeom,
   } = useArtifactFrame({
-    // Paint the open/addressed thread anchors in the doc; a click focuses the thread.
+    // Paint the open thread anchors in the doc; a click focuses the thread.
     comments,
     shortId,
     version,
@@ -614,7 +609,6 @@ export function Artifact() {
     onCanonical: (canonical) =>
       nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
     onLoginBounce: () => nav({ to: "/login", search: artifactLoginSearch(window.location) }),
-    onOpenReview: (proposalId: string) => setReviewing({ proposalId }),
     onOpenComments: () => setRail("comments"),
     post,
     setPanel,
@@ -628,7 +622,6 @@ export function Artifact() {
   const {
     startEdit,
     publishEdit,
-    proposeEdit,
     reply,
     submitNew,
     toggleResolve,
@@ -644,7 +637,6 @@ export function Artifact() {
     me,
     src,
     title: editTitle,
-    proposeMsg,
     message,
     composer,
     sel,
@@ -658,18 +650,16 @@ export function Artifact() {
         // Same artifact — keep the search (the ?collection switcher context, deep links).
         search: (s) => s,
       }),
-    onOpenReview: () => setReviewing({}),
     setEditing,
     setSrc,
     setTitle: setEditTitle,
-    setProposeMsg,
     setComposer,
     setSel,
     setActiveThread,
   })
 
   // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
-  // hook owns the mode + save/propose. Entering clears any parked selection so the
+  // hook owns the mode + save. Entering clears any parked selection so the
   // comment grammar and the edit grammar never overlap; the raw source editor is
   // the fallback when a quote can't be applied (formatted spans).
   const inlineEdit = useInlineEdit({
@@ -682,7 +672,6 @@ export function Artifact() {
     // URL's version rather than the shown one. The two differ only while the mode
     // is open (it freezes the view), and the mode can't be re-entered from inside.
     canEdit: canEditArtifactDoc(art, version ?? art?.current_version, editing),
-    forceProposal: isGuest,
     // The frame always contains rendered HTML, including for Markdown. Only an
     // HTML/deck source supports the opening-tag operation; Markdown keeps image
     // replacement but gets no resize handle.
@@ -900,12 +889,12 @@ export function Artifact() {
   // never requested.
   const rawSrc =
     seeded || (rawTokenStale && !pinnedForShown) ? null : rawArtifactUrl(shortId, shown, rawToken)
-  // Direct publishing is a workbench capability. Guest edits always become proposals.
+  // Direct publishing is a workbench capability.
   const canPublish = !isGuest && (art.my_role === "editor" || art.my_role === "owner")
   // md vs html drives syntax highlighting + how the live preview renders.
   const format = formatOf(art)
-  // Lock: any editor can toggle it (advanced menu). While locked, even an editor
-  // must propose — `effectiveCanPublish` flips the edit flow to the propose path.
+  // Lock: any editor can toggle it (advanced menu). While locked, nothing
+  // publishes — the edit affordances hide until someone unlocks.
   const canLock = canPublish
   const canMove = !isGuest && art.my_role === "owner"
   const isLocked = !!art.locked
@@ -1024,7 +1013,7 @@ export function Artifact() {
     const root = comments.find(
       (comment) =>
         comment.id === comment.thread_id &&
-        (comment.state === "open" || comment.state === "addressed") &&
+        comment.state === "open" &&
         parseAnchor(comment.anchor)?.element?.id === target,
     )
     if (root) setActiveThread(root.thread_id)
@@ -1140,19 +1129,6 @@ export function Artifact() {
         confirmTestId="inline-edit-exit-confirm"
         onConfirm={inlineEdit.confirmExit}
       />
-      {reviewing && (
-        <Suspense fallback={null}>
-          <ReviewOverlay
-            shortId={shortId}
-            currentVersion={art.current_version}
-            myRole={art.my_role}
-            meName={me?.name ?? me?.email ?? null}
-            initialProposalId={reviewing.proposalId}
-            onClose={() => setReviewing(null)}
-            onApplied={load}
-          />
-        </Suspense>
-      )}
       {surface === "insights" && (
         <Suspense fallback={null}>
           <Insights
@@ -1245,8 +1221,6 @@ export function Artifact() {
               favorite={!!art.favorite}
               collections={art.collections ?? []}
               collectionAccess={art.collection_access ?? []}
-              openProposals={art.open_proposals ?? 0}
-              proposalsTotal={art.proposals_total ?? 0}
               isMobile={isMobile}
               panelOpen={panel === "open"}
               openCount={openCount}
@@ -1258,17 +1232,16 @@ export function Artifact() {
               showEdit={canEditDoc && !inlineEdit.active}
               // The raw-source fallback. It is not a dev tool (the inline editor's
               // own errors send people here by name), so it no longer says "(dev)".
-              editLabel={effectiveCanPublish ? "Edit source" : "Propose a change"}
+              editLabel="Edit source"
               // Inline editing: current version, single file, not GitHub-managed.
-              // Commenters get the same affordance as a suggestion (it lands as a
-              // proposal). Phones included: tap a block, type on the keyboard, save
+              // Phones included: tap a block, type on the keyboard, save
               // from the bar. DECKS INCLUDED — a slide's headline is the most
               // typo-prone text Derive holds and the source editor was the only way
               // to fix one. What used to make a deck unsafe to edit (its own Space
               // and arrow keys flipping slides under the caret) is handled in the
               // frame: while a caret is in a block, the page's keyboard is off.
               showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
-              inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
+              inlineEditLabel="Edit"
               onInlineEdit={() => inlineEdit.start()}
               isDeck={isDeckLike}
               videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
@@ -1297,7 +1270,6 @@ export function Artifact() {
               }
               onInsights={() => setSurface("insights")}
               onHistory={() => setSurface("history")}
-              onReview={() => setReviewing({})}
               onStartEdit={startEdit}
               onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
               onFocus={() => setFocus(true)}
@@ -1368,19 +1340,15 @@ export function Artifact() {
             )}
             {editing ? (
               <SourceEditor
-                canPublish={effectiveCanPublish}
-                title={effectiveCanPublish ? editTitle : (art.title ?? shortId)}
-                onTitle={effectiveCanPublish ? setEditTitle : undefined}
+                title={editTitle}
+                onTitle={setEditTitle}
                 format={format}
-                proposeMsg={proposeMsg}
                 message={message}
                 src={src}
-                onProposeMsg={setProposeMsg}
                 onMessage={setMessage}
                 onSrc={setSrc}
                 onCancel={() => setEditing(false)}
                 onPublish={publishEdit}
-                onPropose={proposeEdit}
                 publishing={publishing}
                 shortId={shortId}
               />
@@ -1494,7 +1462,26 @@ export function Artifact() {
               reviewCard={
                 // Top of the comments rail, not its own pane; members who can act only.
                 !isGuest && canComment ? (
-                  <ReviewCard shortId={shortId} refreshKey={reviewTick} />
+                  <>
+                    <ReviewCard shortId={shortId} refreshKey={reviewTick} />
+                    {/* The one line that replaces the edit affordance for people who
+                        cannot publish here: comments are the suggestion channel. */}
+                    {!canPublish ? (
+                      <div
+                        data-testid="comment-suggestion-hint"
+                        className="border-b border-border-soft px-3 py-2 text-xs text-muted-foreground"
+                      >
+                        You can comment on this document. Select any text to suggest a change.
+                      </div>
+                    ) : isLocked ? (
+                      <div
+                        data-testid="locked-suggestion-hint"
+                        className="border-b border-border-soft px-3 py-2 text-xs text-muted-foreground"
+                      >
+                        Changes are locked. Suggest an edit as a comment, or unlock to publish.
+                      </div>
+                    ) : null}
+                  </>
                 ) : undefined
               }
               onSheetHeight={setSheetInset}
@@ -1502,7 +1489,7 @@ export function Artifact() {
               editing={inlineEdit.active}
               // The selection bar's Edit verb: opens the mode with the caret already
               // in the selected text, so a typo you just read costs one click.
-              editLabel={canEditDoc ? (effectiveCanPublish ? "Edit" : "Suggest") : undefined}
+              editLabel={canEditDoc ? "Edit" : undefined}
               onEditSelection={
                 canEditDoc ? () => inlineEdit.start({ fromSelection: true }) : undefined
               }

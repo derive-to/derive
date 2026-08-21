@@ -6,7 +6,7 @@ order: 10
 # Helping someone use Derive
 
 Every other skill is about doing work IN a workspace. This one is about the app around it: "how
-do I add someone", "where do sources live", "what is a proposal", "why can't I publish". Those
+do I add someone", "where do sources live", "what is a review round", "why can't I publish". Those
 questions are answered here rather than in workspace documents. Searching the library first can
 incorrectly suggest that the feature does not exist.
 
@@ -39,7 +39,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/people` | Who is in the workspace, and who they follow. |
 | `/new` | Write or paste a new document (Markdown or HTML) and publish it. |
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |
-| `/artifacts/{short_id}` | One document: read it, comment, propose, share, see versions. |
+| `/artifacts/{short_id}` | One document: read it, comment, share, see versions. |
 | `/users/{handle}` | Someone's public profile and their public work. |
 | `/roadmap` | What is shipped and what is coming. |
 | `/settings` | Everything below. |
@@ -75,7 +75,7 @@ Three roles, and these are the words people see in the app:
 | --- | --- |
 | **Admin** | Everything, plus invite people and manage settings and billing. |
 | **Creator** | Create, publish and edit documents. Cannot invite or change settings. |
-| **Viewer** | Read and comment. Their edits are filed as proposals for someone to approve. |
+| **Viewer** | Read and comment. They suggest changes in comments; someone who can publish applies them. |
 
 If somebody cannot do a thing, it is almost always this: say which role it needs and suggest they
 ask an Admin. `/settings/members` shows who the Admins are.
@@ -109,8 +109,8 @@ organize control on a document.
 **Tag a document.** The organize control on the document, or in bulk from the library's selection
 bar.
 
-**Suggest a change instead of making it.** Edit and choose to propose. Viewers always propose. The
-owner sees it on the document and approves or asks for changes.
+**Suggest a change instead of making it.** Select the text and leave a comment saying what to
+change. Someone with publish access (or an agent asked in the document's chat) applies it.
 
 **Review what is waiting on me.** `/feedback`.
 
@@ -143,9 +143,8 @@ on that same screen. Derive can also send direct messages. Each person controls 
   publish.
 - **Version:** every publish keeps the last one. Nothing is overwritten, and any version can be
   restored.
-- **Proposal:** a change waiting for approval instead of going live. What a Viewer's edit
-  becomes, and what anyone can choose deliberately.
-- **Review:** asking a person to look at a version, answered inline.
+- **Review:** asking a person to look at a version. They answer in comments and send the
+  work back with a note; a note that reads "good to go" is the go-signal.
 - **Thread:** a comment anchored to a passage. Open until somebody resolves it.
 - **Collection:** a folder of documents. A document can be in several.
 - **Tag:** a workspace-wide label for finding things across collections.

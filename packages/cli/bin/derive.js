@@ -28,7 +28,6 @@
 //   derive resolve|reopen <comment_id>     set a thread's state
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     (human) return your answers to the agent
-//   derive approve [--id] [--note m]       (human) approve — the build go-signal
 //   derive doctor [--server url] [--token t]  report which optional features are configured
 //   derive runner serve|once|doctor|install   run a context's answer daemon, or drain once (npx-able anywhere)
 //   derive context push|dev                ship a context dir as its manifest / tune it live
@@ -300,7 +299,7 @@ async function doOAuthLogin(server, loginFlags) {
   // so only sessions that actually manage contexts should carry it.
   const scope =
     loginFlags.scope ??
-    `openid offline_access derive:read derive:comment derive:propose derive:publish derive:review${
+    `openid offline_access derive:read derive:comment derive:publish${
       loginFlags.manage === "true" ? " derive:manage" : ""
     }`
   const verifier = b64url(randomBytes(64))
@@ -1013,7 +1012,6 @@ const LOOP = [
   "reopen",
   "status",
   "send-back",
-  "approve",
   // Findability: one `tag` verb — vocabulary (no args), suggest (--suggest), or apply.
   "tag",
   // Permanent delete, mirroring `organize` state:'deleted'. Ids come positionally, so it
@@ -1165,7 +1163,7 @@ if (LOOP.includes(cmd)) {
       }
       const phrase = ids.length === 1 ? ids[0] : "delete"
       console.error(
-        `About to PERMANENTLY delete ${ids.length} artifact(s), with every version, comment and proposal:\n  ${ids.join("\n  ")}\nThis cannot be undone.`,
+        `About to PERMANENTLY delete ${ids.length} artifact(s), with every version and comment:\n  ${ids.join("\n  ")}\nThis cannot be undone.`,
       )
       const rl = createInterface({ input: process.stdin, output: process.stdout })
       const typed = await new Promise((resolve) =>
@@ -1270,18 +1268,15 @@ if (LOOP.includes(cmd)) {
     process.exit(0)
   }
 
-  if (cmd === "send-back" || cmd === "approve") {
-    const path = cmd === "send-back" ? "review/send-back" : "review/approve"
-    const res = await fetch(`${base}/${path}`, {
+  if (cmd === "send-back") {
+    const res = await fetch(`${base}/review/send-back`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth },
       body: JSON.stringify({ note: flags.note ?? "" }),
     })
     if (!res.ok) await die(res)
     const { round } = await res.json()
-    console.log(
-      `✓ ${cmd === "send-back" ? "sent back to the agent" : "approved"} (round ${round.state})`,
-    )
+    console.log(`✓ sent back to the agent (round ${round.state})`)
     process.exit(0)
   }
 
@@ -1455,7 +1450,6 @@ if (cmd !== "publish") {
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
   derive send-back [--id X] [--note m]     (human) return your answers to the waiting agent
-  derive approve [--id X] [--note m]       (human) approve — the build go-signal
   derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)
   derive context push|dev                  ship a context dir as its manifest / tune it on the working tree
   derive skill add <short_id>              materialize a published skill into ./.claude/skills/ (pinned)

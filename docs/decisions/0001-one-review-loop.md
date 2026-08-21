@@ -3,12 +3,6 @@
 Decided August 2026, by the whole team, on an internal Derive doc ("Removing Proposals and
 Approval") whose pinned threads are the decision log.
 
-The decision lands in two changes: the write-policy collapse and the one switch ship first;
-the deletion of the proposal system and the approval machinery (the `approved` round state,
-the approve endpoint and CLI verb, the served-version pointer) follows immediately in the
-next change. Until that lands, those surfaces remain in the tree; this document describes
-the decided end state.
-
 ## The model
 
 - **Publishing is live.** An agent's write lands exactly like a person's: a new version of the

@@ -112,7 +112,7 @@ if (homeHtml.includes("quiet-sun-"))
 if (!homeHtml.includes("&lt;draft-id&gt;.derive.page"))
   fail("documentation home must mark generated draft URLs as example output")
 if (/publish, review, revise, and approve loop/i.test(homeHtml))
-  fail("documentation home must not present formal approval as every artifact's required path")
+  fail("documentation home must not describe an approve step; review closes with Send back")
 if (/starlight/i.test(homeHtml)) fail("documentation build still contains Starlight chrome")
 
 const llmsFull = readFileSync(join(DIST, "llms-full.txt"), "utf8")

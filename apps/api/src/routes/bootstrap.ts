@@ -95,7 +95,7 @@ export const bootstrapRoutes = (ctx: AppContext) => {
         seatCount: b.billing.billableSeats,
       })
       const blocked =
-        state.canPublishApprove || !state.blockedReason ? null : blockCopy[state.blockedReason]
+        state.canPublish || !state.blockedReason ? null : blockCopy[state.blockedReason]
       // Keep the Stripe seat-drift heal that moving the banner off GET /v1/billing would
       // otherwise have removed: that endpoint healed as a side effect of the banner
       // calling it on every boot, and a small team may never open the Billing page. Same

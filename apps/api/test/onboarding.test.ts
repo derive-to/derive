@@ -14,12 +14,8 @@ import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 describe("onboarding activation signals", () => {
   const u: TestUser = { id: "u_onb", email: "onb@derive.test", name: "Robin" }
-  // A second user whose ONLY agent activity is the propose → approve loop, so the
-  // proposal path is pinned on its own (not shadowed by u's direct MCP version).
-  const u2: TestUser = { id: "u_onb2", email: "onb2@derive.test", name: "Sam" }
-  const { app, meta } = makeAuthedApp("onboarding", [u, u2])
+  const { app, meta } = makeAuthedApp("onboarding", [u])
 
-  let firstShortId: string
   const status = async (who: TestUser = u) =>
     (await app.request("/v1/me/onboarding", { headers: as(who.email) })).json()
 
@@ -70,44 +66,6 @@ describe("onboarding activation signals", () => {
     expect(s.first_artifact).toEqual({ short_id, title: "Agent draft" })
     // agent_connected stays false — no OAuth consent exists in this app.
     expect(s.agent_connected).toBe(false)
-    firstShortId = short_id
-  })
-
-  it("an approved agent proposal on the user's behalf also counts (the propose → approve loop)", async () => {
-    // A propose-scoped agent never creates an 'mcp'-stamped version itself; the
-    // delegation record (on_behalf_of) + the human's approval is the signal. u2's
-    // ONLY agent activity is this loop, so the assertion pins the proposal branch.
-    expect((await status(u2)).published_via_agent).toBe(false)
-    const res = await publishAs(app, "<h1>base</h1>", { title: "Proposal target" }, as(u2.email))
-    const { short_id } = await res.json()
-    const artifact = await meta.getByShortId(short_id)
-    if (!artifact) throw new Error("expected the artifact")
-    const v1 = await meta.getVersion(artifact.id, 1)
-    if (!v1) throw new Error("expected v1")
-    await meta.createProposal({
-      id: "p_onb",
-      artifact_id: artifact.id,
-      blob_key: v1.blob_key,
-      content_type: v1.content_type,
-      kind: artifact.kind,
-      author: "Claude Code",
-      author_id: "oauth:claude",
-      on_behalf_of: u2.id,
-      base_version: 1,
-      message: "agent proposal",
-    })
-    // An OPEN proposal is not activation — only the human's approval is.
-    expect((await status(u2)).published_via_agent).toBe(false)
-    await meta.decideProposal("p_onb", {
-      state: "approved",
-      decided_by: u2.id,
-      decided_version: 2,
-    })
-    const s = await status(u2)
-    expect(s.published_via_agent).toBe(true)
-    expect(s.first_artifact).toEqual({ short_id, title: "Proposal target" })
-    // And u's earlier direct MCP publish stays THEIR first artifact, undisturbed.
-    expect((await status()).first_artifact?.short_id).toBe(firstShortId)
   })
 })
 

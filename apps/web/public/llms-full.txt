@@ -4,7 +4,8 @@
 
 Derive is a workspace for work made with agents. Publish to a lasting URL, keep each revision,
 comment on exact text with W3C TextQuoteSelector, edit directly, and control who can read or
-change the work. Proposals and formal review are available when permissions or a decision require them.
+change the work. Review rounds are there when a decision needs a named look: the reviewer
+answers in comments and sends the work back with a note.
 
 Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to. The FSL license converts each release to Apache-2.0 after two years.
 
@@ -146,26 +147,13 @@ message    optional  Version message
 resolves   optional  Comma-separated comment IDs to close as part of this publish
 ```
 
-### Propose a candidate version (requires human approval)
-
-```
-POST /v1/artifacts/:short_id/proposals
-Content-Type: multipart/form-data
-
-file       required  Proposed content
-message    optional  Rationale shown to the reviewer
-addresses  optional  Comma-separated thread IDs this proposal resolves
-```
-
-Response includes `preview_url` for the reviewer to inspect before approving.
-
 ### Read artifact metadata
 
 ```
 GET /v1/artifacts/:short_id
 ```
 
-Returns full metadata: title, kind, workspace_access, link_role, listed, current_version, versions array, open_proposals count, tags, my_role.
+Returns full metadata: title, kind, workspace_access, link_role, listed, current_version, versions array, tags, my_role.
 
 ### Read artifact source
 

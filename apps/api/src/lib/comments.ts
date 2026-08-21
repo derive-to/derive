@@ -67,10 +67,6 @@ export type CommentMeta = {
   /** An explicit model protocol marker: Derive asked a question and the next human reply in the
    * thread should resume the turn. This is never inferred from punctuation. */
   awaiting_reply?: boolean
-  // The id of the open proposal whose revision claims to address this thread.
-  // Set when the thread flips to `addressed`; cleared when that proposal is
-  // approved (→ resolved) or withdrawn / sent back for changes (→ open).
-  addressed_by?: string
   // Provenance for cross-channel sync. Set when a comment ORIGINATED in GitHub
   // (mirrored in) or, once Derive has posted a comment OUT to GitHub, the id GitHub
   // assigned it. Either presence means "don't re-post this comment to GitHub" —

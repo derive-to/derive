@@ -54,9 +54,7 @@ describe.skipIf(!live)(
             trigger: { kind: "manual" },
             instruction: "Look up what an MCP tool is and rewrite the document with the answer.",
             connectionIds: [conn.id],
-            // publish, so the run REVISES the document. Propose (the default) would file a
-            // proposal instead, and the living-artifact claim is about the page changing.
-            refs: [{ kind: "artifact", id: art.short_id, mode: "publish" }],
+            refs: [{ kind: "artifact", id: art.short_id }],
           }),
         )
       ).json()) as { id: string }

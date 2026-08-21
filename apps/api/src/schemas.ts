@@ -34,17 +34,6 @@ export const ArtifactMember = z
   })
   .openapi("ArtifactMember")
 
-/** One line of a unified diff: context, addition, or deletion. Returned in a proposal's
- *  diff and in an artifact version diff, so it's shared here. */
-export const DiffOp = z
-  .object({
-    t: z
-      .enum(["ctx", "add", "del"])
-      .describe("Line op: ctx = unchanged context, add = added, del = removed."),
-    line: z.string().describe("The line's text; the +/- marker lives in `t`, not here."),
-  })
-  .openapi("DiffOp")
-
 /** A person or agent @mentioned in a comment — id + display name (the picker supplies
  *  ids, so there's no server-side name parsing). Nested in Comment.mentions. */
 export const Mention = z
@@ -215,11 +204,6 @@ export const Artifact = z
       .boolean()
       .optional()
       .describe("true when the current version has a ready screenshot preview."),
-    open_proposals: z.number().optional().describe("Count of open (pending-review) proposals."),
-    proposals_total: z
-      .number()
-      .optional()
-      .describe("Count of all proposals except withdrawn ones."),
     open_threads: z.number().optional().describe("Count of open (unresolved) comment threads."),
     mentions_me: z
       .boolean()

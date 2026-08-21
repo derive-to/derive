@@ -107,9 +107,6 @@ export type CollectionGrant = components["schemas"]["CollectionGrant"]
  *  web client and server can't silently drift. */
 export type Follow = components["schemas"]["Follow"]
 export type FollowKind = Follow["kind"]
-/** A proposal: a candidate version awaiting review. Generated from the OpenAPI spec. */
-export type Proposal = components["schemas"]["Proposal"]
-export type ProposalState = Proposal["state"]
 /** A quote-scoped edit (the inline editor's wire shape): replace the text located by
  *  {exact, prefix, suffix}, resolved server-side against the stored source. */
 export interface QuoteEditInput {
@@ -301,8 +298,8 @@ export type Analytics = components["schemas"]["Analytics"]
 /** A person/agent @mentioned in a comment. Generated from the OpenAPI spec. */
 export type Mention = components["schemas"]["Mention"]
 /** A review round: the agent asked this person to review a version, and polls for
- *  the answer. `pending` = waiting; `sent_back` = they returned answers; `approved`. */
-/** A review round on an artifact (the /derive loop). Generated from the OpenAPI spec. */
+ *  the answer. `pending` = waiting; `sent_back` = they returned answers (a note that
+ *  reads "good to go" is the go-signal). Generated from the OpenAPI spec. */
 export type ReviewRound = components["schemas"]["ReviewRound"]
 
 /** A comment: threaded, anchored to a text quote, with reactions/edits/soft-delete.
@@ -457,8 +454,9 @@ export type GithubSyncStatus = components["schemas"]["GithubSyncStatus"]
 export type InstallationRepo = components["schemas"]["InstallationRepo"]
 /** A repo+scope preview: how many docs would mirror, split by type. Generated from the spec. */
 export type SyncPreview = components["schemas"]["SyncPreview"]
-/** One line of a unified diff. Generated from the OpenAPI spec. */
-export type DiffOp = components["schemas"]["DiffOp"]
+/** One line of a unified diff, as the diff endpoint's ?format=json returns it
+ *  (the route is served outside the OpenAPI surface). */
+export type DiffOp = { t: "ctx" | "add" | "del"; line: string }
 export interface Diff {
   from: number
   to: number
@@ -892,32 +890,6 @@ export const api = {
     f(`/v1/artifacts/${id}/diff?from=${from}&to=${to}&format=json`, opts()).then(j),
   restore: (id: string, version: number): Promise<Artifact> =>
     f(`/v1/artifacts/${id}/restore`, opts({ version })).then(j),
-
-  listProposals: (id: string, state?: ProposalState): Promise<{ proposals: Proposal[] }> =>
-    f(`/v1/artifacts/${id}/proposals${state ? `?state=${state}` : ""}`, opts()).then(j),
-  getProposal: (id: string, proposalId: string): Promise<Proposal> =>
-    f(`/v1/artifacts/${id}/proposals/${proposalId}`, opts()).then(j),
-  propose(id: string, text: string, filename: string, message: string): Promise<Proposal> {
-    const fd = new FormData()
-    fd.append("file", new File([text], filename))
-    if (message) fd.append("message", message)
-    return f(`/v1/artifacts/${id}/proposals`, {
-      method: "POST",
-      body: fd,
-      credentials: "include",
-      headers: { accept: "application/json" },
-    }).then(j)
-  },
-  approveProposal: (
-    id: string,
-    proposalId: string,
-    note?: string,
-  ): Promise<Proposal & { published: number }> =>
-    f(`/v1/artifacts/${id}/proposals/${proposalId}/approve`, opts({ note })).then(j),
-  requestChanges: (id: string, proposalId: string, note?: string): Promise<Proposal> =>
-    f(`/v1/artifacts/${id}/proposals/${proposalId}/request-changes`, opts({ note })).then(j),
-  withdrawProposal: (id: string, proposalId: string): Promise<Proposal> =>
-    f(`/v1/artifacts/${id}/proposals/${proposalId}/withdraw`, opts({})).then(j),
 
   listMembers: (
     id: string,
@@ -1571,13 +1543,11 @@ export const api = {
     },
   ): Promise<Comment> => f(`/v1/artifacts/${id}/comments`, opts(body)).then(j),
   // Review rounds (the /derive loop). getReview → the pending round + history;
-  // sendBack / approve settle the pending round (the sidebar review card's buttons).
+  // sendBack settles the pending round (the sidebar review card's button).
   getReview: (id: string): Promise<{ pending: ReviewRound | null; rounds: ReviewRound[] }> =>
     f(`/v1/artifacts/${id}/review`, opts()).then(j),
   sendBackReview: (id: string, note?: string): Promise<{ round: ReviewRound }> =>
     f(`/v1/artifacts/${id}/review/send-back`, opts({ note })).then(j),
-  approveReview: (id: string, note?: string): Promise<{ round: ReviewRound }> =>
-    f(`/v1/artifacts/${id}/review/approve`, opts({ note })).then(j),
   resolve: (id: string, commentId: string, state: "open" | "resolved") =>
     f(`/v1/artifacts/${id}/comments/${commentId}/resolve`, opts({ state })).then(j),
   react: (id: string, commentId: string, emoji: string): Promise<Comment> =>
@@ -1675,24 +1645,6 @@ export const api = {
     fd.append("base_version", String(baseVersion))
     if (message) fd.append("message", message)
     return f(`/v1/artifacts/${id}/versions`, {
-      method: "POST",
-      body: fd,
-      credentials: "include",
-      headers: { accept: "application/json" },
-    }).then(j)
-  },
-  // The commenter path: the same quote edits, filed as a proposal for review.
-  proposeEdits(
-    id: string,
-    edits: InlineEditInput[],
-    baseVersion: number,
-    message: string,
-  ): Promise<Proposal> {
-    const fd = new FormData()
-    fd.append("edits", JSON.stringify(edits))
-    fd.append("base_version", String(baseVersion))
-    if (message) fd.append("message", message)
-    return f(`/v1/artifacts/${id}/proposals`, {
       method: "POST",
       body: fd,
       credentials: "include",

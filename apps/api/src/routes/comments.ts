@@ -60,10 +60,8 @@ export const commentRoutes = (ctx: AppContext) => {
         .describe("Comment body in Markdown; blanked when the comment is deleted."),
       author: z.string().describe('Author\'s display name; "anonymous" for an anonymous poster.'),
       state: z
-        .enum(["open", "addressed", "resolved", "outdated"])
-        .describe(
-          "Thread state: open, addressed (a proposal in review claims to fix it), resolved, or outdated (the quoted text changed).",
-        ),
+        .enum(["open", "resolved", "outdated"])
+        .describe("Thread state: open, resolved, or outdated (the quoted text changed)."),
       created_at: z.string(),
       anchored: z
         .boolean()
@@ -251,7 +249,7 @@ export const commentRoutes = (ctx: AppContext) => {
       request: {
         params: z.object({ shortId: z.string() }),
         query: z.object({
-          state: z.enum(["open", "resolved", "outdated", "addressed"]).optional(),
+          state: z.enum(["open", "resolved", "outdated"]).optional(),
         }),
       },
       responses: {

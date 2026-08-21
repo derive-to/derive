@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS artifact (
   spa INTEGER NOT NULL DEFAULT 0,
   locked INTEGER NOT NULL DEFAULT 0,
   current_version INTEGER NOT NULL DEFAULT 0,
-  approved_version INTEGER,
   current_content_type TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT,
@@ -582,28 +581,6 @@ CREATE TABLE IF NOT EXISTS domain (
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
 
-CREATE TABLE IF NOT EXISTS proposal (
-  id TEXT PRIMARY KEY,
-  artifact_id TEXT NOT NULL,
-  blob_key TEXT NOT NULL,
-  content_type TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  title TEXT,
-  message TEXT,
-  author TEXT NOT NULL,
-  author_id TEXT,
-  on_behalf_of TEXT,
-  base_version INTEGER NOT NULL,
-  state TEXT NOT NULL DEFAULT 'open',
-  decided_by TEXT,
-  decided_by_id TEXT,
-  decided_version INTEGER,
-  decision_note TEXT,
-  decided_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
-);
-
 CREATE TABLE IF NOT EXISTS review_round (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,
@@ -781,8 +758,6 @@ CREATE INDEX IF NOT EXISTS template_library_owner ON template_library (created_b
 CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);
 
 CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id);
-
-CREATE INDEX IF NOT EXISTS proposal_artifact_state ON proposal (artifact_id, state);
 
 CREATE INDEX IF NOT EXISTS comment_artifact_state ON comment (artifact_id, state);
 

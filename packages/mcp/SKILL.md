@@ -39,7 +39,7 @@ unavailable, or project policy forbids publishing.
 
 | Intent | Read first | Main tools |
 |---|---|---|
-| Create, revise, upload a large doc, or propose | `derive://skills/publishing` | `publish`, `stage`, `read` |
+| Create, revise, or upload a large doc | `derive://skills/publishing` | `publish`, `stage`, `read` |
 | Build a slide deck or presentation | `derive://skills/decks` | `publish`, `read` |
 | Upload or embed an image/font asset | `derive://skills/assets` | `stage`, `publish`, `read` |
 | Review, feedback, requests, or waiting | `derive://skills/loop` | `catch_up`, `read`, `comment`, `publish` |
@@ -96,9 +96,10 @@ For an existing artifact:
 3. Reply when a comment needs an answer. Use a reaction for a simple acknowledgement.
 4. Revise with `publish`. Prefer exact `edits` plus `base_version` for a partial change;
    include thread ids in `addresses` on the same publish.
-5. If someone asks for formal review, set `request_review:true`, then chain
-   `catch_up({short_id, wait:50})` while the round is pending. On `sent_back`, sweep all
-   threads and repeat. `approved` is the go-signal.
+5. If someone asks for review, set `request_review:true`, then chain
+   `catch_up({short_id, wait:50})` while the round is pending. On `sent_back`, read the
+   note and sweep all threads, then repeat. The note is where the human says whether to
+   keep revising or to ship; a note that reads "good to go" IS the go-signal.
 
 For a new artifact, publish it as the workspace's default team draft unless the user
 explicitly asks for wider access. Return the artifact URL, version, access state, and a

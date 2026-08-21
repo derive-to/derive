@@ -81,7 +81,7 @@ export type BucketInput = {
 }
 
 export type ThreadBuckets = {
-  /** Everything not resolved (open / addressed / outdated). */
+  /** Everything not resolved (open / outdated). */
   openThreads: Comment[][]
   resolvedThreads: Comment[][]
   /** Threads pinned beside their live highlight in the margin. */
@@ -118,7 +118,7 @@ export function bucketThreads(p: BucketInput): ThreadBuckets {
     const id = head.thread_id
     const a = parseAnchor(head.anchor)
     // Does this thread's anchor resolve in the live doc? The frame reports `inDoc`
-    // for the anchors it was sent (open/addressed). An `outdated` thread is NOT sent
+    // for the anchors it was sent (open). An `outdated` thread is NOT sent
     // to the frame, so `inDoc[id]` is undefined — fall back to the server's `anchored`
     // flag rather than defaulting to "present" (which would pin it invisibly at
     // opacity 0 instead of showing it as an orphan in the general list).

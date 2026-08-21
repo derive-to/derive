@@ -9,7 +9,7 @@
 //  2. PUBLISH orchestration — the "a new version went live" side-effect chain (the
 //     `version.published` realtime event and the follower fan-out) is constructed in exactly
 //     ONE place, apps/api/src/lib/after-publish.ts. Every publish path (HTTP route, MCP tool,
-//     restore, proposal-approve) must route through `afterPublish` / `emitVersionBump`. This
+//     restore) must route through `afterPublish` / `emitVersionBump`. This
 //     is here because it already went wrong once: an MCP publish silently skipped webhooks
 //     and the realtime event because the sequence was hand-copied and drifted.
 import { readdirSync, readFileSync, statSync } from "node:fs"

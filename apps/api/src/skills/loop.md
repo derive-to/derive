@@ -17,26 +17,25 @@ to you.
 4. Publish the update and include fixed thread ids in `addresses`.
 5. Repeat when more feedback arrives.
 
-Formal review is optional. Use it only when someone asks for a recorded decision or permissions
-require a proposal.
+Review is optional. Ask for it (`request_review` on publish) when the work needs a person's
+eyes or they asked for it.
 
 ## catch_up: state, feedback, history, diffs
 
 Pass an artifact's `short_id` to get its current state: a short summary, versions since
-`since_version`, changed pages, open or outdated comment threads, any formal review state, and the
+`since_version`, changed pages, open or outdated comment threads, any review state, and the
 version history.
 
-- **Feedback queue.** Pass `comments` (open / addressed / resolved / outdated) to
-  get a filtered thread list. `outdated` means the quoted
-  text changed in a landed version, so the feedback may no longer apply; `addressed` means a
-  proposal is already pending for it (don't re-address).
+- **Feedback queue.** Pass `comments` (open / resolved / outdated) to get a filtered
+  thread list. `outdated` means the quoted text changed in a landed version, so the
+  feedback may no longer apply.
 - **Diffs.** Pass `response_format='detailed'` (optionally with `since_version`/`to_version`)
   to include a line-by-line diff between two versions. The diff uses readable Markdown,
   not raw HTML, so it shows what changed rather than tag noise. `since_version` defaults to
   `to_version − 1`.
-- **Formal review state.** The `review` field tracks a requested review round:
-  `pending` means it is waiting; `sent_back` means the reviewer returned comments;
-  `approved` records approval. Open or reopen a round with `request_review` on `publish`.
+- **Review state.** The `review` field tracks a requested review round: `pending` means
+  it is waiting; `sent_back` means the reviewer returned their answers, and their note saying
+  "good to go" is the go-signal. Open or reopen a round with `request_review` on `publish`.
 - **Wait (long-poll).** Pass `wait` (seconds, max 50) to block until a new review state,
   comment, or version appears, or until the time runs out. The response includes anything new
   since `since_version`. It also works without a pending review: when co-editing with someone,
@@ -110,9 +109,9 @@ before building a `create` that will be refused.
 Automations are not the way to answer a comment or ship one revision; that is the loop above.
 Reach for one when the same instruction should run again without anyone remembering to start it.
 
-## When formal review is requested
+## When review is requested
 
-When `catch_up` returns `review.state === 'sent_back'`, read the open threads and revise the
-artifact. Reply where an answer will help. Publish with `request_review:true` to send the new
-version back for review. Include fixed thread ids in `addresses` on that publish. A live publish
-resolves those threads; a proposal marks them addressed until approval.
+When `catch_up` returns `review.state === 'sent_back'`, read the open threads and the note.
+If the note says it's good, stop: that is the go-signal. Otherwise revise and publish with
+`request_review:true` to send the new version back. Include fixed thread ids in `addresses`
+on that publish; the publish resolves those threads.

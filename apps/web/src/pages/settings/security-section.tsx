@@ -75,9 +75,7 @@ export function SecuritySection() {
 const SCOPE_LABEL: Record<string, string> = {
   "derive:read": "Read",
   "derive:comment": "Comment",
-  "derive:propose": "Propose",
   "derive:publish": "Publish",
-  "derive:review": "Review",
 }
 
 // OAuth clients the user has allowed to act on their behalf.

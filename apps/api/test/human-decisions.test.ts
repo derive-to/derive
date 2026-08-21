@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { signApiToken } from "../src/lib/api-token"
-import { as, bearer, jsonAs, makeAuthedApp, proposeAs, publishAs, type TestUser } from "./helpers"
+import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 /**
- * Approval is Derive's human trust boundary, not merely an editor-ranked write.
- * These requests deliberately use credentials that still have enough standing to
- * pass the ordinary `approve` capability check; the direct-human gate is the only
- * thing that should keep them from settling a decision.
+ * Settling a review round is Derive's human trust boundary, not merely an
+ * editor-ranked write. These requests deliberately use credentials that still
+ * carry enough standing to pass the ordinary capability check; the direct-human
+ * gate is the only thing that should keep them from sending work back.
  */
-const seedProposal = async (name: string, encryptionKey?: string) => {
+const seedRound = async (name: string, encryptionKey?: string) => {
   const owner: TestUser = {
     id: `u_${name}_owner`,
     email: `${name}-owner@derive.test`,
@@ -26,68 +26,63 @@ const seedProposal = async (name: string, encryptionKey?: string) => {
   const agent = (await registered.json()) as { id: string; token: string }
   const published = await publishAs(
     app,
-    "<h1>Human-approved base</h1>",
+    "<h1>Reviewed base</h1>",
     { visibility: "org" },
     as(owner.email),
   )
   expect(published.status).toBe(201)
   const shortId = ((await published.json()) as { short_id: string }).short_id
-  const proposed = await proposeAs(
-    app,
-    shortId,
-    "<h1>Machine candidate</h1>",
-    bearer(agent.token),
-    { message: "Ready for a person's decision" },
-  )
-  expect(proposed.status).toBe(201)
-  const proposalId = ((await proposed.json()) as { id: string }).id
-  return { app, meta, owner, agent, shortId, proposalId }
+  const artifact = await meta.getByShortId(shortId)
+  if (!artifact) throw new Error("artifact was not created")
+  const round = await meta.createReviewRound({
+    id: `rr_${name}`,
+    artifact_id: artifact.id,
+    version: artifact.current_version,
+    requested_by: agent.id,
+    requested_for: owner.id,
+    note: null,
+  })
+  return { app, meta, owner, agent, shortId, artifact, round }
 }
 
+const roundState = async (
+  meta: Awaited<ReturnType<typeof seedRound>>["meta"],
+  artifactId: string,
+  roundId: string,
+) => (await meta.listReviewRounds(artifactId)).find((r) => r.id === roundId)?.state
+
 describe("human decision boundary", () => {
-  it("refuses proposal approval and request-changes from an editor agent", async () => {
-    const { app, meta, owner, agent, shortId, proposalId } = await seedProposal("human-agent")
-    for (const action of ["approve", "request-changes"]) {
-      const response = await app.request(
-        `/v1/artifacts/${shortId}/proposals/${proposalId}/${action}`,
-        jsonAs(bearer(agent.token), {}),
-      )
-      expect(response.status).toBe(403)
-      expect(await response.json()).toEqual({ error: "forbidden" })
-    }
-
-    const open = await app.request(`/v1/artifacts/${shortId}/proposals/${proposalId}`, {
-      headers: as(owner.email),
-    })
-    expect((await open.json()).state).toBe("open")
-
-    const humanApproval = await app.request(
-      `/v1/artifacts/${shortId}/proposals/${proposalId}/approve`,
-      jsonAs(as(owner.email), { note: "Human sign-off" }),
+  it("refuses send-back from an editor agent's bearer token", async () => {
+    const { app, meta, agent, shortId, artifact, round } = await seedRound("human-agent")
+    const response = await app.request(
+      `/v1/artifacts/${shortId}/review/send-back`,
+      jsonAs(bearer(agent.token), {}),
     )
-    expect(humanApproval.status).toBe(200)
-    expect((await meta.getProposal(proposalId))?.decided_by_id).toBe(owner.id)
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: "a signed-in human must make this decision" })
+    expect(await roundState(meta, artifact.id, round.id)).toBe("pending")
   })
 
   it("refuses the static owner token and agent-bearer-plus-session ambiguity", async () => {
-    const first = await seedProposal("human-static")
+    const first = await seedRound("human-static")
     const staticAttempt = await first.app.request(
-      `/v1/artifacts/${first.shortId}/proposals/${first.proposalId}/approve`,
+      `/v1/artifacts/${first.shortId}/review/send-back`,
       jsonAs(bearer("tok"), {}),
     )
     expect(staticAttempt.status).toBe(403)
 
-    const second = await seedProposal("human-mixed")
+    const second = await seedRound("human-mixed")
     const mixedAttempt = await second.app.request(
-      `/v1/artifacts/${second.shortId}/proposals/${second.proposalId}/approve`,
+      `/v1/artifacts/${second.shortId}/review/send-back`,
       jsonAs({ ...as(second.owner.email), ...bearer(second.agent.token) }, {}),
     )
     expect(mixedAttempt.status).toBe(403)
+    expect(await roundState(second.meta, second.artifact.id, second.round.id)).toBe("pending")
   })
 
   it("refuses a short-lived minted API token even when it carries owner standing", async () => {
     const secret = "human-decision-signing-secret"
-    const seeded = await seedProposal("human-minted", secret)
+    const seeded = await seedRound("human-minted", secret)
     const token = await signApiToken(
       secret,
       seeded.owner.id,
@@ -97,43 +92,25 @@ describe("human decision boundary", () => {
       Date.now() + 60_000,
     )
     const attempt = await seeded.app.request(
-      `/v1/artifacts/${seeded.shortId}/proposals/${seeded.proposalId}/approve`,
+      `/v1/artifacts/${seeded.shortId}/review/send-back`,
       jsonAs(bearer(token), {}),
     )
     expect(attempt.status).toBe(403)
-    expect((await seeded.meta.getProposal(seeded.proposalId))?.state).toBe("open")
+    expect(await roundState(seeded.meta, seeded.artifact.id, seeded.round.id)).toBe("pending")
   })
 
-  it("refuses machine settlement of review rounds but admits the signed-in reviewer", async () => {
-    const { app, meta, owner, agent, shortId } = await seedProposal("human-round")
-    const artifact = await meta.getByShortId(shortId)
-    if (!artifact) throw new Error("artifact was not created")
-    const round = await meta.createReviewRound({
-      id: "rr_human_boundary",
-      artifact_id: artifact.id,
-      version: artifact.current_version,
-      requested_by: agent.id,
-      requested_for: owner.id,
-      note: null,
-    })
-
-    const agentAttempt = await app.request(
-      `/v1/artifacts/${shortId}/review/approve`,
-      jsonAs(bearer(agent.token), {}),
-    )
-    expect(agentAttempt.status).toBe(403)
-    expect((await meta.listReviewRounds(artifact.id)).find((r) => r.id === round.id)?.state).toBe(
-      "pending",
-    )
-
+  it("admits the signed-in reviewer, recording who settled the round and their note", async () => {
+    const { app, meta, owner, shortId, artifact, round } = await seedRound("human-round")
     const humanAttempt = await app.request(
-      `/v1/artifacts/${shortId}/review/approve`,
-      jsonAs(as(owner.email), { note: "Approved by the requested person" }),
+      `/v1/artifacts/${shortId}/review/send-back`,
+      jsonAs(as(owner.email), { note: "Good to go — ship it" }),
     )
     expect(humanAttempt.status).toBe(200)
     const decided = (await humanAttempt.json()).round
-    expect(decided.state).toBe("approved")
+    expect(decided.state).toBe("sent_back")
+    expect(decided.note).toBe("Good to go — ship it")
     expect(decided.resolved_by_name).toBe("Human owner")
-    expect((await meta.listReviewRounds(artifact.id))[0]?.resolved_by).toBe(owner.id)
+    const settled = (await meta.listReviewRounds(artifact.id)).find((r) => r.id === round.id)
+    expect(settled?.resolved_by).toBe(owner.id)
   })
 })

@@ -16,7 +16,7 @@ These facts describe different product uses rather than steps in a required funn
 - a workspace pays for editor seats.
 
 A private library can be useful without an external view. A shared page can be useful without
-a comment. A recurring report can be useful without formal approval. Report these facts
+a comment. A recurring report can be useful without a review round. Report these facts
 separately and use conversations with users to understand what they mean. Do not combine them
 into a universal score or call an action meaningful from event data alone.
 

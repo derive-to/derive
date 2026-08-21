@@ -4,13 +4,12 @@ import type { AppContext } from "../context"
 import { bail, fail, readJson, str } from "../lib/http"
 
 /** Review rounds: the human side of the /derive loop. An agent requests a review
- *  (on publish); the person answers in the doc and hits **Send back** (their
- *  answers ack), or **Approve** (the go-signal). The agent polls catch_up for the
- *  state. Approval is accepted from wherever — the sidebar button hits these
- *  routes; a terminal "go" records the same call. Humans never resolve threads.
- *  The ReviewRound response schema is the single source for the web client's type. */
+ *  (on publish); the person answers in the doc and hits **Send back** — their note
+ *  is the whole answer, and a note that reads "good to go" IS the go-signal. The
+ *  agent polls catch_up for the state. Humans never resolve threads. The
+ *  ReviewRound response schema is the single source for the web client's type. */
 export const reviewRoutes = (ctx: AppContext) => {
-  const { meta, bus, notify, currentUser, requireArtifact, requireDirectHuman, billingGate } = ctx
+  const { meta, bus, notify, currentUser, requireArtifact, requireDirectHuman } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const ReviewRound = z
@@ -21,22 +20,21 @@ export const reviewRoutes = (ctx: AppContext) => {
       requested_by: z
         .string()
         .describe("Who asked for the review (usually the agent that published)."),
-      requested_for: z.string().describe("The person asked to answer or approve this round."),
+      requested_for: z.string().describe("The person asked to answer this round."),
       state: z
-        .enum(["pending", "sent_back", "approved"])
+        .enum(["pending", "sent_back"])
         .describe(
-          "Round state: pending, sent_back (answers returned), or approved (the go-signal).",
+          "Round state: pending, or sent_back (the answers came back — a note saying go IS the go-signal).",
         ),
       note: z.string().nullable().describe("Free-text note attached to the round; null if none."),
       resolved_by_name: z
         .string()
         .nullable()
-        .describe("The human who settled the round; null while pending or for legacy history."),
+        .describe(
+          "The human who settled the round; null while pending, or when the store has no name for the resolver.",
+        ),
       created_at: z.string(),
-      resolved_at: z
-        .string()
-        .nullable()
-        .describe("When it was sent back or approved; null while pending."),
+      resolved_at: z.string().nullable().describe("When it was sent back; null while pending."),
     })
     .openapi("ReviewRound")
 
@@ -91,7 +89,6 @@ export const reviewRoutes = (ctx: AppContext) => {
       const round = await pendingFor(artifact.id, human.id)
       if (!round) return bail(fail(c, 409, "no review pending on this artifact"))
       const updated = await meta.resolveReviewRound(round.id, {
-        state: "sent_back",
         // Bounded to the declared cap however the body arrived — the note is interpolated
         // into the agent's catch_up prompt, and an unbounded field there is a cost hole.
         note: str(body.note)?.slice(0, 10_000) ?? null,
@@ -104,48 +101,6 @@ export const reviewRoutes = (ctx: AppContext) => {
       // before, so a webhook subscriber — and, now that channels can subscribe, a team — never
       // learned the doc had stopped waiting.
       await notify(artifact, "review.sent_back", {
-        author: human.name,
-        actor_id: human.id,
-      })
-      return c.json({ round: updated })
-    },
-  )
-
-  // Approve: the go-signal. Flips the pending round to `approved`.
-  app.openapi(
-    createRoute({
-      method: "post",
-      path: "/v1/artifacts/{shortId}/review/approve",
-      tags: ["Review"],
-      summary: "Approve a review (the go-signal).",
-      request: { params: z.object({ shortId: z.string() }) },
-      responses: {
-        200: {
-          description: "The round, now approved.",
-          content: { "application/json": { schema: z.object({ round: ReviewRound }) } },
-        },
-      },
-    }),
-    async (c) => {
-      const artifact = await requireArtifact(c, "approve", { split: true })
-      if (artifact instanceof Response) return bail(artifact)
-      const human = await requireDirectHuman(c)
-      if (human instanceof Response) return bail(human)
-      const blocked = await billingGate(c, artifact.org_id)
-      if (blocked) return bail(blocked)
-      const body = await readJson(c, z.object({ note: z.unknown().optional() }))
-      if (body instanceof Response) return bail(body)
-      const round = await pendingFor(artifact.id, human.id)
-      if (!round) return bail(fail(c, 409, "no review pending on this artifact"))
-      const updated = await meta.resolveReviewRound(round.id, {
-        state: "approved",
-        note: str(body.note) ?? null,
-        resolved_by: human.id,
-        resolved_by_name: human.name,
-      })
-      if (!updated) return bail(fail(c, 409, "no review pending on this artifact"))
-      bus.publish(artifact.id, { type: "review.approved", round_id: round.id })
-      await notify(artifact, "review.approved", {
         author: human.name,
         actor_id: human.id,
       })

@@ -136,8 +136,8 @@ export function registerCheckpointTool(tc: ToolContext): void {
           `A layer is one page — ${MAX_LAYER_CHARS} chars max, this is ${content.length}. Trim to what a cold session needs; replace detail with refs.`,
         )
       const bytes = new TextEncoder().encode(content)
-      // A checkpoint is always a live publish (no propose concept here), so it's gated
-      // the same as any other publish/approve choke point.
+      // A checkpoint is always a live publish, so it's gated
+      // the same as any other publish choke point.
       const blocked = await ctx.billingBlocked(targetOrg)
       if (blocked) return text(blocked.message)
       // Same workspace storage cap the HTTP routes and the publish `edits` path

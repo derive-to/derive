@@ -14,7 +14,7 @@ import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
 
 /**
- * Serve stored artifact content (a version or a proposal) under `prefix`, resolving
+ * Serve a stored artifact version's content under `prefix`, resolving
  * a sub-`path` for bundles. Shared by the `/raw/*` sandbox routes and domain mode:
  * for `/raw/:id/v/:n/` the prefix carries the path; for a vanity host the prefix is
  * `/`, so the absolute-URL rewriting becomes a no-op and the artifact serves at its

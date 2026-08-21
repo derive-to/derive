@@ -17,46 +17,37 @@ const CodeEditor = lazy(() => import("./code-editor"))
  * + the comments panel stay, so you can reference comments while editing), not as
  * a fullscreen overlay. Markdown is rendered through the *same* renderMarkdown the
  * server uses, so the preview is exactly what publishes; HTML is shown raw.
- * Editors publish a new version directly (with an optional commit message);
- * commenters submit the edit as a proposal with a "why". On phones the two panes
- * collapse to an Edit / Preview toggle.
+ * Editors publish a new version directly (with an optional commit message). On
+ * phones the two panes collapse to an Edit / Preview toggle.
  */
 export function SourceEditor({
-  canPublish,
   title,
   format,
   src,
   message,
-  proposeMsg,
   onSrc,
   onMessage,
-  onProposeMsg,
   onCancel,
   onPublish,
-  onPropose,
   onTitle,
   placeholder,
   publishing,
   shortId,
 }: {
-  canPublish: boolean
   title: string
   format: "md" | "html"
   src: string
   message: string
-  proposeMsg: string
   onSrc: (v: string) => void
   onMessage: (v: string) => void
-  onProposeMsg: (v: string) => void
   onCancel: () => void
   onPublish: () => void
-  onPropose: () => void
   // When set, the title becomes an editable field (the new-artifact flow at /new);
   // omitted for editing an existing artifact, where the title is shown read-only.
   onTitle?: (v: string) => void
   // First-use hint for the empty editor (the /new flow); omitted when editing.
   placeholder?: string
-  // True while the parent's publish/propose mutation is in flight — disables the toolbar
+  // True while the parent's publish mutation is in flight — disables the toolbar
   // buttons and shows a spinner, so a double-click can't duplicate a version.
   publishing?: boolean
   /** Existing artifact id used to scope the source editor's @mention directory. */
@@ -122,30 +113,17 @@ export function SourceEditor({
         ) : (
           <span className="flex items-center gap-2 font-mono text-2xs text-muted-foreground">
             <Icon name="edit" size={16} />
-            <span className="max-w-[40vw] truncate">
-              {canPublish ? `Editing · ${title}` : "Proposing a change"}
-            </span>
+            <span className="max-w-[40vw] truncate">{`Editing · ${title}`}</span>
           </span>
         )}
-        {canPublish ? (
-          <Input
-            value={message}
-            onChange={(e) => onMessage(e.target.value)}
-            placeholder="Describe this version (optional)"
-            aria-label="Version description"
-            data-testid="artifact-commit-message"
-            className="order-last md:order-none md:w-auto md:max-w-90 md:flex-1"
-          />
-        ) : (
-          <Input
-            value={proposeMsg}
-            onChange={(e) => onProposeMsg(e.target.value)}
-            placeholder="What are you changing, and why?"
-            aria-label="Proposal description"
-            data-testid="artifact-propose-message"
-            className="order-last md:order-none md:w-auto md:max-w-105 md:flex-1"
-          />
-        )}
+        <Input
+          value={message}
+          onChange={(e) => onMessage(e.target.value)}
+          placeholder="Describe this version (optional)"
+          aria-label="Version description"
+          data-testid="artifact-commit-message"
+          className="order-last md:order-none md:w-auto md:max-w-90 md:flex-1"
+        />
         <span className="ml-auto flex items-center gap-2">
           {/* Desktop: show/hide the preview for a full-width editor when you don't
               need it. (Phones use the Edit/Preview tabs below instead.) */}
@@ -186,27 +164,15 @@ export function SourceEditor({
           >
             Cancel
           </Button>
-          {canPublish ? (
-            <Button
-              variant="default"
-              size="sm"
-              data-testid="artifact-publish-version"
-              loading={publishing}
-              onClick={onPublish}
-            >
-              Publish
-            </Button>
-          ) : (
-            <Button
-              variant="default"
-              size="sm"
-              data-testid="artifact-propose-submit"
-              loading={publishing}
-              onClick={onPropose}
-            >
-              Propose
-            </Button>
-          )}
+          <Button
+            variant="default"
+            size="sm"
+            data-testid="artifact-publish-version"
+            loading={publishing}
+            onClick={onPublish}
+          >
+            Publish
+          </Button>
         </span>
       </div>
 

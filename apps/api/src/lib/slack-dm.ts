@@ -156,7 +156,7 @@ export const enqueueSlackArtifactMentionDms = async (
 export const enqueueSlackReviewRequestedDm = async (
   deps: { meta: MetaStore; baseUrl: string },
   artifact: ArtifactRecord,
-  proposal: { requestedBy: string; version: number; note?: string | null },
+  round: { requestedBy: string; version: number; note?: string | null },
   reviewerId: string,
 ): Promise<void> => {
   const { meta, baseUrl } = deps
@@ -168,29 +168,28 @@ export const enqueueSlackReviewRequestedDm = async (
   const t = title(artifact)
   const blocks = [
     section(
-      `:mag: *${mrkdwnLabel(proposal.requestedBy)}* requested your review of <${link}|${mrkdwnLabel(t)}> (v${proposal.version}).`,
+      `:mag: *${mrkdwnLabel(round.requestedBy)}* requested your review of <${link}|${mrkdwnLabel(t)}> (v${round.version}).`,
     ),
-    ...(proposal.note ? [section(`> ${mrkdwnBody(proposal.note, 600)}`)] : []),
+    ...(round.note ? [section(`> ${mrkdwnBody(round.note, 600)}`)] : []),
     // Settle it HERE. This DM is the one moment the loop is blocked on a named person, and it
     // is addressed to exactly them — so the two answers the agent is waiting for belong on it,
     // with "Review in Derive" kept for everything a button cannot express. Sending them to a
-    // browser to press the same two buttons is the difference between a notification and a
+    // browser to press the same button is the difference between a notification and a
     // place to work.
     actions([
       actionButton(
-        SLACK_REVIEW_ACTION.approve,
-        "Approve",
+        SLACK_REVIEW_ACTION.sendBack,
+        "Send back",
         encodeReviewAction(artifact.id),
         "primary",
       ),
-      actionButton(SLACK_REVIEW_ACTION.sendBack, "Send back", encodeReviewAction(artifact.id)),
       openButton(link, "Review in Derive"),
     ]),
   ]
   await enqueueChannelDelivery(meta, "slack_dm", "review.requested", {
     orgId: artifact.org_id,
     userId: reviewerId,
-    text: `${mrkdwnLabel(proposal.requestedBy)} requested your review of ${mrkdwnLabel(t)} (v${proposal.version})`,
+    text: `${mrkdwnLabel(round.requestedBy)} requested your review of ${mrkdwnLabel(t)} (v${round.version})`,
     blocks,
   } satisfies SlackDmPayload)
 }

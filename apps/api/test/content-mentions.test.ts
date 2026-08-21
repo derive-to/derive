@@ -2,7 +2,7 @@ import { newId } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 import { afterPublish } from "../src/lib/after-publish"
 import { contentMentionHandles, fanOutNewContentMentions } from "../src/lib/content-mentions"
-import { as, makeAuthedApp, proposeAs, pub, type TestUser } from "./helpers"
+import { as, makeAuthedApp, pub, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u-own", email: "own@x.com", name: "Owner", username: "own" }
 const editor: TestUser = { id: "u-ed", email: "ed@x.com", name: "Ed", username: "edd" }
@@ -131,35 +131,6 @@ describe("live artifact content mentions", () => {
     )
     expect(updated.status).toBe(201)
     expect(await meta.listNotifications(editor.id, 20)).toHaveLength(0)
-  })
-
-  it("fans out a newly introduced body mention when an approved proposal becomes live", async () => {
-    const { app, meta } = makeAuthedApp("content-mention-proposal", [owner, editor], "editor")
-    const made = await pub(
-      app,
-      "<p>Initial live copy.</p>",
-      { title: "Proposal body mention", visibility: "org" },
-      undefined,
-      as(owner.email),
-    )
-    const { short_id: shortId } = (await made.json()) as { short_id: string }
-    const proposed = await proposeAs(
-      app,
-      shortId,
-      "<p>@own, this body mention lands with the approved proposal.</p>",
-      as(editor.email),
-    )
-    expect(proposed.status).toBe(201)
-    const { id: proposalId } = (await proposed.json()) as { id: string }
-
-    const approved = await app.request(`/v1/artifacts/${shortId}/proposals/${proposalId}/approve`, {
-      method: "POST",
-      headers: as(owner.email),
-    })
-    expect(approved.status).toBe(200)
-    expect(await meta.listNotifications(owner.id, 20)).toMatchObject([
-      { kind: "mention", actor: "Ed", thread_id: "", comment_id: "" },
-    ])
   })
 
   it("never lets a body-notification failure interrupt a version that is already live", async () => {

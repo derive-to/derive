@@ -57,10 +57,8 @@ import {
   subscriptionBlocks,
 } from "../lib/slack-commands"
 import {
-  decodeProposalAction,
   decodeThreadAction,
   enqueueSlackReplyIngest,
-  SLACK_PROPOSAL_ACTION,
   SLACK_THREAD_ACTION,
   threadStateBlocks,
 } from "../lib/slack-comments"
@@ -68,7 +66,6 @@ import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
 import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
 import { isVerifiedLink, linkToActMessage } from "../lib/slack-identity"
 import { handleSlackMention } from "../lib/slack-mention"
-import { runSlackProposalAction } from "../lib/slack-proposal"
 import {
   decodeQuestionReply,
   type QuestionReplyMeta,
@@ -146,7 +143,7 @@ export const slackRoutes = (ctx: AppContext) => {
   // Run best-effort work AFTER we've acked Slack (which demands a reply within 3s). On Workers,
   // waitUntil keeps the isolate alive until it settles; on Node the promise just runs in-process.
   // Either way a terminal .catch() is attached FIRST: an
-  // unawaited reject (e.g. a lookup throwing inside a deferred proposal action, which runs its
+  // unawaited reject (e.g. a lookup throwing inside a deferred review action, which runs its
   // early lookups outside its own try/catch) would otherwise escape as an unhandledRejection.
   // Not fatal here — node.ts installs a log-only last-resort handler — but that logs a bare,
   // contextless line and only exists on the Node path; catching at the call site attributes the
@@ -165,7 +162,7 @@ export const slackRoutes = (ctx: AppContext) => {
     // because everything worth logging happens after it.
     //
     // Link previews were dead in production for a day on exactly this: link_shared arrived, the
-    // synchronous prefix ran, and nothing downstream ever executed. Proposal decisions, the
+    // synchronous prefix ran, and nothing downstream ever executed. Review send-backs, the
     // interactivity repaint and the deferred /derive search shared the fault; the response_url
     // ones only appeared to work because their fetch is dispatched before the first await.
     //
@@ -1291,7 +1288,7 @@ export const slackRoutes = (ctx: AppContext) => {
       return submitQuestionReply(c, payload)
 
     const action = payload.actions?.[0]
-    // A `value` is required by the thread and proposal buttons, which encode their target in
+    // A `value` is required by the thread buttons, which encode their target in
     // one — but NOT by a Work Object action, where Slack round-trips the entity instead and the
     // target is `external_ref`. Requiring it here made every Work Object button a no-op on
     // click: the handler returned ok before reaching the branch that handles them.
@@ -1301,14 +1298,11 @@ export const slackRoutes = (ctx: AppContext) => {
 
     // A Work Object review button. The artifact comes from the card's external_ref rather than a
     // button value — Slack round-trips the entity, so there is no attacker-supplied id to bind.
-    if (
-      action.action_id === SLACK_REVIEW_ACTION.approve ||
-      action.action_id === SLACK_REVIEW_ACTION.sendBack
-    ) {
-      // Two shapes reach here, because the same two actions now ride three surfaces. A Work
+    if (action.action_id === SLACK_REVIEW_ACTION.sendBack) {
+      // Two shapes reach here, because the same action rides three surfaces. A Work
       // Object button carries no value — Slack round-trips the entity, so the target is
       // `external_ref`. A button on a review DM or a channel card has no entity behind it, so
-      // the target travels in `value`, exactly as the thread and proposal buttons do. Either
+      // the target travels in `value`, exactly as the thread buttons do. Either
       // way it only NAMES the artifact: runSlackReviewAction re-reads it and re-authorizes the
       // clicker, so neither path is trusted as authorization.
       const ref = payload.entity?.external_ref?.id
@@ -1321,17 +1315,16 @@ export const slackRoutes = (ctx: AppContext) => {
             if (artifact) break
           }
         // Bind the acting Slack team to the artifact's workspace, exactly as the thread and
-        // proposal branches do: one signed workspace must not act on another org's review.
+        // branches do: one signed workspace must not act on another org's review.
         const install = artifact ? await meta.getSlackInstall(artifact.org_id) : null
         if (artifact && install && install.team_id === payload.team.id)
           runAfterAck(
             runSlackReviewAction(
-              { meta, bus, billingBlocked },
+              { meta, bus },
               {
                 teamId: payload.team.id,
                 slackUserId: payload.user.id,
                 artifact,
-                op: action.action_id === SLACK_REVIEW_ACTION.approve ? "approve" : "send_back",
                 responseUrl: payload.response_url,
               },
             ),
@@ -1343,44 +1336,6 @@ export const slackRoutes = (ctx: AppContext) => {
     // Everything below this point encodes its target in `value` (the Work Object branch above
     // is the one exception, which is why the guard moved off it).
     if (!action.value) return c.json({ ok: true })
-
-    // Proposal Approve / Request-changes — editor-level, authorized AS the clicker's linked
-    // Derive account. The work (approving publishes a version) can exceed 3s, so ack now and
-    // run it off the ack path; all feedback rides response_url.
-    if (
-      action.action_id === SLACK_PROPOSAL_ACTION.approve ||
-      action.action_id === SLACK_PROPOSAL_ACTION.requestChanges
-    ) {
-      const pt = decodeProposalAction(action.value)
-      if (pt && payload.team?.id && payload.user?.id) {
-        runAfterAck(
-          runSlackProposalAction(
-            {
-              meta,
-              blobs,
-              bus,
-              notify,
-              notifyRender,
-              search,
-              background,
-              baseUrl: deps.baseUrl,
-              billingBlocked,
-            },
-            {
-              teamId: payload.team.id,
-              slackUserId: payload.user.id,
-              proposalId: pt.proposalId,
-              artifactId: pt.artifactId,
-              op:
-                action.action_id === SLACK_PROPOSAL_ACTION.approve ? "approve" : "request_changes",
-              responseUrl: payload.response_url,
-              sectionBlock: payload.message?.blocks?.[0],
-            },
-          ),
-        )
-      }
-      return c.json({ ok: true })
-    }
 
     const op =
       action.action_id === SLACK_THREAD_ACTION.resolve

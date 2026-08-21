@@ -333,7 +333,7 @@ describe("catch_up `wait` long-poll", () => {
     setTimeout(() => {
       void (async () => {
         const round = await meta.getPendingRound(a.id)
-        if (round) await meta.resolveReviewRound(round.id, { state: "sent_back", note: "go" })
+        if (round) await meta.resolveReviewRound(round.id, { note: "go" })
         backplane.publish(a.id, { type: "review.sent_back", round_id: round?.id })
       })()
     }, 100)
@@ -354,12 +354,12 @@ describe("catch_up `wait` long-poll", () => {
     const a = await meta.getByShortId(created.short_id as string)
     if (!a) throw new Error("artifact missing")
     const round = await meta.getPendingRound(a.id)
-    if (round) await meta.resolveReviewRound(round.id, { state: "approved", note: null })
+    if (round) await meta.resolveReviewRound(round.id, { note: "good to go" })
 
     const started = Date.now()
     const out = await call(app, token, "catch_up", { short_id: created.short_id, wait: 30 })
     expect(Date.now() - started).toBeLessThan(2_000)
-    expect((out.review as { state: string }).state).toBe("approved")
+    expect((out.review as { state: string }).state).toBe("sent_back")
   })
 
   it("times out quietly and returns the still-pending state", async () => {

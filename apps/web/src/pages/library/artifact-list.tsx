@@ -172,13 +172,11 @@ export function ArtifactListRow({
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
   const dir = a.source_path ? dirOf(a.source_path) : ""
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
-  const awaitingReview =
-    (a.my_role === "owner" || a.my_role === "editor") && (a.open_proposals ?? 0) > 0
   const showArchive = !a.removed && (a.my_role === "owner" || a.my_role === "editor") && !!onArchive
   // The 10px gutter is reserved, always. A row that wants you takes an ink bar in it, so
   // the flag never widens the row or shoves its neighbours — and because the gutter is
   // usually empty, the one row that isn't reads from across the screen.
-  const flagged = a.mentions_me || a.i_participated || awaitingReview
+  const flagged = a.mentions_me || a.i_participated
   const author = a.author ?? null
   const authorLogin = author?.login ?? a.author_login ?? null
 

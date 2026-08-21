@@ -50,8 +50,7 @@ export function registerCodeTool(
         // the code cannot drift into describing different surfaces.
         `${AGENT_SURFACE_HELP}\n\n` +
         `Available: ${toolNames.join(", ")}.\n\n` +
-        `Tools behave exactly as they do when called directly, including how writes land ` +
-        `(publish vs proposal is the workspace's setting, never this tool's).\n\n` +
+        `Tools behave exactly as they do when called directly, including where writes land.\n\n` +
         `Example: const found = []; for (const a of (await tools.find({ query: "roadmap" })).results) ` +
         `{ const doc = await tools.read({ short_id: a.short_id }); if (doc.markdown.includes("Q3")) found.push(a.short_id) } ` +
         `return found`,

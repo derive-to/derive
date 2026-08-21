@@ -60,7 +60,6 @@ import type {
   NewMembership,
   NewNotification,
   NewPlan,
-  NewProposal,
   NewRenderJob,
   NewReport,
   NewRepoSource,
@@ -82,15 +81,12 @@ import type {
   PlanKind,
   PlanRecord,
   PreviewStatus,
-  ProposalRecord,
-  ProposalState,
   RenderJobRecord,
   RenderJobStatus,
   ReportRecord,
   ReportState,
   RepoSourceRecord,
   ReviewRoundRecord,
-  ReviewRoundState,
   Role,
   RunRecord,
   RunStatus,
@@ -186,7 +182,6 @@ import {
   oauthClientWorkspace,
   orgSettings,
   plan,
-  proposal,
   renderJob,
   report,
   repoSource,
@@ -364,7 +359,6 @@ export const schema = {
   artifactFavorite,
   follow,
   artifactTag,
-  proposal,
   reviewRound,
   agent,
   agentMention,
@@ -415,7 +409,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifactMember: true,
   notification: true,
   follow: true,
-  proposal: true,
   reviewRound: true,
   agent: true,
   agentMention: true,
@@ -3301,37 +3294,6 @@ export function makeRepos(db: SqliteDb) {
       .limit(limit)
       .all()
 
-  // ---- Reviews: proposals ------------------------------------------------
-  const createProposal = async (p: NewProposal): Promise<ProposalRecord> =>
-    (await db.insert(proposal).values(p).returning().get()) as ProposalRecord
-  const getProposal = async (id: string): Promise<ProposalRecord | null> =>
-    (await db.select().from(proposal).where(eq(proposal.id, id)).get()) ?? null
-  const listProposals = async (
-    artifactId: string,
-    opts?: { state?: ProposalState },
-  ): Promise<ProposalRecord[]> => {
-    const where = opts?.state
-      ? and(eq(proposal.artifact_id, artifactId), eq(proposal.state, opts.state))
-      : eq(proposal.artifact_id, artifactId)
-    return db.select().from(proposal).where(where).orderBy(desc(proposal.created_at)).all()
-  }
-  const decideProposal = async (
-    id: string,
-    fields: {
-      state: ProposalState
-      decided_by: string | null
-      decided_by_id?: string | null
-      decided_version: number | null
-      decision_note?: string | null
-    },
-  ): Promise<ProposalRecord | null> =>
-    (await db
-      .update(proposal)
-      .set({ ...fields, decided_at: new Date().toISOString() })
-      .where(and(eq(proposal.id, id), eq(proposal.state, "open")))
-      .returning()
-      .get()) ?? null
-
   // ---- Review rounds -----------------------------------------------------
   const createReviewRound = async (r: NewReviewRound): Promise<ReviewRoundRecord> => {
     // One pending round per (artifact, person): clear this person's prior pending
@@ -3378,7 +3340,6 @@ export function makeRepos(db: SqliteDb) {
   const resolveReviewRound = async (
     id: string,
     fields: {
-      state: Extract<ReviewRoundState, "sent_back" | "approved">
       note?: string | null
       resolved_by?: string | null
       resolved_by_name?: string | null
@@ -3387,23 +3348,10 @@ export function makeRepos(db: SqliteDb) {
     const updated =
       (await db
         .update(reviewRound)
-        .set({ ...fields, resolved_at: new Date().toISOString() })
+        .set({ ...fields, state: "sent_back", resolved_at: new Date().toISOString() })
         .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
         .returning()
         .get()) ?? null
-    // An approval moves the artifact's approved-version pointer, never lowering it:
-    // the round's version is what the human actually looked at, and a stale round
-    // approved after a newer one must not roll delivery back. Rounds at version 0
-    // (an unversioned artifact) stamp nothing — approved_version = 0 would read as
-    // "serve version 0" through approvedOrCurrent, not as "never approved".
-    if (updated && fields.state === "approved" && updated.version > 0)
-      await db
-        .update(artifact)
-        .set({
-          approved_version: sql`MAX(COALESCE(${artifact.approved_version}, 0), ${updated.version})`,
-        })
-        .where(eq(artifact.id, updated.artifact_id))
-        .run()
     return updated
   }
 
@@ -4525,11 +4473,8 @@ export function makeRepos(db: SqliteDb) {
     }
   }
   // The first artifact an agent produced FOR this user — the onboarding "published
-  // via agent" signal. Two paths count: a direct MCP publish (version.source='mcp',
-  // attributed to the human the agent acted for) and the propose → approve loop
-  // (an agent proposal on_behalf_of this user that a human approved — the
-  // recommended flow for propose-scoped grants, which never creates an
-  // 'mcp'-stamped version itself). Earliest of the two wins.
+  // via agent" signal: the earliest direct MCP publish (version.source='mcp',
+  // attributed to the human the agent acted for).
   const firstAgentPublish = async (
     userId: string,
   ): Promise<{ short_id: string; title: string | null } | null> => {
@@ -4543,28 +4488,7 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(asc(version.created_at), asc(version.id))
       .limit(1)
       .get()
-    const approved = await db
-      .select({ short_id: artifact.short_id, title: artifact.title, at: proposal.decided_at })
-      .from(proposal)
-      .innerJoin(artifact, eq(artifact.id, proposal.artifact_id))
-      .where(
-        and(
-          eq(proposal.on_behalf_of, userId),
-          eq(proposal.state, "approved"),
-          isNull(artifact.removed_at),
-        ),
-      )
-      .orderBy(asc(proposal.decided_at), asc(proposal.id))
-      .limit(1)
-      .get()
-    // A null decided_at (defensive; decide always stamps it) sorts LAST, never first.
-    const winner =
-      direct && approved
-        ? approved.at && approved.at < direct.at
-          ? approved
-          : direct
-        : (direct ?? approved)
-    return winner ? { short_id: winner.short_id, title: winner.title } : null
+    return direct ? { short_id: direct.short_id, title: direct.title } : null
   }
   // Revoke a user's grant to a client: drop the consent + every live token so access ends
   // now and a fresh consent is required. Best-effort per table (a table may not exist).
@@ -4852,7 +4776,6 @@ export function makeRepos(db: SqliteDb) {
     await db.update(artifact).set({ author_id: null }).where(eq(artifact.author_id, userId)).run()
     await db.update(version).set({ author_id: null }).where(eq(version.author_id, userId)).run()
     await db.update(comment).set({ author_id: null }).where(eq(comment.author_id, userId)).run()
-    await db.update(proposal).set({ author_id: null }).where(eq(proposal.author_id, userId)).run()
     await db.update(agent).set({ created_by: null }).where(eq(agent.created_by, userId)).run()
     await db
       .update(invitation)
@@ -4972,7 +4895,6 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
     await db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
     await db.delete(domain).where(eq(domain.artifact_id, id)).run()
-    await db.delete(proposal).where(eq(proposal.artifact_id, id)).run()
     await db.delete(report).where(eq(report.artifact_id, id)).run()
     await db.delete(notification).where(eq(notification.artifact_id, id)).run()
     await db.delete(agentMention).where(eq(agentMention.artifact_id, id)).run()
@@ -5274,7 +5196,6 @@ export function makeRepos(db: SqliteDb) {
     setArtifactExpiry,
     listExpiredArtifacts,
     deleteDomain,
-    createProposal,
     createReviewRound,
     getPendingRound,
     listReviewRounds,
@@ -5311,9 +5232,6 @@ export function makeRepos(db: SqliteDb) {
     listSessionMessages,
     listSessionMessagesFor,
     listRecentAgentMessages,
-    getProposal,
-    listProposals,
-    decideProposal,
     createNotification,
     createNotifications,
     listNotifications,

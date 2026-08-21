@@ -147,7 +147,7 @@ describe("webhook outbox", () => {
   it("ships the event vocabulary with the list", async () => {
     const list = await (await app.request("/v1/webhooks")).json()
     expect(list.event_options).toEqual([...WEBHOOK_EVENTS])
-    expect(list.event_options).toContain("proposal.approved")
+    expect(list.event_options).toContain("review.sent_back")
     expect(list.event_options.length).toBeGreaterThan(3)
   })
 })

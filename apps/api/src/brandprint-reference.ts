@@ -353,8 +353,8 @@ export const BRANDPRINT_TEMPLATE = `<!doctype html>
 
 /**
  * The brand-profile placeholder: version 1 of a workspace's "Brand profile" artifact,
- * created when the Brandprint is scaffolded so the agent has a fixed short_id to file its
- * proposal against (spec: the placeholder is the recognition contract). The profile counts
+ * created when the Brandprint is scaffolded so the agent has a fixed short_id to publish
+ * its build to (spec: the placeholder is the recognition contract). The profile counts
  * as live from version 2, so this stub is what renders until then. Server home for the
  * setup_brandprint tool; the web mirrors it at
  * apps/web/src/pages/brandprint/profile-placeholder.ts (the SPA can't import this module).

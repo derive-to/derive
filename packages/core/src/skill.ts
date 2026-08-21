@@ -91,12 +91,3 @@ export const workspaceSkillsInstructions = (count: number): string =>
   count > 0
     ? `${count === 100 ? "100+" : count} team skill${count === 1 ? "" : "s"} here — read derive://skills for the catalog. `
     : `Team skills: read derive://skills for the catalog. `
-
-/** The version agent skill delivery serves. A never-reviewed skill serves current, so
- *  solo workspaces feel no gate; the first human approval pins delivery to the approved
- *  version, and later drafts stop reaching agents until someone approves again. An
- *  explicit manifest pin still wins over this — a pin is a deliberate fixed choice. */
-export const approvedOrCurrent = (a: {
-  approved_version: number | null
-  current_version: number
-}): number => a.approved_version ?? a.current_version

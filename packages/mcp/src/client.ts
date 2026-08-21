@@ -93,23 +93,6 @@ export interface CollectionSummaryJson {
 }
 
 /** A revision submitted for human review instead of published live. */
-export interface ProposeArgs {
-  /** Full content for the proposal. Omit when using `edits` instead. */
-  content?: string | Uint8Array
-  filename?: string
-  message: string
-  /** Thread ids this revision addresses (flip to `addressed`, resolve on approval). */
-  addresses?: string[]
-  /** Exact-match search/replace against the current stored source, INSTEAD of
-   *  `content`. */
-  edits?: DocEdit[]
-  baseVersion?: number
-}
-export interface ProposalJson {
-  id: string
-  base_version: number
-  addressed?: string[]
-}
 
 export interface NewCommentArgs {
   body_md: string
@@ -175,7 +158,7 @@ export interface ArtifactJson {
 /** One review round: the human-ack primitive of the /derive loop. */
 export interface ReviewRoundJson {
   id: string
-  state: "pending" | "sent_back" | "approved"
+  state: "pending" | "sent_back"
   version: number
   note: string | null
   created_at: string
@@ -300,7 +283,6 @@ export interface DeriveClient {
   ): Promise<{ collection: { id: string; title: string }; added: number; skipped: number }>
   publish(args: PublishArgs): Promise<ArtifactJson>
   /** Submit a single-file revision for human review (does not go live). */
-  propose(shortId: string, args: ProposeArgs): Promise<ProposalJson>
   get(shortId: string): Promise<ArtifactJson>
   getContent(shortId: string, opts?: ContentOpts): Promise<ContentResult>
   /** Grep WITHIN one artifact (shortId set) or ACROSS the workspace (shortId
@@ -539,29 +521,6 @@ export function createClient(opts: ClientOptions): DeriveClient {
       return ok(
         await f(url, { method: "POST", body: form, headers: authHeaders }),
       ) as Promise<ArtifactJson>
-    },
-
-    async propose(shortId, args) {
-      const form = new FormData()
-      if (args.edits) {
-        form.append("edits", JSON.stringify(args.edits))
-        if (args.baseVersion != null) form.append("base_version", String(args.baseVersion))
-      } else {
-        const bytes =
-          typeof args.content === "string" || args.content === undefined
-            ? new TextEncoder().encode(args.content ?? "")
-            : args.content
-        form.append("file", new Blob([bytes as BlobPart]), args.filename ?? "index.html")
-      }
-      form.append("message", args.message)
-      if (args.addresses?.length) form.append("addresses", args.addresses.join(","))
-      return ok(
-        await f(`${base}/v1/artifacts/${shortId}/proposals`, {
-          method: "POST",
-          body: form,
-          headers: authHeaders,
-        }),
-      ) as Promise<ProposalJson>
     },
 
     async get(shortId) {

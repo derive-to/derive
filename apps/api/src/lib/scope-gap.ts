@@ -17,9 +17,7 @@ import { type Action, capRole, type Role, roleAllows } from "@derive/core"
 /** The scope a caller would need consented to reach each action. */
 const SCOPE_FOR_ACTION: Partial<Record<Action, string>> = {
   comment: "derive:comment",
-  propose: "derive:propose",
   publish: "derive:publish",
-  approve: "derive:review",
   share: "derive:publish",
   manage: "derive:manage",
 }
